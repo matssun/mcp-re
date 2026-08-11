@@ -170,6 +170,7 @@ fn source_for(sts: &FakeSts, token: &TokenFile) -> WebIdentityCredentialSource {
         session_name: "mcp-re-proxy".to_string(),
         endpoint: sts.endpoint.clone(),
     })
+    .expect("the fake STS binds a loopback endpoint, which is admissible")
 }
 
 #[test]

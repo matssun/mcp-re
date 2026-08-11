@@ -144,6 +144,15 @@ pub fn rotation_backoff(
 /// [`current`](Self::current); the rotor writes via [`publish`](Self::publish) /
 /// [`retire`](Self::retire). The `RwLock` is read-mostly — a brief write only at
 /// rotation — so per-request reads are uncontended in steady state.
+///
+/// Every access recovers a poisoned lock rather than propagating the panic. Poison is
+/// sticky, and a panic that unwinds through the write side — `SigningPlane::drop` calls
+/// [`retire_permanently`](Self::retire_permanently) during an unwind — would otherwise
+/// turn every later [`current`](Self::current) on the replica into a panic inside the
+/// request future, replacing the designed fail-closed 503 with a connection reset and no
+/// audit reason. The state behind the lock is a single `Option<Arc<..>>` swapped whole, so
+/// there is no half-written value to inherit; the fail-closed decision is made from what
+/// the guard holds, exactly as on the healthy path.
 #[derive(Default)]
 pub struct DelegatedServerSigner {
     active: RwLock<Option<Arc<ActiveDelegatedKey>>>,
@@ -177,7 +186,10 @@ impl DelegatedServerSigner {
     /// May be negative in the fail-closed window between `exp` and the next successful
     /// rotation — the caller treats `<= 0` as "already failing closed".
     pub fn seconds_to_expiry(&self, now: i64) -> Option<i64> {
-        let guard = self.active.read().expect("delegated signer lock (read)");
+        let guard = self
+            .active
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().map(|a| a.exp - now)
     }
 
@@ -191,13 +203,19 @@ impl DelegatedServerSigner {
         if self.is_terminal() {
             return;
         }
-        *self.active.write().expect("delegated signer lock (write)") = Some(Arc::new(active));
+        *self
+            .active
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(active));
     }
 
     /// Retire the current snapshot — the hot path then fails closed until a new key
     /// is published. Used on fail-closed issuance (ADR-MCPRE-052 §6).
     pub fn retire(&self) {
-        *self.active.write().expect("delegated signer lock (write)") = None;
+        *self
+            .active
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     }
 
     /// Retire, permanently: no later [`publish`](Self::publish) can restore signing.
@@ -224,7 +242,10 @@ impl DelegatedServerSigner {
         if self.is_terminal() {
             return None;
         }
-        let guard = self.active.read().expect("delegated signer lock (read)");
+        let guard = self
+            .active
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         match guard.as_ref() {
             Some(a) if now < a.exp => Some(Arc::clone(a)),
             _ => None,
@@ -754,6 +775,51 @@ mod terminal_retirement_tests {
         assert!(
             signer.current(NOW).is_some(),
             "a recovered rotor must sign again; only the owner's retirement is terminal"
+        );
+    }
+
+    /// A poisoned snapshot lock must fail CLOSED, not panic.
+    ///
+    /// Poison is sticky. `SigningPlane::drop` takes the write side during an unwind, so a
+    /// panic anywhere that unwinds through it poisons this lock for the process lifetime.
+    /// With `.expect(...)` every later `current()` — read on every request and every
+    /// signed rejection — panicked inside the request future, so the designed 503
+    /// `delegated_signing_unavailable` became a connection reset with no audit reason, and
+    /// the rotor's own `publish` panicked too, so the replica could not self-heal.
+    #[test]
+    fn a_poisoned_snapshot_lock_fails_closed_and_still_recovers() {
+        let signer = Arc::new(DelegatedServerSigner::new());
+        signer.publish(key(NOW + 300));
+
+        // Poison the lock the way production does: a panic while the write guard is held.
+        let poisoner = Arc::clone(&signer);
+        let unwound = std::thread::spawn(move || {
+            let _guard = poisoner.active.write().expect("uncontended");
+            panic!("a panic under the write guard");
+        })
+        .join();
+        assert!(unwound.is_err(), "the poisoning thread must have unwound");
+        assert!(
+            signer.active.is_poisoned(),
+            "the test has not staged the condition under test"
+        );
+
+        assert!(
+            signer.current(NOW).is_some(),
+            "the snapshot is swapped whole, so a poisoned lock still holds a valid key"
+        );
+        assert_eq!(signer.seconds_to_expiry(NOW), Some(300));
+
+        // And the replica can still be told to stop signing, and to start again.
+        signer.retire();
+        assert!(
+            signer.current(NOW).is_none(),
+            "retire must still fail closed"
+        );
+        signer.publish(key(NOW + 300));
+        assert!(
+            signer.current(NOW).is_some(),
+            "a poisoned lock must not cost the replica its ability to self-heal"
         );
     }
 }

@@ -19,6 +19,25 @@
 //! Keep-alive is not offered for the same reason: one request per connection means the
 //! reader never has to find a message boundary in a stream, which is where framing
 //! confusion lives. The cost is a TCP handshake per call on loopback.
+//!
+//! ## Loopback is not the whole boundary
+//!
+//! "Processes on this host" does not describe a browser. A web page the user visits can
+//! issue cross-origin `POST`s to `127.0.0.1`, and a page served from a name that
+//! resolves to `127.0.0.1` (DNS rebinding) is treated by the browser as SAME-origin, so
+//! it does not even send an `Origin`. Either way the sidecar would sign and send the
+//! attacker's tool call under this client's identity, mTLS certificate and authorization
+//! bindings, and the remote server would see perfectly valid RFC 9421 evidence. That the
+//! page cannot read the reply is no comfort: the side effect is the payload.
+//!
+//! Three checks close it, and they are checks a local MCP client passes without knowing
+//! they exist:
+//!
+//! * an `Origin` header at all is refused — no MCP client sends one, and a browser
+//!   always does on a cross-origin request;
+//! * `Host` must name loopback, which is what a rebound name cannot do;
+//! * `Content-Type` must be JSON, which a CORS-"simple" `POST` cannot set without a
+//!   preflight the browser will not get an answer to.
 
 use std::io::Read;
 use std::io::Write;
@@ -58,6 +77,14 @@ const EXCHANGE_DEADLINE: Duration = Duration::from_secs(30);
 /// thousands of times over. Nothing is over-read: this socket serves one exchange per
 /// connection, so bytes past the head terminator belong to this request's body.
 const HEAD_CHUNK_BYTES: usize = 1024;
+/// How long one local exchange may take to WRITE, end to end.
+///
+/// A per-syscall write timeout bounds nothing for the same reason a per-syscall read
+/// timeout does not: `write_all` loops over `write`, and every byte the peer accepts
+/// starts a fresh window. A local peer that opens a one-byte receive window holds a
+/// worker thread and an in-flight slot for as long as it cares to, and `max_in_flight`
+/// of them take the sidecar out of service.
+const WRITE_DEADLINE: Duration = Duration::from_secs(30);
 /// Wall-clock bound on writing the at-capacity refusal from the accept thread.
 const REFUSAL_TIMEOUT: Duration = Duration::from_secs(2);
 /// Wall-clock bound on the post-exchange drain.
@@ -75,6 +102,14 @@ pub struct ServeContext {
     pub request_lifetime_secs: i64,
     /// Concurrent local requests permitted.
     pub max_in_flight: usize,
+    /// Whether a request may name a `Host` other than loopback.
+    ///
+    /// False on every ordinary deployment: the `Host` check is what a DNS-rebound name
+    /// resolving to `127.0.0.1` cannot pass, and it is the half of the browser guard
+    /// that `Origin` does not cover (a rebound page is SAME-origin, so it sends none).
+    /// Set only where the operator has already declared `local.allow_non_loopback`,
+    /// which is the point at which they have taken the local leg off loopback anyway.
+    pub allow_any_host: bool,
     /// Wall clock, Unix seconds.
     pub clock: Box<dyn Fn() -> i64 + Send + Sync>,
     /// Fresh nonce bytes, Base64URL-encoded by the caller of [`next_nonce`].
@@ -137,10 +172,9 @@ pub fn serve(listener: TcpListener, context: Arc<ServeContext>, stop: Arc<Atomic
                     // drains would otherwise stop the listener accepting anything and
                     // stop it observing `stop` — one connection denying the sidecar and
                     // blocking graceful shutdown, rather than being refused.
-                    let _ = stream.set_write_timeout(Some(REFUSAL_TIMEOUT));
                     let _ = stream.set_read_timeout(Some(REFUSAL_TIMEOUT));
                     let _ = write_response(
-                        &mut &stream,
+                        &mut DeadlineWriter::new(&stream, Instant::now() + REFUSAL_TIMEOUT),
                         503,
                         None,
                         b"{\"error\":\"mcp-re client sidecar at capacity\"}",
@@ -178,12 +212,17 @@ pub fn serve(listener: TcpListener, context: Arc<ServeContext>, stop: Arc<Atomic
 
 fn handle_connection(mut stream: TcpStream, context: &ServeContext) {
     let deadline = Instant::now() + EXCHANGE_DEADLINE;
-    let _ = stream.set_write_timeout(Some(EXCHANGE_DEADLINE));
     let _ = stream.set_nonblocking(false);
-    let request = match read_request(&mut stream, deadline) {
+    let request = match read_request(&mut stream, deadline, context.allow_any_host) {
         Ok(request) => request,
         Err(status) => {
-            let _ = write_response(&mut stream, status, None, b"{}");
+            let write_deadline = Instant::now() + WRITE_DEADLINE;
+            let _ = write_response(
+                &mut DeadlineWriter::new(&stream, write_deadline),
+                status,
+                None,
+                b"{}",
+            );
             // A refusal happens BEFORE the body is consumed, so bytes are still in
             // flight. Closing on top of them makes the kernel send RST rather than FIN,
             // and the caller then sees a reset instead of the refusal it was told —
@@ -193,7 +232,16 @@ fn handle_connection(mut stream: TcpStream, context: &ServeContext) {
         }
     };
     let (status, kind, body) = dispatch(context, &request);
-    let _ = write_response(&mut stream, status, kind, &body);
+    // A budget of its own, armed from here: the read phase may legitimately have used
+    // its whole deadline, and a reply to an exchange the remote server has already
+    // executed still has to be delivered.
+    let write_deadline = Instant::now() + WRITE_DEADLINE;
+    let _ = write_response(
+        &mut DeadlineWriter::new(&stream, write_deadline),
+        status,
+        kind,
+        &body,
+    );
     // The same reasoning as the refusal path, and it costs more here: what a reset
     // would discard is a VERIFIED reply to a call the remote server has already
     // executed, and a client that retries a reset re-runs the side effect.
@@ -262,6 +310,52 @@ fn arm(stream: &TcpStream, deadline: Instant) -> Result<(), u16> {
         .map_err(|_| 408u16)
 }
 
+/// A [`Write`] over a [`TcpStream`] that cannot outlive one wall-clock deadline.
+///
+/// `write_all` loops over `write`, and each successful partial write re-arms a
+/// per-syscall `SO_SNDTIMEO`, so a peer accepting one byte per interval extends the
+/// total write time without bound. Shrinking the socket's write timeout to the
+/// REMAINING budget before every write is what turns that set of per-syscall timers
+/// into one bound on the response — the same construction [`arm`] applies to reads,
+/// applied to the leg that was left open.
+struct DeadlineWriter<'a> {
+    stream: &'a TcpStream,
+    deadline: Instant,
+}
+
+impl<'a> DeadlineWriter<'a> {
+    fn new(stream: &'a TcpStream, deadline: Instant) -> Self {
+        DeadlineWriter { stream, deadline }
+    }
+
+    /// Arm the socket so the next write cannot outlive the deadline. A zero or elapsed
+    /// budget is reported as a timeout rather than passed to `set_write_timeout`, where
+    /// `Duration::ZERO` means "block forever" and would invert the guarantee.
+    fn arm_write(&self) -> std::io::Result<()> {
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "the local write deadline elapsed",
+            ));
+        }
+        self.stream
+            .set_write_timeout(Some(remaining.max(Duration::from_millis(1))))
+    }
+}
+
+impl Write for DeadlineWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.arm_write()?;
+        (&*self.stream).write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.arm_write()?;
+        (&*self.stream).flush()
+    }
+}
+
 /// Sign, forward, verify, and render the plain reply.
 fn dispatch(
     context: &ServeContext,
@@ -297,25 +391,7 @@ fn dispatch(
     };
 
     match context.proxy.handle(&route_id, &plain, &params) {
-        Ok(response) => {
-            let kind = match &response.kind {
-                ResponseKind::Success => "success",
-                ResponseKind::CallFailed { .. } => "call-failed",
-                ResponseKind::InputRequired { .. } => "input-required",
-                ResponseKind::AcceptedNotification => "accepted-notification",
-                ResponseKind::VerifiedRejection { .. } => "verified-rejection",
-            };
-            // A notification has no reply, and answering it with a JSON body would
-            // invent a result the local client never asked for. The 202 says what the
-            // verified acknowledgement says and no more: the enforcement boundary
-            // accepted the message. It does NOT say the action completed.
-            if matches!(response.kind, ResponseKind::AcceptedNotification) {
-                return (202, Some(kind), Vec::new());
-            }
-            let body = serde_json::to_vec(&response.plain_response)
-                .unwrap_or_else(|_| local_error(&id, "unserializable reply").into());
-            (200, Some(kind), body)
-        }
+        Ok(response) => render_verified(&response, &id),
         // An UNVERIFIABLE response is not a server verdict — the channel is compromised
         // or misconfigured — so it is reported as a gateway failure, never as a result.
         Err(error) => {
@@ -358,6 +434,63 @@ fn dispatch(
     }
 }
 
+/// Render a VERIFIED pipeline outcome as the local HTTP reply.
+///
+/// Separate from [`dispatch`] because this is where the classification the pipeline
+/// produced becomes something an ordinary MCP client can act on, and an ordinary MCP
+/// client reads a status and a body — not the `Mcp-Re-Verified-Kind` header, which is
+/// outside the plain-MCP contract and exists for an embedder.
+fn render_verified(
+    response: &mcp_re_client_proxy::ProxyResponse,
+    id: &Value,
+) -> (u16, Option<&'static str>, Vec<u8>) {
+    let kind = match &response.kind {
+        ResponseKind::Success => "success",
+        ResponseKind::CallFailed { .. } => "call-failed",
+        ResponseKind::InputRequired { .. } => "input-required",
+        ResponseKind::AcceptedNotification => "accepted-notification",
+        ResponseKind::VerifiedRejection { .. } => "verified-rejection",
+    };
+    match &response.kind {
+        // A notification has no reply, and answering it with a JSON body would invent a
+        // result the local client never asked for. The 202 says what the verified
+        // acknowledgement says and no more: the enforcement boundary accepted the
+        // message. It does NOT say the action completed.
+        ResponseKind::AcceptedNotification => (202, Some(kind), Vec::new()),
+        // A verified `InputRequiredResult` is a PAUSE, not a reply. `mcp-re-client-proxy`
+        // has no continuation support, so the answer leg the server is waiting for can
+        // never be signed here, and the variant's `request_state` cannot be carried
+        // anywhere that would use it. Serving the pause as 200 with its result body —
+        // distinguished only by a header the plain-MCP contract does not cover — hands
+        // an embedder a finished tool result for an approval nobody gave.
+        //
+        // Both SDKs fail closed on an unanswerable elicitation. So does this: 501,
+        // because what is missing is this listener's ability to continue the exchange,
+        // not anything the caller or the remote server did wrong. The open leg stays
+        // open at the server, where its own timeout retires it.
+        ResponseKind::InputRequired { .. } => (
+            501,
+            Some(kind),
+            local_error(
+                id,
+                "the server paused this call for input; this listener cannot sign an \
+                 answer leg",
+            )
+            .into(),
+        ),
+        // A verified rejection rides in a 200 on purpose: it IS the server's answer, and
+        // a JSON-RPC error is how a plain MCP client is told a call did not succeed. A
+        // 5xx would read as a channel failure and invite the retry the receipt's own
+        // `retry_safety` may be refusing. What the caller needs to make that decision is
+        // in the body, where `plain_error_from_rejection` put it.
+        _ => {
+            let body = serde_json::to_vec(&response.plain_response)
+                .unwrap_or_else(|_| local_error(id, "unserializable reply").into());
+            (200, Some(kind), body)
+        }
+    }
+}
+
 /// `/route/<id>` names a route; anything else falls to the configured default.
 fn route_for(path: &str, default_route: Option<&str>) -> Option<String> {
     let path = path.split('?').next().unwrap_or(path);
@@ -383,7 +516,11 @@ fn local_error(id: &Value, message: &str) -> String {
 ///
 /// Returns the HTTP status to answer with on failure. Every refusal is a refusal —
 /// there is no lenient path that guesses at framing.
-fn read_request(stream: &mut TcpStream, deadline: Instant) -> Result<LocalRequest, u16> {
+fn read_request(
+    stream: &mut TcpStream,
+    deadline: Instant,
+    allow_any_host: bool,
+) -> Result<LocalRequest, u16> {
     let mut buffer = Vec::with_capacity(1024);
     let mut chunk = [0u8; HEAD_CHUNK_BYTES];
     let head_end = loop {
@@ -420,6 +557,9 @@ fn read_request(stream: &mut TcpStream, deadline: Instant) -> Result<LocalReques
     }
 
     let mut content_length: Option<usize> = None;
+    let mut origin: Option<&str> = None;
+    let mut host: Option<&str> = None;
+    let mut content_type: Option<&str> = None;
     for line in lines {
         let Some((name, value)) = line.split_once(':') else {
             continue;
@@ -436,11 +576,49 @@ fn read_request(stream: &mut TcpStream, deadline: Instant) -> Result<LocalReques
             content_length = Some(value.parse::<usize>().map_err(|_| 400u16)?);
         } else if name.eq_ignore_ascii_case("transfer-encoding") {
             return Err(411);
+        } else if name.eq_ignore_ascii_case("origin") {
+            origin = Some(value);
+        } else if name.eq_ignore_ascii_case("host") {
+            // A repeated Host is the routing analogue of a repeated Content-Length:
+            // the guard below and whatever reads the head next could pick different
+            // ones.
+            if host.is_some() {
+                return Err(400);
+            }
+            host = Some(value);
+        } else if name.eq_ignore_ascii_case("content-type") {
+            content_type = Some(value);
         }
     }
+
+    // FRAMING first, so a message with no boundary is refused as one whatever else it
+    // carries — a head that cannot be framed says nothing reliable about its headers.
     let length = content_length.ok_or(411u16)?;
     if length > MAX_BODY_BYTES {
         return Err(413);
+    }
+
+    // Then the caller-shape guards. All three run before a single byte is signed.
+    //
+    // A browser sends `Origin` on every cross-origin request and no MCP client sends
+    // one at all, so its mere presence identifies the caller as one this socket does
+    // not serve. Refused rather than compared against an allowlist: there is no origin
+    // that should be able to drive this signing key.
+    if origin.is_some() {
+        return Err(403);
+    }
+    // The rebinding half. A page served from `evil.example` whose name resolves to
+    // `127.0.0.1` is SAME-origin to the browser, so it sends no `Origin` — but it does
+    // send that name as `Host`, and a loopback literal is what it cannot forge.
+    if !allow_any_host && !is_loopback_host(host.ok_or(400u16)?) {
+        return Err(421);
+    }
+    // A CORS-"simple" POST may carry only `text/plain`, `application/x-www-form-
+    // urlencoded` or `multipart/form-data`; anything else costs the page a preflight
+    // this listener never answers. Requiring JSON therefore costs a real MCP client
+    // nothing and removes the no-preflight path entirely.
+    if !is_json_content_type(content_type.ok_or(415u16)?) {
+        return Err(415);
     }
     // Exactly `Content-Length` bytes are the message. Anything the caller sent beyond
     // it is not parsed as a second request — it is left for `drain` to consume so the
@@ -461,6 +639,43 @@ fn read_request(stream: &mut TcpStream, deadline: Instant) -> Result<LocalReques
     Ok(LocalRequest { path, body })
 }
 
+/// Whether a `Host` header names this host by an address no name can be rebound to.
+///
+/// Only the literals: `localhost` resolves through the same resolver a rebinding
+/// attack controls, but browsers refuse to let a page claim it as its own name, and the
+/// upstream MCP clients spell the local leg that way. An IPv6 literal arrives bracketed.
+fn is_loopback_host(host: &str) -> bool {
+    let host = host.rsplit_once(':').map_or(host, |(head, port)| {
+        // Only a trailing `:<port>` is stripped — a bare IPv6 literal is full of colons
+        // and must not be truncated into something that happens to parse.
+        if port.bytes().all(|b| b.is_ascii_digit()) && !port.is_empty() {
+            head
+        } else {
+            host
+        }
+    });
+    let host = host
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .unwrap_or(host);
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback())
+}
+
+/// Whether a `Content-Type` names JSON. Parameters (`; charset=utf-8`) are allowed;
+/// the media type itself is not negotiable.
+fn is_json_content_type(value: &str) -> bool {
+    value
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .eq_ignore_ascii_case("application/json")
+}
+
 /// Index just past the CRLFCRLF that ends the head, if the buffer holds one.
 fn find_head_end(buffer: &[u8]) -> Option<usize> {
     buffer
@@ -479,12 +694,16 @@ fn write_response(
         200 => "OK",
         202 => "Accepted",
         400 => "Bad Request",
+        403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
         408 => "Request Timeout",
         411 => "Length Required",
         413 => "Payload Too Large",
+        415 => "Unsupported Media Type",
+        421 => "Misdirected Request",
         431 => "Request Header Fields Too Large",
+        501 => "Not Implemented",
         503 => "Service Unavailable",
         _ => "Bad Gateway",
     };
@@ -621,7 +840,7 @@ mod tests {
         let (mut client, mut server) = socket_pair();
         let writer = std::thread::spawn(move || {
             client
-                .write_all(b"POST /route/r1 HTTP/1.1\r\nContent-Len")
+                .write_all(b"POST /route/r1 HTTP/1.1\r\nHost: 127.0.0.1:8640\r\nContent-Type: application/json\r\nContent-Len")
                 .expect("first chunk");
             std::thread::sleep(Duration::from_millis(20));
             client
@@ -629,7 +848,7 @@ mod tests {
                 .expect("second chunk");
             std::thread::sleep(Duration::from_millis(50));
         });
-        let request = read_request(&mut server, Instant::now() + Duration::from_secs(5))
+        let request = read_request(&mut server, Instant::now() + Duration::from_secs(5), false)
             .expect("the request frames");
         assert_eq!(request.path, "/route/r1");
         assert_eq!(request.body, b"{\"ok\":true}");
@@ -653,8 +872,12 @@ mod tests {
             }
         });
         let started = Instant::now();
-        let status = read_request(&mut server, Instant::now() + Duration::from_millis(120))
-            .expect_err("the deadline must fire");
+        let status = read_request(
+            &mut server,
+            Instant::now() + Duration::from_millis(120),
+            false,
+        )
+        .expect_err("the deadline must fire");
         assert_eq!(status, 408);
         assert!(
             started.elapsed() < Duration::from_secs(2),
@@ -682,6 +905,132 @@ mod tests {
     fn any_other_path_falls_to_the_default_route_only_when_one_is_configured() {
         assert_eq!(route_for("/mcp", Some("d")).as_deref(), Some("d"));
         assert_eq!(route_for("/mcp", None), None);
+    }
+
+    /// A verified pause must never be rendered as a finished call.
+    ///
+    /// Serving `InputRequired` as 200 with the result body — separated from a genuine
+    /// success only by a header outside the plain-MCP contract — is how an elicitation
+    /// reaches an application as a completed tool result, and the variant's
+    /// `request_state` is dropped on the way, so no answer leg could be signed even if
+    /// the embedder wanted to.
+    #[test]
+    fn a_verified_pause_is_not_rendered_as_a_finished_call() {
+        let paused = mcp_re_client_proxy::ProxyResponse {
+            plain_response: json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "resultType": mcp_re_http_profile::INPUT_REQUIRED_RESULT_TYPE,
+                    "requestState": "st-1",
+                },
+            }),
+            kind: ResponseKind::InputRequired {
+                request_state: "st-1".to_owned(),
+            },
+        };
+        let (status, kind, body) = render_verified(&paused, &json!(1));
+        assert_ne!(
+            status, 200,
+            "a pause served as 200 reads as a completed call"
+        );
+        assert_eq!(status, 501);
+        assert_eq!(kind, Some("input-required"));
+        let parsed: Value = serde_json::from_slice(&body).expect("json body");
+        assert!(
+            parsed.get("result").is_none(),
+            "the pause's own result must not reach the local client: {parsed}"
+        );
+        assert!(parsed["error"]["message"]
+            .as_str()
+            .expect("a message")
+            .contains("answer leg"));
+
+        // A genuine terminal success is unchanged: the guard refuses a pause, not a
+        // reply.
+        let done = mcp_re_client_proxy::ProxyResponse {
+            plain_response: json!({ "jsonrpc": "2.0", "id": 1, "result": { "ok": true } }),
+            kind: ResponseKind::Success,
+        };
+        let (status, kind, _) = render_verified(&done, &json!(1));
+        assert_eq!((status, kind), (200, Some("success")));
+    }
+
+    /// The write leg is bounded by the exchange's wall clock, not by one syscall.
+    ///
+    /// `write_all` loops over `write`, so a peer that accepts a trickle re-arms a
+    /// per-syscall `SO_SNDTIMEO` on every partial write and holds a worker thread and an
+    /// in-flight slot indefinitely. Here the peer never reads at all: the socket buffers
+    /// fill, the write blocks, and the deadline — not the 30s per-syscall value — is
+    /// what has to end it.
+    #[test]
+    fn a_peer_that_never_reads_hits_the_write_deadline() {
+        let (client, server) = socket_pair();
+        // Nothing ever reads from `client`; keeping it alive is what makes the peer
+        // "connected but not draining" rather than "gone".
+        let body = vec![b'x'; 8 * 1024 * 1024];
+        let started = Instant::now();
+        let outcome = write_response(
+            &mut DeadlineWriter::new(&server, Instant::now() + Duration::from_millis(150)),
+            200,
+            None,
+            &body,
+        );
+        assert!(
+            outcome.is_err(),
+            "a peer that never reads must not hold the worker",
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the write returned after {:?}; the deadline did not bound it",
+            started.elapsed(),
+        );
+        drop(client);
+    }
+
+    /// A rebound name resolving to 127.0.0.1 is same-origin to the browser, so `Host`
+    /// is the only thing that separates it from a genuine local caller.
+    #[test]
+    fn only_loopback_literals_and_localhost_are_accepted_hosts() {
+        for host in [
+            "127.0.0.1",
+            "127.0.0.1:8640",
+            "127.5.6.7",
+            "localhost",
+            "LOCALHOST:8640",
+            "[::1]",
+            "[::1]:8640",
+        ] {
+            assert!(is_loopback_host(host), "{host} names this host");
+        }
+        for host in [
+            "rebound.evil.example",
+            "rebound.evil.example:8640",
+            "192.0.2.1",
+            "10.0.0.1:8640",
+            "localhost.evil.example",
+            "",
+        ] {
+            assert!(!is_loopback_host(host), "{host} must not pass the guard");
+        }
+    }
+
+    /// A CORS-"simple" POST cannot set a JSON content type without a preflight this
+    /// listener never answers, so requiring one removes the no-preflight path.
+    #[test]
+    fn only_json_content_types_are_accepted() {
+        assert!(is_json_content_type("application/json"));
+        assert!(is_json_content_type("Application/JSON; charset=utf-8"));
+        for value in [
+            "text/plain",
+            "text/plain;charset=UTF-8",
+            "application/x-www-form-urlencoded",
+            "multipart/form-data; boundary=x",
+            "application/json-patch+json",
+            "",
+        ] {
+            assert!(!is_json_content_type(value), "{value} must be refused");
+        }
     }
 
     /// Two `Content-Length` headers let a reader and a writer disagree about where the

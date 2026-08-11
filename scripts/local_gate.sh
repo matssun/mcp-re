@@ -52,6 +52,14 @@ run() { # run <label> <command...>
   if ! "$@"; then
     printf '\n[stage %d] FAILED: %s\n' "$STAGE" "$label" >&2
     printf 'Fix it, then resume with: scripts/local_gate.sh --from %d\n' "$STAGE" >&2
+    # Symmetric with the PASS banner, and on stdout as well as stderr. A reader who
+    # pipes this script (`| tail`, `| grep`) gets the PIPE's exit status, not the
+    # gate's — a failed gate then looks like a pass. So the verdict is also a line in
+    # the output itself: exactly one `LOCAL GATE:` line is printed per run, and its
+    # absence means the run did not finish. Check the line, never the piped status.
+    printf '\n=====================================================================\n'
+    printf 'LOCAL GATE: FAIL (stage %d — %s)\n' "$STAGE" "$label"
+    printf '=====================================================================\n'
     exit 1
   fi
 }
@@ -103,6 +111,8 @@ stage_static() {
     && python3 tools/verification/test_invalidation.py \
     && python3 tools/verification/test_attest.py \
     && python3 tools/verification/test_verus_lane.py \
+    && python3 tools/verification/test_measured_inputs.py \
+    && python3 tools/verification/test_escape_hatches.py \
     && python3 tools/verification/verify --manifests \
     && python3 tools/scitt_fetch_service_key.py --selftest \
     && python3 scripts/slo_gate.py --selftest \

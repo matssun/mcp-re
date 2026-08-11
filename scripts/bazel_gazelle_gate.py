@@ -131,6 +131,21 @@ ALLOW_CARGO_ONLY_FIXTURE = {
     "mock_pkcs11",
 }
 
+# Upstream prover reproducers: a minimal crate that reproduces a TOOLCHAIN bug and is
+# sent to that toolchain's maintainers. It is not workspace source and not a test of
+# this repo — it carries its own detached `[workspace]`, is absent from the root
+# `members` list, and depends on prover crates (vstd, verus_builtin) that are not in
+# the Bazel crate universe. Cargo does not build it either, so unlike every other
+# category here there is no lane whose coverage a Bazel target would restore.
+# `tools/verification/check-assumptions` excludes `verification/reproducers/` for the
+# same reason.
+ALLOW_UPSTREAM_REPRODUCER = {
+    # verification/reproducers/verus-ice-closure-return-type: reproduces a Verus ICE on
+    # a closure return type; the measured prover ceiling it documents is cited in
+    # verification/baseline/wp2-http-profile-triage.md.
+    "verus_ice_closure_return_type",
+}
+
 # Tracked known drift: genuine missing Bazel targets whose Bazel wiring needs a
 # dedicated fixture/runfile bridge. Filed as issues; allowlisted so the gate is
 # GREEN-but-honest until each is wired, and NEW untracked drift still fails.
@@ -163,6 +178,7 @@ ALLOWLIST = (
     | ALLOW_HITL_LIVE
     | ALLOW_NON_HERMETIC
     | ALLOW_CARGO_ONLY_FIXTURE
+    | ALLOW_UPSTREAM_REPRODUCER
     | set(ALLOW_TRACKED_DRIFT)
 )
 

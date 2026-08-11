@@ -77,19 +77,51 @@ def test_evidence_at_the_current_fingerprint_is_issued():
     assert got["a"][1] == {"verus": "pass"}
 
 
-def test_a_unit_claiming_no_prover_lane_needs_no_record():
+def test_a_unit_is_never_handed_a_lane_verdict_it_did_not_claim():
     """A V0 unit's evidence is review and tests, not a proof. It must not be handed a
-    `verus` verdict it never earned, and it must not be refused for lacking one."""
+    `verus` verdict it never earned — and, since nothing resolves `review://`, it must not
+    be handed an empty attestation either."""
     got = decide(
         units("a", evidence=("review://owner",)), [], current(a="sha256:X"), {"verus": {}}
     )
-    assert got["a"][0] == "ISSUE_PASS"
+    assert got["a"][0] == "REFUSE"
     assert got["a"][1] == {}
 
 
 def test_required_lanes_are_read_off_the_declared_evidence():
-    assert required_lanes({"evidence": ["verus://f", "test://t"]}) == {"verus"}
-    assert required_lanes({"evidence": ["review://owner"]}) == set()
+    """EVERY scheme, not the subset that happens to have an implementation. Recognising
+    only `verus`/`lean` left a `test://`-only unit claiming no lane at all, which fell
+    through to ISSUE_PASS with an empty evidence map."""
+    assert required_lanes({"evidence": ["verus://f", "test://t"]}) == {"verus", "test"}
+    assert required_lanes({"evidence": ["review://owner"]}) == {"review"}
+
+
+# --- negative control 0: a declaration nothing measured -----------------------
+
+
+def test_a_unit_whose_only_evidence_no_lane_resolves_is_refused():
+    """The two V0 pilots declared `test://…` and were certified fresh on the strength of a
+    manifest line: no tool resolves that scheme, so nothing had measured them."""
+    got = decide(
+        units("a", evidence=("test://proxy/runtime_lifecycle/transition_relation",)),
+        [],
+        current(a="sha256:X"),
+        {"verus": {}, "lean": {}},
+    )
+    assert got["a"][0] == "REFUSE"
+    assert "absence of measurement is not measurement" in got["a"][2]
+
+
+def test_a_unit_declaring_no_evidence_at_all_is_refused():
+    got = decide(units("a", evidence=()), [], current(a="sha256:X"), {"verus": {}})
+    assert got["a"][0] == "REFUSE"
+    assert got["a"][1] == {}
+    assert "declares no evidence" in got["a"][2]
+
+
+def test_a_malformed_evidence_declaration_refuses_rather_than_disappears():
+    got = decide(units("a", evidence=("not-a-uri",)), [], current(a="sha256:X"), {})
+    assert got["a"][0] == "REFUSE"
 
 
 # --- negative control 1: stale evidence, current source -----------------------

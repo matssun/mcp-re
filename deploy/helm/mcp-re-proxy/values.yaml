@@ -59,7 +59,9 @@ replay:
   redisUrl: "rediss://mcp-re-redis:6379"
   durabilityTier: "redis-wait-quorum:2:2000"
   # Escape hatch for a plaintext `redis://` endpoint. The render-time guard refuses
-  # a plaintext URL under fleet=true unless this is explicitly true, so running
+  # a plaintext URL on the replay, trust-epoch and admission-currency hops — at any
+  # replica count, because the chart always renders --replay-cache shared and the
+  # keyspace is equally writable either way — unless this is explicitly true, so running
   # unencrypted is a decision someone wrote down rather than a default. Only
   # defensible where the hop is confined by other means (a fenced validation
   # namespace, a service mesh terminating TLS transparently).
@@ -384,9 +386,18 @@ serviceAccount:
 #                  a seed there would put a deployment's most sensitive file in the
 #                  pod for nothing.
 #
-# Every key file this Secret does provide is mounted 0400: the proxy refuses to start
-# on a group/world-readable key file, and that refusal now covers tls.key under EVERY
-# custody mode (it used to be skipped for anything but fileSeed).
+# Every key file this Secret provides is mounted 0440, owned by `podSecurityContext.
+# fsGroup` (65532 by default) — NOT 0400. That is the non-root Secret mount model: the
+# process reads the file through its group membership. The chart therefore also renders
+# --allow-group-readable-key-files whenever fsGroup is set, and the proxy accepts group
+# READ only when the file's group is one it is actually in. Group WRITE and every world
+# bit stay refused, under every custody mode including tls.key.
+#
+# Custody consequence to audit: anything sharing gid 65532 in this pod — a sidecar, an
+# ephemeral debug container — can read signing-seed and tls.key. Keep that gid to this
+# workload. Clearing podSecurityContext.fsGroup drops the opt-in flag and restores the
+# owner-only requirement, which then needs the Secret's defaultMode set to 0400 to
+# match, and a uid that owns the files.
 tls:
   secretName: "mcp-re-proxy-material"
   mountPath: "/etc/mcp-re"

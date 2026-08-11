@@ -429,6 +429,48 @@ mod tests {
         assert_eq!(budget.refused(), refused as u64);
     }
 
+    /// Two resolvers built around ONE budget draw from one bucket.
+    ///
+    /// This is what makes the budget survive a `ServerConfig` rebuild: the TLS plane
+    /// creates the budget once and hands the same one to every build, including the
+    /// `--client-crl-reload-secs` rebuild. The broken implementation this catches is
+    /// `DelegatedCertResolver::new` on the reload path, which mints a fresh full bucket
+    /// on every cadence — turning a sustained rate limit into a per-interval window.
+    #[test]
+    fn resolvers_sharing_a_budget_share_one_bucket() {
+        let counting = Arc::new(CountingSigner::default());
+        let budget = Arc::new(TlsHandshakeSignBudget::new(1, 2));
+        let first = DelegatedCertResolver::with_budget(
+            vec![CertificateDer::from(vec![1u8; 8])],
+            counting.clone(),
+            Arc::clone(&budget),
+        );
+        let second = DelegatedCertResolver::with_budget(
+            vec![CertificateDer::from(vec![1u8; 8])],
+            counting.clone(),
+            Arc::clone(&budget),
+        );
+        assert!(Arc::ptr_eq(first.budget(), second.budget()));
+        // Spend the whole burst through the first resolver's key.
+        assert!(budget.try_acquire());
+        assert!(budget.try_acquire());
+        // The rebuilt resolver must NOT start from a full bucket.
+        let signer = second
+            .certified
+            .key
+            .choose_scheme(&[SignatureScheme::ED25519])
+            .expect("signer");
+        assert!(
+            signer.sign(b"transcript").is_err(),
+            "a rebuilt resolver must inherit the spent bucket, not a fresh one"
+        );
+        assert_eq!(
+            counting.calls.load(Ordering::Relaxed),
+            0,
+            "a refused handshake must never reach the remote signer"
+        );
+    }
+
     /// The budget refills, so a bounded rate is a RATE and not a one-shot quota.
     #[test]
     fn handshake_signature_budget_refills_over_time() {

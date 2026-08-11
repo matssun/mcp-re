@@ -24,7 +24,10 @@
  * - **one connection per exchange**, matching the proxy's framing.
  * - **every bound fails closed**: a connect/read that stalls past `timeoutMs`, or a
  *   response past `maxResponseBytes`, rejects rather than hanging or buffering without
- *   bound.
+ *   bound. `timeoutMs` is BOTH the per-socket inactivity bound and an aggregate
+ *   wall-clock bound on reading the response, because the first alone bounds nothing: it
+ *   is re-armed by every byte, so a peer trickling under it holds an exchange — and its
+ *   concurrency slot — indefinitely.
  *
  * There is no way to turn verification off. A helper with a `rejectUnauthorized: false`
  * knob is how mTLS deployments quietly become TLS-shaped plaintext, and the evidence
@@ -97,8 +100,9 @@ export interface MtlsOptions {
   connectPort?: number;
 
   /**
-   * Bound on connect and on socket inactivity, in ms. Defaults to 30s. `null` disables
-   * it, which lets a stalled peer hold an exchange open indefinitely.
+   * Bound on connect, on socket inactivity, and — as an aggregate wall clock — on
+   * reading the whole response. Defaults to 30s. `null` disables all three, which lets a
+   * stalled peer hold an exchange open indefinitely.
    */
   timeoutMs?: number | null;
   /** Response bytes buffered before failing closed. Defaults to 16 MiB. */
@@ -301,20 +305,46 @@ export function mtlsPoster(config: McpReConfig, options: MtlsOptions): Poster {
       req.on("response", (res) => {
         const chunks: Buffer[] = [];
         let size = 0;
+        // The AGGREGATE bound on reading the response, in addition to the per-socket
+        // inactivity timer above. `timeout` is re-armed by every byte that arrives, so a
+        // peer trickling just under it holds this exchange — and the transport semaphore
+        // slot it occupies — open for as long as it cares to; `maxConcurrentExchanges`
+        // such responses wedge the whole client session with no error and no timeout.
+        // The Rust client leg this module mirrors bounds total read time at the same
+        // value (MCPS-093 `read_response_bounded`); this is that bound.
+        //
+        // `null` timeoutMs disables both, preserving the "no bound" knob's meaning.
+        const readDeadline =
+          timeoutMs === undefined
+            ? undefined
+            : setTimeout(() => {
+                res.destroy();
+                reject(
+                  new MtlsTransportError(
+                    `the aggregate response read exceeded ${timeoutMs}ms (slow-loris trickle)`,
+                  ),
+                );
+              }, timeoutMs);
+        const settled = () => {
+          if (readDeadline !== undefined) clearTimeout(readDeadline);
+        };
         res.on("data", (chunk: Buffer) => {
           size += chunk.length;
           if (size > maxResponseBytes) {
             // Stop reading rather than buffer a hostile length to find out how big it is.
+            settled();
             res.destroy();
             reject(new MtlsTransportError(`response exceeded maxResponseBytes (${maxResponseBytes})`));
             return;
           }
           chunks.push(chunk);
         });
-        res.on("error", (e) =>
-          reject(new MtlsTransportError(`the response could not be read: ${e.message}`)),
-        );
+        res.on("error", (e) => {
+          settled();
+          reject(new MtlsTransportError(`the response could not be read: ${e.message}`));
+        });
         res.on("end", () => {
+          settled();
           // From `rawHeaders`, not `headers`: lowercased and in WIRE ORDER, keeping
           // repeats distinct. The signature base is built from what arrived, and
           // Node's parsed map folds duplicates into arrays.

@@ -510,7 +510,7 @@ impl AsyncReplayTier {
         //
         // The charge is taken HERE, above the backend seam, so the bound holds for
         // every deployable adapter — see [`RetentionLedger`].
-        let charge = Charge::reserve(&self.ledger, &key.principal, now_unix)
+        let charge = Charge::reserve(&self.ledger, &key.principal, now_unix, retain_until)
             .map_err(ReplayCacheError::from)?;
         // Scoped to the STORE round trip alone, so the span does not also cover the
         // charge accounting around it. This is the only awaited I/O a request performs,
@@ -529,16 +529,21 @@ impl AsyncReplayTier {
                 ))
                 .await
         };
+        // Settled from what the store ANSWERED, and only the two answers that are answers
+        // settle it. An error, and a cancellation that consumes no answer at all, leave the
+        // charge indeterminate — see [`Charge`] for why that is kept rather than released.
         match outcome {
             // The nonce is retained until `retain_until`, and so is its charge.
             Ok(ReplayDecision::Fresh) => {
-                charge.commit(retain_until);
+                charge.commit();
                 Ok(ReplayDecision::Fresh)
             }
-            // A replay adds no retention (the entry was already there), and a refusal
-            // adds none either, so neither may leave the actor charged for one — the
-            // charge is handed back when it drops here.
-            other => other.map_err(ReplayCacheError::from),
+            // The entry was already there, so this insert retained nothing.
+            Ok(ReplayDecision::Replay) => {
+                charge.release_proven_absent();
+                Ok(ReplayDecision::Replay)
+            }
+            Err(e) => Err(ReplayCacheError::from(e)),
         }
     }
 }
@@ -689,20 +694,55 @@ impl RetentionLedger {
     }
 }
 
+/// How an insert's retention was settled against the ledger.
+///
+/// Three outcomes, not two, because the store round trip has three. Collapsing the third
+/// into the second is what let the budget be bypassed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Settlement {
+    /// No answer has been consumed yet. For a remote store the write may already have
+    /// landed, so this is UNKNOWN-whether-retained, never proven-absent.
+    Indeterminate,
+    /// The store answered `Fresh`: the entry exists and is retained until `retain_until`.
+    Retained,
+    /// The store answered authoritatively that THIS insert retained nothing — a `Replay`,
+    /// where the entry was already present and already charged to whoever created it.
+    ProvenAbsent,
+}
+
 /// One reservation, held for as long as its insert is in flight.
 ///
 /// The charge is taken before the store round-trip and settled after it, and the
 /// request in between can simply STOP: the serving path awaits the handler inside a
 /// hyper service, so a peer that closes its connection (or a deadline that fires) drops
 /// the future mid-await. Settling by hand on each exit path would leak a charge on
-/// exactly that one, and a charge that is never handed back is permanent — an actor
-/// that cancels in flight would walk the tier to its ceiling and fail every signer
-/// closed. A guard cannot miss the path it was not written for.
+/// exactly that one, so the settlement is a guard: a guard cannot miss the path it was
+/// not written for.
+///
+/// # What an unsettled charge means
+///
+/// [`Settlement::Indeterminate`] is the DEFAULT, and dropping while still in it does not
+/// hand the charge back. Retention for the Redis and etcd backends is created by the round
+/// trip itself — a `SET NX PX`, an etcd lease — so a future dropped after the command
+/// reached the server and before its reply was consumed has, as far as this process can
+/// know, retained an entry. Handing the charge back there would be recording did-not-retain
+/// for unknown-whether-retained, and it is a bypass rather than a rounding error: a peer
+/// that aborts its connection after every request writes keys into a shared store whose
+/// only bound is this ledger, while its occupancy stays at zero and `under_pressure` never
+/// trips.
+///
+/// So an indeterminate charge is kept, on the same `retain_until` timeline as a committed
+/// one. If the write landed, the account is right; if it did not, the actor is over-charged
+/// for at most the freshness window and `prune` reclaims it. Over-charging costs one actor
+/// some of its own budget; under-charging costs every signer the tier.
 struct Charge {
     ledger: Arc<RetentionLedger>,
     actor: Arc<str>,
-    /// Set once the entry the charge accounts for exists, so `Drop` leaves it alone.
-    committed: bool,
+    /// The instant the entry this charge accounts for stops being retained. Known before
+    /// the round trip, so an indeterminate settlement can still be given a real expiry
+    /// rather than being held forever or dropped.
+    retain_until: i64,
+    settlement: Settlement,
 }
 
 impl Charge {
@@ -711,27 +751,47 @@ impl Charge {
         ledger: &Arc<RetentionLedger>,
         actor: &str,
         now_unix: i64,
+        retain_until: i64,
     ) -> Result<Charge, ReplayStoreError> {
         let actor = ledger.reserve(actor, now_unix)?;
         Ok(Charge {
             ledger: Arc::clone(ledger),
             actor,
-            committed: false,
+            retain_until,
+            settlement: Settlement::Indeterminate,
         })
     }
 
     /// The store admitted the nonce, so the reservation becomes retention that expires
     /// with it rather than with this request.
-    fn commit(mut self, retain_until: i64) {
-        self.committed = true;
-        self.ledger.commit(Arc::clone(&self.actor), retain_until);
+    fn commit(mut self) {
+        self.settlement = Settlement::Retained;
+        self.ledger
+            .commit(Arc::clone(&self.actor), self.retain_until);
+    }
+
+    /// The store reported a replay: the entry was already there, so this insert added no
+    /// retention and the reservation is handed back.
+    ///
+    /// The ONLY proven-absent settlement. An error is not one — a store that failed to
+    /// answer has not said the write did not happen.
+    fn release_proven_absent(mut self) {
+        self.settlement = Settlement::ProvenAbsent;
+        self.ledger.release(&self.actor);
     }
 }
 
 impl Drop for Charge {
     fn drop(&mut self) {
-        if !self.committed {
-            self.ledger.release(&self.actor);
+        match self.settlement {
+            // Already settled eagerly by the consuming method.
+            Settlement::Retained | Settlement::ProvenAbsent => {}
+            // Cancelled mid-await, or an error that leaves the write's fate unknown. Keep
+            // the charge, expiring with the entry it may have created.
+            Settlement::Indeterminate => {
+                self.ledger
+                    .commit(Arc::clone(&self.actor), self.retain_until);
+            }
         }
     }
 }
@@ -1337,13 +1397,20 @@ mod tests {
         }
     }
 
-    /// A request that is abandoned mid-insert must hand its charge back. The serving
-    /// path awaits the handler inside a hyper service, so a peer that closes its
-    /// connection drops the future while the store round-trip is outstanding — and a
-    /// charge that is never handed back is permanent, so an actor cancelling in flight
-    /// would walk the tier to its ceiling and fail every signer closed.
+    /// A request abandoned mid-insert KEEPS its charge, because the tier does not know
+    /// whether the write landed.
+    ///
+    /// The serving path awaits the handler inside a hyper service, so a peer that closes
+    /// its connection drops the future while the store round-trip is outstanding. For the
+    /// Redis and etcd backends retention IS the round trip — a `SET NX PX`, a lease — so
+    /// the command may already have reached the server. Handing the charge back there
+    /// records did-not-retain for unknown-whether-retained, and the bypass is total: those
+    /// backends have no local ceiling, so this ledger is their only bound, and a peer that
+    /// aborts after every request fills the shared store while its occupancy reads zero.
+    ///
+    /// The broken implementation this catches is releasing on every non-`Fresh` exit.
     #[test]
-    fn an_abandoned_insert_does_not_leak_its_charge() {
+    fn an_abandoned_insert_keeps_its_charge_because_the_write_may_have_landed() {
         let tier =
             AsyncReplayTier::new(Arc::new(NeverAnsweringStore), 0).with_max_retained_entries(10);
         const ACTOR: &str = "did:example:quitter";
@@ -1351,29 +1418,64 @@ mod tests {
             for i in 0..50 {
                 let key = replay_key(ACTOR, &format!("nonce-{i}"), 9_000);
                 // Give it a chance to reserve and reach the store, then walk away.
-                assert!(
-                    tokio::time::timeout(
-                        std::time::Duration::from_millis(1),
-                        tier.check_and_insert(&key, 1_000)
-                    )
-                    .await
-                    .is_err(),
-                    "the store under test never answers"
-                );
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_millis(1),
+                    tier.check_and_insert(&key, 1_000),
+                )
+                .await;
             }
+            assert!(
+                tier.ledger.held_by(ACTOR) > 0,
+                "entries the shared store may be retaining must be charged to somebody"
+            );
+
+            // Cancelling is not a way to buy more than a fair share: the per-actor budget
+            // refuses the greedy actor before the tier's reserve is spent...
+            assert!(
+                tier.ledger.held_by(ACTOR) < 10,
+                "the cancelling actor is bounded by its own budget, not by the ceiling"
+            );
+            // ...so a quiet second actor is still admitted. A charge that closed the tier
+            // for everyone would be its own outage.
+            assert!(
+                tokio::time::timeout(
+                    std::time::Duration::from_millis(1),
+                    tier.check_and_insert(&replay_key("did:example:other", "n", 9_000), 1_000)
+                )
+                .await
+                .is_err(),
+                "another actor still reaches the store"
+            );
+        });
+    }
+
+    /// The charge an abandoned insert keeps is not permanent. It is committed against the
+    /// same `retain_until` as the entry it may have created, so it drains with the
+    /// freshness window rather than accumulating for the life of the process.
+    #[test]
+    fn an_abandoned_insert_s_charge_expires_with_the_entry_it_may_have_created() {
+        let tier = AsyncReplayTier::new(Arc::new(NeverAnsweringStore), 0)
+            .with_max_retained_entries(10_000);
+        const ACTOR: &str = "did:example:quitter";
+        block(async {
+            for i in 0..8 {
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_millis(1),
+                    tier.check_and_insert(&replay_key(ACTOR, &format!("n-{i}"), 1_500), 1_000),
+                )
+                .await;
+            }
+            assert!(
+                tier.ledger.held_by(ACTOR) > 0,
+                "held while it may be retained"
+            );
+            // A prune at a `now` past the retain-until reclaims them.
+            tier.ledger.state.lock().expect("ledger").prune(2_000);
             assert_eq!(
                 tier.ledger.held_by(ACTOR),
                 0,
-                "an abandoned request retains nothing, so it must hold no charge"
+                "an indeterminate charge drains with the freshness window"
             );
-            // And the tier is still able to serve: a leak of 50 against a ceiling of 10
-            // would have closed it for everyone.
-            assert!(tokio::time::timeout(
-                std::time::Duration::from_millis(1),
-                tier.check_and_insert(&replay_key("did:example:other", "n", 9_000), 1_000)
-            )
-            .await
-            .is_err());
         });
     }
 

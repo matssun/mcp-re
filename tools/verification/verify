@@ -60,6 +60,7 @@ from _manifest import (  # noqa: E402
     REPO_ROOT,
     ManifestError,
     aggregate_verdict,
+    boundary_class_violations,
     load_assumptions,
     load_toolchains,
     load_trust_boundaries,
@@ -101,15 +102,35 @@ LANES = [
 ]
 
 
+def gate_exit_code(aggregate: str, gate: bool) -> int:
+    """The process status `--gate` reports for an aggregate verdict.
+
+    Only PASS exits 0. INCOMPLETE is not a pass — it is the state in which no required lane
+    produced formal evidence, which is what a downgraded unit, a deleted unit, an
+    unavailable prover and a deliberately skipped lane all look like. An exit code that
+    cannot tell those from a proved repository makes the CI check green for a run that
+    measured nothing, and the exit code is the only thing CI reads.
+    """
+    if not gate:
+        return 0
+    return 0 if aggregate == "PASS" else 1
+
+
 def validate_manifests() -> tuple[bool, list[str]]:
     notes: list[str] = []
     try:
         doc = load_verification()
-        load_assumptions()
-        load_trust_boundaries()
+        assumptions = load_assumptions()
+        boundaries = load_trust_boundaries()
         toolchains = load_toolchains()
     except ManifestError as exc:
         return False, [str(exc)]
+    # `max_class_without_assumption` is a gate, not a comment: a unit promoted past the
+    # class its crossed boundary permits over-reads what its proof establishes, and the
+    # platform would otherwise report PASS over that over-read.
+    violations = boundary_class_violations(doc, boundaries, assumptions)
+    if violations:
+        return False, violations
     notes.append(f"policy revision {doc['policy_revision']}")
     notes.append(f"{len(doc.get('unit', []))} unit(s), {len(doc.get('edge', []))} edge(s)")
     unresolved = unresolved_pins(toolchains)
@@ -123,7 +144,7 @@ def main() -> int:
     parser.add_argument(
         "--gate",
         action="store_true",
-        help="authoritative mode: a failing lane fails the build",
+        help="authoritative mode: any aggregate but PASS fails the build",
     )
     parser.add_argument(
         "--manifests",
@@ -221,9 +242,7 @@ def main() -> int:
         print("(report-only — pass --gate to make this authoritative)")
     print("=" * 70)
 
-    if aggregate == "FAIL" and args.gate:
-        return 1
-    return 0
+    return gate_exit_code(aggregate, args.gate)
 
 
 if __name__ == "__main__":

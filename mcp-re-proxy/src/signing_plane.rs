@@ -146,7 +146,7 @@ impl SigningPlane {
         // first credential carries the globally comparable `<base>#<counter>` label
         // rather than the bare base. Minting under the bare label is what let a
         // restarted replica appear unrevoked to verifiers pinned past an `INCR`.
-        let epoch_watch = build_delegated_epoch_watch(config, rotor.trust_epoch().to_string());
+        let epoch_watch = build_delegated_epoch_watch(config, rotor.trust_epoch().to_string())?;
         if let Some(watch) = epoch_watch.as_ref() {
             // FAIL CLOSED FOR MINTING: a configured kill switch whose state cannot be
             // read means we cannot produce an epoch verifiers can compare, so we must
@@ -565,49 +565,69 @@ impl DelegatedEpochWatch {
 }
 
 /// Build the delegated-signing trust-epoch watcher from `--trust-epoch-redis-url`.
-/// `None` when no source is configured — the epoch is then whatever
+/// `Ok(None)` when no source is configured — the epoch is then whatever
 /// `--delegated-trust-epoch` fixed it to, with no cross-replica revocation signal (the
 /// honest bounded behaviour for a single-node deployment).
 ///
-/// When a URL IS configured the watcher is always returned: the reader connects lazily
-/// and re-establishes after any failure, so a store that is briefly unreachable at boot
-/// no longer leaves this replica permanently without the operator's kill switch. The
-/// caller resolves the initial label and fails closed if it cannot.
+/// When a URL IS configured this either returns a watcher or REFUSES. The reader connects
+/// lazily and re-establishes after any failure, so a store that is briefly unreachable at
+/// boot does not leave this replica permanently without the operator's kill switch; the
+/// caller resolves the initial label and fails closed if it cannot. But a URL that cannot
+/// be parsed at all yields no watcher, and a `None` here is indistinguishable from "no
+/// source configured": minting would proceed under the bare `--delegated-trust-epoch`
+/// label with the `INCR` kill switch wired to nothing, which is the one thing an operator
+/// who configured a URL has asked not to happen. So a malformed URL is a startup refusal
+/// on this plane's own terms, not a warning line and a silent downgrade.
 #[cfg(feature = "redis_replay")]
 fn build_delegated_epoch_watch(
     config: &cli::Config,
     base_label: String,
-) -> Option<DelegatedEpochWatch> {
-    let url = config.trust_epoch_redis_url.as_ref()?;
+) -> Result<Option<DelegatedEpochWatch>, String> {
+    let Some(url) = config.trust_epoch_redis_url.as_ref() else {
+        return Ok(None);
+    };
     let key = config
         .trust_epoch_key
         .as_deref()
         .unwrap_or(crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY);
     match crate::trust_epoch::RedisEpochReader::connect_lazy(url, key) {
-        Ok(reader) => Some(DelegatedEpochWatch {
+        Ok(reader) => Ok(Some(DelegatedEpochWatch {
             reader: Box::new(reader),
             base_label,
             high_water: std::sync::Mutex::new(None),
-        }),
+        })),
         Err(e) => {
             // Only a malformed URL reaches here (`Client::open` parses, it does not
             // connect), so this is a configuration error, not an outage.
-            eprintln!(
-                "mcp-re-proxy: --trust-epoch-redis-url is not a usable Redis URL ({}); \
-                 delegated trust-epoch revocation cannot be wired.",
+            Err(format!(
+                "delegated-signing: --trust-epoch-redis-url is not a usable Redis URL ({}); \
+                 refusing to start rather than minting delegated credentials under the bare \
+                 --delegated-trust-epoch label, which the operator's INCR kill switch cannot \
+                 revoke (fail closed, ADR-MCPRE-052 §7).",
                 e.0
-            );
-            None
+            ))
         }
     }
 }
 
+/// The same refusal, one step earlier: a build without the `redis_replay` feature has no
+/// reader to construct, so a configured URL cannot be honoured here either. Stated on this
+/// plane rather than inherited from the trust plane's identical check, because "signing
+/// mints under a label the kill switch can reach" is this plane's invariant to keep.
 #[cfg(not(feature = "redis_replay"))]
 fn build_delegated_epoch_watch(
-    _config: &cli::Config,
+    config: &cli::Config,
     _base_label: String,
-) -> Option<DelegatedEpochWatch> {
-    None
+) -> Result<Option<DelegatedEpochWatch>, String> {
+    if config.trust_epoch_redis_url.is_some() {
+        return Err(
+            "delegated-signing: --trust-epoch-redis-url requires a build with the \
+                    `redis_replay` feature; refusing to start rather than minting delegated \
+                    credentials under a label the operator's INCR kill switch cannot revoke."
+                .to_string(),
+        );
+    }
+    Ok(None)
 }
 #[cfg(test)]
 mod rotation_progress_tests {
@@ -901,6 +921,89 @@ mod trust_epoch_watch_tests {
             ],
             "labels track the shared counter only — never a per-process baseline"
         );
+    }
+}
+
+/// What a configured-but-unusable `--trust-epoch-redis-url` does to the signing plane.
+#[cfg(test)]
+mod epoch_watch_wiring_tests {
+    use super::build_delegated_epoch_watch;
+    use crate::cli::Config;
+
+    /// A parsed configuration, then mutated. `parse_args` has its own completeness checks,
+    /// so a malformed epoch URL does not survive the command line; those checks are not
+    /// what protects the runtime, since an embedder builds a `Config` in code and reaches
+    /// this function having run none of them.
+    fn config_with_epoch_url(url: Option<&str>) -> Config {
+        let argv: Vec<String> = [
+            "--bind",
+            "127.0.0.1:0",
+            "--audience",
+            "did:example:server-1",
+            "--server-signer",
+            "did:example:server-1",
+            "--server-key-id",
+            "k1",
+            "--delegated-trust-epoch",
+            "epoch-1",
+            "--signing-key-seed",
+            "/nonexistent/seed",
+            "--tls-cert",
+            "/nonexistent/cert",
+            "--tls-key",
+            "/nonexistent/key",
+            "--client-ca",
+            "/nonexistent/ca",
+            "--trust",
+            "/nonexistent/trust",
+            "--target-uri",
+            "https://localhost/",
+            "--trust-domain",
+            "example.org",
+            "--replay-cache",
+            "file",
+            "--replay-path",
+            "/nonexistent/replay",
+            "--inner-http-url",
+            "http://127.0.0.1:9/mcp",
+        ]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+        let mut config = crate::cli::parse_args(&argv).expect("args parse");
+        config.trust_epoch_redis_url = url.map(|u| u.to_string());
+        config
+    }
+
+    /// An operator who configured a kill switch must not get a replica that mints without
+    /// one. A URL that cannot be turned into a reader previously became `None`, which is
+    /// indistinguishable from "no source configured": the plane skipped its own
+    /// fail-closed block and issued under the bare `--delegated-trust-epoch` label, which
+    /// no `INCR` can revoke, behind a single warning line. The only thing that refused was
+    /// the TRUST plane, in another file, and only because it happens to be materialized
+    /// first.
+    #[test]
+    fn a_configured_but_unusable_epoch_url_refuses_instead_of_minting_unrevocably() {
+        let Err(err) = build_delegated_epoch_watch(
+            &config_with_epoch_url(Some("not a redis url")),
+            "epoch-1".to_string(),
+        ) else {
+            panic!("a kill switch that cannot be wired must refuse the plane");
+        };
+        assert!(
+            err.contains("--trust-epoch-redis-url"),
+            "the refusal must name the flag: {err}"
+        );
+    }
+
+    /// Negative control: no URL is still the honest single-node shape, not a refusal.
+    #[test]
+    fn no_configured_epoch_source_is_still_accepted() {
+        match build_delegated_epoch_watch(&config_with_epoch_url(None), "epoch-1".to_string()) {
+            Ok(None) => {}
+            Ok(Some(_)) => panic!("no URL must yield no watcher"),
+            Err(e) => panic!("an unconfigured kill switch is not a misconfiguration: {e}"),
+        }
     }
 }
 

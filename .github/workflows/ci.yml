@@ -189,6 +189,16 @@ jobs:
           python3 scripts/proxy_flag_doc_gate.py --selftest
           python3 scripts/proxy_flag_doc_gate.py
 
+      # Lifecycle purity (ADR-MCPRE-056/057): `runtime_state.rs` and `exchange_state.rs`
+      # are values, not behaviour. A `use` of a production module would let "is this
+      # transition legal?" answer two ways on the same arguments, which is what SL-04
+      # (closed transition relation) and SL-09 (monotone exchange consequence) rest on.
+      # Wired here as well as in `local_gate.sh` so the merge path enforces it.
+      - name: Lifecycle-purity gate
+        run: |
+          python3 scripts/lifecycle_purity_gate.py --selftest
+          python3 scripts/lifecycle_purity_gate.py
+
       # The SCITT service-key fetcher refuses a plaintext redirect hop. `build_opener`
       # installs the permissive default redirect handler unless it is passed a
       # subclass, so a guard class that exists but is never consulted leaves the

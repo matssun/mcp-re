@@ -397,6 +397,18 @@ impl SignedStatement {
             .map_err(|_| HttpProfileError::MalformedEvidence("scitt statement cose"))?;
         let issuer_kid = String::from_utf8(sign1.protected.header.key_id.clone())
             .map_err(|_| HttpProfileError::MalformedEvidence("scitt statement kid"))?;
+        // RFC 9052 §3.1: a recipient that does not understand a critical parameter MUST
+        // fail. This profile defines no critical statement parameter, so every label in
+        // `crit` is one this verifier does not implement. Ignoring them is what would let
+        // an issuer attach a scope restriction, an expiry or a revised evidence-profile
+        // tag that MCP-RE accepts and disregards while a conforming reader refuses the
+        // statement — two correct readers of one audit artifact disagreeing about whether
+        // it is valid evidence. [`Receipt::from_cose`] holds the same rule.
+        if !sign1.protected.header.crit.is_empty() {
+            return Err(HttpProfileError::MalformedEvidence(
+                "scitt statement critical header unsupported",
+            ));
+        }
         let issued_at = cwt_claim(&sign1.protected.header, CWT_IAT)
             .and_then(|v| v.as_integer())
             .and_then(|i| i64::try_from(i).ok())
@@ -1218,6 +1230,16 @@ pub trait RetainedEvidenceStore {
 /// truncation the §9 chain seam exists to prevent, so the check now takes the
 /// reconstruction and compares EVERY field.
 ///
+/// **The SUBMISSION, not only the verified prefix.** Every identity field above is
+/// derived from the hops that verified, so on an Incomplete record the tail after the
+/// break contributes to none of them and could be substituted wholesale for
+/// attacker-chosen bytes that fail at the same hop index for the same reason.
+/// `submitted_commitment` is the digest over the submitted hops, verified or not, and it
+/// is compared here — otherwise the field that exists to close that gap would be inert.
+/// A statement issued before the profile carried it
+/// ([`EvidenceCommitment::identifies_a_submission`]) cannot bind a submission at all, so
+/// it is refused rather than reported as bound on the strength of its verified prefix.
+///
 /// The comparison is made by REBUILDING the commitment through the same constructor
 /// the issuer used and comparing the results, rather than by re-deriving each field
 /// here. A second implementation of the same rule is a second thing to keep in sync,
@@ -1283,6 +1305,26 @@ pub fn verify_retained_evidence(
     if recomputed.verified_context_commitment != commitment.verified_context_commitment {
         return Err(HttpProfileError::MalformedEvidence(
             "retained verified context does not match the commitment",
+        ));
+    }
+    // The SUBMISSION identity, which is the only field that covers the hops AFTER the
+    // verified prefix. Every field above is derived from that prefix, so on an
+    // Incomplete record — the records an auditor investigates — the unverified tail
+    // contributes to none of them: an archivist holding a statement about
+    // `[h0, h1, h2-tampered]` could present `[h0, h1, h2']`, and as long as `h2'` fails
+    // at the same hop index for the same reason the label and both digests still match.
+    if commitment.identifies_a_submission() {
+        if recomputed.submitted_commitment != commitment.submitted_commitment {
+            return Err(HttpProfileError::MalformedEvidence(
+                "retained submission does not match the commitment",
+            ));
+        }
+    } else if recomputed.identifies_a_submission() {
+        // The record predates the submission identity, so the retained tail is bound only
+        // as far as the verified prefix reaches. Saying so is the point: this is a weaker
+        // result than the one above, and it must not be reported as the same.
+        return Err(HttpProfileError::MalformedEvidence(
+            "the statement carries no submission identity, so the retained submission cannot be bound to it",
         ));
     }
     Ok(())
@@ -1893,6 +1935,36 @@ mod tests {
         }
     }
 
+    /// The same `crit` rule on a Signed Statement. This profile defines no critical
+    /// statement parameter, so any label marked critical is one this verifier does not
+    /// implement: accepting the statement while disregarding the parameter is what RFC
+    /// 9052 §3.1 forbids, and is how two conforming readers of one audit artifact end up
+    /// disagreeing about whether it is valid evidence.
+    #[test]
+    fn a_critical_header_on_a_signed_statement_is_refused() {
+        let st = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 1),
+            None,
+            None,
+        ));
+        SignedStatement::from_cose(st.to_cose()).expect("the issued statement parses");
+
+        let mut sign1 = CoseSign1::from_tagged_slice(st.to_cose()).expect("parses");
+        sign1
+            .protected
+            .header
+            .crit
+            .push(coset::RegisteredLabelWithPrivate::Text(
+                "evidence-profile-revision".to_owned(),
+            ));
+        sign1.protected.original_data = None;
+        let bytes = sign1.to_tagged_vec().expect("encode");
+        assert_eq!(
+            SignedStatement::from_cose(&bytes).unwrap_err(),
+            HttpProfileError::MalformedEvidence("scitt statement critical header unsupported"),
+        );
+    }
+
     /// The `crit` rule, which is what stops an old implementation from verifying a v2
     /// receipt while ignoring the commitment that binds its position. An unknown
     /// critical label is refused at parse, before any signature work.
@@ -2495,6 +2567,59 @@ mod tests {
         substituted.hop_evidence[2].request_evidence =
             RequestEvidence::from_signature_base(b"req-substituted");
         assert!(verify_retained_evidence(&commitment, &substituted, None, None).is_err());
+    }
+
+    /// The UNVERIFIED tail of an Incomplete record. Every field derived from the
+    /// verified prefix matches — same hop 0, same shape digest, same
+    /// `incomplete:1:<reason>` label — so only the submission identity separates the
+    /// bytes the statement was issued over from an archivist's substitute.
+    #[test]
+    fn a_substituted_unverified_tail_is_refused_even_though_the_verified_prefix_matches() {
+        let mut issued = recon(
+            ChainLabel::Incomplete {
+                hop: 1,
+                reason: IncompleteReason::MissingContinuation,
+            },
+            1,
+        );
+        issued.submitted_commitment = "submission-as-issued".to_owned();
+        let commitment = EvidenceCommitment::from_reconstruction(&issued, None, None);
+        verify_retained_evidence(&commitment, &issued, None, None)
+            .expect("the retained bytes are the ones the statement was issued over");
+
+        // A different hop 1 — different bytes, failing at the same index for the same
+        // reason. The verified prefix is untouched.
+        let mut substituted = issued.clone();
+        substituted.submitted_commitment = "submission-substituted".to_owned();
+        let recomputed = EvidenceCommitment::from_reconstruction(&substituted, None, None);
+        assert_eq!(recomputed.request_evidence, commitment.request_evidence);
+        assert_eq!(recomputed.response_evidence, commitment.response_evidence);
+        assert_eq!(recomputed.chain_commitment, commitment.chain_commitment);
+        assert_eq!(recomputed.chain_label, commitment.chain_label);
+        assert_eq!(
+            verify_retained_evidence(&commitment, &substituted, None, None).unwrap_err(),
+            HttpProfileError::MalformedEvidence(
+                "retained submission does not match the commitment"
+            ),
+        );
+    }
+
+    /// A statement issued before the profile carried a submission identity binds only
+    /// its verified prefix, which is a weaker result than this function reports — so it
+    /// is refused rather than answered as if it were the same.
+    #[test]
+    fn a_statement_with_no_submission_identity_cannot_bind_retained_bytes() {
+        let retained = recon(ChainLabel::Complete, 2);
+        let mut pre_revision = EvidenceCommitment::from_reconstruction(&retained, None, None);
+        assert!(pre_revision.identifies_a_submission());
+        pre_revision.submitted_commitment = String::new();
+        assert!(!pre_revision.identifies_a_submission());
+        assert_eq!(
+            verify_retained_evidence(&pre_revision, &retained, None, None).unwrap_err(),
+            HttpProfileError::MalformedEvidence(
+                "the statement carries no submission identity, so the retained submission cannot be bound to it"
+            ),
+        );
     }
 
     /// A chain that broke at hop 0 has no verified prefix, so all three identity

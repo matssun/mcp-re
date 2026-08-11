@@ -33,8 +33,8 @@
 //! Answerable                signer.current(now)              503              yes
 //! ContinuationRetired       continuation_store.consume       409              NO: entry consumed
 //! Forwarded                 forwarded_body                   500              yes
-//! RetentionReserved         retention.reserve (awaited)      503              NO: durable marker
 //! InnerPlaneAccepted        inner_async.admit                503              yes
+//! RetentionReserved         retention.reserve (awaited)      503              NO: durable marker
 //! ==================== IRREVERSIBLE INNER DISPATCH ====================
 //! ResponseObserved          inner_async.dispatch             503 / 504 / 502  the backend has acted
 //! (notification)            sign_delegated_accepted_202      500

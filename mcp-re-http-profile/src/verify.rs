@@ -259,6 +259,19 @@ fn split_parameters(value: &str) -> Vec<&str> {
 fn member_value<'a>(header_value: &'a str, label: &str) -> Result<&'a str, HttpProfileError> {
     let mut found: Option<&'a str> = None;
     for member in split_dictionary(header_value) {
+        // RFC 8941 §3.2's `dict-member` cannot be empty, so a leading, trailing or
+        // doubled comma is not a spelling of the same dictionary — it is not a
+        // dictionary. Skipping it silently, as an unparseable member, is the same
+        // wire-spelling collapse the `=` rule above refuses: `mcp-re=(...)` and
+        // `,mcp-re=(...),` would rebuild one signature base and verify under one
+        // signature, so an intermediary could add or strip a comma in the raw header
+        // and every consumer that logs, hashes, caches or diffs it would hold bytes
+        // other than the ones that were signed.
+        if member.is_empty() {
+            return Err(HttpProfileError::MalformedEvidence(
+                "empty dictionary member",
+            ));
+        }
         if let Some(rest) = member.strip_prefix(label) {
             if let Some(v) = rest.strip_prefix('=') {
                 if found.is_some() {
@@ -1707,6 +1720,37 @@ mod wire_form_tests {
         // OWS around the member-separating comma stays legal (RFC 8941 §4.2).
         assert_eq!(
             member_value("other=(\"@method\") , mcp-re=:YWJj:", "mcp-re").expect("comma OWS"),
+            ":YWJj:"
+        );
+    }
+
+    /// A comma that delimits nothing is not a spelling variant of the dictionary — RFC
+    /// 8941 has no empty `dict-member`. Ignored as "a member I could not parse", it let
+    /// an intermediary add or strip commas in the raw `Signature-Input`/`Signature`
+    /// header while the signature still verified.
+    #[test]
+    fn an_empty_dictionary_member_is_refused_not_ignored() {
+        for spelling in [
+            ",mcp-re=:YWJj:",
+            "mcp-re=:YWJj:,",
+            "mcp-re=:YWJj:,,other=1",
+            " , mcp-re=:YWJj:",
+            ",",
+            "",
+        ] {
+            assert_eq!(
+                member_value(spelling, "mcp-re").unwrap_err(),
+                HttpProfileError::MalformedEvidence("empty dictionary member"),
+                "{spelling:?} was read as the canonical dictionary",
+            );
+        }
+        // The canonical spelling, and a legitimate neighbouring member, are unaffected.
+        assert_eq!(
+            member_value("mcp-re=:YWJj:", "mcp-re").expect("canonical"),
+            ":YWJj:"
+        );
+        assert_eq!(
+            member_value("other=1, mcp-re=:YWJj:", "mcp-re").expect("a neighbour is legal"),
             ":YWJj:"
         );
     }

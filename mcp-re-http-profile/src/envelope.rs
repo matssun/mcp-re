@@ -86,6 +86,11 @@ pub enum OutstandingId {
 /// The serving path calls this on the body it verified, so the parse cannot fail in
 /// production; it still fails closed rather than defaulting, because "I could not read the
 /// request's id" must never become "any id correlates".
+///
+/// This reads the id and nothing else. Whether the body is a JSON-RPC message at all is
+/// [`validate_request_envelope`]'s question, and the absence of an `id` is only a
+/// notification once that has been answered — an object with no `jsonrpc` and no `method`
+/// is not a notification, it is not a message.
 pub fn outstanding_id(request_body: &[u8]) -> Result<OutstandingId, HttpProfileError> {
     let parsed: Value = serde_json::from_slice(request_body)
         .map_err(|_| HttpProfileError::MalformedEvidence("request body"))?;
@@ -95,6 +100,70 @@ pub fn outstanding_id(request_body: &[u8]) -> Result<OutstandingId, HttpProfileE
     match object.get("id") {
         None => Ok(OutstandingId::Notification),
         Some(id) => Ok(OutstandingId::Id(id.clone())),
+    }
+}
+
+/// Validate the JSON-RPC control envelope of a CLIENT REQUEST, returning the outstanding
+/// id it establishes.
+///
+/// MCP requires every MCP message to follow JSON-RPC 2.0, and the requirement is not
+/// direction-specific: a body that is not a legal request is not a message this boundary
+/// may vouch for. Without this, the only member ever read on the request side was `id`,
+/// and its ABSENCE was read as "notification" — so an object carrying nothing but an
+/// evidence block was dispatched to the inner server and acknowledged with a signed 202
+/// asserting the boundary had accepted an MCP message.
+///
+/// The checks, in the order a reader would apply them:
+///
+/// 1. the body is JSON, and is an object;
+/// 2. `jsonrpc` is present and exactly `"2.0"`;
+/// 3. `method` is present and is a string — the member that makes a request a request,
+///    and the one whose absence made "no `id`" mean "notification";
+/// 4. neither `result` nor `error` is present, so one document cannot be read as a
+///    request by this boundary and as a response by the peer;
+/// 5. `params`, when present, is an object or an array (JSON-RPC 2.0 §4.2);
+/// 6. `id`, when present, is a string or a number. JSON-RPC also permits `null`, and MCP
+///    forbids it; a null-id request is refused rather than folded into a notification,
+///    because the two are answered differently — one with a bound signed reply, the other
+///    with a bodyless 202.
+pub fn validate_request_envelope(request_body: &[u8]) -> Result<OutstandingId, HttpProfileError> {
+    let malformed = HttpProfileError::MalformedEvidence;
+
+    let parsed: Value =
+        serde_json::from_slice(request_body).map_err(|_| malformed("request body is not JSON"))?;
+    let object = parsed
+        .as_object()
+        .ok_or(malformed("request body is not a JSON object"))?;
+
+    match object.get("jsonrpc") {
+        Some(Value::String(v)) if v == JSON_RPC_VERSION => {}
+        None => return Err(malformed("request jsonrpc member absent")),
+        Some(_) => return Err(malformed("request jsonrpc member is not \"2.0\"")),
+    }
+
+    match object.get("method") {
+        Some(Value::String(_)) => {}
+        None => return Err(malformed("request method member absent")),
+        Some(_) => return Err(malformed("request method member is not a string")),
+    }
+
+    if object.contains_key("result") || object.contains_key("error") {
+        return Err(malformed("request carries a response member"));
+    }
+
+    match object.get("params") {
+        None | Some(Value::Object(_)) | Some(Value::Array(_)) => {}
+        Some(_) => {
+            return Err(malformed(
+                "request params is neither an object nor an array",
+            ))
+        }
+    }
+
+    match object.get("id") {
+        None => Ok(OutstandingId::Notification),
+        Some(id @ (Value::String(_) | Value::Number(_))) => Ok(OutstandingId::Id(id.clone())),
+        Some(_) => Err(malformed("request id is neither a string nor a number")),
     }
 }
 
@@ -113,7 +182,16 @@ pub fn outstanding_id(request_body: &[u8]) -> Result<OutstandingId, HttpProfileE
 /// 3. exactly one of `result` / `error` is present;
 /// 4. `error`, when present, is an object with an integer `code` and a string `message`;
 /// 5. `result`, when present, is an object (MCP defines every Result as one);
-/// 6. `id` is present and equal to the outstanding request's id.
+/// 6. the reply carries no `method` member, so it is not simultaneously a legal
+///    server-initiated request;
+/// 7. `id` is present and equal to the outstanding request's id.
+///
+/// **On clause 6.** A document carrying `jsonrpc`, `id`, `result` AND `method` satisfies
+/// every other clause here while a client whose JSON-RPC union is not strict parses it as
+/// a request. Signing it would put the boundary's delegated signature over an
+/// authenticated injection channel from the inner backend toward every such client, and
+/// the claim this profile makes — that it signs a legal JSON-RPC response — would be
+/// false: what it signed is also a legal request.
 ///
 /// **On the null-id allowance.** JSON-RPC permits a `null` id when the responder could not
 /// determine the request's id — a parse or invalid-request failure. That excuse is not
@@ -162,6 +240,15 @@ pub fn validate_response_envelope<'a>(
         if !result.is_object() {
             return Err(invalid("result is not an object"));
         }
+    }
+
+    // A response is a response and nothing else. `method` is the member that makes a
+    // JSON-RPC document a request, and `params` only ever accompanies one.
+    if object.contains_key("method") {
+        return Err(invalid("response carries a method member"));
+    }
+    if object.contains_key("params") {
+        return Err(invalid("response carries a params member"));
     }
 
     // Correlation, last, because it is the check most likely to be read as the only one.
@@ -391,6 +478,92 @@ mod tests {
             OutstandingId::Id(Value::Null)
         );
         assert!(outstanding_id(b"not json").is_err());
+    }
+
+    /// A document that is simultaneously a legal response and a legal request is refused.
+    /// Every other clause passes, so nothing else in the validator would have caught it,
+    /// and the PEP would have delegated-signed a server-initiated request aimed at the
+    /// client.
+    #[test]
+    fn a_reply_that_is_also_a_request_is_refused() {
+        assert_eq!(
+            validate(
+                r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true},"method":"tools/call"}"#,
+                &id(1),
+            )
+            .expect_err("request-shaped response"),
+            HttpProfileError::UpstreamResponseInvalid("response carries a method member")
+        );
+        assert_eq!(
+            validate(
+                r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true},"params":{"x":1}}"#,
+                &id(1),
+            )
+            .expect_err("request-shaped response"),
+            HttpProfileError::UpstreamResponseInvalid("response carries a params member")
+        );
+        // The same members INSIDE `result` are application payload and stay opaque.
+        assert!(validate(
+            r#"{"jsonrpc":"2.0","id":1,"result":{"method":"x","params":{}}}"#,
+            &id(1),
+        )
+        .is_ok());
+    }
+
+    /// The request side of the same rule. Reading only `id` made "no id" mean
+    /// "notification", so a body that is not a JSON-RPC message at all was dispatched to
+    /// the inner server and acknowledged with a signed 202.
+    #[test]
+    fn a_request_body_that_is_not_a_json_rpc_message_is_refused() {
+        for body in [
+            r#"{"_meta":{"se.syncom/mcp-re.http.request":{}},"foo":1}"#,
+            r#"{"foo":1}"#,
+            r#"{}"#,
+            r#"{"jsonrpc":"2.0"}"#,
+            r#"{"method":"tools/call","id":1}"#,
+            r#"{"jsonrpc":"1.0","method":"tools/call"}"#,
+            r#"{"jsonrpc":"2.0","method":7}"#,
+            r#"{"jsonrpc":"2.0","method":"x","result":{}}"#,
+            r#"{"jsonrpc":"2.0","method":"x","error":{"code":-1,"message":"m"}}"#,
+            r#"{"jsonrpc":"2.0","method":"x","params":"nope"}"#,
+            r#"{"jsonrpc":"2.0","method":"x","id":null}"#,
+            r#"{"jsonrpc":"2.0","method":"x","id":{"a":1}}"#,
+            "[]",
+            "not json",
+        ] {
+            assert!(
+                validate_request_envelope(body.as_bytes()).is_err(),
+                "{body} was accepted as an MCP request"
+            );
+            // The reader the serving path uses today sees no `id` in most of these and
+            // calls them notifications, which is what the validator exists to stop.
+            let _ = outstanding_id(body.as_bytes());
+        }
+    }
+
+    /// The mirror: legal requests and legal notifications still pass, and the id they
+    /// establish is the same one the correlation check will compare against.
+    #[test]
+    fn a_legal_request_yields_its_outstanding_id() {
+        assert_eq!(
+            validate_request_envelope(br#"{"jsonrpc":"2.0","id":7,"method":"tools/call"}"#)
+                .expect("a legal request"),
+            OutstandingId::Id(json!(7))
+        );
+        assert_eq!(
+            validate_request_envelope(
+                br#"{"jsonrpc":"2.0","id":"req-1","method":"tools/call","params":{"name":"t"}}"#
+            )
+            .expect("a legal request"),
+            OutstandingId::Id(json!("req-1"))
+        );
+        assert_eq!(
+            validate_request_envelope(
+                br#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1}}"#
+            )
+            .expect("a legal notification"),
+            OutstandingId::Notification
+        );
     }
 
     /// The envelope validator does NOT read application payload. Whatever is inside

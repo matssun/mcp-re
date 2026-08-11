@@ -144,19 +144,24 @@ def load_bundle(store: Path) -> dict | None:
     return bundle if isinstance(bundle, dict) else None
 
 
+#: The scheme a declaration takes when it is not a URI at all. It resolves to no lane, so
+#: it refuses, which is what an unparsable evidence declaration must do.
+MALFORMED_LANE = "<malformed-evidence-uri>"
+
+
 def required_lanes(unit: dict) -> set[str]:
     """The lanes this unit claims, read off its declared evidence URIs.
 
-    Derived, not configured: a unit that declares `verus://` evidence requires a Verus
-    record, and one that does not must not be given a Verus verdict it never earned.
+    EVERY scheme, not a recognised subset. Filtering to the schemes that happen to have an
+    implementation is how a unit whose only declared evidence is `test://` ends up claiming
+    no lane at all: the issuance loop then has nothing to check, falls through to
+    ISSUE_PASS, and stamps an attestation whose evidence map is empty. A declared evidence
+    class nothing resolves is unmeasured evidence, and unmeasured evidence refuses.
     """
     lanes = set()
     for entry in unit.get("evidence", []):
         text = str(entry)
-        if "://" in text:
-            scheme = text.split("://", 1)[0]
-            if scheme in {"verus", "lean"}:
-                lanes.add(scheme)
+        lanes.add(text.split("://", 1)[0] if "://" in text else MALFORMED_LANE)
     return lanes
 
 
@@ -190,6 +195,19 @@ def decide_issuance(
         evidence: dict[str, str] = {}
         refusal: str | None = None
         failed_lane: str | None = None
+
+        if not wanted:
+            # A unit that declares no evidence has had nothing measured about it. Issuing a
+            # PASS here is the emptiest false green available: the attestation would carry
+            # an empty evidence map and the graph would print the unit FRESH on the
+            # strength of a manifest declaration alone.
+            decisions[unit_id] = (
+                "REFUSE",
+                {},
+                "the unit declares no evidence, so no lane measured it; absence of "
+                "measurement is not measurement",
+            )
+            continue
 
         for lane in sorted(wanted):
             record = records.get(lane, {}).get(unit_id)

@@ -146,6 +146,26 @@ def test_an_unpinned_prover_is_never_a_pass():
     assert "identity mismatch" in detail
 
 
+def test_a_report_with_no_commit_is_never_a_pass():
+    """The identity check must not fail OPEN on the one field the prover itself controls:
+    a locally built or substituted binary that emits no commit was accepted as the pinned
+    one, and its verdict was recorded as evidence."""
+    ok, detail = evaluate_unit(
+        parse_reports(report([CORE], verified=5, commit="")), "mcp-re-core", [CORE], PIN
+    )
+    assert not ok
+    assert "no commit" in detail
+
+
+def test_an_unpinned_lock_is_never_a_pass():
+    """No pinned commit means no declared identity to check the run against."""
+    ok, detail = evaluate_unit(
+        parse_reports(report([CORE], verified=5)), "mcp-re-core", [CORE], ""
+    )
+    assert not ok
+    assert "no Verus commit" in detail
+
+
 def test_success_false_is_never_a_pass():
     """`success` and a zero error count can disagree; the conjunction is what counts."""
     ok, _ = evaluate_unit(

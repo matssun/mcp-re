@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Owned-worker gate — no unreviewed direct thread spawn in production code.
 
-WHAT THIS PROVES, exactly: no library source outside `managed_worker.rs` starts an OS
-thread through `thread::spawn` or `thread::Builder` except in test code or in a file
-listed below with a reason. That is a syntactic check on two spellings, and the claim
-stops there.
+WHAT THIS PROVES, exactly: no library source outside `managed_worker.rs`, in any crate in
+the repository (including the `sdk/python` and `sdk/typescript` native bindings), starts
+an OS thread through `thread::spawn` or `thread::Builder` except in test code or at one of
+the exact reviewed sites counted below. That is a syntactic check on two spellings, and
+the claim stops there.
 
 WHAT IT DOES NOT PROVE: that no detached runtime worker exists. A helper that wraps the
 spawn, a type alias, a re-export, a `tokio::spawn` or `Runtime::spawn` task, or a thread
@@ -57,44 +58,49 @@ OWNER_MODULE = "src/managed_worker.rs"
 #
 # Adding an entry is a decision, and the asymmetry is the point: an existing entry has
 # to stay explainable, a new one has to argue for itself.
+#
+# Each entry is (site count, reason), and the count is load-bearing: the reason justifies
+# a NAMED thread, so a file-granular exemption would let the serving and evidence paths
+# acquire further detached threads for free. The count is what makes a second spawn in an
+# exempt file a gate failure that has to be argued rather than a silent pass.
 ALLOWED = {
-    "mcp-re-proxy/src/main.rs": (
+    "mcp-re-proxy/src/main.rs": (1, (
         "the SIGTERM/SIGINT bridge thread belongs to the PROCESS, not to any runtime: it "
         "outlives `app::run` by design and exits when the signal flag flips"
-    ),
-    "mcp-re-proxy/src/redis_store.rs": (
+    )),
+    "mcp-re-proxy/src/redis_store.rs": (1, (
         "the bounded-abandonment connect worker is a PER-OPERATION timeout thread, not a "
         "runtime worker; its permit releases the in-flight slot even when it finishes late"
-    ),
-    "mcp-re-proxy/src/tls.rs": (
+    )),
+    "mcp-re-proxy/src/tls.rs": (1, (
         "the per-connection handler on the SYNC serving path lives as long as one "
         "connection and releases its `in_flight` slot on exit; it is bounded by "
         "`max_concurrent_connections` rather than by a runtime's lifetime"
-    ),
-    "mcp-re-client/src/main.rs": (
+    )),
+    "mcp-re-client/src/main.rs": (1, (
         "the client binary's SIGTERM bridge, the same process-lifetime signal thread as "
         "the proxy's — it belongs to the process, not to a runtime"
-    ),
-    "mcp-re-proxy/src/audit_sink.rs": (
+    )),
+    "mcp-re-proxy/src/audit_sink.rs": (1, (
         "the stderr audit writer drains a `static` OnceLock channel and is scoped to the "
         "PROCESS by construction; there is no runtime whose lifetime it could take"
-    ),
-    "mcp-re-proxy/src/transparency.rs": (
+    )),
+    "mcp-re-proxy/src/transparency.rs": (1, (
         "the retention writer already satisfies §9 by hand: `EvidenceRetention` owns the "
         "handle, closing the job channel is its halt, and `Drop` joins it"
-    ),
-    "mcp-re-proxy/src/async_fleet.rs": (
+    )),
+    "mcp-re-proxy/src/async_fleet.rs": (1, (
         "the per-core serving threads satisfy §9 by hand: their handles are `Fleet.workers` "
         "and `Fleet::shutdown_and_join` stops and joins every one of them"
-    ),
-    "mcp-re-client/src/anchors.rs": (
+    )),
+    "mcp-re-client/src/anchors.rs": (1, (
         "the anchor-refresh thread's handle is owned by the refresher it belongs to, which "
         "sets its stop flag and joins on drop"
-    ),
-    "mcp-re-client/src/serve.rs": (
+    )),
+    "mcp-re-client/src/serve.rs": (1, (
         "the client's per-connection handler lives as long as one connection; its capacity "
         "slot is released by the same destructor on success, unwind, and spawn failure"
-    ),
+    )),
 }
 
 # Both spellings that start an OS thread. `Builder` is not a hypothetical bypass: two
@@ -199,32 +205,78 @@ def test_regions(src: str, mask: list[bool]) -> list[tuple[int, int]]:
     return regions
 
 
+#: Directories that hold Rust which is not this repository's production library code.
+#: `node_modules` carries vendored fixture crates from an npm dependency, and build
+#: outputs are copies of sources already scanned.
+PRUNED = {"target", "node_modules", ".git", "bazel-out"}
+
+
+def crates(root: Path) -> list[Path]:
+    """Every crate directory in the repository, at any depth.
+
+    Depth matters: `sdk/python` and `sdk/typescript` are the native bindings that ship to
+    end users, and a depth-1 glob would report a clean tree having read none of them.
+    """
+    found: list[Path] = []
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        if (current / "Cargo.toml").is_file() and (current / "src").is_dir():
+            found.append(current)
+        for child in current.iterdir():
+            if child.is_dir() and not child.is_symlink() and child.name not in PRUNED:
+                stack.append(child)
+    return sorted(found)
+
+
+def production_spawns(src: str) -> list[int]:
+    """The 1-based line of every `thread::spawn`/`Builder` in real, non-test code."""
+    if not SPAWN.search(src):
+        return []
+    mask = code_mask(src)
+    regions = test_regions(src, mask)
+    lines = []
+    for m in SPAWN.finditer(src):
+        off = m.start()
+        if not mask[off]:
+            continue
+        if any(a <= off <= b for a, b in regions):
+            continue
+        lines.append(src.count("\n", 0, off) + 1)
+    return lines
+
+
 def check(root: Path) -> list[str]:
     problems: list[str] = []
-    for manifest in sorted(root.glob("*/Cargo.toml")):
-        crate = manifest.parent
+    for crate in crates(root):
         for src_path in sorted((crate / "src").rglob("*.rs")):
             rel_in_crate = src_path.relative_to(crate).as_posix()
             rel = src_path.relative_to(root).as_posix()
-            if rel_in_crate == OWNER_MODULE or rel in ALLOWED:
+            if rel_in_crate == OWNER_MODULE:
                 continue
             src = src_path.read_text(encoding="utf-8")
-            if not SPAWN.search(src):
+            sites = production_spawns(src)
+            if rel in ALLOWED:
+                # The exemption is for the reviewed sites, not for the file. A count
+                # that no longer matches means a thread nobody argued for, or a reason
+                # that has outlived the code it describes.
+                expected, reason = ALLOWED[rel]
+                if len(sites) != expected:
+                    at = ", ".join(f":{line}" for line in sites) or "none"
+                    problems.append(
+                        f"{rel} is allowlisted for {expected} reviewed spawn site(s) "
+                        f"({reason.strip()}) but has {len(sites)} ({at}). Route the new "
+                        "thread through `managed_worker::WorkerSet::spawn`, or update "
+                        "this gate's entry with the count and the reason the extra "
+                        "thread is sound."
+                    )
                 continue
-            mask = code_mask(src)
-            regions = test_regions(src, mask)
-            for m in SPAWN.finditer(src):
-                off = m.start()
-                if not mask[off]:
-                    continue
-                if any(a <= off <= b for a, b in regions):
-                    continue
-                line = src.count("\n", 0, off) + 1
+            for line in sites:
                 problems.append(
                     f"{rel}:{line} spawns a thread directly. A runtime worker must be "
                     "started through `managed_worker::WorkerSet::spawn`, which owns the "
                     "handle; if this thread is genuinely not a runtime worker, add the "
-                    "file to ALLOWED in this gate with the reason."
+                    "file to ALLOWED in this gate with its site count and the reason."
                 )
     return problems
 
@@ -284,12 +336,45 @@ def selftest() -> int:
             print(f"selftest FAIL: spawn after the test module not caught: {found}")
             return 1
 
-        # An allowlisted file is exempt.
+        # An allowlisted file is exempt at its reviewed site count.
         plane.unlink()
         main = crate / "src" / "main.rs"
         main.write_text("fn main() { std::thread::spawn(|| {}); }\n")
         if check(root):
-            print("selftest FAIL: an allowlisted file was rejected")
+            print("selftest FAIL: an allowlisted file was rejected at its reviewed count")
+            return 1
+
+        # ...and only at that count: a SECOND spawn in the same file is a new thread
+        # nobody reviewed, which a file-granular exemption would have waved through.
+        main.write_text(
+            "fn main() { std::thread::spawn(|| {}); }\n"
+            "fn extra() { std::thread::spawn(move || loop {}); }\n"
+        )
+        found = check(root)
+        if len(found) != 1 or "allowlisted for 1 reviewed spawn site" not in found[0]:
+            print(f"selftest FAIL: extra spawn in an allowlisted file not caught: {found}")
+            return 1
+        main.write_text("fn main() { std::thread::spawn(|| {}); }\n")
+
+        # A crate BELOW the top level is scanned. The SDK bindings live at sdk/<lang>,
+        # and a depth-1 crate walk reports a clean tree having read none of them.
+        nested = root / "sdk" / "python"
+        (nested / "src").mkdir(parents=True)
+        (nested / "Cargo.toml").write_text('[package]\nname = "mcp-re-sdk-python"\n')
+        (nested / "src" / "lib.rs").write_text("fn go() { std::thread::spawn(|| {}); }\n")
+        found = check(root)
+        if len(found) != 1 or not found[0].startswith("sdk/python/src/lib.rs:1"):
+            print(f"selftest FAIL: nested crate not scanned: {found}")
+            return 1
+
+        # Vendored fixture crates under node_modules are not this repo's production code.
+        vendored = root / "sdk" / "typescript" / "node_modules" / "pkg"
+        (vendored / "src").mkdir(parents=True)
+        (vendored / "Cargo.toml").write_text('[package]\nname = "vendored"\n')
+        (vendored / "src" / "lib.rs").write_text("fn go() { std::thread::spawn(|| {}); }\n")
+        (nested / "src" / "lib.rs").write_text("fn go() {}\n")
+        if check(root):
+            print("selftest FAIL: a vendored node_modules crate was scanned")
             return 1
 
     print("owned-worker gate selftest: PASS")
@@ -306,8 +391,10 @@ def main() -> int:
             print(f"  - {p}")
         return 1
     print(
-        "owned-worker gate: OK — no direct thread spawn in production library code "
-        f"outside {OWNER_MODULE}, except {len(ALLOWED)} files that name a reason."
+        f"owned-worker gate: OK — {len(crates(REPO))} crates scanned, no direct thread "
+        f"spawn in production library code outside {OWNER_MODULE}, except "
+        f"{sum(sites for sites, _ in ALLOWED.values())} counted sites in "
+        f"{len(ALLOWED)} files that each name a reason."
     )
     return 0
 

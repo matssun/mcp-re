@@ -73,9 +73,11 @@ __all__ = [
     "MtlsOptions",
     "MtlsTransportError",
     "NotificationNotAcknowledged",
+    "VerifiedReplyNotAResponse",
     "connect_mtls_http",
     "mcp_re_http_transport",
     "mtls_poster",
+    "send_notification_verified",
 ]
 
 #: Names resolved lazily, and the module each lives in. Both modules import the upstream
@@ -89,7 +91,9 @@ _LAZY_EXPORTS = {
     "InputRequired": "transport",
     "McpReConfig": "transport",
     "NotificationNotAcknowledged": "transport",
+    "VerifiedReplyNotAResponse": "transport",
     "mcp_re_http_transport": "transport",
+    "send_notification_verified": "transport",
     "MtlsOptions": "mtls",
     "MtlsTransportError": "mtls",
     "connect_mtls_http": "mtls",

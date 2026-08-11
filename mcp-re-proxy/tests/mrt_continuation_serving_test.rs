@@ -46,6 +46,7 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_proxy::async_inner::AsyncInnerServer;
+use mcp_re_proxy::async_inner::InnerOutcome;
 use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve::ServedHttpRequest;
@@ -2121,4 +2122,610 @@ async fn a_signed_reply_never_advertises_validity_past_its_delegated_credential(
     let served2 = long.handle(served_of(&req2), NOW).await;
     assert_eq!(served2.status, 200);
     assert_eq!(advertised_expiry(&served2), NOW + CREDENTIAL_TTL);
+}
+
+// ===================== ROUND 8: EXECUTION CERTAINTY AT THE SEAMS =====================
+//
+// Four seams where a fact the exchange knows was being flattened into a fact it does not:
+// a store outage into a binding failure, an indeterminate `consume` into "nothing was
+// spent", a free refusal into a durable execution-threshold marker, and every inner
+// outcome into a signed 202. Each test names the broken implementation it must catch, and
+// each asserts the MECHANISM — the wire code, the retry contract, the marker on disk, the
+// backend count — rather than the status alone, which every one of these shares with the
+// behaviour it replaced.
+
+/// A continuation store whose `peek` always fails. `store`/`consume` behave normally, so
+/// an answer leg fails at exactly the read the shared tier serves it from.
+struct PeekFailingStore(Arc<dyn AsyncContinuationStore>);
+
+impl AsyncContinuationStore for PeekFailingStore {
+    fn store<'a>(
+        &'a self,
+        key: &'a str,
+        bases: &'a mcp_re_proxy::continuation_store::RetainedBases,
+        ttl_secs: i64,
+    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<'a, ()> {
+        self.0.store(key, bases, ttl_secs)
+    }
+    fn peek<'a>(
+        &'a self,
+        _key: &'a str,
+    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
+        'a,
+        Option<mcp_re_proxy::continuation_store::RetainedBases>,
+    > {
+        Box::pin(async {
+            Err(
+                mcp_re_proxy::continuation_store::ContinuationStoreError::Unavailable {
+                    details: "the shared tier is down".to_string(),
+                },
+            )
+        })
+    }
+    fn consume<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<'a, bool> {
+        self.0.consume(key)
+    }
+}
+
+/// A continuation store that peeks normally and whose `consume` never answers — the
+/// `DEL`-with-a-lost-reply case, where the entry may or may not be gone.
+struct ConsumeFailingStore(Arc<dyn AsyncContinuationStore>);
+
+impl AsyncContinuationStore for ConsumeFailingStore {
+    fn store<'a>(
+        &'a self,
+        key: &'a str,
+        bases: &'a mcp_re_proxy::continuation_store::RetainedBases,
+        ttl_secs: i64,
+    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<'a, ()> {
+        self.0.store(key, bases, ttl_secs)
+    }
+    fn peek<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
+        'a,
+        Option<mcp_re_proxy::continuation_store::RetainedBases>,
+    > {
+        self.0.peek(key)
+    }
+    fn consume<'a>(
+        &'a self,
+        _key: &'a str,
+    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<'a, bool> {
+        Box::pin(async {
+            Err(
+                mcp_re_proxy::continuation_store::ContinuationStoreError::Unavailable {
+                    details: "the shared tier is down".to_string(),
+                },
+            )
+        })
+    }
+}
+
+/// The `continuation_status` a signed rejection states.
+fn continuation_status_of(body: &[u8]) -> Option<String> {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| {
+            v.pointer("/error/data/mcp_re_error/continuation_status")
+                .and_then(|w| w.as_str())
+                .map(str::to_owned)
+        })
+}
+
+/// **R8-C113.** A shared-tier outage on the answer leg's `peek` is reported as an outage,
+/// not as a forged continuation.
+///
+/// Broken implementation this must catch: `store.peek(key).await.ok().flatten()` — flatten
+/// `Err` into the same `None` as "no live entry", so the dispatcher mints
+/// `continuation_binding_failed` (409). That code means a splice or a replayed
+/// continuation, so an operator paging on it during a Redis blip investigates a forgery
+/// incident, and a genuine splice attempt becomes indistinguishable from store health.
+///
+/// The two halves are asserted together: the outage says `replay_cache_unavailable`, and
+/// the splice on a HEALTHY store still says `continuation_binding_failed`. Either alone
+/// would pass against an implementation that had merely renamed the code.
+#[tokio::test]
+async fn a_continuation_store_outage_on_the_answer_leg_is_named_as_an_outage() {
+    const STATE: &str = "state-token-R8-peek";
+    let healthy: Arc<dyn AsyncContinuationStore> = Arc::new(InMemoryContinuationStore::new());
+    let a = replica(ready_signer(), Arc::clone(&healthy), STATE);
+    let (d_prev, d_irr, state) = open_on(&a, STATE).await;
+
+    // Replica B shares the entry but cannot read it.
+    let blind: Arc<dyn AsyncContinuationStore> = Arc::new(PeekFailingStore(Arc::clone(&healthy)));
+    let b = replica(ready_signer(), blind, STATE);
+
+    let continuation =
+        HttpContinuation::from_handles(d_prev.clone(), d_irr.clone(), state.as_bytes());
+    let (answer, _e) = signed_request("nonce-R8-peek", &answer_body(&state), Some(continuation));
+    let served = b.handle(served_of(&answer), NOW).await;
+
+    assert_eq!(served.status, 503, "a store outage is not a client fault");
+    assert_eq!(
+        wire_code_of(&served.body),
+        "mcp-re.replay_cache_unavailable",
+        "an unreachable shared tier must not be reported as a forged continuation"
+    );
+    // The peek has no side effect, so nothing was spent and an ordinary retry is correct.
+    assert_retry_posture(&served.body, None);
+
+    // Non-vacuity: on a HEALTHY store the code that means "this continuation does not
+    // bind" is still exactly that, so the assertion above discriminates.
+    let c = replica(ready_signer(), Arc::clone(&healthy), STATE);
+    let spliced = HttpContinuation::from_handles(d_prev.clone(), d_prev, state.as_bytes());
+    let (bad, _e) = signed_request("nonce-R8-splice", &answer_body(&state), Some(spliced));
+    let refused = c.handle(served_of(&bad), NOW).await;
+    assert_eq!(refused.status, 409);
+    assert_eq!(
+        wire_code_of(&refused.body),
+        "mcp-re.continuation_binding_failed"
+    );
+}
+
+/// **R8-C011 / C012 / C049 / C084 / C101.** A `consume` that the store never answered is
+/// not reported as "nothing was spent".
+///
+/// Broken implementation this must catch: `Ok(false) | Err(_) => Err(...)` — one refusal
+/// for two different facts, with `ContinuationState::Consumed` recorded only on
+/// `Ok(true)`. A Redis `DEL` whose reply was lost may well have executed, so the approval
+/// may be destroyed; the exchange nonetheless reported `SafeNothingExecuted`, the client
+/// read a plain retryable conflict, and its retry passed replay admission on a fresh nonce
+/// and then failed permanently as already-answered.
+///
+/// Asserted on the BODY's retry contract, not the status: both implementations refuse.
+#[tokio::test]
+async fn an_indeterminate_continuation_retirement_is_never_reported_as_retry_safe() {
+    const STATE: &str = "state-token-R8-consume";
+    let shared: Arc<dyn AsyncContinuationStore> = Arc::new(InMemoryContinuationStore::new());
+    let a = replica(ready_signer(), Arc::clone(&shared), STATE);
+    let (d_prev, d_irr, state) = open_on(&a, STATE).await;
+
+    // The answering replica reads the SAME entry the opener recorded — so the binding
+    // succeeds and the exchange really does reach the retirement step — and only the
+    // atomic removal fails.
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let store: Arc<dyn AsyncContinuationStore> = Arc::new(ConsumeFailingStore(Arc::clone(&shared)));
+    let b = HttpProfileProxy::new_delegated(
+        actor_resolver(),
+        audience(),
+        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
+        counting_inner(Arc::clone(&calls)),
+        300,
+        ready_signer(),
+    )
+    .with_continuation_store(store, TTL);
+
+    let continuation = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
+    let (answer, _e) = signed_request("nonce-R8-consume", &answer_body(&state), Some(continuation));
+    let served = b.handle(served_of(&answer), NOW).await;
+
+    // The action did not run...
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "refused before the dispatch"
+    );
+    // ...the fault is named as the shared tier's, not the caller's...
+    assert_eq!(served.status, 503);
+    assert_eq!(
+        wire_code_of(&served.body),
+        "mcp-re.replay_cache_unavailable",
+        "a store that did not answer is not evidence of a forged continuation"
+    );
+    // ...and the client is told the approval cannot be reused, which is the whole point:
+    // an ordinary retry destroys it for nothing.
+    assert_retry_posture(&served.body, Some("unsafe_without_new_elicitation"));
+    assert_eq!(
+        execution_status_of(&served.body),
+        Some("not_executed".to_owned())
+    );
+    assert_eq!(
+        continuation_status_of(&served.body),
+        Some("consumed".to_owned())
+    );
+}
+
+/// An inner plane that refuses to admit anything, and never transmits.
+struct ClosedInnerPlane;
+
+impl AsyncInnerServer for ClosedInnerPlane {
+    fn admit(&self) -> Result<(), mcp_re_proxy::async_inner::NotAdmitted> {
+        Err(mcp_re_proxy::async_inner::NotAdmitted(
+            "every inner backend is ejected",
+        ))
+    }
+    fn dispatch<'a>(
+        &'a self,
+        _request: &'a [u8],
+    ) -> mcp_re_proxy::async_inner::InnerResponseFuture<'a> {
+        panic!("a refused inner plane must never be dispatched to")
+    }
+}
+
+/// **R8-C010 / C048 / C092.** A free refusal never runs after the retention reservation.
+///
+/// Broken implementation this must catch: order `reserve_retention_stage` BEFORE
+/// `inner_plane_stage`. `RetentionReservation` has no `Drop` that unlinks its marker and
+/// nothing sweeps `*.pending`, so every request refused at the inner-plane gate — local
+/// saturation or an all-ejected backend set, both inducible by an authenticated client
+/// with concurrent slow calls — leaves a permanent on-disk record whose documented meaning
+/// is "this exact request crossed the execution threshold and its outcome was never
+/// retained". The exchange machine reports the same request as `RefusedBeforeDispatch`.
+///
+/// Asserted on the FILESYSTEM. The status and wire code are identical under both
+/// orderings, so only the marker count distinguishes them.
+#[tokio::test]
+async fn an_inner_plane_refusal_leaves_no_durable_retention_marker() {
+    let dir = WedgedRetentionDir::new("no-marker");
+    let retention = Arc::new(
+        mcp_re_proxy::transparency::EvidenceRetention::open(&dir.0).expect("retention opens"),
+    );
+    let reader = Arc::clone(&retention);
+    let proxy = HttpProfileProxy::new_delegated(
+        actor_resolver(),
+        audience(),
+        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
+        Box::new(ClosedInnerPlane),
+        300,
+        ready_signer(),
+    )
+    .with_evidence_retention(retention);
+
+    let (req, _e) = signed_request("nonce-R8-plane", OPEN_BODY, None);
+    let served = proxy.handle(served_of(&req), NOW).await;
+
+    assert_eq!(served.status, 503);
+    assert_eq!(wire_code_of(&served.body), "mcp-re.inner_plane_unavailable");
+    // Nothing ran and nothing was spent, so the refusal is an ordinary retry.
+    assert_retry_posture(&served.body, None);
+    assert_eq!(
+        reader
+            .pending_reservations()
+            .expect("the retention root is readable"),
+        Vec::<String>::new(),
+        "a request that provably never reached a backend must leave no execution-threshold \
+         marker behind"
+    );
+
+    // Non-vacuity: the retention store IS wired and DOES write for an exchange that
+    // crosses the threshold — so the zero above is the ordering, not a dead store.
+    let dir_ok = WedgedRetentionDir::new("no-marker-ok");
+    let retention_ok = Arc::new(
+        mcp_re_proxy::transparency::EvidenceRetention::open(&dir_ok.0).expect("retention opens"),
+    );
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let healthy = HttpProfileProxy::new_delegated(
+        actor_resolver(),
+        audience(),
+        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
+        counting_inner(Arc::clone(&calls)),
+        300,
+        ready_signer(),
+    )
+    .with_evidence_retention(retention_ok);
+    let (req_ok, _e) = signed_request("nonce-R8-plane-ok", OPEN_BODY, None);
+    assert_eq!(healthy.handle(served_of(&req_ok), NOW).await.status, 200);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(
+        std::fs::read_dir(&dir_ok.0)
+            .expect("readable")
+            .filter_map(|e| e.ok())
+            .count()
+            > 0,
+        "the control must actually have retained something"
+    );
+}
+
+/// An inner plane that admits, then reports a fixed outcome without transmitting anything
+/// the test can observe.
+struct FixedOutcomeInner(InnerOutcome);
+
+impl AsyncInnerServer for FixedOutcomeInner {
+    fn dispatch<'a>(
+        &'a self,
+        _request: &'a [u8],
+    ) -> mcp_re_proxy::async_inner::InnerResponseFuture<'a> {
+        let outcome = self.0.clone();
+        Box::pin(async move { outcome })
+    }
+}
+
+const NOTIFICATION_BODY: &[u8] =
+    br#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"1"}}"#;
+
+fn notification_proxy(outcome: InnerOutcome) -> HttpProfileProxy {
+    HttpProfileProxy::new_delegated(
+        actor_resolver(),
+        audience(),
+        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
+        Box::new(FixedOutcomeInner(outcome)),
+        300,
+        ready_signer(),
+    )
+}
+
+/// **R8-C047 / C050 / C051 / C081 / C083.** A notification the inner plane did not deliver
+/// is not acknowledged with a signed 202.
+///
+/// Broken implementation this must catch: branch to `answer_notification` before
+/// `observe_inner_stage` and drop the `InnerOutcome` unread. All four outcomes then
+/// collapse into one delegated-signed bodyless 202 that the client verifies and, per the
+/// SDK contract, treats as the signal to stop — so a `notifications/cancelled` the proxy
+/// provably never transmitted is indistinguishable from one the backend received, under a
+/// signature from the enforcement boundary. Because `observe_origin` was never called on
+/// that arm, the machine's own guard against serving synthesized transport-failure bytes
+/// as a success could not fire either.
+///
+/// RB-09's split is asserted per outcome: nothing transmitted is 503, transmitted with no
+/// answer is 504, and the 504 states that the message may have been acted on.
+#[tokio::test]
+async fn a_notification_the_inner_plane_never_delivered_is_not_acknowledged() {
+    let lost = notification_proxy(InnerOutcome::NotDispatched(
+        "every inner backend is ejected",
+    ));
+    let (req, _e) = signed_request("nonce-R8-note-lost", NOTIFICATION_BODY, None);
+    let served = lost.handle(served_of(&req), NOW).await;
+    assert_ne!(
+        served.status, 202,
+        "a message that was never transmitted must not earn a signed acknowledgement"
+    );
+    assert_eq!(served.status, 503);
+    assert_eq!(wire_code_of(&served.body), "mcp-re.inner_plane_unavailable");
+
+    let timed_out = notification_proxy(InnerOutcome::Indeterminate("inner request timed out"));
+    let (req2, _e) = signed_request("nonce-R8-note-timeout", NOTIFICATION_BODY, None);
+    let served2 = timed_out.handle(served_of(&req2), NOW).await;
+    assert_ne!(served2.status, 202);
+    assert_eq!(served2.status, 504);
+    assert_eq!(
+        wire_code_of(&served2.body),
+        "mcp-re.inner_dispatch_indeterminate"
+    );
+    assert_eq!(
+        execution_status_of(&served2.body),
+        Some("possibly_executed".to_owned()),
+        "a notification transmitted with no answer may have been acted on"
+    );
+}
+
+/// The other half of the split, and the non-vacuity control for it: a notification the
+/// backend RECEIVED is still acknowledged with a bodyless 202.
+///
+/// Both accepting outcomes are exercised, and `InvalidUpstream` is the load-bearing one.
+/// A conformant Streamable-HTTP backend answers a notification with `202 Accepted` and no
+/// body — no `application/json` content type — which the inner client classifies as an
+/// unusable answer from a backend that nevertheless received the message. Refusing it
+/// would break every conformant notification, so the split is on delivery, not on
+/// whether the reply was usable.
+#[tokio::test]
+async fn a_delivered_notification_is_still_acknowledged_with_a_202() {
+    let replied = notification_proxy(InnerOutcome::Replied(Vec::new()));
+    let (req, _e) = signed_request("nonce-R8-note-ok", NOTIFICATION_BODY, None);
+    let served = replied.handle(served_of(&req), NOW).await;
+    assert_eq!(served.status, 202, "the backend received the message");
+    assert!(served.body.is_empty(), "the 202 is bodyless");
+
+    let bodyless_202 = notification_proxy(InnerOutcome::InvalidUpstream(
+        "inner backend did not answer application/json",
+    ));
+    let (req2, _e) = signed_request("nonce-R8-note-202", NOTIFICATION_BODY, None);
+    let served2 = bodyless_202.handle(served_of(&req2), NOW).await;
+    assert_eq!(
+        served2.status, 202,
+        "a backend that answered 202-no-body received the notification"
+    );
+}
+
+/// An inner plane that retires the delegated signer mid-flight, then fails the dispatch.
+struct SignerRetiringInner(Arc<DelegatedServerSigner>);
+
+impl AsyncInnerServer for SignerRetiringInner {
+    fn dispatch<'a>(
+        &'a self,
+        _request: &'a [u8],
+    ) -> mcp_re_proxy::async_inner::InnerResponseFuture<'a> {
+        self.0.retire();
+        Box::pin(async { InnerOutcome::Indeterminate("inner request timed out") })
+    }
+}
+
+/// **R8-C070 / C071.** A post-dispatch refusal is signed and states its execution claim
+/// even when the signer is retired after the exchange snapshotted its key.
+///
+/// Broken implementation this must catch: `signed_rejection` re-asks `self.signer.current`
+/// and falls back to `unsigned_error` when it is gone, dropping the request binding, the
+/// signature AND the `ExecutionDisposition`. `current` returns `None` for a retired signer,
+/// which a drain or a failed rotation can produce between ANSWERABLE and a post-dispatch
+/// refusal — so during exactly those windows the 504 whose entire purpose is to say "the
+/// backend may have acted" left as a bare unsigned body a client cannot distinguish from an
+/// on-path forgery, and which its verifier fails closed on as a transport error, i.e. as
+/// did-not-run.
+#[tokio::test]
+async fn a_post_dispatch_refusal_is_signed_with_the_key_the_exchange_snapshotted() {
+    let signer = ready_signer();
+    let proxy = HttpProfileProxy::new_delegated(
+        actor_resolver(),
+        audience(),
+        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
+        Box::new(SignerRetiringInner(Arc::clone(&signer))),
+        300,
+        Arc::clone(&signer),
+    );
+
+    let (req, _e) = signed_request("nonce-R8-retired", OPEN_BODY, None);
+    let served = proxy.handle(served_of(&req), NOW).await;
+
+    assert_eq!(served.status, 504);
+    assert!(
+        served
+            .headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("signature")),
+        "a post-dispatch refusal must not degrade to an unsigned body"
+    );
+    let body: serde_json::Value =
+        serde_json::from_slice(&served.body).expect("the refusal body is JSON");
+    assert!(
+        body.pointer("/_meta/se.syncom~1mcp-re.http.response")
+            .and_then(|b| b.get("server_delegation"))
+            .is_some(),
+        "the inline delegation credential rides with the signed refusal: {body}"
+    );
+    assert_eq!(
+        execution_status_of(&served.body),
+        Some("possibly_executed".to_owned())
+    );
+    // The signer really is retired: a NEW exchange on the same proxy cannot be answered at
+    // all, which is what makes the assertions above about the snapshot and not about a
+    // signer that happened to still be live.
+    let (req2, _e) = signed_request("nonce-R8-retired-2", OPEN_BODY, None);
+    let served2 = proxy.handle(served_of(&req2), NOW).await;
+    assert_eq!(served2.status, 503);
+    assert_eq!(
+        wire_code_of(&served2.body),
+        "mcp-re.delegated_signing_unavailable"
+    );
+}
+
+/// **R8-C053 / C054.** A body that is not a legal JSON-RPC request never reaches the
+/// backend, and never earns a signed acknowledgement.
+///
+/// Broken implementation this must catch: the one in the tree before the validator was
+/// wired — the only member ever read on the request side was `id`, by `outstanding_id`,
+/// and its ABSENCE was read as "notification". So an object carrying nothing but an
+/// evidence block, or a document that is simultaneously a request and a response, or one
+/// whose `jsonrpc` is not `"2.0"`, was forwarded to the inner server and then acknowledged
+/// with a delegated-signed 202 asserting the enforcement boundary had accepted an MCP
+/// message. A `null` id was folded into the notification arm for the same reason, and the
+/// two are answered differently — one with a bound signed reply, the other with a
+/// bodyless 202.
+///
+/// Asserted on the BACKEND COUNT, which is the mechanism: every one of these bodies would
+/// have produced a plausible-looking response from the proxy either way, and only the
+/// dispatch count distinguishes "refused" from "refused after running it".
+#[tokio::test]
+async fn a_body_that_is_not_a_json_rpc_request_never_reaches_the_backend() {
+    let illegal: &[(&str, &[u8])] = &[
+        (
+            "no method member",
+            br#"{"jsonrpc":"2.0","id":1,"params":{}}"#,
+        ),
+        ("no jsonrpc member", br#"{"id":1,"method":"tools/call"}"#),
+        (
+            "wrong jsonrpc version",
+            br#"{"jsonrpc":"1.0","id":1,"method":"tools/call"}"#,
+        ),
+        (
+            "also a response",
+            br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","result":{}}"#,
+        ),
+        (
+            "scalar params",
+            br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":7}"#,
+        ),
+        (
+            "null id folded into a notification",
+            br#"{"jsonrpc":"2.0","id":null,"method":"notifications/cancelled"}"#,
+        ),
+        ("bare evidence carrier", br#"{"greeting":"hello"}"#),
+    ];
+
+    for (name, body) in illegal {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let proxy = HttpProfileProxy::new_delegated(
+            actor_resolver(),
+            audience(),
+            AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+            ProxyDispatchConfig {
+                fleet_strict: false,
+                tier: None,
+            },
+            counting_inner(Arc::clone(&calls)),
+            300,
+            ready_signer(),
+        );
+
+        let (req, _e) = signed_request(&format!("nonce-R8-env-{name}"), body, None);
+        let served = proxy.handle(served_of(&req), NOW).await;
+
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "{name}: a body that is not an MCP message must not be dispatched"
+        );
+        assert_ne!(served.status, 202, "{name}: acknowledged as a notification");
+        assert_ne!(served.status, 200, "{name}: served as a successful reply");
+        assert_eq!(served.status, 400, "{name}");
+        assert_eq!(
+            wire_code_of(&served.body),
+            "mcp-re.malformed_envelope",
+            "{name}"
+        );
+        // Refused before admission: nothing ran and nothing was spent.
+        assert_retry_posture(&served.body, None);
+
+        // The refusal is FREE, and the replay slot proves it: the same nonce is still
+        // admissible for a well-formed request. Without this the test would pass against
+        // an implementation that refused correctly but had already burned the nonce.
+        let (retry, _e) = signed_request(&format!("nonce-R8-env-{name}"), OPEN_BODY, None);
+        assert_eq!(
+            proxy.handle(served_of(&retry), NOW).await.status,
+            200,
+            "{name}: the refused envelope must not have spent the replay slot"
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+}
+
+/// The non-vacuity control for the validator: the two LEGAL request shapes still pass, and
+/// still reach their own terminals.
+///
+/// Without this, a validator that refused every body would satisfy the test above.
+#[tokio::test]
+async fn the_two_legal_request_shapes_still_reach_their_terminals() {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let bodied = HttpProfileProxy::new_delegated(
+        actor_resolver(),
+        audience(),
+        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
+        counting_inner(Arc::clone(&calls)),
+        300,
+        ready_signer(),
+    );
+    let (req, _e) = signed_request("nonce-R8-env-ok", OPEN_BODY, None);
+    assert_eq!(bodied.handle(served_of(&req), NOW).await.status, 200);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    let notes = notification_proxy(InnerOutcome::Replied(Vec::new()));
+    let (note, _e) = signed_request("nonce-R8-env-note", NOTIFICATION_BODY, None);
+    assert_eq!(notes.handle(served_of(&note), NOW).await.status, 202);
 }

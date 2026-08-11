@@ -60,12 +60,6 @@ import { ContinuationHandles, CorrelationStore, type PendingRequest } from "./co
 import { McpReError, McpReSdkError, type Signer, type SignerPolicy } from "./custody.js";
 
 /**
- * The response-side body evidence block. Stripped before the result reaches the app:
- * MCP-RE's own evidence is not part of the MCP result.
- */
-const RESPONSE_BLOCK_KEY = "se.syncom/mcp-re.http.response";
-
-/**
  * JSON-RPC application error code for a delivered MCP-RE failure. The precise cause is
  * always the frozen `mcp-re.*` token in `.message`.
  *
@@ -180,6 +174,62 @@ export class ContinuationNotAnswered extends McpReSdkError {
     super(detail);
     this.name = "ContinuationNotAnswered";
   }
+}
+
+/**
+ * A verified reply body is not a JSON-RPC RESPONSE, so it is not an answer at all.
+ *
+ * A signature proves the server said these bytes. It does not prove the bytes are a reply
+ * to anything, and `JSONRPCMessageSchema` is a UNION: a body carrying both a legal
+ * `result` and a top-level `method` validates as a `JSONRPCRequest`, and `Protocol`
+ * dispatches it as a server-initiated request — `sampling/createMessage`,
+ * `elicitation/create`, `roots/list` — running the application's handlers on
+ * peer-chosen params over a channel MCP-RE profiles no carrier for, and one `send()`
+ * explicitly refuses in the other direction. The awaiting `callTool` never resolves
+ * either, because its id was consumed as an inbound request id.
+ *
+ * The Rust ambassador refuses the same body and so does the Python twin; this is the
+ * behaviour the byte-parity fixtures cannot see.
+ */
+export class VerifiedReplyNotAResponse extends McpReSdkError {
+  constructor(detail: string) {
+    super(detail);
+    this.name = "VerifiedReplyNotAResponse";
+  }
+}
+
+/**
+ * The structured facts a verified rejection receipt carried, for `error.data`.
+ *
+ * `requestBound` is the core's verdict on whether the receipt is tied to THIS
+ * transmission (RSP-7). The rest is the ADR-MCPRE-058 §10 execution / retry contract the
+ * server derived from its exchange machine and signed into the body: without it a
+ * post-dispatch refusal is indistinguishable from an ordinary outage, and the caller's
+ * retry re-executes a tool call that already ran.
+ *
+ * Only members the receipt actually carried are emitted. An absent `executionStatus`
+ * means the server stated nothing, and inventing `not_executed` for it would collapse
+ * "unknown whether it ran" into "it did not run" at the one place that decides. The
+ * Python twin emits the same keys — this is behaviour, so byte fixtures do not cover it.
+ */
+function rejectionData(verified: {
+  bound: boolean;
+  executionStatus?: string | null;
+  retrySafety?: string | null;
+  continuationStatus?: string | null;
+  retentionStatus?: string | null;
+}): Record<string, unknown> {
+  const data: Record<string, unknown> = { requestBound: verified.bound };
+  const members: [string, string | null | undefined][] = [
+    ["executionStatus", verified.executionStatus],
+    ["retrySafety", verified.retrySafety],
+    ["continuationStatus", verified.continuationStatus],
+    ["retentionStatus", verified.retentionStatus],
+  ];
+  for (const [key, value] of members) {
+    if (value !== undefined && value !== null) data[key] = value;
+  }
+  return data;
 }
 
 /**
@@ -379,21 +429,58 @@ export interface McpReConfig {
  *
  * Read only AFTER verification: the content-digest covered these bytes.
  *
- * MCP-RE's own evidence is not part of the MCP result, so it is stripped. The id is
- * restored because an ADR-MCPS-047 answer leg is an independent request with its own id
+ * MCP-RE's own evidence is not part of the MCP result, and the rebuild below drops it
+ * with every other top-level member the server sent. The id is restored because an ADR-MCPS-047 answer leg is an independent request with its own id
  * (SEP-2322 §retry), while the client issued exactly one call and is awaiting the id it
  * chose. Relabelling is the adapter's job at that seam — every hop was verified here, so
  * the terminal result it hands up is a complete record (§9.3), not a spliced one.
+ *
+ * The envelope is REBUILT from the one member the server sent, not edited in place.
+ * Editing left every other top-level key in the document, and `JSONRPCMessageSchema` is a
+ * union that accepts a request — so a body carrying both a legal `result` and a `method`
+ * validated as a `JSONRPCRequest` and was dispatched by `Client` as a SERVER-INITIATED
+ * request. See {@link VerifiedReplyNotAResponse}.
  */
 function plainMcpReply(body: Buffer, requestId: RequestId): unknown {
-  const doc = JSON.parse(body.toString("utf8"));
-  const meta = doc?._meta;
-  if (meta && typeof meta === "object" && RESPONSE_BLOCK_KEY in meta) {
-    delete meta[RESPONSE_BLOCK_KEY];
-    if (Object.keys(meta).length === 0) delete doc._meta;
+  const response = plainResponseObject(JSON.parse(body.toString("utf8")));
+  response.id = requestId;
+  return response;
+}
+
+/**
+ * The verified reply as a JSON-RPC RESPONSE, or throw.
+ *
+ * The one shape `Client` is awaiting is a response object carrying exactly one of
+ * `result` / `error`. Every other shape is refused here rather than handed to the union
+ * schema, which would pick whichever arm matched. Mirrors the Rust ambassador's
+ * `plain_response_from_verified` and the Python twin's `_plain_response_object`.
+ */
+function plainResponseObject(doc: unknown): Record<string, unknown> {
+  if (doc === null || typeof doc !== "object" || Array.isArray(doc)) {
+    throw new VerifiedReplyNotAResponse(
+      `a verified reply must be a JSON-RPC response object, got ${Array.isArray(doc) ? "array" : typeof doc}`,
+    );
   }
-  doc.id = requestId;
-  return doc;
+  const object = doc as Record<string, unknown>;
+  if ("method" in object) {
+    // A JSON-RPC response has no `method`. Its presence is what makes the union schema
+    // pick the REQUEST arm, so this is not a stray field — it is the whole confusion.
+    // Refused rather than dropped: rebuilding would silently accept a reply the peer
+    // deliberately shaped as something else.
+    throw new VerifiedReplyNotAResponse(
+      "a verified reply carries a top-level `method`; a JSON-RPC response has none",
+    );
+  }
+  const hasResult = "result" in object;
+  const hasError = "error" in object;
+  if (hasResult && hasError) {
+    throw new VerifiedReplyNotAResponse("a verified reply carries both a result and an error");
+  }
+  if (!hasResult && !hasError) {
+    throw new VerifiedReplyNotAResponse("a verified reply carries neither a result nor an error");
+  }
+  const member = hasResult ? "result" : "error";
+  return { jsonrpc: "2.0", id: object.id, [member]: object[member] };
 }
 
 /** The `result` object of a verified reply, for an answer-leg handler to read. */
@@ -991,14 +1078,27 @@ export class McpReHttpTransport implements Transport {
           return errorMessage(
             request.id,
             verified.wireCode ? verified.wireCode : "mcp-re.response_sig_invalid",
-            { requestBound: verified.bound },
+            rejectionData(verified),
           );
         }
 
         if (verified.requestState === undefined || verified.requestState === null) {
           this.#correlation.take(correlationId, now());
           outstanding.delete(correlationId);
-          return JSONRPCMessageSchema.parse(plainMcpReply(httpReply.body, request.id));
+          // The shape check runs BEFORE the union schema, which accepts a request arm:
+          // a verified body carrying a `method` would otherwise be dispatched by
+          // `Client` as a server-initiated request. `plainMcpReply` rebuilds the
+          // envelope, so nothing beyond `result` / `error` can reach the parser.
+          let plain: unknown;
+          try {
+            plain = plainMcpReply(httpReply.body, request.id);
+          } catch (e) {
+            if (!(e instanceof VerifiedReplyNotAResponse)) throw e;
+            return errorMessage(request.id, "mcp-re.malformed_envelope", {
+              detail: e.message,
+            });
+          }
+          return JSONRPCMessageSchema.parse(plain);
         }
 
         // A pause. Associate without consuming — the open leg is answered by its answer

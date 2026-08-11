@@ -24,6 +24,14 @@ sdk/**/native/
 # that gate scans TRACKED files. On this path the ignore list is the only control.
 work/
 **/work/
+# Local agent and editor state. Gitignored, so this list is again the only control:
+# `.claude/settings.local.json` is where env vars and MCP server tokens live, and the
+# skill tree next to it holds private review material.
+.claude/
+**/.claude/
+.vscode/
+.idea/
+.verification/
 **/.env
 **/.env.*
 **/*.pem

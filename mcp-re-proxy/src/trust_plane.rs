@@ -233,9 +233,11 @@ impl TrustPlane {
         // Re-read `--trust` on a cadence so a key removed from the file stops resolving on
         // a RUNNING replica. Without it the tier wrappers above wrap an immutable map and
         // the guarantee printed a few lines up is not one the data plane can keep.
-        // Whether the store behind the resolver is still changing. Only meaningful where a
-        // reload is running: with `--trust-reload-secs` absent the store is frozen by
-        // design and says so on the OFF line below, so there is no freshness to lose.
+        // Whether the store behind the resolver is still being maintained. Two distinct
+        // sources set it, and only one of them is the reload's: exhausting the reload
+        // failure budget (recoverable) and the plane's own retirement in `Drop`
+        // (terminal). The second exists in every configuration, including one with no
+        // `--trust-reload-secs`, so this flag is meaningful there too.
         let trust_freshness = Arc::new(TrustStoreFreshness::default());
         if let Some(interval_secs) = config.trust_reload_secs {
             spawn_trust_reload_task(
@@ -283,17 +285,18 @@ impl TrustPlane {
         // coordinate; the KEY comes from the resolver on every request.
         let resolver: Arc<dyn mcp_re_core::TrustResolver + Send + Sync> = Arc::from(resolver);
         // OUTSIDE the tier wrappers, so a bounded-cache hit cannot answer from a snapshot
-        // the reload has stopped being able to refresh. Only where a reload is running: a
-        // deployment without one has already been told its store cannot change at all.
+        // the reload has stopped being able to refresh — and UNCONDITIONAL, because the
+        // latch it reads is set by the plane's `Drop` in every configuration, not only
+        // where a reload runs. A resolver handed out unwrapped reads no latch at all, so
+        // the plane's documented post-owner transition would not exist for a deployment
+        // that configured no cadence, which is the default tier's accepted shape. Where no
+        // reload runs the flag is only ever set by `Drop`, so the standing cost is one
+        // relaxed atomic load per verification.
         let resolver: Arc<dyn mcp_re_core::TrustResolver + Send + Sync> =
-            if config.trust_reload_secs.is_some() {
-                Arc::new(StaleFailsClosed {
-                    inner: resolver,
-                    freshness: Arc::clone(&trust_freshness),
-                })
-            } else {
-                resolver
-            };
+            Arc::new(StaleFailsClosed {
+                inner: resolver,
+                freshness: Arc::clone(&trust_freshness),
+            });
 
         Ok(TrustPlane {
             resolver,
@@ -418,7 +421,8 @@ impl TrustStoreFreshness {
     }
 }
 /// The request-trust resolver, refusing to answer at all once the store behind it has
-/// stopped changing.
+/// stopped being maintained — whether because the reload exhausted its failure budget or
+/// because the owning [`TrustPlane`] retired.
 ///
 /// `Unavailable` and not `NotFound`: a frozen store still HOLDS the revoked key, so
 /// answering from it is the one outcome that must not happen, and reporting the outage
@@ -436,10 +440,11 @@ impl mcp_re_core::TrustResolver for StaleFailsClosed {
     ) -> Result<mcp_re_core::VerificationKey, mcp_re_core::TrustResolverError> {
         if self.freshness.is_stale() {
             return Err(mcp_re_core::TrustResolverError::Unavailable {
-                details: "the trust store has not been re-read successfully for several \
-                          cadences; a key revoked in --trust would still resolve from the \
-                          frozen snapshot, so verification fails closed until a reload \
-                          succeeds"
+                details: "nothing is maintaining the trust store: either --trust has not \
+                          been re-read successfully for several cadences, or the trust \
+                          plane that owned the refresh is gone. A key revoked in --trust \
+                          would still resolve from the frozen snapshot, so verification \
+                          fails closed"
                     .to_string(),
             });
         }
@@ -1008,6 +1013,96 @@ mod handle_lifetime_tests {
             "the directory must stay readable rather than emptying or panicking"
         );
         assert_eq!(signers.signer_for("unknown-kid"), None);
+    }
+
+    /// The same contract, on a plane built by [`TrustPlane::materialize`] from a
+    /// configuration that set NO `--trust-reload-secs`.
+    ///
+    /// The tests above go through `for_teardown_test`, which constructs the plane's
+    /// resolver directly. That fixture cannot see which resolver `materialize` decides to
+    /// hand out, and `materialize` used to install the staleness guard only when a reload
+    /// cadence was configured — so on the default tier, which validation accepts with no
+    /// cadence, the latch `Drop` sets was read by nothing and a surviving resolver kept
+    /// answering from the frozen snapshot. This drives the production constructor in
+    /// exactly that shape.
+    #[test]
+    fn a_plane_materialized_without_a_reload_cadence_still_fails_closed_after_drop() {
+        let key = mcp_re_core::SigningKey::from_seed_bytes(&[4u8; 32]).public_key();
+        let path = std::env::temp_dir().join(format!(
+            "mcp_re_trust_plane_no_cadence_{}.json",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            format!(
+                r#"[{{"signer":"{SIGNER}","key_id":"{KID}","public_key":"{}"}}]"#,
+                key.to_b64url()
+            ),
+        )
+        .expect("write trust file");
+
+        let argv: Vec<String> = [
+            "--bind",
+            "127.0.0.1:0",
+            "--audience",
+            "did:example:server-1",
+            "--server-signer",
+            "did:example:server-1",
+            "--server-key-id",
+            "response-kid",
+            "--delegated-trust-epoch",
+            "epoch-1",
+            "--signing-key-seed",
+            "/nonexistent/seed",
+            "--tls-cert",
+            "/nonexistent/cert",
+            "--tls-key",
+            "/nonexistent/key",
+            "--client-ca",
+            "/nonexistent/ca",
+            "--target-uri",
+            "https://localhost/",
+            "--trust-domain",
+            "example.org",
+            "--replay-cache",
+            "file",
+            "--replay-path",
+            "/nonexistent/replay",
+            "--inner-http-url",
+            "http://127.0.0.1:9/mcp",
+            "--trust",
+        ]
+        .iter()
+        .map(|s| (*s).to_string())
+        .chain(std::iter::once(path.to_string_lossy().into_owned()))
+        .collect();
+
+        let config = crate::cli::parse_args(&argv).expect("args parse");
+        assert!(
+            config.trust_reload_secs.is_none(),
+            "the shape under test is the one with NO reload cadence"
+        );
+        let config = crate::cli::ValidatedConfig::try_from(config).expect("config validates");
+        let plane =
+            TrustPlane::materialize(&config, "response-kid", Arc::new(AtomicBool::new(false)))
+                .expect("the trust plane materializes");
+
+        let resolver = plane.resolver();
+        assert!(
+            resolver.resolve(SIGNER, KID).is_ok(),
+            "a live plane resolves an enrolled request signer"
+        );
+
+        drop(plane);
+        let _ = std::fs::remove_file(&path);
+
+        match resolver.resolve(SIGNER, KID) {
+            Err(mcp_re_core::TrustResolverError::Unavailable { .. }) => {}
+            other => panic!(
+                "a resolver outliving a plane materialized without --trust-reload-secs \
+                 answered from a snapshot nothing is re-reading, got {other:?}"
+            ),
+        }
     }
 
     /// A handle held past the plane's life must not keep the refresh machinery running.

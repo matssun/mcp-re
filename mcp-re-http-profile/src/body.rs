@@ -25,7 +25,7 @@ const META_KEY: &str = "_meta";
 /// so anything the round trip alters is what gets signed and delivered as authentic,
 /// with the client verifying the altered value as a correctly bound response. The
 /// proxy is a pass-through for application payload, and this is the one place it
-/// could stop being one, so the two alterations that change what a reader SEES are
+/// could stop being one, so every alteration that changes what a reader SEES is
 /// refused rather than performed:
 ///
 ///   * **An integer outside the i64/u64 range.** Without `arbitrary_precision`,
@@ -33,20 +33,26 @@ const META_KEY: &str = "_meta";
 ///     `123456789012345678901234567890` comes back as `1.2345678901234568e29`, having
 ///     lost thirteen significant digits. A 128-bit identifier, a nanosecond timestamp
 ///     or a fixed-point monetary value would be silently rewritten.
+///   * **A number the `f64` carrier cannot hold.** `serde_json` without
+///     `arbitrary_precision` carries every non-integer as `f64`, so
+///     `1234567890123456789.5` comes back as `1.2345678901234568e18` — a fixed-point
+///     amount or a high-precision measurement rewritten inside the signed bytes.
 ///   * **A duplicate member name.** The last one wins and the others vanish from the
-///     signed bytes.
+///     signed bytes. Duplication is decided on the DECODED name, because
+///     `serde_json::Map` is keyed on the decoded string: `"x"` and `"x"` are one
+///     member name however differently they are spelled on the wire.
 ///
 /// Member ORDER is rewritten too, and is not refusable here: every message this
 /// profile has ever signed carries the re-serialized order, so the order IS the
 /// emitted form. RFC 8259 §4 states object members are unordered, so no reader may
-/// depend on it, and unlike the two above it changes no value anyone reads.
+/// depend on it, and unlike the refusals above it changes no value anyone reads.
 ///
 /// Runs after the body has parsed, so the scan may assume well-formed JSON: it
 /// tracks string literals (to avoid reading their contents as structure), object
 /// nesting, and member names, and needs no error recovery.
-fn reject_unrepresentable_json(body: &[u8]) -> Result<(), HttpProfileError> {
+pub fn reject_unrepresentable_json(body: &[u8]) -> Result<(), HttpProfileError> {
     // One frame per open object; `None` for an array, whose elements have no names.
-    let mut frames: Vec<Option<std::collections::HashSet<&[u8]>>> = Vec::new();
+    let mut frames: Vec<Option<std::collections::HashSet<String>>> = Vec::new();
     let mut i = 0usize;
     while i < body.len() {
         match body[i] {
@@ -56,7 +62,7 @@ fn reject_unrepresentable_json(body: &[u8]) -> Result<(), HttpProfileError> {
                 while j < body.len() && body[j] != b'"' {
                     j += if body[j] == b'\\' { 2 } else { 1 };
                 }
-                let name = &body[start..j.min(body.len())];
+                let raw = &body[start..j.min(body.len())];
                 i = j + 1;
                 // A string followed by `:` is a member name; nothing else can be.
                 let mut k = i;
@@ -64,6 +70,7 @@ fn reject_unrepresentable_json(body: &[u8]) -> Result<(), HttpProfileError> {
                     k += 1;
                 }
                 if k < body.len() && body[k] == b':' {
+                    let name = decoded_member_name(raw)?;
                     if let Some(Some(names)) = frames.last_mut() {
                         if !names.insert(name) {
                             return Err(HttpProfileError::MalformedEvidence(
@@ -93,23 +100,89 @@ fn reject_unrepresentable_json(body: &[u8]) -> Result<(), HttpProfileError> {
                     i += 1;
                 }
                 let token = &body[start..i];
-                // Only INTEGER syntax is checked. A token with a fraction or an
-                // exponent is a JSON number whose carrier is `f64` by construction
-                // (RFC 8259 §6), and `f64` round-trips through `serde_json` exactly.
-                if !token.iter().any(|b| matches!(b, b'.' | b'e' | b'E')) {
-                    let text = std::str::from_utf8(token)
-                        .map_err(|_| HttpProfileError::MalformedEvidence("body json"))?;
-                    if text.parse::<i64>().is_err() && text.parse::<u64>().is_err() {
+                let text = std::str::from_utf8(token)
+                    .map_err(|_| HttpProfileError::MalformedEvidence("body json"))?;
+                if token.iter().any(|b| matches!(b, b'.' | b'e' | b'E')) {
+                    if !decimal_survives_the_f64_carrier(text) {
                         return Err(HttpProfileError::MalformedEvidence(
-                            "body carries an integer this profile cannot sign without altering it",
+                            "body carries a number this profile cannot sign without altering it",
                         ));
                     }
+                } else if text.parse::<i64>().is_err() && text.parse::<u64>().is_err() {
+                    return Err(HttpProfileError::MalformedEvidence(
+                        "body carries an integer this profile cannot sign without altering it",
+                    ));
                 }
             }
             _ => i += 1,
         }
     }
     Ok(())
+}
+
+/// The member name as `serde_json` keys it: the raw bytes between the quotes with JSON
+/// escapes decoded.
+///
+/// Duplication must be decided on this form. `serde_json::Map` is keyed on the decoded
+/// string, so `"x"` and `"x"` are ONE member there and the earlier value is
+/// dropped on the way into the signed bytes; keyed on the raw slice they are two
+/// distinct names and the refusal never fires.
+fn decoded_member_name(raw: &[u8]) -> Result<String, HttpProfileError> {
+    let malformed = || HttpProfileError::MalformedEvidence("body json");
+    if !raw.contains(&b'\\') {
+        return std::str::from_utf8(raw)
+            .map(str::to_owned)
+            .map_err(|_| malformed());
+    }
+    let mut quoted = Vec::with_capacity(raw.len() + 2);
+    quoted.push(b'"');
+    quoted.extend_from_slice(raw);
+    quoted.push(b'"');
+    serde_json::from_slice::<String>(&quoted).map_err(|_| malformed())
+}
+
+/// Significant decimal digits an `f64` carries with no loss of value: within this many,
+/// distinct decimals map to distinct `f64`s and are recovered from them exactly.
+const EXACTLY_CARRIED_DECIMAL_DIGITS: usize = 15;
+
+/// Whether a JSON number token carrying a fraction or an exponent keeps its value
+/// through the `f64` the composer re-serializes it from.
+///
+/// `f64` → text → `f64` is exact, but the direction taken here is text → `f64` → text,
+/// and that one is not: `1234567890123456789.5` is emitted as `1.2345678901234568e18`.
+/// Two conditions make the emitted decimal equal the received one:
+///
+///   * the significand carries at most [`EXACTLY_CARRIED_DECIMAL_DIGITS`] significant
+///     digits, so the shortest round-trip form `serde_json` emits has the same value; and
+///   * the carrier neither overflowed to an infinity nor flushed a nonzero value to
+///     zero.
+///
+/// Spelling is not value: `1e2` is emitted as `100.0` and is admitted, the same way
+/// member ORDER is rewritten and admitted. What is refused is a change to the number a
+/// reader sees.
+fn decimal_survives_the_f64_carrier(text: &str) -> bool {
+    let Ok(value) = text.parse::<f64>() else {
+        return false;
+    };
+    if !value.is_finite() {
+        return false;
+    }
+    let significand = text.split(['e', 'E']).next().unwrap_or(text);
+    let digits: Vec<u8> = significand.bytes().filter(|b| b.is_ascii_digit()).collect();
+    let Some(first) = digits.iter().position(|d| *d != b'0') else {
+        // A zero significand — `0`, `0.000`, `0e10`. Exactly carried.
+        return true;
+    };
+    if value == 0.0 {
+        // A nonzero decimal the carrier flushed to zero.
+        return false;
+    }
+    let last = digits
+        .iter()
+        .rposition(|d| *d != b'0')
+        .expect("a nonzero digit was just found");
+    let significant_digits = last - first + 1;
+    significant_digits <= EXACTLY_CARRIED_DECIMAL_DIGITS
 }
 
 /// Insert `block` under top-level `_meta[key]` and return the re-serialized body
@@ -277,6 +350,98 @@ mod tests {
         ] {
             insert_meta_block(ok.as_bytes(), "k.demo", &Demo { a: 1 })
                 .unwrap_or_else(|e| panic!("{ok} must still compose: {e:?}"));
+        }
+    }
+
+    /// Two escaping-variant spellings of one member name are ONE member to
+    /// `serde_json::Map`, so the earlier value vanishes from the signed bytes exactly as
+    /// the plain duplicate would. The refusal is decided on the decoded name.
+    #[test]
+    fn an_escaped_duplicate_member_name_is_refused_like_a_plain_one() {
+        for body in [
+            r#"{"result":{"amount":100,"\u0061mount":1}}"#,
+            r#"{"result":{"\u0061mount":1,"amount":100}}"#,
+            r#"{"result":{"a\u0062":1,"ab":2}}"#,
+            r#"{"result":{"\ud83d\ude00":1,"😀":2}}"#,
+        ] {
+            assert_eq!(
+                insert_meta_block(body.as_bytes(), "k.demo", &Demo { a: 1 }).unwrap_err(),
+                HttpProfileError::MalformedEvidence("body object has a duplicate member name"),
+                "{body} was composed rather than refused",
+            );
+        }
+        // The negative control: composing it really does delete a value.
+        let mutated = serde_json::to_vec(
+            &serde_json::from_slice::<Value>(br#"{"result":{"amount":100,"\u0061mount":1}}"#)
+                .expect("parses"),
+        )
+        .expect("re-serializes");
+        assert!(
+            !String::from_utf8(mutated).unwrap().contains("100"),
+            "the escaped spelling really does collapse last-wins"
+        );
+        // An escaped name that is NOT a duplicate still composes.
+        insert_meta_block(
+            br#"{"result":{"\u0061mount":1,"other":2}}"#,
+            "k.demo",
+            &Demo { a: 1 },
+        )
+        .expect("a lone escaped name is not a duplicate");
+    }
+
+    /// A decimal wider than the `f64` carrier is rewritten by the round trip just as an
+    /// oversized integer is, and is refused on the same ground.
+    #[test]
+    fn a_decimal_the_round_trip_would_alter_is_refused_not_rewritten() {
+        for value in [
+            "1234567890123456789.5",
+            "0.12345678901234567890123",
+            "1.0000000000000000001",
+            "1e-400",
+            "-1234567890123456789.5",
+        ] {
+            let body = format!(r#"{{"jsonrpc":"2.0","result":{{"v":{value}}}}}"#);
+            let err = insert_meta_block(body.as_bytes(), "k.demo", &Demo { a: 1 })
+                .expect_err(&format!("{value} must be refused"));
+            assert_eq!(
+                err,
+                HttpProfileError::MalformedEvidence(
+                    "body carries a number this profile cannot sign without altering it"
+                ),
+                "{value}",
+            );
+        }
+        // An exponent past the carrier's range is refused by the parse itself, one step
+        // earlier — still refused, never composed.
+        assert!(insert_meta_block(
+            br#"{"jsonrpc":"2.0","result":{"v":1e400}}"#,
+            "k.demo",
+            &Demo { a: 1 }
+        )
+        .is_err());
+    }
+
+    /// The mirror: a decimal the carrier holds exactly composes AND arrives with its
+    /// value intact. Asserting composition alone would not have caught the rewrite.
+    #[test]
+    fn a_representable_decimal_keeps_its_value_through_the_composer() {
+        for (value, expect) in [
+            ("1.5", 1.5f64),
+            ("-2.5e-3", -2.5e-3),
+            ("1e2", 100.0),
+            ("0.1", 0.1),
+            ("123456789012345.0", 123456789012345.0),
+            ("0.000", 0.0),
+        ] {
+            let body = format!(r#"{{"jsonrpc":"2.0","result":{{"v":{value}}}}}"#);
+            let out = insert_meta_block(body.as_bytes(), "k.demo", &Demo { a: 1 })
+                .unwrap_or_else(|e| panic!("{value} must still compose: {e:?}"));
+            let root: Value = serde_json::from_slice(&out).unwrap();
+            assert_eq!(
+                root["result"]["v"].as_f64().expect("a number"),
+                expect,
+                "{value} did not survive the composer",
+            );
         }
     }
 

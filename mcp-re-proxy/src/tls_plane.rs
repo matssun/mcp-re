@@ -16,8 +16,11 @@
 //!   rotate its key or observe a trust-epoch advance.
 //! - `reloading_trust::SignerDirectory` KEEPS ANSWERING. It yields an identity coordinate
 //!   and admits nothing on its own.
-//! - This plane's snapshot KEEPS SERVING, for a reason none of the others can claim: **a
-//!   CRL states its own `nextUpdate`**. Past it, the verdict for that issuer is `Unknown`,
+//! - This plane's snapshot KEEPS SERVING, for a reason none of the others can claim:
+//!   **every CRL this plane loads states its own `nextUpdate`** — one that omits it is
+//!   refused where it is read ([`tls::crl_next_update_required`]), at startup and on
+//!   every reload, because it would never fall out of force. Past `nextUpdate` the
+//!   verdict for that issuer is `Unknown`,
 //!   and unknown status is refused unconditionally — `allow_unknown_status` is wired to a
 //!   hard `false` on every builder, with no operator knob. So a CRL nobody is refreshing
 //!   converges on refusing that issuer's certificates rather than on admitting revoked
@@ -32,12 +35,14 @@
 //! >   ONLY BECAUSE its authorization-relevant validity is self-bounded,
 //! >   AND unknown revocation state cannot become admissible.
 //!
-//! The second clause is the one that could quietly stop being true, so it is pinned by
-//! `client_revocation`'s `an_expired_crl_refuses_its_issuer_rather_than_admitting_it`,
-//! which also asserts the counterfactual. **Introducing an operator knob for
-//! `allow_unknown_status` means re-deriving this contract before the change lands** — with
-//! unknown admissible, a surviving snapshot becomes exactly the frozen authorization state
-//! `trust_plane` fails closed to avoid.
+//! Both clauses are load-bearing and both are enforced rather than assumed. The first is
+//! enforced by refusing a CRL with no `nextUpdate`, pinned by `tls`'s
+//! `crl_next_update_tests`; the second is pinned by `client_revocation`'s
+//! `an_expired_crl_refuses_its_issuer_rather_than_admitting_it`, which also asserts the
+//! counterfactual. **Introducing an operator knob for `allow_unknown_status` means
+//! re-deriving this contract before the change lands** — with unknown admissible, a
+//! surviving snapshot becomes exactly the frozen authorization state `trust_plane` fails
+//! closed to avoid.
 //!
 //! A failed reload keeps the last-good configuration, for the same reason
 //! `reloading_trust` does: a truncated file mid-write must not empty what is enforced.
@@ -66,6 +71,24 @@ impl ClientCrlEvidence {
     pub fn is_empty(&self) -> bool {
         self.postures.is_empty()
     }
+}
+
+/// The serving state that must SURVIVE a `ServerConfig` rebuild, created once per plane
+/// and handed to every build.
+///
+/// Both members bound something that is a RATE or an accumulation, so re-creating either
+/// on the reload cadence resets what it bounds:
+///
+/// - `resumption` holds the TLS session cache and the trust epoch in force. A per-build
+///   cache is emptied on every reload — a fleet-wide full-handshake storm on the cadence
+///   — and a per-build epoch can never advance, which leaves the epoch-mismatch eviction
+///   with no live input.
+/// - `sign_budget` bounds how fast unauthenticated peers can drive a remote, billed,
+///   account-throttled TLS handshake signer. A per-build bucket is refilled to full on
+///   every reload, so it bounds a window rather than a rate.
+struct TlsRebuildState {
+    resumption: Arc<crate::tls_auth_epoch::EpochBoundSessionStore>,
+    sign_budget: Arc<crate::delegated_tls::TlsHandshakeSignBudget>,
 }
 
 /// Transport custody: the serving TLS configuration and what keeps it current.
@@ -207,6 +230,14 @@ impl TlsPlane {
                     .map_err(|e| e.to_string())?
                 {
                     tls::CrlFreshness::Fresh => {}
+                    tls::CrlFreshness::NoNextUpdate => {
+                        tls::crl_next_update_required(crl.as_ref(), i).map_err(|e| {
+                            format!(
+                                "mcp-re-proxy refuses to start with a client CRL that never \
+                                 falls out of force: {e}"
+                            )
+                        })?;
+                    }
                     tls::CrlFreshness::NearExpiry { next_update_unix } => eprintln!(
                         "mcp-re-proxy: WARNING: client CRL #{i} is near expiry \
                          (nextUpdate={next_update_unix}); install a refreshed CRL and restart \
@@ -265,9 +296,18 @@ impl TlsPlane {
             )))
         };
 
+        // Created once, before the first build, and handed to every later one: the
+        // session cache and the trust epoch survive a reload, and so does the delegated
+        // handshake-signature bucket.
+        let rebuild_state = Arc::new(TlsRebuildState {
+            resumption: tls::new_resumption_state(&client_ca, reload_allow_unknown),
+            sign_budget: Arc::new(crate::delegated_tls::TlsHandshakeSignBudget::default()),
+        });
+
         // The same construction a CRL reload performs, so the serving config a reload
         // installs cannot diverge from the one startup installed.
-        let server_config = material.rebuild(server_chain, client_ca, client_crls, false)?;
+        let server_config =
+            material.rebuild(server_chain, client_ca, client_crls, false, &rebuild_state)?;
         // ADR-MCPRE-051 §6 (MCPRE-116): the serve loop reads the current config from a
         // versioned, atomically-swappable snapshot instead of a fixed `Arc`. With no
         // `--client-crl-reload-secs` the snapshot is never swapped, so behavior is
@@ -296,6 +336,7 @@ impl TlsPlane {
                         allow_unknown_status: reload_allow_unknown,
                         interval_secs: reload_secs,
                         revocation: revocation.clone(),
+                        rebuild_state: Arc::clone(&rebuild_state),
                     },
                 );
                 eprintln!(
@@ -361,26 +402,32 @@ impl TlsKeyMaterial {
         client_ca: Vec<rustls_pki_types::CertificateDer<'static>>,
         crls: Vec<rustls_pki_types::CertificateRevocationListDer<'static>>,
         allow_unknown_status: bool,
+        state: &TlsRebuildState,
     ) -> Result<rustls::ServerConfig, String> {
         match self {
             TlsKeyMaterial::Exported(key) => {
-                tls::RustlsDirectProvider::build_server_config_with_crls(
+                tls::RustlsDirectProvider::build_server_config_with_crls_resuming(
                     server_chain,
                     key.clone_key(),
                     client_ca,
                     crls,
                     allow_unknown_status,
+                    &state.resumption,
                 )
                 .map_err(|e| e.to_string())
             }
-            TlsKeyMaterial::Delegated(signer) => tls::build_server_config_delegated_validated(
-                server_chain,
-                Arc::clone(signer),
-                client_ca,
-                crls,
-                allow_unknown_status,
-            )
-            .map_err(|e| e.to_string()),
+            TlsKeyMaterial::Delegated(signer) => {
+                tls::build_server_config_delegated_validated_resuming(
+                    server_chain,
+                    Arc::clone(signer),
+                    client_ca,
+                    crls,
+                    allow_unknown_status,
+                    &state.resumption,
+                    &state.sign_budget,
+                )
+                .map_err(|e| e.to_string())
+            }
         }
     }
 }
@@ -400,6 +447,10 @@ struct CrlReloadTask {
     /// reaching new connections alone — which is the gap the per-request check exists
     /// to close.
     revocation: Option<Arc<client_revocation::SharedClientRevocation>>,
+    /// The session cache, trust epoch and handshake-signature budget the rebuilt config
+    /// is wired to — the same ones startup built, so a reload neither empties the cache
+    /// nor refills the bucket.
+    rebuild_state: Arc<TlsRebuildState>,
 }
 /// SUPERVISED like the trust reload and the rotation owner: nothing joins this thread,
 /// and a panic in it would silently stop CRL reloading for the process lifetime.
@@ -436,6 +487,7 @@ fn crl_reload_loop(task: CrlReloadTask, halt: &crate::managed_worker::Halt) {
         allow_unknown_status,
         interval_secs,
         revocation,
+        rebuild_state,
     } = task;
     {
         let mut consecutive_failures: u32 = 0;
@@ -447,6 +499,12 @@ fn crl_reload_loop(task: CrlReloadTask, halt: &crate::managed_worker::Halt) {
             }
             let outcome = config_snapshot::reload_once(&snapshot, || {
                 let crls = cli::load_client_crls(&crl_paths)?;
+                // A CRL that never falls out of force is refused on reload for the same
+                // reason it is refused at startup: keeping last-good is only safe while
+                // last-good ages out on its own.
+                for (i, crl) in crls.iter().enumerate() {
+                    tls::crl_next_update_required(crl.as_ref(), i).map_err(|e| e.to_string())?;
+                }
                 // Build the per-request index from the SAME bytes, BEFORE the verifier
                 // is rebuilt, so a malformed CRL keeps last-good on both rather than
                 // swapping one and failing the other.
@@ -463,6 +521,7 @@ fn crl_reload_loop(task: CrlReloadTask, halt: &crate::managed_worker::Halt) {
                     client_ca.clone(),
                     crls,
                     allow_unknown_status,
+                    &rebuild_state,
                 )?;
                 if let Some(revocation) = revocation.as_ref() {
                     revocation.store(index);

@@ -29,6 +29,23 @@ Two things it is honest about:
   * Proof text outside a declared unit is a FAILURE, not a pass. Otherwise a
     specification could be weakened in a file the manifest does not know about, and no
     lane would ever look at it.
+
+Registration is per UNIT, not per mechanism name. An assumption registers a mechanism
+within the units its `scope` names, so `verus:external_body` trusted for the time parser
+says nothing about a new `external_body` in the admission path. A flat set of mechanism
+names would whitelist every existing and future site in scope the moment one assumption
+mentioned the kind.
+
+And two things registration can never excuse, because no assumption could honestly state
+them:
+
+  * A unit's own PROVED SYMBOL under an escape hatch. `external_body`, `external`,
+    `opaque` or an `assume_specification` on the function a theorem is about makes that
+    theorem vacuous while the prover still reports the symbol verified and the lane still
+    reports PASS.
+  * A proved symbol carrying no specification at all. The specification is a detachable
+    attribute; deleting it leaves the function, the crate's verified count, and every
+    gate exactly as they were.
 """
 
 from __future__ import annotations
@@ -65,7 +82,10 @@ MECHANISMS = {
     "axiom": r"\baxiom\b",
     "external_body": r"\bexternal_body\b",
     "external_type_specification": r"\bexternal_type_specification\b",
+    "external_fn_specification": r"\bexternal_fn_specification\b",
     "external": r"\bexternal\b",
+    "uninterp": r"\buninterp\b",
+    "opaque": r"\bopaque\b",
     "sorry": r"\bsorry\b",
 }
 
@@ -78,69 +98,228 @@ PRODUCTION_MECHANISMS = {
     "assume_specification": r"\bassume_specification\b",
     "external_body": r"\bexternal_body\b",
     "external_type_specification": r"\bexternal_type_specification\b",
+    "external_fn_specification": r"\bexternal_fn_specification\b",
+    # `external` REMOVES a function from verification entirely, which is a stronger escape
+    # than `external_body`. Matched only in its two code spellings, because the bare word
+    # is ordinary English and ordinary Rust.
+    "external": r"verifier::external\b(?!_)|verus_verify\s*\(\s*external\s*\)",
+    # An uninterpreted spec function is a trusted seam by construction: every theorem that
+    # mentions it says nothing about what it computes.
+    "uninterp": r"\buninterp\b",
+    "opaque": r"verifier::opaque\b",
+    "axiom": r"\baxiom\b",
+    "sorry": r"\bsorry\b",
     "assume": r"\bassume\s*[(!]",
     "admit": r"\badmit\s*[(!]",
 }
+
+#: Mechanisms that, applied to the very function a unit claims to have proved, make the
+#: claimed theorem vacuous or delete it. No assumption registers these at a proved symbol,
+#: because there is no honest justification for one: the unit would be advertising a
+#: theorem that the prover was told not to check.
+VACUITY_AT_PROVED_SYMBOL = {
+    "external_body": r"\bexternal_body\b",
+    "external": r"verifier::external\b(?!_)|verus_verify\s*\(\s*external\s*\)",
+    "external_fn_specification": r"\bexternal_fn_specification\b",
+    "assume_specification": r"\bassume_specification\b",
+    "opaque": r"verifier::opaque\b",
+}
+
+#: What makes an attribute block a SPECIFICATION rather than decoration.
+SPECIFICATION_TEXT = re.compile(r"\bensures\b|\brequires\b")
+
+def _definition(name: str) -> re.Pattern[str]:
+    """A Rust function definition, as it appears at the head of the item."""
+    return re.compile(
+        r"^\s*(?:pub(?:\([^)]*\))?\s+)?"
+        r"(?:default\s+|const\s+|async\s+|unsafe\s+|extern\s+\"[^\"]*\"\s+)*"
+        rf"fn\s+{re.escape(name)}\s*[(<]"
+    )
+
 
 SCANNED_SUFFIXES = {".rs", ".lean", ".v"}
 
 #: Generated Lean is machine-owned and may legitimately contain extraction artifacts. It is
 #: excluded from the token scan and covered instead by the generated-drift gate: a
 #: hand-edit there is caught by regeneration mismatch, which is the stronger control.
-EXCLUDED = ("verification/lean/generated/",)
+#:
+#: Reproducers are standalone crates outside the Cargo workspace, in no unit's paths and in
+#: no lane's input. Nothing there can make any unit's proof pass, so a token there is not an
+#: escape hatch — it is a bug report about the prover.
+EXCLUDED = ("verification/lean/generated/", "verification/reproducers/")
 
 
-def registered_mechanisms() -> set[str]:
-    """Mechanisms the registry accounts for, e.g. `verus:external_body`."""
+def registered_by_unit() -> dict[str, set[str]]:
+    """Mechanism kinds the registry accounts for, PER UNIT the assumption is scoped to.
+
+    Scope is what makes registration mean something. `verus:external_body` trusted inside
+    `core.time_rfc3339` is a statement about that unit's trusted computing base and no
+    other; collapsing the registry to a set of names would hand every unit in the
+    repository whatever any one assumption happened to need.
+    """
     doc = load_assumptions()
-    return {
-        entry["tool_specific_mechanism"].split(":", 1)[-1]
-        for entry in doc.get("assumption", [])
-    }
+    out: dict[str, set[str]] = {}
+    for entry in doc.get("assumption", []):
+        mechanism = entry["tool_specific_mechanism"].split(":", 1)[-1]
+        for target in entry.get("scope", []):
+            target = str(target)
+            if target.startswith("unit://"):
+                out.setdefault(target.removeprefix("unit://"), set()).add(mechanism)
+    return out
 
 
-def declared_unit_files() -> set[Path]:
-    """Every existing file a `verification.toml` unit names, expanded from its globs."""
+def is_registered(
+    mechanism: str, owners: frozenset[str] | set[str], registered: dict[str, set[str]]
+) -> bool:
+    """Is this mechanism registered for a unit that declares the file it sits in?
+
+    A file no unit declares has no owning trusted computing base, so nothing can register a
+    mechanism there — which is why the empty owner set answers no rather than yes.
+    """
+    return any(mechanism in registered.get(unit_id, set()) for unit_id in owners)
+
+
+def unit_files() -> dict[Path, set[str]]:
+    """Every existing file a `verification.toml` unit names -> the units that name it."""
     doc = load_verification()
-    files: set[Path] = set()
+    files: dict[Path, set[str]] = {}
     for unit in doc.get("unit", []):
         for declared in unit["paths"]:
             for path in REPO_ROOT.glob(declared):
                 if path.is_file():
-                    files.add(path)
+                    files.setdefault(path, set()).add(unit["id"])
     return files
 
 
-def scan_paths() -> list[tuple[Path, bool]]:
-    """(file, is_production) for everything in scope, in a stable order."""
-    scoped: dict[Path, bool] = {}
+def declared_unit_files() -> set[Path]:
+    """Every existing file a `verification.toml` unit names, expanded from its globs."""
+    return set(unit_files())
+
+
+def scan_paths() -> list[tuple[Path, bool, frozenset[str]]]:
+    """(file, is_production, owning units) for everything in scope, in a stable order."""
+    declared = unit_files()
+    scoped: dict[Path, tuple[bool, frozenset[str]]] = {}
     if VERIFICATION_DIR.exists():
         for path in VERIFICATION_DIR.rglob("*"):
             if path.is_file() and path.suffix in SCANNED_SUFFIXES:
-                scoped[path] = False
-    for path in declared_unit_files():
+                scoped[path] = (False, frozenset(declared.get(path, ())))
+    for path, owners in declared.items():
         if path.suffix in SCANNED_SUFFIXES:
-            scoped.setdefault(path, True)
+            scoped.setdefault(path, (True, frozenset(owners)))
     out = []
     for path in sorted(scoped):
         rel = path.relative_to(REPO_ROOT).as_posix()
         if any(rel.startswith(prefix) for prefix in EXCLUDED):
             continue
-        out.append((path, scoped[path]))
+        is_production, owners = scoped[path]
+        out.append((path, is_production, owners))
     return out
 
 
-def scan() -> list[tuple[Path, int, str, str]]:
-    hits: list[tuple[Path, int, str, str]] = []
-    for path, is_production in scan_paths():
+def scan() -> list[tuple[Path, int, str, str, frozenset[str]]]:
+    hits: list[tuple[Path, int, str, str, frozenset[str]]] = []
+    for path, is_production, owners in scan_paths():
         mechanisms = PRODUCTION_MECHANISMS if is_production else MECHANISMS
         for lineno, line in enumerate(
             path.read_text(encoding="utf-8").splitlines(), start=1
         ):
             for name, pattern in mechanisms.items():
                 if re.search(pattern, line):
-                    hits.append((path.relative_to(REPO_ROOT), lineno, name, line.strip()))
+                    hits.append(
+                        (path.relative_to(REPO_ROOT), lineno, name, line.strip(), owners)
+                    )
     return hits
+
+
+def _bracket_balance(line: str) -> int:
+    return sum(line.count(c) for c in "([{") - sum(line.count(c) for c in ")]}")
+
+
+def _definition_sites(lines: list[str], pattern: re.Pattern[str]) -> list[tuple[int, str]]:
+    """`(line index, attribute block)` for every definition `pattern` matches.
+
+    Read forwards rather than backwards from the item. A Verus specification is a
+    multi-line `#[cfg_attr(...)]` whose body is arbitrary expression text, so no
+    line-shaped heuristic recognises its middle; accumulating the block from its opening
+    `#[` until the brackets balance does.
+    """
+    sites: list[tuple[int, str]] = []
+    block: list[str] = []
+    depth = 0
+    for index, line in enumerate(lines):
+        if depth > 0:
+            block.append(line)
+            depth += _bracket_balance(line)
+            continue
+        stripped = line.strip()
+        if stripped.startswith("#["):
+            block.append(line)
+            depth = max(_bracket_balance(line), 0)
+            continue
+        if not stripped or stripped.startswith(("//", "/*", "*")):
+            block.append(line)
+            continue
+        if pattern.match(line):
+            sites.append((index, "\n".join(block)))
+        block = []
+    return sites
+
+
+def proved_symbol_defects() -> list[str]:
+    """Claimed theorems that no lane can distinguish from a deleted one.
+
+    Three ways a unit advertises a theorem it does not have, none of which the prover's
+    report shows: the function is not in the unit's declared paths at all, it carries an
+    escape hatch that tells the prover not to check it, or its specification has simply
+    been removed while the function stayed.
+    """
+    doc = load_verification()
+    defects: list[str] = []
+    for unit in doc.get("unit", []):
+        symbols = unit.get("proved_symbols", [])
+        if not symbols:
+            continue
+        sources = [
+            path
+            for path in sorted(declared_unit_files())
+            if path.suffix == ".rs" and unit["id"] in unit_files()[path]
+        ]
+        for symbol in symbols:
+            name = symbol.rsplit("::", 1)[-1]
+            pattern = _definition(name)
+            sites = 0
+            for path in sources:
+                lines = path.read_text(encoding="utf-8").splitlines()
+                rel = path.relative_to(REPO_ROOT).as_posix()
+                for index, block in _definition_sites(lines, pattern):
+                    sites += 1
+                    for mechanism, mechanism_pattern in sorted(
+                        VACUITY_AT_PROVED_SYMBOL.items()
+                    ):
+                        if re.search(mechanism_pattern, block):
+                            defects.append(
+                                f"{unit['id']}: proved symbol {symbol} is annotated "
+                                f"`{mechanism}` at {rel}:{index + 1}. The prover is told "
+                                f"not to check the function the unit claims to have "
+                                f"proved, so the theorem is vacuous while the symbol "
+                                f"still appears verified."
+                            )
+                    if not SPECIFICATION_TEXT.search(block):
+                        defects.append(
+                            f"{unit['id']}: proved symbol {symbol} at {rel}:{index + 1} "
+                            f"carries no `requires`/`ensures`. The specification is a "
+                            f"detachable attribute: deleting it leaves the function, the "
+                            f"crate's verified count and the prover's symbol list "
+                            f"unchanged, so no lane sees the theorem go."
+                        )
+            if sites == 0:
+                defects.append(
+                    f"{unit['id']}: proved symbol {symbol} defines no function in the "
+                    f"unit's declared paths. A theorem the manifest advertises over source "
+                    f"the unit does not declare is invalidated by no change to it."
+                )
+    return defects
 
 
 def undeclared_proof_text() -> list[tuple[Path, int, str]]:
@@ -161,15 +340,24 @@ def undeclared_proof_text() -> list[tuple[Path, int, str]]:
 
 def main() -> int:
     try:
-        registered = registered_mechanisms()
+        registered = registered_by_unit()
+        stray = undeclared_proof_text()
+        vacuous = proved_symbol_defects()
     except ManifestError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
 
-    try:
-        stray = undeclared_proof_text()
-    except ManifestError as exc:
-        print(f"FAIL: {exc}", file=sys.stderr)
+    if vacuous:
+        print(f"check-assumptions: {len(vacuous)} claimed theorem(s) not established")
+        for defect in vacuous:
+            print(f"  [VACUOUS] {defect}")
+        print(
+            "\nFAIL: a unit claims a theorem the prover was not asked to check, or was "
+            "asked\nto check nothing about. This is not registrable: an assumption may "
+            "move an\nobligation into the trusted computing base, but it may not leave the "
+            "manifest\nadvertising a proof of the thing it excused.",
+            file=sys.stderr,
+        )
         return 1
 
     if stray:
@@ -185,27 +373,33 @@ def main() -> int:
         )
         return 1
 
+    def covered(mechanism: str, owners: frozenset[str]) -> bool:
+        return is_registered(mechanism, owners, registered)
+
     hits = scan()
-    unregistered = [hit for hit in hits if hit[2] not in registered]
+    unregistered = [hit for hit in hits if not covered(hit[2], hit[4])]
 
     if not hits:
         print("check-assumptions: PASS — no proof escape hatch in scope")
         print("VERDICT: PASS")
-        print(f"  registered assumptions: {len(registered)}")
+        print(f"  registered assumptions: {sum(len(m) for m in registered.values())}")
         return 0
 
     print(f"check-assumptions: {len(hits)} escape-hatch site(s) found")
-    for path, lineno, name, text in hits:
-        status = "registered" if name in registered else "UNREGISTERED"
-        print(f"  [{status}] {path}:{lineno}  {name}  |  {text}")
+    for path, lineno, name, text, owners in hits:
+        status = "registered" if covered(name, owners) else "UNREGISTERED"
+        where = ", ".join(sorted(owners)) or "no unit"
+        print(f"  [{status}] {path}:{lineno}  {name}  ({where})  |  {text}")
 
     if unregistered:
         print(
             "\nFAIL: unregistered proof escape hatch. Every one of these moves an "
-            "obligation\nout of the proof and into the trusted computing base. Register it "
-            "in\nverification/policy/assumptions.toml with a justification and an owner, or "
-            "discharge\nit. A green proof created by an unregistered assumption is not "
-            "MCP-RE evidence.",
+            "obligation\nout of the proof and into the trusted computing base, and "
+            "registration is per\nUNIT: an assumption trusted in one unit does not excuse "
+            "the same mechanism in\nanother. Register it in "
+            "verification/policy/assumptions.toml with a justification,\nan owner, and a "
+            "`scope` naming this unit — or discharge it. A green proof created\nby an "
+            "unregistered assumption is not MCP-RE evidence.",
             file=sys.stderr,
         )
         return 1

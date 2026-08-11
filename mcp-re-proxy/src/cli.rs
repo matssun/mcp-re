@@ -6,6 +6,7 @@
 //! [`Config`] into a [`KeySource`] / [`TrustResolver`] / [`Proxy`]. `main.rs` is a
 //! thin shell that parses, builds, and runs the blocking serve loop.
 
+use std::str::FromStr;
 use std::time::Duration;
 
 use mcp_re_core::InMemoryTrustResolver;
@@ -564,9 +565,20 @@ pub struct Config {
     pub allow_group_readable_key_files: bool,
 }
 
-/// Parse CLI arguments (excluding argv[0]) into a [`Config`]. Returns a
-/// human-readable error string on any missing/invalid argument.
 /// Validate an operator-supplied KMS endpoint override before anything is sent to it.
+///
+/// The decision itself is [`kms_endpoint_authority`]; this only prefixes the offending
+/// flag onto its refusal, so the command line, the validation boundary
+/// ([`kms_endpoint_refusals`]) and the three key-source constructors cannot drift into
+/// disagreeing about the rule.
+fn validated_kms_endpoint(flag: &str, value: &str) -> Result<String, String> {
+    kms_endpoint_authority(value)
+        .map(|_| value.to_string())
+        .map_err(|why| format!("{flag} {why}"))
+}
+
+/// The `host[:port]` a request to `value` will actually reach — or why `value` may not be
+/// used as a KMS/STS endpoint at all.
 ///
 /// These overrides carry the ROOT-KEY trust bootstrap: `getPublicKey` fetches the
 /// `spki_der`/verify key that the verify-before-return guardrail is measured against, and
@@ -575,45 +587,206 @@ pub struct Config {
 /// substituted endpoint supply an attacker-chosen root signing key that every local
 /// fail-closed check then passes self-consistently.
 ///
-/// So: `https://` always; `http://` ONLY to loopback, which keeps the LocalStack / KMS
-/// emulator lane working without letting a plaintext credential leave the machine.
-/// Anything else is refused at parse, before a credential is minted.
-fn validated_kms_endpoint(flag: &str, value: &str) -> Result<String, String> {
-    let rest = if let Some(rest) = value.strip_prefix("https://") {
-        return non_empty_authority(flag, value, rest).map(|()| value.to_string());
+/// So the authority must be a LITERAL `host[:port]` — text a URL parser reads the same way
+/// a reader does. `ureq` resolves a request URL with `url::Url::parse` and connects to its
+/// `host_str()`, which reads `https://cloudkms.googleapis.com@evil.example.com` as host
+/// `evil.example.com` with the recognisable half demoted to userinfo, and reads
+/// `http://localhost:80@evil.example.com` the same way — so userinfo (`@`) is refused, and
+/// so is any host carrying percent- or IDNA-encoding or a separator a parser resolves
+/// differently (`\`, a tab, a stray `%`), all of which name one host to a reader and
+/// another to the parser. The port must be numeric.
+///
+/// Scheme: `https://` always; `http://` ONLY to loopback — decided from the host below,
+/// i.e. AFTER userinfo has been refused, because `http://localhost:80@evil.example.com`
+/// otherwise reads as loopback while the plaintext bearer token leaves the machine. The
+/// loopback exception is what keeps the LocalStack / KMS-emulator lane working.
+///
+/// Applied at parse for a command line, at the validation boundary via
+/// [`kms_endpoint_refusals`] for any config, and again at key-source construction
+/// (`UreqGcpClient::new`, `aws_kms_keysource::authority_of`,
+/// `WebIdentityConfig::from_env`), since the endpoint fields are public and an embedder
+/// reaches key-source construction without meeting a parser.
+pub(crate) fn kms_endpoint_authority(value: &str) -> Result<String, String> {
+    let (plaintext, rest) = if let Some(rest) = value.strip_prefix("https://") {
+        (false, rest)
     } else if let Some(rest) = value.strip_prefix("http://") {
-        rest
+        (true, rest)
     } else {
         return Err(format!(
-            "{flag} must be an absolute https:// URL (got {value:?}); this endpoint carries the \
+            "must be an absolute https:// URL (got {value:?}); this endpoint carries the \
              root-key trust bootstrap and, on GCP, a live bearer token"
         ));
     };
-    non_empty_authority(flag, value, rest)?;
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    let host = match authority.rsplit_once(':') {
-        // Bracketed IPv6 literal: the last colon may belong to the address.
-        Some((h, _)) if !authority.starts_with('[') || h.ends_with(']') => h,
-        _ => authority,
-    };
-    if matches!(host, "localhost" | "127.0.0.1" | "[::1]") {
-        return Ok(value.to_string());
-    }
-    Err(format!(
-        "{flag} may only use http:// for a loopback emulator (localhost, 127.0.0.1, [::1]); \
-         got host {host:?}. A plaintext endpoint exfiltrates the KMS credential and lets a \
-         substituted host supply the root verify key"
-    ))
-}
-
-/// Reject a URL whose authority is empty (`https://`, `http:///v1`), which would otherwise
-/// produce a request URL with no host.
-fn non_empty_authority(flag: &str, value: &str, rest: &str) -> Result<(), String> {
+    // RFC 3986: the authority ends at the first `/`, `?` or `#`. A URL parser may end it
+    // EARLIER (a `\` is a path separator for http(s) URLs, and tab/CR/LF are stripped
+    // before parsing), never later — so the host it picks is always inside this span, and
+    // rejecting the span's contents rejects the parser's host too.
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     if authority.is_empty() {
-        return Err(format!("{flag} has no host: {value:?}"));
+        return Err(format!("has no host: {value:?}"));
     }
-    Ok(())
+    // A query or fragment is not part of an endpoint, and it does not survive the way the
+    // GCP client builds its URLs: `{base}/v1/{name}:asymmetricSign` on a base carrying `?`
+    // puts the whole operation path inside the query string. A trailing PATH is allowed —
+    // an emulator legitimately serves the API under one.
+    if let Some(bad) = rest.chars().find(|c| matches!(c, '?' | '#')) {
+        return Err(format!(
+            "must be a bare scheme://host[:port][/path] endpoint; {bad:?} in {value:?} is a \
+             query or fragment, which is not part of an authority and is not carried through \
+             the per-operation URLs built from it"
+        ));
+    }
+    if authority.contains('@') {
+        return Err(format!(
+            "authority {authority:?} carries userinfo, and a URL parser reads the host as the \
+             text AFTER the '@' — so {value:?} sends the root-key bootstrap, and on GCP a live \
+             bearer token, to a host other than the one it appears to name"
+        ));
+    }
+    let (host, port) = split_host_port(authority, value)?;
+    if plaintext && !names_this_machine(host) {
+        return Err(format!(
+            "may only use http:// for a loopback emulator (localhost, 127.0.0.0/8, [::1]); \
+             got host {host:?}. A plaintext endpoint exfiltrates the KMS credential and lets a \
+             substituted host supply the root verify key"
+        ));
+    }
+    if let Some(port) = port {
+        Ok(format!("{host}:{port}"))
+    } else {
+        Ok(host.to_string())
+    }
+}
+
+/// Does `host` provably name THIS machine, so a plaintext credential sent to it cannot
+/// leave it?
+///
+/// Decided from the parsed address, not from a spelling, so the canonicalisations a URL
+/// parser performs do not change the answer: `url` reads `[0:0:0:0:0:0:0:1]` as `[::1]` and
+/// lowercases `LOCALHOST`, and every address in 127.0.0.0/8 is loopback under RFC 1122, not
+/// just `127.0.0.1`.
+///
+/// The IPv4 shorthands a URL parser also accepts — `127.1`, `0x7f.1` — are NOT recognised
+/// here, so they are refused rather than admitted as loopback. That is the safe direction
+/// (a refusal), and no operator writes an emulator endpoint that way.
+fn names_this_machine(host: &str) -> bool {
+    if let Some(literal) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        return std::net::Ipv6Addr::from_str(literal).is_ok_and(|address| address.is_loopback());
+    }
+    if let Ok(address) = std::net::Ipv4Addr::from_str(host) {
+        return address.is_loopback();
+    }
+    host.eq_ignore_ascii_case("localhost")
+}
+
+/// Split a `host[:port]` authority, refusing anything that is not a literal host.
+///
+/// An IPv6 literal keeps its brackets, because that is the form both the request line and
+/// a `Host` header carry, and its contents must parse as an address — `[foo-bar]` and
+/// `[gggg::1]` are bracket-shaped but are not IPv6 literals, and `url::Url::parse` refuses
+/// both. Admitting them here would only move the failure to the first request.
+///
+/// The unbracketed host is held to letters, digits, `.`, `-` and `_`. That is every
+/// character a URL parser reads back as the text itself AND that a resolver can answer
+/// for: `_` is admitted because internal DNS names carry it and `url` reads it verbatim.
+/// The remaining printable ASCII that `url` also reads verbatim — ``! " $ & ' ( ) * + , ; =
+/// ` { } ~`` — is refused as defence in depth: none of it can appear in a name
+/// `getaddrinfo` will resolve, so refusing it costs no reachable endpoint. Everything else
+/// is refused because a parser does NOT read it as written: `# / ? @ \` move the host,
+/// and `% : < > [ ] ^ |` make `url` fail outright.
+fn split_host_port<'a>(
+    authority: &'a str,
+    value: &str,
+) -> Result<(&'a str, Option<&'a str>), String> {
+    let (host, port) = if authority.starts_with('[') {
+        let end = authority
+            .find(']')
+            .ok_or_else(|| format!("has an unterminated IPv6 literal: {value:?}"))?;
+        match &authority[end + 1..] {
+            "" => (&authority[..=end], None),
+            after => (
+                &authority[..=end],
+                Some(after.strip_prefix(':').ok_or_else(|| {
+                    format!("has junk after its IPv6 literal ({after:?}): {value:?}")
+                })?),
+            ),
+        }
+    } else {
+        match authority.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (authority, None),
+        }
+    };
+    if let Some(literal) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        if std::net::Ipv6Addr::from_str(literal).is_err() {
+            return Err(format!(
+                "host {host:?} is bracket-shaped but is not an IPv6 address, which a URL parser \
+                 refuses outright: {value:?}"
+            ));
+        }
+    } else {
+        if host.is_empty() {
+            return Err(format!("has no host: {value:?}"));
+        }
+        if let Some(bad) = host
+            .chars()
+            .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')))
+        {
+            return Err(format!(
+                "host {host:?} is not a literal name or IP address ({bad:?} is percent-, IDNA- \
+                 or separator-encoding, which a URL parser resolves to a DIFFERENT host than \
+                 the text reads, or a character no resolver can answer for): {value:?}"
+            ));
+        }
+        // A URL parser reads a host whose LAST label is a NUMBER as an IPv4 address rather
+        // than a name, and then rewrites it: `0x7f.1`, `127.1` and `2130706433` all resolve
+        // to 127.0.0.1, and `1.1` to 1.0.0.1. Character-legal, but the address reached is
+        // not the text. So a host of that shape is admitted only when it already IS a plain
+        // dotted quad, where the two agree. No DNS name is affected — a top-level label
+        // cannot be all-numeric, and `url` errors on one that is.
+        let last_label = host
+            .rsplit('.')
+            .find(|label| !label.is_empty())
+            .unwrap_or("");
+        let read_as_an_address = last_label.chars().all(|c| c.is_ascii_digit())
+            || last_label.starts_with("0x")
+            || last_label.starts_with("0X");
+        if read_as_an_address && std::net::Ipv4Addr::from_str(host).is_err() {
+            return Err(format!(
+                "host {host:?} ends in a number, so a URL parser reads it as an IPv4 ADDRESS \
+                 and rewrites it (0x7f.1 and 127.1 both become 127.0.0.1); write the dotted \
+                 quad the request will actually reach: {value:?}"
+            ));
+        }
+    }
+    if let Some(port) = port {
+        // A TCP port is a u16. "all digits" is not the same rule: `:65536` and `:99999999`
+        // are all digits, and `url::Url::parse` refuses both — so admitting them would be a
+        // genuine disagreement about whether the endpoint is usable at all. A leading zero
+        // is refused for the narrower reason that `:0443` parses to 443, making the text
+        // and the port reached differ.
+        // Digits ONLY, checked before parsing: `u16::from_str` accepts a leading `+`, so
+        // `:+443` would parse to 443 while `url::Url::parse` refuses it outright.
+        if port.is_empty() || !port.chars().all(|c| c.is_ascii_digit()) {
+            return Err(format!(
+                "port {port:?} is not a number, and a URL parser refuses it outright: \
+                 {value:?}"
+            ));
+        }
+        if port.len() > 1 && port.starts_with('0') {
+            return Err(format!(
+                "port {port:?} has a leading zero, so the text and the port a URL parser \
+                 reads differ: {value:?}"
+            ));
+        }
+        if port.parse::<u16>().is_err() {
+            return Err(format!(
+                "port {port:?} is not a TCP port number (0-65535), and a URL parser refuses \
+                 it outright: {value:?}"
+            ));
+        }
+    }
+    Ok((host, port))
 }
 
 /// Key-source custody coherence: every selector belongs to the source that was chosen.
@@ -624,10 +797,11 @@ fn non_empty_authority(flag: &str, value: &str, rest: &str) -> Result<(), String
 ///
 /// The clauses are all one shape: a selector that belongs to another source would SILENTLY
 /// do nothing, leaving an operator believing the key is token- or KMS-resident while it is
-/// not. Refusing is the only way that belief can be kept true. The contradictory-custody
-/// case — a delegated TLS selector alongside an exported `--tls-key` — is deliberately NOT
-/// here: it is enforced at the validation boundary by `tls_signing_exclusivity_refusal`,
-/// because it is a security state a programmatic config can reach without a parser.
+/// not. Refusing is the only way that belief can be kept true. Because that belief is a
+/// security state a programmatic config reaches without a parser, the rule is also applied
+/// at the validation boundary, through [`key_source_custody_violation`]. The
+/// contradictory-custody case — a delegated TLS selector alongside an exported `--tls-key`
+/// — is not here at all: it is `tls_signing_exclusivity_refusal`.
 #[allow(clippy::too_many_arguments)]
 fn key_source_custody_refusal(
     key_source: KeySourceKind,
@@ -819,7 +993,9 @@ fn shared_replay_refusal(
 /// refactor's clothes.
 ///
 /// Pure: it takes what it decides on and returns the refusal, so the clauses can be tested
-/// without building a `Config` or a command line.
+/// without building a `Config` or a command line. [`ingress_assertion_violation`] is how
+/// the validation boundary asks the same question of a `Config`, so a config built in code
+/// cannot carry a dangling ingress control either.
 #[allow(clippy::too_many_arguments)]
 fn ingress_assertion_refusal(
     binding: BindingKind,
@@ -976,6 +1152,8 @@ fn ingress_assertion_refusal(
     None
 }
 
+/// Parse CLI arguments (excluding argv[0]) into a [`Config`]. Returns a
+/// human-readable error string on any missing/invalid argument.
 pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut bind = None;
     let mut audience = None;
@@ -2208,6 +2386,19 @@ pub const MAX_CLIENT_CERT_LIFETIME: Duration = Duration::from_secs(3600);
 /// revocation reaches every peer within one connection lifetime.
 pub const MAX_NEAR_ZERO_TRUST_RELOAD_SECS: u64 = 60;
 
+/// The ceiling on `--delegated-ttl-secs` (ADR-MCPRE-052).
+///
+/// The credential's `exp` is the ONLY thing that ever expires a delegated response-signing
+/// key: advancing the trust epoch does not reach credentials already issued under it,
+/// because no verifier reads the counter. So the TTL IS the exposure window of an
+/// exfiltrated hot-path key, and an unbounded TTL turns the short-lived delegated key the
+/// specs describe into a long-lived one while every document still calls it short-lived.
+///
+/// One hour, the same ceiling as [`MAX_CLIENT_CERT_LIFETIME`]: both bound how long a
+/// credential the deployment cannot revoke stays usable, so they answer the same question
+/// and are held to the same number.
+pub const MAX_DELEGATED_TTL_SECS: i64 = 3600;
+
 /// The one decision about whether a transport-binding mode can be deployed.
 ///
 /// `Some(diagnostic)` means it cannot. Mode-C attested ingress binds the request hash under
@@ -2427,6 +2618,66 @@ pub(crate) fn unenforceable_admission_refusal(
     None
 }
 
+/// The KMS/STS endpoint overrides a [`Config`] carries, held to the rule wherever the
+/// config came from.
+///
+/// [`validated_kms_endpoint`] is the decision; this is only how a `Config` answers it, so
+/// the two call sites cannot drift into disagreeing about the rule. The three fields are
+/// public, and they carry the ROOT-KEY trust bootstrap — on GCP every request to them also
+/// carries a live workload-identity bearer token — so a config built in code must not be
+/// able to name a plaintext or attacker-chosen authority for them.
+pub(crate) fn kms_endpoint_refusals(config: &Config) -> Vec<String> {
+    [
+        ("--aws-kms-endpoint", config.aws_kms_endpoint.as_deref()),
+        ("--aws-sts-endpoint", config.aws_sts_endpoint.as_deref()),
+        ("--gcp-kms-endpoint", config.gcp_kms_endpoint.as_deref()),
+    ]
+    .into_iter()
+    .filter_map(|(flag, value)| validated_kms_endpoint(flag, value?).err())
+    .collect()
+}
+
+/// Key-source custody coherence, read off a [`Config`] — so it holds however the config
+/// was built.
+///
+/// An adapter, not a second copy: the clauses stay in [`key_source_custody_refusal`]. A
+/// dangling custody selector is a security state a programmatic config reaches without a
+/// parser, exactly as the TLS-signing exclusivity rule is, and `build_key_source`
+/// dispatches on `key_source` and simply ignores a selector belonging to another source.
+pub(crate) fn key_source_custody_violation(config: &Config) -> Option<String> {
+    key_source_custody_refusal(
+        config.key_source,
+        config.pkcs11_module.as_deref(),
+        config.pkcs11_pin_file.as_deref(),
+        config.pkcs11_token_label.as_deref(),
+        config.pkcs11_key_label.as_deref(),
+        config.pkcs11_tls_key_label.as_deref(),
+        config.aws_kms_region.as_deref(),
+        config.aws_kms_key_id.as_deref(),
+        config.aws_kms_tls_key_id.as_deref(),
+        config.aws_kms_use_web_identity,
+        config.aws_sts_endpoint.as_deref(),
+        config.gcp_kms_key_version.as_deref(),
+        config.gcp_kms_tls_key_version.as_deref(),
+        config.gcp_kms_use_metadata,
+    )
+}
+
+/// Ingress-assertion coherence, read off a [`Config`], for the same reason as above: the
+/// clauses decide whether an operator can believe a request-binding ingress control is in
+/// force, and that belief is no more true when the config was built in code.
+pub(crate) fn ingress_assertion_violation(config: &Config) -> Option<String> {
+    ingress_assertion_refusal(
+        config.binding,
+        &config.ingress_lb_keys,
+        &config.ingress_attestor_keys,
+        &config.ingress_identities,
+        config.ingress_audience.as_deref(),
+        config.ingress_pinned_mtls,
+        config.reverse_proxy_identity_header.as_deref(),
+    )
+}
+
 /// Collect the parse-time unsafe-configuration violations for `config`.
 ///
 /// The proxy has NO security toggle — it always runs the maximal-security posture,
@@ -2496,6 +2747,65 @@ pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
         config.admission_degraded_bound_secs,
     ) {
         violations.push(refusal);
+    }
+    // The KMS/STS endpoint overrides. These carry the root-key trust bootstrap: the
+    // `GetPublicKey` answer from the named host becomes the ROOT verify key the
+    // verify-before-return guardrail is measured against, so a substituted endpoint
+    // substitutes the root authority self-consistently, and the GCP path posts a live
+    // workload-identity bearer token to it in the clear over `http://`.
+    violations.extend(kms_endpoint_refusals(config));
+    // Custody coherence and ingress-assertion coherence. Both decide whether the operator's
+    // belief about a security control matches what runs, and neither is re-checked
+    // downstream — `build_key_source` ignores a selector belonging to another source.
+    if let Some(refusal) = key_source_custody_violation(config) {
+        violations.push(refusal);
+    }
+    if let Some(refusal) = ingress_assertion_violation(config) {
+        violations.push(refusal);
+    }
+    // A zero CRL reload cadence is not a disabled reloader, it is an unbounded one: the
+    // worker's sleep returns immediately, so it re-reads every CRL file, rebuilds the
+    // rustls verifier and swaps the serving snapshot in a tight loop, burning a core and
+    // thrashing the snapshot with no diagnostic.
+    if config.client_crl_reload_secs == Some(0) {
+        violations.push(
+            "--client-crl-reload-secs 0 makes the CRL reloader spin: the cadence is the sleep \
+             between re-reads, so zero re-reads every CRL and rebuilds the TLS verifier \
+             continuously. Set a positive cadence, or omit the flag to load the CRLs once"
+                .to_string(),
+        );
+    }
+    // ADR-MCPRE-052 delegated custody. `exp` is the only thing that expires a delegated
+    // response-signing credential — advancing the trust epoch does not reach one already
+    // issued, because no verifier reads the counter — so the TTL IS the exposure window of
+    // an exfiltrated hot-path key and needs a ceiling, not merely a positive value. The
+    // rotor's successor-before-expiry rule is restated here for the same reason the
+    // ceiling is stated at all: these are public fields on a config a caller can build.
+    if config.delegated_ttl_secs <= 0 {
+        violations.push(
+            "--delegated-ttl-secs must be greater than 0 (it is the life of every delegated \
+             response-signing credential)"
+                .to_string(),
+        );
+    } else if config.delegated_ttl_secs > MAX_DELEGATED_TTL_SECS {
+        violations.push(format!(
+            "--delegated-ttl-secs {} exceeds the ceiling of {MAX_DELEGATED_TTL_SECS}s: the \
+             credential's exp is the ONLY thing that expires it (a trust-epoch advance does \
+             not reach credentials already issued), so the TTL is exactly how long an \
+             exfiltrated delegated signing key stays verifiable; the delegated key is the \
+             SHORT-lived hot-path credential — set a TTL <= {MAX_DELEGATED_TTL_SECS}s",
+            config.delegated_ttl_secs
+        ));
+    }
+    if config.delegated_overlap_secs <= 0
+        || config.delegated_overlap_secs >= config.delegated_ttl_secs
+    {
+        violations.push(format!(
+            "--delegated-overlap-secs must satisfy 0 < overlap < ttl (got overlap={}, ttl={}); \
+             the rotor mints a successor one overlap before expiry, so outside that range \
+             response signing either never rotates or stops",
+            config.delegated_overlap_secs, config.delegated_ttl_secs
+        ));
     }
     // ADR-MCPS-023 §A1 (MCPS-57): `None` disables enforcement outright; a lifetime
     // above the ceiling would let a NOT-short-lived cert be audited as
@@ -3126,11 +3436,13 @@ pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource + Send + Sy
             };
             // #61: a configured TLS-key-version custodies the TLS server key in a
             // SECOND, DISTINCT Cloud KMS key version (independent of the
-            // object-signing key). Its own `GcpKmsEd25519Backend` (same
-            // endpoint/token source, the TLS key-version) drives the delegated TLS
-            // handshake signature; the proxy then never reads `--tls-key` from disk
-            // (the exclusivity guard already forbade it). `None` keeps the
-            // file-backed TLS path.
+            // object-signing key). It gets its own `GcpKmsEd25519Backend` — same
+            // endpoint, but a SEPARATE metadata token source, cache and single-flight
+            // lock, because `GcpKmsEd25519Backend::new` builds one per backend. The two
+            // paths share the metadata server's quota, not a token (R9-C107). That
+            // backend drives the delegated TLS handshake signature; the proxy then never
+            // reads `--tls-key` from disk (the exclusivity guard already forbade it).
+            // `None` keeps the file-backed TLS path.
             match &config.gcp_kms_tls_key_version {
                 Some(tls_key_version) => {
                     let tls_kms_config = crate::gcp_kms_keysource::GcpKmsConfig {
@@ -3725,6 +4037,390 @@ mod tests {
             assert!(
                 with_kms_endpoint("--aws-kms-endpoint", endpoint).is_err(),
                 "{endpoint} has no authority and must be refused"
+            );
+        }
+    }
+
+    /// R9-C001 — an authority a URL parser reads differently from the text it shows.
+    ///
+    /// `ureq` resolves a request URL with `url::Url::parse` and connects to its
+    /// `host_str()`, which reads `https://cloudkms.googleapis.com@evil.example.com` as host
+    /// `evil.example.com` with the recognisable half demoted to userinfo. Verified against
+    /// url 2.5.8 (what ureq 2.12.1 links): every string below resolves to
+    /// `evil.example.com`. That host receives the root-key trust bootstrap — and on GCP a
+    /// live workload-identity bearer token authorizing `asymmetricSign` on the ROOT
+    /// response-signing key.
+    ///
+    /// `http://localhost:80@evil.example.com` is the case that also defeats the loopback
+    /// exception: deriving the loopback host with `rsplit_once(':')` BEFORE userinfo is
+    /// stripped reads `localhost`, so a plaintext bearer token left the machine under a
+    /// rule written to stop exactly that.
+    #[test]
+    fn a_kms_endpoint_whose_authority_carries_userinfo_is_refused() {
+        let hostile = [
+            "https://cloudkms.googleapis.com@evil.example.com",
+            "https://kms.us-east-1.amazonaws.com@evil.example.com/",
+            "https://sts.eu-north-1.amazonaws.com@evil.example.com",
+            "http://localhost:80@evil.example.com",
+            "http://127.0.0.1:8080@evil.example.com",
+            "http://localhost@evil.example.com",
+            "https://user:pass@evil.example.com",
+            "https://@evil.example.com",
+        ];
+        for flag in [
+            "--aws-kms-endpoint",
+            "--aws-sts-endpoint",
+            "--gcp-kms-endpoint",
+        ] {
+            for endpoint in hostile {
+                let err = super::validated_kms_endpoint(flag, endpoint)
+                    .expect_err("an authority carrying userinfo must be refused");
+                assert!(
+                    err.contains(flag) && err.contains("userinfo"),
+                    "{flag} {endpoint}: the refusal must name the flag and the reason, got \
+                     {err:?}"
+                );
+            }
+        }
+        // And through the two boundaries a config actually crosses: the argv match arms,
+        // and `kms_endpoint_refusals` for a `Config` built in code — the three fields are
+        // public, and an embedder reaches key-source construction without a parser.
+        for endpoint in hostile {
+            for flag in ["--aws-kms-endpoint", "--gcp-kms-endpoint"] {
+                let err = with_kms_endpoint(flag, endpoint).expect_err("refused at parse");
+                assert!(
+                    err.contains(flag) && err.contains("userinfo"),
+                    "got {err:?}"
+                );
+            }
+            let mut config =
+                with_kms_endpoint("--gcp-kms-endpoint", "https://kms.example.internal")
+                    .expect("the base config parses");
+            config.aws_kms_endpoint = Some(endpoint.to_string());
+            config.aws_sts_endpoint = Some(endpoint.to_string());
+            config.gcp_kms_endpoint = Some(endpoint.to_string());
+            let refusals = super::kms_endpoint_refusals(&config);
+            assert_eq!(
+                refusals.len(),
+                3,
+                "{endpoint}: every endpoint field must be held to the rule, got {refusals:?}"
+            );
+        }
+    }
+
+    /// The same property one layer out: a host that is not a LITERAL name or address is
+    /// read by a URL parser as some other host than the text shows — IDNA punycodes it,
+    /// percent-encoding decodes it, a backslash or a stripped tab moves where the authority
+    /// ends.
+    #[test]
+    fn a_kms_endpoint_host_that_is_not_a_literal_is_refused() {
+        for endpoint in [
+            // url 2.5.8 punycodes this to xn--example-4fg.com (the 'а' is Cyrillic).
+            "https://exa\u{0430}mple.com",
+            "https://cloudkms.googleapis.com%40evil.example.com",
+            "https://cloudkms.googleapis.com\\@evil.example.com",
+            "https://cloudkms.googleapis.com\t@evil.example.com",
+            // A FULLWIDTH digit three: not a port any parser will read as 443.
+            "https://cloudkms.googleapis.com:44\u{FF13}",
+            "https://cloudkms.googleapis.com:notaport",
+            "https://cloudkms.googleapis.com?x=1",
+            "https://cloudkms.googleapis.com#frag",
+        ] {
+            assert!(
+                with_kms_endpoint("--gcp-kms-endpoint", endpoint).is_err(),
+                "{endpoint:?} does not name a literal host and must be refused"
+            );
+        }
+    }
+
+    /// POSITIVE CONTROL for both refusals above, on all three flags.
+    ///
+    /// The endpoints an operator actually sets — the public Cloud KMS and KMS/STS hosts, a
+    /// regional or VPC-endpoint host, an in-cluster emulator with a port, and the loopback
+    /// `http://` emulator lane in every spelling — must still parse. A gate that refused
+    /// them all would satisfy every assertion above; that is precisely how round 8 shipped
+    /// three fail-closed regressions.
+    #[test]
+    fn the_kms_endpoints_an_operator_legitimately_sets_are_still_accepted() {
+        let legitimate = [
+            "https://cloudkms.googleapis.com",
+            "https://cloudkms.googleapis.com/",
+            "https://us-east1-cloudkms.googleapis.com",
+            "https://kms.us-east-1.amazonaws.com",
+            "https://sts.eu-north-1.amazonaws.com",
+            "https://vpce-0abc123-xy1z.kms.us-east-1.vpce.amazonaws.com",
+            "https://kms.emulator.svc.cluster.local:8443",
+            "https://10.0.0.5:8443",
+            // The LocalStack / KMS-emulator lane, in every spelling.
+            "http://localhost:4566",
+            "http://localhost:4566/",
+            "http://127.0.0.1:4566",
+            "http://127.0.0.1:4566/",
+            "http://[::1]:4566",
+            "http://localhost",
+            "http://127.0.0.1",
+            "http://[::1]",
+        ];
+        for flag in [
+            "--aws-kms-endpoint",
+            "--aws-sts-endpoint",
+            "--gcp-kms-endpoint",
+        ] {
+            for endpoint in legitimate {
+                let admitted = super::validated_kms_endpoint(flag, endpoint);
+                assert!(
+                    admitted.is_ok(),
+                    "{flag} {endpoint} is an endpoint an operator sets and must be accepted, \
+                     got {:?}",
+                    admitted.err()
+                );
+            }
+        }
+        // End to end through both boundaries. `--aws-sts-endpoint` is parsed only alongside
+        // `--aws-kms-use-web-identity` (an unrelated coherence rule), so its accept case is
+        // proved at the `Config` boundary, which is what `app::run` consults.
+        for endpoint in legitimate {
+            for flag in ["--aws-kms-endpoint", "--gcp-kms-endpoint"] {
+                assert!(
+                    with_kms_endpoint(flag, endpoint).is_ok(),
+                    "{flag} {endpoint} must parse"
+                );
+            }
+            let mut config =
+                with_kms_endpoint("--gcp-kms-endpoint", "https://kms.example.internal")
+                    .expect("the base config parses");
+            config.aws_kms_endpoint = Some(endpoint.to_string());
+            config.aws_sts_endpoint = Some(endpoint.to_string());
+            config.gcp_kms_endpoint = Some(endpoint.to_string());
+            assert_eq!(
+                super::kms_endpoint_refusals(&config),
+                Vec::<String>::new(),
+                "{endpoint} must be admissible on all three fields"
+            );
+        }
+    }
+
+    /// The host allowlist is a deliberate line, so it is pinned character by character.
+    ///
+    /// `_` is ADMITTED: internal DNS names carry it and `url::Url::parse` reads it back as
+    /// the text itself, so refusing it would have been pure capability loss. The other
+    /// printable ASCII `url` also reads verbatim is refused as defence in depth — none of
+    /// it can appear in a name a resolver will answer for, so no reachable endpoint is
+    /// lost. Measured against url 2.5.8, the crate ureq 2.12.1 links.
+    #[test]
+    fn the_host_allowlist_is_exactly_the_characters_a_resolver_can_answer_for() {
+        assert!(
+            super::kms_endpoint_authority("https://kms_internal.example:8443").is_ok(),
+            "an underscore is read verbatim by a URL parser and appears in internal DNS names"
+        );
+        assert!(
+            super::kms_endpoint_authority("http://kms_local:4566").is_err(),
+            "but the loopback rule still applies to it"
+        );
+        // Refused, and url reads each of these VERBATIM — a named, accepted capability
+        // loss, not an oversight: none can appear in a name `getaddrinfo` resolves.
+        for c in [
+            '!', '"', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=', '`', '{', '}', '~',
+        ] {
+            assert!(
+                super::kms_endpoint_authority(&format!("https://kms{c}internal.example")).is_err(),
+                "{c:?} must be refused"
+            );
+        }
+        // Refused because a URL parser does NOT read them as written: these MOVE the host
+        // (verified: url resolves each to a host other than the text before the character).
+        for c in ['#', '/', '?', '@', '\\'] {
+            let hostile = format!("https://kms{c}internal.example");
+            // `/`, `?` and `#` end the authority, so the refusal is about what is left.
+            assert!(
+                super::kms_endpoint_authority(&hostile).is_err()
+                    || super::kms_endpoint_authority(&hostile).as_deref() == Ok("kms"),
+                "{c:?} must never yield an authority other than the text before it"
+            );
+        }
+        // Refused, and url fails outright on them too.
+        for c in ['%', '<', '>', '^', '|'] {
+            assert!(
+                super::kms_endpoint_authority(&format!("https://kms{c}internal.example")).is_err(),
+                "{c:?} must be refused"
+            );
+        }
+    }
+
+    /// A bracket-shaped host must be a real IPv6 literal.
+    ///
+    /// `[foo-bar]`, `[1]` and `[gggg::1]` pass a character allowlist but `url::Url::parse`
+    /// refuses all three, so admitting them would only move the failure to the first
+    /// request — and it would leave the gate disagreeing with the parser about what the
+    /// host even is, which is the property this whole check exists to hold.
+    #[test]
+    fn a_bracketed_host_must_be_an_ipv6_literal() {
+        for hostile in [
+            "https://[foo-bar]",
+            "https://[1]",
+            "https://[gggg::1]",
+            "https://[]",
+            "https://[::1",
+            "https://[::1]junk",
+            "http://[fe80::1%25eth0]",
+        ] {
+            assert!(
+                super::kms_endpoint_authority(hostile).is_err(),
+                "{hostile} is not an IPv6 endpoint and must be refused"
+            );
+        }
+        // POSITIVE CONTROL: the real IPv6 spellings, including the canonicalisations a URL
+        // parser performs. `[0:0:0:0:0:0:0:1]` IS ::1, so the loopback rule must see it.
+        for allowed in [
+            "https://[2001:db8::1]",
+            "https://[2001:db8::1]:8443",
+            "https://[::ffff:192.168.0.1]",
+            "http://[::1]",
+            "http://[::1]:4566",
+            "http://[0:0:0:0:0:0:0:1]:4566",
+        ] {
+            assert!(
+                super::kms_endpoint_authority(allowed).is_ok(),
+                "{allowed} is a real IPv6 endpoint and must be accepted: {:?}",
+                super::kms_endpoint_authority(allowed).err()
+            );
+        }
+    }
+
+    /// A host whose last label is a NUMBER is read by a URL parser as an IPv4 address and
+    /// rewritten, so the text is not the host reached — `0x7f.1`, `127.1` and `2130706433`
+    /// all become 127.0.0.1, `1.1` becomes 1.0.0.1. Admitted only as a plain dotted quad,
+    /// where the two agree.
+    #[test]
+    fn a_host_that_ends_in_a_number_must_already_be_the_address_it_resolves_to() {
+        for rewritten in [
+            "https://0x7f.1",
+            "https://127.1",
+            "https://2130706433",
+            "https://1.1",
+            "https://0x01010101",
+            "https://kms.example.1",
+            "http://127.1:4566",
+        ] {
+            assert!(
+                super::kms_endpoint_authority(rewritten).is_err(),
+                "{rewritten} is rewritten by a URL parser and must be refused"
+            );
+        }
+        // POSITIVE CONTROL: dotted quads and ordinary names are untouched. A DNS name is
+        // never affected — a top-level label cannot be all-numeric.
+        for allowed in [
+            "https://10.0.0.5:8443",
+            "https://192.168.0.1",
+            "http://127.0.0.1:4566",
+            "https://kms.us-east-1.amazonaws.com",
+            "https://vpce-0abc123-xy1z.kms.us-east-1.vpce.amazonaws.com",
+            "https://kms-2.example.com",
+        ] {
+            assert!(
+                super::kms_endpoint_authority(allowed).is_ok(),
+                "{allowed} must be accepted: {:?}",
+                super::kms_endpoint_authority(allowed).err()
+            );
+        }
+    }
+
+    /// A port is a u16, not "some digits".
+    ///
+    /// `:65536` and `:99999999` are all-digit and `url::Url::parse` refuses both, so an
+    /// all-digit rule admitted endpoints no request could ever be made to — a real
+    /// disagreement with the parser, in the direction of accepting the unusable. A leading
+    /// zero is refused for the narrower reason that `:0443` reaches port 443 while the text
+    /// says otherwise.
+    #[test]
+    fn a_port_must_be_a_tcp_port_number() {
+        for bad in [
+            "https://kms.example.com:65536",
+            "https://kms.example.com:99999999",
+            "https://kms.example.com:0443",
+            "https://kms.example.com:00",
+            // `u16::from_str` accepts a leading sign; `url::Url::parse` refuses both.
+            "https://kms.example.com:+443",
+            "https://kms.example.com:-443",
+            "https://kms.example.com:",
+            "http://127.0.0.1:65536",
+        ] {
+            assert!(
+                super::kms_endpoint_authority(bad).is_err(),
+                "{bad} is not a usable endpoint and must be refused"
+            );
+        }
+        for good in [
+            "https://kms.example.com:65535",
+            "https://kms.example.com:443",
+            "https://kms.example.com:8443",
+            "http://127.0.0.1:4566",
+            "http://[::1]:1",
+        ] {
+            assert!(
+                super::kms_endpoint_authority(good).is_ok(),
+                "{good} names a real port and must be accepted: {:?}",
+                super::kms_endpoint_authority(good).err()
+            );
+        }
+    }
+
+    /// The plaintext exception is decided from the parsed address, so a spelling a URL
+    /// parser canonicalises does not change the answer — and every address in 127.0.0.0/8
+    /// is loopback, not just `127.0.0.1`.
+    #[test]
+    fn the_plaintext_exception_follows_the_address_not_the_spelling() {
+        for loopback in [
+            "http://127.0.0.1:4566",
+            "http://127.0.0.2:4566",
+            "http://127.255.255.254",
+            "http://LOCALHOST:4566",
+            "http://[0:0:0:0:0:0:0:1]",
+        ] {
+            assert!(
+                super::kms_endpoint_authority(loopback).is_ok(),
+                "{loopback} provably names this machine and must be accepted: {:?}",
+                super::kms_endpoint_authority(loopback).err()
+            );
+        }
+        for off_machine in [
+            "http://128.0.0.1",
+            "http://10.0.0.5:8443",
+            "http://[fe80::1]",
+            "http://[2001:db8::1]",
+            "http://localhost.attacker.example",
+            // The IPv4 shorthands url reads as 127.0.0.1 are refused, not admitted: a
+            // refusal is the safe direction and no operator writes an emulator this way.
+            "http://127.1",
+            "http://0x7f.1",
+        ] {
+            assert!(
+                super::kms_endpoint_authority(off_machine).is_err(),
+                "{off_machine} does not provably name this machine and must be refused"
+            );
+        }
+    }
+
+    /// The authority the AWS SigV4 `Host` header is built from is the one a URL parser will
+    /// connect to, including the port.
+    #[test]
+    fn the_authority_returned_is_the_host_and_port_that_will_be_reached() {
+        for (endpoint, authority) in [
+            (
+                "https://kms.us-east-1.amazonaws.com",
+                "kms.us-east-1.amazonaws.com",
+            ),
+            (
+                "https://kms.us-east-1.amazonaws.com/",
+                "kms.us-east-1.amazonaws.com",
+            ),
+            ("http://localhost:4566/", "localhost:4566"),
+            ("http://[::1]:4566", "[::1]:4566"),
+            ("http://[::1]", "[::1]"),
+        ] {
+            assert_eq!(
+                super::kms_endpoint_authority(endpoint).expect("admissible"),
+                authority
             );
         }
     }

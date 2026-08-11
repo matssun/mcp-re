@@ -489,9 +489,18 @@ fn a_replay_returns_a_verified_rejection_receipt_over_the_real_hop() {
         .handle("r1", &plain_request(), &params)
         .expect("the rejection receipt itself verifies");
     match replayed.kind {
-        ResponseKind::VerifiedRejection { wire_code, bound } => {
+        ResponseKind::VerifiedRejection {
+            wire_code,
+            bound,
+            execution,
+        } => {
             assert_eq!(wire_code.as_deref(), Some("mcp-re.replay_detected"));
             assert!(bound, "the receipt must be bound to the replayed request");
+            // A replay is refused before dispatch and spends nothing, so the receipt
+            // states no execution hazard. Asserted rather than ignored: an UNSTATED
+            // contract must stay distinguishable from one that says the work may have
+            // run, and this is the arm that says nothing.
+            assert!(!execution.is_stated());
         }
         other => panic!("a replay must be a verified rejection, got {other:?}"),
     }

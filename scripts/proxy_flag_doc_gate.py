@@ -42,9 +42,20 @@ CLI_MODULE = "mcp-re-proxy/src/cli.rs"
 
 # Documentation roots. `docs/archive/` is history by definition and records the surface as
 # it was; `docs/security/round-*/` holds captured gate logs, not instructions.
+#
+# Repo-root markdown is in scope too: README.md and CONTRIBUTING.md are the first
+# documents an operator reads, and a scan that stops at `docs/` would never see a command
+# line in either.
 DOC_ROOTS = ("docs", "deploy")
 SKIP_PARTS = ("archive", "grilling-seed")
 SKIP_PATTERNS = (re.compile(r"docs/security/round-"),)
+
+# Floors on what the scan actually selected. A gate whose document set collapses to zero
+# reports the same green as one that examined everything, so the size of the set is part
+# of what has to hold. `MIN_LAUNCH_DOCS` is the load-bearing one: markdown files exist in
+# quantity, documents that actually LAUNCH the proxy are the population under test.
+MIN_SCANNED_DOCS = 40
+MIN_LAUNCH_DOCS = 2
 
 # A fenced block: ```[lang]\n ... \n```
 FENCE = re.compile(r"```[^\n]*\n(.*?)```", re.S)
@@ -111,9 +122,23 @@ def documented_flags(markdown: str) -> set[str]:
 
 
 # A document that opens by declaring itself superseded is describing a surface that is
-# gone ON PURPOSE, and its command lines are the evidence for that claim. Skipping it is
-# reported, never silent: an unexamined skip is how a live guide ends up exempt.
+# gone ON PURPOSE, and its command lines are the evidence for that claim.
+#
+# The banner alone does not grant the exemption. A check a document can opt out of by
+# writing one line about itself is a check any live operator guide can silence, so the
+# exemption is held HERE, by path, and the banner and the entry must agree:
+#
+#   listed + banner   -> skipped, and reported
+#   banner, unlisted  -> FAIL; the document is claiming an exemption the gate did not give
+#   listed, no banner -> FAIL; the entry outlived the document's own claim about itself
 SUPERSEDED = re.compile(r"^>\s*\*\*[⚠!]?\s*Superseded", re.M)
+
+SUPERSEDED_DOCS = frozenset(
+    {
+        "docs/dogfood-runbook.md",
+        "docs/spec/v0.3-claim-matrix.md",
+    }
+)
 
 
 def is_superseded(markdown: str) -> bool:
@@ -121,7 +146,7 @@ def is_superseded(markdown: str) -> bool:
 
 
 def doc_files(repo: Path) -> list[Path]:
-    files: list[Path] = []
+    files: list[Path] = sorted(repo.glob("*.md"))
     for root in DOC_ROOTS:
         for path in sorted((repo / root).rglob("*.md")):
             rel = path.relative_to(repo).as_posix()
@@ -133,7 +158,13 @@ def doc_files(repo: Path) -> list[Path]:
     return files
 
 
-def check(repo: Path, skipped: list[str] | None = None) -> list[str]:
+def check(repo: Path, skipped: list[str] | None = None, floors: bool = True) -> list[str]:
+    """Every problem in `repo`.
+
+    `floors` is off only for the selftest's single-document fixtures, which are about the
+    per-document logic rather than the size of the real corpus; the floor itself has its
+    own case.
+    """
     skipped = skipped if skipped is not None else []
     cli = (repo / CLI_MODULE).read_text(encoding="utf-8")
     known = known_cli_flags(cli)
@@ -143,18 +174,48 @@ def check(repo: Path, skipped: list[str] | None = None) -> list[str]:
             f"changed and this gate is no longer reading it. Fix the gate, do not skip it."
         ]
     problems: list[str] = []
-    for path in doc_files(repo):
+    files = doc_files(repo)
+    launch_docs = 0
+    for path in files:
         rel = path.relative_to(repo).as_posix()
         text = path.read_text(encoding="utf-8")
-        if is_superseded(text):
+        banner, listed = is_superseded(text), rel in SUPERSEDED_DOCS
+        if banner and listed:
             skipped.append(rel)
             continue
-        for flag in sorted(documented_flags(text) - known):
+        if banner:
+            problems.append(
+                f"{rel}: carries a `> **Superseded` banner but is not in this gate's "
+                f"SUPERSEDED_DOCS. A document does not exempt itself from the check its "
+                f"command lines exist to pass; add it here if the exemption is intended."
+            )
+            continue
+        if listed:
+            problems.append(
+                f"{rel}: is in SUPERSEDED_DOCS but no longer declares itself superseded. "
+                f"Remove the entry so the document is scanned again."
+            )
+        flags = documented_flags(text)
+        if flags:
+            launch_docs += 1
+        for flag in sorted(flags - known):
             problems.append(
                 f"{rel}: `{flag}` is used in a proxy command line but {CLI_MODULE} does "
                 f"not parse it. Remove it, or say in the surrounding prose that it was "
                 f"removed (prose is not scanned; command lines are)."
             )
+    if floors and len(files) < MIN_SCANNED_DOCS:
+        problems.append(
+            f"the scan selected only {len(files)} documents (floor {MIN_SCANNED_DOCS}) — "
+            f"the document set collapsed, so a green here measured nothing. Fix the "
+            f"selection, do not lower the floor."
+        )
+    if floors and launch_docs < MIN_LAUNCH_DOCS:
+        problems.append(
+            f"only {launch_docs} scanned document launches the proxy (floor "
+            f"{MIN_LAUNCH_DOCS}) — either the invocation pattern stopped matching or the "
+            f"guides moved out of scope. Fix the selection, do not lower the floor."
+        )
     return problems
 
 
@@ -163,8 +224,9 @@ SELFTEST_CLI += '\n    "--bind" => x,\n    "--trust" => x,\n'
 
 
 def selftest() -> int:
-    """Seven cases: the gate must catch a removed flag and must not cry wolf."""
-    cases: list[tuple[str, str, bool]] = [
+    """The gate must catch a removed flag, must not cry wolf, and must not report a
+    green over a document set that collapsed or exempted itself."""
+    cases: list[tuple[str, str, bool] | tuple[str, str, bool, str]] = [
         (
             "a proxy block using a known flag passes",
             "```sh\nmcp_re_proxy_cli --bind 127.0.0.1:8600\n```\n",
@@ -191,33 +253,91 @@ def selftest() -> int:
             True,
         ),
         (
-            "a document declaring itself superseded is skipped",
+            "an UNLISTED document cannot exempt itself with a Superseded banner",
             "> **⚠ Superseded serving model.**\n\n"
             "```sh\nmcp_re_proxy_cli --gone-flag x\n```\n",
-            True,
+            False,
         ),
         (
             "the crate name in a cargo command is not an invocation",
             "```sh\ncargo test -p mcp-re-proxy --gone-flag x\n```\n",
             True,
         ),
+        (
+            "repo-root markdown is scanned",
+            "```sh\nmcp_re_proxy_cli --gone-flag x\n```\n",
+            False,
+            "README.md",
+        ),
     ]
     failures = 0
-    for name, markdown, should_pass in cases:
+    for case in cases:
+        name, markdown, should_pass = case[0], case[1], case[2]
+        where = case[3] if len(case) > 3 else "docs/case.md"
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             (repo / CLI_MODULE).parent.mkdir(parents=True)
             (repo / CLI_MODULE).write_text(SELFTEST_CLI, encoding="utf-8")
             (repo / "docs").mkdir()
             (repo / "deploy").mkdir()
-            (repo / "docs" / "case.md").write_text(markdown, encoding="utf-8")
-            problems = check(repo)
+            target = repo / where
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(markdown, encoding="utf-8")
+            problems = check(repo, floors=False)
         passed = not problems
         if passed != should_pass:
             failures += 1
             print(f"SELFTEST FAIL: {name}: got {problems or 'no problems'}")
         else:
             print(f"selftest ok: {name}")
+
+    # A LISTED document with the banner is skipped; the same document without the banner
+    # is scanned again and its stale entry reported.
+    listed = sorted(SUPERSEDED_DOCS)[0]
+    for name, markdown, should_pass in (
+        (
+            "a listed document declaring itself superseded is skipped",
+            "> **⚠ Superseded serving model.**\n\n"
+            "```sh\nmcp_re_proxy_cli --gone-flag x\n```\n",
+            True,
+        ),
+        (
+            "a listed document that dropped its banner is reported, not skipped",
+            "```sh\nmcp_re_proxy_cli --bind 127.0.0.1:8600\n```\n",
+            False,
+        ),
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / CLI_MODULE).parent.mkdir(parents=True)
+            (repo / CLI_MODULE).write_text(SELFTEST_CLI, encoding="utf-8")
+            (repo / "docs").mkdir()
+            (repo / "deploy").mkdir()
+            target = repo / listed
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(markdown, encoding="utf-8")
+            problems = check(repo, floors=False)
+        passed = not problems
+        if passed != should_pass:
+            failures += 1
+            print(f"SELFTEST FAIL: {name}: got {problems or 'no problems'}")
+        else:
+            print(f"selftest ok: {name}")
+
+    # The floors: an empty corpus must not read as a pass.
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        (repo / CLI_MODULE).parent.mkdir(parents=True)
+        (repo / CLI_MODULE).write_text(SELFTEST_CLI, encoding="utf-8")
+        (repo / "docs").mkdir()
+        (repo / "deploy").mkdir()
+        problems = check(repo)
+        if len(problems) != 2 or not any("collapsed" in p for p in problems):
+            failures += 1
+            print(f"SELFTEST FAIL: an empty document set was not refused: {problems}")
+        else:
+            print("selftest ok: an empty document set is refused, not reported green")
+
     return 1 if failures else 0
 
 
@@ -233,7 +353,10 @@ def main() -> int:
         for p in problems:
             print(f"  - {p}", file=sys.stderr)
         return 1
-    print("proxy-flag documentation gate: every documented proxy flag exists")
+    print(
+        f"proxy-flag documentation gate: every documented proxy flag exists "
+        f"({len(doc_files(REPO))} documents scanned, {len(skipped)} skipped)"
+    )
     return 0
 
 

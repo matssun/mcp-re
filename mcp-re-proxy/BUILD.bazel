@@ -536,6 +536,27 @@ nt_rust_test(
         "@crates_mcp_re//:tokio",
     ],
 )
+# The bytes the inner server receives are the bytes the client signed, or the inner
+# server receives nothing. The PEP re-serializes the body to strip its own `_meta`
+# keys, and `serde_json` without `arbitrary_precision` is not a faithful carrier: a
+# duplicate member collapses to last-one-wins and an out-of-f64-range number comes
+# back rewritten. Both shapes are refused on the ORIGINAL bytes, before the
+# re-serialization; the cases assert the recording backend is never dispatched.
+nt_rust_test(
+    name = "forwarded_body_fidelity_test",
+    srcs = ["tests/forwarded_body_fidelity_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
+    ],
+)
 # MCPRE-116 (ADR-MCPRE-051 §6): the serving fleet reads its TLS config PER CONNECTION
 # from the ServerConfigSnapshot, so the CRL hot-reload task's atomic swap takes effect
 # without a restart. Without this the reload is a dead wire — the fleet would keep

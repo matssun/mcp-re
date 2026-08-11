@@ -12,6 +12,20 @@ and never falls back to whatever `verus`/`z3` happen to be on PATH. A proof chec
 prover of unknown identity is not evidence, and reporting it as a pass would be exactly
 the "stale or mismatched cache accepted as proof" threat the ADR names.
 
+The install root is a path outside the repository, on a persistent runner, so agreeing on
+the path establishes nothing about the bytes there. Two independent identity checks run
+before any verdict is recorded, and the lane refuses if either is absent:
+
+  * the installed `vstd.vir` must digest to the `verus.vstd` identity the lock records —
+    the prover's specification library is what the proofs are stated against, and it is the
+    one large artifact the lock names by content;
+  * the release's `version.json` must declare the pinned commit, checked before the run
+    rather than taken from the run's own report.
+
+Neither is a signature, and a substituted binary that ships the pinned vstd still passes
+them. They close the case the lock previously only appeared to close: a recorded hash that
+nothing ever compared.
+
 A lane with no V1/V3 unit to check is NOT_REQUIRED, whether or not the toolchain is
 pinned: the manifest asks nothing of it, which is a legitimately empty lane rather than a
 failure. It is not SKIPPED, which would mean the lane was required and deliberately not
@@ -20,6 +34,8 @@ run, and it is not PASS, which would mean a proof was checked.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -68,6 +84,45 @@ def unit_target(unit: dict) -> tuple[str | None, list[str]]:
     return crates.pop(), list(unit.get("features", []))
 
 
+def installed_identity(toolchains: dict, install_root: Path) -> str | None:
+    """Why the installation at `install_root` is NOT the pinned prover, or None.
+
+    Content, not location. The lock records `verus.vstd.identity` and `verus.commit`; until
+    something compares them against the files on disk, both are decoration and the lane's
+    only real claim is that some executable exists at an agreed path.
+    """
+    pinned_vstd = str(toolchains["verus"].get("vstd", {}).get("identity", ""))
+    if not pinned_vstd.startswith("sha256:"):
+        return (
+            "the lock records no `verus.vstd.identity` digest, so the prover's "
+            "specification library cannot be identified"
+        )
+    vstd = install_root / "vstd.vir"
+    if not vstd.is_file():
+        return f"the pinned prover's specification library is missing at {vstd}"
+    digest = "sha256:" + hashlib.sha256(vstd.read_bytes()).hexdigest()
+    if digest != pinned_vstd:
+        return (
+            f"vstd identity mismatch: {vstd} digests to {digest[:23]}, the lock records "
+            f"{pinned_vstd[:23]}. The installation is not the pinned release."
+        )
+
+    pinned_commit = str(toolchains["verus"].get("commit", ""))
+    version_file = install_root / "version.json"
+    if not version_file.is_file():
+        return f"the pinned prover declares no identity: {version_file} is missing"
+    try:
+        declared = json.loads(version_file.read_text(encoding="utf-8"))["verus"]["commit"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return f"{version_file} does not declare a verus commit"
+    if declared != pinned_commit:
+        return (
+            f"installed prover declares commit {str(declared)[:12]}, the lock pins "
+            f"{pinned_commit[:12]}"
+        )
+    return None
+
+
 def main() -> int:
     try:
         toolchains = load_toolchains()
@@ -104,7 +159,8 @@ def main() -> int:
         return 1
 
     pinned_commit = str(toolchains["verus"].get("commit", ""))
-    cargo_verus = Path(toolchains["verus"]["install_root"]) / "cargo-verus"
+    install_root = Path(toolchains["verus"]["install_root"])
+    cargo_verus = install_root / "cargo-verus"
     if not cargo_verus.is_file():
         print(
             f"UNAVAILABLE: the pinned prover is not installed at {cargo_verus}.\n"
@@ -113,6 +169,21 @@ def main() -> int:
             file=sys.stderr,
         )
         print("VERDICT: UNAVAILABLE")
+        return 1
+
+    # A wrong installation is a FAIL, not UNAVAILABLE: something IS installed at the pinned
+    # path and it is not what the lock describes, which is a stronger statement than "the
+    # measurement is missing" and must not be recoverable by installing anything.
+    wrong = installed_identity(toolchains, install_root)
+    if wrong is not None:
+        print(f"FAIL: {wrong}", file=sys.stderr)
+        print(
+            "The lock's recorded identity is compared against the installation before any "
+            "proof is\nattributed to it. Re-install the pinned release, or re-pin the lock "
+            "deliberately.",
+            file=sys.stderr,
+        )
+        print("VERDICT: FAIL")
         return 1
 
     failures = 0

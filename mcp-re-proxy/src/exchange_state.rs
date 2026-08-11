@@ -60,7 +60,10 @@
 //!
 //! **Not a second source of truth.** The states below are entered by the operations that
 //! establish them, and a state is not asserted alongside control flow that could disagree:
-//! a transition IS the step. `transition` refuses anything else.
+//! a transition IS the step. `transition` refuses anything else, and
+//! [`ExchangeProgress::advance`] consults it — and the cross-machine invariants — on every
+//! step of every build, release included. A refused step latches an anomaly that
+//! [`ExchangeProgress::retry_semantics`] reports at full strength.
 //!
 //! **Not a framework.** Closed enums and exhaustive matches, per ADR-MCPRE-058 §12.
 //! **Not public.** Exchange state is not a protocol surface (ADR-MCPRE-057 §18).
@@ -490,6 +493,13 @@ pub(crate) struct ExchangeProgress {
     backend: BackendState,
     origin: ResponseOrigin,
     open_leg: OpenLeg,
+    /// The first illegal transition or invariant violation this exchange hit, latched.
+    ///
+    /// `None` is the ordinary case and the only one in which the tuple below may be read
+    /// at face value. Once set, the model and the code driving it have disagreed, so the
+    /// tuple describes an exchange that was never legally reached and nothing derived from
+    /// it can be trusted to under-claim safely — see [`ExchangeProgress::retry_semantics`].
+    anomaly: Option<&'static str>,
 }
 
 impl ExchangeProgress {
@@ -500,6 +510,7 @@ impl ExchangeProgress {
             backend: BackendState::NotDispatched,
             origin: ResponseOrigin::Undetermined,
             open_leg: OpenLeg::NotApplicable,
+            anomaly: None,
         }
     }
 
@@ -556,23 +567,54 @@ impl ExchangeProgress {
     ///
     /// Monotone by construction — `ExchangeState` is ordered along the pipeline, and this
     /// only ever moves toward the end of it.
+    ///
+    /// # Both checks run in every build
+    ///
+    /// The legality of `(state, event)` under [`transition`] and the coherence of the
+    /// resulting tuple under [`invariant_violation`](Self::invariant_violation) are
+    /// evaluated on every advance of the shipped binary, and a failure of either LATCHES
+    /// into [`anomaly`](Self::anomaly). Neither is a `debug_assert!`: an enforcement layer
+    /// compiled out of release builds leaves the ordering of `?` in the serving path as the
+    /// only thing standing between a reordered stage and the defects this machine exists to
+    /// make unrepresentable, while every test stays green.
+    ///
+    /// Nor is it a panic. Aborting the task would turn a model/code disagreement into a
+    /// dropped connection, whose retry contract is *nothing at all* — strictly less than the
+    /// machine already knows. The latch is the enforcement: it is consumed by
+    /// [`retry_semantics`](Self::retry_semantics), which degrades to the strongest claim
+    /// about consequence, so an exchange the model cannot vouch for is reported as one that
+    /// may have executed rather than as one that provably did not.
     pub(crate) fn advance(&mut self, event: ExchangeEvent) {
-        debug_assert!(
-            transition(self.request, event).is_ok(),
-            "the serving path drove an illegal transition: {:?} + {event:?}",
-            self.request
-        );
+        if transition(self.request, event).is_err() {
+            self.latch("the serving path drove an illegal exchange transition");
+        }
         if let Some(floor) = event.establishes() {
             if floor > self.request {
                 self.request = floor;
             }
         }
         self.sync_backend();
-        debug_assert!(
-            self.invariant_violation().is_none(),
-            "{} (after {event:?})",
-            self.invariant_violation().unwrap_or("")
-        );
+        if let Some(violation) = self.invariant_violation() {
+            self.latch(violation);
+        }
+    }
+
+    /// Record the FIRST anomaly and keep it. A later one cannot describe how the exchange
+    /// left the legal path, and the consequence it forces is already at its maximum.
+    fn latch(&mut self, what: &'static str) {
+        if self.anomaly.is_none() {
+            self.anomaly = Some(what);
+        }
+    }
+
+    /// The latched illegal transition or invariant violation, if the exchange hit one.
+    ///
+    /// `None` on every exchange that stayed on the legal path, which is every exchange the
+    /// serving path is written to produce. `Some` means this process is running code that
+    /// disagrees with the machine, and the exchange record is not evidence of anything.
+    #[cfg(test)]
+    pub(crate) fn anomaly(self) -> Option<&'static str> {
+        self.anomaly
     }
 
     /// Record what the continuation store reported.
@@ -617,17 +659,34 @@ impl ExchangeProgress {
     /// What a client may safely do if the exchange terminates here.
     ///
     /// ```text
+    /// anomaly latched                          -> NotRetrySafe
     /// backend dispatched                       -> NotRetrySafe
     /// approval spent, backend never dispatched -> RequiresNewElicitation
     /// otherwise                                -> SafeNothingExecuted
     /// ```
     ///
-    /// The middle case is the one that had no representation. It is reachable whenever a
+    /// The third case is the one that had no representation. It is reachable whenever a
     /// refusal lands between the continuation retirement and the dispatch — a forwarding
     /// failure or a retention-store outage — and the ordinary retry it used to imply
     /// cannot succeed: the retry's fresh nonce passes the replay tier and the answer then
     /// fails as already-answered, with the human's approval already destroyed.
+    ///
+    /// Throughout, a "retry" is the client re-signing and re-sending the same call, so it
+    /// carries a fresh nonce and a fresh signature. `SafeNothingExecuted` is a claim about
+    /// EFFECTS — nothing ran, no approval was destroyed — and not a promise that replaying
+    /// the identical signed bytes will be admitted; the replay tier refuses those by design,
+    /// at every state past [`ReplayAdmitted`](ExchangeState::ReplayAdmitted).
+    ///
+    /// The first case is why the anomaly latch exists. A tuple that reached a state the
+    /// relation does not admit is not evidence that the backend was never handed the
+    /// request; it is evidence that the machine no longer tracks the code. Reporting that as
+    /// `SafeNothingExecuted` would collapse "did not run" and "unknown whether it ran" into
+    /// the one answer a client may act on destructively, so the unknown is reported at full
+    /// strength instead.
     pub(crate) fn retry_semantics(self) -> RetrySemantics {
+        if self.anomaly.is_some() {
+            return RetrySemantics::NotRetrySafe;
+        }
         if self.request.backend_may_have_executed() {
             return RetrySemantics::NotRetrySafe;
         }
@@ -1452,6 +1511,128 @@ mod tests {
                 "{observed:?}"
             );
         }
+    }
+
+    /// Drive the machine to `target` along the legal pipeline, as `handle` does.
+    fn progressed_to(target: ExchangeState) -> ExchangeProgress {
+        use ExchangeEvent as E;
+        let ladder = [
+            E::SignatureVerified,
+            E::TransportBindingChecked,
+            E::AdmissionCurrencyChecked,
+            E::ContinuationPrepared,
+            E::ReplayAdmitted,
+            E::DelegatedKeySnapshotted,
+            E::ContinuationRetired,
+            E::ForwardBodyPrepared,
+            E::RetentionReserved,
+            E::InnerPlaneAccepted,
+        ];
+        let mut p = ExchangeProgress::new();
+        for e in ladder {
+            if p.state() == target {
+                break;
+            }
+            p.advance(e);
+        }
+        assert_eq!(p.state(), target, "ladder reached the requested state");
+        assert_eq!(p.anomaly(), None, "the legal ladder latches nothing");
+        p
+    }
+
+    #[test]
+    fn the_whole_legal_ladder_latches_no_anomaly() {
+        let p = progressed_to(ExchangeState::InnerPlaneAccepted);
+        assert_eq!(p.anomaly(), None);
+        assert_eq!(p.retry_semantics(), RetrySemantics::SafeNothingExecuted);
+    }
+
+    #[test]
+    fn an_illegal_advance_is_refused_and_latched_in_every_build() {
+        // The stage reorder the relation exists to catch: the dispatch event arrives at a
+        // state that never reserved retention.
+        let mut p = progressed_to(ExchangeState::Answerable);
+        assert!(transition(p.state(), ExchangeEvent::BackendDispatched).is_err());
+        p.advance(ExchangeEvent::BackendDispatched);
+        assert_eq!(
+            p.anomaly(),
+            Some("the serving path drove an illegal exchange transition"),
+            "an inadmissible (state, event) pair must not pass unrecorded"
+        );
+    }
+
+    #[test]
+    fn an_illegal_advance_never_reports_the_exchange_as_retry_safe() {
+        // Before the illegal step the exchange is genuinely pre-dispatch and retry-safe.
+        let mut p = progressed_to(ExchangeState::Answerable);
+        assert_eq!(p.retry_semantics(), RetrySemantics::SafeNothingExecuted);
+        // A skipped stage means the model no longer tracks the code, so whether the backend
+        // ran is UNKNOWN — and unknown must never be served as "nothing executed".
+        p.advance(ExchangeEvent::ResponseSigned);
+        assert!(p.anomaly().is_some());
+        assert_eq!(
+            p.retry_semantics(),
+            RetrySemantics::NotRetrySafe,
+            "unknown-if-ran must not collapse into did-not-run"
+        );
+    }
+
+    #[test]
+    fn a_violated_invariant_is_latched_on_the_advance_that_causes_it() {
+        // P2: an open leg served with no durable continuation record. The reply opens a leg
+        // (`Required`) that nothing ever `Recorded`.
+        let mut p = ExchangeProgress::new();
+        for e in [
+            ExchangeEvent::SignatureVerified,
+            ExchangeEvent::TransportBindingChecked,
+            ExchangeEvent::AdmissionCurrencyChecked,
+            ExchangeEvent::ContinuationPrepared,
+            ExchangeEvent::ReplayAdmitted,
+            ExchangeEvent::DelegatedKeySnapshotted,
+            ExchangeEvent::ContinuationRetired,
+            ExchangeEvent::ForwardBodyPrepared,
+            ExchangeEvent::RetentionReserved,
+            ExchangeEvent::InnerPlaneAccepted,
+            ExchangeEvent::BackendDispatched,
+            ExchangeEvent::ResponseObserved,
+            ExchangeEvent::EnvelopeValidated,
+            ExchangeEvent::ResponseClassified,
+            ExchangeEvent::ResponseSigned,
+            ExchangeEvent::OpenLegRecorded,
+            ExchangeEvent::EvidenceRetained,
+        ] {
+            p.advance(e);
+        }
+        p.observe_open_leg(OpenLeg::Required);
+        assert_eq!(p.anomaly(), None, "nothing is violated until it is SERVED");
+        p.advance(ExchangeEvent::OpenLegResponseServed);
+        assert_eq!(
+            p.anomaly(),
+            Some("an open leg was served without a durable continuation record"),
+            "the P2 invariant must be evaluated outside cfg(debug_assertions)"
+        );
+    }
+
+    #[test]
+    fn the_latch_keeps_the_first_anomaly() {
+        let mut p = progressed_to(ExchangeState::Verified);
+        p.advance(ExchangeEvent::ResponseSigned); // illegal
+        let first = p.anomaly();
+        assert!(first.is_some());
+        p.advance(ExchangeEvent::SignatureVerified); // illegal from ResponseSigned too
+        assert_eq!(p.anomaly(), first, "the first anomaly is the diagnosis");
+    }
+
+    #[test]
+    fn an_illegal_advance_still_never_moves_consequence_backward() {
+        let mut p = progressed_to(ExchangeState::InnerPlaneAccepted);
+        p.advance(ExchangeEvent::BackendDispatched);
+        assert_eq!(p.retry_semantics(), RetrySemantics::NotRetrySafe);
+        // An event establishing an EARLIER state cannot walk the exchange back below the
+        // execution threshold, latch or no latch.
+        p.advance(ExchangeEvent::SignatureVerified);
+        assert!(p.state() >= ExchangeState::Dispatched);
+        assert_eq!(p.retry_semantics(), RetrySemantics::NotRetrySafe);
     }
 
     #[test]

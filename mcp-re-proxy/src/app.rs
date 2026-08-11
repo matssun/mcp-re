@@ -105,26 +105,70 @@ pub fn build_actor_resolver(
     })
 }
 
+/// Whether a startup clock reading costs more than a warning, and why.
+///
+/// A faulted clock is tolerable where it only feeds per-request freshness: every request
+/// then fails closed, which is safe. It is NOT tolerable where the same reading is the
+/// reference time for a BOOT-TIME refusal. `startup_now_unix` is what the TLS plane
+/// compares each client CRL's `nextUpdate` against, and nothing is ever `Stale` relative
+/// to a clock reading zero — so with CRLs configured the refusal that exists to keep an
+/// expired CRL out of the serving path cannot fire, while the revocation-posture transcript
+/// still advertises the CRL as enforced.
+///
+/// Pure, so the decision is assertable without a broken host clock: it takes the reading
+/// and how many CRLs the deployment configured, and returns the refusal.
+fn faulted_clock_refusal(startup_now_unix: i64, configured_crls: usize) -> Option<String> {
+    if configured_crls == 0 || !crate::startup_plan::host_clock_is_faulted(startup_now_unix) {
+        return None;
+    }
+    Some(format!(
+        "mcp-re-proxy refuses to start: the system clock reads at/near the Unix epoch \
+         ({startup_now_unix} < {}s), so the boot-time client-CRL freshness refusal cannot be \
+         performed — every CRL compares as fresh against a zero clock, and the \
+         {configured_crls} configured CRL(s) would be advertised as enforced while an \
+         arbitrarily expired one was loaded. Fix the host clock (NTP/RTC) before starting.",
+        crate::startup_plan::EPOCH_CLOCK_FAULT_THRESHOLD_SECS,
+    ))
+}
+
 /// Enforce the key-file-permission posture for a sensitive key file. The proxy
 /// always runs the maximal-security posture, so a group/world-accessible key file
 /// is a HARD error returned to the caller (startup refuses). Uses the pure
-/// [`cli::key_file_mode_is_insecure`] predicate so it stays consistent with (and
+/// [`cli::key_file_posture_violation`] predicate so it stays consistent with (and
 /// testable alongside) the parse-time checks.
+///
+/// A `stat` that fails for any reason other than "there is no such file" is itself a
+/// refusal. The posture of a file the proxy is about to READ is either established or it
+/// is not, and treating an unreadable `stat` as compliance is how a world-readable signing
+/// seed on a networked or overlay mount (EIO, ESTALE, EACCES on the directory) boots
+/// silently. `NotFound` is the one error that is not a fail-open: there is no file whose
+/// permissions could be wrong, the loader resolves the same path a moment later, and it
+/// reports the absence with the diagnostic that names what was missing.
 #[cfg(unix)]
 fn check_key_file_perms(path: &str, allow_group_read: bool) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt;
     use std::os::unix::fs::PermissionsExt;
-    if let Ok(meta) = std::fs::metadata(path) {
-        let mode = meta.permissions().mode();
-        if let Some(reason) =
-            cli::key_file_posture_violation(mode, meta.gid(), allow_group_read, &process_gids())
-        {
+    let meta = match std::fs::metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
             return Err(format!(
-                "mcp-re-proxy refuses unsafe configuration:\n  - key file {path} \
-                 is {reason} (mode {:o}); restrict to 0600",
-                mode & 0o777
-            ));
+                "mcp-re-proxy refuses unsafe configuration:\n  - key file {path} cannot be \
+                 stat'ed ({e}), so its permission posture cannot be established; it is read \
+                 by the proxy regardless, and starting would mean serving with a key file \
+                 that may be group- or world-readable"
+            ))
         }
+    };
+    let mode = meta.permissions().mode();
+    if let Some(reason) =
+        cli::key_file_posture_violation(mode, meta.gid(), allow_group_read, &process_gids())
+    {
+        return Err(format!(
+            "mcp-re-proxy refuses unsafe configuration:\n  - key file {path} \
+             is {reason} (mode {:o}); restrict to 0600",
+            mode & 0o777
+        ));
     }
     Ok(())
 }
@@ -205,8 +249,76 @@ pub fn run(
     config: crate::cli::Config,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
-    let validated = crate::cli::ValidatedConfig::try_from(config)?;
-    run_validated(&validated, shutdown)
+    // Whether the audit stream is this process's stderr has to be read BEFORE the config
+    // is consumed, and it decides only whether the drain is REPORTED — the drain itself is
+    // unconditional, because a sink installed by an embedder past this seam would still
+    // have left records in the same global queue.
+    let audits_to_stderr = config.audit_sink == crate::cli::AuditSinkKind::Stderr;
+    // The drain is placed around the WHOLE of the run rather than after `serve` returns, so
+    // that every route out of this function passes through it: a clean drain, a serve that
+    // failed, and a startup refused at the boundary. A teardown obligation discharged on
+    // one of three exits is the shape the rest of this round keeps finding.
+    let outcome = crate::cli::ValidatedConfig::try_from(config)
+        .and_then(|validated| run_validated(&validated, shutdown));
+    drain_audit_stream(audits_to_stderr);
+    outcome
+}
+
+/// How long shutdown waits for the audit writer to write out what it was already handed.
+///
+/// Bounded because the writer owns a file descriptor the proxy does not control: a log
+/// collector applying backpressure, a full volume or a stalled pipe reader must cost a
+/// bounded shutdown delay and a stated uncertainty, never a process that will not exit.
+const AUDIT_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Discharge the audit writer's teardown obligation, and SAY which of the two things
+/// happened.
+///
+/// [`crate::audit_sink::flush_stderr_audit`] exists because the writer thread is detached
+/// and cannot be joined: without this call a process that exits with records still queued
+/// loses them, and a shutdown under load loses precisely the decisions taken last.
+///
+/// The two outcomes are reported as different facts on purpose. "Drained" means every
+/// record handed to the writer reached stderr. A timeout does NOT mean records were lost —
+/// it means nobody can say either way, because the acknowledgement that would have settled
+/// it never came. Collapsing those two into one "shutdown complete" line would destroy
+/// exactly the distinction an audit stream exists to preserve, so the timeout line states
+/// the uncertainty as uncertainty rather than as either outcome.
+///
+/// A timeout is deliberately NOT turned into a non-zero result. The serving outcome is
+/// what the caller asked about, and reporting a clean shutdown as failed because a log
+/// collector was slow would make an observability fault look like a serving fault — the
+/// inversion the sink's own "audit must never fail a request" rule rejects on the hot path.
+fn drain_audit_stream(report: bool) {
+    let drained = crate::audit_sink::flush_stderr_audit(AUDIT_FLUSH_TIMEOUT);
+    if let Some(line) = audit_drain_line(drained, report) {
+        eprintln!("{line}");
+    }
+}
+
+/// What shutdown says about the audit drain, or `None` when this deployment does not write
+/// its audit stream to stderr and so has nothing to say about it.
+///
+/// Separated from the drain itself so the one property that matters here — that the two
+/// outcomes never read as the same fact — is assertable without stalling a log collector.
+fn audit_drain_line(drained: bool, report: bool) -> Option<String> {
+    if !report {
+        return None;
+    }
+    Some(if drained {
+        "mcp-re-proxy: audit stream drained at shutdown: every record handed to the audit \
+         writer reached stderr"
+            .to_string()
+    } else {
+        format!(
+            "mcp-re-proxy: WARNING: the audit stream did NOT acknowledge its drain within {}s. \
+             This is NOT a report that records were lost and NOT a clean shutdown of the audit \
+             stream: whether the decisions recorded last reached stderr is UNKNOWN. Their seq \
+             numbers are the gap to look for, and the writer's backing channel (a stalled log \
+             collector, a full volume) is what to check.",
+            AUDIT_FLUSH_TIMEOUT.as_secs()
+        )
+    })
 }
 
 /// The serving path proper. Reachable only with a [`crate::cli::ValidatedConfig`], which
@@ -225,14 +337,25 @@ fn run_validated(
     // freshness check rather than admitting a stale one), but a clock that reads
     // at/near the Unix epoch would otherwise surface only as an unexplained flood of
     // freshness denials. Emit a ONE-TIME loud startup warning so a broken/unset host
-    // clock is diagnosed at the source instead of masked. We do not refuse to start
-    // (the fail-closed posture is already safe), but the operator is told why every
-    // request will be denied.
+    // clock is diagnosed at the source instead of masked. Where the reading only feeds
+    // per-request freshness the posture is already safe, so that case warns rather than
+    // refuses and the operator is told why every request will be denied.
+    //
+    // It is NOT safe where the same reading is the reference time for a BOOT-TIME refusal.
+    // `startup_now_unix` is handed to the TLS plane, which refuses to start on a client CRL
+    // whose `nextUpdate` has passed — a comparison against a clock reading zero declares
+    // every CRL fresh, so the one check that stops an arbitrarily expired CRL from reaching
+    // the serving path silently does not fire while the revocation-posture transcript still
+    // advertises the CRL as enforced. A fail-closed default cannot be inferred from a
+    // fail-closed neighbour: this one is refused.
     //
     // Read the clock ONCE so the comparison, the reported value and every plane handed
     // `startup_now_unix` below agree on one instant. Whether that reading is a FAULT is
-    // the plan's rule; reading the clock and telling the operator is this function's.
+    // the plan's rule; reading the clock and deciding what it costs is this function's.
     let startup_now_unix = now_unix();
+    if let Some(refusal) = faulted_clock_refusal(startup_now_unix, config.client_crl_paths.len()) {
+        return Err(refusal);
+    }
     if crate::startup_plan::host_clock_is_faulted(startup_now_unix) {
         eprintln!(
             "mcp-re-proxy: WARNING: the system clock reads at/near the Unix epoch ({} < {}s); this \
@@ -818,6 +941,7 @@ pub(crate) fn serve_fleet(
 #[cfg(all(test, unix))]
 mod key_file_perm_tests {
     use super::check_key_file_perms;
+    use super::faulted_clock_refusal;
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
@@ -1060,5 +1184,197 @@ mod key_file_perm_tests {
         check_key_file_perms("", false).expect("no file configured is not a violation");
         check_key_file_perms("/nonexistent/path/tls.key", false)
             .expect("a missing file is reported by the loader, not by this guard");
+    }
+
+    /// C077: a `stat` that fails for a reason OTHER than absence must refuse.
+    ///
+    /// The file exists and is about to be read; only its posture is unknowable. Treating
+    /// that as compliance is a fail-open — on a networked or overlay Secret mount an EIO
+    /// or ESTALE would start the proxy over a world-readable signing seed with no
+    /// diagnostic at all.
+    ///
+    /// The broken implementation this catches: `if let Ok(meta) = metadata(path)` with no
+    /// error arm, which is what this guard did.
+    #[test]
+    fn a_key_file_whose_posture_cannot_be_established_is_refused() {
+        let dir = std::env::temp_dir().join(format!("mcp_re_perm_dir_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create dir");
+        let key = dir.join("tls.key");
+        std::fs::write(&key, b"key-material").expect("write");
+        // No search permission on the directory: the file is still there and still
+        // openable by anything holding a descriptor, but `stat` on the path fails EACCES.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+
+        let result = check_key_file_perms(&key.to_string_lossy(), false);
+
+        // Restore before asserting so a failure does not leave an unremovable directory.
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let err = result.expect_err("an unestablishable key-file posture must refuse startup");
+        assert!(
+            err.contains("cannot be stat'ed"),
+            "the refusal must say the posture could not be established, got: {err}"
+        );
+    }
+
+    /// R8-C123 (G10's finding, this group's call site): a record handed to the audit
+    /// writer immediately before teardown must still reach stderr.
+    ///
+    /// The writer thread is DETACHED, so nothing joins it: at process exit whatever it
+    /// had not yet written is gone, and a shutdown under load loses precisely the
+    /// decisions taken last. That is the did-it-get-recorded-or-not collapse — the
+    /// records are neither present nor reported missing, because the drop counter only
+    /// counts what the QUEUE refused, not what the process exited on top of.
+    /// `flush_stderr_audit` exists to close it and, until this call site, had no
+    /// production caller at all.
+    ///
+    /// # Why a child process
+    ///
+    /// The property is "observable AFTER teardown", and teardown means the process is
+    /// gone. Asserting it in-process would only assert that a background thread got
+    /// around to the write — which it would, given any pause, with or without the flush.
+    /// So the scenario runs in a child that enqueues a batch and then `exit`s the instant
+    /// `app::run` returns: no destructors, no grace, the detached writer killed where it
+    /// stands. With the drain in place every record is on stderr before `run` returns;
+    /// without it the tail of the batch dies with the child, which is what the parent
+    /// checks by looking for the LAST sequence number rather than any of them.
+    #[test]
+    fn a_record_enqueued_immediately_before_teardown_still_reaches_stderr() {
+        use crate::audit_sink::AuditSink;
+        use mcp_re_core::audit::AuditEvent;
+
+        const BATCH: u64 = 2000;
+        const CHILD_MARKER: &str = "MCP_RE_AUDIT_FLUSH_TEARDOWN_CHILD";
+        const TEST_NAME: &str = "app::key_file_perm_tests::\
+                                 a_record_enqueued_immediately_before_teardown_still_reaches_stderr";
+
+        if std::env::var_os(CHILD_MARKER).is_some() {
+            // A config the validation boundary refuses, so `run` returns without opening a
+            // socket. The route out does not matter — the drain is on all of them.
+            let mut config = config_with(crate::cli::KeySourceKind::File, "/seed", "/tls.key");
+            config.target_uri = String::new();
+
+            // Attributed records, so the unattributed ceiling cannot drop any of them and
+            // an absent seq means "lost at exit" rather than "refused by the queue".
+            for i in 0..BATCH {
+                crate::audit_sink::StderrAuditSink.record(&crate::audit_sink::AuditRecord {
+                    event: AuditEvent::request_accepted(),
+                    actor_id: Some("teardown-actor".to_string()),
+                    status: 200,
+                    at_unix: i as i64,
+                });
+            }
+            let _ = super::run(
+                config,
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            );
+            // No unwinding, no flush of anything else: whatever the writer has not written
+            // by now is lost, which is the condition under test.
+            std::process::exit(0);
+        }
+
+        let child = std::process::Command::new(
+            std::env::current_exe().expect("the test binary re-invokes itself"),
+        )
+        .args(["--exact", TEST_NAME, "--nocapture"])
+        .env(CHILD_MARKER, "1")
+        .output()
+        .expect("the child scenario runs");
+        let stderr = String::from_utf8_lossy(&child.stderr);
+
+        let last = format!("audit seq={} ", BATCH - 1);
+        assert!(
+            stderr.contains(&last),
+            "the record enqueued last before teardown never reached stderr: no {last:?} in \
+             the child's output. The audit writer is detached, so an unflushed queue dies \
+             with the process and the decisions taken last are neither recorded nor \
+             reported missing."
+        );
+        // The first record is the control: it proves the child really did emit the batch,
+        // so a missing tail above is a lost drain rather than a scenario that never ran.
+        assert!(
+            stderr.contains("audit seq=0 "),
+            "the child emitted no audit records at all, so the assertion above proved \
+             nothing: {stderr}"
+        );
+        assert!(
+            stderr.contains("audit stream drained at shutdown"),
+            "shutdown must STATE which of the two audit outcomes happened, and this run \
+             drained: {stderr}"
+        );
+    }
+
+    /// R8-C123, second half: a drain that TIMED OUT must never read as a drain that
+    /// completed.
+    ///
+    /// The bounded wait exists so a stalled log collector cannot hold the process open,
+    /// which means the timeout is a reachable outcome in production and not an error path.
+    /// What it must not become is a quiet one: "the queue was drained" and "nobody can say
+    /// whether the queue was drained" are different facts about the audit stream, and an
+    /// operator reading the shutdown transcript has to be able to tell which they got.
+    ///
+    /// The broken implementation this catches: reporting both as one shutdown-complete
+    /// line, or reporting only the success and leaving the timeout silent.
+    #[test]
+    fn a_timed_out_audit_drain_never_reads_as_a_completed_one() {
+        let drained = super::audit_drain_line(true, true).expect("stderr audit states its drain");
+        let timed_out =
+            super::audit_drain_line(false, true).expect("a timeout is stated, not swallowed");
+
+        assert_ne!(drained, timed_out);
+        assert!(
+            !drained.contains("WARNING") && drained.contains("drained"),
+            "a completed drain must read as one: {drained}"
+        );
+        assert!(
+            timed_out.contains("WARNING") && timed_out.contains("UNKNOWN"),
+            "a timeout must state the uncertainty AS uncertainty — not as loss, and not as \
+             a clean shutdown: {timed_out}"
+        );
+        assert!(
+            !timed_out.contains("drained at shutdown"),
+            "the timeout line must not carry the completed line's claim: {timed_out}"
+        );
+        // A deployment whose audit goes nowhere says nothing about a stream it does not
+        // write; without this control the two assertions above would also hold for a
+        // function that always spoke.
+        assert!(super::audit_drain_line(true, false).is_none());
+        assert!(super::audit_drain_line(false, false).is_none());
+    }
+
+    /// C117: a faulted host clock is only a warning while it costs nothing but
+    /// per-request fail-closed denials. With client CRLs configured it costs the
+    /// boot-time stale-CRL refusal — nothing is `Stale` against a zero clock — so the
+    /// deployment would load an arbitrarily expired CRL and still print that revocation
+    /// is enforced. That case refuses.
+    ///
+    /// The broken implementation this catches: warning unconditionally, and handing the
+    /// same faulted reading to `TlsPlane::materialize` as the CRL freshness reference.
+    #[test]
+    fn a_faulted_clock_refuses_only_when_it_disables_the_crl_refusal() {
+        use crate::startup_plan::EPOCH_CLOCK_FAULT_THRESHOLD_SECS;
+
+        let refusal = faulted_clock_refusal(0, 1).expect("a faulted clock plus CRLs must refuse");
+        assert!(
+            refusal.contains("CRL") && refusal.contains("clock"),
+            "the refusal must name both halves of why it fired: {refusal}"
+        );
+        assert!(
+            faulted_clock_refusal(EPOCH_CLOCK_FAULT_THRESHOLD_SECS - 1, 2).is_some(),
+            "anything below the fault threshold disables the same refusal"
+        );
+        // The two negative controls. Without them a guard that refused unconditionally
+        // would satisfy the assertions above.
+        assert!(
+            faulted_clock_refusal(0, 0).is_none(),
+            "with no CRL configured there is no boot-time refusal to disable; the \
+             per-request posture is already fail-closed and warns"
+        );
+        assert!(
+            faulted_clock_refusal(EPOCH_CLOCK_FAULT_THRESHOLD_SECS, 3).is_none(),
+            "a sane clock must not be refused however many CRLs are configured"
+        );
     }
 }

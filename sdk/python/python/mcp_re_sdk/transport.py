@@ -75,7 +75,9 @@ __all__ = [
     "InputRequired",
     "McpReConfig",
     "NotificationNotAcknowledged",
+    "VerifiedReplyNotAResponse",
     "mcp_re_http_transport",
+    "send_notification_verified",
 ]
 
 
@@ -145,6 +147,58 @@ class ContinuationNotAnswered(McpReSdkError):
     """
 
 
+class VerifiedReplyNotAResponse(McpReSdkError):
+    """A verified reply body is not a JSON-RPC RESPONSE, so it is not an answer at all.
+
+    A signature proves the server said these bytes. It does not prove the bytes are a
+    reply to anything. The one shape ``ClientSession`` is awaiting is a response object
+    carrying exactly one of ``result`` / ``error``; every other shape is refused here
+    rather than handed to the parser.
+
+    The shape that makes this urgent rather than tidy: a body carrying a legal ``result``
+    AND a top-level ``method`` re-parses as a ``JSONRPCRequest``, and the session
+    dispatches it as a SERVER-INITIATED request — ``sampling/createMessage``,
+    ``elicitation/create``, ``roots/list`` — running the application's registered
+    handlers on attacker-chosen params over a channel MCP-RE profiles no carrier for.
+    The tool call that was actually made then hangs forever, because its id was consumed
+    as an inbound request id and nothing ever answers it.
+    """
+
+
+def _plain_response_object(doc: Any) -> dict:
+    """The verified reply as a JSON-RPC RESPONSE, or raise.
+
+    REBUILT rather than edited in place, which is the whole point: an envelope
+    reconstructed from ``id`` plus the one member the server sent cannot smuggle a
+    ``method`` (or anything else) past the parser, whatever the body carried. Mirrors the
+    Rust ambassador's ``plain_response_from_verified``.
+    """
+    if not isinstance(doc, dict):
+        raise VerifiedReplyNotAResponse(
+            f"a verified reply must be a JSON-RPC response object, got {type(doc).__name__}"
+        )
+    if "method" in doc:
+        # A JSON-RPC response has no `method`. Its presence is what makes the union
+        # adapter pick the REQUEST arm, so this is not a stray field — it is the whole
+        # confusion. Refused rather than dropped: rebuilding would silently accept a
+        # reply the peer deliberately shaped as something else.
+        raise VerifiedReplyNotAResponse(
+            "a verified reply carries a top-level `method`; a JSON-RPC response has none"
+        )
+    has_result = "result" in doc
+    has_error = "error" in doc
+    if has_result and has_error:
+        raise VerifiedReplyNotAResponse(
+            "a verified reply carries both a result and an error"
+        )
+    if not has_result and not has_error:
+        raise VerifiedReplyNotAResponse(
+            "a verified reply carries neither a result nor an error"
+        )
+    member = "result" if has_result else "error"
+    return {"jsonrpc": "2.0", "id": doc.get("id"), member: doc[member]}
+
+
 @dataclass(frozen=True)
 class InputRequired:
     """A verified ADR-MCPS-047 elicitation, and everything answering it needs.
@@ -171,10 +225,6 @@ class InputRequired:
 #: with, or ``None`` to decline. May be a coroutine — eliciting from a human is I/O.
 InputAnswer = Union[Optional[Mapping[str, Any]], Awaitable[Optional[Mapping[str, Any]]]]
 
-
-#: The response-side body evidence block. Stripped before the result reaches the app:
-#: MCP-RE's own evidence is not part of the MCP result.
-_RESPONSE_BLOCK_KEY = "se.syncom/mcp-re.http.response"
 
 #: JSON-RPC application error code for a delivered MCP-RE failure. The precise cause is
 #: always the frozen `mcp-re.*` token in `.message`.
@@ -513,21 +563,23 @@ def _plain_mcp_reply(body: bytes, request_id) -> bytes:
 
     Read only AFTER verification: the content-digest covered these bytes.
 
-    MCP-RE's own evidence is not part of the MCP result, so it is stripped. The id is
+    MCP-RE's own evidence is not part of the MCP result, and the rebuild below drops it
+    with every other top-level member the server sent. The id is
     restored because an ADR-MCPS-047 answer leg is an independent request with its own
     id (SEP-2322 §retry), while the session issued exactly one call and is awaiting the
     id it chose. Relabelling is the adapter's job at that seam — every hop was verified
     here, so the terminal result it hands up is a complete record (§9.3), not a spliced
     one.
+
+    The envelope is REBUILT from the one member the server sent, not edited in place.
+    Editing left every other top-level key in the document, and a body carrying both a
+    legal ``result`` and a ``method`` then re-parsed as a server->client REQUEST — see
+    :class:`VerifiedReplyNotAResponse`. Rebuilding removes the whole class: nothing the
+    reply carries beyond ``result`` / ``error`` survives to reach the parser.
     """
-    doc = json.loads(body)
-    meta = doc.get("_meta")
-    if isinstance(meta, dict) and _RESPONSE_BLOCK_KEY in meta:
-        meta.pop(_RESPONSE_BLOCK_KEY)
-        if not meta:
-            doc.pop("_meta")
-    doc["id"] = request_id
-    return json.dumps(doc).encode()
+    response = _plain_response_object(json.loads(body))
+    response["id"] = request_id
+    return json.dumps(response).encode()
 
 
 def _verified_result(body: bytes) -> Mapping[str, Any]:
@@ -584,6 +636,33 @@ def _error_message(request_id, wire_code: str, data: Any = None) -> SessionMessa
             error=ErrorData(code=_MCP_RE_ERROR_CODE, message=wire_code, data=data),
         )
     )
+
+
+def _rejection_data(verified) -> dict:
+    """The structured facts a verified rejection receipt carried, for ``error.data``.
+
+    ``requestBound`` is the core's verdict on whether the receipt is tied to THIS
+    transmission (RSP-7). The rest is the ADR-MCPRE-058 §10 execution / retry contract
+    the server derived from its exchange machine and signed into the body: without it a
+    post-dispatch refusal is indistinguishable from an ordinary outage, and the caller's
+    retry re-executes a tool call that already ran.
+
+    Only members the receipt actually carried are emitted. An absent ``executionStatus``
+    means the server stated nothing, and inventing ``not_executed`` for it would collapse
+    "unknown whether it ran" into "it did not run" at the one place that decides. The
+    TypeScript twin emits the same keys — this is behaviour, so byte fixtures do not
+    cover it.
+    """
+    data: dict = {"requestBound": bool(verified.bound)}
+    for key, value in (
+        ("executionStatus", verified.execution_status),
+        ("retrySafety", verified.retry_safety),
+        ("continuationStatus", verified.continuation_status),
+        ("retentionStatus", verified.retention_status),
+    ):
+        if value is not None:
+            data[key] = value
+    return data
 
 
 async def _exchange(
@@ -688,17 +767,26 @@ async def _exchange(
                 return _error_message(
                     request.id,
                     verified.wire_code or "mcp-re.response_sig_invalid",
-                    data={"requestBound": bool(verified.bound)},
+                    data=_rejection_data(verified),
                 )
 
             if verified.request_state is None:
                 correlation.take(correlation_id, now=config.clock())
                 outstanding.discard(correlation_id)
-                return SessionMessage(
-                    jsonrpc_message_adapter.validate_json(
-                        _plain_mcp_reply(reply.body, request.id)
+                # The union adapter accepts a JSONRPCRequest, so the shape check has to
+                # happen BEFORE it: a verified body carrying a `method` would otherwise
+                # be delivered to `ClientSession` as a server-initiated request. The
+                # rebuild inside `_plain_mcp_reply` is what makes that impossible; this
+                # turns the refusal into the correlated error the session is awaiting.
+                try:
+                    plain = _plain_mcp_reply(reply.body, request.id)
+                except VerifiedReplyNotAResponse as e:
+                    return _error_message(
+                        request.id,
+                        "mcp-re.malformed_envelope",
+                        data={"detail": str(e)},
                     )
-                )
+                return SessionMessage(jsonrpc_message_adapter.validate_json(plain))
 
             # A pause. Associate without consuming — the open leg is answered by its
             # answer leg, not by this response — and hand up the handles it signs over.
@@ -836,6 +924,34 @@ async def _notify(config: McpReConfig, poster: Poster, method: str, params) -> N
 
     if config.on_notification_acknowledged is not None:
         config.on_notification_acknowledged(method, accepted.server_keyid)
+
+
+async def send_notification_verified(
+    config: McpReConfig, poster: Poster, method: str, params: Any = None
+) -> None:
+    """Send ONE notification and return only once its signed 202 has verified.
+
+    SD-03 says neither SDK may treat a notification as delivered until its 202 verifies.
+    The TypeScript twin gives its caller that guarantee directly: ``send()`` awaits the
+    whole obligation and throws :class:`NotificationNotAcknowledged`. This is the Python
+    surface with the same contract, and it is a separate call because
+    ``ClientSession.send_notification()`` cannot have it: that method hands the message
+    to an anyio memory stream and returns, so the pump on the other side has no caller
+    left to raise to. Reaching back through the pump would mean raising inside the task
+    group that runs every concurrent exchange — the remotely-triggerable session kill
+    round 5 removed, where one unverifiable 202 for a routine notification cancels every
+    unrelated in-flight tool call.
+
+    So an application that must know its ``notifications/cancelled`` reached the
+    enforcement boundary calls this and handles the exception. One that routes
+    notifications through ``ClientSession`` gets the contained behaviour instead: the
+    message is still never treated as delivered, and the failure is reported through
+    :attr:`McpReConfig.on_undeliverable` (see :func:`_one_notification`).
+
+    :raises NotificationNotAcknowledged: signing, POSTing, or verifying the 202 failed.
+        Nothing acknowledged the message, which is exactly what the exception says.
+    """
+    await _notify(config, poster, method, params)
 
 
 async def _one(config: McpReConfig, poster: Poster, request: JSONRPCRequest, read_writer,

@@ -192,6 +192,7 @@ pub fn build(config: &ClientConfig, now: i64) -> Result<BuiltClient, StartupErro
         default_route: config.local.default_route.clone(),
         request_lifetime_secs: config.local.request_lifetime_secs,
         max_in_flight: config.local.max_in_flight,
+        allow_any_host: config.local.allow_non_loopback,
         clock: Box::new(|| {
             use mcp_re_host::Clock;
             mcp_re_host::SystemClock::new().now_unix()

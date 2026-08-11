@@ -180,20 +180,27 @@ struct RetainedResponse {
 /// (`cookie`, `proxy-authorization`, bespoke API-key headers), none of which any auditor
 /// will ever need.
 ///
-/// The covered set is read from the message's own `Signature-Input`, taken from inside
-/// the component list `( … )` only, so a `keyid="cookie"` parameter cannot widen it.
-fn covered_headers(headers: &[(String, String)]) -> Vec<(String, String)> {
+/// The covered set is read from the ONE `Signature-Input` dictionary member the verifier
+/// checked — `label`, which is [`mcp_re_http_profile::REQUEST_LABEL`] for a request and
+/// [`mcp_re_http_profile::RESPONSE_LABEL`] for a response — and from inside that member's
+/// component list `( … )` only. Both restrictions are load-bearing. Verification reads a
+/// single member and ignores every other one, so a client may add `decoy=("cookie")` to a
+/// value that verifies normally; and a component may carry its own parameters, so
+/// `("@method";key="cookie")` names one component, not two. Neither may decide what is
+/// written to a store that holds credential material.
+fn covered_headers(headers: &[(String, String)], label: &str) -> Vec<(String, String)> {
     let mut covered: Vec<String> = Vec::new();
     for (name, value) in headers {
         if !name.eq_ignore_ascii_case("signature-input") {
             continue;
         }
-        for entry in component_lists(value) {
-            for component in quoted_tokens(entry) {
-                // `@method`, `@target-uri`, … are derived, not headers.
-                if !component.starts_with('@') {
-                    covered.push(component.to_ascii_lowercase());
-                }
+        let Some(list) = component_list_for(value, label) else {
+            continue;
+        };
+        for component in component_names(list) {
+            // `@method`, `@target-uri`, … are derived, not headers.
+            if !component.starts_with('@') {
+                covered.push(component.to_ascii_lowercase());
             }
         }
     }
@@ -207,17 +214,57 @@ fn covered_headers(headers: &[(String, String)]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Every `( … )` component list in a `Signature-Input` value.
-fn component_lists(value: &str) -> impl Iterator<Item = &str> {
-    value.split('(').skip(1).filter_map(|rest| {
-        let end = rest.find(')')?;
-        Some(&rest[..end])
-    })
+/// The `( … )` component list of the dictionary member named `label`, if it has one.
+fn component_list_for<'a>(value: &'a str, label: &str) -> Option<&'a str> {
+    for member in dictionary_members(value) {
+        let Some((name, rest)) = member.split_once('=') else {
+            continue;
+        };
+        if name.trim() != label {
+            continue;
+        }
+        let open = rest.find('(')?;
+        let tail = &rest[open + 1..];
+        let close = tail.find(')')?;
+        return Some(&tail[..close]);
+    }
+    None
 }
 
-/// The double-quoted tokens in one component list.
-fn quoted_tokens(list: &str) -> impl Iterator<Item = &str> {
-    list.split('"').skip(1).step_by(2)
+/// The top-level members of a structured-fields dictionary: commas inside a quoted string
+/// do not separate members.
+fn dictionary_members(value: &str) -> Vec<&str> {
+    let mut members = Vec::new();
+    let mut start = 0;
+    let mut quoted = false;
+    let mut escaped = false;
+    for (index, character) in value.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match character {
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            ',' if !quoted => {
+                members.push(&value[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    members.push(&value[start..]);
+    members
+}
+
+/// The component names in one component list: the leading quoted token of each
+/// whitespace-separated item, so an item's own `;key="…"` parameters are not names.
+fn component_names(list: &str) -> impl Iterator<Item = &str> {
+    list.split_whitespace().filter_map(|item| {
+        let rest = item.strip_prefix('"')?;
+        let end = rest.find('"')?;
+        Some(&rest[..end])
+    })
 }
 
 impl RetainedHopRecord {
@@ -227,7 +274,7 @@ impl RetainedHopRecord {
             request: retained_request(request),
             response: RetainedResponse {
                 status: response.status,
-                headers: covered_headers(&response.headers),
+                headers: covered_headers(&response.headers, mcp_re_http_profile::RESPONSE_LABEL),
                 body_b64: b64url_encode(&response.body),
             },
         }
@@ -260,7 +307,7 @@ fn retained_request(request: &HttpRequest) -> RetainedRequest {
     RetainedRequest {
         method: request.method.clone(),
         target_uri: request.target_uri.clone(),
-        headers: covered_headers(&request.headers),
+        headers: covered_headers(&request.headers, mcp_re_http_profile::REQUEST_LABEL),
         body_b64: b64url_encode(&request.body),
     }
 }
@@ -296,11 +343,12 @@ const MAX_WRITE_BATCH: usize = 64;
 
 /// One durable write, and the acknowledgement the awaiting request is owed.
 struct WriteJob {
-    /// Where the bytes must land.
-    path: PathBuf,
-    /// What must be at `path` before this job is acknowledged.
-    bytes: Vec<u8>,
-    /// A reservation marker to unlink once `path` is durable. Its own removal is
+    /// Where the bytes must land, and what must be there before this job is
+    /// acknowledged. `None` for a job that only clears a marker — a reservation
+    /// released by a call that was refused before it could be dispatched publishes
+    /// nothing, so there is no object to make durable.
+    write: Option<(PathBuf, Vec<u8>)>,
+    /// A reservation marker to unlink once the write is durable. Its own removal is
     /// deliberately not made durable: a lost unlink leaves a stale marker, which
     /// over-reports indeterminacy — the safe direction.
     clear_marker: Option<PathBuf>,
@@ -367,13 +415,16 @@ fn write_loop(store: FsRetainedEvidenceStore, jobs: Receiver<WriteJob>) {
 
         let staged: Vec<std::io::Result<()>> = batch
             .iter()
-            .map(|job| store.stage_at(&job.path, &job.bytes))
+            .map(|job| match &job.write {
+                Some((path, bytes)) => store.stage_at(path, bytes),
+                None => Ok(()),
+            })
             .collect();
-        let barrier = if staged.iter().any(|r| r.is_ok()) {
-            store.sync_root()
-        } else {
-            Ok(())
-        };
+        let published = batch
+            .iter()
+            .zip(&staged)
+            .any(|(job, staged)| job.write.is_some() && staged.is_ok());
+        let barrier = if published { store.sync_root() } else { Ok(()) };
 
         for (job, staged) in batch.into_iter().zip(staged) {
             let outcome = staged.and_then(|()| match &barrier {
@@ -386,11 +437,14 @@ fn write_loop(store: FsRetainedEvidenceStore, jobs: Receiver<WriteJob>) {
                 if let Some(marker) = &job.clear_marker {
                     if let Err(e) = std::fs::remove_file(marker) {
                         if e.kind() != std::io::ErrorKind::NotFound {
+                            let stored = match &job.write {
+                                Some((path, _)) => path.display().to_string(),
+                                None => "nothing (the call was refused before dispatch)".to_owned(),
+                            };
                             eprintln!(
-                                "retained evidence: hop {} is stored but its reservation \
-                                 marker {} could not be cleared ({e}); an auditor will see \
-                                 it as indeterminate",
-                                job.path.display(),
+                                "retained evidence: hop {stored} is stored but its \
+                                 reservation marker {} could not be cleared ({e}); an \
+                                 auditor will see it as indeterminate",
                                 marker.display()
                             );
                         }
@@ -405,7 +459,9 @@ fn write_loop(store: FsRetainedEvidenceStore, jobs: Receiver<WriteJob>) {
 /// Durable acceptance of responsibility for one exchange, taken BEFORE the backend runs.
 ///
 /// Holding one means a `<request-digest>.pending` marker is on disk. It is consumed by
-/// [`EvidenceRetention::complete`]; a marker that outlives the process is the record
+/// [`EvidenceRetention::complete`] once the exchange is retained, or by
+/// [`EvidenceRetention::release_before_dispatch`] if the call is refused while the
+/// backend is still untouched; a marker that outlives the process is the record
 /// that this exact request crossed the execution threshold and its outcome was never
 /// retained — the one fact an auditor otherwise cannot recover, because the completed
 /// hop is precisely what failed to be written.
@@ -466,11 +522,19 @@ impl EvidenceRetention {
         bytes: Vec<u8>,
         clear_marker: Option<PathBuf>,
     ) -> Result<(), RetentionError> {
+        self.submit(Some((path, bytes)), clear_marker).await
+    }
+
+    /// Hand the writer a job and await its acknowledgement.
+    async fn submit(
+        &self,
+        write: Option<(PathBuf, Vec<u8>)>,
+        clear_marker: Option<PathBuf>,
+    ) -> Result<(), RetentionError> {
         let (ack, acked) = tokio::sync::oneshot::channel();
         self.jobs
             .try_send(WriteJob {
-                path,
-                bytes,
+                write,
                 clear_marker,
                 ack,
             })
@@ -559,6 +623,49 @@ impl EvidenceRetention {
         let marker = self.pending_path(&reservation.digest);
         self.durable_write(path, bytes, Some(marker)).await?;
         Ok(digest)
+    }
+
+    /// Give a reservation back for a call that was refused BEFORE the backend ran.
+    ///
+    /// A marker says one thing: this request crossed the execution threshold and its
+    /// outcome was never retained. A call refused between `reserve` and dispatch did not
+    /// cross it, so leaving its marker asserts an execution that provably never happened
+    /// — it collapses did-not-run into unknown-if-ran in the direction that invents
+    /// indeterminacy, and it keeps the request's covered headers, this profile's live
+    /// bearer token and DPoP proof among them, in the store for an exchange the boundary
+    /// refused.
+    ///
+    /// The caller therefore owes this call on exactly one path: a refusal taken while
+    /// the backend is still untouched. Calling it once dispatch has begun would erase
+    /// the one fact an auditor cannot recover afterwards, which is why it consumes the
+    /// reservation rather than being available to a handle that has been completed.
+    ///
+    /// Failing to clear the marker is not the caller's error to handle — the refusal
+    /// stands either way, and a stale marker over-reports indeterminacy, which is the
+    /// safe direction.
+    pub async fn release_before_dispatch(&self, reservation: RetentionReservation) {
+        let marker = self.pending_path(&reservation.digest);
+        let _ = self.submit(None, Some(marker)).await;
+    }
+
+    /// The digest tokens of every reservation marker currently on disk.
+    ///
+    /// The reconciliation read. A marker records an exchange whose outcome was never
+    /// retained, and a fact recorded where nothing can enumerate it is not a record an
+    /// auditor can act on: this is how the audit lane asks which calls crossed the
+    /// execution threshold without landing a hop.
+    pub fn pending_reservations(&self) -> Result<Vec<String>, RetentionError> {
+        let mut pending = Vec::new();
+        for entry in std::fs::read_dir(&self.root).map_err(RetentionError::Store)? {
+            let entry = entry.map_err(RetentionError::Store)?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if let Some(digest) = name.strip_suffix(".pending") {
+                pending.push(digest.to_owned());
+            }
+        }
+        pending.sort();
+        Ok(pending)
     }
 
     /// Retain one exchange with NO execution boundary, returning its handle.
@@ -724,13 +831,23 @@ pub fn attest_chain<R: Into<mcp_re_http_profile::ResolverOutcome>>(
     let statement =
         mcp_re_http_profile::scitt::issue_signed_statement(issuer_kid, commitment, now, sign)
             .map_err(AttestError::Statement)?;
-    mcp_re_http_profile::scitt::verify_retained_evidence(
-        statement.commitment(),
-        &reconstruction,
-        bindings_commitment,
-        verified_context_commitment,
-    )
-    .map_err(AttestError::Statement)?;
+    // The self-check compares a record against the bytes it names, and a reconstruction
+    // with no verified prefix — a chain that broke at hop 0, and the empty chain — names
+    // none: two empty handles and a fold over nothing. `verify_retained_evidence` refuses
+    // such a record rather than reporting a match that would equally hold for every
+    // unrelated submission that failed the same way, so running it here would refuse to
+    // attest exactly the records this seam exists for. The statement is still issued: its
+    // label says which hop broke, and `commits_to_verified_evidence` is how any reader
+    // tells that it identifies no particular call.
+    if statement.commitment().commits_to_verified_evidence() {
+        mcp_re_http_profile::scitt::verify_retained_evidence(
+            statement.commitment(),
+            &reconstruction,
+            bindings_commitment,
+            verified_context_commitment,
+        )
+        .map_err(AttestError::Statement)?;
+    }
     Ok(Attestation {
         statement,
         reconstruction,
@@ -766,10 +883,10 @@ mod tests {
                 headers: vec![
                     (
                         "signature-input".into(),
-                        "sig1=(\"@method\" \"content-digest\" \"authorization\");keyid=\"k\""
+                        "mcp-re=(\"@method\" \"content-digest\" \"authorization\");keyid=\"k\""
                             .into(),
                     ),
-                    ("signature".into(), "sig1=:AAAA:".into()),
+                    ("signature".into(), "mcp-re=:AAAA:".into()),
                     ("content-digest".into(), "sha-256=:AAAA:".into()),
                     ("authorization".into(), "Bearer live-access-token".into()),
                     ("cookie".into(), "session=not-covered".into()),
@@ -783,9 +900,9 @@ mod tests {
                 headers: vec![
                     (
                         "signature-input".into(),
-                        "sig1=(\"@status\" \"content-digest\");keyid=\"k\"".into(),
+                        "mcp-re-response=(\"@status\" \"content-digest\");keyid=\"k\"".into(),
                     ),
-                    ("signature".into(), "sig1=:BBBB:".into()),
+                    ("signature".into(), "mcp-re-response=:BBBB:".into()),
                     ("content-digest".into(), "sha-256=:BBBB:".into()),
                 ],
                 body: b"{\"jsonrpc\":\"2.0\"}".to_vec(),
@@ -794,8 +911,8 @@ mod tests {
     }
 
     /// The retained headers are exactly the signed ones.
-    fn covered(headers: &[(String, String)]) -> Vec<(String, String)> {
-        covered_headers(headers)
+    fn covered(headers: &[(String, String)], label: &str) -> Vec<(String, String)> {
+        covered_headers(headers, label)
     }
 
     #[tokio::test]
@@ -809,13 +926,19 @@ mod tests {
 
         assert_eq!(hop.request.method, request.method);
         assert_eq!(hop.request.target_uri, request.target_uri);
-        assert_eq!(hop.request.headers, covered(&request.headers));
+        assert_eq!(
+            hop.request.headers,
+            covered(&request.headers, mcp_re_http_profile::REQUEST_LABEL)
+        );
         assert_eq!(
             hop.request.body, request.body,
             "a retained body is whatever went over the wire, bytes and all"
         );
         assert_eq!(hop.response.status, response.status);
-        assert_eq!(hop.response.headers, covered(&response.headers));
+        assert_eq!(
+            hop.response.headers,
+            covered(&response.headers, mcp_re_http_profile::RESPONSE_LABEL)
+        );
         assert_eq!(hop.response.body, response.body);
     }
 
@@ -865,14 +988,129 @@ mod tests {
         let headers = vec![
             (
                 "Signature-Input".to_owned(),
-                "sig1=(\"@method\");keyid=\"cookie\"".to_owned(),
+                "mcp-re=(\"@method\");keyid=\"cookie\"".to_owned(),
             ),
             ("cookie".to_owned(), "session=secret".to_owned()),
         ];
-        let kept = covered_headers(&headers);
+        let kept = covered_headers(&headers, mcp_re_http_profile::REQUEST_LABEL);
         assert!(
             !kept.iter().any(|(name, _)| name == "cookie"),
             "kept {kept:?}"
+        );
+    }
+
+    /// R8-C042/C121: a second dictionary member is not the covered set.
+    ///
+    /// The verifier reads ONE member and ignores every other, so a value carrying a
+    /// decoy label verifies exactly as it would without it. If retention unioned the
+    /// members instead, an enrolled client could name any header it liked — its own
+    /// `cookie`, or an internal header an ingress adds that the client cannot even read
+    /// — and have it written verbatim into a store of credential material with no
+    /// expiry.
+    #[test]
+    fn a_decoy_dictionary_member_cannot_widen_the_covered_set() {
+        let headers = vec![
+            (
+                "Signature-Input".to_owned(),
+                "mcp-re=(\"@method\" \"authorization\");keyid=\"k\", \
+                 decoy=(\"cookie\" \"x-forwarded-client-cert\")"
+                    .to_owned(),
+            ),
+            ("authorization".to_owned(), "Bearer live".to_owned()),
+            ("cookie".to_owned(), "session=secret".to_owned()),
+            (
+                "x-forwarded-client-cert".to_owned(),
+                "By=spiffe://mesh".to_owned(),
+            ),
+        ];
+        let kept = covered_headers(&headers, mcp_re_http_profile::REQUEST_LABEL);
+        let names: Vec<&str> = kept.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(
+            !names.contains(&"cookie") && !names.contains(&"x-forwarded-client-cert"),
+            "an unverified dictionary member decided what is retained: {names:?}"
+        );
+        assert!(
+            names.contains(&"authorization"),
+            "the verified member's own covered header must still be kept: {names:?}"
+        );
+    }
+
+    /// R8-C042: a component's own parameters are not component names.
+    ///
+    /// `("@method";key="cookie")` names one component. Reading every quoted token in the
+    /// list would read the parameter VALUE as a second one, so the widening the previous
+    /// test closes at the dictionary level would simply move inside the parentheses.
+    #[test]
+    fn an_in_list_component_parameter_cannot_widen_the_covered_set() {
+        let headers = vec![
+            (
+                "Signature-Input".to_owned(),
+                "mcp-re=(\"@method\";key=\"cookie\" \"content-digest\")".to_owned(),
+            ),
+            ("cookie".to_owned(), "session=secret".to_owned()),
+            ("content-digest".to_owned(), "sha-256=:AAAA:".to_owned()),
+        ];
+        let kept = covered_headers(&headers, mcp_re_http_profile::REQUEST_LABEL);
+        let names: Vec<&str> = kept.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(
+            !names.contains(&"cookie"),
+            "a component parameter value was read as a covered header: {names:?}"
+        );
+        assert!(names.contains(&"content-digest"), "kept {names:?}");
+    }
+
+    /// R8-C093: a call refused before dispatch takes its marker with it.
+    ///
+    /// A marker asserts that this request crossed the execution threshold. A refusal
+    /// taken while the backend is untouched did not, so leaving the marker would invent
+    /// an indeterminacy that never existed — and would leave the request's covered
+    /// headers, live bearer token included, on disk for an exchange the boundary
+    /// refused.
+    #[tokio::test]
+    async fn a_reservation_released_before_dispatch_leaves_nothing_behind() {
+        let dir = TempDir::new("released");
+        let retention = EvidenceRetention::open(&dir.0).expect("open");
+        let (request, _) = exchange();
+
+        let reservation = retention.reserve(&request).await.expect("reserve");
+        let marker = dir
+            .0
+            .join(format!("{}.pending", reservation.digest().as_str()));
+        assert!(marker.exists(), "the marker is durable before dispatch");
+        assert_eq!(
+            retention.pending_reservations().expect("list"),
+            vec![reservation.digest().as_str().to_owned()],
+            "an unfinished reservation is enumerable, or nothing can reconcile it"
+        );
+
+        retention.release_before_dispatch(reservation).await;
+
+        assert!(
+            !marker.exists(),
+            "a call that never reached the backend left a credential-bearing marker \
+             that only a successful completion can ever remove"
+        );
+        assert!(retention.pending_reservations().expect("list").is_empty());
+    }
+
+    /// A reservation that is merely DROPPED keeps its marker. Dropping is what a request
+    /// that died mid-flight does, and for that one the outcome genuinely is unknown.
+    #[tokio::test]
+    async fn a_dropped_reservation_keeps_its_marker() {
+        let dir = TempDir::new("dropped");
+        let retention = EvidenceRetention::open(&dir.0).expect("open");
+        let (request, _) = exchange();
+
+        let reservation = retention.reserve(&request).await.expect("reserve");
+        let marker = dir
+            .0
+            .join(format!("{}.pending", reservation.digest().as_str()));
+        drop(reservation);
+
+        assert!(
+            marker.exists(),
+            "over-reporting indeterminacy is the safe direction; a dropped reservation \
+             must not read as a call that never ran"
         );
     }
 

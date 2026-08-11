@@ -626,6 +626,20 @@ pub struct VerifyResultJs {
     pub wire_code: Option<String>,
     /// Whether a rejection receipt is bound to this client's request.
     pub bound: bool,
+    /// The ADR-MCPRE-058 §10 execution/retry contract the server derived from its
+    /// exchange machine and signed into the rejection body. Absent on success and on a
+    /// receipt that stated nothing.
+    ///
+    /// An ABSENT `execution_status` is not `"not_executed"`. The server states a
+    /// disposition when it has one, and collapsing silence into "nothing ran" is
+    /// exactly the read that makes a post-dispatch refusal look retry-safe.
+    pub execution_status: Option<String>,
+    /// `retry_safety`: what a retry of this refused request would cost.
+    pub retry_safety: Option<String>,
+    /// `continuation_status`: whether the exchange consumed a human approval.
+    pub continuation_status: Option<String>,
+    /// `retention_status`: whether the server's evidence-retention obligation failed.
+    pub retention_status: Option<String>,
     /// The verified response's evidence-handle digest algorithm — the
     /// `input_required_response_evidence` handle an MRTR answer leg binds to
     /// (ADR-MCPS-047). Read from the VERIFIED response only.
@@ -726,11 +740,18 @@ pub fn verify_response(
     // the outcome so the caller does not read a signed replay/trust rejection as a
     // success. (An unsigned / direct-root / forged answer never reaches here: it fails
     // verify_delegated_response above and is raised as an error.)
-    let (outcome, wire_code, bound) = match verified.outcome {
-        mcp_re_client_core::DelegatedOutcome::Success => ("success".to_owned(), None, true),
-        mcp_re_client_core::DelegatedOutcome::Rejection { bound, wire_code } => {
-            ("rejection".to_owned(), wire_code, bound)
-        }
+    let (outcome, wire_code, bound, execution) = match verified.outcome {
+        mcp_re_client_core::DelegatedOutcome::Success => (
+            "success".to_owned(),
+            None,
+            true,
+            mcp_re_client_core::ExecutionContract::default(),
+        ),
+        mcp_re_client_core::DelegatedOutcome::Rejection {
+            bound,
+            wire_code,
+            execution,
+        } => ("rejection".to_owned(), wire_code, bound, execution),
     };
     // The response evidence handle (D_irr): the answer leg binds to it. Read from the
     // VERIFIED response evidence, never from unverified bytes.
@@ -748,6 +769,10 @@ pub fn verify_response(
         outcome,
         wire_code,
         bound,
+        execution_status: execution.execution_status,
+        retry_safety: execution.retry_safety,
+        continuation_status: execution.continuation_status,
+        retention_status: execution.retention_status,
         resp_evidence_digest_alg: resp_digest.digest_alg,
         resp_evidence_digest_value: resp_digest.digest_value,
         request_state,

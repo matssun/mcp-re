@@ -219,9 +219,19 @@ impl ManifestVersionFloor for FileManifestFloor {
             ));
         }
         if durable == version {
-            // Already recorded — no write, so re-applying the current manifest does not
-            // churn the directory. Not an error: a concurrent writer recording the same
-            // version is exactly the outcome asked for.
+            // Already recorded — the marker exists, so no marker is created. Not an
+            // error: a concurrent writer recording the same version is exactly the
+            // outcome asked for.
+            //
+            // It still goes through `persist`, which is what makes the directory entry
+            // DURABLE. The trait requires the floor to be durable before `record`
+            // returns Ok, and the marker seen here may be one another process created
+            // and has not fsynced: returning early reported a durability this process
+            // never established, and a power loss in that window loses the marker, so
+            // the next start reads the older floor and a superseded manifest — one that
+            // has not yet revoked a compromised root — becomes acceptable again.
+            persist(&self.dir, version)
+                .map_err(|_| TrustManifestError::FloorNotPersisted("fsync trust-anchor floor"))?;
             return Ok(());
         }
         // Deliberately compared against the DURABLE floor alone, not against
@@ -389,6 +399,43 @@ mod tests {
             .record(9)
             .expect("re-recording the same version is a no-op");
         assert_eq!(floor.min_version().unwrap(), 9);
+    }
+
+    /// The equal-version arm must still ESTABLISH durability, not merely observe a
+    /// marker.
+    ///
+    /// `record` reports "this version can never be accepted again", and in the module's
+    /// own multi-writer topology the marker it sees may be one another process created
+    /// and has not fsynced. Short-circuiting there claimed a durability this process
+    /// never established; a power loss in that window loses the marker, the next start
+    /// reads the older floor, and a superseded manifest — one that has not yet revoked a
+    /// compromised root — is acceptable again.
+    ///
+    /// Driven through the one equal-version case whose durability step can be made to
+    /// fail deterministically: the floor directory is gone, so there is nothing to fsync
+    /// and nothing durable to report.
+    #[test]
+    fn an_equal_version_record_still_establishes_durability() {
+        let scratch = Scratch::new("equal-durable");
+        let mut floor = FileManifestFloor::open(&scratch.0).expect("open");
+        // A marker another writer created, never routed through this handle.
+        persist(&scratch.0, 5).expect("the sidecar records 5");
+        floor
+            .record(5)
+            .expect("re-recording a version the volume already carries is not an error");
+        assert_eq!(floor.min_version().unwrap(), 5);
+
+        // The volume went away. `read_floor` reports 0, so recording 0 takes the
+        // equal-version arm — and there is no directory to make anything durable in.
+        std::fs::remove_dir_all(&scratch.0).expect("the floor directory disappears");
+        assert_eq!(floor.min_version().unwrap(), 0);
+        assert_eq!(
+            floor.record(0).err(),
+            Some(TrustManifestError::FloorNotPersisted(
+                "fsync trust-anchor floor"
+            )),
+            "Ok here reports a durability nothing established",
+        );
     }
 
     /// The load reads the floor, verifies against that snapshot, and only then records.

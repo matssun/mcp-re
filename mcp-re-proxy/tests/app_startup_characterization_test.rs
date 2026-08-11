@@ -806,3 +806,318 @@ fn a_programmatic_config_cannot_disable_the_request_target_reconstruction_check(
         "an absolute target is the supported shape and must not be refused, got: {err}"
     );
 }
+
+/// R8-C014 / R8-C015 — the KMS/STS endpoint overrides carry the ROOT-KEY trust bootstrap,
+/// and the rule that protects them is not a parser rule.
+///
+/// `validated_kms_endpoint` allows `https://` anywhere and `http://` only to loopback,
+/// because the named host supplies the `GetPublicKey`/SPKI that becomes the ROOT verify
+/// key — so a substituted endpoint substitutes the root authority and every local
+/// fail-closed check then passes self-consistently against the attacker's key — and
+/// because the GCP path posts a live workload-identity bearer token to it in the clear.
+///
+/// All three endpoint fields are public on `Config`. Until the rule reached the validation
+/// boundary, a config built in code could name `http://attacker/` and reach key-source
+/// construction unrefused.
+///
+/// R9-C001 extends the case list to the authorities that READ as the intended host and are
+/// not it. `ureq` resolves a request URL with `url::Url::parse` and connects to its
+/// `host_str()`: `https://cloudkms.googleapis.com@evil.example.com` reaches
+/// `evil.example.com`, and `http://localhost:80@evil.example.com` reaches it too — the
+/// loopback exception was decided from a host derived BEFORE userinfo was stripped, so
+/// plaintext to "loopback" put a live bearer token on the wire to an arbitrary host. The
+/// round-8 case list used only bare hosts and passed straight over both.
+///
+/// The broken implementation this catches: consulting `validated_kms_endpoint` only from
+/// the argv match arms, or checking the scheme and the host's emptiness without checking
+/// what a URL parser reads the authority as.
+#[test]
+fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    let m = serving_fixtures::write_material();
+    let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
+
+    // (flag, the REASON the refusal must give, mutation). The reason matters: three of
+    // these fields are also named by unrelated coherence rules, so asserting only that the
+    // flag appears would let a refusal for another cause stand in for this one.
+    #[allow(clippy::type_complexity)]
+    let cases: Vec<(&str, &str, Box<dyn Fn(&mut mcp_re_proxy::cli::Config)>)> = vec![
+        (
+            "--aws-kms-endpoint",
+            "loopback",
+            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+                c.aws_kms_endpoint = Some("http://attacker.example/".to_string())
+            }),
+        ),
+        (
+            "--gcp-kms-endpoint",
+            "loopback",
+            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+                c.gcp_kms_endpoint = Some("http://attacker.example/v1".to_string())
+            }),
+        ),
+        (
+            "--aws-kms-endpoint",
+            "absolute https:// URL",
+            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+                c.aws_kms_endpoint = Some("ftp://kms.internal/".to_string())
+            }),
+        ),
+        (
+            "--aws-kms-endpoint",
+            "has no host",
+            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+                c.aws_kms_endpoint = Some("https://".to_string())
+            }),
+        ),
+        // R9-C001: an authority whose userinfo re-points the request. `url::Url::parse`
+        // reads the host of every one of these as `evil.example.com`.
+        (
+            "--gcp-kms-endpoint",
+            "userinfo",
+            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+                c.gcp_kms_endpoint =
+                    Some("https://cloudkms.googleapis.com@evil.example.com".to_string())
+            }),
+        ),
+        (
+            "--gcp-kms-endpoint",
+            "userinfo",
+            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+                c.gcp_kms_endpoint = Some("http://localhost:80@evil.example.com".to_string())
+            }),
+        ),
+        (
+            "--aws-kms-endpoint",
+            "userinfo",
+            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+                c.aws_kms_endpoint =
+                    Some("https://kms.us-east-1.amazonaws.com@evil.example.com".to_string())
+            }),
+        ),
+        (
+            "--aws-kms-endpoint",
+            "userinfo",
+            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+                c.aws_kms_endpoint = Some("http://127.0.0.1:4566@evil.example.com".to_string())
+            }),
+        ),
+        (
+            "--aws-sts-endpoint",
+            "userinfo",
+            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+                c.aws_sts_endpoint =
+                    Some("https://sts.eu-north-1.amazonaws.com@evil.example.com".to_string())
+            }),
+        ),
+    ];
+
+    for (flag, reason, mutate) in cases {
+        let mut config = parsed.clone();
+        mutate(&mut config);
+        let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
+            .expect_err("an unvalidated root-key endpoint must be refused");
+        assert!(
+            err.contains("refuses unsafe configuration")
+                && err.contains(flag)
+                && err.contains(reason),
+            "the boundary must refuse it, name {flag} and say {reason:?}, got: {err}"
+        );
+    }
+
+    // The negative controls: the shapes the rule exists to KEEP working — the public
+    // hosts, a VPC endpoint, an emulator with a port, and the loopback `http://` lane with
+    // and without a port. A boundary that refused every endpoint would satisfy every
+    // assertion above, which is how round 8 shipped three fail-closed regressions.
+    for allowed in [
+        "https://kms.us-east-1.amazonaws.com/",
+        "https://cloudkms.googleapis.com",
+        "https://vpce-0abc123-xy1z.kms.us-east-1.vpce.amazonaws.com",
+        "https://kms.emulator.svc.cluster.local:8443",
+        "http://127.0.0.1:4566/",
+        "http://localhost:4566",
+        "http://[::1]:4566",
+        "http://localhost",
+    ] {
+        let mut config = parsed.clone();
+        config.aws_kms_endpoint = Some(allowed.to_string());
+        config.gcp_kms_endpoint = Some(allowed.to_string());
+        let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
+            .expect_err("this fixture stops at an environmental step");
+        assert!(
+            !err.contains("refuses unsafe configuration"),
+            "{allowed} is an admissible endpoint and must not be refused, got: {err}"
+        );
+        // `--aws-sts-endpoint` is refused by an unrelated coherence rule unless
+        // `--aws-kms-use-web-identity` is on, so its accept case is asserted against the
+        // endpoint decision itself rather than against the whole boundary.
+        let mut sts = parsed.clone();
+        sts.aws_sts_endpoint = Some(allowed.to_string());
+        let err = mcp_re_proxy::app::run(sts, Arc::new(AtomicBool::new(true)))
+            .expect_err("this fixture stops at an environmental step");
+        assert!(
+            !err.contains("userinfo") && !err.contains("loopback"),
+            "{allowed} is an admissible --aws-sts-endpoint and must not be refused as one, \
+             got: {err}"
+        );
+    }
+}
+
+/// R8-C108 — the custody-coherence and ingress-assertion clauses refuse a state, not a
+/// typo, so they belong at the validation boundary too.
+///
+/// A selector belonging to another key source is silently ignored by `build_key_source`,
+/// which dispatches on `key_source` alone; a dangling ingress key is silently ignored by a
+/// binding that never reads it. In both cases the operator believes a custody or a
+/// request-binding control is in force when nothing enforces it — and neither belief gets
+/// truer because the config was built in code rather than parsed.
+///
+/// The broken implementation this catches: calling `key_source_custody_refusal` and
+/// `ingress_assertion_refusal` only from `parse_args`.
+#[test]
+fn a_programmatic_config_cannot_carry_a_dangling_custody_or_ingress_selector() {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    let m = serving_fixtures::write_material();
+    let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
+
+    #[allow(clippy::type_complexity)]
+    let cases: Vec<(&str, Box<dyn Fn(&mut mcp_re_proxy::cli::Config)>)> = vec![
+        (
+            "--gcp-kms-use-metadata",
+            Box::new(|c: &mut mcp_re_proxy::cli::Config| c.gcp_kms_use_metadata = true),
+        ),
+        (
+            "--aws-kms-use-web-identity",
+            Box::new(|c: &mut mcp_re_proxy::cli::Config| c.aws_kms_use_web_identity = true),
+        ),
+        (
+            "--ingress-lb-key",
+            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+                c.ingress_lb_keys = vec![("lb-1".to_string(), "not-a-key".to_string())]
+            }),
+        ),
+        (
+            "--ingress-identity",
+            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+                c.ingress_identities = vec!["spiffe://x/ingress".to_string()]
+            }),
+        ),
+    ];
+
+    for (flag, mutate) in cases {
+        let mut config = parsed.clone();
+        mutate(&mut config);
+        let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
+            .expect_err("a dangling custody/ingress selector must be refused");
+        assert!(
+            err.contains("refuses unsafe configuration") && err.contains(flag),
+            "the boundary must refuse it and name {flag}, got: {err}"
+        );
+    }
+
+    // Negative control: the untouched fixture carries none of these selectors and must
+    // not be refused for this reason.
+    let err = mcp_re_proxy::app::run(parsed, Arc::new(AtomicBool::new(true)))
+        .expect_err("this fixture stops at an environmental step");
+    assert!(
+        !err.contains("refuses unsafe configuration"),
+        "a coherent custody/ingress configuration must not be refused, got: {err}"
+    );
+}
+
+/// R8-C052 — a zero CRL reload cadence is a spin, not a disabled reloader.
+///
+/// The cadence IS the sleep between re-reads, so `Some(0)` makes the reload worker re-read
+/// every CRL file, rebuild the rustls verifier and swap the serving-config snapshot in a
+/// tight loop: one core burned and the snapshot thrashed, with no diagnostic. The parser
+/// refuses it; `client_crl_reload_secs` is a public field, so until the boundary refused it
+/// too, an embedder or harness got exactly that replica.
+///
+/// The broken implementation this catches: keeping the zero-cadence refusal in the argv
+/// match arm alone.
+#[test]
+fn a_programmatic_config_cannot_hot_spin_the_crl_reloader() {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    let m = serving_fixtures::write_material();
+    let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
+
+    let mut config = parsed.clone();
+    config.client_crl_reload_secs = Some(0);
+    let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
+        .expect_err("a zero reload cadence must be refused");
+    assert!(
+        err.contains("refuses unsafe configuration") && err.contains("--client-crl-reload-secs"),
+        "the boundary must refuse it and name the flag, got: {err}"
+    );
+
+    // Negative controls: a positive cadence, and no cadence at all (load once), are both
+    // supported and must not be refused.
+    for cadence in [Some(30), None] {
+        let mut config = parsed.clone();
+        config.client_crl_reload_secs = cadence;
+        let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
+            .expect_err("this fixture stops at an environmental step");
+        assert!(
+            !err.contains("refuses unsafe configuration"),
+            "cadence {cadence:?} is supported and must not be refused, got: {err}"
+        );
+    }
+}
+
+/// R8-C098 — the delegated credential's TTL is its exposure window, and it needs a ceiling.
+///
+/// `exp` is the ONLY thing that ever expires a delegated response-signing credential: an
+/// operator advancing the trust epoch does not reach credentials already issued under it,
+/// because no verifier reads the counter. So an exfiltrated delegated key stays verifiable
+/// for exactly the configured TTL — while every document describing the deployment calls it
+/// the SHORT-lived hot-path key. Nothing refused, or even warned about, an arbitrarily long
+/// one: parse, the boundary and `delegated_wiring` all checked only `0 < overlap < ttl`.
+///
+/// The broken implementation this catches: a TTL validated for positivity alone.
+#[test]
+fn a_programmatic_config_cannot_mint_an_unboundedly_long_lived_delegated_credential() {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    let m = serving_fixtures::write_material();
+    let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
+    let ceiling = mcp_re_proxy::cli::MAX_DELEGATED_TTL_SECS;
+
+    let mut config = parsed.clone();
+    config.delegated_ttl_secs = ceiling + 1;
+    config.delegated_overlap_secs = 60;
+    let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
+        .expect_err("a TTL above the ceiling must be refused");
+    assert!(
+        err.contains("refuses unsafe configuration") && err.contains("--delegated-ttl-secs"),
+        "the boundary must refuse it and name the flag, got: {err}"
+    );
+
+    // And the rotor's window rule holds at the boundary as well as in the wiring.
+    let mut config = parsed.clone();
+    config.delegated_overlap_secs = config.delegated_ttl_secs;
+    let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
+        .expect_err("an overlap at the TTL must be refused");
+    assert!(
+        err.contains("--delegated-overlap-secs"),
+        "the refusal must name the overlap, got: {err}"
+    );
+
+    // Negative control: a TTL exactly AT the ceiling is admissible. Without it, a boundary
+    // that refused every delegated TTL would satisfy the assertions above.
+    let mut config = parsed;
+    config.delegated_ttl_secs = ceiling;
+    config.delegated_overlap_secs = 60;
+    let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
+        .expect_err("this fixture stops at an environmental step");
+    assert!(
+        !err.contains("refuses unsafe configuration"),
+        "a TTL at the ceiling is admissible and must not be refused, got: {err}"
+    );
+}

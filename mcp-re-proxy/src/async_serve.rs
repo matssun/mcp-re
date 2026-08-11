@@ -641,9 +641,14 @@ async fn serve_connection<H: AsyncRequestHandler>(
     // MAX CONNECTION AGE: the peer's certificate was validated — chain, CRL, validity
     // window — at the handshake and is never re-consulted on an established
     // connection. At the age bound the connection is GRACEFULLY shut down: in-flight
-    // requests finish, no new ones are accepted, and the peer's next request rides a
-    // fresh handshake that re-runs the verifier against the current CRL. Without this,
-    // a peer that never reconnects is never re-checked.
+    // requests finish and no new ones are accepted, so a peer that never reconnects
+    // is not served indefinitely on one admission decision.
+    //
+    // This bound alone does not force re-verification. A TLS 1.3 peer that resumes
+    // presents a PSK and sends no CertificateVerify, so the reconnection re-runs no
+    // chain or CRL check. Resumption tickets are bound to the trust-anchor epoch, so
+    // an anchor change invalidates them; a CRL reload does not. Per-request
+    // revocation is what holds against a revoked-but-resuming peer.
     let conn = builder.serve_connection(io, service);
     tokio::pin!(conn);
     match max_connection_age {

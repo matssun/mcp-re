@@ -484,6 +484,9 @@ fn replayed_request_yields_a_verified_delegated_rejection() {
         ResponseKind::VerifiedRejection {
             wire_code: Some("mcp-re.replay_detected".to_string()),
             bound: true,
+            // A replay is refused before the dispatch and spends nothing, so the receipt
+            // states no execution hazard at all — every token absent.
+            execution: mcp_re_client_core::ExecutionContract::default(),
         }
     );
     // Converted to a PLAIN JSON-RPC error for the local client (fail closed — not a

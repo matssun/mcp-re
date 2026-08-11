@@ -28,6 +28,15 @@ SCHEMA_VERSION = 1
 #: Verification classes, ADR-MCPRE-059 §9.
 CLASSES = {"V0", "V1", "V2", "V3"}
 
+#: The classes as an ordered scale, so "past the class this boundary permits" is a
+#: comparison rather than a reading of the manifest by a human.
+CLASS_ORDER = {"V0": 0, "V1": 1, "V2": 2, "V3": 3}
+
+#: The URI forms an assumption's `scope` may take. A scope entry that matches neither is a
+#: typo that scopes the assumption to nothing while looking like a registration, which is
+#: the same failure as a mistyped key: it must not read as an absent declaration.
+_SCOPE_PREFIXES = ("unit://", "boundary://")
+
 #: Typed edge kinds, ADR-MCPRE-059 §4. Collapsing these into one "depends on" relation is
 #: forbidden once invalidation is enforced, so the set is closed here.
 EDGE_KINDS = {
@@ -302,6 +311,13 @@ def load_assumptions() -> dict:
                 f"the review history."
             )
         seen.add(entry["id"])
+        for target in entry.get("scope", []):
+            if not str(target).startswith(_SCOPE_PREFIXES):
+                raise ManifestError(
+                    f"{awhere}: scope entry {target!r} is neither `unit://<id>` nor "
+                    f"`boundary://<id>`. A scope the tooling cannot resolve trusts the "
+                    f"assumption nowhere while reading as a registration."
+                )
     return doc
 
 
@@ -319,6 +335,65 @@ def load_trust_boundaries() -> dict:
         if cls is not None and cls not in CLASSES:
             raise ManifestError(f"{bwhere}: max_class_without_assumption {cls!r} invalid")
     return doc
+
+
+def expand_paths(patterns) -> set[str]:
+    """The repo-relative files a `paths` list names, with its globs expanded."""
+    out: set[str] = set()
+    for pattern in patterns:
+        for path in REPO_ROOT.glob(pattern):
+            if path.is_file():
+                out.add(path.relative_to(REPO_ROOT).as_posix())
+    return out
+
+
+def boundary_class_violations(
+    verification: dict, boundaries: dict, assumptions: dict
+) -> list[str]:
+    """Units promoted past the class a boundary they cross permits.
+
+    `max_class_without_assumption` is the rule that keeps a proof's meaning honest across a
+    trust boundary: a theorem about code on this side says nothing about the other side, so
+    claiming V1/V2/V3 over an FFI, crypto, KMS or clock boundary is an over-read unless a
+    registered assumption states what is being trusted there.
+
+    A crossing is COVERED when some assumption's `scope` names both the unit and the
+    boundary. Naming only the unit is not enough — that is the assumption's ordinary scope,
+    and it says nothing about which boundary it discharges.
+    """
+    covered: set[tuple[str, str]] = set()
+    for entry in assumptions.get("assumption", []):
+        scope = [str(target) for target in entry.get("scope", [])]
+        units = [t.removeprefix("unit://") for t in scope if t.startswith("unit://")]
+        crossed = [
+            t.removeprefix("boundary://") for t in scope if t.startswith("boundary://")
+        ]
+        for unit_id in units:
+            for boundary_id in crossed:
+                covered.add((unit_id, boundary_id))
+
+    violations: list[str] = []
+    for boundary in boundaries.get("boundary", []):
+        cap = boundary.get("max_class_without_assumption")
+        if cap is None:
+            continue
+        boundary_files = expand_paths(boundary["paths"])
+        for unit in verification.get("unit", []):
+            if CLASS_ORDER[unit["class"]] <= CLASS_ORDER[cap]:
+                continue
+            crossing = sorted(expand_paths(unit["paths"]) & boundary_files)
+            if not crossing:
+                continue
+            if (unit["id"], boundary["id"]) in covered:
+                continue
+            violations.append(
+                f"unit {unit['id']} is class {unit['class']} but its paths cross "
+                f"{boundary['id']} ({', '.join(crossing)}), which permits at most "
+                f"{cap} without a registered assumption covering the crossing. Register "
+                f"one in assumptions.toml with `boundary://{boundary['id']}` in its "
+                f"scope, or lower the unit's class."
+            )
+    return violations
 
 
 def load_toolchains() -> dict:

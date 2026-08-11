@@ -22,17 +22,29 @@
 
 name: verification
 
+# The declared unit sources are part of the trigger set. A unit's evidence is a claim
+# about production Rust, so a change to `mcp-re-core/src/`, `mcp-re-http-profile/src/` or
+# `runtime_state.rs` is exactly the change `check-assumptions` exists to catch — a lane
+# scoped only to `verification/**` would never see a deleted theorem or a new
+# `external_body` in the code the theorem is about.
 on:
   pull_request:
     paths:
       - "verification/**"
       - "tools/verification/**"
       - ".github/workflows/verification.yml"
+      - "mcp-re-core/src/**"
+      - "mcp-re-http-profile/src/**"
+      - "mcp-re-proxy/src/runtime_state.rs"
   push:
     branches: [main]
     paths:
       - "verification/**"
       - "tools/verification/**"
+      - ".github/workflows/verification.yml"
+      - "mcp-re-core/src/**"
+      - "mcp-re-http-profile/src/**"
+      - "mcp-re-proxy/src/runtime_state.rs"
   workflow_dispatch:
 
 permissions:
@@ -52,6 +64,16 @@ jobs:
   # ---------------------------------------------------------------------------
   host:
     name: verification platform (macOS host)
+    # Same-repository refs only. Both lanes execute the checked-out tree's own
+    # `tools/verification/*` on a persistent self-hosted Mac mini that holds the pinned
+    # toolchains under /opt/verification and the operator's cloud credentials, so a fork
+    # pull request reaching this runner is arbitrary code execution on the release
+    # verification host, not a sandboxed CI job. The runner is not ephemeral: anything a
+    # run leaves behind is read by every later run, including the toolchains later
+    # attestations resolve from.
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 30
     steps:
@@ -87,6 +109,13 @@ jobs:
   # ---------------------------------------------------------------------------
   extraction:
     name: extraction pipeline (linux container)
+    # Same-repository refs only — see the `host` job. This lane additionally pipes
+    # `secrets.GITHUB_TOKEN` into `docker login` and bind-mounts the workspace into a
+    # container, so a fork ref here would hand a PR author both the token and the
+    # runner's Docker socket reach.
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 90
     steps:
@@ -105,10 +134,19 @@ jobs:
           # declared toolchain could produce two different models.
           print(f"resolved={'true' if resolved else 'false'}")
           print(f"ref={c.get('image','')}@{c.get('digest','')}" if resolved else "ref=")
+
+          # The pin says the pipeline COULD run; the manifest says whether any unit asks
+          # it for evidence. `verify-lean` reports NOT_REQUIRED while no unit is V2/V3,
+          # and `regenerate-lean` refuses outright because the Charon → Aeneas → Lean
+          # invocation is unimplemented, so running the pipeline on a pin alone makes the
+          # lane permanently red — a red nobody reads is a lane that reports nothing.
+          v = tomllib.load(open("verification/policy/verification.toml", "rb"))
+          units = [u for u in v.get("unit", []) if u.get("class") in ("V2", "V3")]
+          print(f"required={'true' if units else 'false'}")
           PY
 
       - name: Container runtime availability
-        if: steps.image.outputs.resolved == 'true'
+        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
         run: |
           set -euo pipefail
           # An unavailable runtime is a lane that CANNOT run. On the authoritative runner
@@ -118,7 +156,7 @@ jobs:
           docker info --format 'server {{.ServerVersion}} {{.OSType}}/{{.Architecture}}'
 
       - name: Log in to GHCR
-        if: steps.image.outputs.resolved == 'true'
+        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
         run: |
           set -euo pipefail
           # Piped, never passed as an argument: a token on a command line is visible in
@@ -127,7 +165,7 @@ jobs:
             | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
 
       - name: Pull the pinned image and confirm its digest
-        if: steps.image.outputs.resolved == 'true'
+        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
         run: |
           set -euo pipefail
           # Pulling BY DIGEST is what makes the pin mean something: the registry cannot
@@ -136,7 +174,7 @@ jobs:
           docker pull --platform linux/arm64 "${{ steps.image.outputs.ref }}"
 
       - name: Regenerate and check the extracted model
-        if: steps.image.outputs.resolved == 'true'
+        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
         run: |
           set -euo pipefail
           docker run --rm --platform linux/arm64 \
@@ -146,7 +184,7 @@ jobs:
           ./tools/verification/check-generated
 
       - name: Lean proofs
-        if: steps.image.outputs.resolved == 'true'
+        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
         run: |
           set -euo pipefail
           docker run --rm --platform linux/arm64 \
@@ -160,3 +198,15 @@ jobs:
           echo "extraction_container is unresolved in toolchains.lock.toml."
           echo "The Lean lane cannot produce evidence until the image digest is pinned."
           echo "This is the mechanism, not an unfinished step (ADR-MCPRE-059 §2, §19)."
+
+      # NOT_REQUIRED is a distinct outcome from SKIPPED: the pipeline is pinned and could
+      # run, and no unit is asking it for evidence. `tools/verification/verify-lean`
+      # reports the same verdict, so the lane stays consistent whether it is invoked here
+      # or by hand.
+      - name: Extraction lane not required
+        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required != 'true'
+        run: |
+          echo "No unit in verification/policy/verification.toml is declared V2 or V3."
+          echo "The extraction pipeline is pinned but no unit asks it for evidence:"
+          echo "NOT_REQUIRED (ADR-MCPRE-059 §8, §16). Promoting a unit to V2 turns this"
+          echo "lane on, and the Charon -> Aeneas -> Lean invocation must exist by then."

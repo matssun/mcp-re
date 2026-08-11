@@ -120,6 +120,30 @@ pub(crate) struct MaterializedRuntime {
     control: Option<ControlRuntime>,
 }
 
+/// The lifecycle events a finished `serve_fleet` has ESTABLISHED — never more.
+///
+/// The whole of what separates a served shutdown from a startup that never bound, kept as
+/// one function so it is decided once and can be tested without standing up a fleet.
+///
+/// `serve_fleet` fails only before a listener exists (resolving `--bind`, and starting the
+/// fleet) and otherwise returns `Ok` only after `shutdown_and_join`. So `Ok` proves both
+/// that requests were accepted and that the drain completed, and `Err` proves that neither
+/// happened — which is why the failure case justifies NO event at all. `Serving` means the
+/// fleet is accepting requests and `FleetDrained` asserts a join returned; a fleet that
+/// never bound satisfies neither, and applying them anyway is what recorded a bind failure
+/// as a clean drained shutdown.
+fn serving_events(served: &Result<(), String>) -> &'static [RuntimeEvent] {
+    if served.is_ok() {
+        &[
+            RuntimeEvent::ServingStarted,
+            RuntimeEvent::ShutdownRequested,
+            RuntimeEvent::FleetDrained,
+        ]
+    } else {
+        &[]
+    }
+}
+
 impl MaterializedRuntime {
     /// Assemble what startup established. Takes every owned resource by value, so a
     /// caller cannot retain one and outlive the ordering this type enforces.
@@ -157,8 +181,6 @@ impl MaterializedRuntime {
         shutdown: Arc<AtomicBool>,
         mut lifecycle: RuntimeLifecycle,
     ) -> Result<(), String> {
-        lifecycle.apply(RuntimeEvent::ServingStarted)?;
-
         // PHASE 1 — drain. Returns only once every per-core worker has stopped, so no
         // request can be using anything below when phase 2 begins.
         let proxy = Arc::clone(
@@ -169,23 +191,44 @@ impl MaterializedRuntime {
         let served =
             crate::app::serve_fleet(proxy, config_snapshot, serve_options, config, shutdown);
 
-        // `serve_fleet` returning IS the drain (ADR-MCPRE-057 §8.1): its contract is that
-        // no request is running when it returns, which is precisely the predicate
-        // `Draining -> Transitioning` requires. The proof is the join, not a counter —
-        // no request-path accounting was added to represent it.
-        lifecycle.apply(RuntimeEvent::ShutdownRequested)?;
-        lifecycle.apply(RuntimeEvent::FleetDrained)?;
+        // WHICH lifecycle events are applied is decided by `served`, because `served` is
+        // the only thing that knows whether any of them happened. `serve_fleet` fails ONLY
+        // before a listener exists — resolving `--bind`, and starting the fleet — and
+        // otherwise returns `Ok` only after `shutdown_and_join`. So `Ok` is simultaneously
+        // the proof that the fleet accepted requests and the proof that it drained, and
+        // `Err` is the proof that neither ever happened.
+        //
+        // Applying them ahead of the call would make them intentions, which is what
+        // `RuntimeEvent` is defined not to be (ADR-MCPRE-057 §18: planned != established).
+        // A fleet that never bound would then record `Serving` — a state whose whole
+        // meaning is that requests are being accepted, and which `admits_requests` reads —
+        // and go on to record `FleetDrained`, asserting a join that never ran, ending at
+        // the `Stopped` reserved for a clean drained shutdown.
+        for event in serving_events(&served) {
+            lifecycle.apply(*event)?;
+        }
+        if served.is_ok() {
+            self.transition_and_reclaim(&mut lifecycle)?;
+            return served;
+        }
 
         // Phases 2 and 3 run whether serving succeeded or failed: a fleet that could not
         // bind still leaves every plane's workers running, and a failure path that skipped
-        // teardown would be the §I leak this ADR exists to close.
-        self.transition_and_reclaim(&mut lifecycle)?;
-
+        // teardown would be the §I leak this ADR exists to close. They run here WITHOUT the
+        // lifecycle, which has no transition out of `Materialized` for a serve that never
+        // started, so the record stops at the last state the process actually reached
+        // instead of borrowing the vocabulary of a shutdown that did not occur.
+        self.shutdown();
+        debug_assert_eq!(lifecycle.state(), RuntimeState::Materialized);
         served
     }
 
     /// Phases 2 and 3, each event applied only once the phase that establishes it has
     /// returned.
+    ///
+    /// Reached only from a served shutdown. A serve that never bound has no legal route
+    /// here: `Materialized` has no transition for `SecurityTransitionCompleted`, which is
+    /// the relation refusing to let a failed startup borrow the shutdown vocabulary.
     ///
     /// The interleaving is the content: `SecurityTransitionCompleted` between them says
     /// the planes made their post-owner transitions and the substrate was still there
@@ -263,6 +306,83 @@ mod tests {
     use crate::trust_plane::TEST_SIGNER as TRUST_SIGNER;
     use std::time::Duration;
     use std::time::Instant;
+
+    /// A lifecycle driven legally to `Materialized`, where `serve` receives it.
+    fn materialized() -> RuntimeLifecycle {
+        let mut lifecycle = RuntimeLifecycle::new();
+        for event in [
+            RuntimeEvent::ValidationSucceeded,
+            RuntimeEvent::PlanBuilt,
+            RuntimeEvent::MaterializationStarted,
+            RuntimeEvent::MaterializationSucceeded,
+        ] {
+            lifecycle.apply(event).expect("the startup path is legal");
+        }
+        lifecycle
+    }
+
+    /// The events are FACTS, so a `serve_fleet` that failed before binding justifies none
+    /// of them (runtime_state.rs: "Events are facts already established, never intentions").
+    ///
+    /// The broken implementation this catches is the one that was here: applying
+    /// `ServingStarted` before the call and `ShutdownRequested`/`FleetDrained` after it
+    /// without inspecting the result.
+    #[test]
+    fn a_serve_that_never_bound_justifies_no_lifecycle_event() {
+        let failed: Result<(), String> = Err("resolve --bind nope:1: failure".to_string());
+        assert!(
+            serving_events(&failed).is_empty(),
+            "a fleet that never bound neither served nor drained"
+        );
+
+        let mut lifecycle = materialized();
+        for event in serving_events(&failed) {
+            lifecycle.apply(*event).expect("legal");
+        }
+        assert_eq!(
+            lifecycle.state(),
+            RuntimeState::Materialized,
+            "the record stops at the last state the process actually reached"
+        );
+        assert!(
+            !lifecycle.state().admits_requests(),
+            "no window in which the lifecycle authorises admission over an unbound runtime"
+        );
+        assert_ne!(
+            lifecycle.state(),
+            RuntimeState::Stopped,
+            "the terminal reserved for a drained shutdown is not reachable without one"
+        );
+    }
+
+    /// The other direction: a real served shutdown still records the full sequence, so the
+    /// fix above cannot be satisfied by simply never recording anything.
+    #[test]
+    fn a_served_shutdown_records_serving_and_the_drain() {
+        let served: Result<(), String> = Ok(());
+        let mut lifecycle = materialized();
+        for event in serving_events(&served) {
+            lifecycle.apply(*event).expect("the serving path is legal");
+        }
+        assert_eq!(
+            lifecycle.state(),
+            RuntimeState::Transitioning,
+            "a proven drain is what `transition_and_reclaim` requires"
+        );
+    }
+
+    /// The post-drain sequence has no route out of `Materialized`, so a failed serve cannot
+    /// reach `Stopped` even if a future edit forgets the `served.is_ok()` guard in `serve`.
+    #[test]
+    fn the_post_drain_sequence_is_unreachable_from_a_serve_that_never_started() {
+        let mut runtime = populated(cooperative, cooperative, cooperative);
+        let mut lifecycle = materialized();
+        let err = runtime
+            .transition_and_reclaim(&mut lifecycle)
+            .expect_err("a failed startup may not borrow the shutdown vocabulary");
+        assert_eq!(err.state, RuntimeState::Materialized);
+        assert_eq!(err.event, RuntimeEvent::SecurityTransitionCompleted);
+    }
 
     /// A worker that notices its halt and stops. The shape every production worker has.
     fn cooperative(halt: Halt) {

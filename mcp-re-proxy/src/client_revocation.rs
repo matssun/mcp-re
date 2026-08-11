@@ -84,8 +84,9 @@ struct IssuerCrl {
     /// Revoked serials, each with leading zero bytes stripped so the two DER INTEGER
     /// spellings of the same number compare equal.
     revoked: HashSet<Vec<u8>>,
-    /// `nextUpdate`, if the CRL carries one. RFC 5280 permits its omission, and a CRL
-    /// without one never falls out of force (the same reading `crl_freshness` takes).
+    /// `nextUpdate`. RFC 5280 permits its omission, but a CRL without one is refused
+    /// at load — at startup and on every reload — so no index reaches this type
+    /// without it. The `Option` is the parse result, not an admissible state.
     next_update_unix: Option<i64>,
 }
 

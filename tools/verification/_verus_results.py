@@ -26,8 +26,16 @@ Three things it lets the lane check that the log never could:
     A binary at the pinned location that is not the pinned build now fails.
   * **whole-crate verification** — `is-verifying-entire-crate` distinguishes an
     authoritative run from a `focus`-style partial one (Operational Rule 5).
-  * **the specific theorems** — a unit names its proved symbols, so deleting one
-    specification fails the lane instead of leaving the others to answer for it.
+  * **the specific theorems the unit named** — `func-details` lists the functions the
+    prover processed, so deleting the FUNCTION a unit claims fails the lane instead of
+    leaving the crate's other proofs to answer for it.
+
+What the report cannot answer, and what therefore is not claimed here: whether a listed
+function still carries a specification. `func-details` names every function processed,
+with or without a `requires`/`ensures`, and a Verus specification is a detachable
+attribute — deleting it leaves the symbol in the report and the crate's verified count
+healthy. That check is a property of the source, and it is `check-assumptions`, which
+reads the declared unit's own files and fails on a proved symbol with no specification.
 """
 
 from __future__ import annotations
@@ -109,8 +117,24 @@ def evaluate_unit(
             "document discharged no proof obligations, whatever its exit status."
         )
 
+    if not pinned_commit:
+        return False, (
+            "the toolchain lock pins no Verus commit, so the run's prover has no declared "
+            "identity to be checked against. A proof attributed to an unidentified prover "
+            "is not evidence."
+        )
+
     for report in reports:
-        if pinned_commit and report.commit and report.commit != pinned_commit:
+        # An ABSENT commit fails exactly as a wrong one does. Skipping the comparison when
+        # the field is empty makes the check fail open on the single input an adversarial
+        # or locally built prover most easily controls: its own self-report.
+        if not report.commit:
+            return False, (
+                "the prover's report carries no commit. Identity is read from the report, "
+                "so a report that declines to state one leaves the binary unidentified, "
+                "and the install path agreeing proves nothing about the binary."
+            )
+        if report.commit != pinned_commit:
             return False, (
                 f"prover identity mismatch: report says {report.commit[:12]}, the lock "
                 f"pins {pinned_commit[:12]}. A proof checked by an unpinned prover is not "
