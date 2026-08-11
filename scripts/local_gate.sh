@@ -101,6 +101,8 @@ stage_static() {
     && python3 scripts/lifecycle_purity_gate.py \
     && python3 tools/verification/test_verdict_algebra.py \
     && python3 tools/verification/test_invalidation.py \
+    && python3 tools/verification/test_attest.py \
+    && python3 tools/verification/test_verus_lane.py \
     && python3 tools/verification/verify --manifests \
     && python3 tools/scitt_fetch_service_key.py --selftest \
     && python3 scripts/slo_gate.py --selftest \

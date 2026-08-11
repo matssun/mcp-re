@@ -170,7 +170,15 @@ def propagate(
 ) -> dict[str, tuple[str, str]]:
     """Push invalidation along typed edges until it stops moving.
 
-    Two rules, and the difference between them is the entire value of the formal layer:
+    Three rules. The first is about what a failure MEANS; the other two are about how far
+    ordinary staleness travels, and the difference between them is the value of the formal
+    layer:
+
+      * A `BLOCKED` producer blocks its consumers, over every propagating edge kind and
+        through any seal. Freshness is a property of the whole declared evidence closure,
+        not of a unit's own latest verifier result, so a consumer whose own theorem still
+        passes may not issue freshness while a required prerequisite has failed.
+
 
       * An UNSEALED `CONTRACT_CONSUMES` or a `COMPILE_DEPENDENCY` propagates ANY producer
         dirtiness. Conservative, and the default: without a proved unchanged contract there
@@ -190,10 +198,37 @@ def propagate(
             kind = edge["kind"]
             if kind == "REVIEW_CONTEXT":
                 continue
+            # Direction is not decorative: `from` PRODUCES the evidence, `to` CONSUMES it,
+            # and invalidation flows only that way. A graph that is internally consistent
+            # while propagating backwards would report exactly the wrong unit as sound,
+            # which is why `test_invalidation` pins the asymmetry.
             producer, consumer = edge["from"], edge["to"]
             producer_state = result.get(producer, ("UNKNOWN", "not declared"))[0]
             consumer_state = result.get(consumer, ("UNKNOWN", "not declared"))[0]
-            if producer_state == "FRESH" or consumer_state != "FRESH":
+            if producer_state == "FRESH":
+                continue
+
+            # A BLOCKED producer is not staleness, and the difference is the whole point of
+            # keeping two words. DIRTY_* means "this evidence can be re-derived". BLOCKED
+            # means "no valid freshness may be issued until something OUTSIDE this unit is
+            # repaired" — and no amount of re-running the consumer repairs a failed
+            # prerequisite. So it propagates as BLOCKED, and a seal does not stop it: a seal
+            # is a claim about a contract being the whole of the consumer's reasoning, which
+            # says nothing when the proof establishing that contract has failed.
+            #
+            # It also escalates a consumer that is merely dirty, because BLOCKED is strictly
+            # the stronger statement about what may be issued.
+            if producer_state == "BLOCKED":
+                if consumer_state != "BLOCKED":
+                    result[consumer] = (
+                        "BLOCKED",
+                        f"required dependency {producer} is BLOCKED over a {kind} edge; "
+                        "re-running this unit cannot repair a failed prerequisite",
+                    )
+                    changed = True
+                continue
+
+            if consumer_state != "FRESH":
                 continue
 
             if kind == "CONTRACT_CONSUMES" and edge.get("sealed"):

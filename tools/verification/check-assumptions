@@ -15,8 +15,20 @@ Two things it is honest about:
     specification semantics. Until that exists, every specification diff is treated as
     security-sensitive by the review policy, not by this script.
 
-  * It scans `verification/` only. Production Rust is not a proof surface, and scanning it
-    for the word `external` would produce noise that trains people to ignore this gate.
+  * Where it scans is derived, not assumed. `verification/` is always in scope. So is
+    every file a unit in `verification.toml` declares, because the Phase 2 pilot puts
+    specification text directly in the production source it constrains — a gate that
+    scanned only `verification/` would have reported PASS with four escape hatches in
+    `mcp-re-core/src/`. It did, before this was fixed.
+
+    Production files are matched against the CODE forms of each mechanism, not the bare
+    words, which is what the original limit was protecting against: `external` and
+    "admit only the closed set" appear in ordinary Rust for reasons that have nothing to
+    do with proofs. The verus-specific spellings are distinct tokens and are still caught.
+
+  * Proof text outside a declared unit is a FAILURE, not a pass. Otherwise a
+    specification could be weakened in a file the manifest does not know about, and no
+    lane would ever look at it.
 """
 
 from __future__ import annotations
@@ -31,9 +43,18 @@ from _manifest import (  # noqa: E402
     REPO_ROOT,
     ManifestError,
     load_assumptions,
+    load_verification,
 )
 
 VERIFICATION_DIR = REPO_ROOT / "verification"
+
+#: Tokens that mean "there is Verus specification text here". A production file carrying
+#: one of these is a proof surface no matter where it lives, and must belong to a
+#: declared unit.
+PROOF_TEXT = re.compile(r"\bverus_spec\b|\bverus_verify\b|\bverus!\s*\{|\bassume_specification\b")
+
+#: Directories whose Rust is never production source.
+NON_PRODUCTION = ("verification/", "target/")
 
 #: Mechanisms that move a proof obligation out of the proof and into the trusted computing
 #: base. Word-bounded so `assumed_state` or `external_id` do not trip the gate.
@@ -43,8 +64,22 @@ MECHANISMS = {
     "admit": r"\badmit\b",
     "axiom": r"\baxiom\b",
     "external_body": r"\bexternal_body\b",
+    "external_type_specification": r"\bexternal_type_specification\b",
     "external": r"\bexternal\b",
     "sorry": r"\bsorry\b",
+}
+
+#: The same question, asked of production Rust, where the bare words are ordinary English.
+#: "admit only the closed set" in a comment is not a proof escape hatch, and a gate that
+#: said it was would be teaching people to ignore it within a week. So the mechanisms are
+#: matched in their code forms: the verus-specific spellings, and `assume`/`admit` only as
+#: calls.
+PRODUCTION_MECHANISMS = {
+    "assume_specification": r"\bassume_specification\b",
+    "external_body": r"\bexternal_body\b",
+    "external_type_specification": r"\bexternal_type_specification\b",
+    "assume": r"\bassume\s*[(!]",
+    "admit": r"\badmit\s*[(!]",
 }
 
 SCANNED_SUFFIXES = {".rs", ".lean", ".v"}
@@ -64,23 +99,64 @@ def registered_mechanisms() -> set[str]:
     }
 
 
-def scan() -> list[tuple[Path, int, str, str]]:
-    hits: list[tuple[Path, int, str, str]] = []
-    if not VERIFICATION_DIR.exists():
-        return hits
-    for path in sorted(VERIFICATION_DIR.rglob("*")):
-        if not path.is_file() or path.suffix not in SCANNED_SUFFIXES:
-            continue
+def declared_unit_files() -> set[Path]:
+    """Every existing file a `verification.toml` unit names, expanded from its globs."""
+    doc = load_verification()
+    files: set[Path] = set()
+    for unit in doc.get("unit", []):
+        for declared in unit["paths"]:
+            for path in REPO_ROOT.glob(declared):
+                if path.is_file():
+                    files.add(path)
+    return files
+
+
+def scan_paths() -> list[tuple[Path, bool]]:
+    """(file, is_production) for everything in scope, in a stable order."""
+    scoped: dict[Path, bool] = {}
+    if VERIFICATION_DIR.exists():
+        for path in VERIFICATION_DIR.rglob("*"):
+            if path.is_file() and path.suffix in SCANNED_SUFFIXES:
+                scoped[path] = False
+    for path in declared_unit_files():
+        if path.suffix in SCANNED_SUFFIXES:
+            scoped.setdefault(path, True)
+    out = []
+    for path in sorted(scoped):
         rel = path.relative_to(REPO_ROOT).as_posix()
         if any(rel.startswith(prefix) for prefix in EXCLUDED):
             continue
+        out.append((path, scoped[path]))
+    return out
+
+
+def scan() -> list[tuple[Path, int, str, str]]:
+    hits: list[tuple[Path, int, str, str]] = []
+    for path, is_production in scan_paths():
+        mechanisms = PRODUCTION_MECHANISMS if is_production else MECHANISMS
         for lineno, line in enumerate(
             path.read_text(encoding="utf-8").splitlines(), start=1
         ):
-            for name, pattern in MECHANISMS.items():
+            for name, pattern in mechanisms.items():
                 if re.search(pattern, line):
                     hits.append((path.relative_to(REPO_ROOT), lineno, name, line.strip()))
     return hits
+
+
+def undeclared_proof_text() -> list[tuple[Path, int, str]]:
+    """Verus specification text in production Rust that no unit declares."""
+    declared = declared_unit_files()
+    found: list[tuple[Path, int, str]] = []
+    for path in sorted(REPO_ROOT.rglob("*.rs")):
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        if any(rel.startswith(prefix) for prefix in NON_PRODUCTION) or path in declared:
+            continue
+        for lineno, line in enumerate(
+            path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
+        ):
+            if PROOF_TEXT.search(line):
+                found.append((path.relative_to(REPO_ROOT), lineno, line.strip()))
+    return found
 
 
 def main() -> int:
@@ -90,11 +166,30 @@ def main() -> int:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
 
+    try:
+        stray = undeclared_proof_text()
+    except ManifestError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    if stray:
+        print(f"check-assumptions: proof text in {len(stray)} undeclared location(s)")
+        for path, lineno, text in stray:
+            print(f"  [UNDECLARED] {path}:{lineno}  |  {text}")
+        print(
+            "\nFAIL: Verus specification text lives in a file no `verification.toml` unit "
+            "declares.\nA specification outside a unit is checked by no lane and invalidated "
+            "by no change,\nso weakening it would be invisible. Declare the unit, or remove "
+            "the specification.",
+            file=sys.stderr,
+        )
+        return 1
+
     hits = scan()
     unregistered = [hit for hit in hits if hit[2] not in registered]
 
     if not hits:
-        print("check-assumptions: PASS — no proof escape hatch in verification/")
+        print("check-assumptions: PASS — no proof escape hatch in scope")
         print("VERDICT: PASS")
         print(f"  registered assumptions: {len(registered)}")
         return 0

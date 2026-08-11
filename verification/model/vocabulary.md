@@ -129,3 +129,56 @@ bound_to_request(...)
 
 Adding one is a security-sensitive change (§11): a predicate is where a proof's meaning
 lives, and weakening one silently weakens every theorem that consumes it.
+
+---
+
+## Crate, unit, cone: three things that are not the same
+
+Conflating these produced the first Verus boundary decision's central error, and
+Operational Rule 17 exists to stop it recurring. They answer different questions.
+
+```text
+CRATE                  where cargo and the prover operate
+                       tool invocation, compile environment, feature closure
+                       a BUILD fact
+
+VERIFICATION UNIT      the function, module, or type whose property is proved
+                       what verification.toml declares, and what evidence attaches to
+                       an ASSURANCE fact
+
+DEPENDENCY CONE        everything the theorem rests on, reached transitively
+                       ├── proved nodes      checked, contribute no trust
+                       └── trusted frontier  where proving stops:
+                                             assume_specification, external_body,
+                                             external_type_specification, declared
+                                             boundaries, the prover and its solver
+                       a SECURITY fact — this one is the TCB
+```
+
+Only the third is a security property. A unit's assurance is bounded by its trusted
+frontier, not by the size of the crate it happens to live in: unannotated code in the same
+crate enters no cone and costs nothing. Measured, not assumed — a 26-module crate with
+`coset`, `ciborium`, `p256` and `serde` added nothing to the freshness theorem's frontier,
+while six small `std` and policy items did.
+
+So the question to ask of a candidate is never "how big is the crate?" It is:
+
+> What does the proved function touch, and at which of those nodes does proving stop?
+
+## What an attestation must say
+
+A verification result is not "freshness proven". It is:
+
+```text
+THEOREM    the proposition, as stated in the specification
+UNDER      the registered assumptions in its trusted frontier, by id
+WITH       the prover and solver identity that checked it
+OVER       the source and contract fingerprints it was checked against
+```
+
+Dropping any line changes what was established. In particular the assumption set travels
+with the claim: an attestation that records only the verdict lets a count like "six
+registered assumptions" normalize into background noise, at which point nobody can say
+what the theorem still means when one of them changes. The registry holds the
+justifications; the attestation holds the reference, so the two cannot drift apart
+unnoticed.

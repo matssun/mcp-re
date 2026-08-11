@@ -88,26 +88,29 @@ note = "As packaged or required by the pinned Verus release, not whatever Z3 is 
 # .rlib files and Charon builds unmodified. The host is changed rather than the tool.
 
 [extraction_container]
-state = "unresolved"
-image = ""
-digest = ""
+state = "resolved"
+image = "ghcr.io/matssun/mcp-re-verification-extraction"
+digest = "sha256:42318bba386ace68eb1b5ff7173259d3e485fc506cab76d6e40970dc987f7dce"
+tag = "tc-09eedf0aaf503302"
 platform = "linux/arm64"
 definition = "verification/extraction/Dockerfile"
 note = """
 Pinned by DIGEST, never by tag: a tag is a mutable pointer, so a lane pinned to one could
-produce two different models from the same declared toolchain.
+produce two different models from the same declared toolchain. `tag` is recorded for human
+navigation only — nothing resolves through it.
 
-The image has been built and the full Charon -> LLBC -> Aeneas -> Lean pipeline exercised
-end to end from this Dockerfile, so the definition is known good. It is still unresolved
-because the digest that belongs here is the digest of an image the RUNNER can obtain, and
-this image exists only in a local daemon. Resolving it requires deciding where the image
-is published, which is a deployment decision rather than a fact to be discovered.
+The tag is derived from the pinned toolchain contents by tools/verification/extraction-image,
+NOT from VERSION. Tying it to the product release would mint a new digest on every release
+with an unchanged prover (invalidating all formal evidence for nothing), and would leave
+the tag unmoved when a toolchain pin changed — a stale pointer to a different prover.
 
-Until then the Lean lane cannot produce evidence, which is the correct state — not a TODO.
+This digest is the OCI index. It carries the linux/arm64 manifest the Apple Silicon runner
+selects; an amd64 build of identical pins is a different image with a different digest,
+which is why `platform` is part of the identity rather than an incidental detail.
 """
 
 [charon]
-state = "unresolved"
+state = "resolved"
 commit = "340b1af4df92608d0911fc2ba26eef3fd3a30ab4"
 source_url = "https://github.com/AeneasVerif/charon"
 rust_toolchain = "nightly-2026-06-01"
@@ -123,13 +126,12 @@ The nightly is a THIRD Rust toolchain, distinct from both the [rust] channel and
 Verus requires. This is the divergence the [rust] note anticipates, recorded rather than
 resolved: it is confined to the extraction step and never compiles production code.
 
-state stays "unresolved" while [extraction_container] is unresolved. The commit is known,
-but a commit alone does not identify what a build of it produces; the pair (commit, image
-digest) does.
+Resolved together with [extraction_container]: a commit alone does not identify what a
+build of it produces; the pair (commit, image digest) does.
 """
 
 [aeneas]
-state = "unresolved"
+state = "resolved"
 commit = "daa85d7e89400fa978be83fedbc7e475a83f0889"
 source_url = "https://github.com/AeneasVerif/aeneas"
 ocaml_compiler = "5.3.0"
@@ -137,12 +139,11 @@ note = """
 Built inside the extraction container. Aeneas' Makefile requires GNU Make; Apple's
 bundled Make 3.81 is rejected outright, which the container makes moot.
 
-state stays "unresolved" until the container digest is pinned, for the same reason as
-[charon].
+Resolved together with [extraction_container], for the same reason as [charon].
 """
 
 [lean]
-state = "unresolved"
+state = "resolved"
 toolchain = "leanprover/lean4:v4.31.0"
 source = "verification/lean/lean-toolchain"
 note = """
@@ -155,12 +156,11 @@ The extraction image installs elan, whose default stable Lean is NEWER than this
 default is therefore not the pin, and `verification/lean/lean-toolchain` is what makes the
 correct one selected rather than the convenient one.
 
-state stays "unresolved" until [extraction_container] resolves, for the same reason as
-[charon].
+Resolved together with [extraction_container], for the same reason as [charon].
 """
 
 [aeneas_lean_backend]
-state = "unresolved"
+state = "resolved"
 package_revision = "daa85d7e89400fa978be83fedbc7e475a83f0889"
 mathlib_revision = "fabf563a7c95a166b8d7b6efca11c8b4dc9d911f"
 note = """

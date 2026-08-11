@@ -74,6 +74,7 @@ _UNIT_KEYS = {
     "assumptions",
     "features",
     "pilot",
+    "proved_symbols",
 }
 _EDGE_KEYS = {"kind", "from", "to", "contract", "sealed", "sealed_by", "rationale"}
 
@@ -242,6 +243,16 @@ def load_verification() -> dict:
                     f"{uwhere}: path {declared!r} matches nothing. A unit whose source "
                     f"cannot be located has unknown provenance, which is dirty, not empty."
                 )
+        # A V1/V3 unit must name the symbols its proof is about. Without that the lane can
+        # only ask "did this crate verify something", and deleting one of two
+        # specifications leaves the other to answer yes — coverage silently halves while
+        # the gate stays green. Naming them turns a deleted theorem into a lane failure.
+        if unit["class"] in {"V1", "V3"} and not unit.get("proved_symbols"):
+            raise ManifestError(
+                f"{uwhere}: class {unit['class']} requires `proved_symbols`. A unit that "
+                f"claims formal evidence must name the symbols proved, or nothing "
+                f"distinguishes a deleted specification from a passing one."
+            )
         contracts.update(unit.get("exported_contracts", []))
 
     for index, edge in enumerate(doc.get("edge", [])):

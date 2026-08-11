@@ -54,8 +54,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _evidence import write_bundle  # noqa: E402
 from _manifest import (  # noqa: E402
     LANE_VERDICTS,
+    REPO_ROOT,
     ManifestError,
     aggregate_verdict,
     load_assumptions,
@@ -189,6 +191,16 @@ def main() -> int:
     not_required = [
         name for name, verdict in verdicts.items() if verdict == "NOT_REQUIRED"
     ]
+
+    # Phase 3 of the evidence pipeline: the run's verdict becomes a record. Attestation is
+    # a separate phase precisely so that the thing which DECIDES pass is never the thing
+    # which STAMPS freshness; the issuer reads this and may not overrule it.
+    write_bundle(
+        REPO_ROOT / ".verification" / "evidence",
+        aggregate,
+        verdicts,
+        str(load_verification()["policy_revision"]),
+    )
 
     print("\n" + "=" * 70)
     if aggregate == "FAIL":

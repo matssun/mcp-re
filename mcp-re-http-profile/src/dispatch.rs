@@ -41,6 +41,11 @@ use mcp_re_core::ReplayDecision;
 use crate::error::HttpProfileError;
 use crate::replay::HttpReplayKey;
 use crate::verify::VerifiedHttpRequestEvidence;
+#[cfg(feature = "verify")]
+use verus_builtin_macros::verus_spec;
+#[cfg(feature = "verify")]
+#[allow(unused_imports)]
+use vstd::prelude::*;
 
 /// Dispatcher policy knobs.
 #[derive(Debug, Clone, Copy, Default)]
@@ -175,6 +180,18 @@ pub fn dispatch_request(
 /// Ordering is preserved: key construction, then continuation binding; the caller
 /// performs admission strictly LAST, so a spliced or unbindable continuation never
 /// burns a legitimate nonce.
+// ADR-MCPRE-059 WP2 — continuation unbypassability. If a request carries a continuation
+// and this function returns Ok, the continuation WAS verified against the caller-retained
+// bases. The pair (continuation present, continuation_verified == false) is not a state
+// any successful preparation can produce, which is the invariant ADR-MCPRE-056/057/058
+// eliminate dynamically, stated here over every input rather than over the fixtures.
+#[cfg_attr(feature = "verify", verus_spec(out =>
+    ensures
+        out matches Ok((_key, continuation_verified)) ==>
+            (verified.request_block matches Some(block) ==>
+                (block.continuation is Some ==> continuation_verified)),
+))]
+#[allow(clippy::redundant_closure)]
 pub fn prepare_http_dispatch(
     verified: &VerifiedHttpRequestEvidence,
     continuation_ctx: Option<RetainedContinuation<'_>>,
@@ -196,10 +213,15 @@ pub fn prepare_http_dispatch(
     };
 
     // MRTR continuation binding (if the block carries one).
-    let continuation = verified
-        .request_block
-        .as_ref()
-        .and_then(|b| b.continuation.as_ref());
+    // ADR-MCPRE-059 WP2: written as a match rather than `as_ref().and_then(..)` because
+    // the pinned prover cannot relate a closure passed to `and_then` back to its receiver,
+    // which is precisely the link the unbypassability theorem needs. The two forms are the
+    // same expression — this is `and_then`'s own definition — and the choice is recorded as
+    // mechanical proof-enablement, not as an architectural preference.
+    let continuation = match &verified.request_block {
+        Some(b) => b.continuation.as_ref(),
+        None => None,
+    };
     let continuation_verified = match (continuation, continuation_ctx) {
         (Some(c), Some(ctx)) => {
             c.verify(
@@ -207,7 +229,7 @@ pub fn prepare_http_dispatch(
                 ctx.input_required_response_base,
                 ctx.request_state,
             )
-            .map_err(DispatchError::Profile)?;
+            .map_err(|e| DispatchError::Profile(e))?;
             true
         }
         // A continuation to verify but no retained bases to verify against: we

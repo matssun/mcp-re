@@ -1,0 +1,19 @@
+[package]
+name = "verus-ice-closure-return-type"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone on purpose: this is sent upstream, not built by the workspace.
+[workspace]
+
+[dependencies]
+vstd = "=0.0.0-2026-08-09-0044"
+verus_builtin = "=0.0.0-2026-08-09-0044"
+verus_builtin_macros = "=0.0.0-2026-08-09-0044"
+
+[package.metadata.verus]
+verify = true
+
+[lib]
+path = "src/lib.rs"

@@ -87,6 +87,23 @@ def main() -> int:
             for edge in edges
         ],
         "assumptions": len(assumptions.get("assumption", [])),
+        # ADR-MCPRE-059 TRUSTS_ASSUMPTION, materialized. Reported per assumption rather
+        # than per unit so that a shared trust root is visible as one node several
+        # theorems stand on, instead of disappearing behind their separate green badges.
+        # Without this view, N units trusting one un-`ensures`d seam read as N independent
+        # security results; they are not.
+        "trusts_assumption": {
+            asm_id: sorted(
+                unit["id"] for unit in units if asm_id in unit.get("assumptions", [])
+            )
+            for asm_id in sorted(
+                {
+                    asm_id
+                    for unit in units
+                    for asm_id in unit.get("assumptions", [])
+                }
+            )
+        },
         "trust_boundaries": [entry["id"] for entry in boundaries.get("boundary", [])],
         "unresolved_toolchain_pins": unresolved,
         "review_closure": derived["review_closure"],
@@ -110,6 +127,17 @@ def main() -> int:
     sealed = sum(1 for edge in edges if edge.get("sealed"))
     print(f"    sealed           {sealed}")
     print(f"  assumptions        {graph['assumptions']}")
+    # Shared trust roots first, and named. An assumption several theorems stand on is one
+    # node, not several independent results, and the dashboard must not let it read as the
+    # latter (ADR-MCPRE-059 TRUSTS_ASSUMPTION).
+    trusts = graph["trusts_assumption"]
+    shared = {asm: ids for asm, ids in trusts.items() if len(ids) > 1}
+    print(f"    trusted by >1 unit {len(shared)}")
+    for asm, ids in sorted(shared.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        print(f"      {asm}  <- {len(ids)} units: {', '.join(ids)}")
+    for asm, ids in sorted(trusts.items()):
+        if len(ids) == 1:
+            print(f"      {asm}  <- {ids[0]}")
     print(f"  trust boundaries   {len(graph['trust_boundaries'])}")
     if unresolved:
         print(f"  unresolved pins    {', '.join(unresolved)}")

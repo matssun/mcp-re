@@ -12,69 +12,67 @@ and never falls back to whatever `verus`/`z3` happen to be on PATH. A proof chec
 prover of unknown identity is not evidence, and reporting it as a pass would be exactly
 the "stale or mismatched cache accepted as proof" threat the ADR names.
 
-A lane with no V1/V3 unit to check is SKIPPED, whether or not the toolchain is pinned:
-Phase 1 pins the toolchain and Phase 2 produces the first pilot, so the interval between
-them is a legitimately empty lane rather than a failure.
+A lane with no V1/V3 unit to check is NOT_REQUIRED, whether or not the toolchain is
+pinned: the manifest asks nothing of it, which is a legitimately empty lane rather than a
+failure. It is not SKIPPED, which would mean the lane was required and deliberately not
+run, and it is not PASS, which would mean a proof was checked.
 """
 
 from __future__ import annotations
 
-import re
+import os
+import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _evidence import EvidenceRecord, write_record  # noqa: E402
+from _fingerprint import fingerprint_unit  # noqa: E402
 from _manifest import (  # noqa: E402
+    REPO_ROOT,
     ManifestError,
+    load_assumptions,
     load_toolchains,
     load_verification,
     unresolved_pins,
 )
-
-#: Verus prints a summary line like `verification results:: 12 verified, 0 errors`.
-#: Its ABSENCE is the failure mode this lane exists to refuse.
-VERIFICATION_RESULTS = re.compile(
-    r"verification results::\s*(?P<verified>\d+) verified,\s*(?P<errors>\d+) errors"
-)
-
-
-def verified_something(output: str) -> tuple[bool, str]:
-    """Did this invocation actually discharge proof obligations?
-
-    MEASURED, not inferred from the exit code. `cargo verus verify -p mcp-re-core` on a
-    crate with no `verus!{}` block compiles it, prints no verification-results line at all,
-    and exits 0. A lane that trusted that status would report PASS for a repository
-    containing no proofs — the "exits 0 having measured nothing" failure, in the one place
-    where it would be load-bearing.
-
-    Two ways to fail here, and both must:
-      * no results line  -> nothing was verified, and the tool did not say so;
-      * `0 verified`     -> the invocation ran and discharged nothing.
-    """
-    match = VERIFICATION_RESULTS.search(output)
-    if match is None:
-        return False, (
-            "no `verification results::` line: this invocation discharged no proof "
-            "obligations and exited 0 anyway. A crate with no verus!{} block does exactly "
-            "this."
-        )
-    verified = int(match.group("verified"))
-    errors = int(match.group("errors"))
-    if errors:
-        return False, f"{errors} verification error(s)"
-    if verified == 0:
-        return False, "0 verified: the invocation ran and proved nothing"
-    return True, f"{verified} verified, 0 errors"
-
+from _verus_results import evaluate_unit, parse_reports  # noqa: E402
 
 REQUIRED = {"verus", "verus.vstd", "verus.z3", "rust"}
+
+#: The lane builds into its own target directory. The `verify` feature pulls in vstd and
+#: switches on a nightly feature gate, so sharing `target/` with ordinary builds would
+#: mean each one invalidating the other's artifacts.
+LANE_TARGET_DIR = REPO_ROOT / "target" / "verification-verus"
+
+#: Where this lane deposits what it measured. The record is written for a FAILED unit too:
+#: a failure at a known fingerprint is evidence, and suppressing it would leave the last
+#: passing attestation standing while the proof is broken.
+EVIDENCE_STORE = REPO_ROOT / ".verification" / "evidence"
+
+
+def unit_target(unit: dict) -> tuple[str | None, list[str]]:
+    """The Cargo package and features that carry this unit's specifications.
+
+    Derived from the unit's declared paths rather than configured separately: a unit
+    whose paths move to another crate must not keep verifying the crate it left.
+    """
+    crates = {
+        path.split("/", 1)[0]
+        for path in unit["paths"]
+        if "/" in path and (REPO_ROOT / path.split("/", 1)[0] / "Cargo.toml").is_file()
+    }
+    if len(crates) != 1:
+        return None, []
+    return crates.pop(), list(unit.get("features", []))
 
 
 def main() -> int:
     try:
         toolchains = load_toolchains()
         doc = load_verification()
+        assumptions = load_assumptions()
     except ManifestError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
@@ -105,15 +103,123 @@ def main() -> int:
         )
         return 1
 
-    print(
-        "FAIL: units are declared V1/V3 but this lane has no implementation yet.\n"
-        "Implement `cargo verus verify` invocation here before declaring any V1 unit, and\n"
-        "gate its result on `verified_something` — the exit code alone is not evidence.\n"
-        "Refusing rather than reporting a pass: an unimplemented lane that exits 0 is a\n"
-        "green that measured nothing.",
-        file=sys.stderr,
-    )
-    return 1
+    pinned_commit = str(toolchains["verus"].get("commit", ""))
+    cargo_verus = Path(toolchains["verus"]["install_root"]) / "cargo-verus"
+    if not cargo_verus.is_file():
+        print(
+            f"UNAVAILABLE: the pinned prover is not installed at {cargo_verus}.\n"
+            "Not a FAIL — an absent toolchain is a missing measurement, not a failed one —\n"
+            "and not a PASS, because nothing was proved.",
+            file=sys.stderr,
+        )
+        print("VERDICT: UNAVAILABLE")
+        return 1
+
+    failures = 0
+    for unit in verus_units:
+        # Taken BEFORE the prover runs, and recorded alongside the result: the record must
+        # say which source was measured, not which source exists when someone later reads
+        # it. This is the binding the issuer checks.
+        measured_at = fingerprint_unit(unit, doc, toolchains, assumptions)["fingerprint"]
+
+        def record(
+            result: str,
+            detail: str,
+            prover: dict | None = None,
+            unit_id: str = unit["id"],
+            fingerprint: str = measured_at,
+        ) -> None:
+            write_record(
+                EVIDENCE_STORE,
+                EvidenceRecord(
+                    unit_id=unit_id,
+                    lane="verus",
+                    result=result,
+                    fingerprint=fingerprint,
+                    detail=detail,
+                    prover=prover,
+                ),
+            )
+
+        crate, features = unit_target(unit)
+        if crate is None:
+            print(
+                f"FAIL: unit {unit['id']} is class {unit['class']} but its paths name no "
+                "crate this lane can verify.",
+                file=sys.stderr,
+            )
+            record("fail", "the unit's paths name no single crate this lane can verify")
+            failures += 1
+            continue
+
+        argv = [str(cargo_verus), "verify", "-p", crate]
+        for feature in features:
+            argv += ["--features", f"{crate}/{feature}"]
+        # Everything after `--` goes to the prover itself. The structured report is what
+        # this lane reads; the human-readable log is kept only for the failure message.
+        argv += ["--", "--output-json"]
+        print(f"verify-verus: {unit['id']} -> {' '.join(argv[1:])}")
+
+        # Cargo's fingerprint cache is the lane's enemy here: an unchanged crate is
+        # "Finished" without re-running the prover, so the invocation prints no
+        # verification-results line and exits 0 — indistinguishable, to this lane, from a
+        # crate carrying no proofs at all. Discarding the crate's own artifacts (not its
+        # dependencies') makes every run a real check. Found by the guard, which is what
+        # the guard is for.
+        env = {**os.environ, "CARGO_TARGET_DIR": str(LANE_TARGET_DIR)}
+        subprocess.run(
+            ["cargo", "clean", "-p", crate],
+            cwd=REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        # `check=False` and the tool's OWN returncode: piping Verus through anything
+        # replaces its status with the pipeline's, which is how a failed proof reads as a
+        # success. Streams are merged so a report interrupted by a compile error is still
+        # read from one place.
+        proc = subprocess.run(
+            argv,
+            cwd=REPO_ROOT,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+        output = proc.stdout
+        reports = parse_reports(output)
+        ok, detail = evaluate_unit(
+            reports,
+            crate,
+            list(unit.get("proved_symbols", [])),
+            pinned_commit,
+        )
+        prover = {"commit": pinned_commit}
+        if reports:
+            prover = {"commit": reports[0].commit, "version": reports[0].version}
+        if not ok or proc.returncode != 0:
+            print(f"  FAIL: {detail} (exit {proc.returncode})", file=sys.stderr)
+            print(output.strip()[-4000:], file=sys.stderr)
+            record("fail", f"{detail} (exit {proc.returncode})", prover)
+            failures += 1
+        else:
+            print(f"  PASS: {detail}")
+            record("pass", detail, prover)
+
+    if failures:
+        print(
+            f"\nFAIL: {failures} of {len(verus_units)} Verus unit(s) did not verify.",
+            file=sys.stderr,
+        )
+        print("VERDICT: FAIL")
+        return 1
+
+    print(f"\nverify-verus: PASS — {len(verus_units)} unit(s) verified")
+    print("VERDICT: PASS")
+    return 0
 
 
 if __name__ == "__main__":

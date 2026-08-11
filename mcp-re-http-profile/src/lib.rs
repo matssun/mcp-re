@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#![cfg_attr(feature = "verify", feature(proc_macro_hygiene))]
 //! MCP-RE HTTP standards profile — minimal proof path (ADR-MCPRE-050, seed Work Item 3).
 //!
 //! RFC 9421 HTTP Message Signatures + RFC 9530 `Content-Digest` as the
@@ -27,6 +28,25 @@
 //! component, stale window, wrong keyid). Replay-cache integration, artifact
 //! bindings, signed rejections, and MRTR continuation reuse the existing
 //! machinery and land with the full profile (ADR-MCPRE-050 parity gate).
+
+// ADR-MCPRE-059 Phase 2: Verus needs its prelude in the crate root, and attaches loop
+// annotations to expressions, which needs `proc_macro_hygiene`. Both are gated with the
+// rest of the lane, so a production build stays on stable rustc with no prover in sight.
+// ADR-MCPRE-059: `verify` is the Verus lane's feature, not a build feature. Verus's own
+// rustc driver defines `verus_keep_ghost`; an ordinary toolchain does not. Enabling this
+// feature in a normal build — `--all-features` is the way it will happen — therefore
+// fails here, with the reason, instead of failing deeper down on an unstable feature gate
+// nobody expected to be reading about.
+#[cfg(all(feature = "verify", not(verus_keep_ghost)))]
+compile_error!(
+    "feature `verify` carries Verus specifications and builds only under the pinned \
+     prover. Run `tools/verification/verify-verus`; do not enable it from cargo, and \
+     exclude it from any --all-features lane."
+);
+
+#[cfg(feature = "verify")]
+#[allow(unused_imports)]
+use vstd::prelude::*;
 
 pub mod admission;
 pub mod artifact;

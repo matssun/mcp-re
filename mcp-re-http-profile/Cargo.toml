@@ -27,6 +27,41 @@ coset = "0.4"
 # networking, async or fs, so the crate's purity rule holds.
 p256 = { version = "0.14", default-features = false, features = ["ecdsa", "std"] }
 
+# ADR-MCPRE-059 Phase 2: the Verus lane, optional and off by default. Identical posture
+# to mcp-re-core — a production build never resolves these, and the specification text
+# expands to nothing with the `cfg_attr` that carries it. Versions track
+# verification/policy/toolchains.lock.toml.
+[dependencies.vstd]
+version = "=0.0.0-2026-08-09-0044"
+optional = true
+
+[dependencies.verus_builtin]
+version = "=0.0.0-2026-08-09-0044"
+optional = true
+
+[dependencies.verus_builtin_macros]
+version = "=0.0.0-2026-08-09-0044"
+optional = true
+
+[features]
+# mcp-re-core/verify travels with it: `cargo verus verify` processes dependencies too, and
+# a dependency whose manifest asks to be verified but whose prelude is feature-gated off
+# fails to compile. The two lanes turn on together or not at all.
+verify = [
+  "dep:vstd",
+  "dep:verus_builtin",
+  "dep:verus_builtin_macros",
+  "mcp-re-core/verify",
+]
+
+[package.metadata.verus]
+verify = true
+
+# `verus_keep_ghost` is defined by the prover's rustc driver, never by cargo. Declared so
+# the guard in lib.rs does not read as a typo'd cfg on an ordinary build.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)'] }
+
 [lib]
 name = "mcp_re_http_profile"
 path = "src/lib.rs"

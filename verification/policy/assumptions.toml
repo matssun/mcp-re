@@ -38,3 +38,400 @@ schema_version = 1
 # The Phase 3 pilot is expected to need exactly one — SHA-256 collision resistance, as an
 # external model — and producing that single, justified, visible entry is part of what the
 # pilot is demonstrating.
+
+# ---------------------------------------------------------------------------
+# Phase 2 — the Verus pilot's trusted computing base
+# ---------------------------------------------------------------------------
+#
+# Four entries, each one a place where the pilot stopped proving. Three exist because
+# vstd does not specify a `std` item the production code calls; one exists because
+# attribute-style Verus cannot state a loop invariant, and moving to a `verus!{}` block
+# would put the prover's crates in the production dependency graph — a cost the owner
+# ruled out. None of them is a workaround for a proof that failed.
+
+[[assumption]]
+id = "ASM-0001"
+description = "`parse_fixed_digits` returns at most a 4-digit value: n ASCII digits cannot denote more than n digits."
+justification = """
+Verus verifies the caller against this contract but does not check the body, because a
+loop invariant over the iteration count cannot be expressed in the attribute-style
+annotations this crate uses, and the `verus!{}` block that could express it would make
+vstd a production dependency of a crate whose manifest purity is itself a control
+(ADR-MCPS-011/012). The bound is exercised by the module's own tests at every width the
+parser uses. It stops being acceptable if `parse_fixed_digits` is ever called with n > 4,
+which its precondition refuses, or if attribute-style loop invariants become available —
+at which point this entry should be discharged rather than renewed.
+"""
+scope = ["unit://core.time_rfc3339"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
+review_requirement = "Owner review; any change to parse_fixed_digits or its callers."
+affected_contracts = ["contract://core/time/parse_rfc3339_utc"]
+tool_specific_mechanism = "verus:external_body"
+
+[[assumption]]
+id = "ASM-0002"
+description = "`u8::is_ascii_digit` is true exactly on 0x30..=0x39."
+justification = """
+The Rust standard library's documented behaviour, which vstd does not currently specify.
+A wrong specification here would let a non-digit byte through the parser's digit test, so
+it is stated as the exact code-point range rather than as an opaque boolean.
+"""
+scope = ["unit://core.time_rfc3339"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
+review_requirement = "Owner review; discharge if vstd gains a specification for it."
+affected_contracts = ["contract://core/time/parse_rfc3339_utc"]
+tool_specific_mechanism = "verus:assume_specification"
+
+[[assumption]]
+id = "ASM-0003"
+description = "`<[T]>::split_last` terminates and returns."
+justification = """
+Totality only. The proofs use split_last for control flow and claim nothing about what it
+returns, so no theorem here could be weakened by a wrong specification of its value.
+"""
+scope = ["unit://core.time_rfc3339"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
+review_requirement = "Owner review; strengthen if a proof ever depends on its result."
+affected_contracts = ["contract://core/time/parse_rfc3339_utc"]
+tool_specific_mechanism = "verus:assume_specification"
+
+[[assumption]]
+id = "ASM-0004"
+description = "`McpReError` is nameable in a specification as a plain datatype, without verifying its derived Display impl."
+justification = """
+Registered for visibility rather than because a theorem rests on it: the specifications
+mention which error a refusal returns, and the `thiserror`-derived formatting travels with
+the type but is outside the proof. If a future theorem ever claims something about the
+rendered wire token, this entry must be replaced by a proof about that rendering.
+"""
+scope = ["unit://core.time_rfc3339"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
+review_requirement = "Owner review; replace with a proof if a theorem ever concerns Display output."
+affected_contracts = ["contract://core/time/parse_rfc3339_utc"]
+tool_specific_mechanism = "verus:external_type_specification"
+
+# ---------------------------------------------------------------------------
+# The freshness-gate unit's trusted computing base
+# ---------------------------------------------------------------------------
+
+[[assumption]]
+id = "ASM-0005"
+description = "`i64::saturating_sub` clamps at i64::MIN rather than wrapping."
+justification = """
+The standard library's documented behaviour. vstd specifies the unsigned forms only. The
+clamp is load-bearing for the freshness theorem: it is what makes `created - skew` safe to
+compare against `now` at the extremes, and a wrapping implementation would let a crafted
+`created` near i64::MIN wrap past the comparison. Stated as the exact clamp rather than as
+an opaque result so a wrong specification would be visible rather than convenient.
+"""
+scope = ["unit://http_profile.freshness_window"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
+review_requirement = "Owner review; discharge if vstd gains signed saturating specifications."
+affected_contracts = ["contract://http_profile/verify/check_params"]
+tool_specific_mechanism = "verus:assume_specification"
+
+[[assumption]]
+id = "ASM-0006"
+description = "`i64::saturating_add` clamps at i64::MAX rather than wrapping."
+justification = "As ASM-0005, for the upper end of the window."
+scope = ["unit://http_profile.freshness_window"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
+review_requirement = "Owner review; discharge if vstd gains signed saturating specifications."
+affected_contracts = ["contract://http_profile/verify/check_params"]
+tool_specific_mechanism = "verus:assume_specification"
+
+[[assumption]]
+id = "ASM-0007"
+description = "`VerifierPolicy::max_clock_skew` returns this policy's configured skew."
+justification = """
+A field read, presented to the verifier as an uninterpreted function of the policy object.
+Uninterpreted is the point: the theorem must hold for WHATEVER skew a deployment
+configures, so it assumes only that repeated reads of the same policy agree. Verifying the
+body instead would require making VerifierPolicy transparent, which drags its algorithm
+registry and transport policy into the proof for no gain.
+"""
+scope = ["unit://http_profile.freshness_window"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
+review_requirement = "Owner review; any change that makes the getter more than a field read."
+affected_contracts = ["contract://http_profile/verify/check_params"]
+tool_specific_mechanism = "verus:external_body"
+
+[[assumption]]
+id = "ASM-0008"
+description = "`VerifierPolicy::max_signature_validity` returns this policy's configured window bound."
+justification = "As ASM-0007, for the width bound."
+scope = ["unit://http_profile.freshness_window"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
+review_requirement = "Owner review; any change that makes the getter more than a field read."
+affected_contracts = ["contract://http_profile/verify/check_params"]
+tool_specific_mechanism = "verus:external_body"
+
+[[assumption]]
+id = "ASM-0009"
+description = "`VerifierPolicy::accepted_algorithm` resolves a wire token to an accepted algorithm, or None."
+justification = """
+Body unchecked. Algorithm acceptance is orthogonal to the freshness theorem, which claims
+nothing about which algorithm was resolved — only that admission implies a fresh window.
+It must be replaced by a proof before any theorem about algorithm agility is claimed.
+"""
+scope = ["unit://http_profile.freshness_window"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
+review_requirement = "Owner review; MUST be discharged before any algorithm-agility theorem."
+affected_contracts = ["contract://http_profile/verify/check_params"]
+tool_specific_mechanism = "verus:external_body"
+
+[[assumption]]
+id = "ASM-0010"
+description = "`Option::<T>::as_deref` is total; nothing is claimed about its result."
+justification = """
+Totality only, exactly as ASM-0003. The freshness theorem does not depend on what the tag
+or algorithm token turns out to be.
+"""
+scope = ["unit://http_profile.freshness_window"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
+review_requirement = "Owner review; strengthen if a proof ever depends on its result."
+affected_contracts = ["contract://http_profile/verify/check_params"]
+tool_specific_mechanism = "verus:assume_specification"
+
+# ---------------------------------------------------------------------------
+# WP2 — unit://http_profile.admission_currency
+# ---------------------------------------------------------------------------
+
+[[assumption]]
+id = "ASM-0011"
+description = "`AdmissionBinding::matches_state` decides whether this binding commits to a given admitted-state digest."
+justification = """
+Below `boundary.crypto_primitives`. What the predicate MEANS is a statement about SHA-256
+preimages, which this profile trusts by declaration rather than proves. The currency
+theorem is deliberately independent of it: the binding-to-assertion commitment is a
+separate property, and stating an `ensures` here would import a hash claim into a theorem
+that does not need one. Taken as an opaque decision procedure — its refusal path is still
+on the theorem's control flow, its verdict simply carries no meaning.
+"""
+scope = ["unit://http_profile.admission_currency"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 WP2"
+review_requirement = "Owner review; MUST be discharged before any theorem claiming the binding commits to the assertion's admitted state."
+affected_contracts = ["contract://http_profile/admission/check_admission"]
+tool_specific_mechanism = "verus:external_body"
+
+[[assumption]]
+id = "ASM-0012"
+description = "`verify_admission_assertion` is opaque to the currency theorem, and contributes NO postcondition to it."
+justification = """
+The strongest form this assumption can take: no `ensures` at all. The §7 currency property
+is established entirely by `check_admission`'s own comparisons against the authoritative
+state, so the JWS verifier below it may return anything and the theorem still holds. This
+is the point the dependency-cone rule (Operational Rule 17) makes concrete — the trusted
+frontier of this theorem does not include signature verification, JSON decoding, base64,
+Ed25519, or the assertion's own freshness window, even though the proved function calls
+all of them.
+
+An assumption WITHOUT an ensures cannot weaken the theorem it sits under; it can only
+limit what that theorem says. What it costs is stated plainly: `check_admission` returning
+`Ok` does NOT, by this proof, mean the assertion was validly signed or fresh. Those remain
+test-and-review properties until their own unit exists.
+"""
+scope = ["unit://http_profile.admission_currency"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 WP2"
+review_requirement = "Owner review; a separate unit for assertion validity is the discharge, not an ensures added here."
+affected_contracts = ["contract://http_profile/admission/check_admission"]
+tool_specific_mechanism = "verus:external_body"
+
+[[assumption]]
+id = "ASM-0013"
+description = "`mcp_re_core::VerificationKey` is an opaque datatype; no theorem reads it."
+justification = """
+Nameability, not meaning. The trust seam is an `impl Fn(&str) -> Option<VerificationKey>`
+closure parameter, and the pinned prover ICEs (`sst_to_air.rs:510`, unwrap on None) rather
+than diagnosing a closure whose signature mentions a type it has no specification for.
+Declaring the type opaque is what makes the parameter modellable; nothing is assumed about
+keys, and no clause of the theorem mentions one.
+"""
+scope = ["unit://http_profile.admission_currency"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 WP2"
+review_requirement = "Owner review; revisit if a theorem ever needs to say something about a key."
+affected_contracts = ["contract://http_profile/admission/check_admission"]
+tool_specific_mechanism = "verus:external_type_specification"
+
+[[assumption]]
+id = "ASM-0014"
+description = "`#[derive(PartialEq)]` on the fieldless enum `AdmissionStatus` is structural equality."
+justification = """
+Trusted against rustc's derive expansion rather than against a hand-written impl, and it
+is load-bearing: without it, `status != Admitted` is an opaque boolean and the theorem
+cannot see that the paths returning `Ok` are the admitted ones. The risk it carries is
+narrow and checkable by reading three lines of the enum — that a hand-written `PartialEq`
+was substituted for the derive, which the type's own definition forbids by carrying
+`#[derive(PartialEq, Eq)]`.
+"""
+scope = ["unit://http_profile.admission_currency"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 WP2"
+review_requirement = "Owner review; re-examine if AdmissionStatus ever gains a hand-written PartialEq or a payload-carrying variant."
+affected_contracts = ["contract://http_profile/admission/check_admission"]
+tool_specific_mechanism = "verus:assume_specification"
+
+# ---------------------------------------------------------------------------
+# WP2 — unit://http_profile.artifact_typing
+# ---------------------------------------------------------------------------
+
+[[assumption]]
+id = "ASM-0015"
+description = "RESERVED — withdrawn before use."
+justification = """
+Allocated for restating `VerifierPolicy::MAX_CLOCK_SKEW_BOUND` as a literal, for a
+delegation credential-window theorem that was then measured to be out of reach on the
+pinned prover (`format!` expands to unstable `core::fmt::rt` internals vstd does not
+specify). The id is retired rather than reused so that no later assumption inherits a
+justification written for a different theorem.
+"""
+scope = []
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 WP2"
+review_requirement = "None — withdrawn."
+affected_contracts = []
+tool_specific_mechanism = "none"
+
+[[assumption]]
+id = "ASM-0018"
+description = "`sha256_b64url` and `compare` are opaque digest primitives; nothing is claimed about the digest."
+justification = """
+Below `boundary.crypto_primitives`. The typed-verifier theorem is about which
+artifact_type/binding_type pair may leave the verifier as Ok — a control-flow property
+that holds whatever the comparison decides. Stating an ensures here would import a
+preimage-resistance claim into a theorem that does not need one.
+"""
+scope = ["unit://http_profile.artifact_typing"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 WP2"
+review_requirement = "Owner review; MUST be discharged before any theorem claiming a binding commits to the presented credential."
+affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
+tool_specific_mechanism = "verus:external_body"
+
+[[assumption]]
+id = "ASM-0019"
+description = "`ArtifactBinding::validate` is opaque; the typing theorem holds whatever it returns."
+justification = """
+Structural validation — digest token shape and the reference-field all-or-none rule — is
+a separate property from artifact typing. The theorem's Ok-path facts are established by
+the comparison ahead of the call, so this contributes no postcondition.
+"""
+scope = ["unit://http_profile.artifact_typing"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 WP2"
+review_requirement = "Owner review; a validate() contract is its own unit, not an ensures added here."
+affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
+tool_specific_mechanism = "verus:external_body"
+
+[[assumption]]
+id = "ASM-0020"
+description = "`#[derive(PartialEq)]` on the fieldless enums `ArtifactType` and `BindingType` is structural equality."
+justification = "As ASM-0014, for the artifact-type and binding-form tags."
+scope = ["unit://http_profile.artifact_typing"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 WP2"
+review_requirement = "Owner review; re-examine if either enum gains a hand-written PartialEq or a payload-carrying variant."
+affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
+tool_specific_mechanism = "verus:assume_specification"
+
+# ---------------------------------------------------------------------------
+# WP2 — unit://http_profile.continuation_unbypassability
+# ---------------------------------------------------------------------------
+
+[[assumption]]
+id = "ASM-0021"
+description = "`ActorIdentity::actor_id` / `ResolvedActor::actor_id` are opaque; NO ensures."
+justification = """
+The canonical actor_id join is injective by construction (each field escaped before the
+join), and that injectivity is a real property worth its own unit — it is a replay-key
+component. It is not this theorem's property. The unbypassability theorem says nothing
+about the key it builds, only about the continuation flag it returns alongside it, so the
+seam contributes no postcondition and cannot weaken the result.
+
+NOT DISCHARGED, and the reason is measured rather than assumed. Injectivity was attempted
+and blocked by two observed ceilings under the pinned V1 toolchain, recorded with
+reproducers in verification/baseline/wp2-http-profile-triage.md:
+
+    ceiling 2   `format!` is unreachable — it expands through alloc::fmt::format and
+                core::hint::must_use into unstable core::fmt::rt internals
+    ceiling 9   `alloc::str::impl&%5::replace is not supported` — the escape step
+
+Two alternatives were considered and REJECTED, both for the same reason: each would trade
+one named assumption for a larger unnamed one, which is negative progress.
+
+  * A broad trusted specification of the `format!` expansion. It would retire ASM-0021
+    while introducing a trusted model of unstable formatting internals far bigger and less
+    reviewable than the seam it replaced.
+  * Rewriting the production join into a shape the pinned prover happens to handle.
+    Rule 11 exists to prevent exactly this: the current construction is clear and correct,
+    and no independent architectural argument asks for it to change. A prover's present
+    capability is not a reason to distort production code.
+
+Standing, therefore, and explicit — which is what an honest verification result looks like
+when the security value of a claim and the prover's current reach do not coincide. Revisit
+on a prover release that lifts either ceiling.
+"""
+scope = ["unit://http_profile.continuation_unbypassability"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 WP2"
+review_requirement = "Owner review each release; discharge blocked by pinned-toolchain ceilings 2 and 9, not by choice."
+affected_contracts = ["contract://http_profile/dispatch/prepare_http_dispatch"]
+tool_specific_mechanism = "verus:external_body"
+
+[[assumption]]
+id = "ASM-0022"
+description = "WITHDRAWN — discharged by unit://http_profile.continuation_binding."
+justification = """
+Was: `HttpContinuation::verify` opaque, no ensures, so continuation unbypassability was
+proved without any claim that the check it cannot skip is the right check.
+
+Discharged rather than retired: `verify` now carries a proved role-separation contract, and
+`continuation_unbypassability` reaches it through a PROOF_DEPENDENCY edge instead of through
+a trusted seam. The entry is kept, marked withdrawn, so the history of what the upper
+theorem used to assume stays legible — an assumption that simply vanishes from the registry
+leaves the earlier attestations unexplainable.
+"""
+scope = []
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 WP2"
+review_requirement = "None — discharged by proof, ADR-MCPRE-059 WP3."
+affected_contracts = []
+tool_specific_mechanism = "none"
+
+[[assumption]]
+id = "ASM-0023"
+description = "`RequestEvidenceDigest::matches_labeled` returning true means this handle's value IS the labeled digest of those bytes under that label."
+justification = """
+The replacement for ASM-0022, and deliberately much narrower: it constrains one three-line
+comparator instead of leaving a twenty-line role-checking function meaningless.
+
+What it does NOT assume is the important half. The digest is an UNINTERPRETED function of
+`(label, bytes)` — nothing about SHA-256 is claimed, not collision resistance, not preimage
+resistance, not even injectivity. Only functionality: the same label over the same bytes
+gives the same value.
+
+That is exactly enough to prove the binding DISCIPLINE — that each handle is checked under
+its own required role label — and deliberately not enough to prove role SEPARATION, which
+would need `label_a != label_b ==> digest(label_a, x) != digest(label_b, y)`. That is a
+domain-separation property of the construction, it lives at
+`boundary.crypto_primitives`, and no wording here should let it be read as proved.
+"""
+scope = ["unit://http_profile.continuation_binding"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 WP3"
+review_requirement = "Owner review; discharge requires a proof about the digest construction itself, i.e. crossing boundary.crypto_primitives."
+affected_contracts = ["contract://http_profile/block/continuation_verify"]
+tool_specific_mechanism = "verus:external_body"

@@ -1,0 +1,162 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# ADR-MCPRE-059 verification platform — REPORT-ONLY (Phase 1 deliverable 7).
+#
+# This workflow reports verification-infrastructure health. It does not gate merges and
+# must not, until the platform has been measured and the pilots exist (Phases 2-3). The
+# report-only posture is deliberate: a gate that blocks before it is calibrated teaches
+# people to bypass it.
+#
+# Host split (§19). The two lanes do not run in the same place:
+#
+#   * Verus runs natively on the macOS host. Its release archive is self-contained
+#     (own Z3) and its rustc requirement matches the repository's pinned channel.
+#   * Charon/Aeneas/Lean run only inside the pinned Linux container. Charon is a rustc
+#     driver, and on aarch64-apple-darwin the rustc-dev component ships the compiler
+#     crates as .rmeta with no .rlib, so it cannot link there.
+#
+# The runner is a self-hosted Mac mini. GitHub's job-level `container:` key is supported
+# ONLY on Linux runners, so the extraction steps invoke the image explicitly with
+# `docker run` rather than declaring a job container. That also keeps the local and CI
+# invocations textually identical.
+
+name: verification
+
+on:
+  pull_request:
+    paths:
+      - "verification/**"
+      - "tools/verification/**"
+      - ".github/workflows/verification.yml"
+  push:
+    branches: [main]
+    paths:
+      - "verification/**"
+      - "tools/verification/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # The extraction image lives in GHCR. Read-only: this workflow consumes the pinned
+  # image, it never publishes one — publishing is tools/verification/extraction-image,
+  # run deliberately when a toolchain pin changes.
+  packages: read
+
+concurrency:
+  group: verification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Host lane: manifests, assumptions, and Verus.
+  # ---------------------------------------------------------------------------
+  host:
+    name: verification platform (macOS host)
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report the pinned Verus identity
+        run: |
+          set -euo pipefail
+          # Resolved from the lock file, never from PATH: another package manager on this
+          # box supplies a same-named cargo, and a proof checked by an unintended tool is
+          # not the proof the lock file claims.
+          root=$(python3 - <<'PY'
+          import tomllib
+          d = tomllib.load(open("verification/policy/toolchains.lock.toml", "rb"))
+          v = d["verus"]
+          print(v.get("install_root", "") if v.get("state") == "resolved" else "")
+          PY
+          )
+          if [ -z "$root" ]; then
+            echo "Verus pin unresolved — the lane will report SKIPPED, not PASS."
+            exit 0
+          fi
+          "$root/verus" --version
+
+      # Authoritative from Phase 2 onward. Report-only was the honest posture while the
+      # manifest declared no formal evidence; now that a V1 unit exists, a lane that could
+      # go red without failing the build would be evidence nobody has to keep green.
+      - name: Verification platform gate
+        run: ./tools/verification/verify --gate
+
+  # ---------------------------------------------------------------------------
+  # Extraction lane: Charon -> LLBC -> Aeneas -> Lean, inside the pinned image.
+  # ---------------------------------------------------------------------------
+  extraction:
+    name: extraction pipeline (linux container)
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve the pinned extraction image
+        id: image
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import tomllib
+          d = tomllib.load(open("verification/policy/toolchains.lock.toml", "rb"))
+          c = d.get("extraction_container", {})
+          resolved = c.get("state") == "resolved" and c.get("digest")
+          # Pinned by digest, never by tag: a tag is a mutable pointer, so the same
+          # declared toolchain could produce two different models.
+          print(f"resolved={'true' if resolved else 'false'}")
+          print(f"ref={c.get('image','')}@{c.get('digest','')}" if resolved else "ref=")
+          PY
+
+      - name: Container runtime availability
+        if: steps.image.outputs.resolved == 'true'
+        run: |
+          set -euo pipefail
+          # An unavailable runtime is a lane that CANNOT run. On the authoritative runner
+          # that is a failure, never a SKIP — silence must not read as evidence.
+          # macOS cannot run Linux containers natively, so this is a real host
+          # prerequisite (Docker Desktop or colima), not a formality.
+          docker info --format 'server {{.ServerVersion}} {{.OSType}}/{{.Architecture}}'
+
+      - name: Log in to GHCR
+        if: steps.image.outputs.resolved == 'true'
+        run: |
+          set -euo pipefail
+          # Piped, never passed as an argument: a token on a command line is visible in
+          # the process table and trivially echoed into a log.
+          echo '${{ secrets.GITHUB_TOKEN }}' \
+            | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+
+      - name: Pull the pinned image and confirm its digest
+        if: steps.image.outputs.resolved == 'true'
+        run: |
+          set -euo pipefail
+          # Pulling BY DIGEST is what makes the pin mean something: the registry cannot
+          # hand back different content under the same digest, so this either fetches the
+          # reviewed toolchain or fails.
+          docker pull --platform linux/arm64 "${{ steps.image.outputs.ref }}"
+
+      - name: Regenerate and check the extracted model
+        if: steps.image.outputs.resolved == 'true'
+        run: |
+          set -euo pipefail
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD:/workspace" -w /workspace \
+            "${{ steps.image.outputs.ref }}" \
+            ./tools/verification/regenerate-lean
+          ./tools/verification/check-generated
+
+      - name: Lean proofs
+        if: steps.image.outputs.resolved == 'true'
+        run: |
+          set -euo pipefail
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD:/workspace" -w /workspace \
+            "${{ steps.image.outputs.ref }}" \
+            ./tools/verification/verify-lean
+
+      - name: Extraction lane unpinned
+        if: steps.image.outputs.resolved != 'true'
+        run: |
+          echo "extraction_container is unresolved in toolchains.lock.toml."
+          echo "The Lean lane cannot produce evidence until the image digest is pinned."
+          echo "This is the mechanism, not an unfinished step (ADR-MCPRE-059 §2, §19)."

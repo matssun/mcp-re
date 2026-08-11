@@ -232,20 +232,67 @@ one" is not a reason.
     testability. If the boundary would not be wanted with the verifier gone, choose a
     different verification target rather than distort production architecture. This is
     ADR-MCPRE-059 §18 made operational, and the first pilot is already testing it.
-12. **Verification granularity is part of trusted-computing-base design.** A formally
-    attractive unit sitting inside a huge verification crate is not thereby a good
-    verification unit. Proving a small relation while marking a large surface external
-    produces a green verifier over an inflated TCB, and the green means less than it
-    appears to. Choose the unit and the crate together.
+12. **Verification granularity is trusted-computing-base design. Evaluate the proved unit
+    together with its actual proof dependency cone and every external/trusted item it
+    reaches. Crate membership alone does not establish TCB size.** This rule replaces an
+    earlier one that measurement falsified — that a small proof inside a large crate leaves
+    a large surface external and therefore trusted, so unit and crate had to be chosen
+    together. Unannotated items are external *and irrelevant*: they enter no theorem's
+    cone. What to count is the trusted frontier — the nodes in the cone where proving stops
+    and assuming begins. `http_profile.admission_currency` proves a property of the §7
+    admission decision with a frontier of four registered items, inside a 14 800-line
+    crate, and the JWS verifier it calls is not one of them.
+13. **Model consequence separately from topology, and check what actually reads each
+    field.** A monotonic security consequence — what an exchange must still admit has
+    happened — is not the same object as the operational state that produced it. Forcing
+    coexisting facts into one mutually-exclusive enum does one of two harmful things: it
+    manufactures illegal *backward* transitions, or it silently discards information. The
+    instance: `ContinuationState` carried both "this exchange spent an approval" and "this
+    exchange opened a new leg", which coexist on any multi-round-trip conversation. Only
+    the first was ever read, and the second made a backward consequence transition look
+    legal. A security-state field or variant must have an identified authoritative
+    consumer: if no production decision, invariant, evidence record, or external contract
+    depends on it, determine whether it represents real state or merely an unowned claim.
+    (Diagnostic-only data is legitimate — the test is ownership, not readership.) A
+    monotonicity property stated over the whole reachable space is what surfaces both
+    faults, and neither is visible to a happy-path test.
+
+14. **A negative control must create an observable distinction between correct and broken
+    implementations.** A fixture in which both produce the same observable state is vacuous
+    evidence *even when the target code executes* — coverage reports the line, and the line
+    decides nothing. Two ways this fails, both encountered here:
+
+    *The mutation never reaches the defect.* A first attempt to simulate "the replay nonce
+    is burned before the continuation binding check" routed through a path that refused the
+    binding **before** the burn, so nothing was burned and the test passed — which would
+    have been recorded as "the test does not detect this." Prove the mutation violates the
+    invariant, and require the test to fail on ITS OWN assertion, not on a panic in the
+    scaffolding.
+
+    *The fixture makes the invariant mathematically irrelevant.* The delegated signature
+    window is `min(now + sig_ttl, credential.exp)`. With a harness where the response TTL
+    and the credential's remaining life are both 300, `min(300, 300)` and an unclamped
+    `300` are indistinguishable — the clamp executes and decides nothing. The fixture must
+    separate them (`sig_ttl = 300`, credential remaining `= 40`, expected `now + 40`) before
+    it can discriminate.
+15. **Assert the protected property, not the outcome.** Identical outward results can sit
+    over opposite security states. The instance: a retention outage returns HTTP 503 whether
+    or not the backend already ran — good implementation, 503 with zero backend
+    invocations; broken implementation, 503 with one. Only the invocation count witnesses
+    that the execution threshold was not crossed, so a status-code assertion would have
+    passed against the defect it was written to catch.
 
 ## Running it
 
 ```sh
+tools/verification/evidence --gate     # the whole pipeline: verify -> attest -> graph -> frontier
+
 tools/verification/verify              # report-only, the whole platform
 tools/verification/verify --gate       # authoritative: a failing lane fails the build
 tools/verification/verify --manifests  # validate policy files only
 tools/verification/check-assumptions   # the proof escape-hatch gate
 tools/verification/fingerprint         # deterministic ReviewFingerprint per unit
+tools/verification/attest              # issue freshness records from measured evidence
 tools/verification/evidence-graph      # declared units and typed edges
 tools/verification/review-frontier     # minimum review obligation (Phase 4)
 ```
@@ -253,6 +300,36 @@ tools/verification/review-frontier     # minimum review obligation (Phase 4)
 Report-only is the Phase 1 posture on purpose: a verification lane that can fail the build
 before it has ever produced a proof is a lane that gets disabled. CI flips `--gate` when
 the pilots land.
+
+### The pipeline, and why its phases are separate programs
+
+```text
+1. VERIFY     lanes run; each declares its own verdict
+                  ↓  machine evidence record, bound to the fingerprint MEASURED AT
+2. AGGREGATE  PASS / FAIL / INCOMPLETE — only PASS may produce freshness
+                  ↓
+3. ATTEST     the issuer RECORDS what phases 1-2 established. It measures nothing.
+                  ↓
+4. GRAPH      freshness recomputed from attestations + declared dependencies
+                  ↓
+5. FRONTIER   minimum candidate review closure (advisory during Phase 5)
+```
+
+`attest` is a consumer of evidence and must never become a verifier (ADR-MCPRE-059
+Rule 22). It runs no prover and reads no source; it reads the records the lanes wrote, each
+carrying the fingerprint it was measured at, and refuses on three grounds: no evidence,
+evidence measured at a different fingerprint, or a required prerequisite that failed. The
+implementation it exists to make unreachable is *"a lane printed PASS earlier, so stamp
+whatever the tree contains now"*.
+
+It is **not** part of `scripts/local_gate.sh`, and should not be folded into it. The local
+gate asks whether this working tree satisfies its build and test gates. The pipeline asks
+whether, given successful evidence over these exact inputs, a freshness record may be
+issued. Only the second may write to the attestation store.
+
+Issuance is idempotent: no timestamps, no run ids, no counters. Attesting three times
+writes the same bytes three times, because "attested more recently" must never be able to
+mean "fresher" — freshness is fingerprints, not clocks.
 
 ## Related
 

@@ -52,7 +52,12 @@ def main() -> int:
         # the pipeline is absent on this host, the branch below reports UNAVAILABLE, which
         # DOES hold the aggregate at INCOMPLETE — a lane that cannot run is never a lane
         # that passed.
-        state = "not pinned" if (missing or absent) else "pinned, lane not implemented"
+        if missing:
+            state = "not pinned"
+        elif absent:
+            state = "pinned, Lean package not established"
+        else:
+            state = "pinned, lane not implemented"
         print(f"verify-lean: NOT_REQUIRED — no V2/V3 unit declared ({state})")
         print("VERDICT: NOT_REQUIRED")
         if missing:

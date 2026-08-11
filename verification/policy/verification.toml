@@ -77,3 +77,219 @@ pilot = "lean-candidate"
 # reviewed commit to this file, before the change whose propagation it stops.
 #
 # No edges are declared yet: no unit exports a contract yet.
+
+# ---------------------------------------------------------------------------
+# Phase 2 pilot — promoted
+# ---------------------------------------------------------------------------
+#
+# The first unit carrying formal evidence. Its boundary decision is recorded in
+# baseline/phase2-pilot-boundary-decision.md; the measured outcome, including the two
+# places the tool made us change an idiom, is in the "Phase 2 result" section there.
+#
+# `features` names the Cargo feature that carries the specification text. It is off in
+# every production build, so the proof constrains code that ships without the prover in
+# its dependency graph.
+
+[[unit]]
+id = "core.time_rfc3339"
+class = "V1"
+description = "Strict RFC 3339 UTC timestamp parsing: total on arbitrary bytes, and admitting only representable civil instants."
+paths = [
+  "mcp-re-core/src/time.rs",
+  # The specification support the proof stands on: the trusted `std` specifications and
+  # the checked lemmas. Declared as part of the unit because weakening either one weakens
+  # the theorem about time.rs exactly as much as editing time.rs would.
+  "mcp-re-core/src/verus_std_specs.rs",
+  "mcp-re-core/src/verus_proofs.rs",
+]
+exported_contracts = ["contract://core/time/parse_rfc3339_utc"]
+evidence = [
+  "test://core/time/grammar_and_truncation",
+  "verus://core/time/parse_rfc3339_utc_total_and_bounded",
+]
+assumptions = ["ASM-0001", "ASM-0002", "ASM-0003", "ASM-0004"]
+# The theorems this unit claims, by the name the prover reports. Deleting a specification
+# now fails the lane rather than leaving the crate's other proofs to answer for it.
+proved_symbols = [
+  "mcp_re_core::time::parse_rfc3339_utc",
+  "mcp_re_core::time::days_from_civil",
+]
+features = ["verify"]
+pilot = "verus-pilot"
+
+# The live freshness gate. Where core.time_rfc3339 proves a property of a parser used on
+# evidence artifacts, this one proves a property of the decision every served request
+# passes through — which is why the boundary decision named it as the target to move to
+# once the mechanism was known to work.
+
+[[unit]]
+id = "http_profile.freshness_window"
+class = "V1"
+description = "RFC 9421 freshness admission (§5.1): admission implies now lies inside the skew-widened window, the window is non-degenerate, and its width is within policy."
+paths = [
+  "mcp-re-http-profile/src/verify.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/verus_std_specs.rs",
+]
+exported_contracts = ["contract://http_profile/verify/check_params"]
+evidence = [
+  "test://http_profile/verify/freshness_window_vectors",
+  "verus://http_profile/verify/check_params_admission_implies_fresh",
+]
+assumptions = ["ASM-0005", "ASM-0006", "ASM-0007", "ASM-0008", "ASM-0009", "ASM-0010"]
+proved_symbols = ["mcp_re_http_profile::verify::check_params"]
+features = ["verify"]
+pilot = "verus-pilot"
+
+# ---------------------------------------------------------------------------
+# WP2 — the §7 admission currency decision
+# ---------------------------------------------------------------------------
+#
+# The anti-rollback gate. Where http_profile.freshness_window proves a property of the
+# window a message declares, this one proves a property of the verdict a PEP acts on: a
+# live-confirmed admission implies the call's bound generation IS the authoritative one,
+# and a degraded verdict implies the deployment opted in.
+#
+# Its trusted frontier is deliberately small and is the concrete case for Operational
+# Rule 17: the proved function calls JWS decoding, Ed25519 verification, base64 and
+# SHA-256, and NONE of them is in the theorem's dependency cone, because the property is
+# established by the function's own comparisons. ASM-0012 records that this is a limit on
+# what the theorem SAYS, not a hole in what it proves.
+
+[[unit]]
+id = "http_profile.admission_currency"
+class = "V1"
+description = "#415 §7 admission currency: an Ok verdict is Admitted at the bound generation; a live verdict implies generation equality with the authoritative state; a degraded verdict implies explicit deployment opt-in."
+paths = [
+  "mcp-re-http-profile/src/admission.rs",
+  "mcp-re-http-profile/src/verus_std_specs.rs",
+]
+exported_contracts = ["contract://http_profile/admission/check_admission"]
+evidence = [
+  "test://http_profile/admission/currency_and_degraded_battery",
+  "verus://http_profile/admission/check_admission_currency",
+]
+assumptions = ["ASM-0011", "ASM-0012", "ASM-0013", "ASM-0014"]
+proved_symbols = ["mcp_re_http_profile::admission::check_admission"]
+features = ["verify"]
+pilot = "verus-wp2"
+
+# ---------------------------------------------------------------------------
+# WP2 — typed artifact-binding verification
+# ---------------------------------------------------------------------------
+#
+# The rule the module's final match arm exists to enforce: the four registry types that
+# have no typed verifier can never leave `verify_artifact_binding` as Ok. Stated over all
+# inputs rather than over the seven the test battery enumerates — and the per-type
+# theorems make it structural, so a type added to the registry tomorrow cannot fall
+# through to an OAuth verifier without failing this unit.
+
+[[unit]]
+id = "http_profile.artifact_typing"
+class = "V1"
+description = "MCPRE-95 typed artifact bindings: a verified binding is the opaque-digest form of one of the three OAuth types, and each typed verifier admits only its own type."
+paths = [
+  "mcp-re-http-profile/src/artifact.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/verus_std_specs.rs",
+]
+exported_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
+evidence = [
+  "test://http_profile/artifact/typed_binding_battery",
+  "verus://http_profile/artifact/typed_verifier_admits_only_its_own_type",
+]
+assumptions = ["ASM-0018", "ASM-0019", "ASM-0020"]
+proved_symbols = [
+  "mcp_re_http_profile::artifact::verify_artifact_binding",
+  "mcp_re_http_profile::artifact::verify_dpop_ath",
+  "mcp_re_http_profile::artifact::verify_mtls_x5t_s256",
+  "mcp_re_http_profile::artifact::verify_rar_details",
+]
+features = ["verify"]
+pilot = "verus-wp2"
+
+# ---------------------------------------------------------------------------
+# WP2 — continuation unbypassability
+# ---------------------------------------------------------------------------
+#
+# The largest proof cone attempted so far, and the experiment that measured what a rich
+# production model costs: TWELVE datatype transparency declarations, all of them class A
+# (structure only — no view, no equality, no arithmetic specification), and TWO assumptions,
+# both without an `ensures`. The trusted surface did not grow with the model.
+#
+# What it proves is unbypassability, NOT correctness: a request carrying a continuation
+# cannot leave `prepare_http_dispatch` as Ok with `continuation_verified == false`. Whether
+# the three handle comparisons inside `HttpContinuation::verify` are the RIGHT comparisons
+# is ASM-0022 and remains a separate obligation.
+
+[[unit]]
+id = "http_profile.continuation_unbypassability"
+class = "V1"
+description = "MCPRE-102 dispatch preparation: a request whose evidence block carries an MRTR continuation can never be prepared successfully with continuation_verified == false."
+paths = [
+  "mcp-re-http-profile/src/dispatch.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/verify.rs",
+  "mcp-re-http-profile/src/verus_std_specs.rs",
+]
+exported_contracts = ["contract://http_profile/dispatch/prepare_http_dispatch"]
+evidence = [
+  "test://http_profile/dispatch/continuation_binding_battery",
+  "verus://http_profile/dispatch/continuation_present_implies_verified",
+]
+assumptions = ["ASM-0021"]
+proved_symbols = ["mcp_re_http_profile::dispatch::prepare_http_dispatch"]
+features = ["verify"]
+pilot = "verus-wp2"
+
+
+# ---------------------------------------------------------------------------
+# WP3 — composition: discharging an assumption into a proved contract
+# ---------------------------------------------------------------------------
+#
+# `continuation_unbypassability` proved that the binding check cannot be SKIPPED while
+# assuming nothing about whether it is the RIGHT check (the withdrawn ASM-0022). This unit
+# proves the check, and the PROOF_DEPENDENCY edge below composes the two: the upper claim
+# now reaches the lower theorem instead of a trusted seam.
+#
+# The claim is stated at exactly its strength, which is worth reading twice:
+#
+#   PROVED      the verifier checks each handle under the correct role label
+#   NOT PROVED  distinct role-labelled inputs cannot collide
+#
+# The second needs domain separation from the digest construction — a cryptographic
+# property absent from the model on purpose, since `labeled_digest` is uninterpreted. So
+# this unit proves binding DISCIPLINE, not separation, and cross-role collision resistance
+# stays visibly at boundary.crypto_primitives rather than being assumed away.
+
+[[unit]]
+id = "http_profile.continuation_binding"
+class = "V1"
+description = "MCPRE-97 continuation role-labeled binding discipline: an accepted continuation's three handles are the modeled digests of the three presented inputs, each under its OWN required role label. Collision-resistant separation BETWEEN roles is not proved and remains at boundary.crypto_primitives."
+paths = [
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/verus_std_specs.rs",
+]
+exported_contracts = ["contract://http_profile/block/continuation_verify"]
+evidence = [
+  "test://http_profile/block/continuation_role_battery",
+  "verus://http_profile/block/continuation_handles_match_in_role",
+]
+assumptions = ["ASM-0023"]
+proved_symbols = ["mcp_re_http_profile::block::HttpContinuation::verify"]
+features = ["verify"]
+pilot = "verus-wp3"
+
+# The composition edge. Breaking, weakening or dirtying the lower theorem must propagate
+# to the upper claim rather than leaving it standing on a green badge of its own — that
+# propagation, demonstrated on real units, is what distinguishes an evidence graph from a
+# list of passing checks.
+[[edge]]
+kind = "PROOF_DEPENDENCY"
+# Producer -> consumer: dirtiness flows along this arrow, so the LOWER theorem is `from`.
+# The role-separation contract produces the fact; the unbypassability claim consumes it.
+from = "http_profile.continuation_binding"
+to = "http_profile.continuation_unbypassability"
+rationale = "Unbypassability establishes that the binding check runs on every successful path; the role-separation contract establishes what that check guarantees. The end-to-end continuation claim is the composition, and neither half states it alone."

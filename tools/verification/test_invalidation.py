@@ -169,6 +169,7 @@ SEALED = {
 UNSEALED = {"kind": "CONTRACT_CONSUMES", "from": "producer", "to": "consumer"}
 COMPILE = {"kind": "COMPILE_DEPENDENCY", "from": "producer", "to": "consumer"}
 CONTEXT = {"kind": "REVIEW_CONTEXT", "from": "producer", "to": "consumer"}
+PROOF = {"kind": "PROOF_DEPENDENCY", "from": "producer", "to": "consumer"}
 
 
 def test_a_sealed_edge_stops_producer_source_churn():
@@ -188,10 +189,15 @@ def test_a_sealed_edge_does_not_stop_a_contract_change():
 
 
 def test_a_sealed_edge_does_not_stop_a_failed_proof():
-    """Case C. The seal's premise is that the proof still passes. It did not."""
+    """Case C. The seal's premise is that the proof still passes. It did not.
+
+    The consumer is BLOCKED, not merely dirty: a seal claims the exported contract is the
+    whole of the consumer's reasoning about the producer, and that claim is worthless when
+    the proof establishing the contract has failed. Nothing the consumer can re-run repairs
+    a prerequisite outside it."""
     result = graph(SEALED, current(), producer_att=attestation("producer", evidence={"verus": "fail"}))
     assert result["states"]["producer"][0] == "BLOCKED"
-    assert result["states"]["consumer"][0] == "DIRTY_DEPENDENCY"
+    assert result["states"]["consumer"][0] == "BLOCKED"
 
 
 def test_a_sealed_edge_does_not_stop_an_assumption_change():
@@ -227,6 +233,114 @@ def test_context_closure_holds_the_neighbours_without_invalidating_them():
     result = graph(CONTEXT, current({"source_inputs": {"a.rs": "sha256:bbb"}}))
     assert result["review_closure"] == ["producer"]
     assert result["context_closure"] == ["consumer"]
+
+
+def test_a_proof_dependency_propagates_forwards_and_not_backwards():
+    """The edge-direction control.
+
+    `A --PROOF_DEPENDENCY--> B` means B depends on evidence produced by A, and nothing else.
+    A graph that propagated the other way would be internally consistent and would report
+    precisely the wrong unit as sound. The first implementation of this edge in
+    verification.toml had producer and consumer reversed, which is why the asymmetry is
+    pinned here rather than trusted to careful reading.
+    """
+    broken_producer = graph(PROOF, current({"source_inputs": {"a.rs": "sha256:bbb"}}))
+    assert broken_producer["states"]["producer"][0] == "DIRTY_SELF"
+    assert broken_producer["states"]["consumer"][0] == "DIRTY_DEPENDENCY"
+
+    broken_consumer = graph(
+        PROOF, current(), consumer_now=current({"source_inputs": {"a.rs": "sha256:bbb"}})
+    )
+    assert broken_consumer["states"]["consumer"][0] == "DIRTY_SELF"
+    assert broken_consumer["states"]["producer"][0] == "FRESH", (
+        "a consumer's own churn must never reach back to the unit it depends on"
+    )
+
+
+def test_the_composed_claim_lifecycle_through_failure_and_recovery():
+    """The whole loop, not just the invalidation half.
+
+    Recovery matters as much as failure: a graph that blocks correctly but never lets go is
+    unusable, and one that releases too eagerly is a false green.
+    """
+    passing = attestation("producer")
+    failing = attestation("producer", evidence={"verus": "fail"})
+
+    both_pass = graph(PROOF, current(), producer_att=passing)
+    assert both_pass["states"]["producer"][0] == "FRESH"
+    assert both_pass["states"]["consumer"][0] == "FRESH"
+
+    a_broken = graph(PROOF, current(), producer_att=failing)
+    assert a_broken["states"]["producer"][0] == "BLOCKED"
+    assert a_broken["states"]["consumer"][0] == "BLOCKED"
+
+    # Re-attesting the consumer at its own unchanged, still-passing inputs changes nothing.
+    still_broken = graph(
+        PROOF, current(), producer_att=failing, consumer_att=attestation("consumer")
+    )
+    assert still_broken["states"]["consumer"][0] == "BLOCKED"
+
+    # The producer is repaired to the SAME inputs its record was taken at, so nothing in
+    # the closure has moved and the composed claim is supported again.
+    restored = graph(PROOF, current(), producer_att=passing)
+    assert restored["states"]["producer"][0] == "FRESH"
+    assert restored["states"]["consumer"][0] == "FRESH"
+
+    # Repaired to DIFFERENT source is a different matter: the producer is dirty, and the
+    # consumer inherits an ordinary dependency refresh rather than a block.
+    repaired_differently = graph(
+        PROOF, current({"source_inputs": {"a.rs": "sha256:ccc"}}), producer_att=passing
+    )
+    assert repaired_differently["states"]["producer"][0] == "DIRTY_SELF"
+    assert repaired_differently["states"]["consumer"][0] == "DIRTY_DEPENDENCY"
+
+
+def test_blocked_escalates_a_consumer_that_was_merely_dirty():
+    """BLOCKED is strictly the stronger statement, so it must overwrite DIRTY_*, not lose
+    to it because the consumer happened to be stale for a reason of its own."""
+    result = graph(
+        PROOF,
+        current(),
+        consumer_now=current({"source_inputs": {"a.rs": "sha256:bbb"}}),
+        producer_att=attestation("producer", evidence={"verus": "fail"}),
+    )
+    assert result["states"]["consumer"][0] == "BLOCKED"
+
+
+def test_a_failed_lower_proof_does_not_leave_the_composed_claim_green():
+    """The composition rule, and the reason the graph exists rather than a list of badges.
+
+    Shape taken from the real pair: `http_profile.continuation_binding` proves that the
+    continuation check establishes role separation; `http_profile.continuation_unbypassability`
+    proves that check cannot be skipped. Only together do they say anything end to end.
+
+    When the LOWER proof fails, the upper unit's own inputs have not moved at all — its
+    fingerprint is identical, its lane would pass again on its own terms, and every earlier
+    version of this system would have shown it green beside a red one. It must not be
+    fresh, because the claim it participates in no longer holds.
+    """
+    result = graph(
+        PROOF,
+        current(),
+        producer_att=attestation("producer", evidence={"verus": "fail"}),
+    )
+    assert result["states"]["producer"][0] == "BLOCKED"
+    assert result["states"]["consumer"][0] == "BLOCKED"
+    assert result["review_closure"] == ["consumer", "producer"]
+
+
+def test_a_failed_proof_keeps_propagating_and_cannot_be_re_attested_away():
+    """No laundering. Propagation is recomputed from the producer's state on every run, so
+    re-attesting the consumer at its own unchanged inputs does not restore its freshness
+    while the lower proof is still failing."""
+    fresh_consumer = attestation("consumer")
+    result = graph(
+        PROOF,
+        current(),
+        producer_att=attestation("producer", evidence={"verus": "fail"}),
+        consumer_att=fresh_consumer,
+    )
+    assert result["states"]["consumer"][0] == "BLOCKED"
 
 
 def test_context_closure_excludes_the_dirty_set_itself():

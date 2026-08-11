@@ -40,10 +40,21 @@
 
 use crate::error::McpReError;
 
+// ADR-MCPRE-059 Phase 2. Absent from every production build: the import is
+// feature-gated and each specification rides a `cfg_attr` that expands to nothing
+// unless `--features verify` is on.
+#[cfg(feature = "verify")]
+use verus_builtin_macros::{proof, verus_spec, verus_verify};
+#[cfg(feature = "verify")]
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
 /// Days in each month for a common (non-leap) year, January-indexed at 0.
-const DAYS_IN_MONTH: [u8; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+#[cfg_attr(feature = "verify", verus_verify)]
+pub(crate) const DAYS_IN_MONTH: [u8; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
 /// Returns `true` if `year` is a Gregorian leap year.
+#[cfg_attr(feature = "verify", verus_verify)]
 fn is_leap_year(year: i64) -> bool {
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
@@ -51,16 +62,30 @@ fn is_leap_year(year: i64) -> bool {
 /// Parse exactly `n` ASCII digits at `bytes[start..start+n]` into an `i64`.
 ///
 /// Returns `None` if any of the `n` bytes is missing or is not an ASCII digit.
+// ADR-MCPRE-059 ASM-0001 — the one part of this proof the verifier does not check.
+// The bound is what a caller relies on: `n` ASCII digits cannot denote a value of
+// more than `n` digits. It is assumed rather than proved
+// because attribute-style Verus cannot state a loop invariant over the iteration
+// count, and stating it in a `verus!{}` block would put the prover's crates in the
+// production dependency graph. Independently exercised by this module's tests.
+#[cfg_attr(feature = "verify", verus_verify(external_body))]
+#[cfg_attr(feature = "verify", verus_spec(out =>
+    requires
+        n <= 4,
+        start + n <= usize::MAX,
+    ensures
+        out matches Some(v) ==> 0 <= v && v <= 9999,
+))]
 fn parse_fixed_digits(bytes: &[u8], start: usize, n: usize) -> Option<i64> {
     if start + n > bytes.len() {
         return None;
     }
     let mut value: i64 = 0;
-    for &b in &bytes[start..start + n] {
+    for b in &bytes[start..start + n] {
         if !b.is_ascii_digit() {
             return None;
         }
-        value = value * 10 + i64::from(b - b'0');
+        value = value * 10 + i64::from(*b - b'0');
     }
     Some(value)
 }
@@ -71,6 +96,14 @@ fn parse_fixed_digits(bytes: &[u8], start: usize, n: usize) -> Option<i64> {
 /// `month` is 1..=12 and `day` is 1..=31; both are assumed already validated by
 /// the caller. The algorithm is exact for all years and handles leap years and
 /// the 400-year Gregorian cycle correctly.
+#[cfg_attr(feature = "verify", verus_spec(days =>
+    requires
+        0 <= year, year <= 9999,
+        1 <= month, month <= 12,
+        1 <= day, day <= 31,
+    ensures
+        -719528 <= days, days <= 2932897,
+))]
 fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     // Shift the year so that March is the first month: this places the leap day
     // at the end of the (shifted) year, simplifying the era arithmetic.
@@ -92,6 +125,20 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 /// # Examples
 ///
 /// `1970-01-01T00:00:00Z` parses to `0`.
+// ADR-MCPRE-059 Phase 2 theorem. Two properties, both about untrusted input:
+//
+//   * the function is TOTAL on it — no index is out of bounds and no arithmetic
+//     overflows, for any byte string whatsoever, so a hostile timestamp in an
+//     evidence artifact cannot panic the parser;
+//   * every admitted value lies inside the representable civil range, so a caller
+//     comparing it against a freshness boundary is comparing a real instant.
+//
+// Totality is the stronger of the two here: it is a property of ALL inputs, which
+// no finite test suite establishes.
+#[cfg_attr(feature = "verify", verus_spec(out =>
+    ensures
+        out matches Ok(v) ==> -62167219200 <= v && v <= 253402387199,
+))]
 pub fn parse_rfc3339_utc(s: &str) -> Result<i64, McpReError> {
     let bytes = s.as_bytes();
 
@@ -126,14 +173,14 @@ pub fn parse_rfc3339_utc(s: &str) -> Result<i64, McpReError> {
 
     // Validate the tail after the seconds field: either a bare "Z", or a
     // fractional part ".<digits>" followed by "Z".
-    let tail = &bytes[19..];
+    let tail = &bytes[19..bytes.len()];
     let fraction_ok = if tail == b"Z" {
         true
     } else if tail.first() == Some(&b'.') {
         // At least one fractional digit, then a trailing 'Z'.
-        let frac = &tail[1..];
+        let frac = &tail[1..tail.len()];
         match frac.split_last() {
-            Some((&b'Z', digits)) if !digits.is_empty() => {
+            Some((last, digits)) if *last == b'Z' && !digits.is_empty() => {
                 digits.iter().all(|b| b.is_ascii_digit())
             }
             _ => false,
@@ -150,9 +197,16 @@ pub fn parse_rfc3339_utc(s: &str) -> Result<i64, McpReError> {
     if !(1..=12).contains(&month) {
         return Err(McpReError::ExpiredRequest);
     }
-    let mut max_day = i64::from(DAYS_IN_MONTH[(month - 1) as usize]);
+    let mut max_day = DAYS_IN_MONTH[(month - 1) as usize] as i64;
     if month == 2 && is_leap_year(year) {
         max_day = 29;
+    }
+    // Supplies the verifier with the one fact it cannot read off the table itself:
+    // no month is longer than 31 days, which is what bounds `days_from_civil`.
+    #[cfg(feature = "verify")]
+    proof! {
+        broadcast use vstd::array::group_array_axioms;
+        crate::verus_proofs::lemma_days_in_month_bounded((month - 1) as int);
     }
     if day < 1 || day > max_day {
         return Err(McpReError::ExpiredRequest);

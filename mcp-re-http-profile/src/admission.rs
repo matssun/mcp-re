@@ -40,6 +40,11 @@ use sha2::Sha256;
 use crate::block::BindingType;
 use crate::delegation::Audience;
 use crate::error::HttpProfileError;
+#[cfg(feature = "verify")]
+use verus_builtin_macros::{verus_spec, verus_verify};
+#[cfg(feature = "verify")]
+#[allow(unused_imports)]
+use vstd::prelude::*;
 
 /// The JWS `typ` of an admission assertion — distinct from the delegation
 /// credential's, so one can never be presented for the other.
@@ -170,6 +175,10 @@ impl AdmissionBinding {
     }
 
     /// The opaque digest this binding commits to, over `admitted_state_digest`.
+    // ADR-MCPRE-059 ASM-0011: below `boundary.crypto_primitives`. What this predicate
+    // means is a statement about SHA-256, so the currency theorem takes it as an opaque
+    // decision procedure and claims nothing about the digest it computes.
+    #[cfg_attr(feature = "verify", verus_verify(external_body))]
     fn matches_state(&self, admitted_state_digest: &str) -> bool {
         self.binding_type == BindingType::OpaqueDigest
             && self.digest_alg == crate::ids::EVIDENCE_DIGEST_ALG
@@ -281,6 +290,12 @@ fn decode_json<T: for<'de> Deserialize<'de>>(seg: &str) -> Result<T, HttpProfile
 /// key through the trust seam (a kid never introduces trust). Fails closed on a
 /// wrong `typ`/`alg`, an untrusted issuer, a bad signature, an assertion outside
 /// `[nbf, exp]` (± skew), or one older than the policy's `max_assertion_age`.
+// ADR-MCPRE-059 ASM-0012: opaque to the currency theorem, and deliberately WITHOUT an
+// `ensures`. The §7 property below is established entirely by `check_admission`'s own
+// comparisons, so this function contributes no postcondition to it — assuming one here
+// would be assuming the freshness result rather than proving it. Its own freshness
+// obligations are a separate unit, not this one's.
+#[cfg_attr(feature = "verify", verus_verify(external_body))]
 pub fn verify_admission_assertion(
     compact_jws: &str,
     expected_profile: &str,
@@ -366,6 +381,27 @@ fn s_seg_to_b64url(s_seg: &str) -> Result<String, HttpProfileError> {
 ///     AND the assertion is within the P bound, in which case serve on the
 ///     assertion's own status and mark the verdict degraded.
 #[allow(clippy::too_many_arguments)]
+// ADR-MCPRE-059 §7 currency theorem. Three clauses, each one a rule the prose above
+// states and no test can establish for all inputs:
+//
+//   * a LIVE verdict implies the call's bound generation equals the authoritative one and
+//     that state says admitted — the anti-rollback rule, stated as an implication so a
+//     future path that returns Ok without comparing generations cannot exist;
+//   * a DEGRADED verdict implies the authoritative state was unreachable AND the
+//     deployment opted in — so no default deployment can reach a degraded admission;
+//   * every verdict carries the binding's own generation and `Admitted`, so the value the
+//     caller acts on cannot describe a different call than the one that was checked.
+#[cfg_attr(feature = "verify", verus_spec(out =>
+    ensures
+        out matches Ok(v) ==> {
+            &&& v.status == AdmissionStatus::Admitted
+            &&& v.generation == binding.generation
+            &&& !v.degraded ==> (authoritative matches Some(state)
+                    && binding.generation == state.generation
+                    && state.status == AdmissionStatus::Admitted)
+            &&& v.degraded ==> (authoritative is None && policy.allow_degraded_mode)
+        },
+))]
 pub fn check_admission(
     binding: &AdmissionBinding,
     assertion_jws: &str,

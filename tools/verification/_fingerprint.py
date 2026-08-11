@@ -36,7 +36,11 @@ import json
 
 from _manifest import REPO_ROOT
 
-ENCODING_VERSION = 1
+# Bumped to 2 when `proved_symbols` entered the fingerprint. Every attestation carrying
+# version 1 is UNKNOWN from that moment, which is the intended cost: those attestations
+# were computed without knowing which theorems the unit claimed, so they cannot answer
+# whether one has since been deleted.
+ENCODING_VERSION = 2
 
 UNIMPLEMENTED = "unimplemented"
 
@@ -92,6 +96,11 @@ def fingerprint_unit(unit: dict, doc: dict, toolchains: dict, assumptions: dict)
         "generated_inputs": UNIMPLEMENTED,
         "build_configuration": UNIMPLEMENTED,
         "enabled_features": unit.get("features", UNIMPLEMENTED),
+        # The theorems the unit claims, by prover-reported name. In the fingerprint
+        # because deleting one is a reduction in evidence: the source digest would move
+        # too, but the contract digest would not, and this is the component that says the
+        # CLAIM changed rather than its implementation.
+        "proved_symbols": sorted(unit.get("proved_symbols", [])),
         "exported_contracts": sorted(unit.get("exported_contracts", [])),
         "consumed_contracts": sorted(unit.get("consumed_contracts", [])),
         "proof_dependencies": UNIMPLEMENTED,
