@@ -38,8 +38,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::app::now_unix;
 use crate::cli;
+use crate::clock::now_unix;
 use crate::delegated_server_signer::DelegatedServerSigner;
 use crate::delegated_server_signer::TrustEpochAdvance;
 use crate::managed_worker::WorkerSet;
@@ -665,7 +665,7 @@ mod rotation_progress_tests {
     #[test]
     fn unchanged_kid_inside_the_overlap_window_is_not_progress() {
         let signer = DelegatedServerSigner::new();
-        let now = crate::app::now_unix();
+        let now = crate::clock::now_unix();
         // Published key is inside its overlap window: a rotation is DUE.
         signer.publish(key("K1", now + OVERLAP - 1));
         let before = Some("K1".to_string());
@@ -678,7 +678,7 @@ mod rotation_progress_tests {
     #[test]
     fn a_new_kid_is_progress() {
         let signer = DelegatedServerSigner::new();
-        let now = crate::app::now_unix();
+        let now = crate::clock::now_unix();
         signer.publish(key("K2", now + 300));
         let before = Some("K1".to_string());
         assert!(rotation_made_progress(&signer, &before, OVERLAP));
@@ -689,7 +689,7 @@ mod rotation_progress_tests {
     #[test]
     fn unchanged_kid_outside_the_overlap_window_is_not_a_failure() {
         let signer = DelegatedServerSigner::new();
-        let now = crate::app::now_unix();
+        let now = crate::clock::now_unix();
         signer.publish(key("K1", now + 10 * OVERLAP));
         let before = Some("K1".to_string());
         assert!(rotation_made_progress(&signer, &before, OVERLAP));

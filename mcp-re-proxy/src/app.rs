@@ -10,13 +10,12 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 
 use crate::async_serve::ServedHttpRequest;
 use crate::cli;
 use crate::cli::BindingKind;
 use crate::cli::KeySourceKind;
+use crate::clock::now_unix;
 use crate::config_snapshot;
 use crate::http_inner::HttpInnerPool;
 use crate::startup_posture::PostureLog;
@@ -32,13 +31,6 @@ use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::SignerSlot;
-
-pub(crate) fn now_unix() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
 
 /// Build the serving [`crate::ActorResolver`] — the trust seam the RFC 9421 PEP
 /// consults for every signature it verifies (slot discipline, MCPRE-100).

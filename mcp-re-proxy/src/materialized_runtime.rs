@@ -458,7 +458,7 @@ mod tests {
             "a live plane's resolver must answer rather than report an outage"
         );
         assert!(
-            signer.current(crate::app::now_unix()).is_some(),
+            signer.current(crate::clock::now_unix()).is_some(),
             "a live plane must publish a usable delegated key"
         );
 
@@ -475,7 +475,7 @@ mod tests {
              snapshot nothing is re-reading"
         );
         assert!(
-            signer.current(crate::app::now_unix()).is_none(),
+            signer.current(crate::clock::now_unix()).is_none(),
             "a signer that outlived its plane must stop signing: nothing is rotating that \
              key and no trust-epoch advance can revoke it"
         );
@@ -536,7 +536,7 @@ mod tests {
         // The child states the combinations below must exclude are live right now, so
         // reaching them terminal cannot be an artifact of a fixture that started empty.
         assert!(
-            signer.current(crate::app::now_unix()).is_some(),
+            signer.current(crate::clock::now_unix()).is_some(),
             "the signing plane must still be active before the transition"
         );
 
@@ -554,7 +554,7 @@ mod tests {
              while a resolver still answers from a snapshot nothing is re-reading"
         );
         assert!(
-            signer.current(crate::app::now_unix()).is_none(),
+            signer.current(crate::clock::now_unix()).is_none(),
             "Runtime = Stopped AND Signing = Active: the process reports itself shut down \
              while a signer still mints responses off a key no epoch advance can revoke"
         );
@@ -620,7 +620,7 @@ mod tests {
              plane"
         );
         assert!(
-            signer.current(crate::app::now_unix()).is_none(),
+            signer.current(crate::clock::now_unix()).is_none(),
             "the signing plane's retirement was skipped because an earlier plane stalled"
         );
         assert!(

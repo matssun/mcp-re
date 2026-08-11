@@ -53,6 +53,9 @@ pub mod aws_sigv4;
 #[cfg(feature = "aws_kms_keysource")]
 pub mod aws_sts;
 pub mod cli;
+/// Wall-clock acquisition — the one place the OS clock enters the proxy, and the module
+/// `boundary.clock` names.
+pub mod clock;
 // Issue #3838 (ADR-MCPS-014): a non-exporting reference `ResponseSigner` proving the
 // response-signing delegation seam — a backend whose key never leaves it can drive
 // the proxy's full signing path.

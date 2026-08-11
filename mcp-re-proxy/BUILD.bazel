@@ -45,6 +45,9 @@ _PROXY_LIB_SRCS = [
     "src/aws_sigv4.rs",
     "src/aws_sts.rs",
     "src/cli.rs",
+    # Wall-clock acquisition — the module boundary.clock names, kept small so the
+    # declared trust boundary is exactly as wide as the code exercising the authority.
+    "src/clock.rs",
     # ADR-MCPRE-051 §6 (MCPRE-116): versioned serving-config snapshot + in-process
     # CRL hot-reloader. Pure std; always compiled by every flavor.
     "src/config_snapshot.rs",

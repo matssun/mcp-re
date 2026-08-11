@@ -75,18 +75,22 @@ kind = "environment"
 # Every production site that calls `std::time::SystemTime::now()` directly, i.e. every
 # place the OS clock actually enters the system. Two of these are the wrappers the rest
 # of the codebase reads time through — `mcp-re-host/src/clock.rs` (`SystemClock`, the
-# injected `Clock` seam) and `mcp-re-proxy/src/app.rs` (`now_unix()`). Callers of those
-# wrappers are NOT listed: they consume an already-acquired value and hold no clock
-# authority of their own, so listing them would model the call graph instead of the
-# authority.
+# injected `Clock` seam) and `mcp-re-proxy/src/clock.rs` (`now_unix()`). Callers of
+# those wrappers are NOT listed: they consume an already-acquired value and hold no
+# clock authority of their own, so listing them would model the call graph instead of
+# the authority.
+#
+# Each wrapper is a module that owns clock acquisition and nothing else, which is what
+# lets this boundary stay narrow: the declared surface is the code that exercises the
+# authority, not whatever larger module happens to contain it.
 paths = [
   "mcp-re-client/src/main.rs",
   "mcp-re-demo/src/demo_fixtures.rs",
   "mcp-re-host/src/clock.rs",
-  "mcp-re-proxy/src/app.rs",
   "mcp-re-proxy/src/async_replay.rs",
   "mcp-re-proxy/src/aws_kms_keysource.rs",
   "mcp-re-proxy/src/aws_sts.rs",
+  "mcp-re-proxy/src/clock.rs",
   "mcp-re-proxy/src/continuation_store.rs",
   "mcp-re-proxy/src/durable_replay.rs",
   "mcp-re-proxy/src/etcd_store.rs",
