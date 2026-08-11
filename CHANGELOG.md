@@ -12,6 +12,206 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-08-10
+
+### Added — the exchange lifecycle is a value, and refusals derive their retry contract from it (ADR-MCPRE-057, ADR-MCPRE-058)
+
+The serving path has always moved through a fixed sequence of states; until now no value
+held which one it was in. Each state was a position of the program counter, and a refusal
+answered "may the client simply retry this?" from its own position in the function.
+
+That could not be answered locally. It needs two facts at once — whether the backend ran,
+and whether a human's approval was already spent — and one reachable combination was
+unrepresented: a continuation consumed to enforce one-shot, followed by a refusal before
+the dispatch. The approval is destroyed, the action never ran, and an ordinary retry cannot
+recover it. Such refusals now carry
+`retry_safety: unsafe_without_new_elicitation` with `continuation_status: consumed`.
+
+`exchange_state.rs` holds the lifecycle as a closed transition relation with an explicit
+execution threshold, plus four sibling projections — the fate of the approval this exchange
+spent, whether the backend can have acted, who authored the response bytes, and the fate of
+the continuation leg this exchange's own reply opens. Correctness lives in invariants over
+that tuple rather than in an enumeration of it, and the consequence of an exchange is
+monotone by construction: no transition and no store observation can move it to a weaker
+claim about what has happened.
+
+Nothing about the request-side wire format changed for an exchange that succeeds.
+
+### Changed — every post-dispatch failure now states that the call may have executed
+
+Refusals below the execution threshold used to say nothing about it. Exactly one code
+carried the contract — `mcp-re.evidence_retention_indeterminate`, which the rejection
+builder special-cased by name — so an unrecognized `resultType`, a response-signing
+failure, a 202 that could not be signed, and a continuation-record failure at **HTTP 503**
+all returned a bare status after the tool had already run. 503 is the status clients retry,
+and the retry carries a fresh nonce that passes replay admission.
+
+Every rejection emitted at or after the inner dispatch now carries:
+
+```json
+{ "execution_status": "possibly_executed", "retry_safety": "unsafe_without_reconciliation" }
+```
+
+derived from the exchange machine rather than from a list of wire codes, so a
+post-dispatch exit added later cannot silently fail to be on the list.
+`evidence_retention_indeterminate` keeps its more specific body, which additionally names
+which obligation failed.
+
+Pre-dispatch refusals are unchanged, and still report that nothing executed.
+
+### Changed — a backend reply must be a legal JSON-RPC 2.0 response before it is signed
+
+MCP requires MCP messages to follow JSON-RPC 2.0. MCP-RE did not check it. A backend reply
+was signed and served with no verification that `jsonrpc` was `"2.0"`, that the response
+`id` matched the request it answered, or that exactly one of `result` / `error` was
+present — and a body that was not JSON at all was signed as opaque payload, whereupon the
+client's own verifier rejected a message the enforcement boundary had vouched for.
+
+Worse, what checking existed was **conditional on unrelated configuration**: the only real
+envelope inspection lived inside the MRTR open-leg recorder, which returns early when no
+continuation store is wired. Whether MCP-RE refused a malformed protocol response depended
+on whether an operator had configured Redis.
+
+Validation is now unconditional and runs before the signature. A reply that is not a legal
+response to the outstanding request is refused with **502 `mcp-re.upstream_response_invalid`**.
+
+The check stops at the protocol control envelope — syntax, `jsonrpc`, `id` correlation,
+`result` XOR `error`, the `error` member's shape, and the MCP `resultType` /`requestState`
+lifecycle members. Everything else inside `result` remains opaque application payload that
+MCP-RE carries and signs without reading. A JSON-RPC error is treated as what it is: a
+valid terminal protocol response, distinct from both a malformed reply and a transport
+failure.
+
+### Changed — MCP-RE no longer returns an `input_required` response it cannot honour
+
+**Deployments using elicitation / multi-round-trip flows must configure continuation
+storage.**
+
+A deployment with no continuation store served an `input_required` reply with a 200 and
+then refused every answer leg that followed, as `mcp-re.continuation_binding_failed` — a
+code that on the wire reads like an attack signal. The proxy was emitting a state
+transition it had kept nothing to honour, and the client discovered it one leg later.
+
+The refusal now happens where the obligation is incurred:
+**503 `mcp-re.replay_cache_unavailable`** with `execution_status: possibly_executed`. Set
+`--replay-redis-url` to serve these flows. The startup posture line already announced this
+seam as OFF; it now announces a refusal rather than a deferred one.
+
+### Changed — an inner-transport failure is no longer served as a successful response
+
+The inner-server seam returned bytes and nothing else, so six outcomes arrived identical
+and were signed at **HTTP 200** as `-32603 "inner server unavailable"` — indistinguishable
+from the backend genuinely replying with that error:
+
+```text
+no in-flight permit / every backend ejected   nothing was transmitted
+connect error, per-request timeout            transmitted, no answer — execution UNKNOWN
+non-2xx status, non-JSON body                 the backend answered, unusably
+```
+
+A timeout is the textbook may-have-executed case, and serving it as a signed 200 was the
+strongest available signal that the exchange had completed normally.
+
+The seam now reports which outcome occurred, and the exchange derives consequence from it:
+
+| outcome | now | retry |
+| --- | --- | --- |
+| the plane cannot begin a dispatch | 503 `mcp-re.inner_plane_unavailable`, refused **before** the execution threshold | safe — nothing was transmitted |
+| transport failed after transmission | 504 `mcp-re.inner_dispatch_indeterminate` | `possibly_executed` |
+| the backend answered unusably | 502 `mcp-re.upstream_response_invalid` | `possibly_executed` |
+
+The rejection body is still a JSON-RPC error object, so parsers are unaffected; the status
+and the added consequence statement are what changed. A refused connection is deliberately
+classified as indeterminate rather than as a definite non-execution, because the transport
+cannot prove nothing reached the peer.
+
+Local saturation and a fully-ejected backend set are the cases that got strictly better:
+they are facts about the proxy, knowable without transmitting anything, and are now
+retry-safe refusals instead of exchanges that had to report `possibly_executed`.
+
+### Fixed — terminal trust staleness and signing retirement could be reversed by an in-flight worker
+
+Both the trust and delegated-signing planes retire their artifact on drop and then halt
+their worker, but a worker observes its halt only between cycles. A trust reload already
+mid-read could complete afterwards and call `mark_fresh`, reviving a resolver whose only
+remaining job was to refuse; a delegated mint already in flight could publish after
+`retire`, handing a signer that outlived its plane a fresh key and a fresh `exp` that
+nothing rotates and no trust-epoch advance can revoke.
+
+Neither is closeable by ordering at the drop site — the two steps are on different threads.
+Each child machine now distinguishes "temporarily unhealthy, and allowed to recover" from
+"the owner is terminating, and recovery is forbidden", with a terminal latch for the
+second. The recoverable transitions stay recoverable.
+
+### Fixed — three configuration rules could be bypassed by a programmatically built `Config`
+
+Each rule was enforced in `parse_args` and nowhere else, so a `Config` assembled in code —
+an embedder, a harness, a bespoke launcher — reached the serving path having met no parser.
+All three now live at the validation boundary, which no route into the runtime can skip.
+Command-line users see the same diagnostics as before.
+
+* **An empty or scheme-less `--target-uri` disabled the request-target reconstruction
+  check** rather than weakening it. The comparison is answerable only for an absolute
+  target, and the "no mismatch" answer propagated for every request while the deployment
+  went on reporting the binding as in force. The verifier's own audience comparison cannot
+  catch it: both sides are the same configured string.
+* **Contradictory TLS-key custody** — a delegated, non-exporting handshake key asserted
+  alongside an exported one — means the key is custodied in a device it is supposed never
+  to leave while a copy of it sits in a file on the pod. Nothing downstream noticed,
+  because the key-source builder ignores a selector belonging to another source.
+* **`--admission-allow-degraded` with a zero propagation bound.** The old diagnostic
+  claimed a zero window "would fail closed on every unreachable-authority call". It does
+  not: P is a floor on the degraded window, never the whole of it, so an unreachable
+  authority still admitted any assertion younger than the clock-skew tolerance — a window
+  in which a revoked workload keeps being served, on a deployment that configured no window
+  at all.
+
+### Changed — every optional capability states ON or OFF at startup (ADR-MCPRE-056)
+
+Four seams — the verified-context carrier, online OCSP, the MCP transport contract and
+admission currency — announced themselves only when enabled, so an operator reading a
+startup transcript could not tell "this capability is off here" from "this build does not
+have it". Those call for different responses (set a flag versus replace the binary), and
+the cost of guessing wrong is that a security control stays off.
+
+All seven optional capabilities now declare a posture exactly once, and the proxy refuses
+to serve unless every one of them has — in every build profile, not only under debug
+assertions. Each OFF line names what turns the capability on, or why nothing can, and says
+what the deployment does not enforce without it.
+
+### Changed — the composition root, the runtime lifecycle, and teardown have owners
+
+Startup was a single 782-line function in which roughly 38 fallible steps held their
+successful acquisitions as plain locals, so a later failure unwound them in reverse
+declaration order rather than the documented teardown order. Resources are now owned the
+moment they are acquired, and the runtime lifecycle is a value with a closed transition
+relation rather than a set of program-counter positions.
+
+No behaviour changes on a successful startup. A FAILED startup now releases resources in
+the documented order.
+
+### Fixed — the trust store published two locks that could be read torn
+
+The verification keys and the kid → signer coordinate were held in separate locks under a
+comment saying both "must move in the same swap". They did not: between the two write
+locks the store held a resolver from one read of the trust file and a signer map from the
+previous one. The window failed closed, but by accident of how resolution consumes the
+composite pair rather than by anything the publication guaranteed. Both views now come from
+one read, behind one lock.
+
+### Added — the formal-verification platform, phases 0–4 (ADR-MCPRE-059, in progress)
+
+An evidence graph that computes freshness rather than reporting structure: a unit is fresh
+only while every input its previous conclusion depended on still hashes the same, with no
+mutable clean flag anywhere. Attestations record the fingerprint components rather than a
+single digest, because "something moved" cannot tell a reviewer which input moved.
+
+This is developer-facing infrastructure with no runtime surface. The ADR is not complete
+and the Verus pilot boundary is unresolved — Verus verifies per crate, and the candidate
+lifecycle modules live in a crate large enough that the trusted computing base would
+swamp the theorem.
+
+
 ### Changed — `--authz reference` states its refusal once, at the validation boundary
 
 The refusal of the reference authorization profile was stated in two places with two
