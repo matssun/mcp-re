@@ -9,7 +9,6 @@
 use std::time::Duration;
 
 use mcp_re_core::VerificationKey;
-use serde_json::Value;
 
 // MCPS-076 (audit gap G-3): EnvKeySource is dev/CI-only — compiled only under the
 // non-default `dev_env_key_source` feature.
@@ -3472,43 +3471,6 @@ pub fn load_client_crls(
         }
     }
     Ok(crls)
-}
-
-/// Load offline policy-layer revocation ids (ADR-MCPS-013) from zero or more
-/// newline-delimited files. Each non-blank, non-`#`-comment line (trimmed) is one
-/// opaque `revocation_id`. If `paths` is empty, returns an empty list.
-/// Mirrors [`load_client_crls`]: OFFLINE only (loaded once at startup; restart to update)
-/// and FAIL CLOSED — a missing/unreadable file, or a file that yields zero ids, is an error rather than a silently empty deny-list
-/// that would quietly disable revocation.
-/// Parse the trust file into `(signer, key_id, verification_key)` entries so the
-/// serving path can build the RFC 9421 [`mcp_re_http_profile::ResolvedActor`]
-/// resolver (keyid → structured actor). Same fail-closed duplicate rejection as
-/// [`crate::trust_document::load_trust`].
-pub fn load_trust_entries(bytes: &[u8]) -> Result<Vec<(String, String, VerificationKey)>, String> {
-    let value: Value = serde_json::from_slice(bytes).map_err(|e| format!("trust file: {e}"))?;
-    let array = value.as_array().ok_or("trust file must be a JSON array")?;
-    let mut out = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for entry in array {
-        let signer = entry["signer"]
-            .as_str()
-            .ok_or("trust entry missing signer")?;
-        let key_id = entry["key_id"]
-            .as_str()
-            .ok_or("trust entry missing key_id")?;
-        if !seen.insert(key_id.to_string()) {
-            return Err(format!(
-                "trust file: duplicate key_id {key_id} (RFC 9421 resolver keys on key_id)"
-            ));
-        }
-        let pk = entry["public_key"]
-            .as_str()
-            .ok_or("trust entry missing public_key")?;
-        let key = VerificationKey::from_b64url(pk)
-            .map_err(|_| format!("trust entry {signer}#{key_id}: invalid public_key"))?;
-        out.push((signer.to_string(), key_id.to_string(), key));
-    }
-    Ok(out)
 }
 
 pub fn load_revocation_list(paths: &[String]) -> Result<Vec<String>, String> {
