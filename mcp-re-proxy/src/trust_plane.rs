@@ -341,10 +341,10 @@ fn read_trust_file(
     response_kid: &str,
 ) -> Result<(mcp_re_core::InMemoryTrustResolver, HashMap<String, String>), String> {
     let bytes = std::fs::read(trust_path).map_err(|e| format!("{trust_path}: {e}"))?;
-    let resolver = cli::load_trust(&bytes)?;
+    let resolver = crate::trust_document::load_trust(&bytes)?;
     // Slot-scoped: only entries this file enrols for the REQUEST slot become client
     // request signers. A key carried here for another purpose is not one.
-    let signers = cli::load_trust_request_signers(&bytes, response_kid)?;
+    let signers = crate::trust_document::load_trust_request_signers(&bytes, response_kid)?;
     Ok((resolver, signers))
 }
 /// The qualifier carried on the revocation-tier startup line: how fast the trust STORE

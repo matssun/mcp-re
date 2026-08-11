@@ -125,9 +125,14 @@ Mint the same shapes `full_stack_test` mints in-process, but on disk. You need:
 | **Trust file** (JSON array) | Request-signer + authorization-issuer public keys | `--trust` |
 
 The trust file is a JSON array of `{ "signer", "key_id", "public_key" }`
-(public key Base64URL-no-pad), exactly as `cli::load_trust` parses it. It carries
-**both** the request-signer key and (for `--authz reference`) the
-authorization-issuer key.
+(public key Base64URL-no-pad). It carries **both** the request-signer key and (for
+`--authz reference`) the authorization-issuer key.
+
+`trust_document` is the authoritative boundary for what those bytes mean — duplicate
+rejection, slot discipline, and the exclusion of the deployment's own response key from
+the request signers. The `--trust` flag is one consumer of that boundary, not its owner:
+a reload and a programmatic caller reach the same rules without passing through a
+command line.
 
 ```json
 [

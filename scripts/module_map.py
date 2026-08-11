@@ -63,6 +63,7 @@ PLANES: dict[str, list[str]] = {
     "trust": [
         "trust_plane", "trust_cache", "trust_epoch", "live_trust", "push_trust",
         "reloading_trust", "client_revocation", "revocation_tier", "ocsp",
+        "trust_document",
     ],
     "signing": [
         "signing_plane", "key_source", "kms_keysource", "kms_endpoint_policy",
