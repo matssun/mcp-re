@@ -247,14 +247,14 @@ impl KmsHttpClient for UreqKmsClient {
 /// string, so anything that would make a URL parser read a different authority than the
 /// text reads is rejected rather than accepted and signed. That rule is not local to this
 /// adapter — the same override reaches the GCP client and the STS exchange — so the
-/// decision is [`crate::cli::kms_endpoint_authority`], applied here as well as at the CLI
+/// decision is [`crate::kms_endpoint_policy::kms_endpoint_authority`], applied here as well as at the CLI
 /// because `AwsKmsConfig::endpoint` is public and an embedder reaches this constructor
 /// without meeting a parser.
 ///
 /// The path this used to refuse is refused there too: an endpoint is a `host[:port]`
 /// authority, and a `/v1`-style suffix is not part of one.
 fn authority_of(url: &str) -> Result<String, KeyError> {
-    let authority = crate::cli::kms_endpoint_authority(url)
+    let authority = crate::kms_endpoint_policy::kms_endpoint_authority(url)
         .map_err(|why| KeyError::Malformed(format!("aws-kms: endpoint {why}")))?;
     let path = url
         .split_once("://")
@@ -740,7 +740,7 @@ mod tests {
     /// reach and the shared gate did — `http://localhost:80@evil.example.com` was read as
     /// loopback by a rule that derived the host BEFORE stripping userinfo, so a plaintext
     /// SigV4 session credential left the machine. The decision now lives in
-    /// `cli::kms_endpoint_authority`, so this file and the GCP and STS siblings cannot
+    /// `kms_endpoint_policy::kms_endpoint_authority`, so this file and the GCP and STS siblings cannot
     /// disagree about it.
     #[test]
     fn an_authority_that_re_points_the_request_is_refused() {

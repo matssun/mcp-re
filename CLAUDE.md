@@ -7,14 +7,49 @@
 ### Module & File Structure
 
 1. **One Main Type Per File**: Every major `struct`, `enum`, or `trait` must reside in its own file under a domain module (e.g., `src/domain/user_repository.rs`).
-2. **File Size Limit**: No single `.rs` file may exceed 200 lines of code (excluding unit tests). If a file exceeds this, split it into sub-modules.
+2. **File Size Limit**: 200 lines of code (excluding unit tests) is the threshold for a
+   `.rs` file. Crossing it is a **mandatory design-review trigger, not an automatic
+   split** — see "Thresholds are review triggers" below. Let responsibility boundaries
+   drive a file split; never create arbitrary files merely to get under the number.
 3. **Module Re-exports**: Use `mod.rs` to encapsulate module internals and re-export public interfaces using `pub use`.
 
 ### Function Boundaries & Security
 
-1. **Function Line Limit**: No function may exceed 60 lines of code. Split complex logic into private helper functions (`pub(crate)` or `fn`), or pipeline stages.
+1. **Function Line Limit**: 60 lines of code is the threshold for a function. Crossing it
+   is a **mandatory design-review trigger, not an automatic split** — see "Thresholds are
+   review triggers" below. The usual outcome is decomposition into private helper
+   functions (`pub(crate)` or `fn`) or pipeline stages.
 2. **Cognitive Complexity**: Avoid nested `match` or `if let` statements deeper than 2 levels. Use early returns (`?` operator or `let-else` statements).
 3. **Security Code**: Parsing, authentication, and execution MUST be isolated into distinct types/functions. Do not combine I/O operations with cryptographic or authorization logic in the same function.
+
+### Thresholds are review triggers, not laws
+
+The 60-line function and 200-line file limits are **not** unconditional architectural
+laws. Crossing one creates a **mandatory review obligation**, not an automatic
+refactoring obligation. Above the threshold, do one of two things:
+
+- **A — decompose.** Identify the natural responsibilities and split along them. This is
+  the normal outcome, and it is the outcome whenever real seams exist.
+- **B — document an exception.** Explain why keeping the unit intact makes the
+  security/control argument materially clearer and safer.
+
+**"It is complicated" is not an exception.** A B-case must state concretely: why
+decomposition would damage the reasoning, what invariant requires locality, why the
+subordinate responsibilities cannot be separated, and what tests or review evidence
+compensate for the size.
+
+**Never split code merely to satisfy a number.** A rule that forces a split where one
+would destroy clarity produces the very thing these rules exist to prevent —
+architecture distorted to satisfy a metric.
+
+Note what an exception costs: using one where a sensible decomposition exists weakens
+the rule exactly where it was working. A threshold's job is to force you to look. When
+looking finds real seams, split; the threshold has then done its job.
+
+One coherent security invariant does **not** have to be one large function. Keep the
+overarching argument in the module documentation and let the subordinate checks be
+separately testable predicates — that usually makes the invariant easier to
+substantiate, not harder.
 
 ### Testing Requirements
 

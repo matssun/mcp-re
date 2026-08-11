@@ -638,7 +638,7 @@ impl UreqGcpClient {
         // verify-before-return check then passes against the attacker's key. Checked here
         // as well as at the CLI because `GcpKmsConfig::endpoint` is public and an embedder
         // reaches this constructor without meeting a parser.
-        crate::cli::kms_endpoint_authority(&base)
+        crate::kms_endpoint_policy::kms_endpoint_authority(&base)
             .map_err(|why| KeyError::Malformed(format!("gcp-kms: --gcp-kms-endpoint {why}")))?;
         // A trailing slash is a spelling of the same endpoint, and the gate admits it — so
         // it must not survive into the per-operation URLs, where `{base}/v1/...` on

@@ -87,6 +87,9 @@ pub mod audit_sink;
 #[cfg(feature = "gcp_kms_keysource")]
 pub mod gcp_kms_keysource;
 pub mod key_source;
+/// Whether an operator-supplied KMS/STS endpoint may be used at all — a security rule
+/// the command line, the validation boundary and the key sources all consume.
+pub mod kms_endpoint_policy;
 pub mod log_sink;
 // Test / embedding helpers that drive the async serving path synchronously
 // (a private current-thread runtime per call). NOT a serving path — the

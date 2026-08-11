@@ -260,7 +260,7 @@ impl WebIdentityConfig {
         match &endpoint {
             None => validate_region(region)?,
             Some(endpoint) => {
-                crate::cli::kms_endpoint_authority(endpoint).map_err(|why| {
+                crate::kms_endpoint_policy::kms_endpoint_authority(endpoint).map_err(|why| {
                     KeyError::Malformed(format!("aws-kms: --aws-sts-endpoint {why}"))
                 })?;
             }
@@ -319,7 +319,7 @@ impl WebIdentityConfig {
 /// obtain KMS `Sign` on the root response-signing key; whoever receives the KMS traffic
 /// gets the `X-Amz-Security-Token` header outright and supplies the root public key at
 /// construction. An explicitly supplied endpoint skips this check and meets
-/// [`crate::cli::kms_endpoint_authority`] instead — the same rule the `--aws-sts-endpoint`,
+/// [`crate::kms_endpoint_policy::kms_endpoint_authority`] instead — the same rule the `--aws-sts-endpoint`,
 /// `--aws-kms-endpoint` and `--gcp-kms-endpoint` flags meet at parse, applied again at
 /// [`WebIdentityConfig::from_env`] because that is where an endpoint reaches this module.
 pub(crate) fn validate_region(region: &str) -> Result<(), KeyError> {
@@ -463,7 +463,7 @@ impl WebIdentityCredentialSource {
     /// the earliest point with the flag named; both call the one decision, so they cannot
     /// drift.
     pub fn new(config: WebIdentityConfig) -> Result<Self, KeyError> {
-        crate::cli::kms_endpoint_authority(&config.endpoint).map_err(|why| {
+        crate::kms_endpoint_policy::kms_endpoint_authority(&config.endpoint).map_err(|why| {
             KeyError::Malformed(format!("aws-kms: web identity STS endpoint {why}"))
         })?;
         Ok(WebIdentityCredentialSource {

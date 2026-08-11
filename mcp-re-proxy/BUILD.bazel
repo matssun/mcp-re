@@ -71,6 +71,9 @@ _PROXY_LIB_SRCS = [
     "src/retained_evidence.rs",
     "src/transparency.rs",
     "src/key_source.rs",
+    # The KMS/STS endpoint admission rule, owned apart from the parser that was its
+    # first caller: key sources reach it without meeting a command line.
+    "src/kms_endpoint_policy.rs",
     # ADR-MCPS-028: provider-agnostic cloud-KMS response signer core (the shared
     # protocol mapping behind the #3838 delegation seam). Always compiled.
     "src/kms_keysource.rs",
