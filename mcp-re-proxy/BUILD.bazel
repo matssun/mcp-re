@@ -167,6 +167,9 @@ _PROXY_LIB_SRCS = [
     "src/replay_plane.rs",
     # ADR-MCPS-021 Axis 2: declared revocation tier (Tier 1 bounded-cache / Tier 2
     # live / Tier 3 push) — semantic names + honest per-tier guarantee. Pure type.
+    # The tier says which revocation policy applies; this materialises it as runtime
+    # resolver machinery. Separate responsibilities, separate owners.
+    "src/revocation_resolver.rs",
     "src/revocation_tier.rs",
     # ADR-MCPS-021 Tier 2: live strong trust check (no positive caching, optional
     # second live revocation authority, fail-closed on outage).

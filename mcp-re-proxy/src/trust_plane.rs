@@ -222,7 +222,7 @@ impl TrustPlane {
                 );
             }
         }
-        let resolver = cli::build_revocation_resolver_with_channel(
+        let resolver = crate::revocation_resolver::build_revocation_resolver_with_channel(
             &config.revocation_tier,
             Box::new(crate::reloading_trust::SharedTrustStore(Arc::clone(
                 &trust_store,

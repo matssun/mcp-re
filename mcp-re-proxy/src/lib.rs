@@ -150,6 +150,7 @@ pub mod http_profile_serve;
 // ADR-MCPS-021 Axis 2: the declared REVOCATION tier (Tier 1 bounded-cache / Tier 2
 // live / Tier 3 push) — semantic names, honest per-tier guarantee, tier-claim
 // ceiling. Pure type — in the default build. The Axis-2 analogue of replay_tier.
+pub mod revocation_resolver;
 pub mod revocation_tier;
 // ADR-MCPS-021 Tier 2: live strong trust check — consults the inner store on every
 // verification (no positive-trust caching), with an optional second live
