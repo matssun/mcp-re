@@ -43,13 +43,78 @@ LEGITIMATE = {
 }
 
 
+def strip_cfg_test_items(text: str) -> str:
+    """Source with every `#[cfg(test)]`-attributed item removed.
+
+    Removing items INDIVIDUALLY is the correctness argument. Truncating at the first
+    `#[cfg(test)]` looks equivalent and is not: an inline attribute on a test-only helper
+    appears at trust_plane.rs:78, signing_plane.rs:62 and tls_plane.rs:137, and truncating
+    there discards 500-900 lines of production code apiece. Fifteen files in the workspace
+    carry such an early attribute, and the naive form reported three real `cli`
+    dependencies as test-only. The same flaw in the sibling scan under
+    tools/verification/ dropped a production `SystemTime::now()` out of `boundary.clock`.
+    """
+    lines = text.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        if not lines[i].strip().startswith("#[cfg(test)]"):
+            out.append(lines[i])
+            i += 1
+            continue
+        j = i + 1
+        while j < len(lines) and "{" not in lines[j] and not lines[j].rstrip().endswith(";"):
+            j += 1
+        if j < len(lines) and "{" not in lines[j] and lines[j].rstrip().endswith(";"):
+            i = j + 1
+            continue
+        depth, seen = 0, False
+        while j < len(lines):
+            s = re.sub(r'"(?:\\.|[^"\\])*"', '""', lines[j])
+            s = re.sub(r"//.*", "", s)
+            for ch in s:
+                if ch == "{":
+                    depth += 1
+                    seen = True
+                elif ch == "}":
+                    depth -= 1
+            if seen and depth <= 0:
+                break
+            j += 1
+        i = j + 1
+    return "\n".join(out)
+
+
 def code_only(text: str) -> str:
-    """Source with the test module, block comments and line comments removed."""
-    cut = text.find("#[cfg(test)]")
-    if cut > 0:
-        text = text[:cut]
+    """Source with test items, block comments and line comments removed."""
+    text = strip_cfg_test_items(text)
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
     return "\n".join(re.sub(r"//.*", "", line) for line in text.split("\n"))
+
+
+def selftest() -> int:
+    """The naive truncation this scanner used to do, pinned as a refusal."""
+    sample = "\n".join([
+        "use crate::cli;",
+        "impl Thing {",
+        "    #[cfg(test)]",
+        "    fn only_for_tests() -> u8 { 1 }",
+        "}",
+        "fn production(c: &cli::Config) {}",          # AFTER the inline attribute
+        "#[cfg(test)]",
+        "mod tests {",
+        "    fn t(c: &cli::Config) {}",
+        "}",
+    ])
+    kept = code_only(sample)
+    if "fn production" not in kept:
+        print("SELFTEST FAILED: production code after an inline #[cfg(test)] was dropped")
+        return 1
+    if "mod tests" in kept or "fn only_for_tests" in kept:
+        print("SELFTEST FAILED: a #[cfg(test)] item survived")
+        return 1
+    print("startup_backedges selftest: PASS")
+    return 0
 
 
 def edges() -> dict[tuple[str, str], set[str]]:
@@ -71,6 +136,8 @@ def edges() -> dict[tuple[str, str], set[str]]:
 
 
 def main() -> int:
+    if "--selftest" in sys.argv:
+        return selftest()
     found = edges()
     targets = {k: v for k, v in found.items() if k not in LEGITIMATE}
     ok = {k: v for k, v in found.items() if k in LEGITIMATE}

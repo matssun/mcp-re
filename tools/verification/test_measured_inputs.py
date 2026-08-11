@@ -20,6 +20,7 @@ Run: python3 tools/verification/test_measured_inputs.py
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -220,16 +221,47 @@ def _clock_boundary() -> dict:
 
 
 def _production_source(path) -> str:
-    """A file's source with its `#[cfg(test)]` tail removed.
+    """A file's source with every `#[cfg(test)]`-attributed item removed.
 
     A test module reading the clock is not a production clock authority, and counting one
     would make the boundary grow on test code.
+
+    Removing items INDIVIDUALLY is the whole correctness argument. Truncating at the first
+    `#[cfg(test)]` looks equivalent and is not: an inline `#[cfg(test)]` on a helper
+    appears at ocsp.rs:248, and truncating there discards the production
+    `SystemTime::now()` at ocsp.rs:322 -- so the boundary silently lost a real clock
+    acquisition site while this test reported agreement. Fifteen files in the workspace
+    carry such an early attribute.
     """
     lines = path.read_text(errors="replace").split("\n")
-    for i, line in enumerate(lines):
-        if line.strip().startswith("#[cfg(test)]"):
-            return "\n".join(lines[:i])
-    return "\n".join(lines)
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        if not lines[i].strip().startswith("#[cfg(test)]"):
+            out.append(lines[i])
+            i += 1
+            continue
+        j = i + 1
+        while j < len(lines) and "{" not in lines[j] and not lines[j].rstrip().endswith(";"):
+            j += 1
+        if j < len(lines) and "{" not in lines[j] and lines[j].rstrip().endswith(";"):
+            i = j + 1  # an attributed `use ...;` / one-line item
+            continue
+        depth, seen = 0, False
+        while j < len(lines):
+            stripped = re.sub(r'"(?:\\.|[^"\\])*"', '""', lines[j])
+            stripped = re.sub(r"//.*", "", stripped)
+            for ch in stripped:
+                if ch == "{":
+                    depth += 1
+                    seen = True
+                elif ch == "}":
+                    depth -= 1
+            if seen and depth <= 0:
+                break
+            j += 1
+        i = j + 1
+    return "\n".join(out)
 
 
 def _acquisition_sites() -> set[str]:

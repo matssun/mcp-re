@@ -95,6 +95,7 @@ paths = [
   "mcp-re-proxy/src/durable_replay.rs",
   "mcp-re-proxy/src/etcd_store.rs",
   "mcp-re-proxy/src/gcp_kms_keysource.rs",
+  "mcp-re-proxy/src/ocsp.rs",
   "mcp-re-proxy/src/redis_store.rs",
   "mcp-re-proxy/src/retained_evidence.rs",
   "mcp-re-proxy/src/shared_replay.rs",
@@ -138,10 +139,19 @@ max_class_without_assumption = "V0"
 #    own is an OPEN QUESTION for the owner; it is recorded here rather than silently
 #    folded into this one.
 #
-# 3. PARAMETER CONVERSION IS NOT ACQUISITION.
-#    `mcp-re-proxy/src/ocsp.rs` mentions `UNIX_EPOCH`, but only inside
-#    `system_time_to_unix(now: SystemTime)`, which converts a value handed to it. It
-#    calls `SystemTime::now()` nowhere in production code and is therefore excluded.
+# 3. PARAMETER CONVERSION IS NOT ACQUISITION — but a file may do both.
+#    `mcp-re-proxy/src/ocsp.rs` converts a supplied instant in
+#    `system_time_to_unix(now: SystemTime)`, which on its own would not be acquisition.
+#    It is nonetheless LISTED, because it also reads the clock directly at ocsp.rs:322,
+#    supplying the reference instant against which an OCSP response's freshness — and so
+#    a revocation verdict — is decided.
+#
+#    This entry was briefly absent. The scan that produced the first list truncated each
+#    file at its FIRST `#[cfg(test)]`, which in ocsp.rs is an inline attribute at line
+#    248, discarding the production call 74 lines later. Fifteen files in the workspace
+#    carry such an early attribute. The lesson is recorded here rather than only in the
+#    fix: a boundary derived by scanning is only as sound as the scanner's notion of
+#    "production code", and that notion must be tested rather than assumed.
 #
 # The relationship this entry asserts is regression-tested against the source tree, not
 # just against today's manifest — see `test_the_clock_boundary_names_every_acquisition_site`
