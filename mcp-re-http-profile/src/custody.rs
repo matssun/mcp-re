@@ -74,6 +74,7 @@ pub struct KeyLifecycleEvent {
 }
 
 /// Static custody policy (the parts of the credential that do not change per key).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CustodyConfig {
     /// The root `issuer_kid` the credential chains to.
     pub issuer_kid: String,

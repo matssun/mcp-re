@@ -452,6 +452,13 @@ fn run_validated(
     // Transport custody and the offline client-cert revocation posture, both already
     // classified by layer A (ADR-MCPRE-056 §8).
     let tls_plan = crate::startup_plan::TlsPlan::from_validated(config);
+    // Response-signing custody. The SECOND consumer of both shared decisions, and it
+    // receives them the same way the first did — from here, not from its sibling.
+    let signing_plan = crate::startup_plan::SigningPlan::from_validated(
+        config,
+        response_kid.clone(),
+        trust_plan.epoch.clone(),
+    );
 
     // ADR-MCPRE-057 §3 — the lifecycle becomes a value here.
     //
@@ -700,10 +707,8 @@ fn run_validated(
     // The plane must outlive the proxy that signs with it, and it does: both are locals
     // of this function, and `serve_fleet` returns before either is dropped.
     building.install_signing(crate::signing_plane::SigningPlane::materialize(
-        config,
-        &trust_plan.epoch,
+        &signing_plan,
         key_source,
-        &response_kid,
         startup_now_unix,
         Arc::clone(&shutdown),
     )?);

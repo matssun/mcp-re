@@ -77,6 +77,35 @@ const PROJECTED_PLANES: &[Plane] = &[
         // decision, or a value required to establish a decided one?
         reconstructed: &["client_crl_paths", "client_crl_reload_secs"],
     },
+    Plane {
+        env: "MCP_RE_REPLAY_PLANE_SRC",
+        why: "replay_plane establishes the tier in ReplayPlan (ADR-MCPRE-051 §4)",
+        reconstructed: &[
+            "replay_redis_url",
+            "cpstore_etcd_endpoint",
+            "replay_durability_tier",
+        ],
+    },
+    Plane {
+        env: "MCP_RE_SIGNING_PLANE_SRC",
+        why: "signing_plane establishes the posture in SigningPlan (ADR-MCPRE-056 §8)",
+        reconstructed: &["delegated_issuer_kid", "delegated_audience_hash"],
+    },
+    // Not a plane, and listed anyway. `build_delegated_signing` is where the signing
+    // plane's configuration reading actually lived, so stopping the rule at the plane
+    // boundary would have made SigningPlan cosmetic: the plane would take a plan and hand
+    // the wiring a `Config` one line later.
+    Plane {
+        env: "MCP_RE_DELEGATED_WIRING_SRC",
+        why: "delegated_wiring builds what SigningPlan decided (ADR-MCPRE-056 §8)",
+        reconstructed: &[
+            "delegated_issuer_kid",
+            "delegated_audience_hash",
+            "delegated_trust_epoch",
+            "delegated_ttl_secs",
+            "delegated_overlap_secs",
+        ],
+    },
 ];
 
 /// The identifiers that would mean configuration had been reached for directly.
@@ -100,6 +129,16 @@ fn names_identifier(line: &str, ident: &str) -> bool {
     })
 }
 
+/// Whether `line` is a comment, and so reaches nothing.
+///
+/// A doc comment naming `cli::Config` explains what the module does NOT do; a `//` line
+/// naming it is commented-out code. Neither is a dependency, and the sibling
+/// `startup_backedges` gate already ruled the same way about paths in comments — measuring
+/// the spelling instead of the proposition is how these rules go wrong.
+fn is_comment(line: &str) -> bool {
+    line.trim_start().starts_with("//")
+}
+
 /// The production half: everything above the first `#[cfg(test)]`.
 fn production_half(source: &str) -> &str {
     match source.find("#[cfg(test)]") {
@@ -121,7 +160,7 @@ fn production_source(plane: &Plane) -> (std::path::PathBuf, String) {
 fn a_projected_plane_names_no_configuration_type() {
     for plane in PROJECTED_PLANES {
         let (path, source) = production_source(plane);
-        for (number, line) in source.lines().enumerate() {
+        for (number, line) in source.lines().enumerate().filter(|(_, l)| !is_comment(l)) {
             for name in CONFIGURATION_NAMES {
                 assert!(
                     !names_identifier(line, name),
@@ -148,7 +187,7 @@ fn a_projected_plane_names_no_configuration_type() {
 fn a_projected_plane_reconstructs_no_classified_state() {
     for plane in PROJECTED_PLANES {
         let (path, source) = production_source(plane);
-        for (number, line) in source.lines().enumerate() {
+        for (number, line) in source.lines().enumerate().filter(|(_, l)| !is_comment(l)) {
             for name in plane.reconstructed {
                 assert!(
                     !names_identifier(line, name),
@@ -187,6 +226,14 @@ fn the_rule_would_catch_a_reach_back() {
                 .any(|n| names_identifier(source, n)),
             "the rule misses {source:?}"
         );
+    }
+    // Prose about configuration is not a dependency on it, in either comment form.
+    for prose in [
+        "/// Infallible: it does not take a `Config` and re-decide anything.",
+        "//! [`build_delegated_signing`] replaced its `Config` parameter with a plan.",
+        "    // let c: &cli::Config = todo!();",
+    ] {
+        assert!(is_comment(prose), "not recognised as a comment: {prose:?}");
     }
     // The other direction, which is what forced whole-identifier matching: the serving
     // TLS configuration is a materialized artifact, and a rule that flagged it would be

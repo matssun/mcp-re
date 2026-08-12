@@ -80,6 +80,7 @@ fn keys(violations: &[String]) -> Vec<&'static str> {
         "--ingress-",
         "--client-crl-reload-secs 0",
         "--client-crl-reload-secs has no effect",
+        "--delegated-trust-epoch",
         "--delegated-ttl-secs",
         "--delegated-overlap-secs",
         "--max-client-cert-lifetime",
@@ -126,6 +127,7 @@ fn the_boundary_refuses_in_this_order() {
     config.inner_http_urls.clear();
     config.client_crl_paths = vec!["/crl.pem".to_string()];
     config.client_crl_reload_secs = Some(0);
+    config.delegated_trust_epoch = None;
     config.delegated_ttl_secs = 0;
     config.delegated_overlap_secs = 0;
     config.max_client_cert_lifetime = None;
@@ -159,6 +161,7 @@ fn the_boundary_refuses_in_this_order() {
             "--inner-http-url",
             "--key-source",
             "--client-crl-reload-secs 0",
+            "--delegated-trust-epoch",
             "--delegated-ttl-secs",
             "--delegated-overlap-secs",
             "--max-client-cert-lifetime",

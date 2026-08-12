@@ -182,8 +182,7 @@ fn server_resolver() -> ActorResolver {
 
 fn build_server(backend_reply: &'static str) -> HttpProfileProxy {
     let config = server_config();
-    let wiring = mcp_re_proxy::build_delegated_signing(&config, root_key())
-        .expect("build delegated signing wiring");
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
     let mut rotor = wiring.rotor;
     rotor.rotate(NOW).expect("first delegated key");
     let expected_audience = AudienceTuple {
@@ -817,4 +816,17 @@ fn shutdown_waits_for_an_accepted_exchange_instead_of_dropping_it() {
         "serve waited {:?} after the last exchange drained",
         started.elapsed()
     );
+}
+
+/// The `SigningPlan` `app::run` projects, so this lane drives the production wiring
+/// through the same plan the binary does — including the boundary that produces it.
+fn signing_plan(config: &mcp_re_proxy::cli::Config) -> mcp_re_proxy::startup_plan::SigningPlan {
+    use mcp_re_proxy::startup_plan::{response_issuer_kid, SigningPlan, TrustEpochPlan};
+    let validated = mcp_re_proxy::cli::ValidatedConfig::try_from(config.clone())
+        .expect("the fixture config must validate");
+    SigningPlan::from_validated(
+        &validated,
+        response_issuer_kid(&validated),
+        TrustEpochPlan::from_validated(&validated),
+    )
 }

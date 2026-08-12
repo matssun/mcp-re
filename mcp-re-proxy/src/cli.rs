@@ -2668,6 +2668,22 @@ fn legality_violations(config: &Config, decided: MachineViolations) -> Vec<Strin
     // an exfiltrated hot-path key and needs a ceiling, not merely a positive value. The
     // rotor's successor-before-expiry rule is restated here for the same reason the
     // ceiling is stated at all: these are public fields on a config a caller can build.
+    // The epoch is the ADR-MCPRE-052 §7 hard gate, and it arrives here from
+    // `delegated_wiring`, where it was the last deterministic layer-A invalidity refused
+    // after two planes had already established resources. Its two siblings below were
+    // already checked here, so the family was split across two layers with no reason
+    // beyond history — and a config with no epoch got the same treatment `--inner-http-url`
+    // did: refused late, by a module with no stake in the question.
+    if config.delegated_trust_epoch.is_none() {
+        violations.push(
+            "delegated-required response signing requires a trust epoch \
+             (--delegated-trust-epoch): without it every credential is minted under a bare \
+             label instead of <base>#<counter>, so a restarted replica appears unrevoked to \
+             verifiers pinned past an operator INCR and the cross-fleet kill switch stops \
+             working"
+                .to_string(),
+        );
+    }
     if config.delegated_ttl_secs <= 0 {
         violations.push(
             "--delegated-ttl-secs must be greater than 0 (it is the life of every delegated \

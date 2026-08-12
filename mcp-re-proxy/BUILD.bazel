@@ -676,11 +676,17 @@ nt_rust_test(
     auto_cargo_toml = False,
     bazel_build_cfg = False,
     data = [
+        "src/delegated_wiring.rs",
+        "src/replay_plane.rs",
+        "src/signing_plane.rs",
         "src/tls_plane.rs",
         "src/trust_plane.rs",
     ],
     edition = "2021",
     env = {
+        "MCP_RE_DELEGATED_WIRING_SRC": "$(rlocationpath src/delegated_wiring.rs)",
+        "MCP_RE_REPLAY_PLANE_SRC": "$(rlocationpath src/replay_plane.rs)",
+        "MCP_RE_SIGNING_PLANE_SRC": "$(rlocationpath src/signing_plane.rs)",
         "MCP_RE_TLS_PLANE_SRC": "$(rlocationpath src/tls_plane.rs)",
         "MCP_RE_TRUST_PLANE_SRC": "$(rlocationpath src/trust_plane.rs)",
     },

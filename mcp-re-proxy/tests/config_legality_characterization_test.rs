@@ -122,10 +122,6 @@ fn numeric_ranges_are_unconstrained_at_the_boundary() {
 /// believe is in force.
 #[test]
 fn cross_field_relations_are_unenforced_at_the_boundary() {
-    // ADR-MCPRE-052 §7: the epoch minted into every delegated response-signing credential.
-    // A verifier admits only credentials whose epoch is in its accepted set, so there is
-    // deliberately no default — the parser requires it and the boundary does not.
-    assert!(admitted(|c| c.delegated_trust_epoch = None));
     // The dangling-OCSP-knob illusion the parser refuses by name.
     assert!(admitted(
         |c| c.ocsp_responder_url = Some("http://ocsp.example.com".to_string())
@@ -140,6 +136,19 @@ fn cross_field_relations_are_unenforced_at_the_boundary() {
 /// consume one does not merely ignore it.
 #[test]
 fn refused_at_the_boundary() {
+    // ADR-MCPRE-052 §7: the epoch minted into every delegated response-signing credential.
+    // A verifier admits only credentials whose epoch is in its accepted set, so there is
+    // deliberately no default. Admitted before, and refused instead inside
+    // `delegated_wiring` — after the trust and TLS planes had read files and started
+    // workers, by a module whose subject is building a signer rather than judging a
+    // configuration. Its two siblings (`--delegated-ttl-secs`, `--delegated-overlap-secs`)
+    // were already boundary clauses, so one family was split across two layers.
+    let mut config = base();
+    config.delegated_trust_epoch = None;
+    let refusal = ValidatedConfig::try_from(config)
+        .expect_err("delegated signing must not mint under a bare epoch label");
+    assert!(refusal.contains("--delegated-trust-epoch"), "{refusal}");
+
     // The inner plane. Admitted before, and refused instead by the TRUST plane — which
     // meant a configuration naming no inner server was rejected only after trust had read
     // its document and started its workers, by a plane with no stake in the question.

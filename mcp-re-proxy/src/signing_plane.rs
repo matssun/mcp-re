@@ -38,7 +38,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::cli;
 use crate::clock::now_unix;
 use crate::delegated_server_signer::DelegatedServerSigner;
 use crate::delegated_server_signer::TrustEpochAdvance;
@@ -131,10 +130,8 @@ impl SigningPlane {
     /// response public key. `deployment` is the caller's shutdown flag; the worker started
     /// here stops on it, and also when this plane is dropped.
     pub fn materialize(
-        config: &cli::ValidatedConfig,
-        epoch: &crate::startup_plan::TrustEpochPlan,
+        plan: &crate::startup_plan::SigningPlan,
         root_signer: impl crate::key_source::ResponseSigner + Send + 'static,
-        response_kid: &str,
         startup_now_unix: i64,
         deployment: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<SigningPlane, String> {
@@ -142,12 +139,13 @@ impl SigningPlane {
             signer,
             mut rotor,
             overlap,
-        } = crate::delegated_wiring::build_delegated_signing(config, root_signer)?;
+        } = crate::delegated_wiring::build_delegated_signing(plan, root_signer);
         // Resolve the shared trust epoch BEFORE the first key is minted, so the very
         // first credential carries the globally comparable `<base>#<counter>` label
         // rather than the bare base. Minting under the bare label is what let a
         // restarted replica appear unrevoked to verifiers pinned past an `INCR`.
-        let epoch_watch = build_delegated_epoch_watch(epoch, rotor.trust_epoch().to_string())?;
+        let epoch_watch =
+            build_delegated_epoch_watch(&plan.epoch, rotor.trust_epoch().to_string())?;
         if let Some(watch) = epoch_watch.as_ref() {
             // FAIL CLOSED FOR MINTING: a configured kill switch whose state cannot be
             // read means we cannot produce an epoch verifiers can compare, so we must
@@ -178,9 +176,9 @@ impl SigningPlane {
         })?;
         eprintln!(
             "mcp-re-proxy: response signing = DELEGATED (ADR-MCPRE-052): the root issuer is off \
-             the request path; delegated key TTL {}s / overlap {overlap}s; issuer kid \
-             {response_kid:?}. Initial delegated key issued.",
-            config.delegated_ttl_secs,
+             the request path; delegated key TTL {}s / overlap {overlap}s; issuer kid {:?}. \
+             Initial delegated key issued.",
+            plan.custody.ttl, plan.custody.issuer_kid,
         );
         // Cold-path rotation worker: rotate within the overlap window before each key's
         // exp so the KMS/root stays off the per-core serving runtimes. It also watches the

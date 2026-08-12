@@ -167,8 +167,7 @@ fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
 fn build_proxy(
     config: &mcp_re_proxy::cli::Config,
 ) -> (HttpProfileProxy, mcp_re_proxy::ProdDelegatedRotor) {
-    let wiring = mcp_re_proxy::build_delegated_signing(config, root_key())
-        .expect("build delegated signing wiring from config");
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(config), root_key());
     let expected_audience = AudienceTuple {
         audience_id: config.audience.clone(),
         target_uri: config.target_uri.clone(),
@@ -421,4 +420,17 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
             .any(|(k, _)| k.eq_ignore_ascii_case("signature-input")),
         "the fail-closed error is unsigned"
     );
+}
+
+/// The `SigningPlan` `app::run` projects, so this lane drives the production wiring
+/// through the same plan the binary does — including the boundary that produces it.
+fn signing_plan(config: &mcp_re_proxy::cli::Config) -> mcp_re_proxy::startup_plan::SigningPlan {
+    use mcp_re_proxy::startup_plan::{response_issuer_kid, SigningPlan, TrustEpochPlan};
+    let validated = mcp_re_proxy::cli::ValidatedConfig::try_from(config.clone())
+        .expect("the fixture config must validate");
+    SigningPlan::from_validated(
+        &validated,
+        response_issuer_kid(&validated),
+        TrustEpochPlan::from_validated(&validated),
+    )
 }

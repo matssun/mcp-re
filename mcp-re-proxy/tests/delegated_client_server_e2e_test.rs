@@ -185,8 +185,7 @@ fn build_server() -> HttpProfileProxy {
 /// than assume a kid it can spell.
 fn build_server_with_kid() -> (HttpProfileProxy, String) {
     let config = server_config();
-    let wiring = mcp_re_proxy::build_delegated_signing(&config, root_key())
-        .expect("build delegated signing wiring");
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
     let mut rotor = wiring.rotor;
     rotor
         .rotate(NOW)
@@ -628,7 +627,7 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
         .build()
         .expect("rt");
     let config = server_config();
-    let wiring = mcp_re_proxy::build_delegated_signing(&config, root_key()).expect("wiring");
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
     let mut rotor = wiring.rotor;
     rotor.rotate(NOW).expect("first key");
     let first_kid = wiring
@@ -955,4 +954,17 @@ fn a_replayed_older_manifest_cannot_un_revoke_a_root() {
         }),
         "the superseded manifest is refused, so the root stays revoked"
     );
+}
+
+/// The `SigningPlan` `app::run` projects, so this lane drives the production wiring
+/// through the same plan the binary does — including the boundary that produces it.
+fn signing_plan(config: &mcp_re_proxy::cli::Config) -> mcp_re_proxy::startup_plan::SigningPlan {
+    use mcp_re_proxy::startup_plan::{response_issuer_kid, SigningPlan, TrustEpochPlan};
+    let validated = mcp_re_proxy::cli::ValidatedConfig::try_from(config.clone())
+        .expect("the fixture config must validate");
+    SigningPlan::from_validated(
+        &validated,
+        response_issuer_kid(&validated),
+        TrustEpochPlan::from_validated(&validated),
+    )
 }

@@ -394,8 +394,7 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
     // Build the serving proxy EXACTLY as `app::run` does in delegated-required mode:
     // `build_delegated_signing` off the KMS root, then `new_delegated`.
     let config = delegated_config();
-    let wiring = mcp_re_proxy::build_delegated_signing(&config, counting)
-        .expect("build delegated signing wiring from config + KMS root");
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), counting);
     let signer = Arc::clone(&wiring.signer);
     let mut rotor = wiring.rotor;
 
@@ -754,4 +753,17 @@ async fn aws_kms_delegated_required_serving_live() {
 #[ignore = "requires a live AWS KMS (run with --ignored and MCP_RE_AWS_KMS_* + AWS creds set)"]
 fn aws_kms_authority_flip_live() {
     run_kms_authority_flip(live_signer());
+}
+
+/// The `SigningPlan` `app::run` projects, so this lane drives the production wiring
+/// through the same plan the binary does — including the boundary that produces it.
+fn signing_plan(config: &mcp_re_proxy::cli::Config) -> mcp_re_proxy::startup_plan::SigningPlan {
+    use mcp_re_proxy::startup_plan::{response_issuer_kid, SigningPlan, TrustEpochPlan};
+    let validated = mcp_re_proxy::cli::ValidatedConfig::try_from(config.clone())
+        .expect("the fixture config must validate");
+    SigningPlan::from_validated(
+        &validated,
+        response_issuer_kid(&validated),
+        TrustEpochPlan::from_validated(&validated),
+    )
 }

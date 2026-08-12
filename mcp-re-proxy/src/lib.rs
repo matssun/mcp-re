@@ -213,7 +213,7 @@ pub(crate) mod materializing_runtime;
 // root states the order they are established in; what each one MEANS lives here.
 pub(crate) mod request_stages;
 pub(crate) mod serving_capabilities;
-pub(crate) mod startup_plan;
+pub mod startup_plan;
 // ADR-MCPRE-056 §5.4: the optional-capability posture vocabulary. Every seam states
 // whether it is ON or OFF, because silence cannot distinguish "not configured here"
 // from "not in this build". Declaring takes a value, so the OFF branch is a type
