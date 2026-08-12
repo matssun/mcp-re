@@ -3390,47 +3390,6 @@ pub fn build_cpstore_replay_cache(
     )
 }
 
-/// Load the configured offline client-certificate revocation lists (#3839) into
-/// the DER form rustls' `WebPkiClientVerifier` consumes. Each path may hold one or
-/// more CRLs in PEM (`-----BEGIN X509 CRL-----`) or a single raw DER CRL. Fails
-/// closed: a missing or malformed CRL file is a hard startup error (`Err`) rather
-/// than a silently-skipped revocation check. An empty `paths` yields an empty vec
-/// (revocation checking disabled — the pre-#3839 behavior).
-///
-/// OFFLINE only: these bytes are read once at startup and never refreshed over the
-/// network. Online OCSP / CRL-distribution-point fetching is deliberately NOT done
-/// here and is deferred to a follow-up (it needs an HTTP client + a live
-/// responder, which would expand the firewalled supply chain).
-pub fn load_client_crls(
-    paths: &[String],
-) -> Result<Vec<rustls_pki_types::CertificateRevocationListDer<'static>>, String> {
-    use rustls_pki_types::pem::PemObject;
-    use rustls_pki_types::CertificateRevocationListDer;
-
-    let mut crls: Vec<CertificateRevocationListDer<'static>> = Vec::new();
-    for path in paths {
-        let bytes = std::fs::read(path).map_err(|e| format!("client CRL {path}: {e}"))?;
-        // Try PEM first (one file may carry several `X509 CRL` blocks). If the file
-        // contains no PEM CRL block, treat the whole file as a single DER CRL.
-        let pem: Vec<CertificateRevocationListDer<'static>> =
-            CertificateRevocationListDer::pem_slice_iter(&bytes)
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| format!("client CRL {path}: malformed PEM: {e}"))?;
-        if pem.is_empty() {
-            // No PEM CRL block found → interpret the bytes as one DER CRL. Empty
-            // input cannot be a valid DER CRL, so reject it (fail closed) rather
-            // than load a no-op file.
-            if bytes.is_empty() {
-                return Err(format!("client CRL {path}: file is empty"));
-            }
-            crls.push(CertificateRevocationListDer::from(bytes));
-        } else {
-            crls.extend(pem);
-        }
-    }
-    Ok(crls)
-}
-
 pub fn load_revocation_list(paths: &[String]) -> Result<Vec<String>, String> {
     let mut ids: Vec<String> = Vec::new();
     for path in paths {
@@ -6329,22 +6288,6 @@ mod tests {
         a.splice(0..0, args(&["--client-crl", "/a.crl,"]));
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("empty path segment"), "got: {err}");
-    }
-
-    #[test]
-    fn missing_client_crl_file_fails_closed() {
-        // A configured-but-unreadable CRL path is a hard error, never a silently
-        // skipped revocation check.
-        let err =
-            super::load_client_crls(&["/no/such/MCPS3839_MISSING.crl".to_string()]).unwrap_err();
-        assert!(err.contains("MCPS3839_MISSING"), "got: {err}");
-    }
-
-    #[test]
-    fn no_crl_paths_loads_empty_vec() {
-        // The no-CRL path: empty input → empty vec (revocation disabled), no error.
-        let crls = super::load_client_crls(&[]).expect("empty load");
-        assert!(crls.is_empty());
     }
 
     // --- #4030 online OCSP flag parsing -------------------------------------

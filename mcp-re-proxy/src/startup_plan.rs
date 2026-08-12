@@ -302,6 +302,106 @@ impl TrustPlan {
     }
 }
 
+/// What offline client-certificate revocation must establish.
+///
+/// The posture is a VARIANT, not a pair of primitives a consumer re-reads. Layer A already
+/// classified `None`/`Static`/`Reloading` (§C.6), and a plan carrying `Vec<String>` beside
+/// `Option<u64>` would invite the plane to rediscover that classification from
+/// `paths.is_empty()` and `cadence.is_some()` — obeying the letter of "planning consumes
+/// the classification" while reconstructing it one field at a time.
+///
+/// Each variant carries exactly what ITS posture needs. `None` cannot hold paths and
+/// `Static` cannot hold a cadence, so the combinations layer A refuses are not merely
+/// unreachable but unrepresentable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClientRevocationPlan {
+    /// No CRLs. Revocation rests on the client-certificate lifetime ceiling alone, which
+    /// is a posture rather than an absence — see [`crate::tls_plane::fleet_crl_bound`].
+    None,
+    /// CRLs read once at startup. A revocation published afterwards reaches this replica
+    /// when the CRL passes its own `nextUpdate`, or on a restart.
+    Static {
+        /// The files to read.
+        paths: Vec<String>,
+    },
+    /// CRLs re-read on a cadence, so a revocation published after startup takes effect
+    /// within it — on established connections as well as at the handshake.
+    Reloading {
+        /// The files to read.
+        paths: Vec<String>,
+        /// Seconds between re-reads. Layer A holds it above zero.
+        cadence_secs: u64,
+    },
+}
+
+impl ClientRevocationPlan {
+    /// Project the plan from the classified state and the validated locators.
+    ///
+    /// Infallible: `Static` and `Reloading` are the states that HAVE paths, and
+    /// `Reloading` is the state that has a cadence, so layer A has already established
+    /// that each value the variant requires is present.
+    pub fn from_validated(config: &ValidatedConfig) -> ClientRevocationPlan {
+        match config.state().crl_revocation() {
+            crate::config_state::CrlRevocationState::None => ClientRevocationPlan::None,
+            crate::config_state::CrlRevocationState::Static => ClientRevocationPlan::Static {
+                paths: config.client_crl_paths.clone(),
+            },
+            crate::config_state::CrlRevocationState::Reloading => ClientRevocationPlan::Reloading {
+                paths: config.client_crl_paths.clone(),
+                cadence_secs: config
+                    .client_crl_reload_secs
+                    .expect("the reloading state requires the cadence layer A checked for"),
+            },
+        }
+    }
+
+    /// The files to read, empty where the posture reads none.
+    ///
+    /// For materialization, which loads the same bytes under both CRL-bearing postures —
+    /// not for deciding which posture this is. That is what the variant is for.
+    pub fn paths(&self) -> &[String] {
+        match self {
+            ClientRevocationPlan::None => &[],
+            ClientRevocationPlan::Static { paths }
+            | ClientRevocationPlan::Reloading { paths, .. } => paths,
+        }
+    }
+}
+
+/// What the TLS plane must establish (ADR-MCPRE-056 §8).
+///
+/// Two classified states and the resource inputs each posture needs. The certificate
+/// lifetime and the connection-age bound are INPUTS, not decisions: X5's compatibility
+/// relation between them was settled at layer A and is not re-checked here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsPlan {
+    /// Whether the handshake key can leave the device it lives on.
+    pub custody: crate::config_state::TlsCustodyState,
+    /// The offline client-certificate revocation posture.
+    pub client_revocation: ClientRevocationPlan,
+    /// The client-certificate lifetime ceiling, for the operator-facing exposure window.
+    pub max_client_cert_lifetime: Option<std::time::Duration>,
+    /// The connection-age bound the exposure window's honesty depends on.
+    pub max_connection_age: Option<std::time::Duration>,
+}
+
+impl TlsPlan {
+    /// Project the plan from the retained classification and the validated inputs.
+    ///
+    /// **Infallible, deliberately.** Whether this binary has a PKCS#11, AWS or GCP backend
+    /// for delegated custody is a fact about the BUILD, and making this fallible for it
+    /// would collapse the A/B split: the request is coherent either way, and only
+    /// materialization can say whether this executable can serve it.
+    pub fn from_validated(config: &ValidatedConfig) -> TlsPlan {
+        TlsPlan {
+            custody: config.state().tls_custody(),
+            client_revocation: ClientRevocationPlan::from_validated(config),
+            max_client_cert_lifetime: config.max_client_cert_lifetime,
+            max_connection_age: config.limits.max_connection_age,
+        }
+    }
+}
+
 /// What the MRTR continuation store must establish (ADR-MCPS-047, CF-12).
 ///
 /// `Disabled` is a posture, not an absence: cross-replica continuation is opportunistic,
@@ -821,6 +921,79 @@ mod tests {
                 key: "decided-above".to_string(),
             }
         );
+    }
+
+    // ---- the TLS plan --------------------------------------------------------------
+
+    /// Each CRL posture is projected as the VARIANT that carries its own parameters.
+    ///
+    /// The combinations layer A refuses are not merely unreachable here, they are
+    /// unrepresentable: `None` has nowhere to put paths and `Static` has nowhere to put a
+    /// cadence. That is what stops the plane rediscovering the posture from a `Vec` and an
+    /// `Option` it was handed side by side.
+    #[test]
+    fn each_crl_posture_is_projected_as_its_own_variant() {
+        assert_eq!(
+            ClientRevocationPlan::from_validated(&validated(&[])),
+            ClientRevocationPlan::None
+        );
+        assert_eq!(
+            ClientRevocationPlan::from_validated(&validated(&["--client-crl", "/crl.pem"])),
+            ClientRevocationPlan::Static {
+                paths: vec!["/crl.pem".to_string()],
+            }
+        );
+        assert_eq!(
+            ClientRevocationPlan::from_validated(&validated(&[
+                "--client-crl",
+                "/crl.pem",
+                "--client-crl-reload-secs",
+                "300",
+            ])),
+            ClientRevocationPlan::Reloading {
+                paths: vec!["/crl.pem".to_string()],
+                cadence_secs: 300,
+            }
+        );
+    }
+
+    /// Materialization loads the same bytes under both CRL-bearing postures, so the paths
+    /// are reachable without matching — but the accessor answers "which files", never
+    /// "which posture". An empty result means this posture reads none, not that the
+    /// deployment has no revocation configured.
+    #[test]
+    fn the_paths_accessor_answers_which_files_not_which_posture() {
+        assert!(ClientRevocationPlan::None.paths().is_empty());
+        for plan in [
+            ClientRevocationPlan::Static {
+                paths: vec!["/a.pem".to_string()],
+            },
+            ClientRevocationPlan::Reloading {
+                paths: vec!["/a.pem".to_string()],
+                cadence_secs: 60,
+            },
+        ] {
+            assert_eq!(plan.paths(), ["/a.pem".to_string()]);
+        }
+    }
+
+    /// The plan carries the classified custody, and the cert-lifetime/connection-age
+    /// values as INPUTS. X5's relation between the latter two was settled at layer A and
+    /// is not re-checked here — the plan simply carries what the posture must state.
+    #[test]
+    fn the_tls_plan_carries_the_classified_custody_and_its_inputs() {
+        let config = validated(&["--max-client-cert-lifetime", "3600"]);
+        let plan = TlsPlan::from_validated(&config);
+        assert_eq!(
+            plan.custody,
+            crate::config_state::TlsCustodyState::Exported,
+            "the fixture's TLS key is an exported file"
+        );
+        assert_eq!(
+            plan.max_client_cert_lifetime,
+            Some(std::time::Duration::from_secs(3600))
+        );
+        assert_eq!(plan.client_revocation, ClientRevocationPlan::None);
     }
 
     /// A COMPLETE admission configuration. Setting only `admission` used to be enough

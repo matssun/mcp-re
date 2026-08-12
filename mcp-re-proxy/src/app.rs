@@ -449,6 +449,9 @@ fn run_validated(
     let trust_epoch = crate::startup_plan::TrustEpochPlan::from_validated(config);
     let trust_plan =
         crate::startup_plan::TrustPlan::from_validated(config, response_kid.clone(), trust_epoch);
+    // Transport custody and the offline client-cert revocation posture, both already
+    // classified by layer A (ADR-MCPRE-056 §8).
+    let tls_plan = crate::startup_plan::TlsPlan::from_validated(config);
 
     // ADR-MCPRE-057 §3 — the lifecycle becomes a value here.
     //
@@ -551,7 +554,7 @@ fn run_validated(
     // per-request revocation index and the CRL reload worker; `tls_material` is MOVED in
     // so no second copy of the key material can drift from the one a reload rebuilds.
     building.install_tls(crate::tls_plane::TlsPlane::materialize(
-        config,
+        &tls_plan,
         tls_material,
         server_chain,
         client_ca,
@@ -565,7 +568,7 @@ fn run_validated(
     // ADR-MCPS-023 §A1 (MCPS-58): the operator-visible revocation posture. Rendered by
     // the plane that parsed the CRLs, so what an operator is told is assertable in a test
     // rather than only readable in a transcript.
-    for line in crate::tls_plane::revocation_posture_lines(config, building.tls().crls()) {
+    for line in crate::tls_plane::revocation_posture_lines(&tls_plan, building.tls().crls()) {
         eprintln!("{line}");
     }
 
@@ -575,11 +578,7 @@ fn run_validated(
     // claimed on either.
     if config.fleet {
         let trust_bound = crate::trust_plane::fleet_trust_bound(&trust_plan);
-        let crl_bound = crate::tls_plane::fleet_crl_bound(
-            !building.tls().crls().is_empty(),
-            config.max_client_cert_lifetime,
-            config.client_crl_reload_secs,
-        );
+        let crl_bound = crate::tls_plane::fleet_crl_bound(&tls_plan);
         eprintln!(
             "mcp-re-proxy: FLEET cross-replica revocation-lag bounds (ADR-MCPS-049 clause 3): \
              trust-key-status={trust_bound}; client-cert-crl={crl_bound}; zero-window revocation \

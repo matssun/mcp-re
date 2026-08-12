@@ -50,7 +50,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::cli;
 use crate::client_revocation;
 use crate::config_snapshot;
 use crate::managed_worker::WorkerSet;
@@ -197,10 +196,17 @@ impl TlsPlane {
     /// Establish transport custody: load and check the CRLs, build the serving TLS
     /// configuration, and start the reload worker when a cadence is configured.
     ///
+    /// Takes a [`TlsPlan`](crate::startup_plan::TlsPlan) and no configuration. Which
+    /// revocation posture and which custody this deployment is in were decided by layer A;
+    /// what is left here is loading the bytes, building the verifier and starting the
+    /// worker the posture calls for.
+    ///
     /// `material` is MOVED in — the reload worker rebuilds the verifier from the same
-    /// immutable key material, so nothing outside this plane may keep a second copy.
+    /// immutable key material, so nothing outside this plane may keep a second copy. It is
+    /// the ESTABLISHED custody, and the plan states the REQUESTED one; the two are checked
+    /// against each other below rather than assumed to agree.
     pub fn materialize(
-        config: &cli::ValidatedConfig,
+        plan: &crate::startup_plan::TlsPlan,
         material: TlsKeyMaterial,
         server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
         client_ca: Vec<rustls_pki_types::CertificateDer<'static>>,
@@ -208,16 +214,36 @@ impl TlsPlane {
         deployment: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<TlsPlane, String> {
         let is_delegated = material.is_delegated();
+        // The one place the REQUESTED custody and the ESTABLISHED custody meet. Layer A
+        // classified which the deployment asked for from its TLS key selectors; the key
+        // source produced an actual signer. Nothing else compares them, so a divergence —
+        // a selector that classifies as delegated while the key source yields an exported
+        // key — would silently serve handshakes under weaker custody than the deployment
+        // declared, and every startup line would report the declared one.
+        if is_delegated != plan.custody.is_delegated() {
+            return Err(format!(
+                "TLS custody mismatch: the deployment is configured for {} handshake custody, \
+                 but the key source established {} custody. Refusing to serve under a custody \
+                 the configuration does not name",
+                if plan.custody.is_delegated() {
+                    "delegated"
+                } else {
+                    "exported-key"
+                },
+                material.label(),
+            ));
+        }
         // Offline client-cert CRLs (#3839). Loaded once at startup; a missing or
         // malformed CRL file fails closed here. OFFLINE revocation only — there is no
         // online OCSP / distribution-point fetching.
-        let client_crls = cli::load_client_crls(&config.client_crl_paths)?;
+        let crl_paths = plan.client_revocation.paths();
+        let client_crls = tls::load_client_crls(crl_paths)?;
         let mut postures = Vec::with_capacity(client_crls.len());
         if !client_crls.is_empty() {
             eprintln!(
                 "mcp-re-proxy: offline client-cert revocation enabled — {} CRL file(s), unknown \
                  status DENIED (fail closed) (OFFLINE only; no online OCSP/CRL-DP fetching)",
-                config.client_crl_paths.len(),
+                crl_paths.len(),
             );
             // ADR-MCPS-023 §A1 (MCPS-58): the verifier enforces CRL nextUpdate, so a
             // stale CRL fails every new handshake closed. Surface that at BOOT — refuse
@@ -269,7 +295,7 @@ impl TlsPlane {
         // re-reads only the CRLs, never these.
         let reload_chain = server_chain.clone();
         let reload_client_ca = client_ca.clone();
-        let reload_crl_paths = config.client_crl_paths.clone();
+        let reload_crl_paths = crl_paths.to_vec();
         // The CRL verifier ALWAYS fails closed on an unknown revocation status — there
         // is no relax knob. `false` = deny-unknown, threaded to every verifier builder,
         // and the module note's self-bounding argument depends on it staying that way.
@@ -317,34 +343,40 @@ impl TlsPlane {
         )));
 
         let mut workers = WorkerSet::new(deployment);
-        if let Some(reload_secs) = config.client_crl_reload_secs {
-            if reload_crl_paths.is_empty() {
-                eprintln!(
-                    "mcp-re-proxy: --client-crl-reload-secs set but no --client-crl configured; \
-                     no CRL reload scheduled"
-                );
-            } else {
-                let custody = material.label();
-                spawn_crl_reload_task(
-                    &mut workers,
-                    CrlReloadTask {
-                        snapshot: Arc::clone(&snapshot),
-                        server_chain: reload_chain,
-                        material,
-                        client_ca: reload_client_ca,
-                        crl_paths: reload_crl_paths,
-                        allow_unknown_status: reload_allow_unknown,
-                        interval_secs: reload_secs,
-                        revocation: revocation.clone(),
-                        rebuild_state: Arc::clone(&rebuild_state),
-                    },
-                );
-                eprintln!(
-                    "mcp-re-proxy: in-process CRL hot-reload enabled (every {reload_secs}s, \
-                     {custody} TLS custody; refreshed --client-crl honored without restart; \
-                     failed reload keeps last-good)"
-                );
-            }
+        // Only the `Reloading` posture starts a worker, and the cadence comes from that
+        // variant rather than from an `Option` beside it.
+        //
+        // There was a branch here for a cadence with no CRLs, which printed "no CRL reload
+        // scheduled" and carried on. It is gone because it is now unreachable: that
+        // combination is refused at the boundary (CF-04 — a cadence for re-reading an empty
+        // set states a control the deployment does not have). The same shape as
+        // `ReplayPlan::Memory` — a branch that survived because nothing had ever asked
+        // whether a configuration could reach it.
+        if let crate::startup_plan::ClientRevocationPlan::Reloading {
+            paths: _,
+            cadence_secs,
+        } = &plan.client_revocation
+        {
+            let custody = material.label();
+            spawn_crl_reload_task(
+                &mut workers,
+                CrlReloadTask {
+                    snapshot: Arc::clone(&snapshot),
+                    server_chain: reload_chain,
+                    material,
+                    client_ca: reload_client_ca,
+                    crl_paths: reload_crl_paths,
+                    allow_unknown_status: reload_allow_unknown,
+                    interval_secs: *cadence_secs,
+                    revocation: revocation.clone(),
+                    rebuild_state: Arc::clone(&rebuild_state),
+                },
+            );
+            eprintln!(
+                "mcp-re-proxy: in-process CRL hot-reload enabled (every {cadence_secs}s, \
+                 {custody} TLS custody; refreshed --client-crl honored without restart; \
+                 failed reload keeps last-good)"
+            );
         }
         Ok(TlsPlane {
             snapshot,
@@ -498,7 +530,7 @@ fn crl_reload_loop(task: CrlReloadTask, halt: &crate::managed_worker::Halt) {
                 return;
             }
             let outcome = config_snapshot::reload_once(&snapshot, || {
-                let crls = cli::load_client_crls(&crl_paths)?;
+                let crls = tls::load_client_crls(&crl_paths)?;
                 // A CRL that never falls out of force is refused on reload for the same
                 // reason it is refused at startup: keeping last-good is only safe while
                 // last-good ages out on its own.
@@ -569,11 +601,16 @@ fn crl_reload_loop(task: CrlReloadTask, halt: &crate::managed_worker::Halt) {
 /// what an operator is told was to read a transcript. Rendering the facts the plane
 /// already parsed makes the posture assertable (`posture_tests` below) and takes
 /// domain-specific posture construction off the root (ADR-MCPRE-058 §7.1).
+///
+/// Takes the plan AND the evidence, and the split is not incidental: the exposure window
+/// is a statement about what was CONFIGURED, while `per_request_crl_check` is a statement
+/// about what was actually LOADED and is being enforced. Rendering the second from the
+/// plan would report a mechanism as enforced because it was asked for.
 pub(crate) fn revocation_posture_lines(
-    config: &crate::cli::Config,
+    plan: &crate::startup_plan::TlsPlan,
     crls: &ClientCrlEvidence,
 ) -> Vec<String> {
-    let exposure_window = match config.max_client_cert_lifetime {
+    let exposure_window = match plan.max_client_cert_lifetime {
         Some(d) => format!("{}s", d.as_secs()),
         None => "unbounded".to_string(),
     };
@@ -584,7 +621,7 @@ pub(crate) fn revocation_posture_lines(
     let mut lines = vec![format!(
         "mcp-re.revocation.posture connection_max_age={} per_request_cert_validity=enforced \
          per_request_crl_check={} tls_session_resumption=epoch-bound",
-        match config.limits.max_connection_age {
+        match plan.max_connection_age {
             Some(d) => format!("{}s", d.as_secs()),
             None => "unbounded".to_string(),
         },
@@ -599,7 +636,7 @@ pub(crate) fn revocation_posture_lines(
         }
     )];
     if crls.is_empty() {
-        let max_lifetime = match config.max_client_cert_lifetime {
+        let max_lifetime = match plan.max_client_cert_lifetime {
             Some(d) => format!("{}s", d.as_secs()),
             None => "none".to_string(),
         };
@@ -643,25 +680,31 @@ pub(crate) fn revocation_posture_lines(
 ///   established connections as well as at the handshake, so a peer holding a connection
 ///   open does not escape a republished index;
 /// - a CRL without a cadence: the CRL's own `nextUpdate`, or a restart.
-pub fn fleet_crl_bound(
-    has_crls: bool,
-    max_client_cert_lifetime: Option<std::time::Duration>,
-    client_crl_reload_secs: Option<u64>,
-) -> String {
-    if !has_crls {
-        let window = max_client_cert_lifetime
-            .map(|d| format!("{}s", d.as_secs()))
-            .unwrap_or_else(|| "unbounded".to_string());
-        return format!("short-lived-cert only (exposure_window {window}); no client CRL");
-    }
-    match client_crl_reload_secs {
-        Some(secs) => format!(
-            "bounded {secs}s (the --client-crl-reload-secs cadence), enforced per request \
-             on established connections as well as at the handshake"
+///
+/// One `match` over the classified posture, where it was three parameters and two nested
+/// conditionals. The arms are the states, so a fourth posture would not compile until it
+/// stated its own bound — which is the property this claim most needs, since a posture
+/// falling through to another's sentence is exactly how an operator gets a number that
+/// nothing enforces.
+pub fn fleet_crl_bound(plan: &crate::startup_plan::TlsPlan) -> String {
+    use crate::startup_plan::ClientRevocationPlan;
+    match &plan.client_revocation {
+        ClientRevocationPlan::None => {
+            let window = plan
+                .max_client_cert_lifetime
+                .map(|d| format!("{}s", d.as_secs()))
+                .unwrap_or_else(|| "unbounded".to_string());
+            format!("short-lived-cert only (exposure_window {window}); no client CRL")
+        }
+        ClientRevocationPlan::Reloading { cadence_secs, .. } => format!(
+            "bounded {cadence_secs}s (the --client-crl-reload-secs cadence), enforced per \
+             request on established connections as well as at the handshake"
         ),
-        None => "the CRL nextUpdate / a restart (no --client-crl-reload-secs) — a fleet's \
-                 CRL-rollout window"
-            .to_string(),
+        ClientRevocationPlan::Static { .. } => {
+            "the CRL nextUpdate / a restart (no --client-crl-reload-secs) — a fleet's \
+             CRL-rollout window"
+                .to_string()
+        }
     }
 }
 
@@ -756,52 +799,21 @@ mod handle_lifetime_tests {
 mod revocation_posture_tests {
     use super::revocation_posture_lines;
     use super::ClientCrlEvidence;
+    use crate::startup_plan::{ClientRevocationPlan, TlsPlan};
     use crate::tls::CrlPosture;
 
-    /// A config with no CRLs and the given client-cert lifetime.
-    fn config(max_client_cert_lifetime: Option<std::time::Duration>) -> crate::cli::Config {
-        let argv: Vec<String> = [
-            "--bind",
-            "127.0.0.1:8443",
-            "--audience",
-            "did:example:server-1",
-            "--server-signer",
-            "did:example:server-1",
-            "--server-key-id",
-            "server-key-1",
-            "--tls-cert",
-            "/cert",
-            "--tls-key",
-            "/key",
-            "--client-ca",
-            "/ca",
-            "--trust",
-            "/trust.json",
-            "--key-source",
-            "file",
-            "--signing-key-seed",
-            "/seed",
-            "--inner-http-url",
-            "http://127.0.0.1:8080/mcp",
-            "--target-uri",
-            "https://mcp.example.com/mcp",
-            "--delegated-trust-epoch",
-            "epoch-min",
-            "--replay-cache",
-            "shared",
-            "--replay-redis-url",
-            "redis://127.0.0.1:6379",
-            "--replay-durability-tier",
-            "redis-wait-quorum:1:100",
-            "--trust-domain",
-            "mcp.example.com",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-        let mut config = crate::cli::parse_args(&argv).expect("the minimal config must parse");
-        config.max_client_cert_lifetime = max_client_cert_lifetime;
-        config
+    /// A plan with no CRLs and the given client-cert lifetime.
+    ///
+    /// Written out rather than parsed. These assert what an operator is TOLD about a
+    /// posture, and a posture is nameable directly now instead of being assembled out of a
+    /// whole command line around two fields.
+    fn plan(max_client_cert_lifetime: Option<std::time::Duration>) -> TlsPlan {
+        TlsPlan {
+            custody: crate::config_state::TlsCustodyState::Exported,
+            client_revocation: ClientRevocationPlan::None,
+            max_client_cert_lifetime,
+            max_connection_age: Some(std::time::Duration::from_secs(300)),
+        }
     }
 
     fn no_crls() -> ClientCrlEvidence {
@@ -816,7 +828,7 @@ mod revocation_posture_tests {
     /// loaded would describe a mechanism that is not running.
     #[test]
     fn with_no_crl_the_per_request_check_is_reported_as_not_configured() {
-        let lines = revocation_posture_lines(&config(None), &no_crls());
+        let lines = revocation_posture_lines(&plan(None), &no_crls());
         assert!(
             lines[0].contains("per_request_crl_check=not_configured"),
             "got: {}",
@@ -838,7 +850,7 @@ mod revocation_posture_tests {
     /// substituted here would hide exactly that.
     #[test]
     fn a_disabled_certificate_lifetime_renders_as_unbounded() {
-        let lines = revocation_posture_lines(&config(None), &no_crls());
+        let lines = revocation_posture_lines(&plan(None), &no_crls());
         assert!(
             lines
                 .iter()
@@ -877,7 +889,7 @@ mod revocation_posture_tests {
             ],
         };
         let lines =
-            revocation_posture_lines(&config(Some(std::time::Duration::from_secs(3600))), &crls);
+            revocation_posture_lines(&plan(Some(std::time::Duration::from_secs(3600))), &crls);
         assert!(
             lines[0].contains("per_request_crl_check=enforced"),
             "got: {}",
@@ -898,13 +910,113 @@ mod revocation_posture_tests {
     }
 }
 
+/// The one place the REQUESTED custody and the ESTABLISHED custody meet.
+#[cfg(test)]
+mod custody_agreement_tests {
+    use super::*;
+    use crate::startup_plan::{ClientRevocationPlan, TlsPlan};
+
+    fn exported_material() -> TlsKeyMaterial {
+        use rustls::pki_types::PrivateKeyDer;
+        use rustls::pki_types::PrivatePkcs8KeyDer;
+        let key = rcgen::KeyPair::generate().expect("key");
+        TlsKeyMaterial::Exported(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
+            key.serialize_der(),
+        )))
+    }
+
+    fn plan(custody: crate::config_state::TlsCustodyState) -> TlsPlan {
+        TlsPlan {
+            custody,
+            client_revocation: ClientRevocationPlan::None,
+            max_client_cert_lifetime: None,
+            max_connection_age: None,
+        }
+    }
+
+    /// A deployment configured for delegated handshake custody must not be served by an
+    /// exported key.
+    ///
+    /// Nothing else compares these. Layer A classifies the custody from the TLS key
+    /// selectors; the key source produces an actual signer; and every startup line reports
+    /// the DECLARED custody. A divergence would therefore serve handshakes under weaker
+    /// custody than the transcript claims — the failure would be invisible in exactly the
+    /// place an operator looks.
+    #[test]
+    fn a_key_source_that_disagrees_with_the_declared_custody_refuses() {
+        let err = TlsPlane::materialize(
+            &plan(crate::config_state::TlsCustodyState::Delegated),
+            exported_material(),
+            Vec::new(),
+            Vec::new(),
+            0,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .err()
+        .expect("mismatched custody must refuse");
+        assert!(err.contains("custody"), "{err}");
+        assert!(
+            err.contains("delegated") && err.contains("exported-key"),
+            "the refusal must name both sides: {err}"
+        );
+    }
+
+    /// Negative control: agreement is not refused. Without this the assertion above would
+    /// pass just as well if `materialize` refused everything.
+    ///
+    /// It fails later — on the empty certificate chain — which is the point: the custody
+    /// check is not what stops it, and the diagnostic proves which check ran.
+    #[test]
+    fn agreeing_custody_passes_the_check_and_fails_on_something_else() {
+        let err = TlsPlane::materialize(
+            &plan(crate::config_state::TlsCustodyState::Exported),
+            exported_material(),
+            Vec::new(),
+            Vec::new(),
+            0,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .err()
+        .expect("an empty chain cannot build a server config");
+        assert!(
+            !err.contains("custody mismatch"),
+            "agreeing custody must pass the check: {err}"
+        );
+    }
+}
+
 #[cfg(test)]
 mod fleet_crl_bound_tests {
+    use super::fleet_crl_bound;
+    use crate::startup_plan::{ClientRevocationPlan, TlsPlan};
+
+    /// A plan in the posture under test. The postures are enumerated as VARIANTS, so a
+    /// combination layer A refuses — a cadence with no CRLs — cannot be written here at
+    /// all. The old `(has_crls, lifetime, cadence)` triple could name it, and did.
+    fn plan(
+        client_revocation: ClientRevocationPlan,
+        max_client_cert_lifetime: Option<std::time::Duration>,
+    ) -> TlsPlan {
+        TlsPlan {
+            custody: crate::config_state::TlsCustodyState::Exported,
+            client_revocation,
+            max_client_cert_lifetime,
+            max_connection_age: None,
+        }
+    }
+
+    fn crl_paths() -> Vec<String> {
+        vec!["/crl.pem".to_string()]
+    }
+
     /// With no CRL the ONLY bound is the certificate lifetime, and the line has to say so
     /// rather than imply a revocation mechanism exists.
     #[test]
     fn without_a_crl_the_bound_is_the_certificate_lifetime() {
-        let bound = super::fleet_crl_bound(false, Some(std::time::Duration::from_secs(3600)), None);
+        let bound = fleet_crl_bound(&plan(
+            ClientRevocationPlan::None,
+            Some(std::time::Duration::from_secs(3600)),
+        ));
         assert!(bound.contains("exposure_window 3600s"), "got: {bound}");
         assert!(bound.contains("no client CRL"), "got: {bound}");
     }
@@ -914,7 +1026,7 @@ mod fleet_crl_bound_tests {
     /// appears in a transcript, it names the thing that should have been impossible.
     #[test]
     fn a_disabled_lifetime_renders_as_unbounded_not_as_a_number() {
-        let bound = super::fleet_crl_bound(false, None, None);
+        let bound = fleet_crl_bound(&plan(ClientRevocationPlan::None, None));
         assert!(bound.contains("exposure_window unbounded"), "got: {bound}");
     }
 
@@ -924,7 +1036,13 @@ mod fleet_crl_bound_tests {
     /// than the number alone suggests.
     #[test]
     fn a_reload_cadence_bounds_established_connections_not_only_handshakes() {
-        let bound = super::fleet_crl_bound(true, None, Some(300));
+        let bound = fleet_crl_bound(&plan(
+            ClientRevocationPlan::Reloading {
+                paths: crl_paths(),
+                cadence_secs: 300,
+            },
+            None,
+        ));
         assert!(bound.contains("bounded 300s"), "got: {bound}");
         assert!(
             bound.contains("established connections"),
@@ -936,7 +1054,10 @@ mod fleet_crl_bound_tests {
     /// never the cert lifetime, which does not apply once a CRL is present.
     #[test]
     fn without_a_cadence_the_bound_is_the_crls_own_expiry() {
-        let bound = super::fleet_crl_bound(true, Some(std::time::Duration::from_secs(60)), None);
+        let bound = fleet_crl_bound(&plan(
+            ClientRevocationPlan::Static { paths: crl_paths() },
+            Some(std::time::Duration::from_secs(60)),
+        ));
         assert!(bound.contains("nextUpdate"), "got: {bound}");
         assert!(
             !bound.contains("exposure_window"),

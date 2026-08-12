@@ -675,9 +675,13 @@ nt_rust_test(
     srcs = ["tests/plane_config_reachback_test.rs"],
     auto_cargo_toml = False,
     bazel_build_cfg = False,
-    data = ["src/trust_plane.rs"],
+    data = [
+        "src/tls_plane.rs",
+        "src/trust_plane.rs",
+    ],
     edition = "2021",
     env = {
+        "MCP_RE_TLS_PLANE_SRC": "$(rlocationpath src/tls_plane.rs)",
         "MCP_RE_TRUST_PLANE_SRC": "$(rlocationpath src/trust_plane.rs)",
     },
     deps = [
