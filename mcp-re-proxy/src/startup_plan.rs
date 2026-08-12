@@ -14,19 +14,24 @@
 //! interchangeable claims, and every posture statement derived from them would inherit
 //! the confusion.
 
-use crate::cli::ReplayKind;
 use crate::cli::ValidatedConfig;
+use crate::config_state::ContinuationControlState;
+use crate::config_state::ReplayState;
 use crate::replay_tier::ReplayDurabilityTier;
 
 /// The authoritative replay tier this deployment asked for.
 ///
 /// Carries the configuration each backend needs, already resolved and checked for
-/// presence, so materialization has no config lookups left to fail on — only the
-/// environment.
+/// presence, so materialization has no config lookups left to fail on — only the build and
+/// the environment.
+///
+/// **Two variants, because there are two live states.** There was a `Memory` variant with
+/// a full materialization arm that nothing could reach: the boundary refuses
+/// `--replay-cache memory` in every build, so no configuration produced it. And there was
+/// never a `File` arm at all, which is what made `--replay-cache file` admissible at the
+/// boundary and unstartable one stage later (CF-01).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReplayPlan {
-    /// In-process, single-replica. The tier `Proxy::new` is already constructed with.
-    Memory,
     /// CP / linearizable, over the etcd v3 gateway.
     Etcd {
         endpoint: String,
@@ -40,49 +45,35 @@ pub enum ReplayPlan {
 }
 
 impl ReplayPlan {
-    /// Decide the tier from configuration. Deterministic, no I/O.
+    /// Project the plan from the classified replay state and the validated locators.
     ///
-    /// The refusals here are the ones knowable from configuration alone: a kind the async
-    /// serving plane does not offer, and a selected mode missing a value it requires.
-    /// Refusals that depend on which backends were COMPILED IN stay with materialization
-    /// — they are facts about the build, not about the request, they are reported after
-    /// these today, and moving them here would change which diagnostic an operator sees
-    /// first when both apply.
-    pub fn from_config(config: &ValidatedConfig) -> Result<ReplayPlan, String> {
-        match config.replay {
-            ReplayKind::Memory => Ok(ReplayPlan::Memory),
-            // Not a missing feature — a shape that does not fit the data plane at all
-            // (ADR-MCPRE-051 §1).
-            //
-            // The remedy names only `shared`, because it is the only one that can start:
-            // `--replay-cache memory` is refused by validation in every build, so
-            // recommending it would send an operator to a second dead end.
-            ReplayKind::File => Err(
-                "--replay-cache file is not supported on the async serving path: a single \
-                 file-backed cache does not fit the per-core share-nothing data plane. Use \
-                 --replay-cache shared with --replay-durability-tier (redis-wait-quorum or \
-                 linearizable) for durable cross-replica replay."
-                    .to_string(),
-            ),
-            ReplayKind::Shared => {
-                let tier = config
-                    .replay_durability_tier
-                    .as_ref()
-                    .ok_or("--replay-cache shared requires --replay-durability-tier")?
-                    .clone();
-                if matches!(tier, ReplayDurabilityTier::Linearizable) {
-                    let endpoint = config.cpstore_etcd_endpoint.clone().ok_or(
-                        "--replay-durability-tier linearizable requires --cpstore-etcd-endpoint",
-                    )?;
-                    Ok(ReplayPlan::Etcd { endpoint, tier })
-                } else {
-                    let url = config
-                        .replay_redis_url
-                        .clone()
-                        .ok_or("--replay-cache shared requires --replay-redis-url")?;
-                    Ok(ReplayPlan::Redis { url, tier })
-                }
-            }
+    /// **Infallible.** It used to re-decide legality — which kind is offered, whether the
+    /// selected mode has the value it requires — and those decisions are layer A's, made
+    /// once, before this. What survives here is the projection: the state says which
+    /// backend, the validated config supplies the endpoint the state required.
+    ///
+    /// Refusals that depend on which backends were COMPILED IN stay with materialization.
+    /// They are facts about the build, not about the request.
+    pub fn from_validated(config: &ValidatedConfig) -> ReplayPlan {
+        let tier = config
+            .replay_durability_tier
+            .clone()
+            .expect("a classified replay state requires a declared durability tier");
+        match config.state().replay() {
+            ReplayState::SharedLinearizable => ReplayPlan::Etcd {
+                endpoint: config
+                    .cpstore_etcd_endpoint
+                    .clone()
+                    .expect("the linearizable state requires the endpoint layer A checked for"),
+                tier,
+            },
+            ReplayState::SharedRedis => ReplayPlan::Redis {
+                url: config
+                    .replay_redis_url
+                    .clone()
+                    .expect("the Redis state requires the URL layer A checked for"),
+                tier,
+            },
         }
     }
 
@@ -170,12 +161,46 @@ pub fn response_issuer_kid(config: &ValidatedConfig) -> String {
         .unwrap_or_else(|| config.server_key_id.clone())
 }
 
-/// Whether the MRTR continuation store will be wired (ADR-MCPS-047).
+/// What the MRTR continuation store must establish (ADR-MCPS-047, CF-12).
 ///
-/// Keyed on a shared Redis URL, NOT on the replay tier: a linearizable/etcd deployment
-/// that also names a Redis URL still gets cross-replica continuation.
-pub fn continuation_needs_control_runtime(config: &ValidatedConfig) -> bool {
-    cfg!(feature = "redis_replay") && config.replay_redis_url.is_some()
+/// `Disabled` is a posture, not an absence: cross-replica continuation is opportunistic,
+/// so a deployment without it is a deployment whose multi-round-trip flows are
+/// single-replica and whose cross-replica answers fail closed at the binding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContinuationControlPlan {
+    /// No shared store; flows resolve on the replica that opened them.
+    Disabled,
+    /// A shared Redis store at this endpoint.
+    Redis {
+        /// The continuation store's OWN endpoint. It is not the replay store's, even when
+        /// an operator points both at the same Redis.
+        endpoint: String,
+    },
+}
+
+impl ContinuationControlPlan {
+    /// Project the plan from the classified state and the validated locator.
+    ///
+    /// Infallible: layer A already decided that this state is legal and that the locator
+    /// is present where the state requires one, so there is no second refusal to make.
+    pub fn from_validated(config: &ValidatedConfig) -> ContinuationControlPlan {
+        match config.state().continuation_control() {
+            ContinuationControlState::Disabled => ContinuationControlPlan::Disabled,
+            ContinuationControlState::Redis => ContinuationControlPlan::Redis {
+                endpoint: config
+                    .continuation_control_redis_url
+                    .clone()
+                    .expect("the Redis state requires the locator layer A checked for"),
+            },
+        }
+    }
+
+    /// Whether establishing this plan needs the shared control runtime.
+    ///
+    /// One contributor to the aggregate — never the decision itself.
+    pub fn needs_control_runtime(&self) -> bool {
+        cfg!(feature = "redis_replay") && matches!(self, ContinuationControlPlan::Redis { .. })
+    }
 }
 
 /// Whether the §7 admission-currency gate will be wired (MCPRE-493).
@@ -202,7 +227,7 @@ pub fn control_runtime_requirement(
 ) -> crate::control_runtime::ControlRuntimeRequirement {
     crate::control_runtime::ControlRuntimeRequirement::any([
         replay.needs_control_runtime(),
-        continuation_needs_control_runtime(config),
+        ContinuationControlPlan::from_validated(config).needs_control_runtime(),
         admission_needs_control_runtime(config),
     ])
 }
@@ -258,29 +283,24 @@ mod tests {
     }
 
     /// Plan a configuration that came through the parser intact.
-    fn plan_for(extra: &[&str]) -> Result<ReplayPlan, String> {
+    fn plan_for(extra: &[&str]) -> ReplayPlan {
         let config = parse(extra).expect("args parse");
         let validated = ValidatedConfig::try_from(config).expect("config validates");
-        ReplayPlan::from_config(&validated)
+        ReplayPlan::from_validated(&validated)
     }
 
-    /// Plan a configuration that was MUTATED after parsing.
+    /// Why a configuration is not a replay deployment at all.
     ///
-    /// `parse_args` performs its own completeness checks, so a shared tier missing its
-    /// url or endpoint never survives the command line. Those checks are not what
-    /// protects the runtime: `Config` has 76 public fields and `run` accepts anything
-    /// that validates, so an embedder or harness that builds one in code reaches
-    /// planning having run none of them. Mutating a parsed config is the cheapest exact
-    /// reproduction of such a caller, and it is the only way these refusals are
-    /// reachable at all.
-    fn plan_for_mutated(
-        extra: &[&str],
-        mutate: impl FnOnce(&mut Config),
-    ) -> Result<ReplayPlan, String> {
+    /// `parse_args` runs its own completeness checks, so an incomplete shared tier never
+    /// survives the command line. Those checks are not what protects the runtime: `Config`
+    /// has public fields and `run` accepts anything that validates, so an embedder that
+    /// builds one in code meets only the boundary. Mutating a parsed config reproduces
+    /// such a caller exactly — and since layer A now classifies replay, these refusals are
+    /// the boundary's, not planning's.
+    fn refusal_for_mutated(extra: &[&str], mutate: impl FnOnce(&mut Config)) -> String {
         let mut config = parse(extra).expect("args parse");
         mutate(&mut config);
-        let validated = ValidatedConfig::try_from(config).expect("config validates");
-        ReplayPlan::from_config(&validated)
+        ValidatedConfig::try_from(config).expect_err("the mutation must be refused")
     }
 
     const SHARED_REDIS: &[&str] = &[
@@ -305,10 +325,10 @@ mod tests {
     /// — it is non-durable, and a restart re-opens a replay window for any still-fresh
     /// captured envelope.
     ///
-    /// `ReplayPlan::Memory` therefore exists as the total case over `ReplayKind` and as
-    /// what `Proxy::new` is already constructed with, not as a reachable deployment. This
-    /// is pinned so that a later change which makes planning accept memory has to fail a
-    /// test rather than quietly restore a non-durable production tier.
+    /// `ReplayPlan` no longer has a `Memory` variant to reach: it had a full
+    /// materialization arm that no configuration could produce. This is pinned so that a
+    /// later change which makes validation accept memory has to fail a test rather than
+    /// quietly restore a non-durable production tier.
     #[test]
     fn the_memory_tier_is_refused_by_validation_before_planning_sees_it() {
         // Refused on the command line...
@@ -319,36 +339,34 @@ mod tests {
         );
         // ...and refused for a caller that never touched the command line, which is the
         // altitude that actually protects the runtime.
-        let mut config = parse(SHARED_REDIS).expect("args parse");
-        config.replay = ReplayKind::Memory;
-        let err = ValidatedConfig::try_from(config).expect_err("memory must not validate");
+        let err = refusal_for_mutated(SHARED_REDIS, |c| c.replay = crate::cli::ReplayKind::Memory);
         assert!(
             err.contains("--replay-cache memory is non-durable"),
             "{err}"
         );
     }
 
-    /// A file cache validates but cannot be served: it is not a missing feature, it is a
-    /// shape that does not fit the per-core share-nothing data plane.
+    /// A file cache is refused at the boundary, as a statement about which deployments
+    /// exist (CF-01).
+    ///
+    /// It used to validate and then fail one stage later, which is the defect: the two
+    /// stages disagreed about the same configuration, and the boundary's own refusal for
+    /// `memory` recommended `file` as the remedy. Planning no longer gets the chance to
+    /// disagree — it is a projection of a decision already made.
     #[test]
-    fn the_file_cache_is_refused_on_the_async_plane() {
-        let err = plan_for(&[
-            "--replay-cache",
-            "file",
-            "--replay-path",
-            "/nonexistent/replay",
-        ])
-        .expect_err("file must be refused");
+    fn the_file_cache_is_not_a_deployment_state() {
+        let err = refusal_for_mutated(SHARED_REDIS, |c| c.replay = crate::cli::ReplayKind::File);
+        assert!(err.contains("not a supported deployment state"), "{err}");
         assert!(
-            err.contains("not supported on the async serving path"),
-            "{err}"
+            !err.contains("async serving path"),
+            "a layer-A refusal points at no serving path: {err}"
         );
     }
 
     #[test]
     fn linearizable_plans_etcd_at_the_declared_endpoint() {
         assert_eq!(
-            plan_for(SHARED_LINEARIZABLE).expect("plan"),
+            plan_for(SHARED_LINEARIZABLE),
             ReplayPlan::Etcd {
                 endpoint: "http://127.0.0.1:2379".to_string(),
                 tier: ReplayDurabilityTier::Linearizable,
@@ -362,7 +380,7 @@ mod tests {
     /// the redis library's 500ms per-command default.
     #[test]
     fn a_redis_tier_carries_its_url_and_its_wait_parameters() {
-        match plan_for(SHARED_REDIS).expect("plan") {
+        match plan_for(SHARED_REDIS) {
             ReplayPlan::Redis { url, tier } => {
                 assert_eq!(url, "redis://127.0.0.1:6379");
                 assert_eq!(tier.wait_quorum_params(), Some((2, 2000)));
@@ -372,25 +390,22 @@ mod tests {
     }
 
     #[test]
-    fn a_shared_tier_that_skipped_the_parser_still_needs_a_durability_tier() {
-        let err = plan_for_mutated(SHARED_REDIS, |c| c.replay_durability_tier = None)
-            .expect_err("an undeclared durability tier must be refused");
+    fn a_shared_tier_that_skipped_the_parser_is_refused_without_a_durability_tier() {
+        let err = refusal_for_mutated(SHARED_REDIS, |c| c.replay_durability_tier = None);
         assert!(err.contains("--replay-durability-tier"), "{err}");
     }
 
     #[test]
-    fn a_shared_redis_tier_that_skipped_the_parser_still_needs_a_url() {
-        let err = plan_for_mutated(SHARED_REDIS, |c| c.replay_redis_url = None)
-            .expect_err("a redis tier without a url must be refused");
+    fn a_shared_redis_tier_that_skipped_the_parser_is_refused_without_a_url() {
+        let err = refusal_for_mutated(SHARED_REDIS, |c| c.replay_redis_url = None);
         assert!(err.contains("--replay-redis-url"), "{err}");
     }
 
     /// The linearizable claim is never silently downgraded to redis or to memory: with no
     /// CPStore endpoint the tier is refused, not resolved to something weaker.
     #[test]
-    fn a_linearizable_tier_that_skipped_the_parser_still_needs_an_endpoint() {
-        let err = plan_for_mutated(SHARED_LINEARIZABLE, |c| c.cpstore_etcd_endpoint = None)
-            .expect_err("linearizable without an endpoint must be refused");
+    fn a_linearizable_tier_that_skipped_the_parser_is_refused_without_an_endpoint() {
+        let err = refusal_for_mutated(SHARED_LINEARIZABLE, |c| c.cpstore_etcd_endpoint = None);
         assert!(err.contains("--cpstore-etcd-endpoint"), "{err}");
     }
 
@@ -406,8 +421,7 @@ mod tests {
             "redis-wait-quorum:2:2000",
             "--replay-redis-url",
             "redis://203.0.113.1:6379",
-        ])
-        .expect("a plan is produced without contacting anything");
+        ]);
         assert!(matches!(plan, ReplayPlan::Redis { .. }));
     }
 
@@ -442,25 +456,62 @@ mod tests {
 
     #[test]
     fn only_the_redis_replay_tier_declares_a_need() {
-        let redis = plan_for(SHARED_REDIS).expect("plan");
+        let redis = plan_for(SHARED_REDIS);
         assert_eq!(redis.needs_control_runtime(), REDIS);
 
-        let etcd = plan_for(SHARED_LINEARIZABLE).expect("plan");
+        let etcd = plan_for(SHARED_LINEARIZABLE);
         assert!(
             !etcd.needs_control_runtime(),
             "the etcd store drives its own requests"
         );
-        assert!(
-            !ReplayPlan::Memory.needs_control_runtime(),
-            "the in-memory tier does no I/O"
-        );
     }
 
-    /// Keyed on the Redis URL, not the tier: an etcd deployment that also names one
-    /// still gets cross-replica continuation, so it still declares the need.
+    /// Keyed on its OWN locator, and independent of the replay tier (CF-12).
+    ///
+    /// This test used to assert that `--replay-redis-url` beside a linearizable tier
+    /// switched continuation on. That was the alias: one field naming the replay store
+    /// under one tier and the continuation store under another. The configuration it
+    /// described is now refused, and the capability it wanted is expressed directly.
     #[test]
-    fn continuation_declares_on_the_redis_url_not_the_replay_tier() {
-        let with_etcd_and_url = parse(&[
+    fn continuation_declares_on_its_own_locator_not_the_replay_tier() {
+        // The negative control for the split: a CP replay store AND a shared continuation
+        // store, which the alias made impossible to state without overloading a field.
+        let both = parse(&[
+            "--replay-cache",
+            "shared",
+            "--replay-durability-tier",
+            "linearizable",
+            "--cpstore-etcd-endpoint",
+            "http://127.0.0.1:2379",
+            "--continuation-control-redis-url",
+            "redis://127.0.0.1:6379",
+        ])
+        .expect("args parse");
+        let validated = ValidatedConfig::try_from(both).expect("independent facts, both legal");
+        assert_eq!(
+            ContinuationControlPlan::from_validated(&validated).needs_control_runtime(),
+            REDIS
+        );
+        assert!(
+            !ReplayPlan::from_validated(&validated).needs_control_runtime(),
+            "the tier is etcd, so replay itself declares nothing"
+        );
+
+        // And the converse: the replay store's locator no longer reaches continuation.
+        let no_continuation = parse(SHARED_LINEARIZABLE).expect("args parse");
+        let validated = ValidatedConfig::try_from(no_continuation).expect("validates");
+        assert_eq!(
+            ContinuationControlPlan::from_validated(&validated),
+            ContinuationControlPlan::Disabled
+        );
+        assert!(!ContinuationControlPlan::from_validated(&validated).needs_control_runtime());
+    }
+
+    /// The clean break: the old overloaded configuration is refused at layer A, not
+    /// silently reinterpreted as continuation configuration.
+    #[test]
+    fn the_old_alias_is_refused_rather_than_reinterpreted() {
+        let refusal = parse(&[
             "--replay-cache",
             "shared",
             "--replay-durability-tier",
@@ -470,19 +521,15 @@ mod tests {
             "--replay-redis-url",
             "redis://127.0.0.1:6379",
         ])
-        .expect("args parse");
-        let validated = ValidatedConfig::try_from(with_etcd_and_url).expect("validates");
-        assert_eq!(continuation_needs_control_runtime(&validated), REDIS);
+        .expect_err("the alias is refused");
         assert!(
-            !ReplayPlan::from_config(&validated)
-                .expect("plan")
-                .needs_control_runtime(),
-            "the tier is etcd, so replay itself declares nothing"
+            refusal.contains("--replay-redis-url is not valid"),
+            "{refusal}"
         );
-
-        let no_url = parse(SHARED_LINEARIZABLE).expect("args parse");
-        let validated = ValidatedConfig::try_from(no_url).expect("validates");
-        assert!(!continuation_needs_control_runtime(&validated));
+        assert!(
+            refusal.contains("--continuation-control-redis-url"),
+            "the refusal must name the setting that replaces the overloaded use: {refusal}"
+        );
     }
 
     /// A COMPLETE admission configuration. Setting only `admission` used to be enough
@@ -510,9 +557,7 @@ mod tests {
         let on = ValidatedConfig::try_from(on).expect("validates");
         assert_eq!(admission_needs_control_runtime(&on), REDIS);
         assert!(
-            !ReplayPlan::from_config(&on)
-                .expect("plan")
-                .needs_control_runtime(),
+            !ReplayPlan::from_validated(&on).needs_control_runtime(),
             "admission must not need the replay tier to have asked first"
         );
     }
@@ -525,7 +570,7 @@ mod tests {
         // Admission alone, on a tier that declares nothing.
         let admission_only = with_admission(parse(SHARED_LINEARIZABLE).expect("parse"));
         let admission_only = ValidatedConfig::try_from(admission_only).expect("validates");
-        let plan = ReplayPlan::from_config(&admission_only).expect("plan");
+        let plan = ReplayPlan::from_validated(&admission_only);
         assert_eq!(
             control_runtime_requirement(&admission_only, &plan).is_required(),
             REDIS,
@@ -535,7 +580,7 @@ mod tests {
         // Nothing networked at all.
         let none = ValidatedConfig::try_from(parse(SHARED_LINEARIZABLE).expect("parse"))
             .expect("validates");
-        let plan = ReplayPlan::from_config(&none).expect("plan");
+        let plan = ReplayPlan::from_validated(&none);
         assert_eq!(
             control_runtime_requirement(&none, &plan),
             Req::NotRequired,

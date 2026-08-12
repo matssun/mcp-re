@@ -108,8 +108,7 @@ impl Drop for Scratch {
 
 // ---- the real delegated-required server ------------------------------------
 
-fn server_config(replay_path: &std::path::Path) -> mcp_re_proxy::cli::Config {
-    let replay_path = replay_path.to_string_lossy().into_owned();
+fn server_config() -> mcp_re_proxy::cli::Config {
     let args: Vec<String> = [
         "--bind",
         "127.0.0.1:8443",
@@ -136,9 +135,11 @@ fn server_config(replay_path: &std::path::Path) -> mcp_re_proxy::cli::Config {
         "--route",
         "a",
         "--replay-cache",
-        "file",
-        "--replay-path",
-        &replay_path,
+        "shared",
+        "--replay-redis-url",
+        "redis://127.0.0.1:6379",
+        "--replay-durability-tier",
+        "redis-wait-quorum:1:100",
         "--delegated-trust-epoch",
         EPOCH,
         "--trust-domain",
@@ -179,8 +180,8 @@ fn server_resolver() -> ActorResolver {
     })
 }
 
-fn build_server(replay_path: &std::path::Path, backend_reply: &'static str) -> HttpProfileProxy {
-    let config = server_config(replay_path);
+fn build_server(backend_reply: &'static str) -> HttpProfileProxy {
+    let config = server_config();
     let wiring = mcp_re_proxy::build_delegated_signing(&config, root_key())
         .expect("build delegated signing wiring");
     let mut rotor = wiring.rotor;
@@ -337,7 +338,7 @@ fn start_sidecar_with_backend(
     };
 
     let transport = InProcessServer {
-        server: Arc::new(build_server(&scratch.join("replay"), backend_reply)),
+        server: Arc::new(build_server(backend_reply)),
         rt: tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()

@@ -51,6 +51,15 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-051 §6 (MCPRE-116): versioned serving-config snapshot + in-process
     # CRL hot-reloader. Pure std; always compiled by every flavor.
     "src/config_snapshot.rs",
+    # The classified legal deployment state — layer A of the configuration state atlas.
+    # One classifier/validator per configuration machine, and the value they produce.
+    "src/config_state/continuation_control.rs",
+    "src/config_state/cross_machine.rs",
+    "src/config_state/custody.rs",
+    "src/config_state/replay.rs",
+    "src/config_state/mod.rs",
+    "src/config_state/tls_custody.rs",
+    "src/config_state/trust_revocation.rs",
     # ADR-MCPS-028 §C: native GCP Cloud KMS Ed25519 response signer (blocking ureq
     # HTTPS + OAuth2 bearer; behind #[cfg(feature = "gcp_kms_keysource")], cfg'd out
     # of the default build). No async google-cloud SDK (ADR-MCPS-018 lean-sync).
@@ -672,6 +681,18 @@ nt_rust_test(
 nt_rust_test(
     name = "config_legality_characterization_test",
     srcs = ["tests/config_legality_characterization_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [":mcp_re_proxy"],  # keep
+)
+
+# The refusal ORDER a multiply-illegal configuration meets. State legality is the atlas's
+# question; diagnostic precedence is orchestration's, and it is observable — so it is
+# pinned separately, before the boundary is reorganised.
+nt_rust_test(
+    name = "config_refusal_precedence_test",
+    srcs = ["tests/config_refusal_precedence_test.rs"],
     auto_cargo_toml = False,
     bazel_build_cfg = False,
     edition = "2021",

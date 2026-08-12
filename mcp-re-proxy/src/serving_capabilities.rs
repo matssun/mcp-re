@@ -298,10 +298,10 @@ const CONTINUATION_STORE_OFF: &str = "MRTR continuation store = OFF (no --replay
 /// and verify the dependent leg still fails closed without it.
 #[cfg(feature = "redis_replay")]
 pub(crate) fn mrtr_continuation_store(
-    config: &cli::Config,
+    plan: &crate::startup_plan::ContinuationControlPlan,
     control: Option<&crate::control_runtime::ControlRuntime>,
 ) -> Result<Established<Arc<dyn crate::continuation_store::AsyncContinuationStore>>, String> {
-    let Some(url) = config.replay_redis_url.as_ref() else {
+    let crate::startup_plan::ContinuationControlPlan::Redis { endpoint: url } = plan else {
         return Ok(Established::off(CONTINUATION_STORE_OFF));
     };
     let handle = control
@@ -326,7 +326,7 @@ pub(crate) fn mrtr_continuation_store(
 /// the missing feature instead of the flag.
 #[cfg(not(feature = "redis_replay"))]
 pub(crate) fn mrtr_continuation_store(
-    _config: &cli::Config,
+    _plan: &crate::startup_plan::ContinuationControlPlan,
     _control: Option<&crate::control_runtime::ControlRuntime>,
 ) -> Result<Established<Arc<dyn crate::continuation_store::AsyncContinuationStore>>, String> {
     Ok(Established::off(CONTINUATION_STORE_NO_BACKEND))

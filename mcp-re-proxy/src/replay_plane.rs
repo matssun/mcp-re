@@ -37,6 +37,9 @@
 //!   and the runtime are dropped is immaterial. DRAIN-BEFORE-RECLAIM is the property to
 //!   preserve when a later owner holds both in one struct — not a field order.
 
+// Only the feature-gated backends construct a store; a default build refuses both arms
+// before it would need one.
+#[cfg(any(feature = "cpstore_etcd", feature = "redis_replay"))]
 use std::sync::Arc;
 
 use crate::async_replay::AsyncReplayTier;
@@ -60,27 +63,26 @@ pub struct MaterializedReplay {
 ///
 /// Every refusal raised here is a statement about the BUILD or the ENVIRONMENT — a
 /// backend that was not compiled in, a store that would not answer. Refusals knowable
-/// from configuration alone were already raised by [`ReplayPlan::from_config`].
+/// from configuration alone were already decided by layer A, and the plan is a projection
+/// of that decision rather than a second chance to refuse it.
 ///
 /// `control` must be present when the plan declared it needed (see
 /// `startup_plan::control_runtime_requirement`); its absence there is a wiring error in
 /// this process, not an operator mistake.
+// In a build with NEITHER backend compiled, both arms below refuse, so the code after the
+// match never runs and `max_clock_skew` is never read. That is the honest shape of such a
+// build — it can establish no live replay state at all — rather than a wart to work
+// around, so it is named here instead of being silenced everywhere.
+#[cfg_attr(
+    not(any(feature = "cpstore_etcd", feature = "redis_replay")),
+    allow(unreachable_code, unused_variables)
+)]
 pub fn materialize(
     plan: &ReplayPlan,
     max_clock_skew: i64,
     control: Option<&ControlRuntime>,
 ) -> Result<MaterializedReplay, String> {
-    let materialized = match plan {
-        ReplayPlan::Memory => MaterializedReplay {
-            tier: AsyncReplayTier::new(
-                Arc::new(crate::async_replay::InMemoryAsyncAtomicReplayStore::new()),
-                max_clock_skew,
-            ),
-            dispatch: ProxyDispatchConfig {
-                fleet_strict: false,
-                tier: None,
-            },
-        },
+    let materialized: MaterializedReplay = match plan {
         ReplayPlan::Etcd { endpoint, tier } => {
             #[cfg(feature = "cpstore_etcd")]
             {
@@ -173,8 +175,8 @@ fn assert_durable(tier: &AsyncReplayTier) -> Result<(), String> {
         return Err(
             "the configured replay cache self-declares the volatile single-process reference \
              posture (admitted nonces are lost on restart and invisible to peer verifiers); \
-             a durable replay store is required — use --replay-cache file or --replay-cache \
-             shared, or inject a cache that declares ReplayDurabilityClass::Durable"
+             a durable replay store is required — use --replay-cache shared with an accepted \
+             durability tier, or inject a cache that declares ReplayDurabilityClass::Durable"
                 .into(),
         );
     }
@@ -188,14 +190,18 @@ mod tests {
 
     /// The volatile tier cannot be handed over, even though it can be constructed.
     ///
-    /// Validation already refuses `--replay-cache memory` before planning sees it, so this
-    /// is the backstop firing rather than the operator-facing refusal — and it fires from
-    /// inside the producer, so a future caller cannot acquire the tier without it.
+    /// No plan produces it any more — `ReplayPlan` has two variants and both are shared —
+    /// so this asserts the guard directly rather than through a plan. It is the backstop
+    /// that fires from inside the producer, so an INJECTED cache cannot reach the serving
+    /// path without meeting it either, which is the case a configuration refusal cannot
+    /// cover.
     #[test]
     fn a_volatile_tier_is_never_handed_over() {
-        let err = materialize(&ReplayPlan::Memory, 60, None)
-            .err()
-            .expect("the volatile tier must be refused");
+        let volatile = AsyncReplayTier::new(
+            std::sync::Arc::new(crate::async_replay::InMemoryAsyncAtomicReplayStore::new()),
+            60,
+        );
+        let err = assert_durable(&volatile).expect_err("the volatile tier must be refused");
         assert!(err.contains("single-process reference"), "{err}");
     }
 

@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use mcp_re_core::VerificationKey;
 
+use crate::config_state::DeploymentConfigState;
 // MCPS-076 (audit gap G-3): EnvKeySource is dev/CI-only — compiled only under the
 // non-default `dev_env_key_source` feature.
 #[cfg(feature = "dev_env_key_source")]
@@ -307,7 +308,24 @@ pub struct Config {
     pub replay_path: Option<String>,
     /// Shared replay-store connection URL (required when `replay == Shared` and the
     /// declared tier is a Redis tier), e.g. `redis://127.0.0.1:6379` (issue #3837).
+    ///
+    /// The REPLAY store's location, and nothing else. It once also decided where the MRTR
+    /// continuation store lived, which made one field carry two different facts: on the
+    /// linearizable tier replay is on etcd and this named the continuation store instead.
+    /// `continuation_control_redis_url` owns that fact now.
     pub replay_redis_url: Option<String>,
+    /// ADR-MCPS-047: the cross-replica MRTR continuation store's Redis URL.
+    ///
+    /// Separate from `replay_redis_url` because it is a different fact, not the same fact
+    /// with a second consumer: replay records where admitted nonces live, this records
+    /// where a retained continuation base lives, and the two stores answer to different
+    /// owners with disjoint key namespaces. They may name the same Redis — that is then an
+    /// operator's deployment choice rather than an alias the configuration forces.
+    ///
+    /// `None` is a real posture, not missing configuration: cross-replica MRTR is
+    /// opportunistic, its absence is announced, and an answer arriving at a replica with
+    /// no correlated continuation is refused rather than guessed.
+    pub continuation_control_redis_url: Option<String>,
     /// MCPRE-493: what a request carrying NO admission evidence means here —
     /// `off` (admission not enforced at all), `optional`, or `required`. Anything
     /// but `off` requires an authority to verify assertions against and a source to
@@ -995,6 +1013,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut replay = ReplayKind::Memory;
     let mut replay_path = None;
     let mut replay_redis_url = None;
+    let mut continuation_control_redis_url = None;
     // MCPS-84: networked trust-epoch invalidation backend (optional; only under
     // --revocation-tier push).
     let mut trust_epoch_redis_url = None;
@@ -1356,6 +1375,15 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 }
             }
             "--replay-redis-url" => replay_redis_url = Some(value.clone()),
+            "--continuation-control-redis-url" => {
+                if value.trim().is_empty() {
+                    return Err(
+                        "--continuation-control-redis-url requires a non-empty Redis URL"
+                            .to_string(),
+                    );
+                }
+                continuation_control_redis_url = Some(value.clone());
+            }
             "--trust-epoch-redis-url" => trust_epoch_redis_url = Some(value.clone()),
             "--trust-epoch-key" => trust_epoch_key = Some(value.clone()),
             // #69: the CP / etcd endpoint for the LINEARIZABLE durability tier.
@@ -1923,6 +1951,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         retained_evidence_dir,
         verified_context,
         replay_redis_url,
+        continuation_control_redis_url,
         trust_epoch_redis_url,
         trust_epoch_key,
         cpstore_etcd_endpoint,
@@ -2020,14 +2049,31 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
 /// certificate matches its key, whether a KMS answers, whether the clock is sane. Those
 /// are observations, they can change between the check and the use, and they belong to
 /// startup materialization (ADR-MCPRE-056 §5.1).
+///
+/// **It carries what validation recognised.** Deciding that a configuration is legal means
+/// deciding which state it requests — `PushNetworked` rather than `PushInert`, `Delegated`
+/// rather than `Exported` — and that decision is kept rather than recomputed downstream.
+/// A stage that re-derived it from the same fields would be a second authority over one
+/// deployment fact, free to disagree with the first (CF-10).
 #[derive(Debug, Clone)]
-pub struct ValidatedConfig(Config);
+pub struct ValidatedConfig {
+    config: Config,
+    state: DeploymentConfigState,
+}
 
 impl ValidatedConfig {
     /// The validated configuration. Named rather than a public field so the wrapper
     /// cannot be reconstructed around an unchecked `Config`.
     pub fn into_inner(self) -> Config {
-        self.0
+        self.config
+    }
+
+    /// Which state each configuration machine was recognised to be in.
+    ///
+    /// Planning reads this together with the validated values; it does not ask again which
+    /// state the deployment is in, because layer A has answered that once.
+    pub fn state(&self) -> &DeploymentConfigState {
+        &self.state
     }
 }
 
@@ -2035,14 +2081,13 @@ impl TryFrom<Config> for ValidatedConfig {
     type Error = String;
 
     fn try_from(config: Config) -> Result<Self, Self::Error> {
-        let violations = unsafe_config_violations(&config);
-        if !violations.is_empty() {
-            return Err(format!(
+        match validate_configuration(&config) {
+            Ok(state) => Ok(ValidatedConfig { config, state }),
+            Err(violations) => Err(format!(
                 "mcp-re-proxy refuses unsafe configuration:\n  - {}",
                 violations.join("\n  - ")
-            ));
+            )),
         }
-        Ok(ValidatedConfig(config))
     }
 }
 
@@ -2055,45 +2100,20 @@ impl std::ops::Deref for ValidatedConfig {
     type Target = Config;
 
     fn deref(&self) -> &Config {
-        &self.0
+        &self.config
     }
 }
 
 /// Enforce the delegated-XOR-exported TLS-signing rule (ADR-MCPS-028 §G, issue
 /// #58): a source's TLS handshake key is EITHER delegated to a non-exporting
-/// device/KMS (`has_delegated_tls`) OR exported from a file (`has_exported_tls_key`),
-/// never both. A source that asserts both is contradictory — the operator could
-/// believe the key never leaves the device while a file copy also exists — so this
-/// FAILS CLOSED at parse time, before the proxy is constructed.
+/// device/KMS OR exported from a file, never both. A source that asserts both is
+/// contradictory — the operator could believe the key never leaves the device while a
+/// file copy also exists — so it FAILS CLOSED.
 ///
-/// Pure and black-box-testable (no `Config`, no IO). The backend issues (#59–#61)
-/// drive `has_delegated_tls` from their CLI flag; #58 wires the call with the
-/// current values so the seam is exercised, not dead code.
-/// The same rule, read off a [`Config`] — so it holds however the config was built.
-///
-/// ADR-MCPRE-058 §8.3: [`validate_tls_signing_exclusivity`] was reachable ONLY from
-/// `parse_args`, which made it the fifth member of this file's parser-only family. The
-/// state it refuses is not a CLI mistake. A config asserting both custodies means the TLS
-/// handshake key is delegated to a non-exporting device AND a file copy of it exists on
-/// disk, which is exactly the belief the delegated custody modes are chosen to make true
-/// being false. Nothing downstream refuses it: `build_key_source` dispatches on
-/// `key_source` and simply ignores a selector belonging to another source.
-///
-/// This is an adapter, not a second copy of the rule. The decision stays in
-/// `validate_tls_signing_exclusivity`; what is here is how a `Config` answers its two
-/// questions, so the two call sites cannot drift into disagreeing about the rule itself.
-///
-/// `tls_key` is a `String` rather than an `Option`, and empty means "not exported" — the
-/// parser leaves it empty in precisely the delegated case, which is why emptiness rather
-/// than the custody mode is the right test here too.
-pub(crate) fn tls_signing_exclusivity_refusal(config: &Config) -> Option<String> {
-    let has_delegated_tls = config.pkcs11_tls_key_label.is_some()
-        || config.aws_kms_tls_key_id.is_some()
-        || config.gcp_kms_tls_key_version.is_some();
-    let has_exported_tls_key = !config.tls_key.is_empty();
-    validate_tls_signing_exclusivity(has_delegated_tls, has_exported_tls_key).err()
-}
-
+/// Pure and black-box-testable (no `Config`, no IO). The parser calls it with the values
+/// it has just read; the validation boundary asks the same question of two RECOGNISED
+/// states rather than of the fields (atlas X2a/X2b), which is why there is no `Config`
+/// adapter here any more.
 pub fn validate_tls_signing_exclusivity(
     has_delegated_tls: bool,
     has_exported_tls_key: bool,
@@ -2422,32 +2442,6 @@ pub(crate) fn kms_endpoint_refusals(config: &Config) -> Vec<String> {
     .collect()
 }
 
-/// Key-source custody coherence, read off a [`Config`] — so it holds however the config
-/// was built.
-///
-/// An adapter, not a second copy: the clauses stay in [`key_source_custody_refusal`]. A
-/// dangling custody selector is a security state a programmatic config reaches without a
-/// parser, exactly as the TLS-signing exclusivity rule is, and `build_key_source`
-/// dispatches on `key_source` and simply ignores a selector belonging to another source.
-pub(crate) fn key_source_custody_violation(config: &Config) -> Option<String> {
-    key_source_custody_refusal(
-        config.key_source,
-        config.pkcs11_module.as_deref(),
-        config.pkcs11_pin_file.as_deref(),
-        config.pkcs11_token_label.as_deref(),
-        config.pkcs11_key_label.as_deref(),
-        config.pkcs11_tls_key_label.as_deref(),
-        config.aws_kms_region.as_deref(),
-        config.aws_kms_key_id.as_deref(),
-        config.aws_kms_tls_key_id.as_deref(),
-        config.aws_kms_use_web_identity,
-        config.aws_sts_endpoint.as_deref(),
-        config.gcp_kms_key_version.as_deref(),
-        config.gcp_kms_tls_key_version.as_deref(),
-        config.gcp_kms_use_metadata,
-    )
-}
-
 /// Ingress-assertion coherence, read off a [`Config`], for the same reason as above: the
 /// clauses decide whether an operator can believe a request-binding ingress control is in
 /// force, and that belief is no more true when the config was built in code.
@@ -2482,7 +2476,86 @@ pub(crate) fn ingress_assertion_violation(config: &Config) -> Option<String> {
 /// The postures rejected here are the pure-config, platform-independent fail-open
 /// ones: reverse-proxy header ingress (M10/M22), a non-durable/weak replay tier
 /// (#90/ADR-MCPS-020), lb-assertion binding, and cn_legacy identity.
+///
+/// The violations alone. [`validate_configuration`] is the boundary proper — it runs the
+/// same single pass and additionally returns what that pass RECOGNISED, which is what the
+/// runtime needs. This wrapper exists for callers that only ask whether a config is legal.
 pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
+    validate_configuration(config).err().unwrap_or_default()
+}
+
+/// Decide whether a requested deployment state is legal, and say which state it is.
+///
+/// One pass, two products. A validator that recognises `TrustRevocation::PushNetworked`,
+/// checks it, and throws the recognition away leaves every downstream stage to re-derive
+/// the same fact from the same fields — one deployment fact with two derivations, free to
+/// disagree. So the classification is returned (`work/CONFIG-STATE-ATLAS.md` CF-10) and
+/// becomes what plans project from.
+///
+/// **Order is a separate contract.** Every violation is reported, not the first, and the
+/// sequence is what an operator reads. It is pinned by
+/// `tests/config_refusal_precedence_test.rs` so that reorganising this function cannot
+/// silently reorder the diagnosis: machine validators are called at the position their
+/// clauses already occupied.
+pub fn validate_configuration(config: &Config) -> Result<DeploymentConfigState, Vec<String>> {
+    // PASS 1 — each machine recognises its own state and checks that state's columns.
+    let (continuation_control, continuation_violations) =
+        crate::config_state::continuation_control::classify_and_validate(config);
+    let (custody, custody_violations) = crate::config_state::custody::classify_and_validate(config);
+    let (replay, replay_violations) = crate::config_state::replay::classify_and_validate(config);
+    let (tls_custody, tls_custody_violations) =
+        crate::config_state::tls_custody::classify_and_validate(config);
+    let (trust_revocation, trust_violations) =
+        crate::config_state::trust_revocation::classify_and_validate(config);
+    // PASS 2 — the relations between machines, asked of the RECOGNISED states rather than
+    // of the fields again.
+    let cross = crate::config_state::cross_machine::validate(custody, tls_custody, config);
+    let decided = MachineViolations {
+        continuation_control: continuation_violations,
+        custody: custody_violations,
+        replay: replay_violations,
+        tls_custody: tls_custody_violations,
+        trust_revocation: trust_violations,
+        cross,
+    };
+    let violations = legality_violations(config, decided);
+    // `replay` is the one machine whose request may name no state at all — `memory` and
+    // `file` are input forms, not deployments. When that happens it has already pushed its
+    // refusal, so the empty-violations arm below is unreachable with `None`; the `ok_or`
+    // states the coupling rather than leaving it to be inferred.
+    match (violations.is_empty(), replay) {
+        (true, Some(replay)) => Ok(DeploymentConfigState::new(
+            continuation_control,
+            custody,
+            replay,
+            tls_custody,
+            trust_revocation,
+        )),
+        (true, None) => Err(vec![
+            "internal error: no replay state was recognised and no refusal was raised".to_string(),
+        ]),
+        (false, _) => Err(violations),
+    }
+}
+
+/// What the two passes decided, kept apart by owner so the clause list can splice each
+/// where it has always been read.
+struct MachineViolations {
+    continuation_control: Vec<String>,
+    custody: Vec<String>,
+    replay: Vec<String>,
+    tls_custody: Vec<String>,
+    trust_revocation: Vec<String>,
+    cross: crate::config_state::cross_machine::CrossMachineViolations,
+}
+
+/// The clause list, in the order an operator reads it.
+///
+/// Nothing here decides anything about a machine that has one: `decided` arrives already
+/// checked, and this function only places each result where its clauses were read before
+/// the machine owned them — see [`validate_configuration`] on why the position is
+/// load-bearing. Clauses still stated inline belong to machines not yet implemented.
+fn legality_violations(config: &Config, decided: MachineViolations) -> Vec<String> {
     let mut violations = Vec::new();
     // Online OCSP cannot be honored on the production data plane. Checked HERE, not only
     // in `parse_args`, because this is the boundary the runtime actually goes through:
@@ -2502,12 +2575,10 @@ pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
     if let Some(refusal) = unaccepted_authz_profile_refusal(config.authz) {
         violations.push(refusal);
     }
-    // Mode-C: the refusal used to live in the composition root and nowhere else, so it was
-    // a policy decision at the wrong altitude (ADR-MCPRE-056 §12). Deliberately refused for
-    // v0.16 — see `undeployable_transport_binding_refusal`.
-    if let Some(refusal) = tls_signing_exclusivity_refusal(config) {
-        violations.push(refusal);
-    }
+    // X2b — TlsCustody × Tls. A delegated handshake key and an exported copy of it are
+    // contradictory rather than redundant, and the contradiction is between two machines,
+    // so it is decided in pass 2 and only placed here.
+    violations.extend(decided.cross.x2b_exclusive_tls_custody);
     if let Some(refusal) = undeployable_transport_binding_refusal(config.binding) {
         violations.push(refusal);
     }
@@ -2538,13 +2609,17 @@ pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
     // verify-before-return guardrail is measured against, so a substituted endpoint
     // substitutes the root authority self-consistently, and the GCP path posts a live
     // workload-identity bearer token to it in the clear over `http://`.
-    violations.extend(kms_endpoint_refusals(config));
-    // Custody coherence and ingress-assertion coherence. Both decide whether the operator's
-    // belief about a security control matches what runs, and neither is re-checked
-    // downstream — `build_key_source` ignores a selector belonging to another source.
-    if let Some(refusal) = key_source_custody_violation(config) {
-        violations.push(refusal);
-    }
+    // The `Custody` machine: which key material this deployment claims to hold, and every
+    // parameter that claim requires or excludes. Its endpoint guards come first because an
+    // overridden KMS endpoint substitutes the root verify key itself.
+    violations.extend(decided.custody);
+    // X2a — Custody × TlsCustody: a delegated selector names a key object in one specific
+    // backend, so which one is legal depends on the custody state.
+    violations.extend(decided.cross.x2a_delegated_selector);
+    // The `TlsCustody` machine's own column: the exported state has no key without one.
+    violations.extend(decided.tls_custody);
+    // Ingress-assertion coherence: whether the operator's belief about a request-binding
+    // ingress control matches what runs.
     if let Some(refusal) = ingress_assertion_violation(config) {
         violations.push(refusal);
     }
@@ -2633,67 +2708,11 @@ pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
         )),
         Some(_) => {}
     }
-    // ADR-MCPS-021 Axis 2: LIVE and PUSH both advertise a revocation window measured
-    // in the store being consulted or re-consulted. With `--trust` read once at
-    // startup there is nothing behind either: a Tier-3 flush evicts entries that
-    // immediately re-resolve to the identical key, and Tier 2's per-request round trip
-    // hits a frozen map. Refused rather than warned, because the operator asked for a
-    // near-zero window and would otherwise be told at startup that they had one.
-    if matches!(
-        config.revocation_tier,
-        crate::revocation_tier::RevocationTier::Live
-            | crate::revocation_tier::RevocationTier::Push { .. }
-    ) && config.trust_reload_secs.is_none()
-    {
-        violations.push(
-            "--revocation-tier live|push requires --trust-reload-secs: both tiers state a              revocation window in terms of consulting the trust store, but with --trust read              once at startup the store cannot change, so revoking a request-signer key would              need a restart of every replica while the startup line claims otherwise"
-                .to_string(),
-        );
-    }
-    // The cadence is not merely PRESENT-or-absent: it IS the window. A tier's revocation
-    // claim is a statement about how fast a key removed from `--trust` stops resolving,
-    // and nothing resolves faster than the file is re-read — so a present-but-useless
-    // cadence makes the claim exactly as false as an absent one. Each tier is held to
-    // the strongest window it advertises.
-    if let Some(secs) = config.trust_reload_secs {
-        let (ceiling, claim) = match config.revocation_tier {
-            // "near-zero, no positive caching" — bounded by the general near-zero ceiling.
-            crate::revocation_tier::RevocationTier::Live => (
-                MAX_NEAR_ZERO_TRUST_RELOAD_SECS,
-                "--revocation-tier live states a NEAR-ZERO revocation window (the store is \
-                 consulted on every verification)"
-                    .to_string(),
-            ),
-            // Near-zero when the epoch source is healthy, bounded T otherwise — so the
-            // store has to be able to change within T as well as within the near-zero
-            // ceiling.
-            crate::revocation_tier::RevocationTier::Push { t_secs } => (
-                MAX_NEAR_ZERO_TRUST_RELOAD_SECS.min(t_secs.max(1) as u64),
-                format!(
-                    "--revocation-tier push:{t_secs} states a near-zero window with a bounded \
-                     {t_secs}s fallback"
-                ),
-            ),
-            // The declared window T is the whole claim: cached active state is usable
-            // only until T, then fail closed. A store that cannot change within T cannot
-            // deliver it.
-            crate::revocation_tier::RevocationTier::BoundedCache { t_secs } => (
-                t_secs.max(1) as u64,
-                format!(
-                    "--revocation-tier bounded-cache:{t_secs} states that revocation is \
-                     enforced fleet-wide within {t_secs}s"
-                ),
-            ),
-        };
-        if secs > ceiling {
-            violations.push(format!(
-                "--trust-reload-secs {secs} is longer than the revocation window the declared \
-                 tier claims: {claim}, but a key removed from --trust keeps resolving until the \
-                 file is re-read, which is every {secs}s. Set --trust-reload-secs <= {ceiling}, \
-                 or declare a tier whose window the deployment can keep"
-            ));
-        }
-    }
+    // ADR-MCPS-021 Axis 2. The `TrustRevocation` machine owns every question about the
+    // declared tier, the reload cadence that IS its revocation window, and the epoch
+    // source that splits Push into its inert and networked states. Spliced in here rather
+    // than at the end of the list because this is where its clauses have always been read.
+    violations.extend(decided.trust_revocation);
     // MCPS-093/094: the socket timeouts and the aggregate read-phase deadline ARE the
     // slow-loris defense — a peer trickling bytes just under `read_timeout` is stopped
     // by `request_deadline`, and with either gone a handful of connections pin serve
@@ -2724,45 +2743,16 @@ pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
                 .to_string(),
         );
     }
-    // ADR-MCPS-014/020 (#90): the DEFAULT replay backend is `Memory`, an
-    // in-process cache whose admitted nonces live ONLY in process memory. A proxy
-    // restart loses every admitted nonce, re-opening a replay window for any
-    // captured envelope that is still within its `expires_at + skew` freshness
-    // window at restart time — the exposure is the in-restart-window captured-but-
-    // still-fresh envelope (the atomic check-and-insert means a nonce re-admitted
-    // AFTER its freshness window cannot verify). ADR-020 treats durable /
-    // cross-instance replay as the production posture, so under strict/production
-    // the non-durable in-memory default is rejected (not merely warned), mirroring
-    // the fail-open relaxation guards. `File` (single-node durable) and `Shared`
-    // (horizontally durable) survive on their own durability merits and are
-    // assessed by the tier check below.
-    if config.replay == ReplayKind::Memory {
-        violations.push(
-            "--replay-cache memory is non-durable: it keeps admitted nonces only in process \
-             memory (and is the cache used when --replay-cache is omitted), so a proxy RESTART \
-             forgets them and re-opens a replay window for any still-fresh captured envelope \
-             until its expires_at+skew; production must use a durable replay store: \
-             --replay-cache file (single-node durability) or --replay-cache shared (horizontal \
-             durability)"
-                .to_string(),
-        );
-    }
-    // ADR-MCPS-020: under strict/production a shared replay store must declare a
-    // durability tier of REDIS_WAIT_QUORUM or stronger. REDIS_ASYNC carries a
-    // bounded-but-real failover replay window, and SINGLE_STORE_FAIL_CLOSED is a
-    // single point of availability failure — both are rejected (not just warned)
-    // so production cannot silently run on the weaker replay-safety claim.
-    if config.replay == ReplayKind::Shared {
-        if let Some(tier) = &config.replay_durability_tier {
-            if !tier.meets_strict_production_minimum() {
-                violations.push(format!(
-                    "--replay-durability-tier {} is weaker than the strict-production minimum; \
-                     declare redis-wait-quorum:<quorum>:<timeout_ms> or a linearizable tier",
-                    tier.wire_name()
-                ));
-            }
-        }
-    }
+    // The `Replay` machine: which shared store holds admitted nonces, and every locator
+    // that store requires or excludes. Spliced where the `memory` refusal and the
+    // tier-strength refusal were read, in that order — the machine emits the input-form
+    // refusal first for exactly that reason.
+    violations.extend(decided.replay);
+    // The `ContinuationControl` machine (CF-12). A NEW position: this clause has no
+    // predecessor to preserve, because until the alias was split there was no
+    // configuration of its own to refuse. Placed beside Replay because that is where an
+    // operator reading about shared stores is looking, not because the two are related.
+    violations.extend(decided.continuation_control);
     // MCPS-79 (ADR-MCPS-049 clause 1): the FLEET dimension is orthogonal to the
     // security posture. `--strict` alone is single-node strict, where the node is
     // the sole verifier and `--replay-cache file` (ADR-MCPS-014, single-node
@@ -3547,9 +3537,11 @@ mod tests {
         // refusal is unrelated to endpoint validation and would mask an accept case.
         a.extend(args(&[
             "--replay-cache",
-            "file",
-            "--replay-path",
-            "/tmp/mcp-re-cli-kms-endpoint-test",
+            "shared",
+            "--replay-redis-url",
+            "redis://127.0.0.1:6379",
+            "--replay-durability-tier",
+            "redis-wait-quorum:1:100",
         ]));
         a.push(flag.to_string());
         a.push(endpoint.to_string());
@@ -3852,13 +3844,24 @@ mod tests {
     /// production posture, so ANY config that must parse SUCCESSFULLY has to declare
     /// a durable backend — tests splice these flags into `minimal()`.
     fn durable_replay() -> Vec<String> {
-        args(&["--replay-cache", "file", "--replay-path", "/replay"])
+        args(&[
+            "--replay-cache",
+            "shared",
+            "--replay-redis-url",
+            "redis://127.0.0.1:6379",
+            "--replay-durability-tier",
+            "redis-wait-quorum:1:100",
+        ])
     }
 
-    /// `minimal()` plus a durable replay backend — the smallest config that PARSES
-    /// under the unconditional strict/production posture (the bare in-memory default
-    /// is rejected, #90). Success tests that do not exercise replay selection build
-    /// on this.
+    /// `minimal()` plus a replay backend that is a legal deployment state — the smallest
+    /// config that both parses and validates. Success tests that do not exercise replay
+    /// selection build on this.
+    ///
+    /// It named `--replay-cache file` until CF-01: the in-memory default was refused and
+    /// `file` was what the refusal recommended, so the canonical fixture was a state no
+    /// build could materialize. That it went unnoticed is the finding — a whole suite of
+    /// success tests asserted things about a deployment that could not start.
     fn minimal_durable() -> Vec<String> {
         let mut a = minimal();
         a.splice(0..0, durable_replay());
@@ -4316,9 +4319,11 @@ mod tests {
         // now includes it) fails closed — the epoch is mandatory for every deployment.
         let a = args(&[
             "--replay-cache",
-            "file",
-            "--replay-path",
-            "/replay",
+            "shared",
+            "--replay-redis-url",
+            "redis://127.0.0.1:6379",
+            "--replay-durability-tier",
+            "redis-wait-quorum:1:100",
             "--bind",
             "127.0.0.1:8443",
             "--audience",
@@ -4373,7 +4378,7 @@ mod tests {
         );
         assert!(config.mcp_protocol_versions.is_empty());
         assert_eq!(config.key_source, KeySourceKind::File);
-        assert_eq!(config.replay, ReplayKind::File);
+        assert_eq!(config.replay, ReplayKind::Shared);
         assert_eq!(config.binding, BindingKind::Exact);
         // Safe defaults: URI SAN identity, bounded resources.
         assert_eq!(config.identity_source, IdentityPolicy::UriSan);
@@ -5256,7 +5261,14 @@ mod tests {
     fn aws_kms_web_identity_is_off_by_default_and_on_when_named() {
         // A durable replay cache: `minimal()` omits it, and the unsafe-config guard
         // rejects the in-memory default before parsing gets this far.
-        let durable = args(&["--replay-cache", "file", "--replay-path", "/replay"]);
+        let durable = args(&[
+            "--replay-cache",
+            "shared",
+            "--replay-redis-url",
+            "redis://127.0.0.1:6379",
+            "--replay-durability-tier",
+            "redis-wait-quorum:1:100",
+        ]);
 
         let mut a = minimal();
         a.splice(0..0, durable.clone());
@@ -6594,19 +6606,24 @@ mod tests {
         );
     }
 
-    // MCPS-79 (ADR-MCPS-049 clause 1): under --fleet a node-local FILE replay cache
-    // is rejected — it is durable on ONE node but unshareable across verifiers, so a
-    // peer would not see a replayed nonce. Contrast
-    // `single_node_accepts_file_replay_cache`: the same file cache is valid WITHOUT
-    // --fleet (single verifier). This is the orthogonality of the fleet dimension
-    // and the (always-on) strict posture made executable.
+    /// MCPS-79 (ADR-MCPS-049 clause 1): under `--fleet` a node-local FILE replay cache is
+    /// rejected — unshareable across verifiers, so a peer would not see a replayed nonce.
+    ///
+    /// CF-01 made `file` refused on its own grounds too, which is why this drives a
+    /// mutated config: the clause is now redundant against the accepted state set, since
+    /// every live replay state is already shared. It is kept, and kept in its position,
+    /// because it still fires on the rejected input form and it teaches the
+    /// cross-verifier property rather than the durability one.
     #[test]
     fn strict_fleet_rejects_file_replay_cache() {
-        let mut a = minimal();
-        a.splice(0..0, durable_replay());
-        a.splice(0..0, args(&["--fleet"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--fleet"), "got: {err}");
+        let mut config = parse_args(&minimal_durable()).expect("the baseline validates");
+        config.fleet = true;
+        config.replay = ReplayKind::File;
+        config.replay_redis_url = None;
+        let err = unsafe_config_violations(&config)
+            .into_iter()
+            .find(|v| v.contains("--fleet"))
+            .expect("the fleet clause still fires");
         assert!(err.contains("node-local"), "got: {err}");
         assert!(err.contains("shared"), "got: {err}");
     }
@@ -6722,24 +6739,39 @@ mod tests {
         // in-memory backend — always a strict/production violation.
         let err = parse_args(&minimal()).unwrap_err();
         assert!(err.contains("--replay-cache memory"), "got: {err}");
-        // The message must direct to BOTH durable options (single-node + horizontal).
-        assert!(err.contains("--replay-cache file"), "got: {err}");
+        // The remedy must name a state that can actually start. It named
+        // `--replay-cache file` until CF-01 — recommending, as the fix for a
+        // non-durable store, a store no build could establish.
         assert!(err.contains("--replay-cache shared"), "got: {err}");
+        assert!(!err.contains("--replay-cache file"), "got: {err}");
     }
 
-    // #90: the durable single-node `file` backend is NOT a strict violation — a
-    // proxy restart re-reads its admitted nonces from disk, so no restart window
-    // re-opens. The minimal config with `--replay-cache file` must parse Ok with no
-    // replay strict violation.
+    /// CF-01: `file` is not a deployment state, and the refusal says so in those terms.
+    ///
+    /// This test asserted the opposite until 2026-08-12 — that a single-node durable file
+    /// cache was an acceptable production replay store. It was true of the blocking
+    /// serving loop and never became false in configuration: `ReplayPlan` simply grew no
+    /// file arm, so the state stayed admissible at the boundary while nothing could
+    /// establish it. The refusal must not be phrased as a missing build capability,
+    /// because no build supplies one.
     #[test]
-    fn strict_accepts_file_replay_backend() {
-        let config = parse_args(&minimal_durable()).expect("durable file replay must parse");
-        assert_eq!(config.replay, ReplayKind::File);
+    fn file_replay_is_not_a_deployment_state() {
+        let mut config = parse_args(&minimal_durable()).expect("the baseline validates");
+        config.replay = ReplayKind::File;
+        config.replay_redis_url = None;
+        config.replay_path = Some("/replay".to_string());
+        let violations = unsafe_config_violations(&config);
+        let refusal = violations
+            .iter()
+            .find(|v| v.contains("--replay-cache file"))
+            .unwrap_or_else(|| panic!("file must be refused; got {violations:?}"));
         assert!(
-            unsafe_config_violations(&config)
-                .iter()
-                .all(|v| !v.contains("--replay-cache")),
-            "a durable file replay must not be a replay strict violation"
+            refusal.contains("not a supported deployment state"),
+            "{refusal}"
+        );
+        assert!(
+            !refusal.contains("build"),
+            "a layer-A refusal names no build: {refusal}"
         );
     }
 

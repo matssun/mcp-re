@@ -1,0 +1,216 @@
+// SPDX-License-Identifier: Apache-2.0
+//! The ORDER in which a multiply-illegal configuration is refused.
+//!
+//! The boundary answers a different question from the state model. The model
+//! (`work/CONFIG-STATE-ATLAS.md`) says whether a requested deployment state is legal; it
+//! deliberately says nothing about which refusal an operator meets first when several
+//! things are wrong at once. That ordering is a property of validation *orchestration*,
+//! and it is observable: `unsafe_config_violations` returns every violation, in one fixed
+//! source order, and the boundary joins them into the message an operator reads.
+//!
+//! The reason to pin it before reorganising the boundary: the order would otherwise change
+//! as a side effect of which validator happens to be called first — a diagnostic
+//! regression with no failing test and no diff that mentions it. With this file in place a
+//! reordering has to be written down.
+//!
+//! Pinning is not endorsement. Some of this order is deliberate and some is the order the
+//! clauses were added in; this file records what it IS, so that changing it is a decision.
+
+use mcp_re_proxy::cli::{self, AuthzKind, BindingKind, Config, OcspKind, ReplayKind};
+use mcp_re_proxy::IdentityPolicy;
+
+/// A legal configuration, from the parser, so every violation below is one this fixture
+/// introduces on purpose rather than one the baseline dragged in.
+fn legal() -> Config {
+    let argv: Vec<String> = [
+        "--bind",
+        "127.0.0.1:8443",
+        "--audience",
+        "did:example:server-1",
+        "--server-signer",
+        "did:example:server-1",
+        "--server-key-id",
+        "server-key-1",
+        "--signing-key-seed",
+        "/seed",
+        "--tls-cert",
+        "/cert",
+        "--tls-key",
+        "/key",
+        "--client-ca",
+        "/ca",
+        "--trust",
+        "/trust.json",
+        "--inner-http-url",
+        "http://127.0.0.1:8080/mcp",
+        "--target-uri",
+        "https://mcp.example.com/mcp",
+        "--delegated-trust-epoch",
+        "epoch-min",
+        "--trust-domain",
+        "mcp.example.com",
+        "--replay-cache",
+        "shared",
+        "--replay-redis-url",
+        "redis://127.0.0.1:6379",
+        "--replay-durability-tier",
+        "redis-wait-quorum:1:100",
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect();
+    cli::parse_args(&argv).expect("the baseline parses")
+}
+
+/// A distinguishing fragment per clause, in the order the boundary emits them.
+fn keys(violations: &[String]) -> Vec<&'static str> {
+    const CLAUSES: &[&str] = &[
+        "--client-ocsp",
+        "--revocation-list",
+        "--authz",
+        "TLS signing is delegated XOR exported",
+        "--transport-binding lb-assertion places",
+        "--target-uri",
+        "--admission",
+        "--aws-kms-endpoint",
+        "--gcp-kms-endpoint",
+        "--aws-sts-endpoint",
+        "--key-source",
+        "--ingress-",
+        "--client-crl-reload-secs 0",
+        "--delegated-ttl-secs",
+        "--delegated-overlap-secs",
+        "--max-client-cert-lifetime",
+        "--max-connection-age-secs",
+        "--revocation-tier live|push requires",
+        "--trust-reload-secs",
+        "--read-timeout-secs",
+        "--write-timeout-secs",
+        "--request-deadline-secs",
+        "--transport-identity-source cn_legacy",
+        "--replay-cache memory",
+        // Specific enough not to swallow the fleet clause, whose message quotes the same
+        // flag and value while saying something else entirely.
+        "--replay-cache file is not a supported",
+        "--replay-durability-tier",
+        "--fleet requires",
+        "--reverse-proxy-identity-header",
+        "--transport-binding none",
+    ];
+    violations
+        .iter()
+        .map(|v| {
+            CLAUSES
+                .iter()
+                .copied()
+                .find(|c| v.contains(c))
+                .unwrap_or_else(|| panic!("unrecognised refusal, add a key for it: {v}"))
+        })
+        .collect()
+}
+
+/// One configuration violating as many independent clauses as can coexist.
+///
+/// Mutually exclusive states (a `binding` cannot be both `none` and `lb-assertion`) are
+/// split across the fixtures below; this one takes the larger share.
+#[test]
+fn the_boundary_refuses_in_this_order() {
+    let mut config = legal();
+    config.client_ocsp = OcspKind::Require;
+    config.revocation_list_paths = vec!["/deny.json".to_string()];
+    config.authz = AuthzKind::Reference;
+    config.pkcs11_tls_key_label = Some("tls".to_string()); // with tls_key set: XOR violated
+    config.target_uri = String::new();
+    config.client_crl_reload_secs = Some(0);
+    config.delegated_ttl_secs = 0;
+    config.delegated_overlap_secs = 0;
+    config.max_client_cert_lifetime = None;
+    config.limits.max_connection_age = None;
+    config.limits.read_timeout = None;
+    config.limits.write_timeout = None;
+    config.limits.request_deadline = None;
+    config.identity_source = IdentityPolicy::CnLegacy;
+    config.replay = ReplayKind::Memory;
+    config.binding = BindingKind::None;
+
+    let order = keys(&cli::unsafe_config_violations(&config));
+    assert_eq!(
+        order,
+        vec![
+            "--client-ocsp",
+            "--revocation-list",
+            "--authz",
+            "TLS signing is delegated XOR exported",
+            "--target-uri",
+            "--key-source",
+            "--client-crl-reload-secs 0",
+            "--delegated-ttl-secs",
+            "--delegated-overlap-secs",
+            "--max-client-cert-lifetime",
+            "--max-connection-age-secs",
+            "--read-timeout-secs",
+            "--write-timeout-secs",
+            "--request-deadline-secs",
+            "--transport-identity-source cn_legacy",
+            "--replay-cache memory",
+            "--transport-binding none",
+        ],
+        "the boundary's refusal order changed"
+    );
+}
+
+/// The clauses the fixture above cannot reach, because they need a state it contradicts.
+#[test]
+fn the_trust_and_fleet_clauses_keep_their_places() {
+    let mut config = legal();
+    config.revocation_tier = mcp_re_proxy::revocation_tier::RevocationTier::Live;
+    config.trust_reload_secs = None;
+    config.fleet = true;
+    // X1 fires only on a node-local replay kind, and every LIVE replay state is now
+    // shared — so provoking it means naming a rejected input form, which is refused on
+    // its own grounds too. Both appear below, in their pinned positions.
+    config.replay = ReplayKind::File;
+    config.replay_redis_url = None;
+    config.binding = BindingKind::LbAssertion;
+    config.reverse_proxy_identity_header = Some("x-client-id".to_string());
+
+    let order = keys(&cli::unsafe_config_violations(&config));
+    assert_eq!(
+        order,
+        vec![
+            // `lb-assertion` is refused twice, from opposite ends of the list: first
+            // because the mode's own required keys are absent, and last on posture
+            // grounds. An operator meets the parameter complaint before the statement
+            // that the mode is not deployable at all.
+            "--ingress-",
+            "--revocation-tier live|push requires",
+            "--replay-cache file is not a supported",
+            "--fleet requires",
+            "--reverse-proxy-identity-header",
+            "--transport-binding lb-assertion places",
+        ],
+        "the boundary's refusal order changed"
+    );
+}
+
+/// Every violation is reported, not just the first.
+///
+/// This is the property that makes the order above a diagnostic contract rather than an
+/// implementation detail: an operator fixing a configuration sees the whole list, so
+/// dropping a clause silently shortens the list rather than changing an error.
+#[test]
+fn the_boundary_reports_every_violation_not_the_first() {
+    let mut config = legal();
+    config.authz = AuthzKind::Reference;
+    config.identity_source = IdentityPolicy::CnLegacy;
+    config.replay = ReplayKind::Memory;
+
+    let refusal = mcp_re_proxy::cli::ValidatedConfig::try_from(config)
+        .expect_err("three violations must refuse");
+    for expected in ["--authz", "cn_legacy", "--replay-cache memory"] {
+        assert!(
+            refusal.contains(expected),
+            "missing {expected} in: {refusal}"
+        );
+    }
+}

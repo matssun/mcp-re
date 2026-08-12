@@ -196,9 +196,11 @@ mod tests {
             // A durable replay selection so parse-time unsafe-config checks pass; the
             // path is not opened at parse (this builder reads config fields only).
             "--replay-cache",
-            "file",
-            "--replay-path",
-            "/tmp/mcp-re-delegated-wiring-test-replay",
+            "shared",
+            "--replay-redis-url",
+            "redis://127.0.0.1:6379",
+            "--replay-durability-tier",
+            "redis-wait-quorum:1:100",
             "--delegated-trust-epoch",
             "epoch-1",
             "--trust-domain",

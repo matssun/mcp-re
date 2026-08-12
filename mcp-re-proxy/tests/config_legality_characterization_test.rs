@@ -47,9 +47,11 @@ fn base() -> Config {
         "--trust-domain",
         "mcp.example.com",
         "--replay-cache",
-        "file",
-        "--replay-path",
-        "/replay",
+        "shared",
+        "--replay-redis-url",
+        "redis://127.0.0.1:6379",
+        "--replay-durability-tier",
+        "redis-wait-quorum:1:100",
     ]
     .iter()
     .map(|s| (*s).to_string())
@@ -82,16 +84,24 @@ fn required_values_are_unconstrained_at_the_boundary() {
     for (name, admitted) in [
         ("bind", admitted(|c| c.bind = String::new())),
         ("audience", admitted(|c| c.audience = String::new())),
-        ("server_signer", admitted(|c| c.server_signer = String::new())),
-        ("server_key_id", admitted(|c| c.server_key_id = String::new())),
+        (
+            "server_signer",
+            admitted(|c| c.server_signer = String::new()),
+        ),
+        (
+            "server_key_id",
+            admitted(|c| c.server_key_id = String::new()),
+        ),
         ("trust_domain", admitted(|c| c.trust_domain = String::new())),
         ("trust_path", admitted(|c| c.trust_path = String::new())),
         ("client_ca", admitted(|c| c.client_ca = String::new())),
         ("tls_cert", admitted(|c| c.tls_cert = String::new())),
-        ("signing_key_seed", admitted(|c| c.signing_key_seed = String::new())),
         ("inner_http_urls", admitted(|c| c.inner_http_urls.clear())),
     ] {
-        assert!(admitted, "{name}: now refused at the boundary — move this case");
+        assert!(
+            admitted,
+            "{name}: now refused at the boundary — move this case"
+        );
     }
 }
 
@@ -117,24 +127,75 @@ fn cross_field_relations_are_unenforced_at_the_boundary() {
     // A verifier admits only credentials whose epoch is in its accepted set, so there is
     // deliberately no default — the parser requires it and the boundary does not.
     assert!(admitted(|c| c.delegated_trust_epoch = None));
-    // MCPS-84: the trust-epoch source drives the Tier-3 push cache and is inert under any
-    // other tier. Admitted here, so the deployment believes a networked trust invalidation
-    // is active while nothing consumes it.
-    assert!(admitted(|c| c.trust_epoch_redis_url =
-        Some("redis://127.0.0.1:6379".to_string())));
     // The dangling-OCSP-knob illusion the parser refuses by name.
-    assert!(admitted(|c| c.ocsp_responder_url = Some("http://ocsp.example.com".to_string())));
-    // A CP-store endpoint on a configuration that has no CP store.
-    assert!(admitted(|c| c.cpstore_etcd_endpoint = Some("http://127.0.0.1:2379".to_string())));
-    // The selected backend's own required value.
-    assert!(admitted(|c| c.replay_path = None));
-    // A shared replay store with no declared durability tier: the tier IS the horizontal
-    // replay-safety claim, and the boundary's tier-strength check runs only when one is
-    // present.
-    assert!(admitted(|c| {
-        c.replay = cli::ReplayKind::Shared;
-        c.replay_durability_tier = None;
-    }));
+    assert!(admitted(
+        |c| c.ocsp_responder_url = Some("http://ocsp.example.com".to_string())
+    ));
+}
+
+/// Relations that have MOVED to the boundary, and the state each one now decides.
+///
+/// A case arrives here by flipping in the list above. What makes the move meaningful is
+/// not the refusal alone but that the boundary now names a state: `TrustRevocation` has
+/// four, the epoch source is what splits `Push` into two of them, and a tier that cannot
+/// consume one does not merely ignore it.
+#[test]
+fn refused_at_the_boundary() {
+    // MCPS-84 / atlas X8. Admitted before: the deployment believed a networked trust
+    // invalidation was active while no tier consumed it.
+    let mut config = base();
+    config.trust_epoch_redis_url = Some("redis://127.0.0.1:6379".to_string());
+    let refusal =
+        ValidatedConfig::try_from(config).expect_err("an epoch source under a non-Push tier");
+    assert!(refusal.contains("--trust-epoch-redis-url"), "{refusal}");
+
+    // Atlas §C.3. `--key-source file` with no seed is the `FileSeed` state missing the one
+    // parameter it cannot start without: nothing else in that state supplies the
+    // response-signing key.
+    let mut config = base();
+    config.signing_key_seed = String::new();
+    let refusal = ValidatedConfig::try_from(config).expect_err("a custody state with no key");
+    assert!(refusal.contains("--signing-key-seed"), "{refusal}");
+
+    // Atlas §C.1, the Replay machine's forbidden and required columns. A CP-store
+    // endpoint on a state whose store is Redis; a shared store declaring no durability
+    // tier, when the tier IS the horizontal replay-safety claim; and a `--replay-path`
+    // for a state no deployment can be in.
+    for (name, mutate) in [
+        (
+            "cpstore_etcd_endpoint",
+            Box::new(|c: &mut Config| {
+                c.cpstore_etcd_endpoint = Some("http://127.0.0.1:2379".to_string())
+            }) as Box<dyn FnOnce(&mut Config)>,
+        ),
+        (
+            "replay_durability_tier",
+            Box::new(|c: &mut Config| c.replay_durability_tier = None),
+        ),
+        (
+            "replay_path",
+            Box::new(|c: &mut Config| c.replay_path = Some("/replay".to_string())),
+        ),
+    ] {
+        let mut config = base();
+        mutate(&mut config);
+        assert!(
+            ValidatedConfig::try_from(config).is_err(),
+            "{name}: still admitted at the boundary"
+        );
+    }
+
+    // The same source under the tier that DOES consume it is the legal state, and is
+    // recognised as such rather than merely permitted.
+    let mut config = base();
+    config.revocation_tier = mcp_re_proxy::revocation_tier::RevocationTier::Push { t_secs: 30 };
+    config.trust_reload_secs = Some(30);
+    config.trust_epoch_redis_url = Some("redis://127.0.0.1:6379".to_string());
+    let validated = ValidatedConfig::try_from(config).expect("push + epoch source is legal");
+    assert!(
+        validated.state().trust_revocation().has_networked_epoch(),
+        "the boundary accepted it without recognising which state it is"
+    );
 }
 
 /// The boundary refuses `--replay-cache memory` and recommends `--replay-cache file`;

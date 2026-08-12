@@ -584,16 +584,32 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
     ]))
     .to_lowercase()
     .contains("pkcs11"));
-    // A node-local file replay cache is refused on the per-core async serving plane.
-    assert!(app_err(mk(&["--replay-cache", "file", "--replay-path", "/tmp/x"])).contains("file"));
-    // The linearizable (CP) tier needs a cpstore_etcd build.
-    assert!(app_err(mk(&[
+    // A file replay cache never reaches a build question: CF-01 made it a LAYER-A
+    // refusal, because no build can establish it, so there is no capability to name.
+    // Asserted at the boundary rather than through `run`, which it no longer reaches.
+    let file_refusal =
+        mcp_re_proxy::cli::parse_args(&mk(&["--replay-cache", "file", "--replay-path", "/tmp/x"]))
+            .expect_err("file is not a deployment state");
+    assert!(
+        file_refusal.contains("not a supported deployment state"),
+        "{file_refusal}"
+    );
+    // The linearizable (CP) tier needs a cpstore_etcd build. The Redis replay locator is
+    // dropped from the base first: it belongs to the OTHER replay state, and layer A now
+    // refuses it beside a linearizable tier (CF-12), which would mask this build refusal.
+    let mut linearizable = mk(&[
         "--replay-durability-tier",
         "linearizable",
         "--cpstore-etcd-endpoint",
         "http://127.0.0.1:2379",
-    ]))
-    .contains("cpstore_etcd"));
+    ]);
+    let at = linearizable
+        .iter()
+        .position(|a| a == "--replay-redis-url")
+        .expect("the base names a redis replay store");
+    linearizable.drain(at..at + 2);
+    let refusal = app_err(linearizable);
+    assert!(refusal.contains("cpstore_etcd"), "got: {refusal}");
 }
 
 /// ADR-MCPRE-058 §8.3 / §16.3 — the delegated-custody knobs, audited as a family.

@@ -514,7 +514,7 @@ fn run_validated(
     // `replay_plane` only establishes it. Every refusal the plan can raise is a statement
     // about the config; every refusal materialization raises is a statement about the
     // build or the environment.
-    let replay_plan = crate::startup_plan::ReplayPlan::from_config(config)?;
+    let replay_plan = crate::startup_plan::ReplayPlan::from_validated(config);
     // ONE process-lifetime control runtime for every networked control-plane client:
     // the redis replay ConnectionManager's reconnect task, the admission source and the
     // MRTR continuation store. Distinct from the per-core serving runtimes and held
@@ -780,8 +780,11 @@ fn run_validated(
     // store and refuses startup for admission, because one is opportunistic and the other
     // was explicitly requested.
     let (continuation_store, continuation_state) =
-        crate::serving_capabilities::mrtr_continuation_store(config, control_rt.as_ref())?
-            .into_parts();
+        crate::serving_capabilities::mrtr_continuation_store(
+            &crate::startup_plan::ContinuationControlPlan::from_validated(config),
+            control_rt.as_ref(),
+        )?
+        .into_parts();
     if let Some(store) = continuation_store {
         proxy = proxy.with_continuation_store(
             store,
@@ -1026,9 +1029,11 @@ mod key_file_perm_tests {
             "--delegated-trust-epoch",
             "epoch-min",
             "--replay-cache",
-            "file",
-            "--replay-path",
-            "/replay",
+            "shared",
+            "--replay-redis-url",
+            "redis://127.0.0.1:6379",
+            "--replay-durability-tier",
+            "redis-wait-quorum:1:100",
             "--key-source",
             name,
             "--trust-domain",

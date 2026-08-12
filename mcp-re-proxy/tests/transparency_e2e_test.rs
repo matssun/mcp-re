@@ -105,8 +105,7 @@ impl Drop for Scratch {
 
 // ---- the real delegated-required server ------------------------------------
 
-fn server_config(replay_path: &std::path::Path) -> mcp_re_proxy::cli::Config {
-    let replay_path = replay_path.to_string_lossy().into_owned();
+fn server_config() -> mcp_re_proxy::cli::Config {
     let args: Vec<String> = [
         "--bind",
         "127.0.0.1:8443",
@@ -133,9 +132,11 @@ fn server_config(replay_path: &std::path::Path) -> mcp_re_proxy::cli::Config {
         "--route",
         "a",
         "--replay-cache",
-        "file",
-        "--replay-path",
-        &replay_path,
+        "shared",
+        "--replay-redis-url",
+        "redis://127.0.0.1:6379",
+        "--replay-durability-tier",
+        "redis-wait-quorum:1:100",
         "--delegated-trust-epoch",
         EPOCH,
         "--trust-domain",
@@ -184,11 +185,10 @@ fn resolver() -> ActorResolver {
 /// execute" vs "it may have", so a test that only reads the status cannot tell whether
 /// the refusal happened on the right side of the execution boundary.
 fn build_server_counting(
-    replay_path: &std::path::Path,
     retention: Option<Arc<EvidenceRetention>>,
     dispatches: Arc<std::sync::atomic::AtomicUsize>,
 ) -> HttpProfileProxy {
-    let config = server_config(replay_path);
+    let config = server_config();
     let wiring = mcp_re_proxy::build_delegated_signing(&config, root_key())
         .expect("build delegated signing wiring");
     let mut rotor = wiring.rotor;
@@ -219,11 +219,8 @@ fn build_server_counting(
     }
 }
 
-fn build_server(
-    replay_path: &std::path::Path,
-    retention: Option<Arc<EvidenceRetention>>,
-) -> HttpProfileProxy {
-    let config = server_config(replay_path);
+fn build_server(retention: Option<Arc<EvidenceRetention>>) -> HttpProfileProxy {
+    let config = server_config();
     let wiring = mcp_re_proxy::build_delegated_signing(&config, root_key())
         .expect("build delegated signing wiring");
     let mut rotor = wiring.rotor;
@@ -418,7 +415,7 @@ fn a_served_notification_is_retained_like_any_other_accepted_exchange() {
     let scratch = Scratch::new("notification-retained");
     let retention =
         Arc::new(EvidenceRetention::open(scratch.join("evidence")).expect("open retention"));
-    let proxy = build_server(&scratch.join("replay"), Some(Arc::clone(&retention)));
+    let proxy = build_server(Some(Arc::clone(&retention)));
 
     assert_eq!(
         serve_one_notification(&proxy, "nonce-transparency-notification-1"),
@@ -444,7 +441,7 @@ fn a_served_call_becomes_an_offline_verifiable_receipt() {
     let scratch = Scratch::new("vertical");
     let retention =
         Arc::new(EvidenceRetention::open(scratch.join("evidence")).expect("open retention"));
-    let proxy = build_server(&scratch.join("replay"), Some(Arc::clone(&retention)));
+    let proxy = build_server(Some(Arc::clone(&retention)));
 
     assert_eq!(serve_one(&proxy, "nonce-transparency-vertical-1"), 200);
 
@@ -519,7 +516,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
     let scratch = Scratch::new("retained");
     let retention =
         Arc::new(EvidenceRetention::open(scratch.join("evidence")).expect("open retention"));
-    let proxy = build_server(&scratch.join("replay"), Some(Arc::clone(&retention)));
+    let proxy = build_server(Some(Arc::clone(&retention)));
     assert_eq!(serve_one(&proxy, "nonce-transparency-retained-1"), 200);
 
     let name = std::fs::read_dir(scratch.join("evidence"))
@@ -569,7 +566,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
     .expect("the retained bytes reproduce what the statement committed to");
 
     // And the control: a DIFFERENT record does not pass as this one.
-    let other = build_server(&scratch.join("replay-b"), Some(Arc::clone(&retention)));
+    let other = build_server(Some(Arc::clone(&retention)));
     assert_eq!(serve_one(&other, "nonce-transparency-retained-2"), 200);
     let names: Vec<_> = std::fs::read_dir(scratch.join("evidence"))
         .expect("dir")
@@ -606,7 +603,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
 #[test]
 fn retention_is_off_by_default_and_nothing_is_kept() {
     let scratch = Scratch::new("off");
-    let proxy = build_server(&scratch.join("replay"), None);
+    let proxy = build_server(None);
     assert_eq!(serve_one(&proxy, "nonce-transparency-off-1"), 200);
     assert!(
         !scratch.join("evidence").exists(),
@@ -625,7 +622,7 @@ fn an_exchange_whose_evidence_cannot_be_retained_is_refused() {
     let scratch = Scratch::new("failclosed");
     let evidence = scratch.join("evidence");
     let retention = Arc::new(EvidenceRetention::open(&evidence).expect("open retention"));
-    let proxy = build_server(&scratch.join("replay"), Some(Arc::clone(&retention)));
+    let proxy = build_server(Some(Arc::clone(&retention)));
 
     // The store opened; now the directory goes away and a file takes its name.
     std::fs::remove_dir_all(&evidence).expect("remove the store directory");
@@ -657,11 +654,7 @@ fn a_retention_store_that_cannot_accept_the_call_refuses_before_the_backend_runs
     let evidence = scratch.join("evidence");
     let retention = Arc::new(EvidenceRetention::open(&evidence).expect("open retention"));
     let dispatches = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let proxy = build_server_counting(
-        &scratch.join("replay"),
-        Some(Arc::clone(&retention)),
-        Arc::clone(&dispatches),
-    );
+    let proxy = build_server_counting(Some(Arc::clone(&retention)), Arc::clone(&dispatches));
 
     std::fs::remove_dir_all(&evidence).expect("remove the store directory");
     std::fs::write(&evidence, b"not a directory").expect("occupy the path");
@@ -749,7 +742,7 @@ fn a_chain_with_no_verified_hop_is_still_attested() {
     let scratch = Scratch::new("no-verified-hop");
     let retention =
         Arc::new(EvidenceRetention::open(scratch.join("evidence")).expect("open retention"));
-    let proxy = build_server(&scratch.join("replay"), Some(Arc::clone(&retention)));
+    let proxy = build_server(Some(Arc::clone(&retention)));
     assert_eq!(serve_one(&proxy, "nonce-transparency-unverified-1"), 200);
 
     let name = std::fs::read_dir(scratch.join("evidence"))
