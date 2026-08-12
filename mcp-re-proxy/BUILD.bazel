@@ -667,6 +667,17 @@ nt_rust_test(
     ],
 )
 # ADR-MCPRE-056 Phase 0: characterization of `app::run`'s STARTUP behaviour, in the
+# What `ValidatedConfig` establishes, measured from outside the crate. In the DEFAULT
+# lane because the relations it characterizes are the ones every build has.
+nt_rust_test(
+    name = "config_legality_characterization_test",
+    srcs = ["tests/config_legality_characterization_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [":mcp_re_proxy"],  # keep
+)
+
 # DEFAULT lane. Every test that drove `app::run` used to live in tls_load_harness_bench,
 # which is `redis_replay`-gated (so `cargo test --workspace` skips it) and tagged
 # `manual` (so `bazel test //...` skips it) — the composition root was exercised by
