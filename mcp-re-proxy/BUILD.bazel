@@ -53,12 +53,15 @@ _PROXY_LIB_SRCS = [
     "src/config_snapshot.rs",
     # The classified legal deployment state — layer A of the configuration state atlas.
     # One classifier/validator per configuration machine, and the value they produce.
+    "src/config_state/admission.rs",
     "src/config_state/continuation_control.rs",
     "src/config_state/cross_machine.rs",
     "src/config_state/custody.rs",
+    "src/config_state/evidence.rs",
     "src/config_state/replay.rs",
     "src/config_state/mod.rs",
     "src/config_state/tls_custody.rs",
+    "src/config_state/transport.rs",
     "src/config_state/trust_revocation.rs",
     # ADR-MCPS-028 §C: native GCP Cloud KMS Ed25519 response signer (blocking ureq
     # HTTPS + OAuth2 bearer; behind #[cfg(feature = "gcp_kms_keysource")], cfg'd out

@@ -78,6 +78,7 @@ fn keys(violations: &[String]) -> Vec<&'static str> {
         "--key-source",
         "--ingress-",
         "--client-crl-reload-secs 0",
+        "--client-crl-reload-secs has no effect",
         "--delegated-ttl-secs",
         "--delegated-overlap-secs",
         "--max-client-cert-lifetime",
@@ -121,6 +122,7 @@ fn the_boundary_refuses_in_this_order() {
     config.authz = AuthzKind::Reference;
     config.pkcs11_tls_key_label = Some("tls".to_string()); // with tls_key set: XOR violated
     config.target_uri = String::new();
+    config.client_crl_paths = vec!["/crl.pem".to_string()];
     config.client_crl_reload_secs = Some(0);
     config.delegated_ttl_secs = 0;
     config.delegated_overlap_secs = 0;
@@ -141,6 +143,12 @@ fn the_boundary_refuses_in_this_order() {
             "--revocation-list",
             "--authz",
             "TLS signing is delegated XOR exported",
+            // Both moved UP with the `ChannelBinding` machine, from the end of the list to
+            // its own position. Deliberate: an undeployable binding kind and a deprecated
+            // identity source are statements about whether this deployment exists at all,
+            // and an operator should meet them before a limit or a timeout.
+            "--transport-binding none",
+            "--transport-identity-source cn_legacy",
             "--target-uri",
             "--key-source",
             "--client-crl-reload-secs 0",
@@ -151,9 +159,7 @@ fn the_boundary_refuses_in_this_order() {
             "--read-timeout-secs",
             "--write-timeout-secs",
             "--request-deadline-secs",
-            "--transport-identity-source cn_legacy",
             "--replay-cache memory",
-            "--transport-binding none",
         ],
         "the boundary's refusal order changed"
     );
@@ -178,16 +184,18 @@ fn the_trust_and_fleet_clauses_keep_their_places() {
     assert_eq!(
         order,
         vec![
-            // `lb-assertion` is refused twice, from opposite ends of the list: first
-            // because the mode's own required keys are absent, and last on posture
-            // grounds. An operator meets the parameter complaint before the statement
-            // that the mode is not deployable at all.
+            // `lb-assertion` is refused twice: because the mode is not deployable, and
+            // because its own required keys are absent. The order of the pair INVERTED
+            // when the `ChannelBinding` machine took ownership — deliberately, and this is
+            // where that is recorded. An operator now learns the mode does not exist
+            // before being told which of its parameters are missing, which is the useful
+            // way round; previously the undeployability came after every unrelated limit.
+            "--transport-binding lb-assertion places",
             "--ingress-",
             "--revocation-tier live|push requires",
             "--replay-cache file is not a supported",
             "--fleet requires",
             "--reverse-proxy-identity-header",
-            "--transport-binding lb-assertion places",
         ],
         "the boundary's refusal order changed"
     );

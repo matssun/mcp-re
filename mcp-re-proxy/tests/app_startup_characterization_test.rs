@@ -1074,8 +1074,14 @@ fn a_programmatic_config_cannot_hot_spin_the_crl_reloader() {
 
     // Negative controls: a positive cadence, and no cadence at all (load once), are both
     // supported and must not be refused.
+    //
+    // The cadence is given a list to re-read. Since the `CrlRevocation` machine landed, a
+    // cadence with no CRLs is itself refused — it names how often to re-read an empty set,
+    // so it states a revocation control the deployment does not have — and that refusal
+    // would mask the property under test here.
     for cadence in [Some(30), None] {
         let mut config = parsed.clone();
+        config.client_crl_paths = vec![m.client_ca_path.to_string_lossy().into_owned()];
         config.client_crl_reload_secs = cadence;
         let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
             .expect_err("this fixture stops at an environmental step");

@@ -25,17 +25,23 @@
 //! stay in the validated `Config`, where the owning machine checked them against that
 //! state's four columns. Planning reads the pair and produces the plan.
 
+pub mod admission;
 pub mod continuation_control;
 pub(crate) mod cross_machine;
 pub mod custody;
+pub mod evidence;
 pub mod replay;
 pub mod tls_custody;
+pub mod transport;
 pub mod trust_revocation;
 
+pub use admission::AdmissionState;
 pub use continuation_control::ContinuationControlState;
 pub use custody::CustodyState;
+pub use evidence::{AuditState, RetentionState, VerifiedContextState};
 pub use replay::ReplayState;
 pub use tls_custody::TlsCustodyState;
+pub use transport::{ChannelBindingState, CrlRevocationState};
 pub use trust_revocation::TrustRevocationState;
 
 /// Which state each configuration machine was recognised to be in.
@@ -48,30 +54,95 @@ pub use trust_revocation::TrustRevocationState;
 /// is not here yet is one whose legality still lives in the residual clause list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeploymentConfigState {
+    admission: AdmissionState,
+    audit: AuditState,
+    channel_binding: ChannelBindingState,
     continuation_control: ContinuationControlState,
+    crl_revocation: CrlRevocationState,
     custody: CustodyState,
     replay: ReplayState,
+    retention: RetentionState,
     tls_custody: TlsCustodyState,
     trust_revocation: TrustRevocationState,
+    verified_context: VerifiedContextState,
+}
+
+/// The recognised states, as one argument, so adding a machine is a change in one place
+/// rather than in every signature between the validator and the value.
+pub(crate) struct RecognisedStates {
+    pub(crate) admission: AdmissionState,
+    pub(crate) audit: AuditState,
+    pub(crate) channel_binding: ChannelBindingState,
+    pub(crate) continuation_control: ContinuationControlState,
+    pub(crate) crl_revocation: CrlRevocationState,
+    pub(crate) custody: CustodyState,
+    pub(crate) replay: ReplayState,
+    pub(crate) retention: RetentionState,
+    pub(crate) tls_custody: TlsCustodyState,
+    pub(crate) trust_revocation: TrustRevocationState,
+    pub(crate) verified_context: VerifiedContextState,
 }
 
 impl DeploymentConfigState {
     /// Assemble the classified state. Crate-private: the only legitimate producer is the
     /// validation boundary, because the value's meaning is "these states were checked".
-    pub(crate) fn new(
-        continuation_control: ContinuationControlState,
-        custody: CustodyState,
-        replay: ReplayState,
-        tls_custody: TlsCustodyState,
-        trust_revocation: TrustRevocationState,
-    ) -> Self {
-        Self {
+    pub(crate) fn new(states: RecognisedStates) -> Self {
+        let RecognisedStates {
+            admission,
+            audit,
+            channel_binding,
             continuation_control,
+            crl_revocation,
             custody,
             replay,
+            retention,
             tls_custody,
             trust_revocation,
+            verified_context,
+        } = states;
+        Self {
+            admission,
+            audit,
+            channel_binding,
+            continuation_control,
+            crl_revocation,
+            custody,
+            replay,
+            retention,
+            tls_custody,
+            trust_revocation,
+            verified_context,
         }
+    }
+
+    /// Whether a workload admission gate applies, and how strictly.
+    pub fn admission(&self) -> AdmissionState {
+        self.admission
+    }
+
+    /// Where the per-request security record goes.
+    pub fn audit(&self) -> AuditState {
+        self.audit
+    }
+
+    /// How a verified request signer is bound to the authenticated channel.
+    pub fn channel_binding(&self) -> ChannelBindingState {
+        self.channel_binding
+    }
+
+    /// Offline client-certificate revocation.
+    pub fn crl_revocation(&self) -> CrlRevocationState {
+        self.crl_revocation
+    }
+
+    /// Whether exchanges are retained for later SCITT statements.
+    pub fn retention(&self) -> RetentionState {
+        self.retention
+    }
+
+    /// What the PEP asserts to the inner server about the caller.
+    pub fn verified_context(&self) -> VerifiedContextState {
+        self.verified_context
     }
 
     /// Whether multi-round-trip flows resolve across replicas, and nothing about replay:
@@ -159,13 +230,19 @@ mod tests {
 
     #[test]
     fn the_state_carries_what_the_planes_would_otherwise_re_derive() {
-        let state = DeploymentConfigState::new(
-            ContinuationControlState::Redis,
-            CustodyState::Pkcs11,
-            ReplayState::SharedLinearizable,
-            TlsCustodyState::Delegated,
-            TrustRevocationState::PushNetworked { t_secs: 30 },
-        );
+        let state = DeploymentConfigState::new(RecognisedStates {
+            admission: AdmissionState::Required,
+            audit: AuditState::Stderr,
+            channel_binding: ChannelBindingState::ExactUriSan,
+            continuation_control: ContinuationControlState::Redis,
+            crl_revocation: CrlRevocationState::Reloading,
+            custody: CustodyState::Pkcs11,
+            replay: ReplayState::SharedLinearizable,
+            retention: RetentionState::On,
+            tls_custody: TlsCustodyState::Delegated,
+            trust_revocation: TrustRevocationState::PushNetworked { t_secs: 30 },
+            verified_context: VerifiedContextState::Trusted,
+        });
         assert!(state.trust_revocation().has_networked_epoch());
         assert!(state.custody().is_non_exporting_device());
         assert!(state.tls_custody().is_delegated());
@@ -173,5 +250,14 @@ mod tests {
         // replay store and a shared continuation store are independently expressible.
         assert_eq!(state.replay(), &ReplayState::SharedLinearizable);
         assert!(state.continuation_control().is_shared());
+        // Every machine the atlas names is represented exactly once, including the ones
+        // that cannot be misconfigured: the value states the whole posture, not the part
+        // that needed checking.
+        assert!(state.admission().is_enforced());
+        assert_eq!(state.audit(), AuditState::Stderr);
+        assert_eq!(state.channel_binding(), ChannelBindingState::ExactUriSan);
+        assert_eq!(state.crl_revocation(), CrlRevocationState::Reloading);
+        assert_eq!(state.retention(), RetentionState::On);
+        assert!(state.verified_context().asserts_inner_channel_isolation());
     }
 }

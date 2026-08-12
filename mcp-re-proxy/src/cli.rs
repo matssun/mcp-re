@@ -2507,11 +2507,26 @@ pub fn validate_configuration(config: &Config) -> Result<DeploymentConfigState, 
         crate::config_state::tls_custody::classify_and_validate(config);
     let (trust_revocation, trust_violations) =
         crate::config_state::trust_revocation::classify_and_validate(config);
+    let (admission, admission_violations) =
+        crate::config_state::admission::classify_and_validate(config);
+    let (channel_binding, binding_violations) =
+        crate::config_state::transport::classify_and_validate_binding(config);
+    let (crl_revocation, crl_violations) =
+        crate::config_state::transport::classify_and_validate_crl(config);
+    let (audit, retention, verified_context) = crate::config_state::evidence::classify(config);
     // PASS 2 — the relations between machines, asked of the RECOGNISED states rather than
     // of the fields again.
-    let cross = crate::config_state::cross_machine::validate(custody, tls_custody, config);
+    let cross = crate::config_state::cross_machine::validate(
+        custody,
+        tls_custody,
+        &trust_revocation,
+        config,
+    );
     let decided = MachineViolations {
+        admission: admission_violations,
+        channel_binding: binding_violations,
         continuation_control: continuation_violations,
+        crl_revocation: crl_violations,
         custody: custody_violations,
         replay: replay_violations,
         tls_custody: tls_custody_violations,
@@ -2519,29 +2534,44 @@ pub fn validate_configuration(config: &Config) -> Result<DeploymentConfigState, 
         cross,
     };
     let violations = legality_violations(config, decided);
-    // `replay` is the one machine whose request may name no state at all — `memory` and
-    // `file` are input forms, not deployments. When that happens it has already pushed its
-    // refusal, so the empty-violations arm below is unreachable with `None`; the `ok_or`
-    // states the coupling rather than leaving it to be inferred.
-    match (violations.is_empty(), replay) {
-        (true, Some(replay)) => Ok(DeploymentConfigState::new(
-            continuation_control,
-            custody,
-            replay,
-            tls_custody,
-            trust_revocation,
+    // Two machines can name NO state: `Replay` (`memory` and `file` are input forms, not
+    // deployments) and `ChannelBinding` (three undeployable binding kinds, one deprecated
+    // identity source). Each has already pushed its refusal when that happens, so the
+    // `None` arms below are unreachable — stated rather than `unwrap`ped, so a machine that
+    // forgets to refuse fails loudly instead of building a state nothing recognised.
+    if !violations.is_empty() {
+        return Err(violations);
+    }
+    match (replay, channel_binding) {
+        (Some(replay), Some(channel_binding)) => Ok(DeploymentConfigState::new(
+            crate::config_state::RecognisedStates {
+                admission,
+                audit,
+                channel_binding,
+                continuation_control,
+                crl_revocation,
+                custody,
+                replay,
+                retention,
+                tls_custody,
+                trust_revocation,
+                verified_context,
+            },
         )),
-        (true, None) => Err(vec![
-            "internal error: no replay state was recognised and no refusal was raised".to_string(),
+        _ => Err(vec![
+            "internal error: a configuration machine recognised no state and raised no refusal"
+                .to_string(),
         ]),
-        (false, _) => Err(violations),
     }
 }
 
 /// What the two passes decided, kept apart by owner so the clause list can splice each
 /// where it has always been read.
 struct MachineViolations {
+    admission: Vec<String>,
+    channel_binding: Vec<String>,
     continuation_control: Vec<String>,
+    crl_revocation: Vec<String>,
     custody: Vec<String>,
     replay: Vec<String>,
     tls_custody: Vec<String>,
@@ -2567,9 +2597,7 @@ fn legality_violations(config: &Config, decided: MachineViolations) -> Vec<Strin
     // Same shape, second instance: the parser refuses a deny-list that nothing enforces,
     // and `revocation_list_paths` is a public field, so a caller that builds the struct in
     // code reaches the serving path without meeting a parser.
-    if let Some(refusal) = unenforceable_revocation_list_refusal(&config.revocation_list_paths) {
-        violations.push(refusal);
-    }
+    violations.extend(decided.cross.x6_unenforceable_deny_list);
     // Third instance of the same shape. This one was not a bypass — the composition root
     // refused it too — but it was stated twice, in two places, with two messages.
     if let Some(refusal) = unaccepted_authz_profile_refusal(config.authz) {
@@ -2579,9 +2607,12 @@ fn legality_violations(config: &Config, decided: MachineViolations) -> Vec<Strin
     // contradictory rather than redundant, and the contradiction is between two machines,
     // so it is decided in pass 2 and only placed here.
     violations.extend(decided.cross.x2b_exclusive_tls_custody);
-    if let Some(refusal) = undeployable_transport_binding_refusal(config.binding) {
-        violations.push(refusal);
-    }
+    // The `ChannelBinding` machine: which binding kinds are deployments at all, and which
+    // identity source names a live state. Its `binding == none` and `== lb-assertion`
+    // clauses used to sit at the END of this list; they are emitted here now, which is a
+    // DELIBERATE precedence change — the mode's own undeployability is what an operator
+    // needs first, and it was previously reported after every unrelated limit.
+    violations.extend(decided.channel_binding);
     // Sixth instance, and the one that reaches furthest into a served request: an empty or
     // scheme-less `--target-uri` does not weaken the request-target reconstruction check,
     // it disables it for every request, while `async_serve` documents the shape as
@@ -2594,16 +2625,7 @@ fn legality_violations(config: &Config, decided: MachineViolations) -> Vec<Strin
     // downstream re-checked the degraded window, so a programmatic config reached the
     // serving path with `allow_degraded` on and P zero — a revoked workload served for
     // the clock-skew tolerance on a deployment that configured no window at all.
-    if let Some(refusal) = unenforceable_admission_refusal(
-        config.admission,
-        config.admission_authority_kid.as_deref(),
-        config.admission_authority_pubkey_b64url.as_deref(),
-        config.admission_redis_url.as_deref(),
-        config.admission_allow_degraded,
-        config.admission_degraded_bound_secs,
-    ) {
-        violations.push(refusal);
-    }
+    violations.extend(decided.admission);
     // The KMS/STS endpoint overrides. These carry the root-key trust bootstrap: the
     // `GetPublicKey` answer from the named host becomes the ROOT verify key the
     // verify-before-return guardrail is measured against, so a substituted endpoint
@@ -2623,18 +2645,9 @@ fn legality_violations(config: &Config, decided: MachineViolations) -> Vec<Strin
     if let Some(refusal) = ingress_assertion_violation(config) {
         violations.push(refusal);
     }
-    // A zero CRL reload cadence is not a disabled reloader, it is an unbounded one: the
-    // worker's sleep returns immediately, so it re-reads every CRL file, rebuilds the
-    // rustls verifier and swaps the serving snapshot in a tight loop, burning a core and
-    // thrashing the snapshot with no diagnostic.
-    if config.client_crl_reload_secs == Some(0) {
-        violations.push(
-            "--client-crl-reload-secs 0 makes the CRL reloader spin: the cadence is the sleep \
-             between re-reads, so zero re-reads every CRL and rebuilds the TLS verifier \
-             continuously. Set a positive cadence, or omit the flag to load the CRLs once"
-                .to_string(),
-        );
-    }
+    // The `CrlRevocation` machine: whether offline revocation is off, loaded once, or
+    // re-read, and what each of those states requires.
+    violations.extend(decided.crl_revocation);
     // ADR-MCPRE-052 delegated custody. `exp` is the only thing that expires a delegated
     // response-signing credential — advancing the trust epoch does not reach one already
     // issued, because no verifier reads the counter — so the TTL IS the exposure window of
@@ -2686,43 +2699,24 @@ fn legality_violations(config: &Config, decided: MachineViolations) -> Vec<Strin
         )),
         Some(_) => {}
     }
-    // A client certificate's chain, CRL status and validity window are checked at the
-    // TLS handshake and never again on an established connection. Without a
-    // connection-age bound a peer holding a stolen or revoked certificate keeps full
-    // authenticated access for as long as it keeps one connection open — so the
-    // `--max-client-cert-lifetime` ceiling above and the CRL reload cadence both stop
-    // being true statements about the deployment.
-    match config.limits.max_connection_age {
-        None => violations.push(
-            "--max-connection-age-secs 0 disables the connection-age bound: the client \
-             certificate is validated only at the handshake, so a peer that never \
-             reconnects is never re-checked against an expiry or a reloaded CRL. Set a \
-             bounded age (default 300s)"
-                .to_string(),
-        ),
-        Some(age) if age > MAX_CLIENT_CERT_LIFETIME => violations.push(format!(
-            "--max-connection-age-secs {}s exceeds the client-cert lifetime ceiling of {}s: \
-             a connection would outlive the credential that authenticated it",
-            age.as_secs(),
-            MAX_CLIENT_CERT_LIFETIME.as_secs(),
-        )),
-        Some(_) => {}
-    }
-    // ADR-MCPS-021 Axis 2. The `TrustRevocation` machine owns every question about the
-    // declared tier, the reload cadence that IS its revocation window, and the epoch
-    // source that splits Push into its inert and networked states. Spliced in here rather
-    // than at the end of the list because this is where its clauses have always been read.
+    // X5 — Limits × Tls: a connection may not outlive the credential that authenticated
+    // it, because the client certificate is checked at the handshake and never again.
+    violations.extend(decided.cross.x5_connection_outlives_credential);
+    // The `TrustRevocation` machine (ADR-MCPS-021 Axis 2): the declared tier, the reload
+    // cadence that IS its revocation window, and the epoch source that splits Push into
+    // its inert and networked states. Spliced here because this is where its clauses have
+    // always been read.
     violations.extend(decided.trust_revocation);
     // MCPS-093/094: the socket timeouts and the aggregate read-phase deadline ARE the
-    // slow-loris defense — a peer trickling bytes just under `read_timeout` is stopped
-    // by `request_deadline`, and with either gone a handful of connections pin serve
-    // slots up to `max_concurrent_connections` with nothing to drop them.
+    // slow-loris defense — a peer trickling bytes just under `read_timeout` is stopped by
+    // `request_deadline`, and with either gone a handful of connections pin serve slots up
+    // to `max_concurrent_connections` with nothing to drop them.
     //
-    // An out-of-range value was already rejected LOUDLY, with the stated reason that
-    // "the control can never be turned off by out-of-range input". `0` turned the same
-    // control off silently, which left the binary asserting a maximal-security posture
-    // while its own defense was disabled. Each default is `Some(30s)`, so `None` here
-    // only ever comes from an operator explicitly passing `0`.
+    // An out-of-range value was already rejected LOUDLY, with the stated reason that "the
+    // control can never be turned off by out-of-range input". `0` turned the same control
+    // off silently, which left the binary asserting a maximal-security posture while its
+    // own defense was disabled. Each default is `Some(30s)`, so `None` here only ever comes
+    // from an operator explicitly passing `0`.
     for (value, flag) in [
         (config.limits.read_timeout, "--read-timeout-secs"),
         (config.limits.write_timeout, "--write-timeout-secs"),
@@ -2735,13 +2729,6 @@ fn legality_violations(config: &Config, decided: MachineViolations) -> Vec<Strin
                  fail-closed drop. Set a bounded value (default 30s)"
             ));
         }
-    }
-    if config.identity_source == IdentityPolicy::CnLegacy {
-        violations.push(
-            "--transport-identity-source cn_legacy is a deprecated, insecure identity binding; \
-             use uri_san or dns_san"
-                .to_string(),
-        );
     }
     // The `Replay` machine: which shared store holds admitted nonces, and every locator
     // that store requires or excludes. Spliced where the `memory` refusal and the
@@ -2779,47 +2766,14 @@ fn legality_violations(config: &Config, decided: MachineViolations) -> Vec<Strin
             }
         ));
     }
-    // #4082 (M10/M22): reverse-proxy identity-header ingress takes the verified
-    // identity from a forwarded header and trusts, on the operator's word alone,
-    // that the socket is reachable ONLY by the upstream — a process that can
-    // reach the socket can SPOOF any identity. Strict refuses to enable this
-    // documented spoofable posture silently.
-    if config.reverse_proxy_identity_header.is_some() {
-        violations.push(
-            "--reverse-proxy-identity-header trusts a forwarded identity header that any peer \
-             able to reach the socket can spoof; production must terminate mTLS locally (omit \
-             --reverse-proxy-identity-header)"
-                .to_string(),
-        );
-    }
-    // #4082 (M11): `--transport-binding none` ignores the mTLS channel identity,
-    // so a request signed by identity A can be presented over a channel
-    // authenticated as identity B. The channel-to-signer binding must be enforced
-    // in production.
-    if config.binding == BindingKind::None {
-        violations.push(
-            "--transport-binding none ignores the mTLS channel identity, decoupling the \
-             verified request signer from the authenticated channel; production must bind \
-             them (--transport-binding exact)"
-                .to_string(),
-        );
-    }
-    // ADR-MCPS-023 Tier 3 (issue #71): `--transport-binding lb-assertion` is a
-    // cryptographically request-bound ingress assertion, but the load balancer
-    // still terminates the client's mTLS and is in the trusted computing base —
-    // this is request-bound INGRESS assertion, NOT end-to-end client↔node binding
-    // (NOT end_to_end_mtls). Strict/production refuses to enable the downgraded
-    // posture silently, mirroring the trusted-ingress-header refusal above.
-    if config.binding == BindingKind::LbAssertion {
-        violations.push(
-            "--transport-binding lb-assertion places the load balancer in the trusted \
-             computing base (the LB terminates the client mTLS and signs a request-bound \
-             assertion); this is request-bound ingress assertion, NOT end-to-end \
-             client↔node mTLS; production must bind end-to-end (--transport-binding exact \
-             with locally-terminated client mTLS)"
-                .to_string(),
-        );
-    }
+    // X7 — ChannelBinding × Tls: mTLS is terminated locally XOR a forwarded identity is
+    // trusted. The two binding-kind clauses that used to close this list moved up into the
+    // `ChannelBinding` machine's own position.
+    violations.extend(decided.cross.x7_local_mtls_xor_forwarded);
+    // X9 — TrustRevocation × DelegatedSigning. The epoch posture is decided once, by the
+    // `TrustRevocation` machine, and carried in the classification; nothing is re-derived
+    // here (CF-09).
+    violations.extend(decided.cross.x9_trust_epoch_posture);
     violations
 }
 

@@ -10,12 +10,12 @@
 //! pass rather than a second opinion: every question it asks has already been answered
 //! once, by the machine that owns it.
 //!
-//! Implemented here: X2a and X2b. X5, X6, X7 and X9 still sit inline at the boundary,
-//! waiting for the machines they join.
+//! All six live here: X2a, X2b, X5, X6, X7, X9.
 
 use crate::cli::Config;
 use crate::config_state::custody::CustodyState;
 use crate::config_state::tls_custody::TlsCustodyState;
+use crate::config_state::trust_revocation::TrustRevocationState;
 
 /// The relations, kept separate so each can be reported where its clause has always been
 /// read rather than in one block at the end (CF-11 — precedence changes deliberately).
@@ -25,6 +25,14 @@ pub(crate) struct CrossMachineViolations {
     pub(crate) x2a_delegated_selector: Vec<String>,
     /// X2b — `TlsCustody` × `Tls`.
     pub(crate) x2b_exclusive_tls_custody: Vec<String>,
+    /// X5 — `Limits` × `Tls`.
+    pub(crate) x5_connection_outlives_credential: Vec<String>,
+    /// X6 — `Authz` × `Trust`.
+    pub(crate) x6_unenforceable_deny_list: Vec<String>,
+    /// X7 — `ChannelBinding` × `Tls`.
+    pub(crate) x7_local_mtls_xor_forwarded: Vec<String>,
+    /// X9 — `TrustRevocation` × `DelegatedSigning`.
+    pub(crate) x9_trust_epoch_posture: Vec<String>,
 }
 
 /// X2a: which delegated TLS selector is legal depends on the custody state.
@@ -68,15 +76,92 @@ fn x2b(tls_custody: TlsCustodyState, config: &Config) -> Vec<String> {
     Vec::new()
 }
 
+/// X5: a connection may not outlive the credential that authenticated it.
+///
+/// A client certificate's chain, CRL status and validity window are checked at the TLS
+/// handshake and never again on an established connection, so without a bound a peer
+/// holding a stolen or revoked certificate keeps authenticated access for as long as it
+/// keeps one connection open — and both the lifetime ceiling and the CRL cadence stop
+/// being true statements about the deployment.
+fn x5(config: &Config) -> Vec<String> {
+    let ceiling = crate::cli::MAX_CLIENT_CERT_LIFETIME;
+    match config.limits.max_connection_age {
+        None => vec![
+            "--max-connection-age-secs 0 disables the connection-age bound: the client \
+             certificate is validated only at the handshake, so a peer that never \
+             reconnects is never re-checked against an expiry or a reloaded CRL. Set a \
+             bounded age (default 300s)"
+                .to_string(),
+        ],
+        Some(age) if age > ceiling => vec![format!(
+            "--max-connection-age-secs {}s exceeds the client-cert lifetime ceiling of {}s: \
+             a connection would outlive the credential that authenticated it",
+            age.as_secs(),
+            ceiling.as_secs(),
+        )],
+        Some(_) => Vec::new(),
+    }
+}
+
+/// X6: a deny-list no authorization profile will consult enforces nothing.
+///
+/// `Authz` is degenerate — only `Off` is reachable — so this relation is currently
+/// unconditional. It is still a relation rather than a `Trust` column: the list becomes
+/// meaningful the moment an authorization profile exists to read it, and nothing about
+/// trust configuration changes then.
+fn x6(config: &Config) -> Vec<String> {
+    crate::cli::unenforceable_revocation_list_refusal(&config.revocation_list_paths)
+        .into_iter()
+        .collect()
+}
+
+/// X7: mTLS is terminated locally XOR a forwarded identity is trusted.
+///
+/// The header posture is refused outright — any peer that can reach the socket can spoof
+/// it — which is what makes the second half of the relation currently unreachable: with no
+/// forwarded identity there is always a local client certificate to bound.
+fn x7(config: &Config) -> Vec<String> {
+    if config.reverse_proxy_identity_header.is_some() {
+        return vec![
+            "--reverse-proxy-identity-header trusts a forwarded identity header that any peer \
+             able to reach the socket can spoof; production must terminate mTLS locally (omit \
+             --reverse-proxy-identity-header)"
+                .to_string(),
+        ];
+    }
+    Vec::new()
+}
+
+/// X9: the trust-epoch posture, interpreted once (CF-09).
+///
+/// `TrustRevocation` owns whether the epoch configuration is LEGAL — that is X8, and it is
+/// checked inside that machine. What belongs here is the relation to delegated signing:
+/// the credential label the operator's INCR kill switch reaches is minted under the same
+/// posture the trust cache flushes on, so the two must be one decision.
+///
+/// The decision is `TrustRevocationState::has_networked_epoch`, made by the machine and
+/// carried in `DeploymentConfigState`. Neither plan re-derives it from
+/// `trust_epoch_redis_url`, and neither plane asks the other. This function therefore has
+/// nothing left to refuse — which is the ruling holding, not an omission: it is stated so
+/// that a future rule joining these two machines has an owner to be added to.
+fn x9(_trust_revocation: &TrustRevocationState, _config: &Config) -> Vec<String> {
+    Vec::new()
+}
+
 /// Check the cross-machine relations over states pass 1 recognised.
 pub(crate) fn validate(
     custody: CustodyState,
     tls_custody: TlsCustodyState,
+    trust_revocation: &TrustRevocationState,
     config: &Config,
 ) -> CrossMachineViolations {
     CrossMachineViolations {
         x2a_delegated_selector: x2a(custody, config),
         x2b_exclusive_tls_custody: x2b(tls_custody, config),
+        x5_connection_outlives_credential: x5(config),
+        x6_unenforceable_deny_list: x6(config),
+        x7_local_mtls_xor_forwarded: x7(config),
+        x9_trust_epoch_posture: x9(trust_revocation, config),
     }
 }
 
@@ -94,7 +179,8 @@ mod tests {
         mutate(&mut config);
         let (custody, _) = crate::config_state::custody::classify_and_validate(&config);
         let (tls_custody, _) = crate::config_state::tls_custody::classify_and_validate(&config);
-        validate(custody, tls_custody, &config)
+        let (trust, _) = crate::config_state::trust_revocation::classify_and_validate(&config);
+        validate(custody, tls_custody, &trust, &config)
     }
 
     #[test]
@@ -137,6 +223,52 @@ mod tests {
                 "a dangling {flag} was accepted"
             );
         }
+    }
+
+    #[test]
+    fn a_connection_may_not_outlive_the_credential_that_authenticated_it() {
+        assert!(relations(|_| {})
+            .x5_connection_outlives_credential
+            .is_empty());
+        assert!(!relations(|c| c.limits.max_connection_age = None)
+            .x5_connection_outlives_credential
+            .is_empty());
+        assert!(!relations(|c| c.limits.max_connection_age =
+            Some(crate::cli::MAX_CLIENT_CERT_LIFETIME + std::time::Duration::from_secs(1)))
+        .x5_connection_outlives_credential
+        .is_empty());
+    }
+
+    #[test]
+    fn a_deny_list_no_profile_will_read_is_refused() {
+        assert!(relations(|_| {}).x6_unenforceable_deny_list.is_empty());
+        assert!(
+            !relations(|c| c.revocation_list_paths = vec!["/deny.json".to_string()])
+                .x6_unenforceable_deny_list
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_forwarded_identity_is_refused_where_mtls_terminates_locally() {
+        assert!(relations(|_| {}).x7_local_mtls_xor_forwarded.is_empty());
+        assert!(
+            !relations(|c| c.reverse_proxy_identity_header = Some("x-client-id".to_string()))
+                .x7_local_mtls_xor_forwarded
+                .is_empty()
+        );
+    }
+
+    /// CF-09 holding, asserted rather than assumed: the epoch posture is decided by the
+    /// `TrustRevocation` machine, so this relation has nothing left to re-decide.
+    #[test]
+    fn the_trust_epoch_posture_is_not_re_derived_here() {
+        let found = relations(|c| {
+            c.revocation_tier = crate::revocation_tier::RevocationTier::Push { t_secs: 30 };
+            c.trust_reload_secs = Some(30);
+            c.trust_epoch_redis_url = Some("redis://127.0.0.1:6379".to_string());
+        });
+        assert!(found.x9_trust_epoch_posture.is_empty());
     }
 
     #[test]
