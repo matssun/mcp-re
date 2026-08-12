@@ -666,6 +666,24 @@ nt_rust_test(
         "//mcp-re-test-paths:mcp_re_test_paths",
     ],
 )
+# ADR-MCPRE-056 §8: the third clause of the completion criterion — a plane whose posture
+# comes from its plan must not read configuration to re-decide it. The signature proves no
+# `Config` is PASSED; this proves none is NAMED, which is the form a future reach-back
+# actually takes (a fully-qualified path, no import, no signature change).
+nt_rust_test(
+    name = "plane_config_reachback_test",
+    srcs = ["tests/plane_config_reachback_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = ["src/trust_plane.rs"],
+    edition = "2021",
+    env = {
+        "MCP_RE_TRUST_PLANE_SRC": "$(rlocationpath src/trust_plane.rs)",
+    },
+    deps = [
+        "//mcp-re-test-paths:mcp_re_test_paths",
+    ],
+)
 nt_rust_test(
     name = "revocation_serving_wiring_test",
     srcs = ["tests/revocation_serving_wiring_test.rs"],

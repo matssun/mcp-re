@@ -71,6 +71,7 @@ fn keys(violations: &[String]) -> Vec<&'static str> {
         "TLS signing is delegated XOR exported",
         "--transport-binding lb-assertion places",
         "--target-uri",
+        "--inner-http-url",
         "--admission",
         "--aws-kms-endpoint",
         "--gcp-kms-endpoint",
@@ -122,6 +123,7 @@ fn the_boundary_refuses_in_this_order() {
     config.authz = AuthzKind::Reference;
     config.pkcs11_tls_key_label = Some("tls".to_string()); // with tls_key set: XOR violated
     config.target_uri = String::new();
+    config.inner_http_urls.clear();
     config.client_crl_paths = vec!["/crl.pem".to_string()];
     config.client_crl_reload_secs = Some(0);
     config.delegated_ttl_secs = 0;
@@ -150,6 +152,11 @@ fn the_boundary_refuses_in_this_order() {
             "--transport-binding none",
             "--transport-identity-source cn_legacy",
             "--target-uri",
+            // NEW, and it arrived from the trust plane rather than from nowhere: naming no
+            // inner server was previously refused only after trust had read its document
+            // and started its workers. It sits beside `--target-uri` because both are
+            // required locators the parser checks and the boundary did not.
+            "--inner-http-url",
             "--key-source",
             "--client-crl-reload-secs 0",
             "--delegated-ttl-secs",

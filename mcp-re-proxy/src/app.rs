@@ -443,6 +443,12 @@ fn run_validated(
     // not enroll it as a request signer, and signing mints under it. Two derivations
     // could disagree about which key that is.
     let response_kid = crate::startup_plan::response_issuer_kid(config);
+    // The shared trust-epoch mechanism, interpreted ONCE and handed to both consumers
+    // (CF-09). Trust flushes its cache on an advance; delegated signing mints under the
+    // resulting label. Each used to read the configuration for itself.
+    let trust_epoch = crate::startup_plan::TrustEpochPlan::from_validated(config);
+    let trust_plan =
+        crate::startup_plan::TrustPlan::from_validated(config, response_kid.clone(), trust_epoch);
 
     // ADR-MCPRE-057 §3 — the lifecycle becomes a value here.
     //
@@ -469,8 +475,7 @@ fn run_validated(
     let mut building = crate::materializing_runtime::MaterializingRuntime::begin(lifecycle)?;
 
     building.install_trust(crate::trust_plane::TrustPlane::materialize(
-        config,
-        &response_kid,
+        &trust_plan,
         Arc::clone(&shutdown),
     )?);
     let resolver = building.trust().resolver();
@@ -569,11 +574,7 @@ fn run_validated(
     // (the two tiers have different cadences). Zero-window revocation is never
     // claimed on either.
     if config.fleet {
-        let trust_bound = crate::trust_plane::fleet_trust_bound(
-            &config.revocation_tier,
-            config.trust_epoch_redis_url.is_some(),
-            config.trust_reload_secs,
-        );
+        let trust_bound = crate::trust_plane::fleet_trust_bound(&trust_plan);
         let crl_bound = crate::tls_plane::fleet_crl_bound(
             !building.tls().crls().is_empty(),
             config.max_client_cert_lifetime,
@@ -701,6 +702,7 @@ fn run_validated(
     // of this function, and `serve_fleet` returns before either is dropped.
     building.install_signing(crate::signing_plane::SigningPlane::materialize(
         config,
+        &trust_plan.epoch,
         key_source,
         &response_kid,
         startup_now_unix,

@@ -132,6 +132,7 @@ impl SigningPlane {
     /// here stops on it, and also when this plane is dropped.
     pub fn materialize(
         config: &cli::ValidatedConfig,
+        epoch: &crate::startup_plan::TrustEpochPlan,
         root_signer: impl crate::key_source::ResponseSigner + Send + 'static,
         response_kid: &str,
         startup_now_unix: i64,
@@ -146,7 +147,7 @@ impl SigningPlane {
         // first credential carries the globally comparable `<base>#<counter>` label
         // rather than the bare base. Minting under the bare label is what let a
         // restarted replica appear unrevoked to verifiers pinned past an `INCR`.
-        let epoch_watch = build_delegated_epoch_watch(config, rotor.trust_epoch().to_string())?;
+        let epoch_watch = build_delegated_epoch_watch(epoch, rotor.trust_epoch().to_string())?;
         if let Some(watch) = epoch_watch.as_ref() {
             // FAIL CLOSED FOR MINTING: a configured kill switch whose state cannot be
             // read means we cannot produce an epoch verifiers can compare, so we must
@@ -564,8 +565,15 @@ impl DelegatedEpochWatch {
     }
 }
 
-/// Build the delegated-signing trust-epoch watcher from `--trust-epoch-redis-url`.
-/// `Ok(None)` when no source is configured — the epoch is then whatever
+/// Build the delegated-signing trust-epoch watcher from the SHARED epoch plan (CF-09).
+///
+/// The plan is an input, not something read from configuration here. This function and the
+/// trust plane's channel builder are the two CONSUMERS of one decision; while each
+/// interpreted `--trust-epoch-redis-url` for itself they were two authorities that happened
+/// to agree, and the code said as much — trust's refusal of a malformed URL landed first
+/// only because trust is materialized first.
+///
+/// `Ok(None)` when no source is planned — the epoch is then whatever
 /// `--delegated-trust-epoch` fixed it to, with no cross-replica revocation signal (the
 /// honest bounded behaviour for a single-node deployment).
 ///
@@ -580,16 +588,18 @@ impl DelegatedEpochWatch {
 /// on this plane's own terms, not a warning line and a silent downgrade.
 #[cfg(feature = "redis_replay")]
 fn build_delegated_epoch_watch(
-    config: &cli::Config,
+    epoch: &crate::startup_plan::TrustEpochPlan,
     base_label: String,
 ) -> Result<Option<DelegatedEpochWatch>, String> {
-    let Some(url) = config.trust_epoch_redis_url.as_ref() else {
+    let crate::startup_plan::TrustEpochPlan::Redis { url, key } = epoch else {
         return Ok(None);
     };
-    let key = config
-        .trust_epoch_key
-        .as_deref()
-        .unwrap_or(crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY);
+    // Layer B, asked of the PLAN rather than of `cfg!` here, for the same reason the trust
+    // plane asks it: one owner for the question in every build, not an owner only in the
+    // build where it refuses. Always `None` in this lane.
+    if let Some(refusal) = epoch.unsupported_by_build() {
+        return Err(refusal);
+    }
     match crate::trust_epoch::RedisEpochReader::connect_lazy(url, key) {
         Ok(reader) => Ok(Some(DelegatedEpochWatch {
             reader: Box::new(reader),
@@ -611,23 +621,21 @@ fn build_delegated_epoch_watch(
 }
 
 /// The same refusal, one step earlier: a build without the `redis_replay` feature has no
-/// reader to construct, so a configured URL cannot be honoured here either. Stated on this
-/// plane rather than inherited from the trust plane's identical check, because "signing
-/// mints under a label the kill switch can reach" is this plane's invariant to keep.
+/// reader to construct, so a planned source cannot be honoured here either.
+///
+/// The message is the PLAN's, identical to the trust plane's, because the two planes were
+/// refusing the same build fact with two different sentences — each naming only its own
+/// half of the consequence, and which half an operator met decided by materialization
+/// order (CF-09's layer-B clause).
 #[cfg(not(feature = "redis_replay"))]
 fn build_delegated_epoch_watch(
-    config: &cli::Config,
+    epoch: &crate::startup_plan::TrustEpochPlan,
     _base_label: String,
 ) -> Result<Option<DelegatedEpochWatch>, String> {
-    if config.trust_epoch_redis_url.is_some() {
-        return Err(
-            "delegated-signing: --trust-epoch-redis-url requires a build with the \
-                    `redis_replay` feature; refusing to start rather than minting delegated \
-                    credentials under a label the operator's INCR kill switch cannot revoke."
-                .to_string(),
-        );
+    match epoch.unsupported_by_build() {
+        Some(refusal) => Err(refusal),
+        None => Ok(None),
     }
-    Ok(None)
 }
 #[cfg(test)]
 mod rotation_progress_tests {
@@ -924,57 +932,24 @@ mod trust_epoch_watch_tests {
     }
 }
 
-/// What a configured-but-unusable `--trust-epoch-redis-url` does to the signing plane.
+/// What a planned-but-unusable trust-epoch source does to the signing plane.
 #[cfg(test)]
 mod epoch_watch_wiring_tests {
     use super::build_delegated_epoch_watch;
-    use crate::cli::Config;
+    use crate::startup_plan::TrustEpochPlan;
 
-    /// A parsed configuration, then mutated. `parse_args` has its own completeness checks,
-    /// so a malformed epoch URL does not survive the command line; those checks are not
-    /// what protects the runtime, since an embedder builds a `Config` in code and reaches
-    /// this function having run none of them.
-    fn config_with_epoch_url(url: Option<&str>) -> Config {
-        let argv: Vec<String> = [
-            "--bind",
-            "127.0.0.1:0",
-            "--audience",
-            "did:example:server-1",
-            "--server-signer",
-            "did:example:server-1",
-            "--server-key-id",
-            "k1",
-            "--delegated-trust-epoch",
-            "epoch-1",
-            "--signing-key-seed",
-            "/nonexistent/seed",
-            "--tls-cert",
-            "/nonexistent/cert",
-            "--tls-key",
-            "/nonexistent/key",
-            "--client-ca",
-            "/nonexistent/ca",
-            "--trust",
-            "/nonexistent/trust",
-            "--target-uri",
-            "https://localhost/",
-            "--trust-domain",
-            "example.org",
-            "--replay-cache",
-            "shared",
-            "--replay-redis-url",
-            "redis://127.0.0.1:6379",
-            "--replay-durability-tier",
-            "redis-wait-quorum:1:100",
-            "--inner-http-url",
-            "http://127.0.0.1:9/mcp",
-        ]
-        .iter()
-        .map(|s| (*s).to_string())
-        .collect();
-        let mut config = crate::cli::parse_args(&argv).expect("args parse");
-        config.trust_epoch_redis_url = url.map(|u| u.to_string());
-        config
+    /// A plan, written out. The plan is what this function consumes now, so the fixture
+    /// states the posture directly instead of assembling a whole `Config` around one field.
+    ///
+    /// The URL below is REACHABLE: layer A checks the locator's shape and nothing more —
+    /// whether a Redis client can use it is a fact about the build, deliberately left to
+    /// this plane — so a scheme-bearing URL that is not a Redis URL passes validation and
+    /// arrives here.
+    fn planned(url: &str) -> TrustEpochPlan {
+        TrustEpochPlan::Redis {
+            url: url.to_string(),
+            key: crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY.to_string(),
+        }
     }
 
     /// An operator who configured a kill switch must not get a replica that mints without
@@ -985,11 +960,10 @@ mod epoch_watch_wiring_tests {
     /// the TRUST plane, in another file, and only because it happens to be materialized
     /// first.
     #[test]
-    fn a_configured_but_unusable_epoch_url_refuses_instead_of_minting_unrevocably() {
-        let Err(err) = build_delegated_epoch_watch(
-            &config_with_epoch_url(Some("not a redis url")),
-            "epoch-1".to_string(),
-        ) else {
+    fn a_planned_but_unusable_epoch_url_refuses_instead_of_minting_unrevocably() {
+        let Err(err) =
+            build_delegated_epoch_watch(&planned("http://127.0.0.1:6379"), "epoch-1".to_string())
+        else {
             panic!("a kill switch that cannot be wired must refuse the plane");
         };
         assert!(
@@ -998,12 +972,14 @@ mod epoch_watch_wiring_tests {
         );
     }
 
-    /// Negative control: no URL is still the honest single-node shape, not a refusal.
+    /// Negative control: no planned source is still the honest single-node shape, not a
+    /// refusal.
     #[test]
-    fn no_configured_epoch_source_is_still_accepted() {
-        match build_delegated_epoch_watch(&config_with_epoch_url(None), "epoch-1".to_string()) {
+    fn no_planned_epoch_source_is_still_accepted() {
+        match build_delegated_epoch_watch(&TrustEpochPlan::NoNetworkChannel, "epoch-1".to_string())
+        {
             Ok(None) => {}
-            Ok(Some(_)) => panic!("no URL must yield no watcher"),
+            Ok(Some(_)) => panic!("no source must yield no watcher"),
             Err(e) => panic!("an unconfigured kill switch is not a misconfiguration: {e}"),
         }
     }

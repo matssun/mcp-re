@@ -96,7 +96,6 @@ fn required_values_are_unconstrained_at_the_boundary() {
         ("trust_path", admitted(|c| c.trust_path = String::new())),
         ("client_ca", admitted(|c| c.client_ca = String::new())),
         ("tls_cert", admitted(|c| c.tls_cert = String::new())),
-        ("inner_http_urls", admitted(|c| c.inner_http_urls.clear())),
     ] {
         assert!(
             admitted,
@@ -141,6 +140,15 @@ fn cross_field_relations_are_unenforced_at_the_boundary() {
 /// consume one does not merely ignore it.
 #[test]
 fn refused_at_the_boundary() {
+    // The inner plane. Admitted before, and refused instead by the TRUST plane — which
+    // meant a configuration naming no inner server was rejected only after trust had read
+    // its document and started its workers, by a plane with no stake in the question.
+    let mut config = base();
+    config.inner_http_urls.clear();
+    let refusal =
+        ValidatedConfig::try_from(config).expect_err("a deployment must name an inner server");
+    assert!(refusal.contains("--inner-http-url"), "{refusal}");
+
     // MCPS-84 / atlas X8. Admitted before: the deployment believed a networked trust
     // invalidation was active while no tier consumed it.
     let mut config = base();

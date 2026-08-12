@@ -61,6 +61,32 @@ impl TrustRevocationState {
         matches!(self, Self::PushNetworked { .. })
     }
 
+    /// The declared tier, as the resolver builder's own type.
+    ///
+    /// A projection OUT of the classification, not a second reading of `--revocation-tier`:
+    /// the two push states collapse back to one tier because the epoch source changes what
+    /// is established, not which caching discipline the resolver applies. A plane that
+    /// re-read the flag instead would be free to disagree with the state that was
+    /// classified (CF-10).
+    pub fn tier(&self) -> RevocationTier {
+        match self {
+            Self::BoundedCache { t_secs } => RevocationTier::BoundedCache { t_secs: *t_secs },
+            Self::Live => RevocationTier::Live,
+            Self::PushInert { t_secs } | Self::PushNetworked { t_secs } => {
+                RevocationTier::Push { t_secs: *t_secs }
+            }
+        }
+    }
+
+    /// Whether this state asks for a push channel that has no source behind it.
+    ///
+    /// The honest guarantee is then the bounded-`T` fallback and nothing else, which is a
+    /// thing to SAY at startup — so it is named here rather than inferred at the surface
+    /// from a channel that came back absent.
+    pub fn push_channel_is_inert(&self) -> bool {
+        matches!(self, Self::PushInert { .. })
+    }
+
     /// The window the state claims, in seconds — `None` for `Live`, whose claim is
     /// near-zero rather than a bound.
     pub fn declared_window_secs(&self) -> Option<i64> {
@@ -287,6 +313,32 @@ mod tests {
         assert!(!inert.has_networked_epoch());
         assert!(networked.has_networked_epoch());
         assert_ne!(inert, networked, "the same tier, two different states");
+    }
+
+    /// The projection back to the resolver's own type is total, and the two push states
+    /// collapse to one tier: the epoch source changes what gets ESTABLISHED, not which
+    /// caching discipline the resolver applies.
+    #[test]
+    fn the_state_projects_back_to_the_tier_the_resolver_is_built_from() {
+        for (state, expected) in [
+            (
+                TrustRevocationState::BoundedCache { t_secs: 60 },
+                RevocationTier::BoundedCache { t_secs: 60 },
+            ),
+            (TrustRevocationState::Live, RevocationTier::Live),
+            (
+                TrustRevocationState::PushInert { t_secs: 30 },
+                RevocationTier::Push { t_secs: 30 },
+            ),
+            (
+                TrustRevocationState::PushNetworked { t_secs: 30 },
+                RevocationTier::Push { t_secs: 30 },
+            ),
+        ] {
+            assert_eq!(state.tier(), expected, "{state:?}");
+        }
+        assert!(TrustRevocationState::PushInert { t_secs: 30 }.push_channel_is_inert());
+        assert!(!TrustRevocationState::PushNetworked { t_secs: 30 }.push_channel_is_inert());
     }
 
     #[test]

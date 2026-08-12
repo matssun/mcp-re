@@ -2620,6 +2620,20 @@ fn legality_violations(config: &Config, decided: MachineViolations) -> Vec<Strin
     if let Some(refusal) = target_uri_violation(&config.target_uri) {
         violations.push(refusal);
     }
+    // Seventh, and it arrives here from the TRUST plane, where it had no business being:
+    // whether a deployment names an inner server is a statement about the request, not
+    // about trust, and refusing it there meant the trust plane could reject a
+    // configuration after two other planes had already established resources. It is the
+    // same class as the clause above — a required locator `parse_args` checks and the
+    // boundary did not — so it takes the position next to it.
+    if config.inner_http_urls.is_empty() {
+        violations.push(
+            "the proxy serves over an async HTTP inner plane: pass --inner-http-url <url>. To \
+             protect a local stdio MCP server, run it behind the mcp-re-stdio-bridge adapter \
+             and point --inner-http-url at the bridge."
+                .to_string(),
+        );
+    }
     // The admission gate. Its four clauses were the LAST parse-only invariants of this
     // shape, and one of them was a genuine bypass rather than a misplacement: nothing
     // downstream re-checked the degraded window, so a programmatic config reached the

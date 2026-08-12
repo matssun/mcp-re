@@ -161,6 +161,147 @@ pub fn response_issuer_kid(config: &ValidatedConfig) -> String {
         .unwrap_or_else(|| config.server_key_id.clone())
 }
 
+/// The shared trust-epoch mechanism, interpreted ONCE (CF-09).
+///
+/// Two planes act on this fact: trust flushes its cache when the epoch advances, and
+/// delegated signing mints under the resulting label so an operator's `INCR` revokes
+/// fleet-wide. They are consumers. Before this type they were two authorities — each
+/// reading `--trust-epoch-redis-url`, each defaulting `--trust-epoch-key`, each with its
+/// own build refusal — and the only reason they agreed was that they read the same fields
+/// in the same way. Nothing made them.
+///
+/// The key is DEFAULTED here, once, for the same reason: a default applied at two sites is
+/// two decisions that happen to coincide.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrustEpochPlan {
+    /// No networked source. The trust cache runs at its declared bound, and delegated
+    /// signing mints under the bare `--delegated-trust-epoch` label — the honest
+    /// single-node shape, not a degraded one.
+    NoNetworkChannel,
+    /// A networked epoch counter at this location, under this key.
+    Redis {
+        /// Where the counter lives.
+        url: String,
+        /// The key holding it, already defaulted.
+        key: String,
+    },
+}
+
+impl TrustEpochPlan {
+    /// Project the plan from the classified trust-revocation state and the validated
+    /// locator.
+    ///
+    /// Infallible: `PushNetworked` is the state that HAS a source, so layer A has already
+    /// established both that this deployment may carry one and that it does.
+    pub fn from_validated(config: &ValidatedConfig) -> TrustEpochPlan {
+        if !config.state().trust_revocation().has_networked_epoch() {
+            return TrustEpochPlan::NoNetworkChannel;
+        }
+        TrustEpochPlan::Redis {
+            url: config
+                .trust_epoch_redis_url
+                .clone()
+                .expect("the networked epoch state requires the URL layer A checked for"),
+            key: config
+                .trust_epoch_key
+                .clone()
+                .unwrap_or_else(|| crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY.to_string()),
+        }
+    }
+
+    /// Why THIS BUILD cannot establish the plan, if it cannot — layer B, stated once.
+    ///
+    /// Both planes refused a configured epoch source in a build without a Redis client,
+    /// in two places, with two different messages naming two different consequences. Each
+    /// message was true and neither was complete, and which one an operator met was decided
+    /// by materialization order. One refusal states both consequences.
+    pub fn unsupported_by_build(&self) -> Option<String> {
+        match self {
+            TrustEpochPlan::NoNetworkChannel => None,
+            TrustEpochPlan::Redis { .. } if cfg!(feature = "redis_replay") => None,
+            TrustEpochPlan::Redis { .. } => Some(
+                "--trust-epoch-redis-url requires a build with the `redis_replay` feature. \
+                 Without it the trust cache has no networked invalidation channel, and \
+                 delegated credentials would be minted under the bare --delegated-trust-epoch \
+                 label — which the operator's INCR kill switch cannot revoke. Refusing to \
+                 start (fail closed, ADR-MCPRE-052 §7)"
+                    .to_string(),
+            ),
+        }
+    }
+}
+
+/// How the `--trust` file is kept current.
+///
+/// A state, not a missing value: no tier resolves a revocation faster than the store is
+/// re-read, so a deployment that reads it once has declared that revoking a request-signer
+/// key costs a restart of every replica.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustReloadPlan {
+    /// `--trust` is read once. Only `BoundedCache` may be in this state.
+    ReadOnceAtStartup,
+    /// Re-read on this cadence, so a key removed from the file stops resolving within it.
+    Every {
+        /// The cadence, in seconds.
+        secs: u64,
+    },
+}
+
+impl TrustReloadPlan {
+    /// The cadence, where there is one.
+    pub fn cadence_secs(&self) -> Option<u64> {
+        match self {
+            TrustReloadPlan::ReadOnceAtStartup => None,
+            TrustReloadPlan::Every { secs } => Some(*secs),
+        }
+    }
+}
+
+/// What the trust plane must establish (ADR-MCPRE-056 §8).
+///
+/// Everything the plane needs and nothing it could re-decide: the classified revocation
+/// state, the two locators, and the epoch mechanism normalized above it. `TrustPlane` used
+/// to receive the whole `ValidatedConfig` and answer "which posture is this?" for itself —
+/// a second derivation of a fact layer A had already classified.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustPlan {
+    /// Which revocation posture this deployment asked for.
+    pub revocation: crate::config_state::TrustRevocationState,
+    /// The trust document.
+    pub trust_path: String,
+    /// The root issuer whose key must never be enrolled as a request signer.
+    pub response_kid: String,
+    /// How the document is kept current.
+    pub reload: TrustReloadPlan,
+    /// The shared epoch mechanism — an INPUT, so this plane cannot become its authority
+    /// merely by being materialized first (CF-09).
+    pub epoch: TrustEpochPlan,
+}
+
+impl TrustPlan {
+    /// Project the plan from the retained classification and the validated locators.
+    ///
+    /// `response_kid` and `epoch` are passed IN rather than derived here. Both are shared
+    /// with the signing plane, and a value derived inside one consumer is a value the other
+    /// consumer must re-derive.
+    pub fn from_validated(
+        config: &ValidatedConfig,
+        response_kid: String,
+        epoch: TrustEpochPlan,
+    ) -> TrustPlan {
+        TrustPlan {
+            revocation: config.state().trust_revocation().clone(),
+            trust_path: config.trust_path.clone(),
+            response_kid,
+            reload: match config.trust_reload_secs {
+                Some(secs) => TrustReloadPlan::Every { secs },
+                None => TrustReloadPlan::ReadOnceAtStartup,
+            },
+            epoch,
+        }
+    }
+}
+
 /// What the MRTR continuation store must establish (ADR-MCPS-047, CF-12).
 ///
 /// `Disabled` is a posture, not an absence: cross-replica continuation is opportunistic,
@@ -529,6 +670,156 @@ mod tests {
         assert!(
             refusal.contains("--continuation-control-redis-url"),
             "the refusal must name the setting that replaces the overloaded use: {refusal}"
+        );
+    }
+
+    // ---- the trust plan (CF-09, CF-10) ------------------------------------------
+
+    /// A push tier with a networked epoch source, which is the only state that plans one.
+    const PUSH_NETWORKED: &[&str] = &[
+        "--revocation-tier",
+        "push:30",
+        "--trust-reload-secs",
+        "15",
+        "--trust-epoch-redis-url",
+        "redis://127.0.0.1:6379",
+    ];
+
+    fn validated(extra: &[&str]) -> ValidatedConfig {
+        let config = parse(&[SHARED_REDIS, extra].concat()).expect("args parse");
+        ValidatedConfig::try_from(config).expect("config validates")
+    }
+
+    /// The epoch is planned from the CLASSIFICATION, and the key is defaulted here —
+    /// once. Both planes used to default it for themselves, which is two decisions that
+    /// happened to coincide.
+    #[test]
+    fn the_epoch_plan_normalizes_the_key_once() {
+        assert_eq!(
+            TrustEpochPlan::from_validated(&validated(PUSH_NETWORKED)),
+            TrustEpochPlan::Redis {
+                url: "redis://127.0.0.1:6379".to_string(),
+                key: crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY.to_string(),
+            },
+            "an unset --trust-epoch-key is resolved in the plan, not in each consumer"
+        );
+        assert_eq!(
+            TrustEpochPlan::from_validated(&validated(
+                &[PUSH_NETWORKED, &["--trust-epoch-key", "mcp-re:epoch"]].concat()
+            )),
+            TrustEpochPlan::Redis {
+                url: "redis://127.0.0.1:6379".to_string(),
+                key: "mcp-re:epoch".to_string(),
+            }
+        );
+    }
+
+    /// Every state that is not `PushNetworked` plans no channel. Asserted across all four
+    /// rather than only on the default, because the absence of a channel is the honest
+    /// single-node posture and not a failure to configure one.
+    #[test]
+    fn only_the_networked_push_state_plans_an_epoch_source() {
+        for extra in [
+            &[][..],
+            &["--revocation-tier", "live", "--trust-reload-secs", "5"][..],
+            &["--revocation-tier", "push:30", "--trust-reload-secs", "15"][..],
+        ] {
+            let plan = TrustEpochPlan::from_validated(&validated(extra));
+            assert_eq!(
+                plan,
+                TrustEpochPlan::NoNetworkChannel,
+                "{extra:?} planned a channel"
+            );
+            assert!(
+                plan.unsupported_by_build().is_none(),
+                "a plan with no channel is establishable by every build"
+            );
+        }
+    }
+
+    /// The layer-B refusal is the PLAN's, so both consumers state the same one. It names
+    /// both consequences, because each plane used to name only its own.
+    #[test]
+    fn the_build_refusal_is_stated_once_and_names_both_consequences() {
+        let plan = TrustEpochPlan::from_validated(&validated(PUSH_NETWORKED));
+        match (plan.unsupported_by_build(), cfg!(feature = "redis_replay")) {
+            (None, true) => {}
+            (Some(refusal), false) => {
+                assert!(refusal.contains("redis_replay"), "{refusal}");
+                assert!(
+                    refusal.contains("invalidation"),
+                    "the trust consequence must be named: {refusal}"
+                );
+                assert!(
+                    refusal.contains("kill switch"),
+                    "the signing consequence must be named: {refusal}"
+                );
+            }
+            (verdict, redis) => panic!("build support {redis} disagreed with {verdict:?}"),
+        }
+    }
+
+    /// The plan carries the classified posture rather than the tier flag, and the reload
+    /// cadence as a state rather than an `Option` a consumer has to interpret.
+    #[test]
+    fn the_trust_plan_carries_the_retained_classification() {
+        let config = validated(PUSH_NETWORKED);
+        let plan = TrustPlan::from_validated(
+            &config,
+            "root-1".to_string(),
+            TrustEpochPlan::from_validated(&config),
+        );
+        assert_eq!(
+            plan.revocation,
+            crate::config_state::TrustRevocationState::PushNetworked { t_secs: 30 },
+            "the plan must hold what layer A classified, not re-read --revocation-tier"
+        );
+        assert_eq!(plan.reload, TrustReloadPlan::Every { secs: 15 });
+        assert_eq!(plan.response_kid, "root-1");
+        assert!(matches!(plan.epoch, TrustEpochPlan::Redis { .. }));
+
+        let default_tier = validated(&[]);
+        let plan = TrustPlan::from_validated(
+            &default_tier,
+            "root-1".to_string(),
+            TrustEpochPlan::from_validated(&default_tier),
+        );
+        assert_eq!(
+            plan.reload,
+            TrustReloadPlan::ReadOnceAtStartup,
+            "no cadence is a posture, not a missing value"
+        );
+    }
+
+    /// The issuer kid and the epoch are INPUTS to the trust plan.
+    ///
+    /// This is the structural half of CF-09: with both passed in, the trust plan cannot
+    /// become their authority merely by being the first consumer written. The assertion is
+    /// that a plan built with a value the configuration does not name carries that value —
+    /// which is only possible because nothing inside re-derives it.
+    #[test]
+    fn the_shared_values_are_inputs_the_trust_plan_cannot_re_derive() {
+        let config = validated(PUSH_NETWORKED);
+        assert_ne!(
+            response_issuer_kid(&config),
+            "decided-above",
+            "the fixture must not coincide with what a re-derivation would produce"
+        );
+        let plan = TrustPlan::from_validated(
+            &config,
+            "decided-above".to_string(),
+            TrustEpochPlan::Redis {
+                url: "redis://198.51.100.1:6379".to_string(),
+                key: "decided-above".to_string(),
+            },
+        );
+        assert_eq!(plan.response_kid, "decided-above");
+        assert_eq!(
+            plan.epoch,
+            TrustEpochPlan::Redis {
+                url: "redis://198.51.100.1:6379".to_string(),
+                key: "decided-above".to_string(),
+            }
         );
     }
 

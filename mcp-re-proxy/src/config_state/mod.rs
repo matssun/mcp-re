@@ -3,8 +3,8 @@
 //!
 //! `Config` describes a *requested* deployment. Not every combination of its fields
 //! describes a deployment that could exist, and the atlas is the closed model of the ones
-//! that can: ten machines, each with its own states, and a small set of relations between
-//! them. This module is that model as code — one classifier/validator per machine, and one
+//! that can: eleven machines, each with its own states, and a small set of relations
+//! between them. This module is that model as code — one classifier/validator per machine, and one
 //! value carrying what they recognised.
 //!
 //! **Three layers, and this is only the first.** Layer A asks whether the request is
