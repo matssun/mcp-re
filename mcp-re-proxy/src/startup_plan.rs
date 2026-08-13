@@ -473,7 +473,7 @@ impl TlsPlan {
     pub fn from_validated(config: &ValidatedConfig) -> TlsPlan {
         let values = config.config();
         TlsPlan {
-            custody: config.state().tls_custody(),
+            custody: config.state().tls_custody().clone(),
             client_revocation: ClientRevocationPlan::from_validated(config),
             max_client_cert_lifetime: values.max_client_cert_lifetime,
             max_connection_age: values.limits.max_connection_age,
@@ -1221,8 +1221,10 @@ mod tests {
         let plan = TlsPlan::from_validated(&config);
         assert_eq!(
             plan.custody,
-            crate::config_state::TlsCustodyState::Exported,
-            "the fixture's TLS key is an exported file"
+            crate::config_state::TlsCustodyState::Exported {
+                key_path: "/nonexistent/key".to_string(),
+            },
+            "the fixture's TLS key is an exported file, and the plan carries its path"
         );
         assert_eq!(
             plan.max_client_cert_lifetime,

@@ -2608,7 +2608,7 @@ pub fn validate_configuration(config: &Config) -> Result<DeploymentConfigState, 
     // of the fields again.
     let cross = crate::config_state::cross_machine::validate(
         config.key_source,
-        tls_custody,
+        tls_custody.as_ref(),
         trust_revocation.as_ref(),
         config,
     );
@@ -2625,13 +2625,14 @@ pub fn validate_configuration(config: &Config) -> Result<DeploymentConfigState, 
         cross,
     };
     let violations = legality_violations(config, decided);
-    // Six owners can name NOTHING: `Replay` (`memory` and `file` are input forms, not
+    // Seven owners can name NOTHING: `Replay` (`memory` and `file` are input forms, not
     // deployments), `ChannelBinding` (three undeployable binding kinds, one deprecated
     // identity source), `DelegatedSigning` (the §7 epoch has no default, so without it there
     // is no posture to resolve), `TrustRevocation` (three of its four states require a
     // reload cadence), `Admission` (its two enforcing states require an authority and a
-    // record locator), and `Custody` (every state requires the material it signs with) — a
-    // state cannot be built without the witnesses that make it inhabitable. Each has already
+    // record locator), `Custody` (every state requires the material it signs with) and
+    // `TlsCustody` (its exported state requires the key it exports) — a state cannot be
+    // built without the witnesses that make it inhabitable. Each has already
     // pushed its refusal when that happens, so the arms below are unreachable — stated
     // one machine at a time, so an owner that forgets to refuse fails loudly and NAMES
     // itself instead of hiding inside a wildcard over a widening tuple.
@@ -2661,6 +2662,9 @@ pub fn validate_configuration(config: &Config) -> Result<DeploymentConfigState, 
     };
     let Some(custody) = custody else {
         return Err(unrecognised("custody"));
+    };
+    let Some(tls_custody) = tls_custody else {
+        return Err(unrecognised("tls-custody"));
     };
     Ok(DeploymentConfigState::new(
         crate::config_state::RecognisedStates {

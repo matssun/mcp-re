@@ -809,7 +809,9 @@ mod revocation_posture_tests {
     /// whole command line around two fields.
     fn plan(max_client_cert_lifetime: Option<std::time::Duration>) -> TlsPlan {
         TlsPlan {
-            custody: crate::config_state::TlsCustodyState::Exported,
+            custody: crate::config_state::TlsCustodyState::Exported {
+                key_path: "/key".to_string(),
+            },
             client_revocation: ClientRevocationPlan::None,
             max_client_cert_lifetime,
             max_connection_age: Some(std::time::Duration::from_secs(300)),
@@ -945,7 +947,11 @@ mod custody_agreement_tests {
     #[test]
     fn a_key_source_that_disagrees_with_the_declared_custody_refuses() {
         let err = TlsPlane::materialize(
-            &plan(crate::config_state::TlsCustodyState::Delegated),
+            &plan(crate::config_state::TlsCustodyState::Delegated {
+                selector: crate::config_state::DelegatedTlsKey::Pkcs11 {
+                    key_label: "tls".to_string(),
+                },
+            }),
             exported_material(),
             Vec::new(),
             Vec::new(),
@@ -969,7 +975,9 @@ mod custody_agreement_tests {
     #[test]
     fn agreeing_custody_passes_the_check_and_fails_on_something_else() {
         let err = TlsPlane::materialize(
-            &plan(crate::config_state::TlsCustodyState::Exported),
+            &plan(crate::config_state::TlsCustodyState::Exported {
+                key_path: "/key".to_string(),
+            }),
             exported_material(),
             Vec::new(),
             Vec::new(),
@@ -998,7 +1006,9 @@ mod fleet_crl_bound_tests {
         max_client_cert_lifetime: Option<std::time::Duration>,
     ) -> TlsPlan {
         TlsPlan {
-            custody: crate::config_state::TlsCustodyState::Exported,
+            custody: crate::config_state::TlsCustodyState::Exported {
+                key_path: "/key".to_string(),
+            },
             client_revocation,
             max_client_cert_lifetime,
             max_connection_age: None,

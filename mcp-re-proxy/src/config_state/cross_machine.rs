@@ -74,8 +74,17 @@ fn x2a(kind: KeySourceKind, config: &Config) -> Vec<String> {
 ///
 /// ADR-MCPS-028 §G. Asserting both is contradictory rather than redundant: the operator
 /// could believe the key never leaves the device while a file copy also exists.
-fn x2b(tls_custody: TlsCustodyState, config: &Config) -> Vec<String> {
-    if tls_custody.is_delegated() && !config.tls_key.is_empty() {
+/// Asked of the STATE, and safely: the fallible side of `TlsCustody` is `Exported`, and
+/// this clause fires only on `Delegated`, which the presence of a selector always
+/// constructs. So a configuration with no recognised TLS custody has no exported-copy
+/// contradiction to report either.
+///
+/// The exported material is still read from the request, deliberately. Under `Delegated`
+/// the state does NOT carry `--tls-key`: carrying it would make the very combination this
+/// clause forbids representable. `Tls` has no state type to consult instead, so this is a
+/// relation to an owner whose material still lives in the request.
+fn x2b(tls_custody: Option<&TlsCustodyState>, config: &Config) -> Vec<String> {
+    if tls_custody.is_some_and(TlsCustodyState::is_delegated) && !config.tls_key.is_empty() {
         return vec![crate::cli::validate_tls_signing_exclusivity(true, true)
             .expect_err("both custodies asserted")];
     }
@@ -157,7 +166,7 @@ fn x9(_trust_revocation: Option<&TrustRevocationState>, _config: &Config) -> Vec
 /// Check the cross-machine relations over states pass 1 recognised.
 pub(crate) fn validate(
     custody_source: KeySourceKind,
-    tls_custody: TlsCustodyState,
+    tls_custody: Option<&TlsCustodyState>,
     trust_revocation: Option<&TrustRevocationState>,
     config: &Config,
 ) -> CrossMachineViolations {
@@ -184,7 +193,12 @@ mod tests {
         mutate(&mut config);
         let (tls_custody, _) = crate::config_state::tls_custody::classify_and_validate(&config);
         let (trust, _) = crate::config_state::trust_revocation::classify_and_validate(&config);
-        validate(config.key_source, tls_custody, trust.as_ref(), &config)
+        validate(
+            config.key_source,
+            tls_custody.as_ref(),
+            trust.as_ref(),
+            &config,
+        )
     }
 
     #[test]

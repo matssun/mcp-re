@@ -74,7 +74,7 @@ pub use delegated_signing::DelegatedSigningFacts;
 pub use evidence::{AuditState, RetentionState, VerifiedContextState};
 pub use mcp_transport_contract::McpTransportContractState;
 pub use replay::ReplayState;
-pub use tls_custody::TlsCustodyState;
+pub use tls_custody::{DelegatedTlsKey, TlsCustodyState};
 pub use transport::{ChannelBindingState, CrlRevocationState};
 pub use trust_revocation::TrustRevocationState;
 
@@ -217,8 +217,8 @@ impl DeploymentConfigState {
     }
 
     /// Whether the TLS handshake key can leave the device it lives on.
-    pub fn tls_custody(&self) -> TlsCustodyState {
-        self.tls_custody
+    pub fn tls_custody(&self) -> &TlsCustodyState {
+        &self.tls_custody
     }
 
     /// The trust-revocation state — the authority both `TrustPlan` and `SigningPlan`
@@ -320,7 +320,11 @@ mod tests {
             retention: RetentionState::On {
                 directory: "/var/lib/mcp-re/evidence".to_string(),
             },
-            tls_custody: TlsCustodyState::Delegated,
+            tls_custody: TlsCustodyState::Delegated {
+                selector: DelegatedTlsKey::Pkcs11 {
+                    key_label: "tls".to_string(),
+                },
+            },
             trust_revocation: TrustRevocationState::PushNetworked {
                 t_secs: 30,
                 reload_secs: crate::config_state::TrustRevocationState::cadence(5),
