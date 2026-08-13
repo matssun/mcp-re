@@ -194,19 +194,16 @@ impl TrustEpochPlan {
     /// Infallible: `PushNetworked` is the state that HAS a source, so layer A has already
     /// established both that this deployment may carry one and that it does.
     pub fn from_validated(config: &ValidatedConfig) -> TrustEpochPlan {
-        let values = config.config();
-        if !config.state().trust_revocation().has_networked_epoch() {
-            return TrustEpochPlan::NoNetworkChannel;
-        }
-        TrustEpochPlan::Redis {
-            url: values
-                .trust_epoch_redis_url
-                .clone()
-                .expect("the networked epoch state requires the URL layer A checked for"),
-            key: values
-                .trust_epoch_key
-                .clone()
-                .unwrap_or_else(|| crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY.to_string()),
+        match config.state().trust_revocation() {
+            crate::config_state::TrustRevocationState::PushNetworked {
+                epoch_url,
+                epoch_key,
+                ..
+            } => TrustEpochPlan::Redis {
+                url: epoch_url.clone(),
+                key: epoch_key.clone(),
+            },
+            _ => TrustEpochPlan::NoNetworkChannel,
         }
     }
 
@@ -295,12 +292,32 @@ impl TrustPlan {
             revocation: config.state().trust_revocation().clone(),
             trust_path: values.trust_path.clone(),
             response_kid,
-            reload: match values.trust_reload_secs {
-                Some(secs) => TrustReloadPlan::Every { secs },
-                None => TrustReloadPlan::ReadOnceAtStartup,
-            },
+            reload: trust_reload_plan(config.state().trust_revocation(), values),
             epoch,
         }
+    }
+}
+
+/// How often `--trust` is re-read, decided from the state rather than from the request.
+///
+/// Three of the four states CARRY a cadence, because their Required column names one, so
+/// none of them can be projected to `ReadOnceAtStartup` — the posture that would silently
+/// contradict a tier whose whole claim is that the store is re-read. Only `BoundedCache`
+/// consults the validated request, because only there is the cadence optional and both
+/// postures legal.
+fn trust_reload_plan(
+    state: &crate::config_state::TrustRevocationState,
+    values: &crate::cli::Config,
+) -> TrustReloadPlan {
+    use crate::config_state::TrustRevocationState as S;
+    match state {
+        S::Live { reload_secs }
+        | S::PushInert { reload_secs, .. }
+        | S::PushNetworked { reload_secs, .. } => TrustReloadPlan::Every { secs: *reload_secs },
+        S::BoundedCache { .. } => match values.trust_reload_secs {
+            Some(secs) => TrustReloadPlan::Every { secs },
+            None => TrustReloadPlan::ReadOnceAtStartup,
+        },
     }
 }
 
@@ -857,6 +874,69 @@ mod tests {
         ValidatedConfig::try_from(config).expect("config validates")
     }
 
+    /// The refresh posture comes from the STATE's witness, not from the request beside it.
+    ///
+    /// Three of the four trust states carry their cadence because their Required column
+    /// names one. The structural property that buys: no reload-bearing state can be
+    /// projected to `ReadOnceAtStartup`, which would silently contradict a tier whose whole
+    /// claim is that the store is re-read.
+    ///
+    /// Asserted by clearing `--trust-reload-secs` from the values AFTER classification, so
+    /// a projection that consulted the request would answer `ReadOnceAtStartup` and fail
+    /// here. Only reading the witness gives `Every`.
+    #[test]
+    fn a_reload_bearing_state_cannot_be_projected_to_read_once() {
+        use crate::config_state::TrustRevocationState as S;
+        let mut values = validated(PUSH_NETWORKED).into_inner();
+        values.trust_reload_secs = None;
+        let carried = [
+            S::Live { reload_secs: 7 },
+            S::PushInert {
+                t_secs: 30,
+                reload_secs: 7,
+            },
+            S::PushNetworked {
+                t_secs: 30,
+                reload_secs: 7,
+                epoch_url: "redis://127.0.0.1:6379".to_string(),
+                epoch_key: "k".to_string(),
+            },
+        ];
+        for state in carried {
+            assert_eq!(
+                trust_reload_plan(&state, &values),
+                TrustReloadPlan::Every { secs: 7 },
+                "{state:?} must project its own cadence, not the request's absence"
+            );
+        }
+    }
+
+    /// The other half of the same rule: `BoundedCache`'s cadence is OPTIONAL, so it is not
+    /// a witness and both postures stay reachable through the validated request.
+    ///
+    /// If this collapsed to one answer it would mean the witness rule had been over-applied
+    /// — an optional parameter moved into a state that does not require it.
+    #[test]
+    fn bounded_cache_keeps_both_refresh_postures() {
+        use crate::config_state::TrustRevocationState as S;
+        let state = S::BoundedCache { t_secs: 60 };
+        let mut values = validated(PUSH_NETWORKED).into_inner();
+
+        values.trust_reload_secs = None;
+        assert_eq!(
+            trust_reload_plan(&state, &values),
+            TrustReloadPlan::ReadOnceAtStartup,
+            "an omitted cadence under bounded-cache reads the store once"
+        );
+
+        values.trust_reload_secs = Some(60);
+        assert_eq!(
+            trust_reload_plan(&state, &values),
+            TrustReloadPlan::Every { secs: 60 },
+            "a supplied cadence under bounded-cache still re-reads"
+        );
+    }
+
     /// The epoch is planned from the CLASSIFICATION, and the key is defaulted here —
     /// once. Both planes used to default it for themselves, which is two decisions that
     /// happened to coincide.
@@ -938,7 +1018,12 @@ mod tests {
         );
         assert_eq!(
             plan.revocation,
-            crate::config_state::TrustRevocationState::PushNetworked { t_secs: 30 },
+            crate::config_state::TrustRevocationState::PushNetworked {
+                t_secs: 30,
+                reload_secs: 15,
+                epoch_url: "redis://127.0.0.1:6379".to_string(),
+                epoch_key: crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY.to_string(),
+            },
             "the plan must hold what layer A classified, not re-read --revocation-tier"
         );
         assert_eq!(plan.reload, TrustReloadPlan::Every { secs: 15 });

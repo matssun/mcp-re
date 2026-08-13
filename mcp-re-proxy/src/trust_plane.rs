@@ -688,7 +688,12 @@ mod store_cadence_tests {
     #[test]
     fn the_push_tier_bound_states_the_poll_interval_not_the_next_request() {
         let line = fleet_trust_bound(&plan(
-            TrustRevocationState::PushNetworked { t_secs: 90 },
+            TrustRevocationState::PushNetworked {
+                t_secs: 90,
+                reload_secs: 5,
+                epoch_url: "redis://127.0.0.1:6379".to_string(),
+                epoch_key: "mcp-re:trust:epoch".to_string(),
+            },
             TrustReloadPlan::Every { secs: 30 },
         ));
         assert!(
@@ -713,7 +718,10 @@ mod store_cadence_tests {
     #[test]
     fn a_push_tier_without_a_source_reports_the_fallback_only() {
         let line = fleet_trust_bound(&plan(
-            TrustRevocationState::PushInert { t_secs: 90 },
+            TrustRevocationState::PushInert {
+                t_secs: 90,
+                reload_secs: 5,
+            },
             TrustReloadPlan::Every { secs: 30 },
         ));
         assert!(line.contains("inert"), "got: {line}");
@@ -733,10 +741,18 @@ mod store_cadence_tests {
     #[test]
     fn every_posture_names_the_reload_floor_under_its_number() {
         for revocation in [
-            TrustRevocationState::Live,
+            TrustRevocationState::Live { reload_secs: 5 },
             TrustRevocationState::BoundedCache { t_secs: 60 },
-            TrustRevocationState::PushInert { t_secs: 60 },
-            TrustRevocationState::PushNetworked { t_secs: 60 },
+            TrustRevocationState::PushInert {
+                t_secs: 60,
+                reload_secs: 5,
+            },
+            TrustRevocationState::PushNetworked {
+                t_secs: 60,
+                reload_secs: 5,
+                epoch_url: "redis://127.0.0.1:6379".to_string(),
+                epoch_key: "mcp-re:trust:epoch".to_string(),
+            },
         ] {
             let with_reload = fleet_trust_bound(&plan(
                 revocation.clone(),

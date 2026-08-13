@@ -2522,7 +2522,7 @@ pub fn validate_configuration(config: &Config) -> Result<DeploymentConfigState, 
     let cross = crate::config_state::cross_machine::validate(
         custody,
         tls_custody,
-        &trust_revocation,
+        trust_revocation.as_ref(),
         config,
     );
     let decided = MachineViolations {
@@ -2538,33 +2538,36 @@ pub fn validate_configuration(config: &Config) -> Result<DeploymentConfigState, 
         cross,
     };
     let violations = legality_violations(config, decided);
-    // Three owners can name NOTHING: `Replay` (`memory` and `file` are input forms, not
+    // Four owners can name NOTHING: `Replay` (`memory` and `file` are input forms, not
     // deployments), `ChannelBinding` (three undeployable binding kinds, one deprecated
-    // identity source), and `DelegatedSigning` (the §7 epoch has no default, so without it
-    // there is no posture to resolve). Each has already pushed its refusal when that
-    // happens, so the `None` arms below are unreachable — stated rather than `unwrap`ped, so
-    // an owner that forgets to refuse fails loudly instead of building a state nothing
-    // recognised.
+    // identity source), `DelegatedSigning` (the §7 epoch has no default, so without it there
+    // is no posture to resolve), and `TrustRevocation` (three of its four states require a
+    // reload cadence, and a state cannot be built without the witnesses that make it
+    // inhabitable). Each has already pushed its refusal when that happens, so the `None`
+    // arms below are unreachable — stated rather than `unwrap`ped, so an owner that forgets
+    // to refuse fails loudly instead of building a state nothing recognised.
     if !violations.is_empty() {
         return Err(violations);
     }
-    match (replay, channel_binding, delegated_signing) {
-        (Some(replay), Some(channel_binding), Some(delegated_signing)) => Ok(
-            DeploymentConfigState::new(crate::config_state::RecognisedStates {
-                admission,
-                audit,
-                channel_binding,
-                continuation_control,
-                crl_revocation,
-                custody,
-                delegated_signing,
-                replay,
-                retention,
-                tls_custody,
-                trust_revocation,
-                verified_context,
-            }),
-        ),
+    match (replay, channel_binding, delegated_signing, trust_revocation) {
+        (Some(replay), Some(channel_binding), Some(delegated_signing), Some(trust_revocation)) => {
+            Ok(DeploymentConfigState::new(
+                crate::config_state::RecognisedStates {
+                    admission,
+                    audit,
+                    channel_binding,
+                    continuation_control,
+                    crl_revocation,
+                    custody,
+                    delegated_signing,
+                    replay,
+                    retention,
+                    tls_custody,
+                    trust_revocation,
+                    verified_context,
+                },
+            ))
+        }
         _ => Err(vec![
             "internal error: a configuration machine recognised no state and raised no refusal"
                 .to_string(),

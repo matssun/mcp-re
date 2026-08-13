@@ -287,7 +287,12 @@ mod tests {
             replay: ReplayState::SharedLinearizable,
             retention: RetentionState::On,
             tls_custody: TlsCustodyState::Delegated,
-            trust_revocation: TrustRevocationState::PushNetworked { t_secs: 30 },
+            trust_revocation: TrustRevocationState::PushNetworked {
+                t_secs: 30,
+                reload_secs: 5,
+                epoch_url: "redis://127.0.0.1:6379".to_string(),
+                epoch_key: "mcp-re:trust:epoch".to_string(),
+            },
             verified_context: VerifiedContextState::Trusted,
         });
         assert!(state.trust_revocation().has_networked_epoch());

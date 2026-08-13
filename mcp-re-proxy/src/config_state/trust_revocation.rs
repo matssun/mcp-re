@@ -11,6 +11,13 @@
 //! | `PushInert{T}` | reload | epoch key | `reload <= min(MAX_NEAR_ZERO, T)` |
 //! | `PushNetworked{T}` | reload, epoch url | — | same, plus a scheme-bearing url |
 //!
+//! **Each state carries what its Required column names.** The three states that require a
+//! cadence hold one, so they cannot be built without it and planning cannot project
+//! "read once at startup" from a tier that claims the store is re-read. `PushNetworked`
+//! additionally holds the epoch locator whose presence distinguishes it from `PushInert`,
+//! and the epoch key already resolved against this machine's default. `BoundedCache`'s
+//! cadence is optional, so it stays a validated request parameter.
+//!
 //! **The epoch source is a selector, not a parameter.** It is what distinguishes the last
 //! two states, so a tier that cannot consume it does not merely ignore it — the request is
 //! incoherent, and refusing that is atlas rule X8.
@@ -24,11 +31,19 @@ use crate::cli::Config;
 use crate::cli::MAX_NEAR_ZERO_TRUST_RELOAD_SECS;
 use crate::revocation_tier::RevocationTier;
 
-/// Which trust-revocation state a configuration requests.
+/// Which trust-revocation state a configuration requests, and what makes it inhabitable.
 ///
-/// Semantic only: the cadence, the URL and the key stay in the validated `Config`, where
-/// this machine has checked them against the state's columns. Planning reads *this plus
-/// those values* and produces the normalized plan (CF-10).
+/// Each state carries the witnesses its own Required column names. Three of the four
+/// require a reload cadence, so those three cannot be constructed without one — planning
+/// therefore cannot project `ReadOnceAtStartup` from a tier whose whole claim is that the
+/// store is re-read. `BoundedCache` is the exception the columns state: its cadence is
+/// optional, so it stays a validated request parameter and both refresh postures remain
+/// reachable from it.
+///
+/// The reload cadence is a `u64` and not a `NonZeroU64` because layer A currently admits
+/// zero. Encoding a rule the model does not state would refuse deployments this proxy
+/// accepts today; the guard and the narrower type belong together in a change that decides
+/// that question, not in this one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrustRevocationState {
     /// Tier 1 — cached active trust state lives at most `t_secs`.
@@ -37,19 +52,60 @@ pub enum TrustRevocationState {
         t_secs: i64,
     },
     /// Tier 2 — the store is consulted on every verification.
-    Live,
+    Live {
+        /// How often `--trust` is re-read. Required: the tier's claim is that a removed
+        /// key stops resolving near-instantly, and nothing resolves faster than the re-read.
+        reload_secs: u64,
+    },
     /// Tier 3 with no epoch source: the push channel is absent, so the honest guarantee
     /// is the bounded-`T` fallback and nothing else.
     PushInert {
         /// The bounded-`T` fallback window.
         t_secs: i64,
+        /// How often `--trust` is re-read. Required for the same reason as `Live`.
+        reload_secs: u64,
     },
     /// Tier 3 with a networked epoch source: a revocation advances the epoch and the
     /// trust cache flushes within a poll interval.
     PushNetworked {
         /// The bounded-`T` fallback window, used when the channel is unhealthy.
         t_secs: i64,
+        /// How often `--trust` is re-read. Required for the same reason as `Live`.
+        reload_secs: u64,
+        /// Where the epoch counter lives. Its presence is what distinguishes this state
+        /// from `PushInert`, so the state that has one carries it.
+        epoch_url: String,
+        /// Which key holds the counter, already resolved against the default. Downstream
+        /// cannot tell whether an operator named it.
+        epoch_key: String,
     },
+}
+
+/// Which state the request most nearly names, before its witnesses are known to be present.
+///
+/// Separate from [`TrustRevocationState`] so classification can stay total. A classifier
+/// that could fail would have to answer "which state is this?" and "is that state legal?"
+/// at once, and the second answer is what the caller accumulates across machines — so a
+/// missing cadence is reported as a violation of the state it most nearly requests, with
+/// that state's own ceiling, rather than as an unclassifiable config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RequestedState {
+    BoundedCache { t_secs: i64 },
+    Live,
+    PushInert { t_secs: i64 },
+    PushNetworked { t_secs: i64 },
+}
+
+impl RequestedState {
+    /// Whether the request names a networked epoch source.
+    fn has_networked_epoch(self) -> bool {
+        matches!(self, Self::PushNetworked { .. })
+    }
+
+    /// Whether inhabiting this state requires a reload cadence.
+    fn requires_cadence(self) -> bool {
+        !matches!(self, Self::BoundedCache { .. })
+    }
 }
 
 impl TrustRevocationState {
@@ -71,8 +127,8 @@ impl TrustRevocationState {
     pub fn tier(&self) -> RevocationTier {
         match self {
             Self::BoundedCache { t_secs } => RevocationTier::BoundedCache { t_secs: *t_secs },
-            Self::Live => RevocationTier::Live,
-            Self::PushInert { t_secs } | Self::PushNetworked { t_secs } => {
+            Self::Live { .. } => RevocationTier::Live,
+            Self::PushInert { t_secs, .. } | Self::PushNetworked { t_secs, .. } => {
                 RevocationTier::Push { t_secs: *t_secs }
             }
         }
@@ -91,10 +147,10 @@ impl TrustRevocationState {
     /// near-zero rather than a bound.
     pub fn declared_window_secs(&self) -> Option<i64> {
         match self {
-            Self::Live => None,
+            Self::Live { .. } => None,
             Self::BoundedCache { t_secs }
-            | Self::PushInert { t_secs }
-            | Self::PushNetworked { t_secs } => Some(*t_secs),
+            | Self::PushInert { t_secs, .. }
+            | Self::PushNetworked { t_secs, .. } => Some(*t_secs),
         }
     }
 }
@@ -105,15 +161,44 @@ impl TrustRevocationState {
 /// this?" and "is that state legal?" at once, and the second answer is what the caller
 /// accumulates across machines — so an illegal combination is reported as a violation of
 /// the state it most nearly requests, not as an unclassifiable config.
-fn classify(config: &Config) -> TrustRevocationState {
+fn classify(config: &Config) -> RequestedState {
     match config.revocation_tier {
-        RevocationTier::BoundedCache { t_secs } => TrustRevocationState::BoundedCache { t_secs },
-        RevocationTier::Live => TrustRevocationState::Live,
+        RevocationTier::BoundedCache { t_secs } => RequestedState::BoundedCache { t_secs },
+        RevocationTier::Live => RequestedState::Live,
         RevocationTier::Push { t_secs } if config.trust_epoch_redis_url.is_some() => {
-            TrustRevocationState::PushNetworked { t_secs }
+            RequestedState::PushNetworked { t_secs }
         }
-        RevocationTier::Push { t_secs } => TrustRevocationState::PushInert { t_secs },
+        RevocationTier::Push { t_secs } => RequestedState::PushInert { t_secs },
     }
+}
+
+/// Build the state, once its witnesses are known to be present.
+///
+/// `None` is never a silent outcome: every path that reaches it has already pushed the
+/// violation naming the value that was missing.
+fn build(requested: RequestedState, config: &Config) -> Option<TrustRevocationState> {
+    let cadence = config.trust_reload_secs;
+    Some(match requested {
+        RequestedState::BoundedCache { t_secs } => TrustRevocationState::BoundedCache { t_secs },
+        RequestedState::Live => TrustRevocationState::Live {
+            reload_secs: cadence?,
+        },
+        RequestedState::PushInert { t_secs } => TrustRevocationState::PushInert {
+            t_secs,
+            reload_secs: cadence?,
+        },
+        RequestedState::PushNetworked { t_secs } => TrustRevocationState::PushNetworked {
+            t_secs,
+            reload_secs: cadence?,
+            epoch_url: config.trust_epoch_redis_url.clone()?,
+            // The default belongs to this machine, so it is applied here and nothing
+            // downstream can tell an omitted key from a named one.
+            epoch_key: config
+                .trust_epoch_key
+                .clone()
+                .unwrap_or_else(|| crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY.to_string()),
+        },
+    })
 }
 
 /// The reload cadence the state requires, and the ceiling it must respect.
@@ -121,10 +206,9 @@ fn classify(config: &Config) -> TrustRevocationState {
 /// A separate predicate because the cadence is the whole revocation claim: a tier states
 /// how fast a key removed from `--trust` stops resolving, and nothing resolves faster than
 /// the file is re-read.
-fn cadence_violations(state: &TrustRevocationState, config: &Config) -> Vec<String> {
+fn cadence_violations(state: RequestedState, config: &Config) -> Vec<String> {
     let mut out = Vec::new();
-    let required = !matches!(state, TrustRevocationState::BoundedCache { .. });
-    if required && config.trust_reload_secs.is_none() {
+    if state.requires_cadence() && config.trust_reload_secs.is_none() {
         out.push(
             "--revocation-tier live|push requires --trust-reload-secs: both tiers state a \
              revocation window in terms of consulting the trust store, but with --trust read \
@@ -137,22 +221,21 @@ fn cadence_violations(state: &TrustRevocationState, config: &Config) -> Vec<Stri
         return out;
     };
     let (ceiling, claim) = match state {
-        TrustRevocationState::Live => (
+        RequestedState::Live => (
             MAX_NEAR_ZERO_TRUST_RELOAD_SECS,
             "--revocation-tier live states a NEAR-ZERO revocation window (the store is \
              consulted on every verification)"
                 .to_string(),
         ),
-        TrustRevocationState::PushInert { t_secs }
-        | TrustRevocationState::PushNetworked { t_secs } => (
-            MAX_NEAR_ZERO_TRUST_RELOAD_SECS.min((*t_secs).max(1) as u64),
+        RequestedState::PushInert { t_secs } | RequestedState::PushNetworked { t_secs } => (
+            MAX_NEAR_ZERO_TRUST_RELOAD_SECS.min(t_secs.max(1) as u64),
             format!(
                 "--revocation-tier push:{t_secs} states a near-zero window with a bounded \
                  {t_secs}s fallback"
             ),
         ),
-        TrustRevocationState::BoundedCache { t_secs } => (
-            (*t_secs).max(1) as u64,
+        RequestedState::BoundedCache { t_secs } => (
+            t_secs.max(1) as u64,
             format!(
                 "--revocation-tier bounded-cache:{t_secs} states that revocation is \
                  enforced fleet-wide within {t_secs}s"
@@ -171,7 +254,7 @@ fn cadence_violations(state: &TrustRevocationState, config: &Config) -> Vec<Stri
 }
 
 /// The epoch-source columns: which states may carry one, and what shape it must have.
-fn epoch_violations(state: &TrustRevocationState, config: &Config) -> Vec<String> {
+fn epoch_violations(state: RequestedState, config: &Config) -> Vec<String> {
     let mut out = Vec::new();
     // X8. `PushInert` is the state that has no URL, so only the two non-Push states can
     // reach this: a configured source under a tier that never consumes it.
@@ -215,11 +298,15 @@ fn epoch_violations(state: &TrustRevocationState, config: &Config) -> Vec<String
 /// The state is returned alongside the violations rather than instead of them: a caller
 /// accumulating across machines needs every violation, and a caller that finds none needs
 /// the classification (CF-10 — classify, do not classify and discard).
-pub fn classify_and_validate(config: &Config) -> (TrustRevocationState, Vec<String>) {
-    let state = classify(config);
-    let mut violations = cadence_violations(&state, config);
-    violations.extend(epoch_violations(&state, config));
-    (state, violations)
+///
+/// `None` means the request names a state whose witnesses are not all present — a `Live`
+/// or `push` tier with no cadence. The violation naming the missing value is beside it, so
+/// a `None` never travels without its reason.
+pub fn classify_and_validate(config: &Config) -> (Option<TrustRevocationState>, Vec<String>) {
+    let requested = classify(config);
+    let mut violations = cadence_violations(requested, config);
+    violations.extend(epoch_violations(requested, config));
+    (build(requested, config), violations)
 }
 
 #[cfg(test)]
@@ -230,7 +317,9 @@ mod tests {
     fn state_of(mutate: impl FnOnce(&mut Config)) -> TrustRevocationState {
         let mut config = legal_config();
         mutate(&mut config);
-        classify_and_validate(&config).0
+        classify_and_validate(&config)
+            .0
+            .expect("the case names a state whose witnesses are present")
     }
 
     fn violations_of(mutate: impl FnOnce(&mut Config)) -> Vec<String> {
@@ -262,21 +351,29 @@ mod tests {
                 }),
             ),
             (
-                TrustRevocationState::Live,
+                TrustRevocationState::Live { reload_secs: 5 },
                 Box::new(|c: &mut Config| {
                     c.revocation_tier = RevocationTier::Live;
                     c.trust_reload_secs = Some(5);
                 }),
             ),
             (
-                TrustRevocationState::PushInert { t_secs: 30 },
+                TrustRevocationState::PushInert {
+                    t_secs: 30,
+                    reload_secs: 30,
+                },
                 Box::new(|c: &mut Config| {
                     c.revocation_tier = RevocationTier::Push { t_secs: 30 };
                     c.trust_reload_secs = Some(30);
                 }),
             ),
             (
-                TrustRevocationState::PushNetworked { t_secs: 30 },
+                TrustRevocationState::PushNetworked {
+                    t_secs: 30,
+                    reload_secs: 30,
+                    epoch_url: "redis://127.0.0.1:6379".to_string(),
+                    epoch_key: "mcp-re:trust:epoch".to_string(),
+                },
                 Box::new(|c: &mut Config| {
                     c.revocation_tier = RevocationTier::Push { t_secs: 30 };
                     c.trust_reload_secs = Some(30);
@@ -289,7 +386,11 @@ mod tests {
             let mut config = legal_config();
             mutate(&mut config);
             let (state, violations) = classify_and_validate(&config);
-            assert_eq!(state, expected, "classified as the wrong state");
+            assert_eq!(
+                state,
+                Some(expected.clone()),
+                "classified as the wrong state"
+            );
             assert!(
                 violations.is_empty(),
                 "{expected:?} refused: {violations:?}"
@@ -325,20 +426,41 @@ mod tests {
                 TrustRevocationState::BoundedCache { t_secs: 60 },
                 RevocationTier::BoundedCache { t_secs: 60 },
             ),
-            (TrustRevocationState::Live, RevocationTier::Live),
             (
-                TrustRevocationState::PushInert { t_secs: 30 },
+                TrustRevocationState::Live { reload_secs: 5 },
+                RevocationTier::Live,
+            ),
+            (
+                TrustRevocationState::PushInert {
+                    t_secs: 30,
+                    reload_secs: 5,
+                },
                 RevocationTier::Push { t_secs: 30 },
             ),
             (
-                TrustRevocationState::PushNetworked { t_secs: 30 },
+                TrustRevocationState::PushNetworked {
+                    t_secs: 30,
+                    reload_secs: 5,
+                    epoch_url: "redis://127.0.0.1:6379".to_string(),
+                    epoch_key: "mcp-re:trust:epoch".to_string(),
+                },
                 RevocationTier::Push { t_secs: 30 },
             ),
         ] {
             assert_eq!(state.tier(), expected, "{state:?}");
         }
-        assert!(TrustRevocationState::PushInert { t_secs: 30 }.push_channel_is_inert());
-        assert!(!TrustRevocationState::PushNetworked { t_secs: 30 }.push_channel_is_inert());
+        assert!(TrustRevocationState::PushInert {
+            t_secs: 30,
+            reload_secs: 5
+        }
+        .push_channel_is_inert());
+        assert!(!TrustRevocationState::PushNetworked {
+            t_secs: 30,
+            reload_secs: 5,
+            epoch_url: "redis://127.0.0.1:6379".to_string(),
+            epoch_key: "mcp-re:trust:epoch".to_string()
+        }
+        .push_channel_is_inert());
     }
 
     #[test]

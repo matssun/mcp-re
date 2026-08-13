@@ -144,7 +144,7 @@ fn x7(config: &Config) -> Vec<String> {
 /// `trust_epoch_redis_url`, and neither plane asks the other. This function therefore has
 /// nothing left to refuse — which is the ruling holding, not an omission: it is stated so
 /// that a future rule joining these two machines has an owner to be added to.
-fn x9(_trust_revocation: &TrustRevocationState, _config: &Config) -> Vec<String> {
+fn x9(_trust_revocation: Option<&TrustRevocationState>, _config: &Config) -> Vec<String> {
     Vec::new()
 }
 
@@ -152,7 +152,7 @@ fn x9(_trust_revocation: &TrustRevocationState, _config: &Config) -> Vec<String>
 pub(crate) fn validate(
     custody: CustodyState,
     tls_custody: TlsCustodyState,
-    trust_revocation: &TrustRevocationState,
+    trust_revocation: Option<&TrustRevocationState>,
     config: &Config,
 ) -> CrossMachineViolations {
     CrossMachineViolations {
@@ -180,7 +180,7 @@ mod tests {
         let (custody, _) = crate::config_state::custody::classify_and_validate(&config);
         let (tls_custody, _) = crate::config_state::tls_custody::classify_and_validate(&config);
         let (trust, _) = crate::config_state::trust_revocation::classify_and_validate(&config);
-        validate(custody, tls_custody, &trust, &config)
+        validate(custody, tls_custody, trust.as_ref(), &config)
     }
 
     #[test]
