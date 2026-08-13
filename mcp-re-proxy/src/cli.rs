@@ -1685,16 +1685,18 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // MCPRE-493: the admission gate's own coherence, consulted from the same predicate
     // the validation boundary uses. Kept HERE, at the position these checks always
     // occupied, so the diagnostic a CLI user meets first does not change (§K1).
-    if let Some(refusal) = unenforceable_admission_refusal(
+    // The authority it derives is discarded here and rebuilt by the state's owner: parsing
+    // produces a `Config`, which is the REQUEST, and a request holds no witnesses. The
+    // single decode this slice is about is the one on the path from a validated
+    // configuration to `AdmissionState`.
+    validated_admission_authority(
         admission,
         admission_authority_kid.as_deref(),
         admission_authority_pubkey_b64url.as_deref(),
         admission_redis_url.as_deref(),
         admission_allow_degraded,
         admission_degraded_bound_secs,
-    ) {
-        return Err(refusal);
-    }
+    )?;
     // Shared-replay coherence; the clauses live in `shared_replay_refusal` and the call
     // stays where they were (ADR-MCPRE-058 §8.5).
     if let Some(refusal) = shared_replay_refusal(
@@ -2340,12 +2342,29 @@ const MISSING_ADMISSION_AUTHORITY: &str =
      --admission-authority-pubkey (an assertion is only evidence if the issuer is one this \
      deployment trusts)";
 
+/// What an enforcing admission posture cannot exist without, established once.
+///
+/// The key is the DECODED authority rather than its encoding: the check that it decodes is
+/// the same operation as decoding it, so a boundary that verifies and then discards the
+/// result forces every later stage to repeat the work and to carry an unreachable failure
+/// arm for a proposition already proved.
+pub(crate) struct AdmissionAuthority {
+    /// The key id an assertion must present.
+    pub(crate) kid: String,
+    /// The key that verifies it.
+    pub(crate) key: VerificationKey,
+    /// The shared authoritative record currency is compared against.
+    pub(crate) redis_url: String,
+}
+
 /// The one decision about whether an admission-currency configuration can be enforced.
 ///
-/// `Some(diagnostic)` means it cannot. Every clause here is a property of the parsed
-/// configuration alone, so this is the boundary that owns them (ADR-MCPRE-056 §AA):
-/// `Config` has public fields, and until this moved, all four lived in `parse_args` where
-/// a programmatically built configuration walked past them.
+/// `Err(diagnostic)` means it cannot. `Ok(None)` is `--admission off`, the one state that
+/// needs no authority; `Ok(Some(..))` carries what the enforcing states are inhabited by.
+/// Every clause here is a property of the parsed configuration alone, so this is the
+/// boundary that owns them (ADR-MCPRE-056 §AA): `Config` has public fields, and until this
+/// moved, all four lived in `parse_args` where a programmatically built configuration
+/// walked past them.
 ///
 /// # Why a zero degraded window is refused
 ///
@@ -2359,69 +2378,74 @@ const MISSING_ADMISSION_AUTHORITY: &str =
 ///
 /// A NEGATIVE bound does fail closed on every call, but it is refused by the same clause:
 /// a policy nobody can satisfy is not a safer spelling of "off".
-pub(crate) fn unenforceable_admission_refusal(
+pub(crate) fn validated_admission_authority(
     admission: AdmissionKind,
     authority_kid: Option<&str>,
     authority_pubkey_b64url: Option<&str>,
     redis_url: Option<&str>,
     allow_degraded: bool,
     degraded_bound_secs: i64,
-) -> Option<String> {
+) -> Result<Option<AdmissionAuthority>, String> {
     // Clause order is the order these checks always ran in, so the diagnostic a CLI user
     // meets first does not change (§K1).
-    if admission != AdmissionKind::Off {
+    let authority = if admission == AdmissionKind::Off {
+        None
+    } else {
         // Enforcing admission needs BOTH an authority to verify assertions against and a
         // source to check currency against. With neither, the gate would verify nothing
         // while looking enabled — the most dangerous of the three states, because the
         // deployment believes it has admission control.
         let Some(pubkey) = authority_pubkey_b64url else {
-            return Some(MISSING_ADMISSION_AUTHORITY.to_string());
+            return Err(MISSING_ADMISSION_AUTHORITY.to_string());
         };
-        if authority_kid.is_none() {
-            return Some(MISSING_ADMISSION_AUTHORITY.to_string());
-        }
-        // Checked HERE rather than where the verifier is built: an unusable authority key
+        let Some(kid) = authority_kid else {
+            return Err(MISSING_ADMISSION_AUTHORITY.to_string());
+        };
+        // Decoded HERE rather than where the verifier is built: an unusable authority key
         // is a property of the configuration, and catching it at materialization left the
         // composition root as the only thing between a programmatic config and a gate with
-        // no usable issuer.
-        if VerificationKey::from_b64url(pubkey).is_err() {
-            return Some(
+        // no usable issuer. The key travels onward from here, so this is the only decode.
+        let Ok(key) = VerificationKey::from_b64url(pubkey) else {
+            return Err(
                 "--admission-authority-pubkey is not a valid base64url-no-pad 32-byte \
                  Ed25519 public key"
                     .to_string(),
             );
-        }
-        if redis_url.is_none() {
-            return Some(
+        };
+        let Some(redis_url) = redis_url else {
+            return Err(
                 "--admission optional|required requires --admission-redis-url (the shared \
                  authoritative record; without it every call fails closed on an unreachable \
                  authority)"
                     .to_string(),
             );
-        }
-    }
+        };
+        Some(AdmissionAuthority {
+            kid: kid.to_string(),
+            key,
+            redis_url: redis_url.to_string(),
+        })
+    };
     // Deliberately NOT nested under `admission != Off`: a degraded window configured
     // without a gate to apply it to is still a setting that reads as enforced.
     if allow_degraded && degraded_bound_secs <= 0 {
-        return Some(
-            "--admission-allow-degraded true requires a positive \
+        return Err("--admission-allow-degraded true requires a positive \
              --admission-degraded-bound-secs (P). P is a FLOOR on the degraded window, not \
              the whole of it: the PEP serves an unreachable authority for \
              P + --max-clock-skew seconds, so P=0 still admits a revoked workload for the \
              skew tolerance while claiming no window was configured"
-                .to_string(),
-        );
+            .to_string());
     }
     if admission == AdmissionKind::Off && (redis_url.is_some() || authority_kid.is_some()) {
         // A dangling setting reads as "admission is configured" to anyone auditing the
         // command line, while nothing is enforced.
-        return Some(
+        return Err(
             "--admission-authority-kid / --admission-redis-url are set but --admission is \
              off; enable it or remove them"
                 .to_string(),
         );
     }
-    None
+    Ok(authority)
 }
 
 /// The KMS/STS endpoint overrides a [`Config`] carries, held to the rule wherever the
@@ -2539,37 +2563,48 @@ pub fn validate_configuration(config: &Config) -> Result<DeploymentConfigState, 
         cross,
     };
     let violations = legality_violations(config, decided);
-    // Four owners can name NOTHING: `Replay` (`memory` and `file` are input forms, not
+    // Five owners can name NOTHING: `Replay` (`memory` and `file` are input forms, not
     // deployments), `ChannelBinding` (three undeployable binding kinds, one deprecated
     // identity source), `DelegatedSigning` (the §7 epoch has no default, so without it there
-    // is no posture to resolve), and `TrustRevocation` (three of its four states require a
-    // reload cadence, and a state cannot be built without the witnesses that make it
-    // inhabitable). Each has already pushed its refusal when that happens, so the `None`
+    // is no posture to resolve), `TrustRevocation` (three of its four states require a
+    // reload cadence), and `Admission` (its two enforcing states require an authority and a
+    // record locator) — a state cannot be built without the witnesses that make it
+    // inhabitable. Each has already pushed its refusal when that happens, so the `None`
     // arms below are unreachable — stated rather than `unwrap`ped, so an owner that forgets
     // to refuse fails loudly instead of building a state nothing recognised.
     if !violations.is_empty() {
         return Err(violations);
     }
-    match (replay, channel_binding, delegated_signing, trust_revocation) {
-        (Some(replay), Some(channel_binding), Some(delegated_signing), Some(trust_revocation)) => {
-            Ok(DeploymentConfigState::new(
-                crate::config_state::RecognisedStates {
-                    admission,
-                    audit,
-                    channel_binding,
-                    continuation_control,
-                    crl_revocation,
-                    custody,
-                    delegated_signing,
-                    mcp_transport_contract,
-                    replay,
-                    retention,
-                    tls_custody,
-                    trust_revocation,
-                    verified_context,
-                },
-            ))
-        }
+    match (
+        replay,
+        channel_binding,
+        delegated_signing,
+        trust_revocation,
+        admission,
+    ) {
+        (
+            Some(replay),
+            Some(channel_binding),
+            Some(delegated_signing),
+            Some(trust_revocation),
+            Some(admission),
+        ) => Ok(DeploymentConfigState::new(
+            crate::config_state::RecognisedStates {
+                admission,
+                audit,
+                channel_binding,
+                continuation_control,
+                crl_revocation,
+                custody,
+                delegated_signing,
+                mcp_transport_contract,
+                replay,
+                retention,
+                tls_custody,
+                trust_revocation,
+                verified_context,
+            },
+        )),
         _ => Err(vec![
             "internal error: a configuration machine recognised no state and raised no refusal"
                 .to_string(),

@@ -41,7 +41,6 @@
 
 use std::sync::Arc;
 
-use crate::cli;
 use crate::startup_posture::SeamState;
 
 /// What materializing one optional capability produced: the artifact to attach, and the
@@ -103,7 +102,7 @@ const OCSP_OFF: &str = "ONLINE OCSP client-cert revocation = OFF: no responder i
 /// PEP, because revocation is decided during the TLS handshake.
 /// Takes no configuration, because no legal deployment can change the answer.
 ///
-/// `--client-ocsp require` is refused by [`cli::online_ocsp_refusal`] from inside
+/// `--client-ocsp require` is refused by [`crate::cli::online_ocsp_refusal`] from inside
 /// `legality_violations`, which is on the only route to a `ValidatedConfig` — so every
 /// validated deployment has `client_ocsp == Off`, `build_ocsp_checker` returns `None`, and
 /// this posture is OFF. Taking a `&Config` implied a choice the legality model does not
@@ -112,7 +111,7 @@ const OCSP_OFF: &str = "ONLINE OCSP client-cert revocation = OFF: no responder i
 /// The seam still DECLARES, because `Seam::ALL` does not vary by `cfg` and an undeclared
 /// seam refuses startup. What went away is the input, not the declaration.
 ///
-/// [`cli::build_ocsp_checker`] and the `online_ocsp` feature are deliberately left in
+/// [`crate::cli::build_ocsp_checker`] and the `online_ocsp` feature are deliberately left in
 /// place. Proving the `Require` arm unreachable under today's legality model is not a
 /// decision to delete the implementation a future async OCSP would be built from.
 #[cfg(feature = "online_ocsp")]
@@ -352,22 +351,49 @@ pub(crate) struct AdmissionGate {
 /// nothing: a call carrying a fresh, correctly-bound assertion is served even after its
 /// workload has been revoked, because currency is a comparison against state only the
 /// deployment can supply.
+///
+/// # Why three scalars travel beside the state
+///
+/// `max_clock_skew` is a validated request parameter with three unrelated consumers — the
+/// replay tier's skew-folded retain-until, the request `VerifierPolicy`, and this policy —
+/// and no admission-specific rule. It belongs to no machine, so it is passed rather than
+/// owned. The degraded pair is a different case and is passed here only PROVISIONALLY: it
+/// is a second semantic posture whose legality table is not yet ruled, and moving it into
+/// `AdmissionState` before that ruling would let the type invent the rule.
 #[cfg(feature = "redis_replay")]
 pub(crate) fn admission_currency(
-    config: &cli::Config,
+    state: &crate::config_state::AdmissionState,
+    max_clock_skew: i64,
+    allow_degraded: bool,
+    degraded_bound_secs: i64,
     control: Option<&crate::control_runtime::ControlRuntime>,
 ) -> Result<Established<AdmissionGate>, String> {
-    if config.admission == cli::AdmissionKind::Off {
-        return Ok(Established::off(ADMISSION_OFF));
-    }
-    // `cli::unenforceable_admission_refusal` has already refused an admission
-    // configuration missing any of its four required parts, so these are
-    // RECONSTRUCTIONS, not checks: each fails closed with a precise internal error if an
-    // invariant were ever violated, and none of them is where the rule lives.
-    let url = config
-        .admission_redis_url
-        .as_ref()
-        .ok_or("internal error: admission enabled without --admission-redis-url")?;
+    use crate::config_state::AdmissionState;
+    // The state names the posture AND carries what that posture cannot exist without, so
+    // there is nothing here to reconstruct and no arm for a witness that went missing.
+    let (enforcement, kid, key, url) = match state {
+        AdmissionState::Off => return Ok(Established::off(ADMISSION_OFF)),
+        AdmissionState::Optional {
+            authority_kid,
+            authority,
+            redis_url,
+        } => (
+            crate::http_profile_serve::AdmissionEnforcement::Optional,
+            authority_kid.clone(),
+            authority.clone(),
+            redis_url,
+        ),
+        AdmissionState::Required {
+            authority_kid,
+            authority,
+            redis_url,
+        } => (
+            crate::http_profile_serve::AdmissionEnforcement::Required,
+            authority_kid.clone(),
+            authority.clone(),
+            redis_url,
+        ),
+    };
     // The admission record is an INDEPENDENT endpoint; it has nothing to do with which
     // replay tier the deployment chose. Coupling it to the replay control runtime made
     // admission unimplementable on the CP/linearizable tier — the operator supplied
@@ -379,26 +405,6 @@ pub(crate) fn admission_currency(
     let source = handle
         .block_on(crate::redis_admission_source::RedisAdmissionSource::connect(url))
         .map_err(|e| format!("connect redis admission source: {e}"))?;
-    let kid = config
-        .admission_authority_kid
-        .clone()
-        .ok_or("internal error: admission enabled without --admission-authority-kid")?;
-    let key = mcp_re_core::VerificationKey::from_b64url(
-        config
-            .admission_authority_pubkey_b64url
-            .as_deref()
-            .ok_or("internal error: admission enabled without --admission-authority-pubkey")?,
-    )
-    .map_err(|e| {
-        format!(
-            "internal error: --admission-authority-pubkey did not decode after validation \
-             accepted it: {e:?}"
-        )
-    })?;
-    let enforcement = match config.admission {
-        cli::AdmissionKind::Required => crate::http_profile_serve::AdmissionEnforcement::Required,
-        _ => crate::http_profile_serve::AdmissionEnforcement::Optional,
-    };
     // Rendered before the resolver closure below moves `kid`.
     let line = format!(
         "admission currency = {} (authority {kid}, shared record over redis, degraded {})",
@@ -406,8 +412,8 @@ pub(crate) fn admission_currency(
             crate::http_profile_serve::AdmissionEnforcement::Required => "REQUIRED",
             crate::http_profile_serve::AdmissionEnforcement::Optional => "optional",
         },
-        if config.admission_allow_degraded {
-            format!("allowed within P={}s", config.admission_degraded_bound_secs)
+        if allow_degraded {
+            format!("allowed within P={degraded_bound_secs}s")
         } else {
             "OFF (an unreachable authority fails closed)".to_string()
         },
@@ -417,9 +423,9 @@ pub(crate) fn admission_currency(
             source: Arc::new(source),
             policy: mcp_re_http_profile::AdmissionPolicy {
                 max_assertion_age: 300,
-                max_clock_skew: config.max_clock_skew,
-                degraded_propagation_bound: config.admission_degraded_bound_secs,
-                allow_degraded_mode: config.admission_allow_degraded,
+                max_clock_skew,
+                degraded_propagation_bound: degraded_bound_secs,
+                allow_degraded_mode: allow_degraded,
             },
             enforcement,
             resolve_authority: Arc::new(move |presented: &str| {
@@ -438,10 +444,13 @@ pub(crate) fn admission_currency(
 /// it.
 #[cfg(not(feature = "redis_replay"))]
 pub(crate) fn admission_currency(
-    config: &cli::Config,
+    state: &crate::config_state::AdmissionState,
+    _max_clock_skew: i64,
+    _allow_degraded: bool,
+    _degraded_bound_secs: i64,
     _control: Option<&crate::control_runtime::ControlRuntime>,
 ) -> Result<Established<AdmissionGate>, String> {
-    if config.admission != cli::AdmissionKind::Off {
+    if state.is_enforced() {
         return Err(
             "--admission requires a build with the `redis_replay` feature (the \
                     shared authoritative admission record)"

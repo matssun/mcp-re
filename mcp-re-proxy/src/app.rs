@@ -804,8 +804,14 @@ fn run_validated(
     }
     posture.declare(Seam::MrtrContinuationStore, continuation_state);
 
-    let (admission, admission_state) =
-        crate::serving_capabilities::admission_currency(values, control_rt.as_ref())?.into_parts();
+    let (admission, admission_state) = crate::serving_capabilities::admission_currency(
+        config.state().admission(),
+        values.max_clock_skew,
+        values.admission_allow_degraded,
+        values.admission_degraded_bound_secs,
+        control_rt.as_ref(),
+    )?
+    .into_parts();
     if let Some(gate) = admission {
         proxy = proxy.with_admission(
             gate.source,

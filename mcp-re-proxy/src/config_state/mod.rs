@@ -157,9 +157,10 @@ impl DeploymentConfigState {
         }
     }
 
-    /// Whether a workload admission gate applies, and how strictly.
-    pub fn admission(&self) -> AdmissionState {
-        self.admission
+    /// Whether a workload admission gate applies, how strictly, and — when it does — the
+    /// authority and shared record it was found inhabitable by.
+    pub fn admission(&self) -> &AdmissionState {
+        &self.admission
     }
 
     /// Where the per-request security record goes.
@@ -284,7 +285,11 @@ mod tests {
     #[test]
     fn the_state_carries_what_the_planes_would_otherwise_re_derive() {
         let state = DeploymentConfigState::new(RecognisedStates {
-            admission: AdmissionState::Required,
+            admission: AdmissionState::Required {
+                authority_kid: "authority-1".to_string(),
+                authority: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32]).public_key(),
+                redis_url: "redis://127.0.0.1:6379".to_string(),
+            },
             audit: AuditState::Stderr,
             channel_binding: ChannelBindingState::ExactUriSan,
             continuation_control: ContinuationControlState::Redis {
