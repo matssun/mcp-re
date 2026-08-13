@@ -69,7 +69,7 @@ pub mod trust_revocation;
 
 pub use admission::{AdmissionAvailability, AdmissionState};
 pub use continuation_control::ContinuationControlState;
-pub use custody::CustodyState;
+pub use custody::{AwsCredentialMode, CustodyState};
 pub use delegated_signing::DelegatedSigningFacts;
 pub use evidence::{AuditState, RetentionState, VerifiedContextState};
 pub use mcp_transport_contract::McpTransportContractState;
@@ -206,8 +206,8 @@ impl DeploymentConfigState {
     }
 
     /// Where the response-signing key lives.
-    pub fn custody(&self) -> CustodyState {
-        self.custody
+    pub fn custody(&self) -> &CustodyState {
+        &self.custody
     }
 
     /// What was established about delegated response signing — the epoch every credential
@@ -300,7 +300,12 @@ mod tests {
                 paths: vec!["/crl.pem".to_string()],
                 cadence_secs: 300,
             },
-            custody: CustodyState::Pkcs11,
+            custody: CustodyState::Pkcs11 {
+                module: "/lib/softhsm.so".to_string(),
+                pin_file: "/pin".to_string(),
+                token_label: "token".to_string(),
+                key_label: "signing".to_string(),
+            },
             mcp_transport_contract: McpTransportContractState::Enforced {
                 versions: vec!["2026-07-28".to_string()],
             },

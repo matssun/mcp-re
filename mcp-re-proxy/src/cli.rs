@@ -2607,7 +2607,7 @@ pub fn validate_configuration(config: &Config) -> Result<DeploymentConfigState, 
     // PASS 2 — the relations between machines, asked of the RECOGNISED states rather than
     // of the fields again.
     let cross = crate::config_state::cross_machine::validate(
-        custody,
+        config.key_source,
         tls_custody,
         trust_revocation.as_ref(),
         config,
@@ -2625,53 +2625,60 @@ pub fn validate_configuration(config: &Config) -> Result<DeploymentConfigState, 
         cross,
     };
     let violations = legality_violations(config, decided);
-    // Five owners can name NOTHING: `Replay` (`memory` and `file` are input forms, not
+    // Six owners can name NOTHING: `Replay` (`memory` and `file` are input forms, not
     // deployments), `ChannelBinding` (three undeployable binding kinds, one deprecated
     // identity source), `DelegatedSigning` (the §7 epoch has no default, so without it there
     // is no posture to resolve), `TrustRevocation` (three of its four states require a
-    // reload cadence), and `Admission` (its two enforcing states require an authority and a
-    // record locator) — a state cannot be built without the witnesses that make it
-    // inhabitable. Each has already pushed its refusal when that happens, so the `None`
-    // arms below are unreachable — stated rather than `unwrap`ped, so an owner that forgets
-    // to refuse fails loudly instead of building a state nothing recognised.
+    // reload cadence), `Admission` (its two enforcing states require an authority and a
+    // record locator), and `Custody` (every state requires the material it signs with) — a
+    // state cannot be built without the witnesses that make it inhabitable. Each has already
+    // pushed its refusal when that happens, so the arms below are unreachable — stated
+    // one machine at a time, so an owner that forgets to refuse fails loudly and NAMES
+    // itself instead of hiding inside a wildcard over a widening tuple.
     if !violations.is_empty() {
         return Err(violations);
     }
-    match (
-        replay,
-        channel_binding,
-        delegated_signing,
-        trust_revocation,
-        admission,
-    ) {
-        (
-            Some(replay),
-            Some(channel_binding),
-            Some(delegated_signing),
-            Some(trust_revocation),
-            Some(admission),
-        ) => Ok(DeploymentConfigState::new(
-            crate::config_state::RecognisedStates {
-                admission,
-                audit,
-                channel_binding,
-                continuation_control,
-                crl_revocation,
-                custody,
-                delegated_signing,
-                mcp_transport_contract,
-                replay,
-                retention,
-                tls_custody,
-                trust_revocation,
-                verified_context,
-            },
-        )),
-        _ => Err(vec![
-            "internal error: a configuration machine recognised no state and raised no refusal"
-                .to_string(),
-        ]),
-    }
+    let unrecognised = |machine: &str| {
+        vec![format!(
+            "internal error: the {machine} configuration machine recognised no state and \
+             raised no refusal"
+        )]
+    };
+    let Some(replay) = replay else {
+        return Err(unrecognised("replay"));
+    };
+    let Some(channel_binding) = channel_binding else {
+        return Err(unrecognised("channel-binding"));
+    };
+    let Some(delegated_signing) = delegated_signing else {
+        return Err(unrecognised("delegated-signing"));
+    };
+    let Some(trust_revocation) = trust_revocation else {
+        return Err(unrecognised("trust-revocation"));
+    };
+    let Some(admission) = admission else {
+        return Err(unrecognised("admission"));
+    };
+    let Some(custody) = custody else {
+        return Err(unrecognised("custody"));
+    };
+    Ok(DeploymentConfigState::new(
+        crate::config_state::RecognisedStates {
+            admission,
+            audit,
+            channel_binding,
+            continuation_control,
+            crl_revocation,
+            custody,
+            delegated_signing,
+            mcp_transport_contract,
+            replay,
+            retention,
+            tls_custody,
+            trust_revocation,
+            verified_context,
+        },
+    ))
 }
 
 /// What the two passes decided, kept apart by owner so the clause list can splice each

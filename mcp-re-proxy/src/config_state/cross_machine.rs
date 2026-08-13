@@ -13,7 +13,7 @@
 //! All six live here: X2a, X2b, X5, X6, X7, X9.
 
 use crate::cli::Config;
-use crate::config_state::custody::CustodyState;
+use crate::cli::KeySourceKind;
 use crate::config_state::tls_custody::TlsCustodyState;
 use crate::config_state::trust_revocation::TrustRevocationState;
 
@@ -40,26 +40,32 @@ pub(crate) struct CrossMachineViolations {
 /// The selector names a key object in a specific backend, so it is meaningful only under
 /// the custody source that has that backend. On any other source it would silently do
 /// nothing, leaving a deployment that believes its handshake key is device-resident.
-fn x2a(custody: CustodyState, config: &Config) -> Vec<String> {
+/// Asked of the SELECTOR rather than of the built state, because custody is two things and
+/// this relation is about only one of them. `key_source` names a source totally; the state
+/// adds the material that source needs. A deployment naming `aws-kms` without its region
+/// has no custody STATE, and still has a custody SOURCE that a PKCS#11 TLS selector does
+/// not belong to — so asking this of the state would drop that diagnostic exactly when a
+/// configuration is wrong in two ways at once.
+fn x2a(kind: KeySourceKind, config: &Config) -> Vec<String> {
     [
         (
             config.pkcs11_tls_key_label.is_some(),
-            CustodyState::Pkcs11,
+            KeySourceKind::Pkcs11,
             "--pkcs11-tls-key-label has no effect without --key-source pkcs11",
         ),
         (
             config.aws_kms_tls_key_id.is_some(),
-            CustodyState::AwsKms,
+            KeySourceKind::AwsKms,
             "--aws-kms-tls-key-id has no effect without --key-source aws-kms",
         ),
         (
             config.gcp_kms_tls_key_version.is_some(),
-            CustodyState::GcpKms,
+            KeySourceKind::GcpKms,
             "--gcp-kms-tls-key-version has no effect without --key-source gcp-kms",
         ),
     ]
     .into_iter()
-    .filter(|(present, owner, _)| *present && custody != *owner)
+    .filter(|(present, owner, _)| *present && kind != *owner)
     .map(|(_, _, message)| message.to_string())
     .collect()
 }
@@ -150,13 +156,13 @@ fn x9(_trust_revocation: Option<&TrustRevocationState>, _config: &Config) -> Vec
 
 /// Check the cross-machine relations over states pass 1 recognised.
 pub(crate) fn validate(
-    custody: CustodyState,
+    custody_source: KeySourceKind,
     tls_custody: TlsCustodyState,
     trust_revocation: Option<&TrustRevocationState>,
     config: &Config,
 ) -> CrossMachineViolations {
     CrossMachineViolations {
-        x2a_delegated_selector: x2a(custody, config),
+        x2a_delegated_selector: x2a(custody_source, config),
         x2b_exclusive_tls_custody: x2b(tls_custody, config),
         x5_connection_outlives_credential: x5(config),
         x6_unenforceable_deny_list: x6(config),
@@ -168,7 +174,6 @@ pub(crate) fn validate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::KeySourceKind;
     use crate::config_state::test_support::legal_config;
 
     /// A flag a case must name in its refusal, and the configuration that provokes it.
@@ -177,10 +182,9 @@ mod tests {
     fn relations(mutate: impl FnOnce(&mut Config)) -> CrossMachineViolations {
         let mut config = legal_config();
         mutate(&mut config);
-        let (custody, _) = crate::config_state::custody::classify_and_validate(&config);
         let (tls_custody, _) = crate::config_state::tls_custody::classify_and_validate(&config);
         let (trust, _) = crate::config_state::trust_revocation::classify_and_validate(&config);
-        validate(custody, tls_custody, trust.as_ref(), &config)
+        validate(config.key_source, tls_custody, trust.as_ref(), &config)
     }
 
     #[test]
