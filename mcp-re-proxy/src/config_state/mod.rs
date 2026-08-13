@@ -20,10 +20,39 @@
 //! disagree. So validation returns a [`DeploymentConfigState`], and that is what the plane
 //! plans project from.
 //!
-//! **Semantic classification is not a normalized plan.** The state enums stay small: they
-//! name which state was requested and hold nothing else. The cadence, the URL and the key
-//! stay in the validated `Config`, where the owning machine checked them against that
-//! state's four columns. Planning reads the pair and produces the plan.
+//! **Layer A must not discard evidence intrinsic to the state it just established.** The
+//! same argument that makes the classification a value applies to what proving it
+//! produced. Deciding that a deployment is `SharedRedis` *is* deciding that its Redis URL
+//! is present; a state that keeps only the verdict leaves planning to fetch the URL back
+//! out of the broad request and assert `expect("layer A guarantees this")` — the proof
+//! erased and then recovered, one layer along, from a representation weak enough to still
+//! say `None`.
+//!
+//! So a semantic owner retains the facts that constitute its invariant. Two shapes, because
+//! the atlas has two kinds of owner:
+//!
+//! - A **state-owning machine** carries its classified state together with the witnesses
+//!   intrinsic to inhabiting it. A `Reloading` CRL state without its cadence does not
+//!   describe a deployment, so the cadence travels with the state that required it.
+//! - A **guard-only owner** has no mode choice and therefore no state enum, but still owns
+//!   invariants and resolved values. `DelegatedSigning` is unconditional (ADR-MCPRE-052 is
+//!   the only response-signing mode) and still owns the §7 trust-epoch requirement and the
+//!   two defaulting rules for the issuer kid and the audience hash. A resolved default is
+//!   owned at the layer that owns the rule; downstream there is no knowledge that a
+//!   default ever existed.
+//!
+//! **Two limits keep this from becoming a second `Config`.** A generic deployment
+//! parameter stays in `Config` — validated, but not evidence for inhabiting any particular
+//! state; `max_clock_skew`, `bind` and the limits are checked and stay put. And a fact
+//! already encoded by a variant is *derived*, never stored beside it: `SharedRedis` names
+//! the tier, so carrying a tier field too would create two authorities free to disagree,
+//! and the impossible pairing becomes representable again.
+//!
+//! **This is not a normalized plan either.** Consumer-specific shaping is still planning's
+//! job. The progression is `Config` (requested values) → `DeploymentConfigState` (semantic
+//! state plus its own evidence) → `Plan` (one consumer's intent), and each stage means
+//! strictly more than the last — without any of them saying "the previous stage promised
+//! this".
 
 pub mod admission;
 pub mod continuation_control;
