@@ -17,6 +17,8 @@ use crate::cli::BindingKind;
 use crate::cli::KeySourceKind;
 use crate::clock::now_unix;
 use crate::config_snapshot;
+use crate::config_state::CustodyState;
+use crate::config_state::TlsCustodyState;
 use crate::http_inner::HttpInnerPool;
 use crate::startup_posture::PostureLog;
 use crate::startup_posture::Seam;
@@ -199,23 +201,37 @@ fn process_gids() -> Vec<u32> {
 /// Gating the whole check on `key_source == File` therefore skipped the one private key
 /// that DOES land in the pod in precisely the modes advertised as "no key material ever
 /// lands in the pod": a Secret mounted with Kubernetes' default 0644 booted silently.
-fn key_files_read_from_disk(config: &cli::Config) -> Vec<&str> {
-    let mut paths = Vec::new();
-    if config.key_source == KeySourceKind::File && !config.signing_key_seed.is_empty() {
-        paths.push(config.signing_key_seed.as_str());
-    }
-    if !config.tls_key.is_empty() {
-        paths.push(config.tls_key.as_str());
-    }
-    // The PKCS#11 User PIN file is not a key, but it is the credential that unlocks the
-    // token holding the signing and (optionally) TLS keys — so a group/world-readable PIN
-    // file is as good as a readable key file, and belongs behind the same floor.
-    if let Some(pin_file) = config.pkcs11_pin_file.as_deref() {
-        if !pin_file.is_empty() {
-            paths.push(pin_file);
+fn key_files_read_from_disk<'a>(
+    custody: &'a CustodyState,
+    tls_custody: &'a TlsCustodyState,
+) -> Vec<&'a str> {
+    // Under `EnvSeed` NOTHING is on disk: every locator this deployment carries names an
+    // environment variable, including the TLS ones. The old field test compared
+    // `key_source == File` for the seed but not for `--tls-key`, so an env-var NAME was
+    // stat'ed as a path — harmless only because a missing file passes the check. Phrasing
+    // the projection over the state removes the case instead of adding a condition for it.
+    let CustodyState::EnvSeed { .. } = custody else {
+        let mut paths = Vec::new();
+        match custody {
+            // The signing seed, where the deployment keeps one on disk.
+            CustodyState::FileSeed { seed_path } => paths.push(seed_path.as_str()),
+            // The PKCS#11 User PIN file is not a key, but it is the credential that
+            // unlocks the token holding the signing and (optionally) TLS keys — so a
+            // group/world-readable PIN file is as good as a readable key file, and belongs
+            // behind the same floor.
+            CustodyState::Pkcs11 { pin_file, .. } => paths.push(pin_file.as_str()),
+            // The KMS states keep the signing key in KMS; neither holds a local secret.
+            CustodyState::AwsKms { .. } | CustodyState::GcpKms { .. } => {}
+            CustodyState::EnvSeed { .. } => unreachable!("the let-else above took this arm"),
         }
-    }
-    paths
+        // And the handshake key, only where custody EXPORTS one. Delegated custody keeps
+        // it on the device, and X2b has already refused a file copy beside it.
+        if let TlsCustodyState::Exported { key_path } = tls_custody {
+            paths.push(key_path.as_str());
+        }
+        return paths;
+    };
+    Vec::new()
 }
 
 /// No-op off unix: the mode bits this guard reads do not exist there. Kept in step with
@@ -393,7 +409,7 @@ fn run_validated(
     // A group/world-readable key file is a HARD error (refuse startup). The other
     // guards are parse-time and already enforced inside `cli::parse_args`; this one is
     // filesystem-dependent so it lives here.
-    for path in key_files_read_from_disk(values) {
+    for path in key_files_read_from_disk(config.state().custody(), config.state().tls_custody()) {
         check_key_file_perms(path, values.allow_group_readable_key_files)?;
     }
     // A disabled (`none`/`0`) or over-ceiling `--max-client-cert-lifetime` is
@@ -409,7 +425,13 @@ fn run_validated(
     // signs by delegation (`sign_response`), so a non-exporting HSM/KMS source would
     // never need to surrender its private key — there is deliberately no
     // `signing_key()` export call on the wiring path anymore.
-    let key_source = cli::build_key_source(values).map_err(|e| e.to_string())?;
+    let key_source = cli::build_key_source(
+        config.state().custody(),
+        config.state().tls_custody(),
+        &values.tls_cert,
+        &values.client_ca,
+    )
+    .map_err(|e| e.to_string())?;
     let server_chain = key_source
         .tls_server_cert_chain()
         .map_err(|e| e.to_string())?;
@@ -1073,6 +1095,27 @@ mod key_file_perm_tests {
             .unwrap_or_else(|e| panic!("{source:?} config must parse: {e}"))
     }
 
+    /// The two custody states the disk projection is a function of.
+    ///
+    /// Classified rather than hand-built, so these tests measure what the validation
+    /// boundary actually recognises for the fixture above.
+    fn custody_states(
+        config: &crate::cli::Config,
+    ) -> (
+        crate::config_state::CustodyState,
+        crate::config_state::TlsCustodyState,
+    ) {
+        let (custody, violations) = crate::config_state::custody::classify_and_validate(config);
+        assert!(violations.is_empty(), "fixture refused: {violations:?}");
+        let (tls_custody, violations) =
+            crate::config_state::tls_custody::classify_and_validate(config);
+        assert!(violations.is_empty(), "fixture refused: {violations:?}");
+        (
+            custody.expect("the fixture names a custody state"),
+            tls_custody.expect("the fixture names a TLS custody state"),
+        )
+    }
+
     /// C048: the PKCS#11 PIN file unlocks the token holding the signing keys, so it must
     /// be among the files the startup permission check covers — otherwise the credential
     /// protecting the keys sits behind a weaker floor than the keys themselves.
@@ -1082,15 +1125,17 @@ mod key_file_perm_tests {
         use crate::cli::KeySourceKind;
 
         let config = config_with(KeySourceKind::Pkcs11, "", "/tls.key");
-        let files = key_files_read_from_disk(&config);
+        let (custody, tls_custody) = custody_states(&config);
+        let files = key_files_read_from_disk(&custody, &tls_custody);
         assert!(
             files.contains(&"/etc/mcp-re/pin"),
             "the PIN file must be checked; got {files:?}"
         );
         // And it is NOT claimed for a source that reads no PIN.
-        let file_custody = config_with(KeySourceKind::File, "/seed", "/tls.key");
+        let file_config = config_with(KeySourceKind::File, "/seed", "/tls.key");
+        let (custody, tls_custody) = custody_states(&file_config);
         assert!(
-            !key_files_read_from_disk(&file_custody)
+            !key_files_read_from_disk(&custody, &tls_custody)
                 .iter()
                 .any(|p| p.contains("pin")),
             "file custody reads no PIN file"
@@ -1160,7 +1205,8 @@ mod key_file_perm_tests {
             KeySourceKind::GcpKms,
         ] {
             let config = config_with(source, "/seed", "/tls.key");
-            let checked = key_files_read_from_disk(&config);
+            let (custody, tls_custody) = custody_states(&config);
+            let checked = key_files_read_from_disk(&custody, &tls_custody);
             assert!(
                 checked.contains(&"/tls.key"),
                 "{source:?}: the TLS key lands on disk and must be permission-checked"
@@ -1182,8 +1228,9 @@ mod key_file_perm_tests {
         use crate::cli::KeySourceKind;
 
         let config = config_with(KeySourceKind::GcpKms, "", "");
+        let (custody, tls_custody) = custody_states(&config);
         assert!(
-            key_files_read_from_disk(&config).is_empty(),
+            key_files_read_from_disk(&custody, &tls_custody).is_empty(),
             "delegated TLS + KMS custody reads no private key from disk"
         );
     }

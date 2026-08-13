@@ -204,6 +204,24 @@ pub struct FileKeySource {
 }
 
 impl FileKeySource {
+    /// The TLS and client-CA half only, for a source whose SIGNING key lives elsewhere.
+    ///
+    /// `KmsKeySource` wraps one of these to serve `tls_server_cert_chain`,
+    /// `tls_server_key` and `client_ca_roots`; its own `ResponseSigner` impl routes to the
+    /// KMS backend, the `tls` field is private, and no accessor hands it out. So the seed
+    /// path is not merely unused on those deployments — it is outside the reachable method
+    /// surface of the wrapped source, and passing one in would hand a component material
+    /// nothing can consume.
+    #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
+    pub(crate) fn tls_only(tls_cert_path: &str, tls_key_path: &str, client_ca_path: &str) -> Self {
+        FileKeySource {
+            signing_key_seed_path: String::new(),
+            tls_cert_path: tls_cert_path.to_string(),
+            tls_key_path: tls_key_path.to_string(),
+            client_ca_path: client_ca_path.to_string(),
+        }
+    }
+
     fn read(&self, path: &str) -> Result<Vec<u8>, KeyError> {
         fs::read(path).map_err(|e| KeyError::NotFound(format!("{path}: {e}")))
     }
