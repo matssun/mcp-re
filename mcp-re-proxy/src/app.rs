@@ -743,8 +743,10 @@ fn run_validated(
                 )
             },
         )?;
-    let (mcp_transport, transport_state) =
-        crate::serving_capabilities::mcp_transport_contract(values).into_parts();
+    let (mcp_transport, transport_state) = crate::serving_capabilities::mcp_transport_contract(
+        config.state().mcp_transport_contract(),
+    )
+    .into_parts();
     if let Some(policy) = mcp_transport {
         verifier_policy = verifier_policy.with_mcp_transport(policy);
     }

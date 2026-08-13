@@ -3,7 +3,7 @@
 //!
 //! `Config` describes a *requested* deployment. Not every combination of its fields
 //! describes a deployment that could exist, and the atlas is the closed model of the ones
-//! that can: eleven machines, each with its own states, a set of guard-only owners that
+//! that can: twelve machines, each with its own states, a set of guard-only owners that
 //! have invariants without a mode choice, and a small set of relations between them. This
 //! module is that model as code — one classifier/validator per owner, and one value
 //! carrying what they recognised.
@@ -61,6 +61,7 @@ pub(crate) mod cross_machine;
 pub mod custody;
 pub mod delegated_signing;
 pub mod evidence;
+pub mod mcp_transport_contract;
 pub mod replay;
 pub mod tls_custody;
 pub mod transport;
@@ -71,6 +72,7 @@ pub use continuation_control::ContinuationControlState;
 pub use custody::CustodyState;
 pub use delegated_signing::DelegatedSigningFacts;
 pub use evidence::{AuditState, RetentionState, VerifiedContextState};
+pub use mcp_transport_contract::McpTransportContractState;
 pub use replay::ReplayState;
 pub use tls_custody::TlsCustodyState;
 pub use transport::{ChannelBindingState, CrlRevocationState};
@@ -93,6 +95,7 @@ pub struct DeploymentConfigState {
     crl_revocation: CrlRevocationState,
     custody: CustodyState,
     delegated_signing: DelegatedSigningFacts,
+    mcp_transport_contract: McpTransportContractState,
     replay: ReplayState,
     retention: RetentionState,
     tls_custody: TlsCustodyState,
@@ -110,6 +113,7 @@ pub(crate) struct RecognisedStates {
     pub(crate) crl_revocation: CrlRevocationState,
     pub(crate) custody: CustodyState,
     pub(crate) delegated_signing: DelegatedSigningFacts,
+    pub(crate) mcp_transport_contract: McpTransportContractState,
     pub(crate) replay: ReplayState,
     pub(crate) retention: RetentionState,
     pub(crate) tls_custody: TlsCustodyState,
@@ -129,6 +133,7 @@ impl DeploymentConfigState {
             crl_revocation,
             custody,
             delegated_signing,
+            mcp_transport_contract,
             replay,
             retention,
             tls_custody,
@@ -143,6 +148,7 @@ impl DeploymentConfigState {
             crl_revocation,
             custody,
             delegated_signing,
+            mcp_transport_contract,
             replay,
             retention,
             tls_custody,
@@ -191,6 +197,11 @@ impl DeploymentConfigState {
     /// not a state a deployment can be in.
     pub fn replay(&self) -> &ReplayState {
         &self.replay
+    }
+
+    /// Whether the MCP transport/version contract is asserted, and for which versions.
+    pub fn mcp_transport_contract(&self) -> &McpTransportContractState {
+        &self.mcp_transport_contract
     }
 
     /// Where the response-signing key lives.
@@ -284,6 +295,9 @@ mod tests {
                 cadence_secs: 300,
             },
             custody: CustodyState::Pkcs11,
+            mcp_transport_contract: McpTransportContractState::Enforced {
+                versions: vec!["2026-07-28".to_string()],
+            },
             delegated_signing: delegated_signing::classify_and_validate(
                 &test_support::legal_config(),
             )

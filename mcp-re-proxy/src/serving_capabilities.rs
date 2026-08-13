@@ -136,9 +136,9 @@ pub(crate) fn online_ocsp() -> Established<std::convert::Infallible> {
 /// than a default, because the failure it prevents is a signed request that names one
 /// tool in its header and invokes another in its body.
 pub(crate) fn mcp_transport_contract(
-    config: &cli::Config,
+    state: &crate::config_state::McpTransportContractState,
 ) -> Established<mcp_re_http_profile::McpTransportPolicy> {
-    if config.mcp_protocol_versions.is_empty() {
+    let crate::config_state::McpTransportContractState::Enforced { versions } = state else {
         return Established::off(
             "MCP transport contract = OFF (no --mcp-protocol-version): the required \
              transport headers are not asserted and Mcp-Name is not checked against \
@@ -146,18 +146,13 @@ pub(crate) fn mcp_transport_contract(
              another in its body. Declare the protocol version(s) this deployment serves \
              to enforce the contract.",
         );
-    }
-    let versions: Vec<&str> = config
-        .mcp_protocol_versions
-        .iter()
-        .map(String::as_str)
-        .collect();
+    };
+    let accepted: Vec<&str> = versions.iter().map(String::as_str).collect();
     Established::on(
-        mcp_re_http_profile::McpTransportPolicy::mcp_2026_07_28(&versions),
+        mcp_re_http_profile::McpTransportPolicy::mcp_2026_07_28(&accepted),
         format!(
-            "MCP transport contract ENFORCED for protocol version(s) {:?} \
-             (required transport headers covered; Mcp-Name must equal params.name)",
-            config.mcp_protocol_versions
+            "MCP transport contract ENFORCED for protocol version(s) {versions:?} \
+             (required transport headers covered; Mcp-Name must equal params.name)"
         ),
     )
 }

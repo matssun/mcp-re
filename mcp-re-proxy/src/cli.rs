@@ -2517,6 +2517,7 @@ pub fn validate_configuration(config: &Config) -> Result<DeploymentConfigState, 
     let (crl_revocation, crl_violations) =
         crate::config_state::transport::classify_and_validate_crl(config);
     let (audit, retention, verified_context) = crate::config_state::evidence::classify(config);
+    let mcp_transport_contract = crate::config_state::mcp_transport_contract::classify(config);
     // PASS 2 — the relations between machines, asked of the RECOGNISED states rather than
     // of the fields again.
     let cross = crate::config_state::cross_machine::validate(
@@ -2560,6 +2561,7 @@ pub fn validate_configuration(config: &Config) -> Result<DeploymentConfigState, 
                     crl_revocation,
                     custody,
                     delegated_signing,
+                    mcp_transport_contract,
                     replay,
                     retention,
                     tls_custody,
