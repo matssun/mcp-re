@@ -86,6 +86,7 @@ fn keys(violations: &[String]) -> Vec<&'static str> {
         "--max-client-cert-lifetime",
         "--max-connection-age-secs",
         "--revocation-tier live|push requires",
+        "--trust-reload-secs 0",
         "--trust-reload-secs",
         "--read-timeout-secs",
         "--write-timeout-secs",
@@ -182,6 +183,9 @@ fn the_trust_and_fleet_clauses_keep_their_places() {
     config.revocation_tier = mcp_re_proxy::revocation_tier::RevocationTier::Live;
     config.trust_reload_secs = None;
     config.fleet = true;
+    // The zero-cadence clause shares this position with the missing-cadence clause above —
+    // they are the same guard answering two ways, so only one can fire per run and they
+    // are pinned together rather than each claiming its own slot.
     // X1 fires only on a node-local replay kind, and every LIVE replay state is now
     // shared — so provoking it means naming a rejected input form, which is refused on
     // its own grounds too. Both appear below, in their pinned positions.
@@ -231,4 +235,35 @@ fn the_boundary_reports_every_violation_not_the_first() {
             "missing {expected} in: {refusal}"
         );
     }
+}
+
+/// The zero-cadence refusal occupies the SAME slot as its missing-cadence sibling.
+///
+/// Both come from the reload-cadence guard, so an operator meets one clause about that
+/// flag in one place whichever way they got it wrong. Pinned in its own run because a
+/// single configuration cannot provoke both — the cadence is either absent or zero.
+#[test]
+fn the_zero_cadence_clause_takes_the_cadence_slot() {
+    let mut config = legal();
+    config.revocation_tier = mcp_re_proxy::revocation_tier::RevocationTier::Live;
+    config.trust_reload_secs = Some(0);
+    config.fleet = true;
+    config.replay = ReplayKind::File;
+    config.replay_redis_url = None;
+    config.binding = BindingKind::LbAssertion;
+    config.reverse_proxy_identity_header = Some("x-client-id".to_string());
+
+    let order = keys(&cli::unsafe_config_violations(&config));
+    assert_eq!(
+        order,
+        vec![
+            "--transport-binding lb-assertion places",
+            "--ingress-",
+            "--trust-reload-secs 0",
+            "--replay-cache file is not a supported",
+            "--fleet requires",
+            "--reverse-proxy-identity-header",
+        ],
+        "the boundary's refusal order changed"
+    );
 }

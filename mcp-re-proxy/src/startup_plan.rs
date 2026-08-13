@@ -235,14 +235,15 @@ pub enum TrustReloadPlan {
     ReadOnceAtStartup,
     /// Re-read on this cadence, so a key removed from the file stops resolving within it.
     Every {
-        /// The cadence, in seconds.
-        secs: u64,
+        /// The cadence, in seconds. Non-zero because a zero cadence is a spinning reloader,
+        /// which layer A refuses — so `Every { secs: 0 }` has no constructor.
+        secs: std::num::NonZeroU64,
     },
 }
 
 impl TrustReloadPlan {
     /// The cadence, where there is one.
-    pub fn cadence_secs(&self) -> Option<u64> {
+    pub fn cadence_secs(&self) -> Option<std::num::NonZeroU64> {
         match self {
             TrustReloadPlan::ReadOnceAtStartup => None,
             TrustReloadPlan::Every { secs } => Some(*secs),
@@ -287,7 +288,7 @@ impl TrustPlan {
             revocation: config.state().trust_revocation().clone(),
             trust_path: values.trust_path.clone(),
             response_kid,
-            reload: trust_reload_plan(config.state().trust_revocation(), values),
+            reload: trust_reload_plan(config.state().trust_revocation()),
             epoch,
         }
     }
@@ -300,17 +301,17 @@ impl TrustPlan {
 /// contradict a tier whose whole claim is that the store is re-read. Only `BoundedCache`
 /// consults the validated request, because only there is the cadence optional and both
 /// postures legal.
-fn trust_reload_plan(
-    state: &crate::config_state::TrustRevocationState,
-    values: &crate::cli::Config,
-) -> TrustReloadPlan {
+fn trust_reload_plan(state: &crate::config_state::TrustRevocationState) -> TrustReloadPlan {
     use crate::config_state::TrustRevocationState as S;
     match state {
         S::Live { reload_secs }
         | S::PushInert { reload_secs, .. }
         | S::PushNetworked { reload_secs, .. } => TrustReloadPlan::Every { secs: *reload_secs },
-        S::BoundedCache { .. } => match values.trust_reload_secs {
-            Some(secs) => TrustReloadPlan::Every { secs },
+        // Total, and reading no raw value: layer A normalized the optional cadence, so
+        // there is no `Some(0)` left to filter here — and therefore no way for a refused
+        // request to be re-read as a different legal posture.
+        S::BoundedCache { reload_secs, .. } => match reload_secs {
+            Some(secs) => TrustReloadPlan::Every { secs: *secs },
             None => TrustReloadPlan::ReadOnceAtStartup,
         },
     }
@@ -872,31 +873,33 @@ mod tests {
     /// projected to `ReadOnceAtStartup`, which would silently contradict a tier whose whole
     /// claim is that the store is re-read.
     ///
-    /// Asserted by clearing `--trust-reload-secs` from the values AFTER classification, so
-    /// a projection that consulted the request would answer `ReadOnceAtStartup` and fail
-    /// here. Only reading the witness gives `Every`.
+    /// The projection cannot consult the request at all — `trust_reload_plan` takes only
+    /// the state — so this asserts what remains: that each reload-bearing state projects
+    /// its OWN carried cadence rather than some default.
     #[test]
     fn a_reload_bearing_state_cannot_be_projected_to_read_once() {
         use crate::config_state::TrustRevocationState as S;
-        let mut values = validated(PUSH_NETWORKED).into_inner();
-        values.trust_reload_secs = None;
         let carried = [
-            S::Live { reload_secs: 7 },
+            S::Live {
+                reload_secs: crate::config_state::TrustRevocationState::cadence(7),
+            },
             S::PushInert {
                 t_secs: 30,
-                reload_secs: 7,
+                reload_secs: crate::config_state::TrustRevocationState::cadence(7),
             },
             S::PushNetworked {
                 t_secs: 30,
-                reload_secs: 7,
+                reload_secs: crate::config_state::TrustRevocationState::cadence(7),
                 epoch_url: "redis://127.0.0.1:6379".to_string(),
                 epoch_key: "k".to_string(),
             },
         ];
         for state in carried {
             assert_eq!(
-                trust_reload_plan(&state, &values),
-                TrustReloadPlan::Every { secs: 7 },
+                trust_reload_plan(&state),
+                TrustReloadPlan::Every {
+                    secs: crate::config_state::TrustRevocationState::cadence(7)
+                },
                 "{state:?} must project its own cadence, not the request's absence"
             );
         }
@@ -910,20 +913,22 @@ mod tests {
     #[test]
     fn bounded_cache_keeps_both_refresh_postures() {
         use crate::config_state::TrustRevocationState as S;
-        let state = S::BoundedCache { t_secs: 60 };
-        let mut values = validated(PUSH_NETWORKED).into_inner();
-
-        values.trust_reload_secs = None;
         assert_eq!(
-            trust_reload_plan(&state, &values),
+            trust_reload_plan(&S::BoundedCache {
+                t_secs: 60,
+                reload_secs: None,
+            }),
             TrustReloadPlan::ReadOnceAtStartup,
             "an omitted cadence under bounded-cache reads the store once"
         );
-
-        values.trust_reload_secs = Some(60);
         assert_eq!(
-            trust_reload_plan(&state, &values),
-            TrustReloadPlan::Every { secs: 60 },
+            trust_reload_plan(&S::BoundedCache {
+                t_secs: 60,
+                reload_secs: Some(S::cadence(60)),
+            }),
+            TrustReloadPlan::Every {
+                secs: S::cadence(60)
+            },
             "a supplied cadence under bounded-cache still re-reads"
         );
     }
@@ -1011,13 +1016,18 @@ mod tests {
             plan.revocation,
             crate::config_state::TrustRevocationState::PushNetworked {
                 t_secs: 30,
-                reload_secs: 15,
+                reload_secs: crate::config_state::TrustRevocationState::cadence(15),
                 epoch_url: "redis://127.0.0.1:6379".to_string(),
                 epoch_key: crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY.to_string(),
             },
             "the plan must hold what layer A classified, not re-read --revocation-tier"
         );
-        assert_eq!(plan.reload, TrustReloadPlan::Every { secs: 15 });
+        assert_eq!(
+            plan.reload,
+            TrustReloadPlan::Every {
+                secs: crate::config_state::TrustRevocationState::cadence(15)
+            }
+        );
         assert_eq!(plan.response_kid, "root-1");
         assert!(matches!(plan.epoch, TrustEpochPlan::Redis { .. }));
 

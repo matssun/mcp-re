@@ -251,7 +251,7 @@ impl TrustPlane {
                 Arc::clone(&trust_store),
                 plan.trust_path.clone(),
                 response_kid.to_string(),
-                interval_secs,
+                interval_secs.get(),
                 Arc::clone(&trust_freshness),
             );
             eprintln!(
@@ -690,11 +690,13 @@ mod store_cadence_tests {
         let line = fleet_trust_bound(&plan(
             TrustRevocationState::PushNetworked {
                 t_secs: 90,
-                reload_secs: 5,
+                reload_secs: crate::config_state::TrustRevocationState::cadence(5),
                 epoch_url: "redis://127.0.0.1:6379".to_string(),
                 epoch_key: "mcp-re:trust:epoch".to_string(),
             },
-            TrustReloadPlan::Every { secs: 30 },
+            TrustReloadPlan::Every {
+                secs: crate::config_state::TrustRevocationState::cadence(30),
+            },
         ));
         assert!(
             !line.contains("next request"),
@@ -720,9 +722,11 @@ mod store_cadence_tests {
         let line = fleet_trust_bound(&plan(
             TrustRevocationState::PushInert {
                 t_secs: 90,
-                reload_secs: 5,
+                reload_secs: crate::config_state::TrustRevocationState::cadence(5),
             },
-            TrustReloadPlan::Every { secs: 30 },
+            TrustReloadPlan::Every {
+                secs: crate::config_state::TrustRevocationState::cadence(30),
+            },
         ));
         assert!(line.contains("inert"), "got: {line}");
         assert!(
@@ -741,22 +745,29 @@ mod store_cadence_tests {
     #[test]
     fn every_posture_names_the_reload_floor_under_its_number() {
         for revocation in [
-            TrustRevocationState::Live { reload_secs: 5 },
-            TrustRevocationState::BoundedCache { t_secs: 60 },
+            TrustRevocationState::Live {
+                reload_secs: crate::config_state::TrustRevocationState::cadence(5),
+            },
+            TrustRevocationState::BoundedCache {
+                t_secs: 60,
+                reload_secs: None,
+            },
             TrustRevocationState::PushInert {
                 t_secs: 60,
-                reload_secs: 5,
+                reload_secs: crate::config_state::TrustRevocationState::cadence(5),
             },
             TrustRevocationState::PushNetworked {
                 t_secs: 60,
-                reload_secs: 5,
+                reload_secs: crate::config_state::TrustRevocationState::cadence(5),
                 epoch_url: "redis://127.0.0.1:6379".to_string(),
                 epoch_key: "mcp-re:trust:epoch".to_string(),
             },
         ] {
             let with_reload = fleet_trust_bound(&plan(
                 revocation.clone(),
-                TrustReloadPlan::Every { secs: 15 },
+                TrustReloadPlan::Every {
+                    secs: crate::config_state::TrustRevocationState::cadence(15),
+                },
             ));
             assert!(
                 with_reload.contains("--trust re-read every 15s"),
@@ -796,7 +807,9 @@ mod store_cadence_tests {
     /// are read together.
     #[test]
     fn a_configured_cadence_is_named_on_the_tier_line() {
-        let line = store_change_cadence(TrustReloadPlan::Every { secs: 30 });
+        let line = store_change_cadence(TrustReloadPlan::Every {
+            secs: crate::config_state::TrustRevocationState::cadence(30),
+        });
         assert!(line.starts_with("30s"), "got: {line}");
         assert!(line.contains("--trust"), "got: {line}");
     }

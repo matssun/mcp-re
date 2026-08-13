@@ -296,7 +296,7 @@ mod tests {
             tls_custody: TlsCustodyState::Delegated,
             trust_revocation: TrustRevocationState::PushNetworked {
                 t_secs: 30,
-                reload_secs: 5,
+                reload_secs: crate::config_state::TrustRevocationState::cadence(5),
                 epoch_url: "redis://127.0.0.1:6379".to_string(),
                 epoch_key: "mcp-re:trust:epoch".to_string(),
             },
