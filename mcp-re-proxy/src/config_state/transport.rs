@@ -44,14 +44,28 @@ pub enum ChannelBindingState {
 }
 
 /// Offline client-certificate revocation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Each state carries what inhabiting it requires. No `Option` is involved and no build
+/// step is needed, because here presence IS the classification: a non-empty CRL set is
+/// what makes the state `Static` rather than `None`, and a cadence beside it is what makes
+/// it `Reloading`. A state cannot exist without the value that selected it.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CrlRevocationState {
     /// No CRLs — revocation rests entirely on the client-certificate lifetime ceiling.
     None,
     /// CRLs loaded once at startup.
-    Static,
+    Static {
+        /// The CRL files. Non-empty: an empty set is what `None` means.
+        paths: Vec<String>,
+    },
     /// CRLs re-read on a cadence, so a revocation published after startup takes effect.
-    Reloading,
+    Reloading {
+        /// The CRL files. Non-empty, as for `Static`.
+        paths: Vec<String>,
+        /// How often they are re-read. Its presence is what distinguishes this from
+        /// `Static`, so the state that has one carries it.
+        cadence_secs: u64,
+    },
 }
 
 /// Recognise the channel-binding state, or say why the request names none.
@@ -116,10 +130,15 @@ pub fn classify_and_validate_binding(
 fn classify_crl(config: &Config) -> CrlRevocationState {
     if config.client_crl_paths.is_empty() {
         CrlRevocationState::None
-    } else if config.client_crl_reload_secs.is_some() {
-        CrlRevocationState::Reloading
+    } else if let Some(cadence_secs) = config.client_crl_reload_secs {
+        CrlRevocationState::Reloading {
+            paths: config.client_crl_paths.clone(),
+            cadence_secs,
+        }
     } else {
-        CrlRevocationState::Static
+        CrlRevocationState::Static {
+            paths: config.client_crl_paths.clone(),
+        }
     }
 }
 
@@ -215,13 +234,24 @@ mod tests {
     fn every_legal_crl_state_form_is_classified_and_accepted() {
         let cases: Vec<Form> = vec![
             (CrlRevocationState::None, |_| {}),
-            (CrlRevocationState::Static, |c| {
-                c.client_crl_paths = vec!["/crl.pem".to_string()];
-            }),
-            (CrlRevocationState::Reloading, |c| {
-                c.client_crl_paths = vec!["/crl.pem".to_string()];
-                c.client_crl_reload_secs = Some(300);
-            }),
+            (
+                CrlRevocationState::Static {
+                    paths: vec!["/crl.pem".to_string()],
+                },
+                |c: &mut Config| {
+                    c.client_crl_paths = vec!["/crl.pem".to_string()];
+                },
+            ),
+            (
+                CrlRevocationState::Reloading {
+                    paths: vec!["/crl.pem".to_string()],
+                    cadence_secs: 300,
+                },
+                |c: &mut Config| {
+                    c.client_crl_paths = vec!["/crl.pem".to_string()];
+                    c.client_crl_reload_secs = Some(300);
+                },
+            ),
         ];
         for (expected, mutate) in cases {
             let (state, violations) = crl(mutate);

@@ -25,28 +25,36 @@
 use crate::cli::Config;
 
 /// Which continuation-control state a configuration requests.
+///
+/// `Redis` carries its locator. As with the CRL machine, presence IS the classification
+/// here — the locator's presence is what makes the state `Redis` — so the state cannot
+/// exist without the value that selected it and no fallible build step is needed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContinuationControlState {
     /// No shared store. Multi-round-trip flows are single-replica; a cross-replica answer
     /// is refused at the binding.
     Disabled,
     /// A shared Redis store, so a flow opened on one replica can be answered on another.
-    Redis,
+    Redis {
+        /// Where retained continuation bases live.
+        endpoint: String,
+    },
 }
 
 impl ContinuationControlState {
     /// Whether a shared continuation store is requested.
     pub fn is_shared(&self) -> bool {
-        matches!(self, Self::Redis)
+        matches!(self, Self::Redis { .. })
     }
 }
 
 /// Recognise the requested state. Total: presence of the locator IS the request.
 fn classify(config: &Config) -> ContinuationControlState {
-    if config.continuation_control_redis_url.is_some() {
-        ContinuationControlState::Redis
-    } else {
-        ContinuationControlState::Disabled
+    match &config.continuation_control_redis_url {
+        Some(endpoint) => ContinuationControlState::Redis {
+            endpoint: endpoint.clone(),
+        },
+        None => ContinuationControlState::Disabled,
     }
 }
 
@@ -89,7 +97,12 @@ mod tests {
         let (state, violations) = run(|c| {
             c.continuation_control_redis_url = Some("redis://127.0.0.1:6379".to_string());
         });
-        assert_eq!(state, ContinuationControlState::Redis);
+        assert_eq!(
+            state,
+            ContinuationControlState::Redis {
+                endpoint: "redis://127.0.0.1:6379".to_string()
+            }
+        );
         assert!(violations.is_empty(), "{violations:?}");
         assert!(state.is_shared());
     }
@@ -131,7 +144,9 @@ mod tests {
                 shared(c);
             })
             .0,
-            ContinuationControlState::Redis
+            ContinuationControlState::Redis {
+                endpoint: "redis://127.0.0.1:6379".to_string()
+            }
         );
         assert_eq!(
             run(|c| {

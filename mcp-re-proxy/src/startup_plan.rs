@@ -50,29 +50,24 @@ impl ReplayPlan {
     /// **Infallible.** It used to re-decide legality — which kind is offered, whether the
     /// selected mode has the value it requires — and those decisions are layer A's, made
     /// once, before this. What survives here is the projection: the state says which
-    /// backend, the validated config supplies the endpoint the state required.
+    /// backend and carries the endpoint that made it legal, and the tier follows from the
+    /// state rather than being fetched back out of the request.
     ///
     /// Refusals that depend on which backends were COMPILED IN stay with materialization.
     /// They are facts about the build, not about the request.
     pub fn from_validated(config: &ValidatedConfig) -> ReplayPlan {
-        let values = config.config();
-        let tier = values
-            .replay_durability_tier
-            .clone()
-            .expect("a classified replay state requires a declared durability tier");
-        match config.state().replay() {
-            ReplayState::SharedLinearizable => ReplayPlan::Etcd {
-                endpoint: values
-                    .cpstore_etcd_endpoint
-                    .clone()
-                    .expect("the linearizable state requires the endpoint layer A checked for"),
+        let state = config.state().replay();
+        // The tier is DERIVED from the state, not read beside it. Each arm therefore gets
+        // the only tier its backend can serve, so no construction path pairs the etcd
+        // store with a Redis quorum tier.
+        let tier = state.durability_tier();
+        match state {
+            ReplayState::SharedLinearizable { endpoint } => ReplayPlan::Etcd {
+                endpoint: endpoint.clone(),
                 tier,
             },
-            ReplayState::SharedRedis => ReplayPlan::Redis {
-                url: values
-                    .replay_redis_url
-                    .clone()
-                    .expect("the Redis state requires the URL layer A checked for"),
+            ReplayState::SharedRedis { url, .. } => ReplayPlan::Redis {
+                url: url.clone(),
                 tier,
             },
         }
@@ -421,17 +416,18 @@ impl ClientRevocationPlan {
     /// `Reloading` is the state that has a cadence, so layer A has already established
     /// that each value the variant requires is present.
     pub fn from_validated(config: &ValidatedConfig) -> ClientRevocationPlan {
-        let values = config.config();
+        use crate::config_state::CrlRevocationState as S;
         match config.state().crl_revocation() {
-            crate::config_state::CrlRevocationState::None => ClientRevocationPlan::None,
-            crate::config_state::CrlRevocationState::Static => ClientRevocationPlan::Static {
-                paths: values.client_crl_paths.clone(),
+            S::None => ClientRevocationPlan::None,
+            S::Static { paths } => ClientRevocationPlan::Static {
+                paths: paths.clone(),
             },
-            crate::config_state::CrlRevocationState::Reloading => ClientRevocationPlan::Reloading {
-                paths: values.client_crl_paths.clone(),
-                cadence_secs: values
-                    .client_crl_reload_secs
-                    .expect("the reloading state requires the cadence layer A checked for"),
+            S::Reloading {
+                paths,
+                cadence_secs,
+            } => ClientRevocationPlan::Reloading {
+                paths: paths.clone(),
+                cadence_secs: *cadence_secs,
             },
         }
     }
@@ -507,14 +503,10 @@ impl ContinuationControlPlan {
     /// Infallible: layer A already decided that this state is legal and that the locator
     /// is present where the state requires one, so there is no second refusal to make.
     pub fn from_validated(config: &ValidatedConfig) -> ContinuationControlPlan {
-        let values = config.config();
         match config.state().continuation_control() {
             ContinuationControlState::Disabled => ContinuationControlPlan::Disabled,
-            ContinuationControlState::Redis => ContinuationControlPlan::Redis {
-                endpoint: values
-                    .continuation_control_redis_url
-                    .clone()
-                    .expect("the Redis state requires the locator layer A checked for"),
+            ContinuationControlState::Redis { endpoint } => ContinuationControlPlan::Redis {
+                endpoint: endpoint.clone(),
             },
         }
     }
@@ -533,8 +525,7 @@ impl ContinuationControlPlan {
 /// chosen. Deriving it from replay once made admission unimplementable on the
 /// CP/linearizable tier, and the natural resolution was to turn the control off.
 pub fn admission_needs_control_runtime(config: &ValidatedConfig) -> bool {
-    let values = config.config();
-    cfg!(feature = "redis_replay") && values.admission != crate::cli::AdmissionKind::Off
+    cfg!(feature = "redis_replay") && config.state().admission().is_enforced()
 }
 
 /// Aggregate the control-runtime requirement across EVERY capability that can need it.

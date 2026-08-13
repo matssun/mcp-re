@@ -167,8 +167,8 @@ impl DeploymentConfigState {
     }
 
     /// Offline client-certificate revocation.
-    pub fn crl_revocation(&self) -> CrlRevocationState {
-        self.crl_revocation
+    pub fn crl_revocation(&self) -> &CrlRevocationState {
+        &self.crl_revocation
     }
 
     /// Whether exchanges are retained for later SCITT statements.
@@ -276,15 +276,22 @@ mod tests {
             admission: AdmissionState::Required,
             audit: AuditState::Stderr,
             channel_binding: ChannelBindingState::ExactUriSan,
-            continuation_control: ContinuationControlState::Redis,
-            crl_revocation: CrlRevocationState::Reloading,
+            continuation_control: ContinuationControlState::Redis {
+                endpoint: "redis://127.0.0.1:6379".to_string(),
+            },
+            crl_revocation: CrlRevocationState::Reloading {
+                paths: vec!["/crl.pem".to_string()],
+                cadence_secs: 300,
+            },
             custody: CustodyState::Pkcs11,
             delegated_signing: delegated_signing::classify_and_validate(
                 &test_support::legal_config(),
             )
             .0
             .expect("the legal fixture names a trust epoch"),
-            replay: ReplayState::SharedLinearizable,
+            replay: ReplayState::SharedLinearizable {
+                endpoint: "http://127.0.0.1:2379".to_string(),
+            },
             retention: RetentionState::On,
             tls_custody: TlsCustodyState::Delegated,
             trust_revocation: TrustRevocationState::PushNetworked {
@@ -300,7 +307,10 @@ mod tests {
         assert!(state.tls_custody().is_delegated());
         // CF-12's negative control, at the level of the value itself: a linearizable
         // replay store and a shared continuation store are independently expressible.
-        assert_eq!(state.replay(), &ReplayState::SharedLinearizable);
+        assert!(matches!(
+            state.replay(),
+            ReplayState::SharedLinearizable { .. }
+        ));
         assert!(state.continuation_control().is_shared());
         // Every machine the atlas names is represented exactly once, including the ones
         // that cannot be misconfigured: the value states the whole posture, not the part
@@ -308,7 +318,10 @@ mod tests {
         assert!(state.admission().is_enforced());
         assert_eq!(state.audit(), AuditState::Stderr);
         assert_eq!(state.channel_binding(), ChannelBindingState::ExactUriSan);
-        assert_eq!(state.crl_revocation(), CrlRevocationState::Reloading);
+        assert!(matches!(
+            state.crl_revocation(),
+            CrlRevocationState::Reloading { .. }
+        ));
         assert_eq!(state.retention(), RetentionState::On);
         assert!(state.verified_context().asserts_inner_channel_isolation());
     }

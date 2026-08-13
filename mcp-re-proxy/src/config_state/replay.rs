@@ -29,12 +29,31 @@ use crate::cli::{Config, ReplayKind};
 use crate::replay_tier::ReplayDurabilityTier;
 
 /// Which replay state a configuration requests. Only live states are representable.
+///
+/// Each state carries the locator its Required column names, so planning has nothing left
+/// to look up. The DURABILITY TIER is deliberately not a field: the variant already names
+/// it — `classify` sends `Linearizable` to `SharedLinearizable` and only
+/// `RedisWaitQuorum` can reach `SharedRedis`, because those are exactly the two tiers
+/// `meets_strict_production_minimum` accepts. Storing it beside the variant would be two
+/// authorities over one fact, and would make `Etcd` paired with a Redis quorum tier
+/// representable again. It is [derived](Self::durability_tier) instead, from the variant
+/// plus the quorum parameters, which are NOT derivable and so are carried.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReplayState {
     /// A shared Redis store at a quorum-acknowledged durability tier.
-    SharedRedis,
+    SharedRedis {
+        /// Where admitted nonces live.
+        url: String,
+        /// Replica acknowledgements required before an insert counts as durable.
+        quorum: u32,
+        /// How long to wait for those acknowledgements before failing closed.
+        timeout_ms: u64,
+    },
     /// A shared linearizable CP store (etcd).
-    SharedLinearizable,
+    SharedLinearizable {
+        /// The CP store's endpoint.
+        endpoint: String,
+    },
 }
 
 impl ReplayState {
@@ -44,10 +63,37 @@ impl ReplayState {
     /// re-derived from fields at each materialization site.
     pub fn required_feature(&self) -> &'static str {
         match self {
-            Self::SharedRedis => "redis_replay",
-            Self::SharedLinearizable => "cpstore_etcd",
+            Self::SharedRedis { .. } => "redis_replay",
+            Self::SharedLinearizable { .. } => "cpstore_etcd",
         }
     }
+
+    /// The tier this state IS, reconstructed rather than stored.
+    ///
+    /// A projection out of the classification. The variant decides which tier, and the
+    /// carried quorum parameters supply what the variant alone cannot say.
+    pub fn durability_tier(&self) -> ReplayDurabilityTier {
+        match self {
+            Self::SharedRedis {
+                quorum, timeout_ms, ..
+            } => ReplayDurabilityTier::RedisWaitQuorum {
+                quorum: *quorum,
+                timeout_ms: *timeout_ms,
+            },
+            Self::SharedLinearizable { .. } => ReplayDurabilityTier::Linearizable,
+        }
+    }
+}
+
+/// Which state the request most nearly names, before its locators are known to be present.
+///
+/// Separate from [`ReplayState`] for the same reason `TrustRevocation` has one: the column
+/// checks below need to know which state's columns to apply, and that answer must exist
+/// even when a required locator does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RequestedState {
+    SharedRedis { quorum: u32, timeout_ms: u64 },
+    SharedLinearizable,
 }
 
 /// Why a requested replay backend is not a deployment state at all.
@@ -80,7 +126,7 @@ fn rejected_input_form(config: &Config) -> Option<String> {
 }
 
 /// Recognise which shared state the declared tier names, or why it names none.
-fn classify(config: &Config) -> Result<ReplayState, String> {
+fn classify(config: &Config) -> Result<RequestedState, String> {
     if let Some(refusal) = rejected_input_form(config) {
         return Err(refusal);
     }
@@ -93,8 +139,13 @@ fn classify(config: &Config) -> Result<ReplayState, String> {
         );
     };
     match tier {
-        ReplayDurabilityTier::Linearizable => Ok(ReplayState::SharedLinearizable),
-        tier if tier.meets_strict_production_minimum() => Ok(ReplayState::SharedRedis),
+        ReplayDurabilityTier::Linearizable => Ok(RequestedState::SharedLinearizable),
+        ReplayDurabilityTier::RedisWaitQuorum { quorum, timeout_ms } => {
+            Ok(RequestedState::SharedRedis {
+                quorum: *quorum,
+                timeout_ms: *timeout_ms,
+            })
+        }
         tier => Err(format!(
             "--replay-durability-tier {} is weaker than the strict-production minimum; \
              declare redis-wait-quorum:<quorum>:<timeout_ms> or a linearizable tier",
@@ -104,7 +155,7 @@ fn classify(config: &Config) -> Result<ReplayState, String> {
 }
 
 /// The required and forbidden locators of a recognised state.
-fn locator_violations(state: &ReplayState, config: &Config) -> Vec<String> {
+fn locator_violations(state: RequestedState, config: &Config) -> Vec<String> {
     let mut out = Vec::new();
     // Forbidden in BOTH live states: the only state `replay_path` parameterizes is not one
     // a deployment can be in. It is `Option`-typed and mode-specific, so its presence is an
@@ -118,7 +169,7 @@ fn locator_violations(state: &ReplayState, config: &Config) -> Vec<String> {
         );
     }
     match state {
-        ReplayState::SharedRedis => {
+        RequestedState::SharedRedis { .. } => {
             if config.replay_redis_url.is_none() {
                 out.push("--replay-cache shared requires --replay-redis-url".to_string());
             }
@@ -130,7 +181,7 @@ fn locator_violations(state: &ReplayState, config: &Config) -> Vec<String> {
                 );
             }
         }
-        ReplayState::SharedLinearizable => {
+        RequestedState::SharedLinearizable => {
             if config.cpstore_etcd_endpoint.is_none() {
                 out.push(
                     "--replay-durability-tier linearizable requires a CP/linearizable store \
@@ -165,11 +216,27 @@ fn locator_violations(state: &ReplayState, config: &Config) -> Vec<String> {
 pub fn classify_and_validate(config: &Config) -> (Option<ReplayState>, Vec<String>) {
     match classify(config) {
         Err(refusal) => (None, vec![refusal]),
-        Ok(state) => {
-            let violations = locator_violations(&state, config);
-            (Some(state), violations)
+        Ok(requested) => {
+            let violations = locator_violations(requested, config);
+            (build(requested, config), violations)
         }
     }
+}
+
+/// Build the state, once its locator is known to be present.
+///
+/// `None` never travels alone: `locator_violations` has already named the missing value.
+fn build(requested: RequestedState, config: &Config) -> Option<ReplayState> {
+    Some(match requested {
+        RequestedState::SharedRedis { quorum, timeout_ms } => ReplayState::SharedRedis {
+            url: config.replay_redis_url.clone()?,
+            quorum,
+            timeout_ms,
+        },
+        RequestedState::SharedLinearizable => ReplayState::SharedLinearizable {
+            endpoint: config.cpstore_etcd_endpoint.clone()?,
+        },
+    })
 }
 
 #[cfg(test)]
@@ -209,8 +276,20 @@ mod tests {
     #[test]
     fn every_legal_state_form_is_classified_and_accepted() {
         let cases: Vec<Form> = vec![
-            (ReplayState::SharedRedis, redis),
-            (ReplayState::SharedLinearizable, linearizable),
+            (
+                ReplayState::SharedRedis {
+                    url: "redis://127.0.0.1:6379".to_string(),
+                    quorum: 1,
+                    timeout_ms: 100,
+                },
+                redis,
+            ),
+            (
+                ReplayState::SharedLinearizable {
+                    endpoint: "http://127.0.0.1:2379".to_string(),
+                },
+                linearizable,
+            ),
         ];
         for (expected, mutate) in cases {
             let (state, violations) = run(mutate);
@@ -228,10 +307,44 @@ mod tests {
 
     #[test]
     fn each_state_names_the_feature_that_could_establish_it() {
-        assert_eq!(ReplayState::SharedRedis.required_feature(), "redis_replay");
+        let (redis_state, _) = run(redis);
+        let (etcd_state, _) = run(linearizable);
         assert_eq!(
-            ReplayState::SharedLinearizable.required_feature(),
+            redis_state.expect("redis form is legal").required_feature(),
+            "redis_replay"
+        );
+        assert_eq!(
+            etcd_state
+                .expect("linearizable form is legal")
+                .required_feature(),
             "cpstore_etcd"
+        );
+    }
+
+    /// The tier follows from the state, so the impossible pairing has no constructor.
+    ///
+    /// Before the witnesses moved, planning fetched `--replay-durability-tier` back out of
+    /// the request and handed the SAME value to both arms, so `Etcd` carrying a Redis
+    /// quorum tier was constructible in the type system even though layer A had ruled it
+    /// out. Deriving removes it: each variant can only produce its own tier.
+    #[test]
+    fn the_tier_is_derived_from_the_state_not_stored_beside_it() {
+        let (redis_state, _) = run(redis);
+        assert_eq!(
+            redis_state.expect("redis form is legal").durability_tier(),
+            ReplayDurabilityTier::RedisWaitQuorum {
+                quorum: 1,
+                timeout_ms: 100,
+            },
+            "the Redis state reconstructs its quorum tier from its carried parameters"
+        );
+        let (etcd_state, _) = run(linearizable);
+        assert_eq!(
+            etcd_state
+                .expect("linearizable form is legal")
+                .durability_tier(),
+            ReplayDurabilityTier::Linearizable,
+            "the CP state can name no other tier"
         );
     }
 
