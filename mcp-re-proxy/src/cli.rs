@@ -6,10 +6,12 @@
 //! [`Config`] into a [`KeySource`] / [`TrustResolver`] / [`Proxy`]. `main.rs` is a
 //! thin shell that parses, builds, and runs the blocking serve loop.
 
+use std::num::NonZeroU64;
 use std::time::Duration;
 
 use mcp_re_core::VerificationKey;
 
+use crate::config_state::AdmissionAvailability;
 use crate::config_state::DeploymentConfigState;
 // MCPS-076 (audit gap G-3): EnvKeySource is dev/CI-only — compiled only under the
 // non-default `dev_env_key_source` feature.
@@ -2349,8 +2351,6 @@ const DANGLING_ADMISSION_AUTHORITY: &str =
     "--admission-authority-kid / --admission-authority-pubkey / --admission-redis-url are \
      set but --admission is off; enable it or remove them";
 
-/// The degraded window is refused beside `--admission off` for the same reason, and NOT
-/// because a window would be too wide: no gate is built, so no window is opened at all.
 /// A window configured on an enforcing deployment that never opens it. Refused for
 /// unreachability rather than for width: the number is fine, nothing will ever read it.
 const INERT_DEGRADED_BOUND: &str =
@@ -2359,6 +2359,9 @@ const INERT_DEGRADED_BOUND: &str =
      --admission-allow-degraded true to use it, or remove it to fail closed on an \
      unreachable authority";
 
+/// The degraded window is refused beside `--admission off` for the same reason as the
+/// authority triple, and NOT because a window would be too wide: no gate is built, so no
+/// window is opened at all.
 const DANGLING_DEGRADED_WINDOW: &str =
     "--admission-allow-degraded / --admission-degraded-bound-secs are set but --admission \
      is off; a degraded window tolerates an UNREACHABLE ADMISSION AUTHORITY, and with the \
@@ -2378,6 +2381,9 @@ pub(crate) struct AdmissionAuthority {
     pub(crate) key: VerificationKey,
     /// The shared authoritative record currency is compared against.
     pub(crate) redis_url: String,
+    /// What this deployment does when that record cannot be reached. Derived here because
+    /// the two flags behind it are legal only in the combinations this function accepts.
+    pub(crate) availability: AdmissionAvailability,
 }
 
 /// The one decision about whether an admission-currency configuration can be enforced.
@@ -2463,28 +2469,42 @@ pub(crate) fn validated_admission_authority(
                     .to_string(),
             );
         };
-        // The converse. Both readers of the bound sit behind `if !allow_degraded_mode`
-        // early returns — `check_admission` and `degraded_window_exhausted` — so with
-        // degraded mode off the value is not merely unused, it is unreachable. An operator
-        // who set a window and left the mode off has configured a tolerance this
-        // deployment will never apply, and is one restart away from believing it did.
-        if !allow_degraded && degraded_bound_secs != 0 {
-            return Err(INERT_DEGRADED_BOUND.to_string());
-        }
-        // Nested under the enforcing branch, where the rationale below is TRUE: a gate
-        // exists, and P is the width of the window it opens on an unreachable authority.
-        if allow_degraded && degraded_bound_secs <= 0 {
-            return Err("--admission-allow-degraded true requires a positive \
-                 --admission-degraded-bound-secs (P). P is a FLOOR on the degraded window, \
-                 not the whole of it: the PEP serves an unreachable authority for \
-                 P + --max-clock-skew seconds, so P=0 still admits a revoked workload for \
-                 the skew tolerance while claiming no window was configured"
-                .to_string());
-        }
+        // The two flags become the posture they describe, and the two legal combinations
+        // are the only ones that produce one.
+        let availability = if !allow_degraded {
+            // Both readers of the bound sit behind `if !allow_degraded_mode` early returns
+            // — `check_admission` and `degraded_window_exhausted` — so with degraded mode
+            // off the value is not merely unused, it is unreachable. An operator who set a
+            // window and left the mode off has configured a tolerance this deployment will
+            // never apply, and is one restart away from believing it did.
+            if degraded_bound_secs != 0 {
+                return Err(INERT_DEGRADED_BOUND.to_string());
+            }
+            AdmissionAvailability::FailClosed
+        } else {
+            // Nested under the enforcing branch, where the rationale below is TRUE: a gate
+            // exists, and P is the width of the window it opens on an unreachable
+            // authority. Every value the narrowing rejects — negative, and zero — is a
+            // value this clause refuses, so the conversion decides nothing the rule has
+            // not already decided.
+            let Some(bound_secs) = u64::try_from(degraded_bound_secs)
+                .ok()
+                .and_then(NonZeroU64::new)
+            else {
+                return Err("--admission-allow-degraded true requires a positive \
+                     --admission-degraded-bound-secs (P). P is a FLOOR on the degraded \
+                     window, not the whole of it: the PEP serves an unreachable authority \
+                     for P + --max-clock-skew seconds, so P=0 still admits a revoked \
+                     workload for the skew tolerance while claiming no window was configured"
+                    .to_string());
+            };
+            AdmissionAvailability::BoundedDegraded { bound_secs }
+        };
         Some(AdmissionAuthority {
             kid: kid.to_string(),
             key,
             redis_url: redis_url.to_string(),
+            availability,
         })
     };
     Ok(authority)

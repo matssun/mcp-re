@@ -67,7 +67,7 @@ pub mod tls_custody;
 pub mod transport;
 pub mod trust_revocation;
 
-pub use admission::AdmissionState;
+pub use admission::{AdmissionAvailability, AdmissionState};
 pub use continuation_control::ContinuationControlState;
 pub use custody::CustodyState;
 pub use delegated_signing::DelegatedSigningFacts;
@@ -289,6 +289,7 @@ mod tests {
                 authority_kid: "authority-1".to_string(),
                 authority: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32]).public_key(),
                 redis_url: "redis://127.0.0.1:6379".to_string(),
+                availability: AdmissionAvailability::FailClosed,
             },
             audit: AuditState::Stderr,
             channel_binding: ChannelBindingState::ExactUriSan,

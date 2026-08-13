@@ -44,6 +44,32 @@
 
 use crate::cli::{AdmissionAuthority, AdmissionKind, Config};
 use mcp_re_core::VerificationKey;
+use std::num::NonZeroU64;
+
+/// What an enforcing deployment does when the admission authority is unreachable.
+///
+/// A subordinate choice of an enabled gate, not a machine of its own. Degraded availability
+/// has no meaning without an authority that can be unreachable, so an independent machine
+/// would need a cross-machine rule forbidding all of its meaningful states under `Off` —
+/// where the simpler and truer ontology is that `Off` has no such choice to make.
+///
+/// The two variants are the two legal cells of the table above, which is why the bound is a
+/// [`NonZeroU64`]: layer A has already refused every non-positive window, so nothing
+/// downstream can be handed one. The type records the rule; it did not create it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdmissionAvailability {
+    /// An unreachable authority refuses the call. No window.
+    FailClosed,
+    /// An unreachable authority is tolerated for a bounded window.
+    ///
+    /// `bound_secs` is P, a FLOOR on that window rather than the whole of it: the PEP
+    /// serves for `P + max_clock_skew` seconds.
+    BoundedDegraded {
+        /// P, in seconds. Narrowed from a positive `i64`, so it is representable as one
+        /// again by construction.
+        bound_secs: NonZeroU64,
+    },
+}
 
 /// Which admission state a configuration requests.
 ///
@@ -62,6 +88,8 @@ pub enum AdmissionState {
         authority: VerificationKey,
         /// The shared authoritative record currency is compared against.
         redis_url: String,
+        /// What this deployment does when that record cannot be reached.
+        availability: AdmissionAvailability,
     },
     /// Enforced always: a call with no admission evidence is refused.
     Required {
@@ -71,6 +99,8 @@ pub enum AdmissionState {
         authority: VerificationKey,
         /// The shared authoritative record currency is compared against.
         redis_url: String,
+        /// What this deployment does when that record cannot be reached.
+        availability: AdmissionAvailability,
     },
 }
 
@@ -94,11 +124,13 @@ impl PartialEq for AdmissionState {
                     authority_kid: a_kid,
                     authority: a_key,
                     redis_url: a_url,
+                    availability: a_av,
                 },
                 Self::Optional {
                     authority_kid: b_kid,
                     authority: b_key,
                     redis_url: b_url,
+                    availability: b_av,
                 },
             )
             | (
@@ -106,13 +138,20 @@ impl PartialEq for AdmissionState {
                     authority_kid: a_kid,
                     authority: a_key,
                     redis_url: a_url,
+                    availability: a_av,
                 },
                 Self::Required {
                     authority_kid: b_kid,
                     authority: b_key,
                     redis_url: b_url,
+                    availability: b_av,
                 },
-            ) => a_kid == b_kid && a_url == b_url && a_key.to_bytes() == b_key.to_bytes(),
+            ) => {
+                a_kid == b_kid
+                    && a_url == b_url
+                    && a_av == b_av
+                    && a_key.to_bytes() == b_key.to_bytes()
+            }
             _ => false,
         }
     }
@@ -149,6 +188,7 @@ pub fn classify_and_validate(config: &Config) -> (Option<AdmissionState>, Vec<St
         kid,
         key,
         redis_url,
+        availability,
     }) = authority
     else {
         return (Some(AdmissionState::Off), Vec::new());
@@ -161,11 +201,13 @@ pub fn classify_and_validate(config: &Config) -> (Option<AdmissionState>, Vec<St
             authority_kid: kid,
             authority: key,
             redis_url,
+            availability,
         },
         AdmissionKind::Required => AdmissionState::Required {
             authority_kid: kid,
             authority: key,
             redis_url,
+            availability,
         },
     };
     (Some(state), Vec::new())
@@ -218,9 +260,9 @@ mod tests {
         }
     }
 
-    /// The point of the slice: an enforcing state carries the three facts it cannot be
-    /// inhabited without, and carries the key DECODED. Nothing downstream reads the
-    /// request for them, and nothing downstream repeats the decode.
+    /// An enforcing state carries every fact it cannot be inhabited without, and carries
+    /// the key DECODED. Nothing downstream reads the request for them, and nothing
+    /// downstream repeats the decode.
     #[test]
     fn an_enforcing_state_carries_the_authority_that_made_it_inhabitable() {
         let (state, _) = run(|c| enforcing(c, AdmissionKind::Required));
@@ -228,6 +270,7 @@ mod tests {
             authority_kid,
             authority,
             redis_url,
+            availability,
         }) = state
         else {
             panic!("a complete admission configuration selects the enforcing state");
@@ -235,6 +278,28 @@ mod tests {
         assert_eq!(authority_kid, "authority-1");
         assert_eq!(redis_url, "redis://127.0.0.1:6379");
         assert_eq!(authority.to_b64url(), valid_pubkey());
+        assert_eq!(availability, AdmissionAvailability::FailClosed);
+    }
+
+    /// The two flags are CLASSIFIED, not carried. Layer A owns the distinction between
+    /// failing closed and tolerating a bounded window, so no consumer recombines a bool
+    /// and an integer into a posture — and the illegal combinations have no encoding.
+    #[test]
+    fn the_availability_posture_is_classified_from_the_two_flags() {
+        let (state, _) = run(|c| {
+            enforcing(c, AdmissionKind::Required);
+            c.admission_allow_degraded = true;
+            c.admission_degraded_bound_secs = 90;
+        });
+        let Some(AdmissionState::Required { availability, .. }) = state else {
+            panic!("a complete admission configuration selects the enforcing state");
+        };
+        assert_eq!(
+            availability,
+            AdmissionAvailability::BoundedDegraded {
+                bound_secs: NonZeroU64::new(90).expect("90 is not zero"),
+            }
+        );
     }
 
     /// `Off` needs no authority, so it holds none — the absence is structural rather than
@@ -337,7 +402,9 @@ mod tests {
     /// never be reached, and a window that is narrower than it claims.
     #[derive(Debug, Clone, Copy)]
     enum Cell {
-        Legal,
+        /// Accepted, and it classifies to exactly this posture. `None` for `Off`, which
+        /// has no availability choice to make.
+        Legal(Option<AdmissionAvailability>),
         /// No gate exists, so no admission-specific parameter means anything.
         DanglingUnderOff,
         /// A gate exists, but both readers of the bound return before consulting it.
@@ -350,7 +417,7 @@ mod tests {
         /// The phrase that identifies this refusal and no other.
         fn marker(self) -> &'static str {
             match self {
-                Cell::Legal => unreachable!("a legal cell has no refusal to identify"),
+                Cell::Legal(_) => unreachable!("a legal cell has no refusal to identify"),
                 Cell::DanglingUnderOff => "--admission is off",
                 Cell::UnreachableBound => "--admission-allow-degraded is false",
                 Cell::InvalidWidth => "P + --max-clock-skew",
@@ -367,20 +434,26 @@ mod tests {
     /// with another mistake's diagnostic.
     #[test]
     fn the_degraded_truth_table_is_complete_and_each_refusal_names_its_own_mistake() {
+        let bounded = |secs: u64| {
+            Some(AdmissionAvailability::BoundedDegraded {
+                bound_secs: NonZeroU64::new(secs).expect("a positive test bound"),
+            })
+        };
+        let fail_closed = Some(AdmissionAvailability::FailClosed);
         let cases: &[(bool, bool, i64, Cell)] = &[
             // gate off: nothing admission-specific may be configured
-            (false, false, 0, Cell::Legal),
+            (false, false, 0, Cell::Legal(None)),
             (false, false, 30, Cell::DanglingUnderOff),
             (false, false, -30, Cell::DanglingUnderOff),
             (false, true, 0, Cell::DanglingUnderOff),
             (false, true, 30, Cell::DanglingUnderOff),
             // gate on
-            (true, false, 0, Cell::Legal),
+            (true, false, 0, Cell::Legal(fail_closed)),
             (true, false, 30, Cell::UnreachableBound),
             (true, false, -30, Cell::UnreachableBound),
             (true, true, 0, Cell::InvalidWidth),
             (true, true, -30, Cell::InvalidWidth),
-            (true, true, 30, Cell::Legal),
+            (true, true, 30, Cell::Legal(bounded(30))),
         ];
         for &(gate, allow, bound, expected) in cases {
             let (state, violations) = run(|c| {
@@ -393,7 +466,7 @@ mod tests {
                 c.admission_degraded_bound_secs = bound;
             });
             let at = format!("gate={gate} allow={allow} P={bound}");
-            let Cell::Legal = expected else {
+            let Cell::Legal(posture) = expected else {
                 assert!(
                     state.is_none(),
                     "{at}: a refused configuration named a state"
@@ -406,7 +479,15 @@ mod tests {
                 continue;
             };
             assert!(violations.is_empty(), "{at}: refused — {violations:?}");
-            assert!(state.is_some(), "{at}: accepted but named no state");
+            let classified = match state {
+                Some(AdmissionState::Off) => None,
+                Some(
+                    AdmissionState::Optional { availability, .. }
+                    | AdmissionState::Required { availability, .. },
+                ) => Some(availability),
+                None => panic!("{at}: accepted but named no state"),
+            };
+            assert_eq!(classified, posture, "{at}: classified to the wrong posture");
         }
     }
 

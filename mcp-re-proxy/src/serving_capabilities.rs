@@ -352,47 +352,56 @@ pub(crate) struct AdmissionGate {
 /// workload has been revoked, because currency is a comparison against state only the
 /// deployment can supply.
 ///
-/// # Why three scalars travel beside the state
+/// # Why one scalar travels beside the state
 ///
 /// `max_clock_skew` is a validated request parameter with three unrelated consumers — the
 /// replay tier's skew-folded retain-until, the request `VerifierPolicy`, and this policy —
 /// and no admission-specific rule. It belongs to no machine, so it is passed rather than
-/// owned. The degraded pair is a different case and is passed here only PROVISIONALLY: it
-/// is a second semantic posture whose legality table is not yet ruled, and moving it into
-/// `AdmissionState` before that ruling would let the type invent the rule.
+/// owned.
 #[cfg(feature = "redis_replay")]
 pub(crate) fn admission_currency(
     state: &crate::config_state::AdmissionState,
     max_clock_skew: i64,
-    allow_degraded: bool,
-    degraded_bound_secs: i64,
     control: Option<&crate::control_runtime::ControlRuntime>,
 ) -> Result<Established<AdmissionGate>, String> {
-    use crate::config_state::AdmissionState;
+    use crate::config_state::{AdmissionAvailability, AdmissionState};
     // The state names the posture AND carries what that posture cannot exist without, so
     // there is nothing here to reconstruct and no arm for a witness that went missing.
-    let (enforcement, kid, key, url) = match state {
+    let (enforcement, kid, key, url, availability) = match state {
         AdmissionState::Off => return Ok(Established::off(ADMISSION_OFF)),
         AdmissionState::Optional {
             authority_kid,
             authority,
             redis_url,
+            availability,
         } => (
             crate::http_profile_serve::AdmissionEnforcement::Optional,
             authority_kid.clone(),
             authority.clone(),
             redis_url,
+            availability,
         ),
         AdmissionState::Required {
             authority_kid,
             authority,
             redis_url,
+            availability,
         } => (
             crate::http_profile_serve::AdmissionEnforcement::Required,
             authority_kid.clone(),
             authority.clone(),
             redis_url,
+            availability,
         ),
+    };
+    // The two `AdmissionPolicy` flags are a PROJECTION of one posture rather than two
+    // settings this seam could combine wrongly. `unwrap_or` is a saturation that cannot
+    // fire: the bound was narrowed from a positive `i64` at layer A.
+    let (allow_degraded_mode, degraded_propagation_bound) = match availability {
+        AdmissionAvailability::FailClosed => (false, 0),
+        AdmissionAvailability::BoundedDegraded { bound_secs } => {
+            (true, i64::try_from(bound_secs.get()).unwrap_or(i64::MAX))
+        }
     };
     // The admission record is an INDEPENDENT endpoint; it has nothing to do with which
     // replay tier the deployment chose. Coupling it to the replay control runtime made
@@ -412,10 +421,13 @@ pub(crate) fn admission_currency(
             crate::http_profile_serve::AdmissionEnforcement::Required => "REQUIRED",
             crate::http_profile_serve::AdmissionEnforcement::Optional => "optional",
         },
-        if allow_degraded {
-            format!("allowed within P={degraded_bound_secs}s")
-        } else {
-            "OFF (an unreachable authority fails closed)".to_string()
+        match availability {
+            AdmissionAvailability::FailClosed => {
+                "OFF (an unreachable authority fails closed)".to_string()
+            }
+            AdmissionAvailability::BoundedDegraded { bound_secs } => {
+                format!("allowed within P={bound_secs}s")
+            }
         },
     );
     Ok(Established::on(
@@ -424,8 +436,8 @@ pub(crate) fn admission_currency(
             policy: mcp_re_http_profile::AdmissionPolicy {
                 max_assertion_age: 300,
                 max_clock_skew,
-                degraded_propagation_bound: degraded_bound_secs,
-                allow_degraded_mode: allow_degraded,
+                degraded_propagation_bound,
+                allow_degraded_mode,
             },
             enforcement,
             resolve_authority: Arc::new(move |presented: &str| {
@@ -446,8 +458,6 @@ pub(crate) fn admission_currency(
 pub(crate) fn admission_currency(
     state: &crate::config_state::AdmissionState,
     _max_clock_skew: i64,
-    _allow_degraded: bool,
-    _degraded_bound_secs: i64,
     _control: Option<&crate::control_runtime::ControlRuntime>,
 ) -> Result<Established<AdmissionGate>, String> {
     if state.is_enforced() {
