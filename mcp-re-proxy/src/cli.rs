@@ -2503,6 +2503,8 @@ pub fn validate_configuration(config: &Config) -> Result<DeploymentConfigState, 
     let (continuation_control, continuation_violations) =
         crate::config_state::continuation_control::classify_and_validate(config);
     let (custody, custody_violations) = crate::config_state::custody::classify_and_validate(config);
+    let (delegated_signing, delegated_signing_violations) =
+        crate::config_state::delegated_signing::classify_and_validate(config);
     let (replay, replay_violations) = crate::config_state::replay::classify_and_validate(config);
     let (tls_custody, tls_custody_violations) =
         crate::config_state::tls_custody::classify_and_validate(config);
@@ -2529,36 +2531,40 @@ pub fn validate_configuration(config: &Config) -> Result<DeploymentConfigState, 
         continuation_control: continuation_violations,
         crl_revocation: crl_violations,
         custody: custody_violations,
+        delegated_signing: delegated_signing_violations,
         replay: replay_violations,
         tls_custody: tls_custody_violations,
         trust_revocation: trust_violations,
         cross,
     };
     let violations = legality_violations(config, decided);
-    // Two machines can name NO state: `Replay` (`memory` and `file` are input forms, not
-    // deployments) and `ChannelBinding` (three undeployable binding kinds, one deprecated
-    // identity source). Each has already pushed its refusal when that happens, so the
-    // `None` arms below are unreachable — stated rather than `unwrap`ped, so a machine that
-    // forgets to refuse fails loudly instead of building a state nothing recognised.
+    // Three owners can name NOTHING: `Replay` (`memory` and `file` are input forms, not
+    // deployments), `ChannelBinding` (three undeployable binding kinds, one deprecated
+    // identity source), and `DelegatedSigning` (the §7 epoch has no default, so without it
+    // there is no posture to resolve). Each has already pushed its refusal when that
+    // happens, so the `None` arms below are unreachable — stated rather than `unwrap`ped, so
+    // an owner that forgets to refuse fails loudly instead of building a state nothing
+    // recognised.
     if !violations.is_empty() {
         return Err(violations);
     }
-    match (replay, channel_binding) {
-        (Some(replay), Some(channel_binding)) => Ok(DeploymentConfigState::new(
-            crate::config_state::RecognisedStates {
+    match (replay, channel_binding, delegated_signing) {
+        (Some(replay), Some(channel_binding), Some(delegated_signing)) => Ok(
+            DeploymentConfigState::new(crate::config_state::RecognisedStates {
                 admission,
                 audit,
                 channel_binding,
                 continuation_control,
                 crl_revocation,
                 custody,
+                delegated_signing,
                 replay,
                 retention,
                 tls_custody,
                 trust_revocation,
                 verified_context,
-            },
-        )),
+            }),
+        ),
         _ => Err(vec![
             "internal error: a configuration machine recognised no state and raised no refusal"
                 .to_string(),
@@ -2574,6 +2580,7 @@ struct MachineViolations {
     continuation_control: Vec<String>,
     crl_revocation: Vec<String>,
     custody: Vec<String>,
+    delegated_signing: Vec<String>,
     replay: Vec<String>,
     tls_custody: Vec<String>,
     trust_revocation: Vec<String>,
@@ -2663,54 +2670,12 @@ fn legality_violations(config: &Config, decided: MachineViolations) -> Vec<Strin
     // The `CrlRevocation` machine: whether offline revocation is off, loaded once, or
     // re-read, and what each of those states requires.
     violations.extend(decided.crl_revocation);
-    // ADR-MCPRE-052 delegated custody. `exp` is the only thing that expires a delegated
-    // response-signing credential — advancing the trust epoch does not reach one already
-    // issued, because no verifier reads the counter — so the TTL IS the exposure window of
-    // an exfiltrated hot-path key and needs a ceiling, not merely a positive value. The
-    // rotor's successor-before-expiry rule is restated here for the same reason the
-    // ceiling is stated at all: these are public fields on a config a caller can build.
-    // The epoch is the ADR-MCPRE-052 §7 hard gate, and it arrives here from
-    // `delegated_wiring`, where it was the last deterministic layer-A invalidity refused
-    // after two planes had already established resources. Its two siblings below were
-    // already checked here, so the family was split across two layers with no reason
-    // beyond history — and a config with no epoch got the same treatment `--inner-http-url`
-    // did: refused late, by a module with no stake in the question.
-    if config.delegated_trust_epoch.is_none() {
-        violations.push(
-            "delegated-required response signing requires a trust epoch \
-             (--delegated-trust-epoch): without it every credential is minted under a bare \
-             label instead of <base>#<counter>, so a restarted replica appears unrevoked to \
-             verifiers pinned past an operator INCR and the cross-fleet kill switch stops \
-             working"
-                .to_string(),
-        );
-    }
-    if config.delegated_ttl_secs <= 0 {
-        violations.push(
-            "--delegated-ttl-secs must be greater than 0 (it is the life of every delegated \
-             response-signing credential)"
-                .to_string(),
-        );
-    } else if config.delegated_ttl_secs > MAX_DELEGATED_TTL_SECS {
-        violations.push(format!(
-            "--delegated-ttl-secs {} exceeds the ceiling of {MAX_DELEGATED_TTL_SECS}s: the \
-             credential's exp is the ONLY thing that expires it (a trust-epoch advance does \
-             not reach credentials already issued), so the TTL is exactly how long an \
-             exfiltrated delegated signing key stays verifiable; the delegated key is the \
-             SHORT-lived hot-path credential — set a TTL <= {MAX_DELEGATED_TTL_SECS}s",
-            config.delegated_ttl_secs
-        ));
-    }
-    if config.delegated_overlap_secs <= 0
-        || config.delegated_overlap_secs >= config.delegated_ttl_secs
-    {
-        violations.push(format!(
-            "--delegated-overlap-secs must satisfy 0 < overlap < ttl (got overlap={}, ttl={}); \
-             the rotor mints a successor one overlap before expiry, so outside that range \
-             response signing either never rotates or stops",
-            config.delegated_overlap_secs, config.delegated_ttl_secs
-        ));
-    }
+    // ADR-MCPRE-052 delegated custody, decided by its own owner. The epoch was refused in
+    // `delegated_wiring` — the last deterministic layer-A invalidity left, raised after two
+    // planes had already established resources — while its two siblings were checked here,
+    // so the family was split across two layers with no reason beyond history. It is one
+    // owner now, and this is where an operator has always read it.
+    violations.extend(decided.delegated_signing);
     // ADR-MCPS-023 §A1 (MCPS-57): `None` disables enforcement outright; a lifetime
     // above the ceiling would let a NOT-short-lived cert be audited as
     // `short_lived_cert`. Both fail closed.

@@ -142,25 +142,23 @@ pub fn host_clock_is_faulted(now_unix: i64) -> bool {
 
 /// The kid naming the ROOT issuer that delegated credentials chain to (ADR-MCPRE-052).
 ///
-/// Planned, not materialized: it is a two-field derivation over configuration, and both
-/// the trust plane and the signing plane are handed it rather than either producing it.
-/// That ordering is forced — trust is established well before the root issuer is invoked
-/// — but it is also correct, because the kid is a statement of INTENT about which issuer
-/// this deployment will chain to, not evidence that the issuer answered.
+/// A projection, not a derivation: layer A owns the rule that `--delegated-issuer-kid`
+/// wins when set and the server key id names the issuer otherwise, and this reads the
+/// value that rule produced
+/// ([`DelegatedSigningFacts`](crate::config_state::DelegatedSigningFacts)). Both the trust
+/// plane and the signing plane are handed the result rather than either producing it.
 ///
-/// `--delegated-issuer-kid` wins when set; otherwise the server key id names the issuer,
-/// which is the single-key deployment where root and issuer coincide.
+/// Planned, not materialized: the kid is a statement of INTENT about which issuer this
+/// deployment will chain to, not evidence that the issuer answered. That ordering is
+/// forced — trust is established well before the root issuer is invoked — and correct for
+/// the same reason.
 ///
 /// The invariant that makes it safe belongs to signing, and the two planes consume
 /// opposite halves of it: this kid answers the Response slot, and it is never enrolled as
-/// a REQUEST signer. Splitting the derivation across the two consumers would let them
-/// disagree about which key that is, which is the one thing this must not permit.
+/// a REQUEST signer. They cannot disagree about which key that is, because there is one
+/// resolved value and neither of them resolves it.
 pub fn response_issuer_kid(config: &ValidatedConfig) -> String {
-    let values = config.config();
-    values
-        .delegated_issuer_kid
-        .clone()
-        .unwrap_or_else(|| values.server_key_id.clone())
+    config.state().delegated_signing().issuer_kid().to_string()
 }
 
 /// The shared trust-epoch mechanism, interpreted ONCE (CF-09).
@@ -347,22 +345,15 @@ impl SigningPlan {
         epoch: TrustEpochPlan,
     ) -> SigningPlan {
         let values = config.config();
+        let facts = config.state().delegated_signing();
         SigningPlan {
             custody: mcp_re_http_profile::CustodyConfig {
                 issuer_kid: response_kid,
                 iss: values.server_signer.clone(),
                 profile: mcp_re_http_profile::PROFILE_TAG.to_string(),
                 aud: values.audience.clone(),
-                // Overridable so a deployment can scope the delegated key to something
-                // other than the response audience, where its verifiers expect that.
-                audience_hash: values
-                    .delegated_audience_hash
-                    .clone()
-                    .unwrap_or_else(|| values.audience.clone()),
-                trust_epoch: values
-                    .delegated_trust_epoch
-                    .clone()
-                    .expect("delegated signing requires the trust epoch layer A checked for"),
+                audience_hash: facts.audience_hash().to_string(),
+                trust_epoch: facts.trust_epoch().to_string(),
                 server_role: "server".to_string(),
                 server_trust_domain: values.trust_domain.clone(),
                 server_subject: values.server_signer.clone(),

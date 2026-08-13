@@ -57,6 +57,7 @@ _PROXY_LIB_SRCS = [
     "src/config_state/continuation_control.rs",
     "src/config_state/cross_machine.rs",
     "src/config_state/custody.rs",
+    "src/config_state/delegated_signing.rs",
     "src/config_state/evidence.rs",
     "src/config_state/replay.rs",
     "src/config_state/mod.rs",

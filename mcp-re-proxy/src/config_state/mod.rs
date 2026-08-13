@@ -3,9 +3,10 @@
 //!
 //! `Config` describes a *requested* deployment. Not every combination of its fields
 //! describes a deployment that could exist, and the atlas is the closed model of the ones
-//! that can: eleven machines, each with its own states, and a small set of relations
-//! between them. This module is that model as code — one classifier/validator per machine, and one
-//! value carrying what they recognised.
+//! that can: eleven machines, each with its own states, a set of guard-only owners that
+//! have invariants without a mode choice, and a small set of relations between them. This
+//! module is that model as code — one classifier/validator per owner, and one value
+//! carrying what they recognised.
 //!
 //! **Three layers, and this is only the first.** Layer A asks whether the request is
 //! internally coherent; it touches no filesystem, no network, and no cargo feature. Layer
@@ -58,6 +59,7 @@ pub mod admission;
 pub mod continuation_control;
 pub(crate) mod cross_machine;
 pub mod custody;
+pub mod delegated_signing;
 pub mod evidence;
 pub mod replay;
 pub mod tls_custody;
@@ -67,20 +69,21 @@ pub mod trust_revocation;
 pub use admission::AdmissionState;
 pub use continuation_control::ContinuationControlState;
 pub use custody::CustodyState;
+pub use delegated_signing::DelegatedSigningFacts;
 pub use evidence::{AuditState, RetentionState, VerifiedContextState};
 pub use replay::ReplayState;
 pub use tls_custody::TlsCustodyState;
 pub use transport::{ChannelBindingState, CrlRevocationState};
 pub use trust_revocation::TrustRevocationState;
 
-/// Which state each configuration machine was recognised to be in.
+/// What layer A recognised: each machine's state, and each guard-only owner's facts.
 ///
-/// Built only by a successful validation, so holding one is evidence that every state
-/// here was checked against its own required/optional/forbidden/guard columns and that
-/// the cross-machine relations hold between them.
+/// Built only by a successful validation, so holding one is evidence that every owner here
+/// was checked against its own required/optional/forbidden/guard columns and that the
+/// cross-machine relations hold between them.
 ///
-/// It grows one field per machine as the atlas's machines are implemented; a machine that
-/// is not here yet is one whose legality still lives in the residual clause list.
+/// It grows one field per owner as the atlas is implemented; an owner that is not here yet
+/// is one whose legality still lives in the residual clause list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeploymentConfigState {
     admission: AdmissionState,
@@ -89,6 +92,7 @@ pub struct DeploymentConfigState {
     continuation_control: ContinuationControlState,
     crl_revocation: CrlRevocationState,
     custody: CustodyState,
+    delegated_signing: DelegatedSigningFacts,
     replay: ReplayState,
     retention: RetentionState,
     tls_custody: TlsCustodyState,
@@ -105,6 +109,7 @@ pub(crate) struct RecognisedStates {
     pub(crate) continuation_control: ContinuationControlState,
     pub(crate) crl_revocation: CrlRevocationState,
     pub(crate) custody: CustodyState,
+    pub(crate) delegated_signing: DelegatedSigningFacts,
     pub(crate) replay: ReplayState,
     pub(crate) retention: RetentionState,
     pub(crate) tls_custody: TlsCustodyState,
@@ -123,6 +128,7 @@ impl DeploymentConfigState {
             continuation_control,
             crl_revocation,
             custody,
+            delegated_signing,
             replay,
             retention,
             tls_custody,
@@ -136,6 +142,7 @@ impl DeploymentConfigState {
             continuation_control,
             crl_revocation,
             custody,
+            delegated_signing,
             replay,
             retention,
             tls_custody,
@@ -189,6 +196,12 @@ impl DeploymentConfigState {
     /// Where the response-signing key lives.
     pub fn custody(&self) -> CustodyState {
         self.custody
+    }
+
+    /// What was established about delegated response signing — the epoch every credential
+    /// is minted under, and the two values whose defaulting rule this layer owns.
+    pub fn delegated_signing(&self) -> &DelegatedSigningFacts {
+        &self.delegated_signing
     }
 
     /// Whether the TLS handshake key can leave the device it lives on.
@@ -266,6 +279,11 @@ mod tests {
             continuation_control: ContinuationControlState::Redis,
             crl_revocation: CrlRevocationState::Reloading,
             custody: CustodyState::Pkcs11,
+            delegated_signing: delegated_signing::classify_and_validate(
+                &test_support::legal_config(),
+            )
+            .0
+            .expect("the legal fixture names a trust epoch"),
             replay: ReplayState::SharedLinearizable,
             retention: RetentionState::On,
             tls_custody: TlsCustodyState::Delegated,
