@@ -2075,6 +2075,20 @@ impl ValidatedConfig {
     pub fn state(&self) -> &DeploymentConfigState {
         &self.state
     }
+
+    /// The validated values, for planning and composition.
+    ///
+    /// Named rather than a `Deref` because reading raw configuration is a statement about
+    /// which layer the reader belongs to, not merely a question of safety. A shared
+    /// `&Config` cannot undo the validation — but the two callers of this method are the
+    /// two stages entitled to interpret configuration at all (startup planning, and the
+    /// composition root that builds the plans), and a `Deref` made that boundary invisible
+    /// at the call site. In particular it silently downgraded `&ValidatedConfig` to
+    /// `&Config` when forwarding into modules that establish runtime capabilities; written
+    /// out, each such forward is visible in review and countable as work remaining.
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
 }
 
 impl TryFrom<Config> for ValidatedConfig {
@@ -2088,19 +2102,6 @@ impl TryFrom<Config> for ValidatedConfig {
                 violations.join("\n  - ")
             )),
         }
-    }
-}
-
-/// Read the validated configuration.
-///
-/// `Deref` rather than 76 accessors: the wrapper's job is to make the *construction*
-/// checked, not to ration reads. Handing out a `&Config` is harmless — the invariant is
-/// that this value was validated, and a shared reference cannot undo that.
-impl std::ops::Deref for ValidatedConfig {
-    type Target = Config;
-
-    fn deref(&self) -> &Config {
-        &self.config
     }
 }
 

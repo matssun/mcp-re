@@ -324,6 +324,7 @@ fn run_validated(
     config: &crate::cli::ValidatedConfig,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
+    let values = config.config();
     // Clock-fault diagnosis (audit #94 F5). `now_unix()` deliberately maps a
     // pre-epoch SystemTime error to 0 (fail CLOSED — every request then fails its
     // freshness check rather than admitting a stale one), but a clock that reads
@@ -345,7 +346,7 @@ fn run_validated(
     // `startup_now_unix` below agree on one instant. Whether that reading is a FAULT is
     // the plan's rule; reading the clock and deciding what it costs is this function's.
     let startup_now_unix = now_unix();
-    if let Some(refusal) = faulted_clock_refusal(startup_now_unix, config.client_crl_paths.len()) {
+    if let Some(refusal) = faulted_clock_refusal(startup_now_unix, values.client_crl_paths.len()) {
         return Err(refusal);
     }
     if crate::startup_plan::host_clock_is_faulted(startup_now_unix) {
@@ -365,7 +366,7 @@ fn run_validated(
     // `cli::unsafe_config_violations` — the proxy never reaches here with them. Only
     // the env key source (a dev/CI-only build, `dev_env_key_source`) is worth a
     // runtime note, since that build deliberately permits it.
-    if config.key_source == KeySourceKind::Env {
+    if values.key_source == KeySourceKind::Env {
         eprintln!(
             "mcp-re-proxy: WARNING: --key-source env is a dev/CI-only build (dev_env_key_source); \
              env key material is visible to the process tree. Never use in production."
@@ -377,7 +378,7 @@ fn run_validated(
     // identity. This is only safe if the listening socket is reachable ONLY by
     // the trusted upstream; anyone who can reach the port could otherwise spoof
     // any identity by setting the header. (Strict ingress enforcement is #3842.)
-    if let Some(header) = &config.reverse_proxy_identity_header {
+    if let Some(header) = &values.reverse_proxy_identity_header {
         eprintln!(
             "mcp-re-proxy: WARNING: reverse-proxy identity mode is ENABLED (reading the trusted \
              header '{header}', format {:?}, identity field {:?}). mTLS is assumed terminated \
@@ -386,14 +387,14 @@ fn run_validated(
              (loopback / private network / its own mTLS link) and that the upstream STRIPS any \
              client-supplied copy of '{header}' before setting its own. If the socket is \
              reachable by untrusted clients, they can SPOOF any identity.",
-            config.reverse_proxy_header_format, config.identity_source, config.bind,
+            values.reverse_proxy_header_format, values.identity_source, values.bind,
         );
     }
     // A group/world-readable key file is a HARD error (refuse startup). The other
     // guards are parse-time and already enforced inside `cli::parse_args`; this one is
     // filesystem-dependent so it lives here.
-    for path in key_files_read_from_disk(config) {
-        check_key_file_perms(path, config.allow_group_readable_key_files)?;
+    for path in key_files_read_from_disk(values) {
+        check_key_file_perms(path, values.allow_group_readable_key_files)?;
     }
     // A disabled (`none`/`0`) or over-ceiling `--max-client-cert-lifetime` is
     // rejected at parse time (`cli::unsafe_config_violations`), so by here it is
@@ -408,7 +409,7 @@ fn run_validated(
     // signs by delegation (`sign_response`), so a non-exporting HSM/KMS source would
     // never need to surrender its private key — there is deliberately no
     // `signing_key()` export call on the wiring path anymore.
-    let key_source = cli::build_key_source(config).map_err(|e| e.to_string())?;
+    let key_source = cli::build_key_source(values).map_err(|e| e.to_string())?;
     let server_chain = key_source
         .tls_server_cert_chain()
         .map_err(|e| e.to_string())?;
@@ -501,22 +502,22 @@ fn run_validated(
         .map_err(|e| e.to_string())?;
     let server_identity = ActorIdentity {
         role: "server".to_string(),
-        trust_domain: config.trust_domain.clone(),
-        subject: config.server_signer.clone(),
+        trust_domain: values.trust_domain.clone(),
+        subject: values.server_signer.clone(),
         keyid: response_kid.clone(),
     };
     let resolve_actor = build_actor_resolver(
         building.trust().signers(),
         Arc::clone(&resolver),
-        config.trust_domain.clone(),
+        values.trust_domain.clone(),
         response_kid.clone(),
         server_identity.clone(),
         response_pub,
     );
     let expected_audience = AudienceTuple {
-        audience_id: config.audience.clone(),
-        target_uri: config.target_uri.clone(),
-        route: config.route.clone(),
+        audience_id: values.audience.clone(),
+        target_uri: values.target_uri.clone(),
+        route: values.route.clone(),
     };
     let mut transport_binding: Option<Box<dyn TransportBindingPolicy + Send + Sync>> = None;
     // ADR-MCPRE-051 §4: the AUTHORITATIVE async replay tier. The atomic
@@ -547,9 +548,9 @@ fn run_validated(
     let crate::replay_plane::MaterializedReplay {
         tier: replay_async,
         dispatch: dispatch_cfg,
-    } = crate::replay_plane::materialize(&replay_plan, config.max_clock_skew, control_rt.as_ref())?;
+    } = crate::replay_plane::materialize(&replay_plan, values.max_clock_skew, control_rt.as_ref())?;
     // Mode-A transport binding: bind the verified request actor to the mTLS peer.
-    if config.binding == BindingKind::Exact {
+    if values.binding == BindingKind::Exact {
         transport_binding = Some(Box::new(ExactMatchBinding::new()));
     }
 
@@ -583,7 +584,7 @@ fn run_validated(
     // cross-replica revocation-lag bounds explicitly, derived from real config
     // (the two tiers have different cadences). Zero-window revocation is never
     // claimed on either.
-    if config.fleet {
+    if values.fleet {
         let trust_bound = crate::trust_plane::fleet_trust_bound(&trust_plan);
         let crl_bound = crate::tls_plane::fleet_crl_bound(&tls_plan);
         eprintln!(
@@ -615,8 +616,8 @@ fn run_validated(
     // assertion header (failing closed on a duplicate) instead of reading a local
     // client cert or a forwarded identity header. The three strategies are mutually
     // exclusive; the CLI forbids combining lb-assertion with a reverse-proxy header.
-    let identity_strategy = if config.binding == BindingKind::LbAssertion
-        || config.binding == BindingKind::AttestedIngress
+    let identity_strategy = if values.binding == BindingKind::LbAssertion
+        || values.binding == BindingKind::AttestedIngress
     {
         // Both the v1 LB-assertion (Mode B) and the v2 attested-ingress (Mode C)
         // paths carry identity in the signed assertion header — verified post-
@@ -625,12 +626,12 @@ fn run_validated(
         // duplicate) for both.
         IdentityStrategy::LbAssertion
     } else {
-        match &config.reverse_proxy_identity_header {
+        match &values.reverse_proxy_identity_header {
             None => IdentityStrategy::DirectTls,
             Some(header) => IdentityStrategy::ReverseProxyHeader(ReverseProxyMtlsProvider::new(
                 header.clone(),
-                config.reverse_proxy_header_format,
-                config.identity_source,
+                values.reverse_proxy_header_format,
+                values.identity_source,
             )),
         }
     };
@@ -641,7 +642,7 @@ fn run_validated(
 
     // #4030 ONLINE OCSP client-cert revocation. Attached to `ServerOptions` below rather
     // than to the PEP, because revocation is decided during the TLS handshake.
-    let (ocsp_checker, ocsp_state) = crate::serving_capabilities::online_ocsp(config).into_parts();
+    let (ocsp_checker, ocsp_state) = crate::serving_capabilities::online_ocsp(values).into_parts();
     posture.declare(Seam::OnlineOcspClientRevocation, ocsp_state);
     // A build without the backend still DECLARES the seam above — that is the point of
     // `Seam::ALL` not varying by `cfg` — but there is no checker type in it to carry, so
@@ -649,14 +650,14 @@ fn run_validated(
     #[cfg(not(feature = "online_ocsp"))]
     let _ = ocsp_checker;
     let serve_options = ServerOptions {
-        identity_policy: config.identity_source,
+        identity_policy: values.identity_source,
         identity_strategy,
-        limits: config.limits.clone(),
-        max_client_cert_lifetime: config.max_client_cert_lifetime,
+        limits: values.limits.clone(),
+        max_client_cert_lifetime: values.max_client_cert_lifetime,
         client_revocation: client_revocation.clone(),
         #[cfg(feature = "online_ocsp")]
         ocsp_checker,
-        target_uri: config.target_uri.clone(),
+        target_uri: values.target_uri.clone(),
         // The delegated-TLS custody paths sign the handshake through a KMS or a
         // PKCS#11 token, synchronously, inside rustls' `Signer::sign`.
         tls_signing_may_block: is_delegated_tls,
@@ -665,11 +666,11 @@ fn run_validated(
     // ADR-MCPRE-051 §3: the async inner plane — a per-core pooled hyper client to
     // the stateless Streamable-HTTP inner backends. Forwarding is AWAITED, never
     // blocking a per-core runtime worker.
-    let inner_timeout = config
+    let inner_timeout = values
         .limits
         .read_timeout
         .unwrap_or_else(|| Duration::from_secs(30));
-    let pool = HttpInnerPool::from_url_strs(config.inner_http_urls.clone(), inner_timeout)?;
+    let pool = HttpInnerPool::from_url_strs(values.inner_http_urls.clone(), inner_timeout)?;
     // The pool is PROCESS-WIDE (one instance behind the `Arc` every core shares), so
     // its in-flight bound must not sit below the fleet's aggregate admission ceiling.
     // If it did, requests that passed every security gate would be answered with a
@@ -678,10 +679,10 @@ fn run_validated(
     // deliberate, to the inner pool, where it is an accident of core count.
     // The RULE is pure and lives in the plan; the core count is the environment reading it
     // needs, and the wiring is this function's business.
-    let cores = crate::async_fleet::resolve_core_count(config.cores);
+    let cores = crate::async_fleet::resolve_core_count(values.cores);
     let ceiling = crate::startup_plan::inner_plane_ceiling(
-        config.limits.max_in_flight_requests,
-        config.max_in_flight_total,
+        values.limits.max_in_flight_requests,
+        values.max_in_flight_total,
         cores,
     );
     let pool = match crate::startup_plan::inner_plane_raise(
@@ -732,25 +733,25 @@ fn run_validated(
     // acceptance window and the replay `retain_until`, so an admitted nonce is
     // retained for exactly as long as its signature can still be accepted.
     let mut verifier_policy =
-        mcp_re_http_profile::VerifierPolicy::new(&["ed25519"], config.max_clock_skew).map_err(
+        mcp_re_http_profile::VerifierPolicy::new(&["ed25519"], values.max_clock_skew).map_err(
             |_| {
                 format!(
                     "--max-clock-skew {} is out of bounds: the RFC 9421 freshness gate accepts \
                      0..={} seconds (§5.1 bounded skew)",
-                    config.max_clock_skew,
+                    values.max_clock_skew,
                     mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
                 )
             },
         )?;
     let (mcp_transport, transport_state) =
-        crate::serving_capabilities::mcp_transport_contract(config).into_parts();
+        crate::serving_capabilities::mcp_transport_contract(values).into_parts();
     if let Some(policy) = mcp_transport {
         verifier_policy = verifier_policy.with_mcp_transport(policy);
     }
     posture.declare(Seam::McpTransportContract, transport_state);
     eprintln!(
         "mcp-re-proxy: freshness gate = created-{skew}s .. expires+{skew}s (RFC 9421 §5.1)",
-        skew = config.max_clock_skew
+        skew = values.max_clock_skew
     );
     proxy = proxy.with_verifier_policy(verifier_policy);
     if let Some(binding) = transport_binding {
@@ -759,21 +760,21 @@ fn run_validated(
 
     // ADR-MCPS-035: the per-request security record. Both arms install a sink — the OFF
     // state is a real `NoAuditSink` — so this one is a pair rather than an `Established`.
-    let (audit_sink, audit_state) = crate::serving_capabilities::security_audit_record(config);
+    let (audit_sink, audit_state) = crate::serving_capabilities::security_audit_record(values);
     proxy = proxy.with_audit_sink(audit_sink);
     posture.declare(Seam::SecurityAuditRecord, audit_state);
 
     // ADR-MCPRE-054: evidence retention. Opening the store is effectful and refuses
     // startup, which is why this is the one capability here that can return an error.
     let (retention, retention_state) =
-        crate::serving_capabilities::evidence_retention(config)?.into_parts();
+        crate::serving_capabilities::evidence_retention(values)?.into_parts();
     if let Some(retention) = retention {
         proxy = proxy.with_evidence_retention(Arc::new(retention));
     }
     posture.declare(Seam::EvidenceRetention, retention_state);
 
     let (verified_context, verified_context_state) =
-        crate::serving_capabilities::verified_context_carrier(config).into_parts();
+        crate::serving_capabilities::verified_context_carrier(values).into_parts();
     if let Some(policy) = verified_context {
         proxy = proxy.with_verified_context_carrier(policy);
     }
@@ -800,7 +801,7 @@ fn run_validated(
     posture.declare(Seam::MrtrContinuationStore, continuation_state);
 
     let (admission, admission_state) =
-        crate::serving_capabilities::admission_currency(config, control_rt.as_ref())?.into_parts();
+        crate::serving_capabilities::admission_currency(values, control_rt.as_ref())?.into_parts();
     if let Some(gate) = admission {
         proxy = proxy.with_admission(
             gate.source,
@@ -838,7 +839,7 @@ fn run_validated(
     runtime.serve(
         Arc::clone(&config_snapshot),
         Arc::new(serve_options),
-        config,
+        values,
         shutdown,
         lifecycle,
     )

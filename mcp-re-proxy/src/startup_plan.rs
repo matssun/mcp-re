@@ -55,20 +55,21 @@ impl ReplayPlan {
     /// Refusals that depend on which backends were COMPILED IN stay with materialization.
     /// They are facts about the build, not about the request.
     pub fn from_validated(config: &ValidatedConfig) -> ReplayPlan {
-        let tier = config
+        let values = config.config();
+        let tier = values
             .replay_durability_tier
             .clone()
             .expect("a classified replay state requires a declared durability tier");
         match config.state().replay() {
             ReplayState::SharedLinearizable => ReplayPlan::Etcd {
-                endpoint: config
+                endpoint: values
                     .cpstore_etcd_endpoint
                     .clone()
                     .expect("the linearizable state requires the endpoint layer A checked for"),
                 tier,
             },
             ReplayState::SharedRedis => ReplayPlan::Redis {
-                url: config
+                url: values
                     .replay_redis_url
                     .clone()
                     .expect("the Redis state requires the URL layer A checked for"),
@@ -155,10 +156,11 @@ pub fn host_clock_is_faulted(now_unix: i64) -> bool {
 /// a REQUEST signer. Splitting the derivation across the two consumers would let them
 /// disagree about which key that is, which is the one thing this must not permit.
 pub fn response_issuer_kid(config: &ValidatedConfig) -> String {
-    config
+    let values = config.config();
+    values
         .delegated_issuer_kid
         .clone()
-        .unwrap_or_else(|| config.server_key_id.clone())
+        .unwrap_or_else(|| values.server_key_id.clone())
 }
 
 /// The shared trust-epoch mechanism, interpreted ONCE (CF-09).
@@ -194,15 +196,16 @@ impl TrustEpochPlan {
     /// Infallible: `PushNetworked` is the state that HAS a source, so layer A has already
     /// established both that this deployment may carry one and that it does.
     pub fn from_validated(config: &ValidatedConfig) -> TrustEpochPlan {
+        let values = config.config();
         if !config.state().trust_revocation().has_networked_epoch() {
             return TrustEpochPlan::NoNetworkChannel;
         }
         TrustEpochPlan::Redis {
-            url: config
+            url: values
                 .trust_epoch_redis_url
                 .clone()
                 .expect("the networked epoch state requires the URL layer A checked for"),
-            key: config
+            key: values
                 .trust_epoch_key
                 .clone()
                 .unwrap_or_else(|| crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY.to_string()),
@@ -289,11 +292,12 @@ impl TrustPlan {
         response_kid: String,
         epoch: TrustEpochPlan,
     ) -> TrustPlan {
+        let values = config.config();
         TrustPlan {
             revocation: config.state().trust_revocation().clone(),
-            trust_path: config.trust_path.clone(),
+            trust_path: values.trust_path.clone(),
             response_kid,
-            reload: match config.trust_reload_secs {
+            reload: match values.trust_reload_secs {
                 Some(secs) => TrustReloadPlan::Every { secs },
                 None => TrustReloadPlan::ReadOnceAtStartup,
             },
@@ -342,27 +346,28 @@ impl SigningPlan {
         response_kid: String,
         epoch: TrustEpochPlan,
     ) -> SigningPlan {
+        let values = config.config();
         SigningPlan {
             custody: mcp_re_http_profile::CustodyConfig {
                 issuer_kid: response_kid,
-                iss: config.server_signer.clone(),
+                iss: values.server_signer.clone(),
                 profile: mcp_re_http_profile::PROFILE_TAG.to_string(),
-                aud: config.audience.clone(),
+                aud: values.audience.clone(),
                 // Overridable so a deployment can scope the delegated key to something
                 // other than the response audience, where its verifiers expect that.
-                audience_hash: config
+                audience_hash: values
                     .delegated_audience_hash
                     .clone()
-                    .unwrap_or_else(|| config.audience.clone()),
-                trust_epoch: config
+                    .unwrap_or_else(|| values.audience.clone()),
+                trust_epoch: values
                     .delegated_trust_epoch
                     .clone()
                     .expect("delegated signing requires the trust epoch layer A checked for"),
                 server_role: "server".to_string(),
-                server_trust_domain: config.trust_domain.clone(),
-                server_subject: config.server_signer.clone(),
-                ttl: config.delegated_ttl_secs,
-                overlap: config.delegated_overlap_secs,
+                server_trust_domain: values.trust_domain.clone(),
+                server_subject: values.server_signer.clone(),
+                ttl: values.delegated_ttl_secs,
+                overlap: values.delegated_overlap_secs,
             },
             epoch,
         }
@@ -408,14 +413,15 @@ impl ClientRevocationPlan {
     /// `Reloading` is the state that has a cadence, so layer A has already established
     /// that each value the variant requires is present.
     pub fn from_validated(config: &ValidatedConfig) -> ClientRevocationPlan {
+        let values = config.config();
         match config.state().crl_revocation() {
             crate::config_state::CrlRevocationState::None => ClientRevocationPlan::None,
             crate::config_state::CrlRevocationState::Static => ClientRevocationPlan::Static {
-                paths: config.client_crl_paths.clone(),
+                paths: values.client_crl_paths.clone(),
             },
             crate::config_state::CrlRevocationState::Reloading => ClientRevocationPlan::Reloading {
-                paths: config.client_crl_paths.clone(),
-                cadence_secs: config
+                paths: values.client_crl_paths.clone(),
+                cadence_secs: values
                     .client_crl_reload_secs
                     .expect("the reloading state requires the cadence layer A checked for"),
             },
@@ -460,11 +466,12 @@ impl TlsPlan {
     /// would collapse the A/B split: the request is coherent either way, and only
     /// materialization can say whether this executable can serve it.
     pub fn from_validated(config: &ValidatedConfig) -> TlsPlan {
+        let values = config.config();
         TlsPlan {
             custody: config.state().tls_custody(),
             client_revocation: ClientRevocationPlan::from_validated(config),
-            max_client_cert_lifetime: config.max_client_cert_lifetime,
-            max_connection_age: config.limits.max_connection_age,
+            max_client_cert_lifetime: values.max_client_cert_lifetime,
+            max_connection_age: values.limits.max_connection_age,
         }
     }
 }
@@ -492,10 +499,11 @@ impl ContinuationControlPlan {
     /// Infallible: layer A already decided that this state is legal and that the locator
     /// is present where the state requires one, so there is no second refusal to make.
     pub fn from_validated(config: &ValidatedConfig) -> ContinuationControlPlan {
+        let values = config.config();
         match config.state().continuation_control() {
             ContinuationControlState::Disabled => ContinuationControlPlan::Disabled,
             ContinuationControlState::Redis => ContinuationControlPlan::Redis {
-                endpoint: config
+                endpoint: values
                     .continuation_control_redis_url
                     .clone()
                     .expect("the Redis state requires the locator layer A checked for"),
@@ -517,7 +525,8 @@ impl ContinuationControlPlan {
 /// chosen. Deriving it from replay once made admission unimplementable on the
 /// CP/linearizable tier, and the natural resolution was to turn the control off.
 pub fn admission_needs_control_runtime(config: &ValidatedConfig) -> bool {
-    cfg!(feature = "redis_replay") && config.admission != crate::cli::AdmissionKind::Off
+    let values = config.config();
+    cfg!(feature = "redis_replay") && values.admission != crate::cli::AdmissionKind::Off
 }
 
 /// Aggregate the control-runtime requirement across EVERY capability that can need it.
