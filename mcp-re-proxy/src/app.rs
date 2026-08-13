@@ -760,21 +760,23 @@ fn run_validated(
 
     // ADR-MCPS-035: the per-request security record. Both arms install a sink — the OFF
     // state is a real `NoAuditSink` — so this one is a pair rather than an `Established`.
-    let (audit_sink, audit_state) = crate::serving_capabilities::security_audit_record(values);
+    let (audit_sink, audit_state) =
+        crate::serving_capabilities::security_audit_record(config.state().audit());
     proxy = proxy.with_audit_sink(audit_sink);
     posture.declare(Seam::SecurityAuditRecord, audit_state);
 
     // ADR-MCPRE-054: evidence retention. Opening the store is effectful and refuses
     // startup, which is why this is the one capability here that can return an error.
     let (retention, retention_state) =
-        crate::serving_capabilities::evidence_retention(values)?.into_parts();
+        crate::serving_capabilities::evidence_retention(config.state().retention())?.into_parts();
     if let Some(retention) = retention {
         proxy = proxy.with_evidence_retention(Arc::new(retention));
     }
     posture.declare(Seam::EvidenceRetention, retention_state);
 
     let (verified_context, verified_context_state) =
-        crate::serving_capabilities::verified_context_carrier(values).into_parts();
+        crate::serving_capabilities::verified_context_carrier(config.state().verified_context())
+            .into_parts();
     if let Some(policy) = verified_context {
         proxy = proxy.with_verified_context_carrier(policy);
     }

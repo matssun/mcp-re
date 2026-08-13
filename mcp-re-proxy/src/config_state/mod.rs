@@ -172,8 +172,8 @@ impl DeploymentConfigState {
     }
 
     /// Whether exchanges are retained for later SCITT statements.
-    pub fn retention(&self) -> RetentionState {
-        self.retention
+    pub fn retention(&self) -> &RetentionState {
+        &self.retention
     }
 
     /// What the PEP asserts to the inner server about the caller.
@@ -292,7 +292,9 @@ mod tests {
             replay: ReplayState::SharedLinearizable {
                 endpoint: "http://127.0.0.1:2379".to_string(),
             },
-            retention: RetentionState::On,
+            retention: RetentionState::On {
+                directory: "/var/lib/mcp-re/evidence".to_string(),
+            },
             tls_custody: TlsCustodyState::Delegated,
             trust_revocation: TrustRevocationState::PushNetworked {
                 t_secs: 30,
@@ -322,7 +324,7 @@ mod tests {
             state.crl_revocation(),
             CrlRevocationState::Reloading { .. }
         ));
-        assert_eq!(state.retention(), RetentionState::On);
+        assert!(matches!(state.retention(), RetentionState::On { .. }));
         assert!(state.verified_context().asserts_inner_channel_isolation());
     }
 }

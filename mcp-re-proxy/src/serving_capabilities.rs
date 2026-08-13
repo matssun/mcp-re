@@ -179,10 +179,10 @@ pub(crate) fn mcp_transport_contract(
 /// re-deriving which sink to install from the posture. The capabilities are not uniform,
 /// and this is where that shows.
 pub(crate) fn security_audit_record(
-    config: &cli::Config,
+    state: crate::config_state::AuditState,
 ) -> (Arc<dyn crate::audit_sink::AuditSink>, SeamState) {
-    match config.audit_sink {
-        cli::AuditSinkKind::Stderr => (
+    match state {
+        crate::config_state::AuditState::Stderr => (
             Arc::new(crate::audit_sink::StderrAuditSink),
             SeamState::on(
                 "security audit record = STDERR (ADR-MCPS-035): one line per \
@@ -190,7 +190,7 @@ pub(crate) fn security_audit_record(
                  and the frozen mcp-re.* wire code.",
             ),
         ),
-        cli::AuditSinkKind::None => (
+        crate::config_state::AuditState::None => (
             Arc::new(crate::audit_sink::NoAuditSink),
             SeamState::off(
                 "security audit record = NONE: no per-request accepted/rejected \
@@ -206,10 +206,14 @@ pub(crate) fn security_audit_record(
 /// Opening the store is effectful and FAILS STARTUP. A deployment that cannot open it
 /// would otherwise refuse every request with `evidence_retention_unavailable` while
 /// appearing to have started, which is the least diagnosable shape the failure has.
+/// Takes the classified state, not the deployment request: layer A already decided that
+/// this deployment retains evidence, and `On` carries the directory that decided it. What
+/// is left here is layer C — whether the directory can be opened — which is the one
+/// question configuration cannot answer.
 pub(crate) fn evidence_retention(
-    config: &cli::Config,
+    state: &crate::config_state::RetentionState,
 ) -> Result<Established<crate::transparency::EvidenceRetention>, String> {
-    let Some(dir) = config.retained_evidence_dir.as_ref() else {
+    let crate::config_state::RetentionState::On { directory: dir } = state else {
         return Ok(Established::off(
             "evidence retention = OFF: nothing is retained, so no SCITT \
              statement can later be issued about a call served here. Pass \
@@ -237,9 +241,9 @@ pub(crate) fn evidence_retention(
 /// writes its OWN resolved actor in its place. `trusted` is an operator assertion about
 /// the inner channel that nothing here can verify.
 pub(crate) fn verified_context_carrier(
-    config: &cli::Config,
+    state: crate::config_state::VerifiedContextState,
 ) -> Established<mcp_re_http_profile::VerifiedContextPolicy> {
-    if config.verified_context == cli::VerifiedContextKind::Trusted {
+    if state.asserts_inner_channel_isolation() {
         Established::on(
             mcp_re_http_profile::VerifiedContextPolicy::Trusted,
             "verified-context carrier = TRUSTED (#415 §10): the PEP writes its \

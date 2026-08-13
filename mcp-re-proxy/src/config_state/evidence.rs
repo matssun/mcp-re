@@ -3,8 +3,10 @@
 //! `work/CONFIG-STATE-ATLAS.md` §C.6.
 //!
 //! Three two-state machines over what a deployment records and what it asserts. They share
-//! a file because each is a single selector with no parameters and no guards; giving each
-//! its own file would imply a structure that is not there.
+//! a file because each is a single selector with no guards; giving each its own file would
+//! imply a structure that is not there. `Audit` and `VerifiedContext` are selectors whose
+//! field IS the state; `Retention` additionally carries the directory whose presence
+//! selects it.
 //!
 //! None of them can be misconfigured — every state form is legal and none has a required,
 //! forbidden or numeric column. **That is the finding, not an omission.** Classifying them
@@ -24,13 +26,22 @@ pub enum AuditState {
 }
 
 /// Whether full request and response messages are retained for later SCITT statements.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `On` carries the directory that put it in that state. Without it the classification is
+/// a verdict whose evidence was thrown away: establishing retention would have to ask
+/// `retained_evidence_dir.is_some()` a second time, from a representation still able to
+/// say `None`, having already been told the answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RetentionState {
     /// Nothing is retained; the request path is unchanged.
     Off,
     /// Exchanges are retained to a directory — a data-retention decision, so it is named
     /// rather than derived from another flag.
-    On,
+    On {
+        /// Where retained exchanges are written. Its presence is what selects this state,
+        /// so the state that has one carries it.
+        directory: String,
+    },
 }
 
 /// What the PEP asserts to the inner server about the caller.
@@ -58,10 +69,11 @@ pub fn classify(config: &Config) -> (AuditState, RetentionState, VerifiedContext
         AuditSinkKind::None => AuditState::None,
         AuditSinkKind::Stderr => AuditState::Stderr,
     };
-    let retention = if config.retained_evidence_dir.is_some() {
-        RetentionState::On
-    } else {
-        RetentionState::Off
+    let retention = match &config.retained_evidence_dir {
+        Some(directory) => RetentionState::On {
+            directory: directory.clone(),
+        },
+        None => RetentionState::Off,
     };
     let verified_context = match config.verified_context {
         VerifiedContextKind::Disabled => VerifiedContextState::Disabled,
@@ -105,7 +117,9 @@ mod tests {
             }),
             (
                 AuditState::Stderr,
-                RetentionState::On,
+                RetentionState::On {
+                    directory: "/evidence".to_string()
+                },
                 VerifiedContextState::Trusted
             )
         );
@@ -121,8 +135,22 @@ mod tests {
         );
         assert_eq!(
             states(|c| c.retained_evidence_dir = Some("/evidence".to_string())).1,
-            RetentionState::On
+            RetentionState::On {
+                directory: "/evidence".to_string()
+            }
         );
+    }
+
+    /// The state carries the directory that selected it, so establishing retention has no
+    /// second question to ask. Asserted with a path the default fixture does not name.
+    #[test]
+    fn the_on_state_carries_the_directory_that_selected_it() {
+        let RetentionState::On { directory } =
+            states(|c| c.retained_evidence_dir = Some("/srv/evidence-7".to_string())).1
+        else {
+            panic!("a named directory selects the On state");
+        };
+        assert_eq!(directory, "/srv/evidence-7");
     }
 
     #[test]
