@@ -642,7 +642,7 @@ fn run_validated(
 
     // #4030 ONLINE OCSP client-cert revocation. Attached to `ServerOptions` below rather
     // than to the PEP, because revocation is decided during the TLS handshake.
-    let (ocsp_checker, ocsp_state) = crate::serving_capabilities::online_ocsp(values).into_parts();
+    let (ocsp_checker, ocsp_state) = crate::serving_capabilities::online_ocsp().into_parts();
     posture.declare(Seam::OnlineOcspClientRevocation, ocsp_state);
     // A build without the backend still DECLARES the seam above — that is the point of
     // `Seam::ALL` not varying by `cfg` — but there is no checker type in it to carry, so

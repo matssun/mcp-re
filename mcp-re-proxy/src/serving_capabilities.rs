@@ -101,38 +101,30 @@ const OCSP_OFF: &str = "ONLINE OCSP client-cert revocation = OFF: no responder i
 ///
 /// The checker is attached to [`ServerOptions`](crate::ServerOptions) rather than to the
 /// PEP, because revocation is decided during the TLS handshake.
+/// Takes no configuration, because no legal deployment can change the answer.
+///
+/// `--client-ocsp require` is refused by [`cli::online_ocsp_refusal`] from inside
+/// `legality_violations`, which is on the only route to a `ValidatedConfig` — so every
+/// validated deployment has `client_ocsp == Off`, `build_ocsp_checker` returns `None`, and
+/// this posture is OFF. Taking a `&Config` implied a choice the legality model does not
+/// offer.
+///
+/// The seam still DECLARES, because `Seam::ALL` does not vary by `cfg` and an undeclared
+/// seam refuses startup. What went away is the input, not the declaration.
+///
+/// [`cli::build_ocsp_checker`] and the `online_ocsp` feature are deliberately left in
+/// place. Proving the `Require` arm unreachable under today's legality model is not a
+/// decision to delete the implementation a future async OCSP would be built from.
 #[cfg(feature = "online_ocsp")]
-pub(crate) fn online_ocsp(config: &cli::Config) -> Established<crate::ocsp::OcspChecker> {
-    match cli::build_ocsp_checker(config) {
-        Some(checker) => {
-            let responder = config
-                .ocsp_responder_url
-                .as_deref()
-                .map(|u| format!("override {u}"))
-                .unwrap_or_else(|| "from each leaf's AIA".to_string());
-            let indeterminate = if checker.soft_fail() {
-                "ALLOW (soft-fail)"
-            } else {
-                "REJECT (hard-fail)"
-            };
-            Established::on(
-                checker,
-                format!(
-                    "ONLINE OCSP client-cert revocation enabled (SHA-256 CertIDs; \
-                     responder URL {responder}; on indeterminate result: {indeterminate}). \
-                     The OCSP responder must answer SHA-256 CertIDs."
-                ),
-            )
-        }
-        None => Established::off(OCSP_OFF),
-    }
+pub(crate) fn online_ocsp() -> Established<crate::ocsp::OcspChecker> {
+    Established::off(OCSP_OFF)
 }
 
 /// The same seam in a build without the backend. Declared, not skipped: `Seam::ALL` does
 /// not vary by `cfg`, because a capability compiled out is a state the transcript has to
 /// be able to express.
 #[cfg(not(feature = "online_ocsp"))]
-pub(crate) fn online_ocsp(_config: &cli::Config) -> Established<std::convert::Infallible> {
+pub(crate) fn online_ocsp() -> Established<std::convert::Infallible> {
     Established::off(OCSP_OFF)
 }
 
