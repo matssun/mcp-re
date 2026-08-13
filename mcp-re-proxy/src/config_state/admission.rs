@@ -9,7 +9,19 @@
 //! | `Off` | — | authority kid/pubkey, redis url, degraded window | — |
 //! | `Optional` | kid, pubkey, redis url | — | pubkey is a 32-byte base64url Ed25519 key |
 //! | `Required` | kid, pubkey, redis url | — | same |
-//! | …`+ Degraded` | degraded bound | — | `P > 0` |
+//! | …`+ Degraded` | degraded bound | — | `P > 0`, and `P = 0` without degraded mode |
+//!
+//! The degraded columns, completely — two legal cells per enforcing state and none
+//! anywhere else:
+//!
+//! | Admission | `allow_degraded` | `P` | |
+//! |---|---|---|---|
+//! | `Off` | false | `0` | legal — asked for nothing, configured nothing |
+//! | `Off` | anything else | | dangling |
+//! | enforcing | false | `0` | legal — fails closed on an unreachable authority |
+//! | enforcing | false | `≠ 0` | refused: the bound is unreachable |
+//! | enforcing | true | `≤ 0` | refused: the window is wider than it claims |
+//! | enforcing | true | `> 0` | legal — bounded degradation |
 //!
 //! **`Off` is an explicit operator decision, not an absence.** That is what separates it
 //! from [`ContinuationControl::Disabled`](crate::config_state::ContinuationControlState):
@@ -17,27 +29,18 @@
 //! rather than ignored — a `--admission-redis-url` beside `--admission off` reads to an
 //! auditor as "admission is configured" while nothing is enforced.
 //!
-//! **The degraded window is checked whether or not a gate exists.** `P = 0` with
-//! `allow_degraded` on is not a disabled window: the PEP serves an unreachable authority
-//! for `P + max_clock_skew` seconds, so zero still admits a revoked workload for the skew
-//! tolerance while claiming no window was configured.
+//! **`Off` forbids all five of its parameters**, the authority pubkey and the degraded
+//! window included. Two of the five used to slip through: the dangling clause named only
+//! the kid and the redis url, and the degraded window was caught only at `P = 0`, so a
+//! POSITIVE window beside `--admission off` was accepted.
 //!
-//! # Two open gaps in the `Off` row above
-//!
-//! The table states the intended model; the guard is narrower, in two places, and neither
-//! is closed by this module's witnesses.
-//!
-//! - The dangling-parameter clause tests the kid and the redis url only, so a
-//!   `--admission-authority-pubkey` beside `--admission off` is ACCEPTED.
-//! - A degraded window with `P > 0` beside `--admission off` is also accepted; only
-//!   `P = 0` is refused there. And under `Off` the reason given for that refusal does not
-//!   hold: no gate is built, so nothing serves an unreachable authority for any window.
-//!   The clause is defensible under `Off` as a dangling-parameter refusal — a different
-//!   argument from the one it states.
-//!
-//! Both are ruled real gaps, to be closed as a behaviour-changing slice. They are named
-//! here rather than fixed silently, because a witness slice that also moved the legality
-//! boundary would leave neither change reviewable.
+//! **A degraded window is refused for a different reason on each side of that line.** With
+//! a gate, `P = 0` and `allow_degraded` on is not a disabled window: the PEP serves an
+//! unreachable authority for `P + max_clock_skew` seconds, so zero still admits a revoked
+//! workload for the skew tolerance while claiming no window was configured. With no gate,
+//! that argument is simply false — nothing is built, and no window of any width is opened.
+//! The setting is refused there because it dangles, which is the true reason, and the
+//! width clause now sits inside the enforcing branch where its own reasoning holds.
 
 use crate::cli::{AdmissionAuthority, AdmissionKind, Config};
 use mcp_re_core::VerificationKey;
@@ -71,8 +74,17 @@ pub enum AdmissionState {
     },
 }
 
-/// A key's identity is its encoding: [`VerificationKey`] is a curve point with no equality
-/// of its own, and two admission states are the same state when they name the same issuer.
+/// Two admission states are the same state when they name the same issuer.
+///
+/// [`VerificationKey`] deliberately implements neither `PartialEq` nor `Eq`, and this does
+/// not widen it from the configuration layer. `to_bytes` is the canonical 32-byte public
+/// key — one encoding per curve point, no equivalent spellings — so it is what identity
+/// means here.
+///
+/// This is CONFIGURATION-STATE equality: it exists for `DeploymentConfigState`'s derive and
+/// for the unit tests below. It decides nothing about a request. Whether a presented kid is
+/// the deployment's authority, and whether a signature verifies under it, stay with the
+/// resolver and the verifying key themselves.
 impl PartialEq for AdmissionState {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -296,13 +308,15 @@ mod tests {
         );
     }
 
-    /// `Off` forbids its parameters, because it is a decision rather than an absence.
+    /// `Off` forbids every AUTHORITY parameter, the pubkey included. The pubkey used to be
+    /// omitted from this clause while the module's own table said it was forbidden.
     #[test]
-    fn a_parameter_dangling_on_the_off_state_is_refused() {
+    fn every_authority_parameter_is_refused_beside_an_off_gate() {
         for mutate in [
-            (|c: &mut Config| c.admission_redis_url = Some("redis://127.0.0.1:6379".to_string()))
+            (|c: &mut Config| c.admission_authority_kid = Some("authority-1".to_string()))
                 as fn(&mut Config),
-            |c: &mut Config| c.admission_authority_kid = Some("authority-1".to_string()),
+            |c: &mut Config| c.admission_authority_pubkey_b64url = Some(valid_pubkey()),
+            |c: &mut Config| c.admission_redis_url = Some("redis://127.0.0.1:6379".to_string()),
         ] {
             let (state, violations) = run(|c| {
                 c.admission = AdmissionKind::Off;
@@ -310,30 +324,109 @@ mod tests {
             });
             assert!(state.is_none(), "a refused configuration named a state");
             assert!(
-                violations.iter().any(|v| v.contains("--admission is")),
+                violations.iter().any(|v| v.contains("--admission is off")),
                 "a dangling admission parameter was accepted: {violations:?}"
             );
         }
     }
 
-    /// The guard that is deliberately NOT nested under "a gate exists": a degraded window
-    /// of zero still admits a revoked workload for the clock-skew tolerance.
+    /// What a degraded cell is expected to be, and — when refused — WHICH mistake it is.
+    ///
+    /// Three refusals that a single "is it rejected" assertion would conflate. They are
+    /// different operator errors: a setting that applies to nothing, a setting that can
+    /// never be reached, and a window that is narrower than it claims.
+    #[derive(Debug, Clone, Copy)]
+    enum Cell {
+        Legal,
+        /// No gate exists, so no admission-specific parameter means anything.
+        DanglingUnderOff,
+        /// A gate exists, but both readers of the bound return before consulting it.
+        UnreachableBound,
+        /// A gate exists and will open a window, but not the width that was asked for.
+        InvalidWidth,
+    }
+
+    impl Cell {
+        /// The phrase that identifies this refusal and no other.
+        fn marker(self) -> &'static str {
+            match self {
+                Cell::Legal => unreachable!("a legal cell has no refusal to identify"),
+                Cell::DanglingUnderOff => "--admission is off",
+                Cell::UnreachableBound => "--admission-allow-degraded is false",
+                Cell::InvalidWidth => "P + --max-clock-skew",
+            }
+        }
+    }
+
+    /// The complete degraded truth table, asserted cell by cell.
+    ///
+    /// Eight conceptual cells plus negative-bound representatives on both sides. Two are
+    /// legal, and they are the two the sub-posture will encode: fail-closed, and bounded
+    /// degradation over a positive window. Everything else is refused, and the table pins
+    /// WHICH refusal, so that a future clause reordering cannot quietly answer one mistake
+    /// with another mistake's diagnostic.
     #[test]
-    fn a_degraded_window_of_zero_is_refused_with_or_without_a_gate() {
-        for kind in [AdmissionKind::Off, AdmissionKind::Required] {
-            let (_, violations) = run(|c| {
-                if kind == AdmissionKind::Required {
-                    enforcing(c, kind);
+    fn the_degraded_truth_table_is_complete_and_each_refusal_names_its_own_mistake() {
+        let cases: &[(bool, bool, i64, Cell)] = &[
+            // gate off: nothing admission-specific may be configured
+            (false, false, 0, Cell::Legal),
+            (false, false, 30, Cell::DanglingUnderOff),
+            (false, false, -30, Cell::DanglingUnderOff),
+            (false, true, 0, Cell::DanglingUnderOff),
+            (false, true, 30, Cell::DanglingUnderOff),
+            // gate on
+            (true, false, 0, Cell::Legal),
+            (true, false, 30, Cell::UnreachableBound),
+            (true, false, -30, Cell::UnreachableBound),
+            (true, true, 0, Cell::InvalidWidth),
+            (true, true, -30, Cell::InvalidWidth),
+            (true, true, 30, Cell::Legal),
+        ];
+        for &(gate, allow, bound, expected) in cases {
+            let (state, violations) = run(|c| {
+                if gate {
+                    enforcing(c, AdmissionKind::Required);
+                } else {
+                    c.admission = AdmissionKind::Off;
                 }
-                c.admission_allow_degraded = true;
-                c.admission_degraded_bound_secs = 0;
+                c.admission_allow_degraded = allow;
+                c.admission_degraded_bound_secs = bound;
             });
-            assert!(
-                violations
-                    .iter()
-                    .any(|v| v.contains("--admission-degraded-bound-secs")),
-                "{kind:?}: {violations:?}"
-            );
+            let at = format!("gate={gate} allow={allow} P={bound}");
+            let Cell::Legal = expected else {
+                assert!(
+                    state.is_none(),
+                    "{at}: a refused configuration named a state"
+                );
+                let marker = expected.marker();
+                assert!(
+                    violations.iter().any(|v| v.contains(marker)),
+                    "{at}: expected {expected:?} ({marker}), got {violations:?}"
+                );
+                continue;
+            };
+            assert!(violations.is_empty(), "{at}: refused — {violations:?}");
+            assert!(state.is_some(), "{at}: accepted but named no state");
+        }
+    }
+
+    /// The `Off` half of the table again, from the other direction: the width argument is
+    /// never the reason given when no gate exists, because no window is opened at all.
+    #[test]
+    fn no_refusal_under_an_off_gate_argues_about_window_width() {
+        for (allow, bound) in [(true, 30), (true, 0), (false, 30)] {
+            let (_, violations) = run(|c| {
+                c.admission = AdmissionKind::Off;
+                c.admission_allow_degraded = allow;
+                c.admission_degraded_bound_secs = bound;
+            });
+            for refusal in &violations {
+                assert!(
+                    !refusal.contains("P + --max-clock-skew"),
+                    "allow={allow} P={bound}: the width argument must not be given \
+                     with no gate: {refusal}"
+                );
+            }
         }
     }
 }

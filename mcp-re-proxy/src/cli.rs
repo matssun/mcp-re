@@ -2342,6 +2342,29 @@ const MISSING_ADMISSION_AUTHORITY: &str =
      --admission-authority-pubkey (an assertion is only evidence if the issuer is one this \
      deployment trusts)";
 
+/// Every authority parameter is refused beside `--admission off`, the pubkey included: the
+/// three are one setting, and half of a dangling authority is no less misleading than all
+/// of it.
+const DANGLING_ADMISSION_AUTHORITY: &str =
+    "--admission-authority-kid / --admission-authority-pubkey / --admission-redis-url are \
+     set but --admission is off; enable it or remove them";
+
+/// The degraded window is refused beside `--admission off` for the same reason, and NOT
+/// because a window would be too wide: no gate is built, so no window is opened at all.
+/// A window configured on an enforcing deployment that never opens it. Refused for
+/// unreachability rather than for width: the number is fine, nothing will ever read it.
+const INERT_DEGRADED_BOUND: &str =
+    "--admission-degraded-bound-secs is set but --admission-allow-degraded is false; the \
+     bound is read only when degraded mode is on, so this window can never open. Pass \
+     --admission-allow-degraded true to use it, or remove it to fail closed on an \
+     unreachable authority";
+
+const DANGLING_DEGRADED_WINDOW: &str =
+    "--admission-allow-degraded / --admission-degraded-bound-secs are set but --admission \
+     is off; a degraded window tolerates an UNREACHABLE ADMISSION AUTHORITY, and with the \
+     gate off there is no authority to be unreachable and no window to widen. Enable \
+     --admission or remove them";
+
 /// What an enforcing admission posture cannot exist without, established once.
 ///
 /// The key is the DECODED authority rather than its encoding: the check that it decodes is
@@ -2378,6 +2401,13 @@ pub(crate) struct AdmissionAuthority {
 ///
 /// A NEGATIVE bound does fail closed on every call, but it is refused by the same clause:
 /// a policy nobody can satisfy is not a safer spelling of "off".
+///
+/// That argument is about a gate that EXISTS, so the clause sits inside the enforcing
+/// branch. It used to sit outside it, refusing `P = 0` under `--admission off` too, where
+/// the reasoning does not hold: nothing is built, so no assertion is served for any window.
+/// The setting is still refused there — by the dangling-parameter clause, which is the
+/// true reason — and a positive window under `off`, which the old placement accepted, is
+/// refused with it.
 pub(crate) fn validated_admission_authority(
     admission: AdmissionKind,
     authority_kid: Option<&str>,
@@ -2386,9 +2416,22 @@ pub(crate) fn validated_admission_authority(
     allow_degraded: bool,
     degraded_bound_secs: i64,
 ) -> Result<Option<AdmissionAuthority>, String> {
-    // Clause order is the order these checks always ran in, so the diagnostic a CLI user
-    // meets first does not change (§K1).
+    // Clause order within the enforcing branch is the order these checks always ran in, so
+    // the diagnostic a CLI user meets first does not change (§K1).
     let authority = if admission == AdmissionKind::Off {
+        // `Off` is a decision about a gate, so EVERY admission parameter dangling beside
+        // it is refused. Each one reads to an auditor as "admission is configured" while
+        // nothing is enforced, and none of them has an operational meaning without a gate.
+        if authority_kid.is_some() || authority_pubkey_b64url.is_some() || redis_url.is_some() {
+            return Err(DANGLING_ADMISSION_AUTHORITY.to_string());
+        }
+        // Including the degraded window. Tolerating an unreachable authority is meaningless
+        // when there is no authority to be unreachable: `Off` builds no gate, so no window
+        // of any width is ever opened. A non-zero bound is refused whatever its sign — a
+        // negative one is no more meaningful here than a positive one.
+        if allow_degraded || degraded_bound_secs != 0 {
+            return Err(DANGLING_DEGRADED_WINDOW.to_string());
+        }
         None
     } else {
         // Enforcing admission needs BOTH an authority to verify assertions against and a
@@ -2420,31 +2463,30 @@ pub(crate) fn validated_admission_authority(
                     .to_string(),
             );
         };
+        // The converse. Both readers of the bound sit behind `if !allow_degraded_mode`
+        // early returns — `check_admission` and `degraded_window_exhausted` — so with
+        // degraded mode off the value is not merely unused, it is unreachable. An operator
+        // who set a window and left the mode off has configured a tolerance this
+        // deployment will never apply, and is one restart away from believing it did.
+        if !allow_degraded && degraded_bound_secs != 0 {
+            return Err(INERT_DEGRADED_BOUND.to_string());
+        }
+        // Nested under the enforcing branch, where the rationale below is TRUE: a gate
+        // exists, and P is the width of the window it opens on an unreachable authority.
+        if allow_degraded && degraded_bound_secs <= 0 {
+            return Err("--admission-allow-degraded true requires a positive \
+                 --admission-degraded-bound-secs (P). P is a FLOOR on the degraded window, \
+                 not the whole of it: the PEP serves an unreachable authority for \
+                 P + --max-clock-skew seconds, so P=0 still admits a revoked workload for \
+                 the skew tolerance while claiming no window was configured"
+                .to_string());
+        }
         Some(AdmissionAuthority {
             kid: kid.to_string(),
             key,
             redis_url: redis_url.to_string(),
         })
     };
-    // Deliberately NOT nested under `admission != Off`: a degraded window configured
-    // without a gate to apply it to is still a setting that reads as enforced.
-    if allow_degraded && degraded_bound_secs <= 0 {
-        return Err("--admission-allow-degraded true requires a positive \
-             --admission-degraded-bound-secs (P). P is a FLOOR on the degraded window, not \
-             the whole of it: the PEP serves an unreachable authority for \
-             P + --max-clock-skew seconds, so P=0 still admits a revoked workload for the \
-             skew tolerance while claiming no window was configured"
-            .to_string());
-    }
-    if admission == AdmissionKind::Off && (redis_url.is_some() || authority_kid.is_some()) {
-        // A dangling setting reads as "admission is configured" to anyone auditing the
-        // command line, while nothing is enforced.
-        return Err(
-            "--admission-authority-kid / --admission-redis-url are set but --admission is \
-             off; enable it or remove them"
-                .to_string(),
-        );
-    }
     Ok(authority)
 }
 
@@ -3931,14 +3973,15 @@ mod tests {
         );
 
         // And with the gate off, where the setting enforces nothing but still reads as
-        // configured to anyone auditing the deployment.
+        // configured to anyone auditing the deployment. Refused as a DANGLING parameter:
+        // the width argument above does not apply, because no window is opened at all.
         let mut off = parse_args(&minimal_durable()).expect("the base config parses");
         off.admission_allow_degraded = true;
         off.admission_degraded_bound_secs = 0;
         assert!(
             unsafe_config_violations(&off)
                 .iter()
-                .any(|v| v.contains("--admission-degraded-bound-secs")),
+                .any(|v| v.contains("--admission is off")),
             "a degraded window without a gate is still a setting that reads as enforced"
         );
     }
@@ -3949,9 +3992,15 @@ mod tests {
     /// unreachable authority for `P + --max-clock-skew` seconds. An operator told only
     /// that zero is disallowed would reasonably set P=1 and believe they had a one-second
     /// window. Pinned against the profile-layer test that measures the real width.
+    ///
+    /// Asked of an ENFORCING deployment, because that is the only place the width argument
+    /// is true: with the gate off no window is opened, and the refusal there is about a
+    /// dangling parameter instead.
     #[test]
     fn the_degraded_window_refusal_names_the_clock_skew_term() {
-        let mut config = parse_args(&minimal_durable()).expect("the base config parses");
+        let mut a = minimal_durable();
+        a.splice(0..0, admission_args("required"));
+        let mut config = parse_args(&a).expect("a complete admission config parses");
         config.admission_allow_degraded = true;
         config.admission_degraded_bound_secs = 0;
         let refusal = unsafe_config_violations(&config)
