@@ -23,7 +23,7 @@
 
 #![cfg(feature = "aws_kms_keysource")]
 
-mod common;
+use crate::common;
 
 use common::run_rotation_scenario;
 use common::RootAuthority;
