@@ -13,14 +13,12 @@ exports_files(["src/http_profile_dispatch.rs"])
 # cargo-only (no Bazel target): each is `#![cfg(feature = "…kms…")]` + `#[ignore]`
 # and runs ONLY in the manual live-infra lane (`cargo test --features … --
 # --ignored` against real AWS/GCP KMS):
-#   tests/aws_kms_live_test.rs, tests/aws_kms_delegated_required_live_test.rs,
-#   tests/aws_kms_delegated_signing_live_test.rs,
-#   tests/aws_kms_delegated_tls_live_test.rs,
-#   tests/aws_kms_http_profile_live_test.rs, tests/aws_kms_root_rotation_live_test.rs,
-#   tests/gcp_kms_live_test.rs, tests/gcp_kms_delegated_tls_live_test.rs,
-#   tests/gcp_kms_delegated_signing_live_test.rs,
-#   tests/gcp_kms_delegated_required_live_test.rs,
-#   tests/gcp_kms_http_profile_live_test.rs, tests/gcp_kms_root_rotation_live_test.rs
+#   tests/integration_live/ — eleven suites in one cargo binary
+#     (aws_kms_delegated_required, aws_kms_delegated_signing, aws_kms_delegated_tls,
+#     aws_kms_http_profile, aws_kms_live, aws_kms_root_rotation,
+#     gcp_kms_delegated_required, gcp_kms_delegated_signing, gcp_kms_delegated_tls,
+#     gcp_kms_http_profile, gcp_kms_root_rotation)
+#   tests/gcp_kms_live_test.rs — its own binary: it mutates process environment
 # Each carries `#[ignore]` LIVE tests; the http-profile and delegated-signing files
 # ALSO carry non-ignored `*_offline_local_seed` twins, which the cargo
 # feature-gated-backends CI job runs on every push (they need no cloud).
@@ -554,8 +552,13 @@ nt_rust_test(
 # a full blocking mTLS round-trip (certs minted in-process via rcgen).
 nt_rust_test(
     name = "integration_test",
-    srcs = glob(["tests/integration/*.rs"]),
+    srcs = glob(["tests/integration/*.rs"]) + [
+        # `main.rs` reaches these shared modules via `#[path = "../<dir>/mod.rs"]`.
+        "tests/serving_fixtures/mod.rs",
+        "tests/startup_transcript/mod.rs",
+    ],
     auto_cargo_toml = False,
+    crate_root = "tests/integration/main.rs",
     bazel_build_cfg = False,
     data = [
         "//docs:sidecar-deployment-guide.md",
@@ -667,8 +670,12 @@ nt_rust_test(
 # fail-closed control — an exchange whose evidence cannot be kept is refused.
 nt_rust_test(
     name = "integration_async_test",
-    srcs = glob(["tests/integration_async/*.rs"]),
+    srcs = glob(["tests/integration_async/*.rs"]) + [
+        # `main.rs` reaches the shared helpers via `#[path = "../common/mod.rs"]`.
+        "tests/common/mod.rs",
+    ],
     auto_cargo_toml = False,
+    crate_root = "tests/integration_async/main.rs",
     bazel_build_cfg = False,
     crate_features = ["async_serve"],
     edition = "2021",
@@ -868,7 +875,11 @@ nt_rust_test(
     name = "integration_ext_test",
     srcs = glob(["tests/integration_ext/*.rs"]),
     auto_cargo_toml = False,
+    crate_root = "tests/integration_ext/main.rs",
     bazel_build_cfg = False,
+    # Each suite is `#![cfg(feature = ...)]`; without these the binary links and runs
+    # ZERO tests while reporting PASSED.
+    crate_features = _PROXY_EXT_FEATURES,
     edition = "2021",
     env_inherit = [
         "MCP_RE_TEST_REDIS_URL",
