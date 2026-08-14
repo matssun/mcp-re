@@ -248,4 +248,59 @@ mod tests {
             assert!(err.contains("redis_replay"), "{err}");
         }
     }
+
+    /// **BF-01** (atlas §D.2): with neither backend linked, EVERY plan refuses — so the
+    /// build can reach no replay state at all.
+    ///
+    /// The test above says each arm names the feature it wants. This says what those
+    /// refusals amount to TOGETHER, which is the finding: `ReplayPlan` has exactly two
+    /// variants and both are shared, so a build carrying neither `redis_replay` nor
+    /// `cpstore_etcd` has no reachable replay state. Layer A independently refuses every
+    /// other input form — `Memory` (also the value when `--replay-cache` is omitted) and
+    /// `File` — so no command line reaches a state such a build can materialize, and a
+    /// default build is therefore not a serving binary. The README and the sidecar
+    /// deployment guide both state this; this is where it is enforced.
+    ///
+    /// If this ever fails, the question to ask is which replay state became reachable.
+    /// The fix is NOT to restore an in-memory arm: that would make materialization
+    /// describe a state layer A refuses to represent, which is the defect CF-01 removed.
+    #[test]
+    fn a_build_with_no_replay_backend_can_reach_no_replay_state() {
+        let etcd = ReplayPlan::Etcd {
+            endpoint: "http://203.0.113.1:2379".to_string(),
+            tier: ReplayDurabilityTier::Linearizable,
+        };
+        let redis = ReplayPlan::Redis {
+            url: "redis://203.0.113.1:6379".to_string(),
+            tier: ReplayDurabilityTier::RedisWaitQuorum {
+                quorum: 2,
+                timeout_ms: 2000,
+            },
+        };
+
+        if cfg!(feature = "cpstore_etcd") {
+            // Only the etcd arm can be probed without a control runtime once its backend
+            // is linked; the Redis arm CONSUMES one, and handing it `None` would assert
+            // the runtime contract rather than reachability. One reachable state is
+            // enough to show the build is a serving binary.
+            assert!(
+                materialize(&etcd, 60, None).is_ok(),
+                "a build linking cpstore_etcd must reach the linearizable state"
+            );
+            return;
+        }
+        if cfg!(feature = "redis_replay") {
+            // Redis linked, etcd not: the etcd arm refuses for want of ITS backend, which
+            // says nothing about BF-01 either way. Reachability of the Redis arm needs a
+            // runtime, so it is asserted where a runtime exists, not here.
+            return;
+        }
+
+        for plan in [&etcd, &redis] {
+            assert!(
+                materialize(plan, 60, None).is_err(),
+                "BF-01: with neither backend linked, no replay state may be reachable"
+            );
+        }
+    }
 }
