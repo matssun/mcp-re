@@ -436,21 +436,6 @@ nt_rust_test(
         "@crates_mcp_re//:zeroize",
     ],
 )
-# MCPRE-104 (#308): the proxy replay-tier adapter around the HTTP-profile
-# dispatcher, driven end-to-end (sub-minimum tier refused, wait-quorum/linearizable
-# admitted, verify→dispatch→sign→verify e2e, core single-process gate beneath).
-nt_rust_test(
-    name = "http_profile_dispatch_test",
-    srcs = ["tests/http_profile_dispatch_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
-    ],
-)
 # MCPS-027: KeySource (File + Env) — signing key + TLS cert/key + client-CA.
 nt_rust_test(
     name = "key_source_test",
@@ -544,46 +529,6 @@ nt_rust_test(
         "@crates_mcp_re//:tokio",
     ],
 )
-# ADR-MCPRE-050 local round-trip: RFC 9421 client -> production HttpProfileProxy
-# (verify -> dispatch -> sign) -> verify, plus the cross-request replay rejection,
-# entirely in-process (in-memory async replay tier, no listener/Redis).
-nt_rust_test(
-    name = "rfc9421_round_trip_test",
-    srcs = ["tests/rfc9421_round_trip_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = ["async_serve"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_async",  # keep
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde",
-    "@crates_mcp_re//:serde_json",
-        "@crates_mcp_re//:tokio",
-    ],
-)
-# The bytes the inner server receives are the bytes the client signed, or the inner
-# server receives nothing. The PEP re-serializes the body to strip its own `_meta`
-# keys, and `serde_json` without `arbitrary_precision` is not a faithful carrier: a
-# duplicate member collapses to last-one-wins and an out-of-f64-range number comes
-# back rewritten. Both shapes are refused on the ORIGINAL bytes, before the
-# re-serialization; the cases assert the recording backend is never dispatched.
-nt_rust_test(
-    name = "forwarded_body_fidelity_test",
-    srcs = ["tests/forwarded_body_fidelity_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = ["async_serve"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_async",  # keep
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde_json",
-        "@crates_mcp_re//:tokio",
-    ],
-)
 # MCPRE-116 (ADR-MCPRE-051 §6): the serving fleet reads its TLS config PER CONNECTION
 # from the ServerConfigSnapshot, so the CRL hot-reload task's atomic swap takes effect
 # without a restart. Without this the reload is a dead wire — the fleet would keep
@@ -603,22 +548,6 @@ nt_rust_test(
         # Named by path (`tokio::net::TcpListener`) rather than imported, so cargo
         # resolves it transitively while Bazel needs the edge stated.
         "@crates_mcp_re//:tokio",
-    ],
-)
-# ADR-MCPRE-055: resumption is a shortcut only while the trust that authorised it
-# stands. Drives real rustls handshakes, because the property is whether rustls actually
-# resumed — a store that silently never resumed would pass the unit tests.
-nt_rust_test(
-    name = "tls_epoch_resumption_test",
-    srcs = ["tests/tls_epoch_resumption_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy",  # keep
-        "@crates_mcp_re//:rcgen",
-        "@crates_mcp_re//:rustls",
-        "@crates_mcp_re//:rustls-pki-types",
     ],
 )
 # Revocation must take effect on the connection a revoked peer is ALREADY holding:
@@ -641,6 +570,34 @@ nt_rust_test(
         "@crates_mcp_re//:tokio",
     ],
 )
+
+
+# The plain-library integration suites, in ONE test binary.
+#
+# A `rust_test` links exactly one variant of the proxy library, and every binary
+# statically links the whole graph, so the link is the dominant cost of building this
+# crate's tests. These suites all link `:mcp_re_proxy` and none of them depends on
+# having a process to itself, so they share one. Suites that mutate process
+# environment, install a global default, or re-execute themselves keep their own
+# target, where that process boundary is real. The `async_serve` suites link a
+# different library variant and are grouped separately.
+
+# `app_startup_characterization_test`
+# DEFAULT lane. Every test that drove `app::run` used to live in tls_load_harness_bench,
+# which is `redis_replay`-gated (so `cargo test --workspace` skips it) and tagged
+# `manual` (so `bazel test //...` skips it) — the composition root was exercised by
+# neither. Hermetic: no Redis, no Docker, no listener; every case is refused before the
+# serve loop, and the transcript is read from the REAL binary's stderr so the harness
+# observes the system from outside while its internals are restructured.
+# `config_legality_characterization_test`
+# ADR-MCPRE-056 Phase 0: characterization of `app::run`'s STARTUP behaviour, in the
+# What `ValidatedConfig` establishes, measured from outside the crate. In the DEFAULT
+# lane because the relations it characterizes are the ones every build has.
+# `config_refusal_precedence_test`
+# The refusal ORDER a multiply-illegal configuration meets. State legality is the atlas's
+# question; diagnostic precedence is orchestration's, and it is observable — so it is
+# pinned separately, before the boundary is reorganised.
+# `documented_cli_test`
 # ADR-MCPS-021: the revocation tier the proxy ANNOUNCES at startup must be the tier the
 # data plane actually runs — the resolver was previously built, its guarantee printed,
 # and then discarded, so the serving path used a frozen boot-time snapshot.
@@ -654,31 +611,36 @@ nt_rust_test(
 # restating `unsafe_config_violations` in a second language. Running the parser is the
 # rule itself. The guide is delivered as data (runfiles), with the mcp-re-test-paths
 # cargo fallback — the same scheme as the conformance drift guards.
-nt_rust_test(
-    name = "documented_cli_test",
-    srcs = ["tests/documented_cli_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    data = ["//docs:sidecar-deployment-guide.md"],
-    edition = "2021",
-    env = {
-        "MCP_RE_SIDECAR_GUIDE": "$(rlocationpath //docs:sidecar-deployment-guide.md)",
-    },
-    deps = [
-        ":mcp_re_proxy",  # keep
-        "//mcp-re-test-paths:mcp_re_test_paths",
-    ],
-)
+# `http_profile_dispatch_test`
+# MCPRE-104 (#308): the proxy replay-tier adapter around the HTTP-profile
+# dispatcher, driven end-to-end (sub-minimum tier refused, wait-quorum/linearizable
+# admitted, verify→dispatch→sign→verify e2e, core single-process gate beneath).
+# `mtls_transport_binding_test`
+# ADR-MCPRE-050 mTLS transport binding: the RFC 9421 signer bound to the presented
+# TLS client cert (RFC 8705 x5t#S256), proven over a REAL mutual-TLS handshake —
+# the production server config + the mcp-re-transport client presenting a cert; the
+# negotiated peer leaf DER is fed into verify_request_full. Positive (own channel),
+# relayed-onto-a-different-channel, and plain-HTTP-no-cert all fail closed.
+# `plane_config_reachback_test`
 # ADR-MCPRE-056 §8: the third clause of the completion criterion — a plane whose posture
 # comes from its plan must not read configuration to re-decide it. The signature proves no
 # `Config` is PASSED; this proves none is NAMED, which is the form a future reach-back
 # actually takes (a fully-qualified path, no import, no signature change).
+# `tls_epoch_resumption_test`
+# ADR-MCPRE-055: resumption is a shortcut only while the trust that authorised it
+# stands. Drives real rustls handshakes, because the property is whether rustls actually
+# resumed — a store that silently never resumed would pass the unit tests.
+# `tls_test`
+# MCPS-025: RustlsDirectProvider — identity extraction (URI/DNS/CN priority) +
+# a full blocking mTLS round-trip (certs minted in-process via rcgen).
 nt_rust_test(
-    name = "plane_config_reachback_test",
-    srcs = ["tests/plane_config_reachback_test.rs"],
+    name = "integration_test",
+    srcs = glob(["tests/integration/*.rs"]),
     auto_cargo_toml = False,
     bazel_build_cfg = False,
     data = [
+        "//docs:sidecar-deployment-guide.md",
+        ":mcp_re_proxy_cli",
         "src/delegated_wiring.rs",
         "src/replay_plane.rs",
         "src/signing_plane.rs",
@@ -687,6 +649,8 @@ nt_rust_test(
     ],
     edition = "2021",
     env = {
+        "MCP_RE_SIDECAR_GUIDE": "$(rlocationpath //docs:sidecar-deployment-guide.md)",
+        "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_cli)",
         "MCP_RE_DELEGATED_WIRING_SRC": "$(rlocationpath src/delegated_wiring.rs)",
         "MCP_RE_REPLAY_PLANE_SRC": "$(rlocationpath src/replay_plane.rs)",
         "MCP_RE_SIGNING_PLANE_SRC": "$(rlocationpath src/signing_plane.rs)",
@@ -694,251 +658,63 @@ nt_rust_test(
         "MCP_RE_TRUST_PLANE_SRC": "$(rlocationpath src/trust_plane.rs)",
     },
     deps = [
-        "//mcp-re-test-paths:mcp_re_test_paths",
-    ],
-)
-nt_rust_test(
-    name = "revocation_serving_wiring_test",
-    srcs = ["tests/revocation_serving_wiring_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy",  # keep
+        ":mcp_re_proxy",
+        ":mcp_re_proxy_cli",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
-    ],
-)
-# ADR-MCPRE-056 Phase 0: characterization of `app::run`'s STARTUP behaviour, in the
-# What `ValidatedConfig` establishes, measured from outside the crate. In the DEFAULT
-# lane because the relations it characterizes are the ones every build has.
-nt_rust_test(
-    name = "config_legality_characterization_test",
-    srcs = ["tests/config_legality_characterization_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [":mcp_re_proxy"],  # keep
-)
-
-# The refusal ORDER a multiply-illegal configuration meets. State legality is the atlas's
-# question; diagnostic precedence is orchestration's, and it is observable — so it is
-# pinned separately, before the boundary is reorganised.
-nt_rust_test(
-    name = "config_refusal_precedence_test",
-    srcs = ["tests/config_refusal_precedence_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [":mcp_re_proxy"],  # keep
-)
-
-# DEFAULT lane. Every test that drove `app::run` used to live in tls_load_harness_bench,
-# which is `redis_replay`-gated (so `cargo test --workspace` skips it) and tagged
-# `manual` (so `bazel test //...` skips it) — the composition root was exercised by
-# neither. Hermetic: no Redis, no Docker, no listener; every case is refused before the
-# serve loop, and the transcript is read from the REAL binary's stderr so the harness
-# observes the system from outside while its internals are restructured.
-nt_rust_test(
-    name = "app_startup_characterization_test",
-    srcs = [
-        "tests/app_startup_characterization_test.rs",
-        "tests/serving_fixtures/mod.rs",
-        "tests/startup_transcript/mod.rs",
-    ],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    data = [
-        ":mcp_re_proxy_cli",
-    ],
-    edition = "2021",
-    env = {
-        "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_cli)",
-    },
-    deps = [
-        ":mcp_re_proxy",  # keep
-        "//mcp-re-core:mcp_re_core",
         "//mcp-re-test-paths:mcp_re_test_paths",
-        # The transcript harness signals the child with SIGTERM to reach the drain path.
+        "//mcp-re-transport:mcp_re_transport",
         "@crates_mcp_re//:libc",
         "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls",
+        "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:serde",
         "@crates_mcp_re//:serde_json",
     ],
 )
-# ADR-MCPRE-052 delegated-signing serving cutover (MCPRE-122): drives the
-# HttpProfileProxy delegated path end-to-end (success + bound/preflight rejection +
-# fail-closed + direct-root-rejected).
-nt_rust_test(
-    name = "delegated_serving_test",
-    srcs = ["tests/delegated_serving_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = ["async_serve"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_async",  # keep
-        # The client-FACING crate, not just the http-profile primitives: one case
-        # verifies the server's bodyless 202 through the entry point an SDK actually
-        # binds (mcp_re_client_core::verify_delegated_accepted_202).
-        "//mcp-re-client-core:mcp_re_client_core",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde",
-    "@crates_mcp_re//:serde_json",
-        "@crates_mcp_re//:tokio",
-    ],
-)
-# ADR-MCPRE-052 phase 2 (MCPRE-122): production wiring — drives the real
-# build_delegated_signing(Config, root) from a parser-produced delegated-required
-# config, through new_delegated serving, proving success/replay/expiry-fail-closed/
-# rotation with an in-memory root (the KMS-root swap is the cargo-only live lane).
-nt_rust_test(
-    name = "delegated_production_wiring_test",
-    srcs = ["tests/delegated_production_wiring_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = ["async_serve"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_async",  # keep
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde",
-    "@crates_mcp_re//:serde_json",
-        "@crates_mcp_re//:tokio",
-    ],
-)
-# ADR-MCPS-047: the stateless cross-replica MRTR continuation serving contract — open
-# on replica A (records the retained bases in the shared store), answer on replica B
-# (recovers them, binds the continuation, terminal reply), plus the fail-closed
-# negatives (no store entry / one-shot / tampered requestState). The live analogue is
-# Proof 3 of docs/security/gke-multi-replica-validation.sh.
-nt_rust_test(
-    name = "mrt_continuation_serving_test",
-    srcs = ["tests/mrt_continuation_serving_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = ["async_serve"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_async",  # keep
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde",
-    "@crates_mcp_re//:serde_json",
-        "@crates_mcp_re//:tokio",
-    ],
-)
+
+# The `async_serve` integration suites, in ONE test binary.
+#
+# The companion of `:integration_test`; the same rule governs membership. These link
+# `:mcp_re_proxy_async`. `async_drain_test` is deliberately NOT here: it runs under
+# `RUST_TEST_THREADS=1`, which is a property of a binary and cannot be given to one
+# suite inside a shared one.
+
+# `admission_currency_serving_test`
 # MCPRE-493: §7 admission currency through the production PEP. A superseded generation
 # and a revoked status are refused BEFORE the backend runs; a healthy authority with no
 # record is a definitive negative rather than an outage; degraded mode serves only
 # within P; and a revocation on a shared source is honoured by a replica that never saw
 # the workload. The Redis-backed propagation MEASUREMENT is a separate cargo-only lane
 # (it needs a live store, so it is not hermetic).
-nt_rust_test(
-    name = "admission_currency_serving_test",
-    srcs = ["tests/admission_currency_serving_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = ["async_serve"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_async",  # keep
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde",
-    "@crates_mcp_re//:serde_json",
-        "@crates_mcp_re//:sha2",
-        "@crates_mcp_re//:tokio",
-    ],
-)
-# ADR-MCPRE-052 trust-anchor (MASTER/root key) lifecycle — the complement to the
-# delegated-KEY lifecycle. Root rotation (overlap {A,B} then cutover to {B}), root
-# revocation (issuer_kid revoked ⇒ all descendants rejected before exp), and root
-# issuance failure (unavailable KMS root ⇒ serve until the delegated key expires then
-# fail closed, no extend, no direct-root). Verifier side via TrustedIssuerSet; server
-# side via the public rotor. See docs/spec/delegated-required-validation-matrix.md §H.
-nt_rust_test(
-    name = "root_key_lifecycle_test",
-    srcs = ["tests/root_key_lifecycle_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = ["async_serve"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_async",  # keep
-        "//mcp-re-client-core:mcp_re_client_core",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde",
-    "@crates_mcp_re//:serde_json",
-    ],
-)
-# ADR-MCPRE-052 §I: root rotation through a SIGNED trust-anchor manifest, with roots
-# AUTO-PROVISIONED by a TestRootAuthorityProvider (no human creates a key). The
-# hermetic (in-memory) twin of the live Cloud KMS lane; both call
-# common::run_rotation_scenario. See docs/spec/root-authority-rotation.md.
-nt_rust_test(
-    name = "root_authority_manifest_test",
-    srcs = [
-        "tests/root_authority_manifest_test.rs",
-        "tests/common/mod.rs",
-    ],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = ["async_serve"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_async",  # keep
-        "//mcp-re-client-core:mcp_re_client_core",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde",
-    "@crates_mcp_re//:serde_json",
-    ],
-)
-# ADR-MCPRE-054, the whole vertical: a served call is RETAINED before its response goes
-# out, an auditor reconstructs the chain over the retained bytes, issues a Signed
-# Statement committing to it, registers it, and the receipt verifies OFFLINE. Also the
-# fail-closed control — an exchange whose evidence cannot be kept is refused.
-nt_rust_test(
-    name = "transparency_e2e_test",
-    srcs = ["tests/transparency_e2e_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = ["async_serve"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_async",
-        "//mcp-re-client-core:mcp_re_client_core",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde_json",
-        "@crates_mcp_re//:tokio",
-    ],
-)
+# `delegated_client_server_e2e_test`
 # MCPRE-122 client↔server e2e: the REAL client-side ClientProxy round-trips through an
 # in-process transport to the REAL server-side HttpProfileProxy in delegated-required
 # mode (success / replay-bound-rejection / direct-root-downgrade-refused). client-proxy
 # is a dev-only dep — never in the server proxy's production closure.
-nt_rust_test(
-    name = "delegated_client_server_e2e_test",
-    srcs = ["tests/delegated_client_server_e2e_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = ["async_serve"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_async",  # keep
-        "//mcp-re-client-core:mcp_re_client_core",
-        "//mcp-re-client-proxy:mcp_re_client_proxy",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde",
-    "@crates_mcp_re//:serde_json",
-        "@crates_mcp_re//:tokio",
-    ],
-)
+# `delegated_production_wiring_test`
+# ADR-MCPRE-052 phase 2 (MCPRE-122): production wiring — drives the real
+# build_delegated_signing(Config, root) from a parser-produced delegated-required
+# config, through new_delegated serving, proving success/replay/expiry-fail-closed/
+# rotation with an in-memory root (the KMS-root swap is the cargo-only live lane).
+# `delegated_serving_test`
+# ADR-MCPRE-052 delegated-signing serving cutover (MCPRE-122): drives the
+# HttpProfileProxy delegated path end-to-end (success + bound/preflight rejection +
+# fail-closed + direct-root-rejected).
+# `forwarded_body_fidelity_test`
+# The bytes the inner server receives are the bytes the client signed, or the inner
+# server receives nothing. The PEP re-serializes the body to strip its own `_meta`
+# keys, and `serde_json` without `arbitrary_precision` is not a faithful carrier: a
+# duplicate member collapses to last-one-wins and an out-of-f64-range number comes
+# back rewritten. Both shapes are refused on the ORIGINAL bytes, before the
+# re-serialization; the cases assert the recording backend is never dispatched.
+# `mrt_continuation_serving_test`
+# ADR-MCPS-047: the stateless cross-replica MRTR continuation serving contract — open
+# on replica A (records the retained bases in the shared store), answer on replica B
+# (recovers them, binds the continuation, terminal reply), plus the fail-closed
+# negatives (no store entry / one-shot / tampered requestState). The live analogue is
+# Proof 3 of docs/security/gke-multi-replica-validation.sh.
+# `replay_race_harness_test`
 # The CLIENT LEG of Mode A end-to-end mTLS over a REAL network hop: the real
 # ClientProxy signs, mcp_re_transport's shipped MtlsRemoteTransport carries the
 # exchange over a verifying mTLS socket, and the real async serving path answers.
@@ -949,22 +725,47 @@ nt_rust_test(
 # SAME signed request yield EXACTLY ONE `Fresh`, and ZERO when the store is
 # unavailable. Deterministic — a Barrier releases the racing threads at once and the
 # assertion is an exact count, so there is no timing/sleep condition to flake.
+# `rfc9421_round_trip_test`
+# ADR-MCPRE-050 local round-trip: RFC 9421 client -> production HttpProfileProxy
+# (verify -> dispatch -> sign) -> verify, plus the cross-request replay rejection,
+# entirely in-process (in-memory async replay tier, no listener/Redis).
+# `root_authority_manifest_test`
+# ADR-MCPRE-052 §I: root rotation through a SIGNED trust-anchor manifest, with roots
+# AUTO-PROVISIONED by a TestRootAuthorityProvider (no human creates a key). The
+# hermetic (in-memory) twin of the live Cloud KMS lane; both call
+# common::run_rotation_scenario. See docs/spec/root-authority-rotation.md.
+# `root_key_lifecycle_test`
+# ADR-MCPRE-052 trust-anchor (MASTER/root key) lifecycle — the complement to the
+# delegated-KEY lifecycle. Root rotation (overlap {A,B} then cutover to {B}), root
+# revocation (issuer_kid revoked ⇒ all descendants rejected before exp), and root
+# issuance failure (unavailable KMS root ⇒ serve until the delegated key expires then
+# fail closed, no extend, no direct-root). Verifier side via TrustedIssuerSet; server
+# side via the public rotor. See docs/spec/delegated-required-validation-matrix.md §H.
+# `transparency_e2e_test`
+# ADR-MCPRE-054, the whole vertical: a served call is RETAINED before its response goes
+# out, an auditor reconstructs the chain over the retained bytes, issues a Signed
+# Statement committing to it, registers it, and the receipt verifies OFFLINE. Also the
+# fail-closed control — an exchange whose evidence cannot be kept is refused.
 nt_rust_test(
-    name = "replay_race_harness_test",
-    srcs = ["tests/replay_race_harness_test.rs"],
+    name = "integration_async_test",
+    srcs = glob(["tests/integration_async/*.rs"]),
     auto_cargo_toml = False,
     bazel_build_cfg = False,
     crate_features = ["async_serve"],
     edition = "2021",
     deps = [
-        ":mcp_re_proxy_async",  # keep
+        ":mcp_re_proxy_async",
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-client-proxy:mcp_re_client_proxy",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
         "@crates_mcp_re//:serde",
-    "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:sha2",
         "@crates_mcp_re//:tokio",
     ],
 )
+
 nt_rust_test(
     name = "mtls_client_leg_e2e_test",
     srcs = ["tests/mtls_client_leg_e2e_test.rs"],
@@ -1061,48 +862,7 @@ nt_rust_test(
         "@crates_mcp_re//:zeroize",
     ],
 )
-# ADR-MCPRE-050 mTLS transport binding: the RFC 9421 signer bound to the presented
-# TLS client cert (RFC 8705 x5t#S256), proven over a REAL mutual-TLS handshake —
-# the production server config + the mcp-re-transport client presenting a cert; the
-# negotiated peer leaf DER is fed into verify_request_full. Positive (own channel),
-# relayed-onto-a-different-channel, and plain-HTTP-no-cert all fail closed.
-nt_rust_test(
-    name = "mtls_transport_binding_test",
-    srcs = ["tests/mtls_transport_binding_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
-        "//mcp-re-transport:mcp_re_transport",
-        "@crates_mcp_re//:rcgen",
-        "@crates_mcp_re//:rustls",
-        "@crates_mcp_re//:rustls-pki-types",
-    ],
-)
 
-# MCPS-025: RustlsDirectProvider — identity extraction (URI/DNS/CN priority) +
-# a full blocking mTLS round-trip (certs minted in-process via rcgen).
-nt_rust_test(
-    name = "tls_test",
-    srcs = ["tests/tls_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy",
-        # ADR-MCPS-028 §G: the delegated-TLS handshake test signs with a local
-        # mcp-re-core Ed25519 key standing in for the device/KMS.
-        "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:rcgen",
-        "@crates_mcp_re//:rustls",
-        "@crates_mcp_re//:rustls-pki-types",
-        "@crates_mcp_re//:serde",
-    "@crates_mcp_re//:serde_json",
-    ],
-)
 # ===========================================================================
 # Phase 7 external backends (#4028 Redis, #4030 OCSP, #4034 PKCS#11, #4039
 # Linux sandbox). A SINGLE library flavor builds all three Mac-buildable
@@ -1381,19 +1141,3 @@ oci_push(
     repository = "ghcr.io/matssun/code/mcp-re-proxy-ext",
 )
 
-nt_rust_test(
-    name = "verified_context_carrier_test",
-    srcs = ["tests/verified_context_carrier_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = ["async_serve"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_async",  # keep
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde",
-    "@crates_mcp_re//:serde_json",
-        "@crates_mcp_re//:tokio",
-    ],
-)

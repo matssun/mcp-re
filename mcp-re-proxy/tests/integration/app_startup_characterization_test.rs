@@ -16,8 +16,8 @@
 //! The cases here deliberately need no Redis, no Docker and no listener: each config is
 //! refused BEFORE the serve loop, so the whole file is fast and hermetic.
 
-mod serving_fixtures;
-mod startup_transcript;
+use crate::serving_fixtures;
+use crate::startup_transcript;
 
 use serving_fixtures::Material;
 

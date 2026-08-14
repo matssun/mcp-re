@@ -9,7 +9,7 @@
 //! The IDENTICAL scenario runs against real Cloud KMS roots in
 //! `gcp_kms_root_rotation_live_test.rs` (both call `common::run_rotation_scenario`).
 
-mod common;
+use crate::common;
 
 use common::run_rotation_scenario;
 use common::InMemoryTestRootAuthorityProvider;

@@ -72,7 +72,7 @@ shown are the real defaults from that parser.
 `--max-clock-skew` defaults to `300` seconds.
 
 The worked example below is fed to the real parser by
-`mcp-re-proxy/tests/documented_cli_test.rs`, so it cannot drift into a command line the
+`mcp-re-proxy/tests/integration/documented_cli_test.rs`, so it cannot drift into a command line the
 proxy refuses to start with.
 
 Its identity values are **placeholders**: `did:example:server-1`, `example.com` and
