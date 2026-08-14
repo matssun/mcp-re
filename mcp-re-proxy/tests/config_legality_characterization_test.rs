@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-//! What `ValidatedConfig` does and does not establish, measured rather than read.
+//! What `ValidatedDeployment` does and does not establish, measured rather than read.
 //!
-//! `ValidatedConfig` is meant to mean "this deployment state is legal". The claim is only
+//! `ValidatedDeployment` is meant to mean "this deployment state is legal". The claim is only
 //! as strong as the set of relations its constructor actually decides, and this file
-//! measures that set from the outside: each case builds a `Config` in code carrying a
+//! measures that set from the outside: each case builds a `DeploymentRequest` in code carrying a
 //! state `parse_args` refuses, and records whether the boundary refuses it too.
 //!
 //! Every case below is currently ADMITTED. That is the finding, not an accident of the
@@ -12,13 +12,13 @@
 //! flips and must be moved into [`refused_at_the_boundary`] — which is what makes this a
 //! characterization of the boundary rather than a list of things someone once checked.
 
-use mcp_re_proxy::cli::{self, Config, ValidatedConfig};
+use mcp_re_proxy::cli::{self, DeploymentRequest, ValidatedDeployment};
 
 /// The smallest command line that parses under the unconditional strict posture.
 ///
 /// It names `--replay-cache file` because the boundary refuses `memory` and its refusal
 /// text recommends `file`. See [`the_recommended_replay_backend_cannot_start`].
-fn base() -> Config {
+fn base() -> DeploymentRequest {
     let argv: Vec<String> = [
         "--bind",
         "127.0.0.1:8443",
@@ -59,16 +59,16 @@ fn base() -> Config {
     cli::parse_args(&argv).expect("baseline parses")
 }
 
-fn admitted(mutate: impl FnOnce(&mut Config)) -> bool {
+fn admitted(mutate: impl FnOnce(&mut DeploymentRequest)) -> bool {
     let mut config = base();
     mutate(&mut config);
-    ValidatedConfig::try_from(config).is_ok()
+    ValidatedDeployment::try_from(config).is_ok()
 }
 
 #[test]
 fn the_baseline_is_admitted() {
     assert!(
-        ValidatedConfig::try_from(base()).is_ok(),
+        ValidatedDeployment::try_from(base()).is_ok(),
         "the baseline must be legal, or every case below measures the wrong thing"
     );
 }
@@ -145,7 +145,7 @@ fn refused_at_the_boundary() {
     // were already boundary clauses, so one family was split across two layers.
     let mut config = base();
     config.delegated_trust_epoch = None;
-    let refusal = ValidatedConfig::try_from(config)
+    let refusal = ValidatedDeployment::try_from(config)
         .expect_err("delegated signing must not mint under a bare epoch label");
     assert!(refusal.contains("--delegated-trust-epoch"), "{refusal}");
 
@@ -155,7 +155,7 @@ fn refused_at_the_boundary() {
     let mut config = base();
     config.inner_http_urls.clear();
     let refusal =
-        ValidatedConfig::try_from(config).expect_err("a deployment must name an inner server");
+        ValidatedDeployment::try_from(config).expect_err("a deployment must name an inner server");
     assert!(refusal.contains("--inner-http-url"), "{refusal}");
 
     // MCPS-84 / atlas X8. Admitted before: the deployment believed a networked trust
@@ -163,7 +163,7 @@ fn refused_at_the_boundary() {
     let mut config = base();
     config.trust_epoch_redis_url = Some("redis://127.0.0.1:6379".to_string());
     let refusal =
-        ValidatedConfig::try_from(config).expect_err("an epoch source under a non-Push tier");
+        ValidatedDeployment::try_from(config).expect_err("an epoch source under a non-Push tier");
     assert!(refusal.contains("--trust-epoch-redis-url"), "{refusal}");
 
     // Atlas §C.3. `--key-source file` with no seed is the `FileSeed` state missing the one
@@ -171,7 +171,7 @@ fn refused_at_the_boundary() {
     // response-signing key.
     let mut config = base();
     config.signing_key_seed = String::new();
-    let refusal = ValidatedConfig::try_from(config).expect_err("a custody state with no key");
+    let refusal = ValidatedDeployment::try_from(config).expect_err("a custody state with no key");
     assert!(refusal.contains("--signing-key-seed"), "{refusal}");
 
     // Atlas §C.1, the Replay machine's forbidden and required columns. A CP-store
@@ -181,23 +181,23 @@ fn refused_at_the_boundary() {
     for (name, mutate) in [
         (
             "cpstore_etcd_endpoint",
-            Box::new(|c: &mut Config| {
+            Box::new(|c: &mut DeploymentRequest| {
                 c.cpstore_etcd_endpoint = Some("http://127.0.0.1:2379".to_string())
-            }) as Box<dyn FnOnce(&mut Config)>,
+            }) as Box<dyn FnOnce(&mut DeploymentRequest)>,
         ),
         (
             "replay_durability_tier",
-            Box::new(|c: &mut Config| c.replay_durability_tier = None),
+            Box::new(|c: &mut DeploymentRequest| c.replay_durability_tier = None),
         ),
         (
             "replay_path",
-            Box::new(|c: &mut Config| c.replay_path = Some("/replay".to_string())),
+            Box::new(|c: &mut DeploymentRequest| c.replay_path = Some("/replay".to_string())),
         ),
     ] {
         let mut config = base();
         mutate(&mut config);
         assert!(
-            ValidatedConfig::try_from(config).is_err(),
+            ValidatedDeployment::try_from(config).is_err(),
             "{name}: still admitted at the boundary"
         );
     }
@@ -208,7 +208,7 @@ fn refused_at_the_boundary() {
     config.revocation_tier = mcp_re_proxy::revocation_tier::RevocationTier::Push { t_secs: 30 };
     config.trust_reload_secs = Some(30);
     config.trust_epoch_redis_url = Some("redis://127.0.0.1:6379".to_string());
-    let validated = ValidatedConfig::try_from(config).expect("push + epoch source is legal");
+    let validated = ValidatedDeployment::try_from(config).expect("push + epoch source is legal");
     assert!(
         validated.state().trust_revocation().has_networked_epoch(),
         "the boundary accepted it without recognising which state it is"

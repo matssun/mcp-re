@@ -14,7 +14,7 @@
 //! reads as a one-line convenience at the point it is written.
 //!
 //! That is the whole failure mode. A plane does not reacquire its posture by taking a
-//! `Config` parameter back; it does it by reading one field, once, because the plan did not
+//! `DeploymentRequest` parameter back; it does it by reading one field, once, because the plan did not
 //! happen to carry it — and the honest fix in that moment is to widen the plan, not to
 //! reach past it.
 //!
@@ -23,10 +23,10 @@
 //! It proves that the production half of each module below — everything above its first
 //! `#[cfg(test)]` — mentions no configuration type by name. It does NOT prove semantic
 //! independence: a plane handed a closure that reads configuration, or a plan type that
-//! grew a `Config` field, would satisfy this and violate the property. Keeping the claim
+//! grew a `DeploymentRequest` field, would satisfy this and violate the property. Keeping the claim
 //! narrow is deliberate; a gate that overstates itself is what stops people looking.
 //!
-//! Test code is deliberately out of scope. A test may build a `ValidatedConfig` to drive
+//! Test code is deliberately out of scope. A test may build a `ValidatedDeployment` to drive
 //! the production constructor — `trust_plane`'s own no-cadence teardown test does exactly
 //! that, and it is the more convincing test for being end-to-end.
 
@@ -36,10 +36,10 @@ struct Plane {
     env: &'static str,
     /// Which plan it establishes.
     why: &'static str,
-    /// `Config` field names whose POSTURE layer A already classified.
+    /// `DeploymentRequest` field names whose POSTURE layer A already classified.
     ///
     /// This is the third check, and it catches what the other two cannot. A plane can take
-    /// no `Config`, name no configuration type, and still receive primitive plan fields
+    /// no `DeploymentRequest`, name no configuration type, and still receive primitive plan fields
     /// from which it reconstructs a classified state:
     ///
     /// ```ignore
@@ -48,14 +48,14 @@ struct Plane {
     ///
     /// That is the same defect one layer along — a second derivation of a fact layer A
     /// already decided. The rule is indirect but exact: these are the names the fields
-    /// carry in `Config`, and a plan that carries the posture as a VARIANT has no reason
+    /// carry in `DeploymentRequest`, and a plan that carries the posture as a VARIANT has no reason
     /// to reuse them. A plane that names one is reading a primitive where a state exists.
     reconstructed: &'static [&'static str],
 }
 
 /// The modules under the rule, and the reason each is here.
 ///
-/// Only planes that have been projected. A plane still taking `ValidatedConfig` is not a
+/// Only planes that have been projected. A plane still taking `ValidatedDeployment` is not a
 /// violation of this rule — it is work not yet done, and listing it here would turn a
 /// standing property into a failing test that has to be silenced.
 const PROJECTED_PLANES: &[Plane] = &[
@@ -94,7 +94,7 @@ const PROJECTED_PLANES: &[Plane] = &[
     // Not a plane, and listed anyway. `build_delegated_signing` is where the signing
     // plane's configuration reading actually lived, so stopping the rule at the plane
     // boundary would have made SigningPlan cosmetic: the plane would take a plan and hand
-    // the wiring a `Config` one line later.
+    // the wiring a `DeploymentRequest` one line later.
     Plane {
         env: "MCP_RE_DELEGATED_WIRING_SRC",
         why: "delegated_wiring builds what SigningPlan decided (ADR-MCPRE-056 §8)",
@@ -110,15 +110,15 @@ const PROJECTED_PLANES: &[Plane] = &[
 
 /// The identifiers that would mean configuration had been reached for directly.
 ///
-/// Matched as WHOLE identifiers, not as substrings. `Config` as a substring also matches
+/// Matched as WHOLE identifiers, not as substrings. `DeploymentRequest` as a substring also matches
 /// rustls' `ServerConfig` and this crate's `ServerConfigSnapshot`, which are the serving
-/// TLS configuration — a materialized artifact with nothing to do with `cli::Config`. A
+/// TLS configuration — a materialized artifact with nothing to do with `cli::DeploymentRequest`. A
 /// rule that conflated them would be unsatisfiable for the TLS plane, and the way such a
 /// rule gets fixed is by deleting it.
 ///
-/// `ValidatedConfig` is therefore listed separately: whole-identifier matching is what
+/// `ValidatedDeployment` is therefore listed separately: whole-identifier matching is what
 /// excludes `ServerConfig`, and it excludes this too.
-const CONFIGURATION_NAMES: &[&str] = &["cli", "Config", "ValidatedConfig"];
+const CONFIGURATION_NAMES: &[&str] = &["cli", "DeploymentRequest", "ValidatedDeployment"];
 
 /// Whether `line` names `ident` as a whole identifier rather than inside a longer one.
 fn names_identifier(line: &str, ident: &str) -> bool {
@@ -131,7 +131,7 @@ fn names_identifier(line: &str, ident: &str) -> bool {
 
 /// Whether `line` is a comment, and so reaches nothing.
 ///
-/// A doc comment naming `cli::Config` explains what the module does NOT do; a `//` line
+/// A doc comment naming `cli::DeploymentRequest` explains what the module does NOT do; a `//` line
 /// naming it is commented-out code. Neither is a dependency, and the sibling
 /// `startup_backedges` gate already ruled the same way about paths in comments — measuring
 /// the spelling instead of the proposition is how these rules go wrong.
@@ -212,13 +212,13 @@ fn the_rule_would_catch_a_reach_back() {
     let reaching = "fn materialize(plan: &TrustPlan) {\n    let _ = config.trust_path;\n}\n\
                     #[cfg(test)]\nmod tests {}\n";
     assert!(
-        !production_half(reaching).contains("ValidatedConfig"),
+        !production_half(reaching).contains("ValidatedDeployment"),
         "the fixture must not pass for the wrong reason"
     );
     for source in [
-        "let c: &crate::cli::Config = todo!();",
-        "fn m(config: &ValidatedConfig) {}",
-        "cli::Config::default();",
+        "let c: &crate::cli::DeploymentRequest = todo!();",
+        "fn m(config: &ValidatedDeployment) {}",
+        "cli::DeploymentRequest::default();",
     ] {
         assert!(
             CONFIGURATION_NAMES
@@ -229,9 +229,9 @@ fn the_rule_would_catch_a_reach_back() {
     }
     // Prose about configuration is not a dependency on it, in either comment form.
     for prose in [
-        "/// Infallible: it does not take a `Config` and re-decide anything.",
-        "//! [`build_delegated_signing`] replaced its `Config` parameter with a plan.",
-        "    // let c: &cli::Config = todo!();",
+        "/// Infallible: it does not take a `DeploymentRequest` and re-decide anything.",
+        "//! [`build_delegated_signing`] replaced its `DeploymentRequest` parameter with a plan.",
+        "    // let c: &cli::DeploymentRequest = todo!();",
     ] {
         assert!(is_comment(prose), "not recognised as a comment: {prose:?}");
     }
@@ -252,11 +252,11 @@ fn the_rule_would_catch_a_reach_back() {
 }
 
 /// The production half is what is measured, so the split has to be right: a rule that
-/// stopped at the wrong line would scan test fixtures, where a `ValidatedConfig` is
+/// stopped at the wrong line would scan test fixtures, where a `ValidatedDeployment` is
 /// legitimate, and report a violation that is not one.
 #[test]
 fn the_split_excludes_test_code() {
-    let source = "fn materialize() {}\n#[cfg(test)]\nmod tests {\n    use crate::cli::Config;\n}\n";
-    assert!(!production_half(source).contains("Config"));
+    let source = "fn materialize() {}\n#[cfg(test)]\nmod tests {\n    use crate::cli::DeploymentRequest;\n}\n";
+    assert!(!production_half(source).contains("DeploymentRequest"));
     assert!(production_half(source).contains("materialize"));
 }

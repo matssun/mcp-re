@@ -67,7 +67,7 @@ pub struct DelegatedSigningWiring {
 /// — the caller drives the initial [`DelegatedRotor::rotate`] (so a startup issuance
 /// failure refuses to serve) and spawns the rotation thread.
 ///
-/// **Infallible, and that is the change.** It used to take a `Config` and re-decide two
+/// **Infallible, and that is the change.** It used to take a `DeploymentRequest` and re-decide two
 /// things: that a trust epoch is present, and that `0 < overlap < ttl`. Both are layer-A
 /// questions, both are boundary clauses now, and answering them here meant a deterministic
 /// configuration invalidity was refused after the trust and TLS planes had already
@@ -136,7 +136,7 @@ mod tests {
     fn delegated_plan() -> crate::startup_plan::SigningPlan {
         let config = delegated_config();
         let validated =
-            crate::cli::ValidatedConfig::try_from(config).expect("the fixture must validate");
+            crate::cli::ValidatedDeployment::try_from(config).expect("the fixture must validate");
         crate::startup_plan::SigningPlan::from_validated(
             &validated,
             crate::startup_plan::response_issuer_kid(&validated),
@@ -144,7 +144,7 @@ mod tests {
         )
     }
 
-    fn delegated_config() -> crate::cli::Config {
+    fn delegated_config() -> crate::cli::DeploymentRequest {
         let args: Vec<String> = [
             "--bind",
             "127.0.0.1:8443",

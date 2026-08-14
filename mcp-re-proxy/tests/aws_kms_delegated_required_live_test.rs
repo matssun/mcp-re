@@ -232,10 +232,10 @@ fn custody_cfg() -> CustodyConfig {
     }
 }
 
-/// The production serving Config in delegated-required mode (parser-produced, as the
+/// The production serving DeploymentRequest in delegated-required mode (parser-produced, as the
 /// binary does). Filesystem paths are placeholders — the delegated wiring reads
 /// config fields, not files. `--server-key-id` becomes the credential issuer kid.
-fn delegated_config() -> mcp_re_proxy::cli::Config {
+fn delegated_config() -> mcp_re_proxy::cli::DeploymentRequest {
     let args: Vec<String> = [
         "--bind",
         "127.0.0.1:8443",
@@ -757,9 +757,11 @@ fn aws_kms_authority_flip_live() {
 
 /// The `SigningPlan` `app::run` projects, so this lane drives the production wiring
 /// through the same plan the binary does — including the boundary that produces it.
-fn signing_plan(config: &mcp_re_proxy::cli::Config) -> mcp_re_proxy::startup_plan::SigningPlan {
+fn signing_plan(
+    config: &mcp_re_proxy::cli::DeploymentRequest,
+) -> mcp_re_proxy::startup_plan::SigningPlan {
     use mcp_re_proxy::startup_plan::{response_issuer_kid, SigningPlan, TrustEpochPlan};
-    let validated = mcp_re_proxy::cli::ValidatedConfig::try_from(config.clone())
+    let validated = mcp_re_proxy::cli::ValidatedDeployment::try_from(config.clone())
         .expect("the fixture config must validate");
     SigningPlan::from_validated(
         &validated,

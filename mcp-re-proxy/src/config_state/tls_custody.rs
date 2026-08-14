@@ -17,7 +17,7 @@
 //! both custodies says the handshake key never leaves the device AND that a file copy of
 //! it exists — the exact belief the delegated modes are chosen to make true, being false.
 
-use crate::cli::Config;
+use crate::cli::DeploymentRequest;
 
 /// Which key object a delegated handshake signature is made with.
 ///
@@ -78,7 +78,7 @@ impl TlsCustodyState {
 /// Two selectors at once picks the first in this fixed order, and that choice is never
 /// observed: a configuration naming two of them has at least one that does not match its
 /// `Custody` source, so X2a refuses it and the state is discarded with the refusal.
-fn classify(config: &Config) -> Option<TlsCustodyState> {
+fn classify(config: &DeploymentRequest) -> Option<TlsCustodyState> {
     let delegated = |selector| Some(TlsCustodyState::Delegated { selector });
     if let Some(key_label) = config.pkcs11_tls_key_label.clone() {
         return delegated(DelegatedTlsKey::Pkcs11 { key_label });
@@ -104,7 +104,7 @@ fn classify(config: &Config) -> Option<TlsCustodyState> {
 /// are checked in the cross-machine pass and deliberately not here. A local validator
 /// that reached into another machine's fields would break the layering even when its
 /// answer was right.
-pub fn classify_and_validate(config: &Config) -> (Option<TlsCustodyState>, Vec<String>) {
+pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<TlsCustodyState>, Vec<String>) {
     let state = classify(config);
     let mut violations = Vec::new();
     if state.is_none() {
@@ -125,9 +125,9 @@ mod tests {
     use crate::config_state::test_support::legal_config;
 
     /// A selector this machine must record, and the configuration that requests it.
-    type Form = (DelegatedTlsKey, fn(&mut Config));
+    type Form = (DelegatedTlsKey, fn(&mut DeploymentRequest));
 
-    fn run(mutate: impl FnOnce(&mut Config)) -> (Option<TlsCustodyState>, Vec<String>) {
+    fn run(mutate: impl FnOnce(&mut DeploymentRequest)) -> (Option<TlsCustodyState>, Vec<String>) {
         let mut config = legal_config();
         mutate(&mut config);
         classify_and_validate(&config)

@@ -117,13 +117,13 @@ MISPLACED_OWNERSHIP: dict[str, tuple[str, str]] = {
         "the paths arrive as flags",
         "the TLS plane, taking already-validated paths",
     ),
-    "Config": (
+    "DeploymentRequest": (
         "the raw parsed-configuration type, consumed directly by runtime planes so they "
         "depend on the parser's data shape rather than on their own inputs",
         "a validated-configuration/domain type the planes own, with the parser producing it",
     ),
-    "ValidatedConfig": (
-        "as Config; the validated form still lives in the parser module",
+    "ValidatedDeployment": (
+        "as DeploymentRequest; the validated form still lives in the parser module",
         "a domain configuration type outside the parser",
     ),
     "DelegatedSigningWiring": (
@@ -200,8 +200,8 @@ def code_only(text: str) -> str:
 def edges_for(name: str, src: str, known: set[str]) -> dict[str, set[str]]:
     """Production edges out of one module, as {target: {symbols}}.
 
-    Both reference forms count: a qualified `crate::cli::Config`, and a bare
-    `use crate::cli;` followed by `cli::Config`. Missing the second under-reports badly.
+    Both reference forms count: a qualified `crate::cli::DeploymentRequest`, and a bare
+    `use crate::cli;` followed by `cli::DeploymentRequest`. Missing the second under-reports badly.
     """
     found: dict[str, set[str]] = defaultdict(set)
     for mod, sym in re.findall(r"crate::([a-z0-9_]+)::([A-Za-z0-9_]+)", src):
@@ -230,7 +230,7 @@ def build_map() -> tuple[dict[str, dict[str, set[str]]], set[str]]:
 def selftest() -> int:
     """A miniature graph with every construct that previously confused the scanner."""
     sample = "\n".join([
-        "//! Module doc mentioning [`crate::cli::Config`] as an intra-doc link.",
+        "//! Module doc mentioning [`crate::cli::DeploymentRequest`] as an intra-doc link.",
         "use crate::cli;",
         "use crate::tls::ServerLimits;",
         "impl Thing {",
@@ -238,7 +238,7 @@ def selftest() -> int:
         "    fn helper() -> u8 { 1 }",          # inline attribute, mid-file
         "}",
         "/// Doc link to [`crate::trust_plane::Thing`] — a reference, not a dependency.",
-        "fn production(c: &cli::Config) -> &str {",
+        "fn production(c: &cli::DeploymentRequest) -> &str {",
         '    let _ = "crate::evidence::AuditSink";',   # a path inside a string
         "    // crate::replay_plane::Plan in a comment",
         "    ServerLimits::NAME",
@@ -253,8 +253,8 @@ def selftest() -> int:
     got = edges_for("subject", code_only(sample), known)
 
     checks: list[tuple[bool, str]] = [
-        ("cli" in got and "Config" in got["cli"],
-         "a bare `use crate::cli;` plus `cli::Config` AFTER an inline #[cfg(test)]"),
+        ("cli" in got and "DeploymentRequest" in got["cli"],
+         "a bare `use crate::cli;` plus `cli::DeploymentRequest` AFTER an inline #[cfg(test)]"),
         ("tls" in got and "ServerLimits" in got["tls"],
          "a qualified `use crate::tls::ServerLimits;`"),
         ("trust_plane" not in got, "a rustdoc intra-doc link must NOT be an edge"),

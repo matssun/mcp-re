@@ -1146,7 +1146,7 @@ mod handle_lifetime_tests {
             config.trust_reload_secs.is_none(),
             "the shape under test is the one with NO reload cadence"
         );
-        let config = crate::cli::ValidatedConfig::try_from(config).expect("config validates");
+        let config = crate::cli::ValidatedDeployment::try_from(config).expect("config validates");
         let plan = crate::startup_plan::TrustPlan::from_validated(
             &config,
             "response-kid".to_string(),

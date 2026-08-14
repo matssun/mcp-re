@@ -12,7 +12,7 @@
 //!
 //! All six live here: X2a, X2b, X5, X6, X7, X9.
 
-use crate::cli::Config;
+use crate::cli::DeploymentRequest;
 use crate::cli::KeySourceKind;
 use crate::config_state::tls_custody::TlsCustodyState;
 use crate::config_state::trust_revocation::TrustRevocationState;
@@ -46,7 +46,7 @@ pub(crate) struct CrossMachineViolations {
 /// has no custody STATE, and still has a custody SOURCE that a PKCS#11 TLS selector does
 /// not belong to — so asking this of the state would drop that diagnostic exactly when a
 /// configuration is wrong in two ways at once.
-fn x2a(kind: KeySourceKind, config: &Config) -> Vec<String> {
+fn x2a(kind: KeySourceKind, config: &DeploymentRequest) -> Vec<String> {
     [
         (
             config.pkcs11_tls_key_label.is_some(),
@@ -83,7 +83,7 @@ fn x2a(kind: KeySourceKind, config: &Config) -> Vec<String> {
 /// the state does NOT carry `--tls-key`: carrying it would make the very combination this
 /// clause forbids representable. `Tls` has no state type to consult instead, so this is a
 /// relation to an owner whose material still lives in the request.
-fn x2b(tls_custody: Option<&TlsCustodyState>, config: &Config) -> Vec<String> {
+fn x2b(tls_custody: Option<&TlsCustodyState>, config: &DeploymentRequest) -> Vec<String> {
     if tls_custody.is_some_and(TlsCustodyState::is_delegated) && !config.tls_key.is_empty() {
         return vec![crate::cli::validate_tls_signing_exclusivity(true, true)
             .expect_err("both custodies asserted")];
@@ -98,7 +98,7 @@ fn x2b(tls_custody: Option<&TlsCustodyState>, config: &Config) -> Vec<String> {
 /// holding a stolen or revoked certificate keeps authenticated access for as long as it
 /// keeps one connection open — and both the lifetime ceiling and the CRL cadence stop
 /// being true statements about the deployment.
-fn x5(config: &Config) -> Vec<String> {
+fn x5(config: &DeploymentRequest) -> Vec<String> {
     let ceiling = crate::cli::MAX_CLIENT_CERT_LIFETIME;
     match config.limits.max_connection_age {
         None => vec![
@@ -124,7 +124,7 @@ fn x5(config: &Config) -> Vec<String> {
 /// unconditional. It is still a relation rather than a `Trust` column: the list becomes
 /// meaningful the moment an authorization profile exists to read it, and nothing about
 /// trust configuration changes then.
-fn x6(config: &Config) -> Vec<String> {
+fn x6(config: &DeploymentRequest) -> Vec<String> {
     crate::cli::unenforceable_revocation_list_refusal(&config.revocation_list_paths)
         .into_iter()
         .collect()
@@ -135,7 +135,7 @@ fn x6(config: &Config) -> Vec<String> {
 /// The header posture is refused outright — any peer that can reach the socket can spoof
 /// it — which is what makes the second half of the relation currently unreachable: with no
 /// forwarded identity there is always a local client certificate to bound.
-fn x7(config: &Config) -> Vec<String> {
+fn x7(config: &DeploymentRequest) -> Vec<String> {
     if config.reverse_proxy_identity_header.is_some() {
         return vec![
             "--reverse-proxy-identity-header trusts a forwarded identity header that any peer \
@@ -159,7 +159,10 @@ fn x7(config: &Config) -> Vec<String> {
 /// `trust_epoch_redis_url`, and neither plane asks the other. This function therefore has
 /// nothing left to refuse — which is the ruling holding, not an omission: it is stated so
 /// that a future rule joining these two machines has an owner to be added to.
-fn x9(_trust_revocation: Option<&TrustRevocationState>, _config: &Config) -> Vec<String> {
+fn x9(
+    _trust_revocation: Option<&TrustRevocationState>,
+    _config: &DeploymentRequest,
+) -> Vec<String> {
     Vec::new()
 }
 
@@ -168,7 +171,7 @@ pub(crate) fn validate(
     custody_source: KeySourceKind,
     tls_custody: Option<&TlsCustodyState>,
     trust_revocation: Option<&TrustRevocationState>,
-    config: &Config,
+    config: &DeploymentRequest,
 ) -> CrossMachineViolations {
     CrossMachineViolations {
         x2a_delegated_selector: x2a(custody_source, config),
@@ -186,9 +189,9 @@ mod tests {
     use crate::config_state::test_support::legal_config;
 
     /// A flag a case must name in its refusal, and the configuration that provokes it.
-    type Case = (&'static str, fn(&mut Config));
+    type Case = (&'static str, fn(&mut DeploymentRequest));
 
-    fn relations(mutate: impl FnOnce(&mut Config)) -> CrossMachineViolations {
+    fn relations(mutate: impl FnOnce(&mut DeploymentRequest)) -> CrossMachineViolations {
         let mut config = legal_config();
         mutate(&mut config);
         let (tls_custody, _) = crate::config_state::tls_custody::classify_and_validate(&config);

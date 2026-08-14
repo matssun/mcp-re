@@ -31,7 +31,7 @@
 //! returns immediately, so it re-reads every CRL, rebuilds the rustls verifier and swaps
 //! the serving snapshot in a tight loop, burning a core with no diagnostic.
 
-use crate::cli::{BindingKind, Config};
+use crate::cli::{BindingKind, DeploymentRequest};
 use crate::transport::IdentityPolicy;
 
 /// How a verified request signer is bound to the authenticated channel.
@@ -73,7 +73,7 @@ pub enum CrlRevocationState {
 /// Unlike most machines this one can fail to classify: `binding` has three variants no
 /// deployment can be in, and `identity_source` has a deprecated one. They are input forms,
 /// not states, so they produce no member of the model.
-fn classify_binding(config: &Config) -> Result<ChannelBindingState, Vec<String>> {
+fn classify_binding(config: &DeploymentRequest) -> Result<ChannelBindingState, Vec<String>> {
     let mut refusals = Vec::new();
     if let Some(refusal) = crate::cli::undeployable_transport_binding_refusal(config.binding) {
         refusals.push(refusal);
@@ -118,7 +118,7 @@ fn classify_binding(config: &Config) -> Result<ChannelBindingState, Vec<String>>
 /// The ingress parameters belong to states the model does not contain, and their coherence
 /// is checked by `ingress_assertion_violation` at its own position in the clause list.
 pub fn classify_and_validate_binding(
-    config: &Config,
+    config: &DeploymentRequest,
 ) -> (Option<ChannelBindingState>, Vec<String>) {
     match classify_binding(config) {
         Ok(state) => (Some(state), Vec::new()),
@@ -127,7 +127,7 @@ pub fn classify_and_validate_binding(
 }
 
 /// Recognise the CRL-revocation state. Total: the two fields name one.
-fn classify_crl(config: &Config) -> CrlRevocationState {
+fn classify_crl(config: &DeploymentRequest) -> CrlRevocationState {
     if config.client_crl_paths.is_empty() {
         CrlRevocationState::None
     } else if let Some(cadence_secs) = config.client_crl_reload_secs {
@@ -143,7 +143,7 @@ fn classify_crl(config: &Config) -> CrlRevocationState {
 }
 
 /// Classify the CRL-revocation state and check its columns.
-pub fn classify_and_validate_crl(config: &Config) -> (CrlRevocationState, Vec<String>) {
+pub fn classify_and_validate_crl(config: &DeploymentRequest) -> (CrlRevocationState, Vec<String>) {
     let state = classify_crl(config);
     let mut violations = Vec::new();
     if config.client_crl_reload_secs == Some(0) {
@@ -171,16 +171,18 @@ mod tests {
     use super::*;
     use crate::config_state::test_support::legal_config;
 
-    fn binding(mutate: impl FnOnce(&mut Config)) -> (Option<ChannelBindingState>, Vec<String>) {
+    fn binding(
+        mutate: impl FnOnce(&mut DeploymentRequest),
+    ) -> (Option<ChannelBindingState>, Vec<String>) {
         let mut config = legal_config();
         mutate(&mut config);
         classify_and_validate_binding(&config)
     }
 
     /// A state this machine must recognise, and how to request it.
-    type Form = (CrlRevocationState, fn(&mut Config));
+    type Form = (CrlRevocationState, fn(&mut DeploymentRequest));
 
-    fn crl(mutate: impl FnOnce(&mut Config)) -> (CrlRevocationState, Vec<String>) {
+    fn crl(mutate: impl FnOnce(&mut DeploymentRequest)) -> (CrlRevocationState, Vec<String>) {
         let mut config = legal_config();
         mutate(&mut config);
         classify_and_validate_crl(&config)
@@ -238,7 +240,7 @@ mod tests {
                 CrlRevocationState::Static {
                     paths: vec!["/crl.pem".to_string()],
                 },
-                |c: &mut Config| {
+                |c: &mut DeploymentRequest| {
                     c.client_crl_paths = vec!["/crl.pem".to_string()];
                 },
             ),
@@ -247,7 +249,7 @@ mod tests {
                     paths: vec!["/crl.pem".to_string()],
                     cadence_secs: 300,
                 },
-                |c: &mut Config| {
+                |c: &mut DeploymentRequest| {
                     c.client_crl_paths = vec!["/crl.pem".to_string()];
                     c.client_crl_reload_secs = Some(300);
                 },

@@ -67,7 +67,7 @@ pub mod delegated_response_signer;
 // the cold-path rotor that keeps it fresh (root issuer off the request path).
 pub mod delegated_server_signer;
 // ADR-MCPRE-052 phase 2 (MCPRE-122): production wiring — build the delegated signer +
-// cold-path rotor from a parsed Config + a ROOT issuer (KMS/HSM/file ResponseSigner).
+// cold-path rotor from a parsed DeploymentRequest + a ROOT issuer (KMS/HSM/file ResponseSigner).
 // Delegated-signing is the only response-signing mode.
 pub mod delegated_wiring;
 // ADR-MCPS-028 §G: delegated TLS handshake signing — a rustls SigningKey that

@@ -248,10 +248,10 @@ fn the_trust_store_is_refused_before_the_client_crls_are_read() {
     }
 }
 
-/// A `Config` that never went through the parser cannot bypass the safety guards.
+/// A `DeploymentRequest` that never went through the parser cannot bypass the safety guards.
 ///
-/// `Config` has 76 public fields. Until the validation boundary landed, the hard guards
-/// ran only inside `parse_args`, so anything that built a `Config` in code — an
+/// `DeploymentRequest` has 76 public fields. Until the validation boundary landed, the hard guards
+/// ran only inside `parse_args`, so anything that built a `DeploymentRequest` in code — an
 /// embedder, a harness, a bespoke launcher — reached the serving path having run none of
 /// them. This mutates a parsed config AFTER parsing, which is the cheapest way to
 /// reproduce exactly what such a caller can construct, and asserts `run` refuses it.
@@ -289,7 +289,7 @@ fn a_config_that_skipped_the_parser_still_cannot_bypass_the_safety_guards() {
 /// `--client-ocsp require` is refused because the check is implemented only on the
 /// blocking serve loop, while the production data plane is the per-core async fleet, which
 /// performs no OCSP round trip at all. That refusal used to live only in `parse_args`, so
-/// a caller building a `Config` in code could set `client_ocsp = Require`, reach the
+/// a caller building a `DeploymentRequest` in code could set `client_ocsp = Require`, reach the
 /// serving path, and have startup announce `ONLINE OCSP client-cert revocation enabled` on
 /// a deployment that admits every revoked client certificate.
 ///
@@ -326,7 +326,7 @@ fn a_programmatic_config_cannot_claim_an_ocsp_check_the_serving_path_never_makes
 /// `--revocation-list` supplies a policy-layer deny-list consumed only by an authorization
 /// profile, and no production profile has landed, so the list would enforce nothing. The
 /// parser refuses it — but `revocation_list_paths` is a public field, so a caller building
-/// a `Config` in code reached the serving path carrying a revocation control that is never
+/// a `DeploymentRequest` in code reached the serving path carrying a revocation control that is never
 /// read. An operator would believe a compromised grant was revoked while it kept being
 /// authorized.
 ///
@@ -360,7 +360,7 @@ fn a_programmatic_config_cannot_carry_a_deny_list_nothing_enforces() {
 /// An unaccepted authorization profile is refused at the VALIDATION boundary.
 ///
 /// Third instance of the family, and the one that was never a bypass: the composition root
-/// carried its own copy of this refusal, so a programmatically built `Config` was already
+/// carried its own copy of this refusal, so a programmatically built `DeploymentRequest` was already
 /// caught. What was wrong is that one prohibition was stated twice, in two places, with two
 /// different diagnostics — free to drift, and a policy decision sitting in a composition
 /// root (ADR-MCPRE-056 §12).
@@ -397,7 +397,7 @@ fn a_programmatic_config_cannot_enable_an_unaccepted_authz_profile() {
 /// The composition root used to refuse it too, in the same `matches!` arm as Mode-C
 /// attested ingress. That arm now covers Mode-C only, so this test is what establishes
 /// that dropping the duplicate did not drop the prohibition: the boundary refuses
-/// lb-assertion on its own, for a `Config` that never met the parser.
+/// lb-assertion on its own, for a `DeploymentRequest` that never met the parser.
 ///
 /// Asserts the boundary's own wrapper rather than merely `is_err()` — with the guard gone,
 /// this config would still fail later for an unrelated reason, and a weaker test would
@@ -618,7 +618,7 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
 ///
 /// `parse_args` refuses four delegated-custody configurations: a missing trust epoch, a
 /// non-positive TTL, a non-positive overlap, and an overlap that meets or exceeds the
-/// TTL. Each is an invariant an in-code caller could otherwise walk past, since `Config`
+/// TTL. Each is an invariant an in-code caller could otherwise walk past, since `DeploymentRequest`
 /// has public fields and nothing downstream re-derives them.
 ///
 /// The four are asserted together because the failure they prevent is one failure. A
@@ -652,25 +652,29 @@ fn a_programmatic_config_cannot_carry_delegated_custody_the_rotor_cannot_honour(
     // Each case is a mutation the parser would have refused, applied afterwards — the
     // only shape an in-code caller has — with the substring the refusal must name.
     #[allow(clippy::type_complexity)]
-    let cases: Vec<(&str, Box<dyn Fn(&mut mcp_re_proxy::cli::Config)>, &str)> = vec![
+    let cases: Vec<(
+        &str,
+        Box<dyn Fn(&mut mcp_re_proxy::cli::DeploymentRequest)>,
+        &str,
+    )> = vec![
         (
             "no trust epoch",
-            Box::new(|c: &mut mcp_re_proxy::cli::Config| c.delegated_trust_epoch = None),
+            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| c.delegated_trust_epoch = None),
             "trust epoch",
         ),
         (
             "zero ttl",
-            Box::new(|c: &mut mcp_re_proxy::cli::Config| c.delegated_ttl_secs = 0),
+            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| c.delegated_ttl_secs = 0),
             "ttl",
         ),
         (
             "negative overlap",
-            Box::new(|c: &mut mcp_re_proxy::cli::Config| c.delegated_overlap_secs = -1),
+            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| c.delegated_overlap_secs = -1),
             "overlap",
         ),
         (
             "overlap at the ttl",
-            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
                 c.delegated_overlap_secs = c.delegated_ttl_secs
             }),
             "overlap",
@@ -680,7 +684,7 @@ fn a_programmatic_config_cannot_carry_delegated_custody_the_rotor_cannot_honour(
     for (name, mutate, expected) in cases {
         let mut config = parsed.clone();
         mutate(&mut config);
-        let err = mcp_re_proxy::cli::ValidatedConfig::try_from(config).expect_err(&format!(
+        let err = mcp_re_proxy::cli::ValidatedDeployment::try_from(config).expect_err(&format!(
             "{name}: custody the rotor cannot honour must be refused"
         ));
         assert!(
@@ -698,7 +702,7 @@ fn a_programmatic_config_cannot_carry_delegated_custody_the_rotor_cannot_honour(
         valid.delegated_overlap_secs > 0,
         "the control needs a genuinely valid overlap to be worth anything"
     );
-    mcp_re_proxy::cli::ValidatedConfig::try_from(valid)
+    mcp_re_proxy::cli::ValidatedDeployment::try_from(valid)
         .expect("a valid delegated custody policy must be admitted");
 }
 
@@ -706,7 +710,7 @@ fn a_programmatic_config_cannot_carry_delegated_custody_the_rotor_cannot_honour(
 ///
 /// `validate_tls_signing_exclusivity` refuses a config that asserts BOTH a delegated,
 /// non-exporting TLS key and an exported one. Until now it was called from `parse_args`
-/// and nowhere else, so a `Config` built in code could assert both and reach the serving
+/// and nowhere else, so a `DeploymentRequest` built in code could assert both and reach the serving
 /// path — and nothing downstream would notice, because `build_key_source` dispatches on
 /// `key_source` and simply ignores a selector belonging to another source.
 ///
@@ -768,7 +772,7 @@ fn a_programmatic_config_cannot_assert_both_delegated_and_exported_tls_custody()
 /// does not weaken the check, it turns it off for every request — and both of those
 /// functions documented the shape as something the parser had already guaranteed.
 ///
-/// It had, and only for argv. `target_uri` is a public `Config` field, so this was the
+/// It had, and only for argv. `target_uri` is a public `DeploymentRequest` field, so this was the
 /// sixth member of the parser-only family: an ingress fanning several paths into one
 /// process would verify signatures over a `@target-uri` no request arrived at, while the
 /// deployment reported the binding as in force.
@@ -823,7 +827,7 @@ fn a_programmatic_config_cannot_disable_the_request_target_reconstruction_check(
 /// fail-closed check then passes self-consistently against the attacker's key — and
 /// because the GCP path posts a live workload-identity bearer token to it in the clear.
 ///
-/// All three endpoint fields are public on `Config`. Until the rule reached the validation
+/// All three endpoint fields are public on `DeploymentRequest`. Until the rule reached the validation
 /// boundary, a config built in code could name `http://attacker/` and reach key-source
 /// construction unrefused.
 ///
@@ -850,32 +854,36 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
     // these fields are also named by unrelated coherence rules, so asserting only that the
     // flag appears would let a refusal for another cause stand in for this one.
     #[allow(clippy::type_complexity)]
-    let cases: Vec<(&str, &str, Box<dyn Fn(&mut mcp_re_proxy::cli::Config)>)> = vec![
+    let cases: Vec<(
+        &str,
+        &str,
+        Box<dyn Fn(&mut mcp_re_proxy::cli::DeploymentRequest)>,
+    )> = vec![
         (
             "--aws-kms-endpoint",
             "loopback",
-            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
                 c.aws_kms_endpoint = Some("http://attacker.example/".to_string())
             }),
         ),
         (
             "--gcp-kms-endpoint",
             "loopback",
-            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
                 c.gcp_kms_endpoint = Some("http://attacker.example/v1".to_string())
             }),
         ),
         (
             "--aws-kms-endpoint",
             "absolute https:// URL",
-            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
                 c.aws_kms_endpoint = Some("ftp://kms.internal/".to_string())
             }),
         ),
         (
             "--aws-kms-endpoint",
             "has no host",
-            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
                 c.aws_kms_endpoint = Some("https://".to_string())
             }),
         ),
@@ -884,7 +892,7 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
         (
             "--gcp-kms-endpoint",
             "userinfo",
-            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
                 c.gcp_kms_endpoint =
                     Some("https://cloudkms.googleapis.com@evil.example.com".to_string())
             }),
@@ -892,14 +900,14 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
         (
             "--gcp-kms-endpoint",
             "userinfo",
-            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
                 c.gcp_kms_endpoint = Some("http://localhost:80@evil.example.com".to_string())
             }),
         ),
         (
             "--aws-kms-endpoint",
             "userinfo",
-            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
                 c.aws_kms_endpoint =
                     Some("https://kms.us-east-1.amazonaws.com@evil.example.com".to_string())
             }),
@@ -907,14 +915,14 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
         (
             "--aws-kms-endpoint",
             "userinfo",
-            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
                 c.aws_kms_endpoint = Some("http://127.0.0.1:4566@evil.example.com".to_string())
             }),
         ),
         (
             "--aws-sts-endpoint",
             "userinfo",
-            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
                 c.aws_sts_endpoint =
                     Some("https://sts.eu-north-1.amazonaws.com@evil.example.com".to_string())
             }),
@@ -992,24 +1000,26 @@ fn a_programmatic_config_cannot_carry_a_dangling_custody_or_ingress_selector() {
     let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
 
     #[allow(clippy::type_complexity)]
-    let cases: Vec<(&str, Box<dyn Fn(&mut mcp_re_proxy::cli::Config)>)> = vec![
+    let cases: Vec<(&str, Box<dyn Fn(&mut mcp_re_proxy::cli::DeploymentRequest)>)> = vec![
         (
             "--gcp-kms-use-metadata",
-            Box::new(|c: &mut mcp_re_proxy::cli::Config| c.gcp_kms_use_metadata = true),
+            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| c.gcp_kms_use_metadata = true),
         ),
         (
             "--aws-kms-use-web-identity",
-            Box::new(|c: &mut mcp_re_proxy::cli::Config| c.aws_kms_use_web_identity = true),
+            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
+                c.aws_kms_use_web_identity = true
+            }),
         ),
         (
             "--ingress-lb-key",
-            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
                 c.ingress_lb_keys = vec![("lb-1".to_string(), "not-a-key".to_string())]
             }),
         ),
         (
             "--ingress-identity",
-            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
                 c.ingress_identities = vec!["spiffe://x/ingress".to_string()]
             }),
         ),

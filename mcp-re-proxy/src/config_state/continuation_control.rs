@@ -22,7 +22,7 @@
 //! and a cargo feature with `Replay` is not a semantic edge. The endpoints may name the
 //! same Redis, and when they do that is an operator's deployment choice.
 
-use crate::cli::Config;
+use crate::cli::DeploymentRequest;
 
 /// Which continuation-control state a configuration requests.
 ///
@@ -49,7 +49,7 @@ impl ContinuationControlState {
 }
 
 /// Recognise the requested state. Total: presence of the locator IS the request.
-fn classify(config: &Config) -> ContinuationControlState {
+fn classify(config: &DeploymentRequest) -> ContinuationControlState {
     match &config.continuation_control_redis_url {
         Some(endpoint) => ContinuationControlState::Redis {
             endpoint: endpoint.clone(),
@@ -62,7 +62,9 @@ fn classify(config: &Config) -> ContinuationControlState {
 ///
 /// Only the build-independent shape of the URL is checked. Whether this binary has a Redis
 /// client is layer B, and whether the store answers is layer C.
-pub fn classify_and_validate(config: &Config) -> (ContinuationControlState, Vec<String>) {
+pub fn classify_and_validate(
+    config: &DeploymentRequest,
+) -> (ContinuationControlState, Vec<String>) {
     let state = classify(config);
     let mut violations = Vec::new();
     if let Some(url) = &config.continuation_control_redis_url {
@@ -82,7 +84,7 @@ mod tests {
     use super::*;
     use crate::config_state::test_support::legal_config;
 
-    fn run(mutate: impl FnOnce(&mut Config)) -> (ContinuationControlState, Vec<String>) {
+    fn run(mutate: impl FnOnce(&mut DeploymentRequest)) -> (ContinuationControlState, Vec<String>) {
         let mut config = legal_config();
         mutate(&mut config);
         classify_and_validate(&config)
@@ -135,7 +137,7 @@ mod tests {
     /// replay tier does not reach the continuation state.
     #[test]
     fn the_replay_tier_does_not_reach_this_machine() {
-        let shared = |c: &mut Config| {
+        let shared = |c: &mut DeploymentRequest| {
             c.continuation_control_redis_url = Some("redis://127.0.0.1:6379".to_string());
         };
         assert_eq!(

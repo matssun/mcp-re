@@ -14,7 +14,7 @@
 //! rather than a record of the parts that happened to need checking, and it is why a later
 //! stage can read the posture off the classification instead of re-reading the field.
 
-use crate::cli::{AuditSinkKind, Config, VerifiedContextKind};
+use crate::cli::{AuditSinkKind, DeploymentRequest, VerifiedContextKind};
 
 /// Where the per-request security record goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,7 +64,7 @@ impl VerifiedContextState {
 }
 
 /// Classify the evidence machines. Each is total, and none has columns to check.
-pub fn classify(config: &Config) -> (AuditState, RetentionState, VerifiedContextState) {
+pub fn classify(config: &DeploymentRequest) -> (AuditState, RetentionState, VerifiedContextState) {
     let audit = match config.audit_sink {
         AuditSinkKind::None => AuditState::None,
         AuditSinkKind::Stderr => AuditState::Stderr,
@@ -88,7 +88,7 @@ mod tests {
     use crate::config_state::test_support::legal_config;
 
     fn states(
-        mutate: impl FnOnce(&mut Config),
+        mutate: impl FnOnce(&mut DeploymentRequest),
     ) -> (AuditState, RetentionState, VerifiedContextState) {
         let mut config = legal_config();
         mutate(&mut config);

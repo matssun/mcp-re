@@ -16,12 +16,12 @@
 //! Pinning is not endorsement. Some of this order is deliberate and some is the order the
 //! clauses were added in; this file records what it IS, so that changing it is a decision.
 
-use mcp_re_proxy::cli::{self, AuthzKind, BindingKind, Config, OcspKind, ReplayKind};
+use mcp_re_proxy::cli::{self, AuthzKind, BindingKind, DeploymentRequest, OcspKind, ReplayKind};
 use mcp_re_proxy::IdentityPolicy;
 
 /// A legal configuration, from the parser, so every violation below is one this fixture
 /// introduces on purpose rather than one the baseline dragged in.
-fn legal() -> Config {
+fn legal() -> DeploymentRequest {
     let argv: Vec<String> = [
         "--bind",
         "127.0.0.1:8443",
@@ -227,7 +227,7 @@ fn the_boundary_reports_every_violation_not_the_first() {
     config.identity_source = IdentityPolicy::CnLegacy;
     config.replay = ReplayKind::Memory;
 
-    let refusal = mcp_re_proxy::cli::ValidatedConfig::try_from(config)
+    let refusal = mcp_re_proxy::cli::ValidatedDeployment::try_from(config)
         .expect_err("three violations must refuse");
     for expected in ["--authz", "cn_legacy", "--replay-cache memory"] {
         assert!(

@@ -25,7 +25,7 @@
 //! forbid it without destroying cross-replica MRTR. `ContinuationControl` owns that fact
 //! now, so the forbidden cell can finally be stated.
 
-use crate::cli::{Config, ReplayKind};
+use crate::cli::{DeploymentRequest, ReplayKind};
 use crate::replay_tier::ReplayDurabilityTier;
 
 /// Which replay state a configuration requests. Only live states are representable.
@@ -100,7 +100,7 @@ enum RequestedState {
 ///
 /// Separate from the columns because these refusals are about the *input form*: there is
 /// no state to check the parameters of.
-fn rejected_input_form(config: &Config) -> Option<String> {
+fn rejected_input_form(config: &DeploymentRequest) -> Option<String> {
     match config.replay {
         ReplayKind::Memory => Some(
             "--replay-cache memory is non-durable: it keeps admitted nonces only in process \
@@ -126,7 +126,7 @@ fn rejected_input_form(config: &Config) -> Option<String> {
 }
 
 /// Recognise which shared state the declared tier names, or why it names none.
-fn classify(config: &Config) -> Result<RequestedState, String> {
+fn classify(config: &DeploymentRequest) -> Result<RequestedState, String> {
     if let Some(refusal) = rejected_input_form(config) {
         return Err(refusal);
     }
@@ -155,7 +155,7 @@ fn classify(config: &Config) -> Result<RequestedState, String> {
 }
 
 /// The required and forbidden locators of a recognised state.
-fn locator_violations(state: RequestedState, config: &Config) -> Vec<String> {
+fn locator_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<String> {
     let mut out = Vec::new();
     // Forbidden in BOTH live states: the only state `replay_path` parameterizes is not one
     // a deployment can be in. It is `Option`-typed and mode-specific, so its presence is an
@@ -213,7 +213,7 @@ fn locator_violations(state: RequestedState, config: &Config) -> Vec<String> {
 /// `Err` means the request names no state at all — a rejected input form, or a tier this
 /// posture does not accept. There is nothing to put in `DeploymentConfigState` for those,
 /// which is the point: they are not deployments.
-pub fn classify_and_validate(config: &Config) -> (Option<ReplayState>, Vec<String>) {
+pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<ReplayState>, Vec<String>) {
     match classify(config) {
         Err(refusal) => (None, vec![refusal]),
         Ok(requested) => {
@@ -226,7 +226,7 @@ pub fn classify_and_validate(config: &Config) -> (Option<ReplayState>, Vec<Strin
 /// Build the state, once its locator is known to be present.
 ///
 /// `None` never travels alone: `locator_violations` has already named the missing value.
-fn build(requested: RequestedState, config: &Config) -> Option<ReplayState> {
+fn build(requested: RequestedState, config: &DeploymentRequest) -> Option<ReplayState> {
     Some(match requested {
         RequestedState::SharedRedis { quorum, timeout_ms } => ReplayState::SharedRedis {
             url: config.replay_redis_url.clone()?,
@@ -245,11 +245,11 @@ mod tests {
     use crate::config_state::test_support::legal_config;
 
     /// A flag a case must name in its refusal, and the configuration that provokes it.
-    type Case = (&'static str, fn(&mut Config));
+    type Case = (&'static str, fn(&mut DeploymentRequest));
     /// A state this machine must recognise, and how to request it.
-    type Form = (ReplayState, fn(&mut Config));
+    type Form = (ReplayState, fn(&mut DeploymentRequest));
 
-    fn redis(config: &mut Config) {
+    fn redis(config: &mut DeploymentRequest) {
         config.replay = ReplayKind::Shared;
         config.replay_path = None;
         config.replay_redis_url = Some("redis://127.0.0.1:6379".to_string());
@@ -259,7 +259,7 @@ mod tests {
         });
     }
 
-    fn linearizable(config: &mut Config) {
+    fn linearizable(config: &mut DeploymentRequest) {
         config.replay = ReplayKind::Shared;
         config.replay_path = None;
         config.replay_redis_url = None;
@@ -267,7 +267,7 @@ mod tests {
         config.cpstore_etcd_endpoint = Some("http://127.0.0.1:2379".to_string());
     }
 
-    fn run(mutate: impl FnOnce(&mut Config)) -> (Option<ReplayState>, Vec<String>) {
+    fn run(mutate: impl FnOnce(&mut DeploymentRequest)) -> (Option<ReplayState>, Vec<String>) {
         let mut config = legal_config();
         mutate(&mut config);
         classify_and_validate(&config)
@@ -470,7 +470,7 @@ mod tests {
 
     #[test]
     fn a_path_for_a_state_no_deployment_can_be_in_is_refused_in_both_states() {
-        for mutate in [redis as fn(&mut Config), linearizable] {
+        for mutate in [redis as fn(&mut DeploymentRequest), linearizable] {
             let (_, violations) = run(|c| {
                 mutate(c);
                 c.replay_path = Some("/replay".to_string());

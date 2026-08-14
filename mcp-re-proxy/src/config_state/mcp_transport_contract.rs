@@ -32,7 +32,7 @@
 //! refusal for it here would narrow a vocabulary the product deliberately delegates.
 //! Whether it SHOULD be narrowed is a product question, and a different commit.
 
-use crate::cli::Config;
+use crate::cli::DeploymentRequest;
 
 /// Which MCP transport-contract state a configuration requests.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,9 +60,9 @@ impl McpTransportContractState {
     }
 }
 
-/// Recognise the requested state. Total: every `Config` names one, and neither state has
+/// Recognise the requested state. Total: every `DeploymentRequest` names one, and neither state has
 /// a column to check.
-pub fn classify(config: &Config) -> McpTransportContractState {
+pub fn classify(config: &DeploymentRequest) -> McpTransportContractState {
     if config.mcp_protocol_versions.is_empty() {
         return McpTransportContractState::Unconstrained;
     }
@@ -76,7 +76,7 @@ mod tests {
     use super::*;
     use crate::config_state::test_support::legal_config;
 
-    fn state_of(mutate: impl FnOnce(&mut Config)) -> McpTransportContractState {
+    fn state_of(mutate: impl FnOnce(&mut DeploymentRequest)) -> McpTransportContractState {
         let mut config = legal_config();
         mutate(&mut config);
         classify(&config)

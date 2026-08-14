@@ -20,7 +20,7 @@
 //! distinction and encode it by ERASING the field, writing `None` over the default. A
 //! request that eagerly fills defaults destroys the difference between a value chosen and
 //! a value never mentioned, and reconstructing it in the parser puts the rule below the
-//! boundary every other legality rule is decided at: a `Config` built in code met none of
+//! boundary every other legality rule is decided at: a `DeploymentRequest` built in code met none of
 //! it.
 //!
 //! So the request states its intent once, with absence representable, and layer A applies
@@ -43,7 +43,7 @@
 
 use std::num::NonZeroUsize;
 
-use crate::cli::Config;
+use crate::cli::DeploymentRequest;
 
 /// The admission limit as the OPERATOR stated it, absence included.
 ///
@@ -105,17 +105,17 @@ impl InFlightLimitBasis {
 ///
 /// One constant, two readers: this and [`crate::tls::ServerLimits::default`], which must
 /// agree because a `ServerLimits` built directly — by a test, by an embedder driving
-/// `async_serve` without a `Config` — gets the same bound the validated path resolves to.
+/// `async_serve` without a `DeploymentRequest` — gets the same bound the validated path resolves to.
 pub const DEFAULT_PER_CORE_IN_FLIGHT: usize = 256;
 
-/// Recognise the basis. Total and infallible: every `Config` states one of three things,
+/// Recognise the basis. Total and infallible: every `DeploymentRequest` states one of three things,
 /// and the default makes the third a basis too.
 ///
 /// There is no mutual-exclusivity refusal here, or anywhere at this layer: the illegal
 /// combination is not representable, so there is no state to reject. What survives is the
 /// parser's [`second_admission_limit`](crate::cli), which refuses an ARGUMENT LIST naming
 /// two — a fact about the input, not about the request.
-pub fn classify(config: &Config) -> InFlightLimitBasis {
+pub fn classify(config: &DeploymentRequest) -> InFlightLimitBasis {
     match config.in_flight_limit {
         InFlightLimitRequest::PerCore(requests) => InFlightLimitBasis::PerCore { requests },
         InFlightLimitRequest::FleetTotal(requests) => InFlightLimitBasis::FleetTotal { requests },

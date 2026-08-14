@@ -92,7 +92,7 @@ fn audience() -> AudienceTuple {
 // ---- server side -----------------------------------------------------------
 
 /// The server's delegated-required serving config (parser-produced, as the binary).
-fn server_config() -> mcp_re_proxy::cli::Config {
+fn server_config() -> mcp_re_proxy::cli::DeploymentRequest {
     let args: Vec<String> = [
         "--bind",
         "127.0.0.1:8443",
@@ -958,9 +958,11 @@ fn a_replayed_older_manifest_cannot_un_revoke_a_root() {
 
 /// The `SigningPlan` `app::run` projects, so this lane drives the production wiring
 /// through the same plan the binary does — including the boundary that produces it.
-fn signing_plan(config: &mcp_re_proxy::cli::Config) -> mcp_re_proxy::startup_plan::SigningPlan {
+fn signing_plan(
+    config: &mcp_re_proxy::cli::DeploymentRequest,
+) -> mcp_re_proxy::startup_plan::SigningPlan {
     use mcp_re_proxy::startup_plan::{response_issuer_kid, SigningPlan, TrustEpochPlan};
-    let validated = mcp_re_proxy::cli::ValidatedConfig::try_from(config.clone())
+    let validated = mcp_re_proxy::cli::ValidatedDeployment::try_from(config.clone())
         .expect("the fixture config must validate");
     SigningPlan::from_validated(
         &validated,

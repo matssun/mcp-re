@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The classified legal deployment state — layer A of `work/CONFIG-STATE-ATLAS.md`.
 //!
-//! `Config` describes a *requested* deployment. Not every combination of its fields
+//! `DeploymentRequest` describes a *requested* deployment. Not every combination of its fields
 //! describes a deployment that could exist, and the atlas is the closed model of the ones
 //! that can: twelve machines, each with its own states, a set of guard-only owners that
 //! have invariants without a mode choice, and a small set of relations between them. This
@@ -42,15 +42,15 @@
 //!   owned at the layer that owns the rule; downstream there is no knowledge that a
 //!   default ever existed.
 //!
-//! **Two limits keep this from becoming a second `Config`.** A generic deployment
-//! parameter stays in `Config` — validated, but not evidence for inhabiting any particular
+//! **Two limits keep this from becoming a second `DeploymentRequest`.** A generic deployment
+//! parameter stays in `DeploymentRequest` — validated, but not evidence for inhabiting any particular
 //! state; `max_clock_skew`, `bind` and the limits are checked and stay put. And a fact
 //! already encoded by a variant is *derived*, never stored beside it: `SharedRedis` names
 //! the tier, so carrying a tier field too would create two authorities free to disagree,
 //! and the impossible pairing becomes representable again.
 //!
 //! **This is not a normalized plan either.** Consumer-specific shaping is still planning's
-//! job. The progression is `Config` (requested values) → `DeploymentConfigState` (semantic
+//! job. The progression is `DeploymentRequest` (requested values) → `DeploymentConfigState` (semantic
 //! state plus its own evidence) → `Plan` (one consumer's intent), and each stage means
 //! strictly more than the last — without any of them saying "the previous stage promised
 //! this".
@@ -244,13 +244,13 @@ impl DeploymentConfigState {
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use crate::cli::{self, Config};
+    use crate::cli::{self, DeploymentRequest};
 
     /// A configuration the parser accepts, for a machine's tests to mutate.
     ///
     /// From `parse_args` rather than a struct literal so that a test which expects a
     /// refusal is measuring the mutation it made, not a defect it inherited.
-    pub(crate) fn legal_config() -> Config {
+    pub(crate) fn legal_config() -> DeploymentRequest {
         let argv: Vec<String> = [
             "--bind",
             "127.0.0.1:8443",

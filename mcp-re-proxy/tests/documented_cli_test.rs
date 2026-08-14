@@ -18,7 +18,7 @@
 //! them syntactically would mean restating `unsafe_config_violations` in a second language
 //! with no compiler between the copies.
 //!
-//! `cli::parse_args` followed by `ValidatedConfig::try_from` is not a restatement of the
+//! `cli::parse_args` followed by `ValidatedDeployment::try_from` is not a restatement of the
 //! rule; it IS the rule, and it covers all three at once. Neither reads the filesystem, so
 //! the guide's `/etc/mcp-re/...` paths need not exist for this to be a real check.
 //!
@@ -91,7 +91,7 @@ fn invocations_in_block(block: &str, launch: &str) -> Vec<Vec<String>> {
 /// The guide's worked example must parse AND pass the unsafe-configuration boundary.
 ///
 /// Both halves matter and they fail differently. `parse_args` rejects a flag that no
-/// longer exists or a value outside its enum; `ValidatedConfig::try_from` is what refuses
+/// longer exists or a value outside its enum; `ValidatedDeployment::try_from` is what refuses
 /// an admissible-looking value the deployment may not use. The guide's example carried
 /// defects of both kinds.
 #[test]
@@ -114,7 +114,7 @@ fn the_sidecar_guides_worked_example_is_a_configuration_the_proxy_will_start_wit
                  {rendered}\n\nparse_args said: {e}\n\nFix the guide, not this test."
             )
         });
-        cli::ValidatedConfig::try_from(config).unwrap_or_else(|e| {
+        cli::ValidatedDeployment::try_from(config).unwrap_or_else(|e| {
             panic!(
                 "the sidecar guide documents a command line that PARSES but is refused \
                  before serving:\n  {rendered}\n\nvalidation said: {e}\n\nFix the guide, \

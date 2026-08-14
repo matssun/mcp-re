@@ -22,7 +22,7 @@
 //! while minting under another. [`DelegatedSigningFacts`] resolves both once, and nothing
 //! after this point can see that a default was ever involved.
 //!
-//! **The TTL and the overlap are checked here and kept in `Config`.** They are this owner's
+//! **The TTL and the overlap are checked here and kept in `DeploymentRequest`.** They are this owner's
 //! invariant, so the guards belong to it. The values do not, because nothing downstream
 //! re-derives them: planning reads an `i64` and hands it to a `CustodyConfig` field that is
 //! an `i64`. A normalized witness here would strengthen only the middle hop and widen again
@@ -30,7 +30,7 @@
 //! `mcp_re_http_profile::CustodyConfig` is what would make that hold, and that is a
 //! different type in a different crate.
 
-use crate::cli::{Config, MAX_DELEGATED_TTL_SECS};
+use crate::cli::{DeploymentRequest, MAX_DELEGATED_TTL_SECS};
 
 /// What layer A established about delegated response signing.
 ///
@@ -75,7 +75,9 @@ impl DelegatedSigningFacts {
 /// range guards do not gate construction — they are defects in a posture that is otherwise
 /// fully determined, and reporting them together with everything else is the point of
 /// collecting violations rather than returning at the first.
-pub fn classify_and_validate(config: &Config) -> (Option<DelegatedSigningFacts>, Vec<String>) {
+pub fn classify_and_validate(
+    config: &DeploymentRequest,
+) -> (Option<DelegatedSigningFacts>, Vec<String>) {
     let mut violations = Vec::new();
     let epoch = config.delegated_trust_epoch.clone();
     if epoch.is_none() {
@@ -115,7 +117,7 @@ pub fn classify_and_validate(config: &Config) -> (Option<DelegatedSigningFacts>,
 /// — so the TTL IS the exposure window of an exfiltrated hot-path key and needs a ceiling,
 /// not merely a positive value. The rotor's successor-before-expiry rule is checked for the
 /// same reason the ceiling is: these are public fields on a config a caller can build.
-fn ttl_violations(config: &Config) -> Vec<String> {
+fn ttl_violations(config: &DeploymentRequest) -> Vec<String> {
     let mut out = Vec::new();
     if config.delegated_ttl_secs <= 0 {
         out.push(
@@ -151,7 +153,9 @@ mod tests {
     use super::*;
     use crate::config_state::test_support::legal_config;
 
-    fn run(mutate: impl FnOnce(&mut Config)) -> (Option<DelegatedSigningFacts>, Vec<String>) {
+    fn run(
+        mutate: impl FnOnce(&mut DeploymentRequest),
+    ) -> (Option<DelegatedSigningFacts>, Vec<String>) {
         let mut config = legal_config();
         mutate(&mut config);
         classify_and_validate(&config)

@@ -3,7 +3,7 @@
 //!
 //! The pure, testable pieces of the binary live here: argument parsing, the
 //! trust-file loader, the subprocess inner server, and the builders that turn a
-//! [`Config`] into a [`KeySource`] / [`TrustResolver`] / [`Proxy`]. `main.rs` is a
+//! [`DeploymentRequest`] into a [`KeySource`] / [`TrustResolver`] / [`Proxy`]. `main.rs` is a
 //! thin shell that parses, builds, and runs the blocking serve loop.
 
 use std::num::NonZeroU64;
@@ -36,14 +36,14 @@ use crate::transport::ReverseProxyHeaderFormat;
 
 /// A secret string that does not leak through `Debug` and is scrubbed on drop.
 ///
-/// [`Config`] derives `Debug`, so any structured log, panic message, or debug print of
+/// [`DeploymentRequest`] derives `Debug`, so any structured log, panic message, or debug print of
 /// the config would otherwise carry the PKCS#11 User PIN verbatim. The PIN is the
 /// credential that unlocks a token holding the response-signing and (optionally) TLS
 /// private keys, so it belongs in the same custody class as the keys themselves.
 ///
 /// `Zeroizing` wipes the heap allocation when the value drops. That is a best effort
 /// against a core dump or a freed-page read, not a guarantee: the string was already
-/// copied by whatever read it in, and `Clone` (needed because `Config` is `Clone`)
+/// copied by whatever read it in, and `Clone` (needed because `DeploymentRequest` is `Clone`)
 /// makes another copy. It removes the copies this code controls.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SecretString(zeroize::Zeroizing<String>);
@@ -210,7 +210,7 @@ pub enum AuthzKind {
 
 /// Fully-parsed CLI configuration.
 #[derive(Debug, Clone)]
-pub struct Config {
+pub struct DeploymentRequest {
     /// Listen address, e.g. `127.0.0.1:8443`.
     pub bind: String,
     /// Expected audience (this server's identity).
@@ -490,7 +490,7 @@ pub struct Config {
     ///   `--pkcs11-pin <pin>` published the credential that unlocks the token holding
     ///   the response-signing (and optionally TLS) private keys to every local user for
     ///   the lifetime of the process.
-    /// * [`Config`] derives `Debug` and is cloned freely, so a PIN stored here would
+    /// * [`DeploymentRequest`] derives `Debug` and is cloned freely, so a PIN stored here would
     ///   ride along into any structured log, panic message, or debug print. Keeping only
     ///   the path means there is nothing to redact.
     ///
@@ -816,8 +816,8 @@ fn shared_replay_refusal(
 /// refactor's clothes.
 ///
 /// Pure: it takes what it decides on and returns the refusal, so the clauses can be tested
-/// without building a `Config` or a command line. [`ingress_assertion_violation`] is how
-/// the validation boundary asks the same question of a `Config`, so a config built in code
+/// without building a `DeploymentRequest` or a command line. [`ingress_assertion_violation`] is how
+/// the validation boundary asks the same question of a `DeploymentRequest`, so a config built in code
 /// cannot carry a dangling ingress control either.
 #[allow(clippy::too_many_arguments)]
 fn ingress_assertion_refusal(
@@ -975,9 +975,9 @@ fn ingress_assertion_refusal(
     None
 }
 
-/// Parse CLI arguments (excluding argv[0]) into a [`Config`]. Returns a
+/// Parse CLI arguments (excluding argv[0]) into a [`DeploymentRequest`]. Returns a
 /// human-readable error string on any missing/invalid argument.
-pub fn parse_args(args: &[String]) -> Result<Config, String> {
+pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     let mut bind = None;
     let mut audience = None;
     let mut server_signer = None;
@@ -1200,7 +1200,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             }
             // #4034 PKCS#11 key source.
             "--pkcs11-module" => pkcs11_module = Some(value.clone()),
-            // The PIN is read from a FILE, never argv. See `Config::pkcs11_pin_file`.
+            // The PIN is read from a FILE, never argv. See `DeploymentRequest::pkcs11_pin_file`.
             "--pkcs11-pin-file" => pkcs11_pin_file = Some(value.clone()),
             // Still recognised, only to REFUSE it with the reason and the replacement.
             // Falling through to "unknown flag" would be a worse error for the one
@@ -1702,7 +1702,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // the validation boundary uses. Kept HERE, at the position these checks always
     // occupied, so the diagnostic a CLI user meets first does not change (§K1).
     // The authority it derives is discarded here and rebuilt by the state's owner: parsing
-    // produces a `Config`, which is the REQUEST, and a request holds no witnesses. The
+    // produces a `DeploymentRequest`, which is the REQUEST, and a request holds no witnesses. The
     // single decode this slice is about is the one on the path from a validated
     // configuration to `AdmissionState`.
     validated_admission_authority(
@@ -1882,7 +1882,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         (ttl, overlap)
     };
 
-    let config = Config {
+    let config = DeploymentRequest {
         bind: require(bind, "--bind")?,
         audience: require(audience, "--audience")?,
         server_signer: require(server_signer, "--server-signer")?,
@@ -2043,21 +2043,21 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // black-box testable and shared with `main.rs` (which adds the filesystem-
     // dependent key-file-permission check). The proxy never even constructs when a
     // parse-time violation is present.
-    ValidatedConfig::try_from(config).map(ValidatedConfig::into_inner)
+    ValidatedDeployment::try_from(config).map(ValidatedDeployment::into_inner)
 }
 
-/// A [`Config`] whose PURE guards have been checked.
+/// A [`DeploymentRequest`] whose PURE guards have been checked.
 ///
 /// The guards themselves are not new — [`unsafe_config_violations`] has always run at
 /// the end of [`parse_args`]. What was missing is that passing through `parse_args` was
-/// the ONLY thing that ran them. `Config` has 76 public fields, so any caller that built
+/// the ONLY thing that ran them. `DeploymentRequest` has 76 public fields, so any caller that built
 /// one in code and handed it to `app::run` got a proxy with cn_legacy identity, a
 /// non-durable replay tier, a disabled client-cert lifetime or reverse-proxy header
 /// ingress — every posture the project refuses — with nothing to stop it. The guard was
 /// at the wrong altitude: on one path into the runtime rather than on the runtime.
 ///
 /// This type moves it onto the runtime. The serving path accepts only a
-/// `ValidatedConfig`, and the only way to obtain one is [`TryFrom`], so there is no
+/// `ValidatedDeployment`, and the only way to obtain one is [`TryFrom`], so there is no
 /// route past the check whether the config came from argv or from a caller's struct
 /// literal.
 ///
@@ -2074,15 +2074,15 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
 /// A stage that re-derived it from the same fields would be a second authority over one
 /// deployment fact, free to disagree with the first (CF-10).
 #[derive(Debug, Clone)]
-pub struct ValidatedConfig {
-    config: Config,
+pub struct ValidatedDeployment {
+    config: DeploymentRequest,
     state: DeploymentConfigState,
 }
 
-impl ValidatedConfig {
+impl ValidatedDeployment {
     /// The validated configuration. Named rather than a public field so the wrapper
-    /// cannot be reconstructed around an unchecked `Config`.
-    pub fn into_inner(self) -> Config {
+    /// cannot be reconstructed around an unchecked `DeploymentRequest`.
+    pub fn into_inner(self) -> DeploymentRequest {
         self.config
     }
 
@@ -2098,23 +2098,23 @@ impl ValidatedConfig {
     ///
     /// Named rather than a `Deref` because reading raw configuration is a statement about
     /// which layer the reader belongs to, not merely a question of safety. A shared
-    /// `&Config` cannot undo the validation — but the two callers of this method are the
+    /// `&DeploymentRequest` cannot undo the validation — but the two callers of this method are the
     /// two stages entitled to interpret configuration at all (startup planning, and the
     /// composition root that builds the plans), and a `Deref` made that boundary invisible
-    /// at the call site. In particular it silently downgraded `&ValidatedConfig` to
-    /// `&Config` when forwarding into modules that establish runtime capabilities; written
+    /// at the call site. In particular it silently downgraded `&ValidatedDeployment` to
+    /// `&DeploymentRequest` when forwarding into modules that establish runtime capabilities; written
     /// out, each such forward is visible in review and countable as work remaining.
-    pub fn config(&self) -> &Config {
+    pub fn config(&self) -> &DeploymentRequest {
         &self.config
     }
 }
 
-impl TryFrom<Config> for ValidatedConfig {
+impl TryFrom<DeploymentRequest> for ValidatedDeployment {
     type Error = String;
 
-    fn try_from(config: Config) -> Result<Self, Self::Error> {
+    fn try_from(config: DeploymentRequest) -> Result<Self, Self::Error> {
         match validate_configuration(&config) {
-            Ok(state) => Ok(ValidatedConfig { config, state }),
+            Ok(state) => Ok(ValidatedDeployment { config, state }),
             Err(violations) => Err(format!(
                 "mcp-re-proxy refuses unsafe configuration:\n  - {}",
                 violations.join("\n  - ")
@@ -2129,9 +2129,9 @@ impl TryFrom<Config> for ValidatedConfig {
 /// contradictory — the operator could believe the key never leaves the device while a
 /// file copy also exists — so it FAILS CLOSED.
 ///
-/// Pure and black-box-testable (no `Config`, no IO). The parser calls it with the values
+/// Pure and black-box-testable (no `DeploymentRequest`, no IO). The parser calls it with the values
 /// it has just read; the validation boundary asks the same question of two RECOGNISED
-/// states rather than of the fields (atlas X2a/X2b), which is why there is no `Config`
+/// states rather than of the fields (atlas X2a/X2b), which is why there is no `DeploymentRequest`
 /// adapter here any more.
 pub fn validate_tls_signing_exclusivity(
     has_delegated_tls: bool,
@@ -2163,7 +2163,7 @@ pub fn validate_tls_signing_exclusivity(
 /// and the deployment goes on reporting that the binding is in force.
 ///
 /// Both functions say in their own docs that the parser guarantees the shape. It did, and
-/// only for argv: `target_uri` is a public `Config` field, so a programmatically built
+/// only for argv: `target_uri` is a public `DeploymentRequest` field, so a programmatically built
 /// config reaches the serving path having met no parser. An ingress fanning several paths
 /// into one process would then verify signatures over a `@target-uri` the request never
 /// arrived at, which is the exact scenario the parse-time diagnostic describes.
@@ -2274,7 +2274,7 @@ pub(crate) fn undeployable_transport_binding_refusal(binding: BindingKind) -> Op
 /// One function because this prohibition was previously stated TWICE, in two places, with
 /// two different messages: once in `parse_args` and once in the composition root. Neither
 /// was at the validation boundary. That is not a bypass — the composition root did catch a
-/// programmatically built `Config` — but two independent statements of one prohibition can
+/// programmatically built `DeploymentRequest` — but two independent statements of one prohibition can
 /// drift, and a policy decision does not belong in a composition root (ADR-MCPRE-056 §12).
 pub(crate) fn unaccepted_authz_profile_refusal(authz: AuthzKind) -> Option<String> {
     (authz == AuthzKind::Reference).then(|| {
@@ -2305,7 +2305,7 @@ pub(crate) fn unaccepted_authz_profile_refusal(authz: AuthzKind) -> Option<Strin
 ///
 /// A function for the same reason as [`online_ocsp_refusal`]: consulted from
 /// [`parse_args`] for the specific diagnostic, and from [`unsafe_config_violations`],
-/// which is what a programmatically built `Config` meets. Two copies of a condition is how
+/// which is what a programmatically built `DeploymentRequest` meets. Two copies of a condition is how
 /// the parser and the validation boundary drifted apart the first time.
 pub(crate) fn unenforceable_revocation_list_refusal(paths: &[String]) -> Option<String> {
     (!paths.is_empty()).then(|| {
@@ -2335,7 +2335,7 @@ pub(crate) fn unenforceable_revocation_list_refusal(paths: &[String]) -> Option<
 ///
 /// A function rather than two copies of the condition because it is consulted from two
 /// altitudes — [`parse_args`], for the specific diagnostic, and
-/// [`unsafe_config_violations`], which is what a programmatically built `Config` meets.
+/// [`unsafe_config_violations`], which is what a programmatically built `DeploymentRequest` meets.
 /// Two copies is how the two drifted in the first place: the parser refused, the
 /// validation boundary did not, and a caller that skipped the parser reached the serving
 /// path with the claim intact.
@@ -2405,7 +2405,7 @@ pub(crate) struct AdmissionAuthority {
 /// `Err(diagnostic)` means it cannot. `Ok(None)` is `--admission off`, the one state that
 /// needs no authority; `Ok(Some(..))` carries what the enforcing states are inhabited by.
 /// Every clause here is a property of the parsed configuration alone, so this is the
-/// boundary that owns them (ADR-MCPRE-056 §AA): `Config` has public fields, and until this
+/// boundary that owns them (ADR-MCPRE-056 §AA): `DeploymentRequest` has public fields, and until this
 /// moved, all four lived in `parse_args` where a programmatically built configuration
 /// walked past them.
 ///
@@ -2524,15 +2524,15 @@ pub(crate) fn validated_admission_authority(
     Ok(authority)
 }
 
-/// The KMS/STS endpoint overrides a [`Config`] carries, held to the rule wherever the
+/// The KMS/STS endpoint overrides a [`DeploymentRequest`] carries, held to the rule wherever the
 /// config came from.
 ///
-/// [`validated_kms_endpoint`] is the decision; this is only how a `Config` answers it, so
+/// [`validated_kms_endpoint`] is the decision; this is only how a `DeploymentRequest` answers it, so
 /// the two call sites cannot drift into disagreeing about the rule. The three fields are
 /// public, and they carry the ROOT-KEY trust bootstrap — on GCP every request to them also
 /// carries a live workload-identity bearer token — so a config built in code must not be
 /// able to name a plaintext or attacker-chosen authority for them.
-pub(crate) fn kms_endpoint_refusals(config: &Config) -> Vec<String> {
+pub(crate) fn kms_endpoint_refusals(config: &DeploymentRequest) -> Vec<String> {
     [
         ("--aws-kms-endpoint", config.aws_kms_endpoint.as_deref()),
         ("--aws-sts-endpoint", config.aws_sts_endpoint.as_deref()),
@@ -2543,10 +2543,10 @@ pub(crate) fn kms_endpoint_refusals(config: &Config) -> Vec<String> {
     .collect()
 }
 
-/// Ingress-assertion coherence, read off a [`Config`], for the same reason as above: the
+/// Ingress-assertion coherence, read off a [`DeploymentRequest`], for the same reason as above: the
 /// clauses decide whether an operator can believe a request-binding ingress control is in
 /// force, and that belief is no more true when the config was built in code.
-pub(crate) fn ingress_assertion_violation(config: &Config) -> Option<String> {
+pub(crate) fn ingress_assertion_violation(config: &DeploymentRequest) -> Option<String> {
     ingress_assertion_refusal(
         config.binding,
         &config.ingress_lb_keys,
@@ -2571,7 +2571,7 @@ pub(crate) fn ingress_assertion_violation(config: &Config) -> Option<String> {
 /// # Why this is the parser's job and not the boundary's
 ///
 /// [`InFlightLimitRequest`](crate::config_state::InFlightLimitRequest) holds ONE limit, so
-/// a `Config` naming both cannot be constructed — by a parser, an embedder or a test — and
+/// a `DeploymentRequest` naming both cannot be constructed — by a parser, an embedder or a test — and
 /// the boundary has no such state left to refuse. What remains is only reachable while
 /// READING an argument list, where "already set" is a fact about the input rather than
 /// about the request: without this, the second flag would silently overwrite the first.
@@ -2601,7 +2601,7 @@ fn second_admission_limit(
 /// The proxy has NO security toggle — it always runs the maximal-security posture,
 /// so this is applied unconditionally. This is the pure, black-box-testable core:
 /// each returned string names the offending flag and how to fix it. It covers ONLY
-/// the conditions knowable from the parsed [`Config`] — the group/world-readable
+/// the conditions knowable from the parsed [`DeploymentRequest`] — the group/world-readable
 /// key-file check is filesystem-dependent and lives in `main.rs` (which reads the
 /// file mode and reuses the same fail-closed posture).
 ///
@@ -2619,7 +2619,7 @@ fn second_admission_limit(
 /// The violations alone. [`validate_configuration`] is the boundary proper — it runs the
 /// same single pass and additionally returns what that pass RECOGNISED, which is what the
 /// runtime needs. This wrapper exists for callers that only ask whether a config is legal.
-pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
+pub fn unsafe_config_violations(config: &DeploymentRequest) -> Vec<String> {
     validate_configuration(config).err().unwrap_or_default()
 }
 
@@ -2636,7 +2636,9 @@ pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
 /// `tests/config_refusal_precedence_test.rs` so that reorganising this function cannot
 /// silently reorder the diagnosis: machine validators are called at the position their
 /// clauses already occupied.
-pub fn validate_configuration(config: &Config) -> Result<DeploymentConfigState, Vec<String>> {
+pub fn validate_configuration(
+    config: &DeploymentRequest,
+) -> Result<DeploymentConfigState, Vec<String>> {
     // PASS 1 — each machine recognises its own state and checks that state's columns.
     let (continuation_control, continuation_violations) =
         crate::config_state::continuation_control::classify_and_validate(config);
@@ -2762,11 +2764,11 @@ struct MachineViolations {
 /// checked, and this function only places each result where its clauses were read before
 /// the machine owned them — see [`validate_configuration`] on why the position is
 /// load-bearing. Clauses still stated inline belong to machines not yet implemented.
-fn legality_violations(config: &Config, decided: MachineViolations) -> Vec<String> {
+fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -> Vec<String> {
     let mut violations = Vec::new();
     // Online OCSP cannot be honored on the production data plane. Checked HERE, not only
     // in `parse_args`, because this is the boundary the runtime actually goes through:
-    // `client_ocsp` is one of `Config`'s public fields, so a caller that builds the struct
+    // `client_ocsp` is one of `DeploymentRequest`'s public fields, so a caller that builds the struct
     // in code reaches the serving path without ever meeting a parser.
     if let Some(refusal) = online_ocsp_refusal(config.client_ocsp) {
         violations.push(refusal);
@@ -3095,7 +3097,7 @@ fn parse_cert_lifetime(value: &str) -> Result<Option<Duration>, String> {
 /// a Tier-3 identity reports the same source field the direct-TLS / reverse-proxy
 /// paths would.
 pub fn build_lb_assertion_binding(
-    config: &Config,
+    config: &DeploymentRequest,
 ) -> Result<Option<crate::transport::LbAssertionBinding>, String> {
     if config.binding != BindingKind::LbAssertion {
         return Ok(None);
@@ -3125,7 +3127,7 @@ pub fn build_lb_assertion_binding(
 /// key is a valid Ed25519 public key — this only reconstructs the verifier, failing
 /// closed with a precise error if any invariant were ever violated.
 pub fn build_attested_ingress_binding(
-    config: &Config,
+    config: &DeploymentRequest,
 ) -> Result<Option<crate::transport::LbAssertionV2Binding>, String> {
     if config.binding != BindingKind::AttestedIngress {
         return Ok(None);
@@ -3258,7 +3260,7 @@ pub fn build_key_source(
             key_label,
         } => {
             // Read the User PIN here, at the one point it is used, so it exists for as
-            // short a window as possible and never lands in `Config` (which is `Debug`
+            // short a window as possible and never lands in `DeploymentRequest` (which is `Debug`
             // and freely cloned). The file must be no more readable than a key file:
             // it unlocks the token holding the signing keys.
             let pin = read_pkcs11_pin(pin_file)?;
@@ -3620,7 +3622,7 @@ pub fn load_revocation_list(paths: &[String]) -> Result<Vec<String>, String> {
 /// mandatory timeout (fail closed on timeout) so it can never wedge the blocking
 /// serve loop.
 #[cfg(feature = "online_ocsp")]
-pub fn build_ocsp_checker(config: &Config) -> Option<crate::ocsp::OcspChecker> {
+pub fn build_ocsp_checker(config: &DeploymentRequest) -> Option<crate::ocsp::OcspChecker> {
     match config.client_ocsp {
         OcspKind::Off => None,
         // Hard-fail (fail closed) always: OCSP has no soft-fail knob any more.
@@ -3659,7 +3661,7 @@ mod tests {
     // ---- KMS endpoint override validation (C054) --------------------------
 
     /// Parse `minimal()` plus one KMS endpoint override.
-    fn with_kms_endpoint(flag: &str, endpoint: &str) -> Result<super::Config, String> {
+    fn with_kms_endpoint(flag: &str, endpoint: &str) -> Result<super::DeploymentRequest, String> {
         let mut a = minimal();
         // `minimal()` omits --replay-cache, which `unsafe_config_violations` refuses; that
         // refusal is unrelated to endpoint validation and would mask an accept case.
@@ -3777,7 +3779,7 @@ mod tests {
             }
         }
         // And through the two boundaries a config actually crosses: the argv match arms,
-        // and `kms_endpoint_refusals` for a `Config` built in code — the three fields are
+        // and `kms_endpoint_refusals` for a `DeploymentRequest` built in code — the three fields are
         // public, and an embedder reaches key-source construction without a parser.
         for endpoint in hostile {
             for flag in ["--aws-kms-endpoint", "--gcp-kms-endpoint"] {
@@ -3872,7 +3874,7 @@ mod tests {
         }
         // End to end through both boundaries. `--aws-sts-endpoint` is parsed only alongside
         // `--aws-kms-use-web-identity` (an unrelated coherence rule), so its accept case is
-        // proved at the `Config` boundary, which is what `app::run` consults.
+        // proved at the `DeploymentRequest` boundary, which is what `app::run` consults.
         for endpoint in legitimate {
             for flag in ["--aws-kms-endpoint", "--gcp-kms-endpoint"] {
                 assert!(
@@ -4085,7 +4087,7 @@ mod tests {
 
     /// The degraded-window rule was the LAST parse-only admission invariant, and unlike
     /// the others nothing downstream re-checked it: the composition root passed
-    /// `allow_degraded` and P straight into `AdmissionPolicy`. So a `Config` built in code
+    /// `allow_degraded` and P straight into `AdmissionPolicy`. So a `DeploymentRequest` built in code
     /// reached the serving path with degraded mode on and no window configured, and got
     /// one `--max-clock-skew` wide — a revoked workload served against an unreachable
     /// authority on a deployment that asked for no degraded window at all.
@@ -4437,7 +4439,7 @@ mod tests {
     /// already refused the pair (`_helpers.tpl`), so the two deployment surfaces disagreed
     /// about whether the configuration was legal at all.
     ///
-    /// The refusal is the PARSER's because the request type holds one limit: a `Config`
+    /// The refusal is the PARSER's because the request type holds one limit: a `DeploymentRequest`
     /// naming both cannot be built, so the boundary has no such state left to refuse.
     /// Reading an argument list is the only place the combination still appears, and
     /// without this the second flag would silently overwrite the first.
@@ -4467,7 +4469,7 @@ mod tests {
     /// default to make room for it. That erasure is gone: absence is now representable, so
     /// the request says "fleet total" and the boundary resolves it.
     ///
-    /// The case that was broken: an embedder assembling a `Config` from
+    /// The case that was broken: an embedder assembling a `DeploymentRequest` from
     /// `ServerLimits::default()` plus a fleet-wide target got the default 256 per core and
     /// no diagnostic, because the provenance rule lived in the parser alone.
     #[test]
@@ -4511,7 +4513,7 @@ mod tests {
         assert!(unsafe_config_violations(&config).is_empty());
 
         // `parse_args` applies `unsafe_config_violations` unconditionally, so
-        // disabling the bound never produces a Config at all.
+        // disabling the bound never produces a DeploymentRequest at all.
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--max-connection-age-secs", "0"]));
         let err = parse_args(&a).expect_err("a disabled connection-age bound is refused");
@@ -4920,11 +4922,11 @@ mod tests {
         );
     }
 
-    /// A complete Mode-C [`Config`], assembled by mutating a parsed base rather than
+    /// A complete Mode-C [`DeploymentRequest`], assembled by mutating a parsed base rather than
     /// through `parse_args` — the boundary refuses the mode, so no parsed path can
     /// produce one. The `did:` audience and ingress identity match
     /// [`attested_ingress_flags`].
-    fn mode_c_config() -> super::Config {
+    fn mode_c_config() -> super::DeploymentRequest {
         let mut config = parse_args(&minimal_durable()).expect("the base config parses");
         config.binding = BindingKind::AttestedIngress;
         config.identity_source = IdentityPolicy::UriSan;
@@ -5210,7 +5212,7 @@ mod tests {
         assert_eq!(
             config.pkcs11_pin_file.as_deref(),
             Some("/etc/mcp-re/pkcs11-pin"),
-            "the config carries the PIN's PATH; the PIN itself is not a Config field"
+            "the config carries the PIN's PATH; the PIN itself is not a DeploymentRequest field"
         );
         assert_eq!(config.pkcs11_token_label.as_deref(), Some("mcp-re-test"));
         assert_eq!(
@@ -5274,7 +5276,7 @@ mod tests {
 
     #[test]
     fn a_secret_string_does_not_print_its_value_or_length() {
-        // C049: Config derives Debug and is cloned freely. The PIN is no longer a Config
+        // C049: DeploymentRequest derives Debug and is cloned freely. The PIN is no longer a DeploymentRequest
         // field at all, but the type that carries it in transit must not leak either.
         let secret = super::SecretString::new("hunter2");
         let rendered = format!("{secret:?}");
@@ -5386,7 +5388,7 @@ mod tests {
     /// rather than from the request, so a layer-B refusal is measured through the same
     /// path production takes.
     fn key_source_from(
-        config: &super::Config,
+        config: &super::DeploymentRequest,
     ) -> Result<Box<dyn super::KeySource + Send + Sync>, super::KeyError> {
         let (custody, violations) = crate::config_state::custody::classify_and_validate(config);
         assert!(violations.is_empty(), "fixture refused: {violations:?}");
@@ -7425,7 +7427,7 @@ mod tests {
 
     // `build_lb_assertion_binding` is never reached on the CLI happy path (the
     // lb-assertion binding is refused at parse), so cover the pure builder directly by
-    // mutating a parsed Config — the wiring + the fail-closed key parse.
+    // mutating a parsed DeploymentRequest — the wiring + the fail-closed key parse.
     #[test]
     fn build_lb_assertion_binding_wires_keys_and_fails_closed() {
         let mut c = parse_args(&minimal_durable()).expect("parse");

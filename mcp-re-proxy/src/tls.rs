@@ -90,14 +90,14 @@ pub struct ServerLimits {
     ///
     /// On the validated path this is not what an operator wrote. The admission limit is
     /// stated once, in
-    /// [`Config::in_flight_limit`](crate::cli::Config::in_flight_limit), which can express
+    /// [`DeploymentRequest::in_flight_limit`](crate::cli::DeploymentRequest::in_flight_limit), which can express
     /// per-core, fleet-wide, or nothing at all; the boundary resolves that to a basis and
     /// the composition root writes the per-core answer HERE. Setting this field on a
-    /// `Config` therefore states nothing — it is overwritten.
+    /// `DeploymentRequest` therefore states nothing — it is overwritten.
     ///
     /// The fail-safe default remains, and is the same constant the basis resolves an
     /// unstated limit to, so a `ServerLimits` built directly — by a test, or an embedder
-    /// driving `async_serve` with no `Config` — is bounded on exactly the same terms.
+    /// driving `async_serve` with no `DeploymentRequest` — is bounded on exactly the same terms.
     pub max_in_flight_requests: Option<usize>,
     /// MCPRE-115 (ADR-MCPRE-051 §6): the BOUNDED GRACE WINDOW for graceful drain on
     /// the async serving path. On shutdown each per-core [`serve`] loop stops

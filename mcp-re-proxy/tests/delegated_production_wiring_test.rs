@@ -3,7 +3,7 @@
 //!
 //! The sibling `delegated_serving_test` proves the serving CONTRACT with a hand-built
 //! rotor. This lane proves the PRODUCTION WIRING: it drives the real
-//! `build_delegated_signing(config, root)` from a real, parser-produced [`Config`] in
+//! `build_delegated_signing(config, root)` from a real, parser-produced [`DeploymentRequest`] in
 //! delegated-signing (the only response mode), exactly as the serving binary does —
 //! only the socket/TLS layer (covered by the fleet tests) is left out. The root issuer
 //! here is a fake/in-memory `SigningKey` (the KMS-as-root swap is proven through the
@@ -79,11 +79,11 @@ fn audience() -> AudienceTuple {
     }
 }
 
-/// The real serving Config in delegated-required mode, produced by the production CLI
+/// The real serving DeploymentRequest in delegated-required mode, produced by the production CLI
 /// parser. Filesystem paths are placeholders — the delegated wiring reads config
 /// fields (audience, server-signer/-key-id, trust domain, ttl/overlap/epoch), not
 /// files. A durable replay selection satisfies the parse-time unsafe-config checks.
-fn delegated_config() -> mcp_re_proxy::cli::Config {
+fn delegated_config() -> mcp_re_proxy::cli::DeploymentRequest {
     let args: Vec<String> = [
         "--bind",
         "127.0.0.1:8443",
@@ -165,7 +165,7 @@ fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
 /// the proxy plus the rotor so the test can drive controlled rotation/expiry (in the
 /// binary a background thread does this).
 fn build_proxy(
-    config: &mcp_re_proxy::cli::Config,
+    config: &mcp_re_proxy::cli::DeploymentRequest,
 ) -> (HttpProfileProxy, mcp_re_proxy::ProdDelegatedRotor) {
     let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(config), root_key());
     let expected_audience = AudienceTuple {
@@ -424,9 +424,11 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
 
 /// The `SigningPlan` `app::run` projects, so this lane drives the production wiring
 /// through the same plan the binary does — including the boundary that produces it.
-fn signing_plan(config: &mcp_re_proxy::cli::Config) -> mcp_re_proxy::startup_plan::SigningPlan {
+fn signing_plan(
+    config: &mcp_re_proxy::cli::DeploymentRequest,
+) -> mcp_re_proxy::startup_plan::SigningPlan {
     use mcp_re_proxy::startup_plan::{response_issuer_kid, SigningPlan, TrustEpochPlan};
-    let validated = mcp_re_proxy::cli::ValidatedConfig::try_from(config.clone())
+    let validated = mcp_re_proxy::cli::ValidatedDeployment::try_from(config.clone())
         .expect("the fixture config must validate");
     SigningPlan::from_validated(
         &validated,

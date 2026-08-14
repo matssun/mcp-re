@@ -247,14 +247,14 @@ fn check_key_file_perms(_path: &str, _allow_group_read: bool) -> Result<(), Stri
 /// binary's `main` is a thin shim over this; keeping it in the library makes the
 /// whole deployed serving path in-process-testable.
 ///
-/// The signature still takes a raw [`crate::cli::Config`], and validation happens HERE
-/// rather than being the caller's job. `Config` has 76 public fields, so a caller that
+/// The signature still takes a raw [`crate::cli::DeploymentRequest`], and validation happens HERE
+/// rather than being the caller's job. `DeploymentRequest` has 76 public fields, so a caller that
 /// builds one in code — an embedder, a harness, a test — used to reach the serving path
 /// having run none of the parse-time safety guards. Validating at the boundary closes
 /// that without breaking any existing caller: every guard now runs whichever way the
-/// config was produced, and nothing past this point sees an unchecked `Config`.
+/// config was produced, and nothing past this point sees an unchecked `DeploymentRequest`.
 pub fn run(
-    config: crate::cli::Config,
+    config: crate::cli::DeploymentRequest,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
     // Whether the audit stream is this process's stderr has to be read BEFORE the config
@@ -266,7 +266,7 @@ pub fn run(
     // that every route out of this function passes through it: a clean drain, a serve that
     // failed, and a startup refused at the boundary. A teardown obligation discharged on
     // one of three exits is the shape the rest of this round keeps finding.
-    let outcome = crate::cli::ValidatedConfig::try_from(config)
+    let outcome = crate::cli::ValidatedDeployment::try_from(config)
         .and_then(|validated| run_validated(&validated, shutdown));
     drain_audit_stream(audits_to_stderr);
     outcome
@@ -329,7 +329,7 @@ fn audit_drain_line(drained: bool, report: bool) -> Option<String> {
     })
 }
 
-/// The serving path proper. Reachable only with a [`crate::cli::ValidatedConfig`], which
+/// The serving path proper. Reachable only with a [`crate::cli::ValidatedDeployment`], which
 /// is the whole point: there is no route into it that skips the guards.
 // The composition root is long ON PURPOSE (§12): its length is the assembly it performs,
 // and shortening it by moving statements into helpers would hide ordering and ownership
@@ -337,7 +337,7 @@ fn audit_drain_line(drained: bool, report: bool) -> Option<String> {
 // the module, so anything else here that grows past the threshold is still reported.
 #[allow(clippy::too_many_lines)]
 fn run_validated(
-    config: &crate::cli::ValidatedConfig,
+    config: &crate::cli::ValidatedDeployment,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
     let values = config.config();
@@ -495,7 +495,7 @@ fn run_validated(
     // required its own preconditions to be manufactured would be describing an
     // architecture that does not exist.
     let mut lifecycle = crate::runtime_state::RuntimeLifecycle::new();
-    // Holding a `ValidatedConfig` IS the proof: there is no route to this function that
+    // Holding a `ValidatedDeployment` IS the proof: there is no route to this function that
     // skips the boundary.
     lifecycle.apply(crate::runtime_state::RuntimeEvent::ValidationSucceeded)?;
     lifecycle.apply(crate::runtime_state::RuntimeEvent::PlanBuilt)?;
@@ -903,7 +903,7 @@ fn run_validated(
 /// The admission limit arrives as the RESOLVED basis rather than as request fields: the
 /// fleet needs the fleet-wide half of it, and which half exists is the boundary's answer.
 fn fleet_config(
-    values: &cli::Config,
+    values: &cli::DeploymentRequest,
     in_flight_limit: crate::config_state::InFlightLimitBasis,
 ) -> Result<crate::async_fleet::FleetConfig, String> {
     use std::net::ToSocketAddrs;
@@ -1034,14 +1034,14 @@ mod tests {
         }
     }
 
-    /// A parsed `Config` for `source`, built through the REAL parser so the test cannot
+    /// A parsed `DeploymentRequest` for `source`, built through the REAL parser so the test cannot
     /// drift from what the CLI actually produces. An empty `tls_key` is how the parser
     /// represents delegated TLS, so it is passed through rather than defaulted.
     fn config_with(
         source: crate::cli::KeySourceKind,
         seed: &str,
         tls_key: &str,
-    ) -> crate::cli::Config {
+    ) -> crate::cli::DeploymentRequest {
         use crate::cli::KeySourceKind;
         let (name, mut extra): (&str, Vec<&str>) = match source {
             KeySourceKind::File => ("file", vec![]),
@@ -1132,7 +1132,7 @@ mod tests {
     /// Classified rather than hand-built, so these tests measure what the validation
     /// boundary actually recognises for the fixture above.
     fn custody_states(
-        config: &crate::cli::Config,
+        config: &crate::cli::DeploymentRequest,
     ) -> (
         crate::config_state::CustodyState,
         crate::config_state::TlsCustodyState,

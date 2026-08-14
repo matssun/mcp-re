@@ -31,7 +31,7 @@
 //! parser leaves empty in the device states, so its emptiness carries no intent and it is
 //! ignored there rather than forbidden.
 
-use crate::cli::{Config, KeySourceKind};
+use crate::cli::{DeploymentRequest, KeySourceKind};
 
 /// How the AWS KMS states obtain the credentials they call KMS with.
 ///
@@ -124,7 +124,7 @@ impl CustodyState {
 ///
 /// `None` when a required value is absent — which is exactly when `required_violations`
 /// below pushes a refusal, so a caller never sees one without the other.
-fn classify(config: &Config) -> Option<CustodyState> {
+fn classify(config: &DeploymentRequest) -> Option<CustodyState> {
     let seed = |value: &str| (!value.is_empty()).then(|| value.to_string());
     Some(match config.key_source {
         KeySourceKind::File => CustodyState::FileSeed {
@@ -163,7 +163,7 @@ fn classify(config: &Config) -> Option<CustodyState> {
 ///
 /// Takes the requested KIND rather than the built state: this is what runs when the state
 /// could NOT be built, so it cannot depend on one existing.
-fn required_violations(kind: KeySourceKind, config: &Config) -> Vec<String> {
+fn required_violations(kind: KeySourceKind, config: &DeploymentRequest) -> Vec<String> {
     let mut out = Vec::new();
     let mut require = |present: bool, message: &str| {
         if !present {
@@ -223,7 +223,7 @@ fn required_violations(kind: KeySourceKind, config: &Config) -> Vec<String> {
 ///
 /// Every entry is `Option`-typed or an explicitly-passed flag, so presence is an operator
 /// statement rather than a default (CF-04's qualification).
-fn forbidden_violations(kind: KeySourceKind, config: &Config) -> Vec<String> {
+fn forbidden_violations(kind: KeySourceKind, config: &DeploymentRequest) -> Vec<String> {
     let mut out = Vec::new();
     let mut forbid = |present: bool, owner: KeySourceKind, flag: &str, owning_source: &str| {
         if present && kind != owner {
@@ -279,7 +279,7 @@ fn forbidden_violations(kind: KeySourceKind, config: &Config) -> Vec<String> {
 /// Every violation in the columns is reported, not the first. That is a deliberate change
 /// from the predicate this replaces, and it matches every other clause at this boundary;
 /// a configuration with one violation still reads exactly as before.
-pub fn classify_and_validate(config: &Config) -> (Option<CustodyState>, Vec<String>) {
+pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<CustodyState>, Vec<String>) {
     let mut violations = crate::cli::kms_endpoint_refusals(config);
     violations.extend(required_violations(config.key_source, config));
     violations.extend(forbidden_violations(config.key_source, config));
@@ -291,7 +291,7 @@ mod tests {
     use super::*;
     use crate::config_state::test_support::legal_config;
 
-    fn pkcs11(config: &mut Config) {
+    fn pkcs11(config: &mut DeploymentRequest) {
         config.key_source = KeySourceKind::Pkcs11;
         config.pkcs11_module = Some("/lib/softhsm.so".to_string());
         config.pkcs11_pin_file = Some("/pin".to_string());
@@ -299,24 +299,28 @@ mod tests {
         config.pkcs11_key_label = Some("signing".to_string());
     }
 
-    fn aws(config: &mut Config) {
+    fn aws(config: &mut DeploymentRequest) {
         config.key_source = KeySourceKind::AwsKms;
         config.aws_kms_region = Some("eu-north-1".to_string());
         config.aws_kms_key_id = Some("alias/signing".to_string());
     }
 
-    fn gcp(config: &mut Config) {
+    fn gcp(config: &mut DeploymentRequest) {
         config.key_source = KeySourceKind::GcpKms;
         config.gcp_kms_key_version =
             Some("projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1".to_string());
     }
 
     /// A state this machine must recognise, and how to request it.
-    type Form = (fn(&CustodyState) -> bool, &'static str, fn(&mut Config));
+    type Form = (
+        fn(&CustodyState) -> bool,
+        &'static str,
+        fn(&mut DeploymentRequest),
+    );
     /// A flag a case must name in its refusal, and the configuration that provokes it.
-    type Case = (&'static str, fn(&mut Config));
+    type Case = (&'static str, fn(&mut DeploymentRequest));
 
-    fn run(mutate: impl FnOnce(&mut Config)) -> (Option<CustodyState>, Vec<String>) {
+    fn run(mutate: impl FnOnce(&mut DeploymentRequest)) -> (Option<CustodyState>, Vec<String>) {
         let mut config = legal_config();
         mutate(&mut config);
         classify_and_validate(&config)
@@ -328,12 +332,12 @@ mod tests {
             (
                 |s| matches!(s, CustodyState::FileSeed { .. }),
                 "FileSeed",
-                |c: &mut Config| c.key_source = KeySourceKind::File,
+                |c: &mut DeploymentRequest| c.key_source = KeySourceKind::File,
             ),
             (
                 |s| matches!(s, CustodyState::EnvSeed { .. }),
                 "EnvSeed",
-                |c: &mut Config| c.key_source = KeySourceKind::Env,
+                |c: &mut DeploymentRequest| c.key_source = KeySourceKind::Env,
             ),
             (
                 |s| matches!(s, CustodyState::Pkcs11 { .. }),
@@ -353,9 +357,9 @@ mod tests {
 
     #[test]
     fn only_the_device_states_hold_the_key_off_this_process() {
-        let built = |mutate: fn(&mut Config)| run(mutate).0.expect("a legal state");
+        let built = |mutate: fn(&mut DeploymentRequest)| run(mutate).0.expect("a legal state");
         assert!(!built(|c| c.key_source = KeySourceKind::File).is_non_exporting_device());
-        for mutate in [pkcs11 as fn(&mut Config), aws, gcp] {
+        for mutate in [pkcs11 as fn(&mut DeploymentRequest), aws, gcp] {
             assert!(built(mutate).is_non_exporting_device());
         }
     }
@@ -511,19 +515,19 @@ mod tests {
     #[test]
     fn a_state_missing_its_material_is_not_built() {
         for mutate in [
-            (|c: &mut Config| {
+            (|c: &mut DeploymentRequest| {
                 pkcs11(c);
                 c.pkcs11_pin_file = None;
-            }) as fn(&mut Config),
-            |c: &mut Config| {
+            }) as fn(&mut DeploymentRequest),
+            |c: &mut DeploymentRequest| {
                 aws(c);
                 c.aws_kms_key_id = None;
             },
-            |c: &mut Config| {
+            |c: &mut DeploymentRequest| {
                 gcp(c);
                 c.gcp_kms_key_version = None;
             },
-            |c: &mut Config| {
+            |c: &mut DeploymentRequest| {
                 c.key_source = KeySourceKind::File;
                 c.signing_key_seed = String::new();
             },

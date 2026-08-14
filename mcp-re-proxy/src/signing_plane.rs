@@ -937,7 +937,7 @@ mod epoch_watch_wiring_tests {
     use crate::startup_plan::TrustEpochPlan;
 
     /// A plan, written out. The plan is what this function consumes now, so the fixture
-    /// states the posture directly instead of assembling a whole `Config` around one field.
+    /// states the posture directly instead of assembling a whole `DeploymentRequest` around one field.
     ///
     /// The URL below is REACHABLE: layer A checks the locator's shape and nothing more —
     /// whether a Redis client can use it is a fact about the build, deliberately left to

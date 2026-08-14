@@ -42,7 +42,7 @@
 //! The setting is refused there because it dangles, which is the true reason, and the
 //! width clause now sits inside the enforcing branch where its own reasoning holds.
 
-use crate::cli::{AdmissionAuthority, AdmissionKind, Config};
+use crate::cli::{AdmissionAuthority, AdmissionKind, DeploymentRequest};
 use mcp_re_core::VerificationKey;
 use std::num::NonZeroU64;
 
@@ -172,7 +172,7 @@ impl AdmissionState {
 /// checks have always run in, so the diagnostic a multiply-misconfigured deployment meets
 /// first does not move. No state is recognised when it refuses: an enforcing state cannot
 /// be built without the witnesses that make it inhabitable.
-pub fn classify_and_validate(config: &Config) -> (Option<AdmissionState>, Vec<String>) {
+pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<AdmissionState>, Vec<String>) {
     let authority = match crate::cli::validated_admission_authority(
         config.admission,
         config.admission_authority_kid.as_deref(),
@@ -219,9 +219,9 @@ mod tests {
     use crate::config_state::test_support::legal_config;
 
     /// A flag a case must name in its refusal, and the configuration that provokes it.
-    type Case = (&'static str, fn(&mut Config));
+    type Case = (&'static str, fn(&mut DeploymentRequest));
 
-    fn enforcing(config: &mut Config, kind: AdmissionKind) {
+    fn enforcing(config: &mut DeploymentRequest, kind: AdmissionKind) {
         config.admission = kind;
         config.admission_authority_kid = Some("authority-1".to_string());
         config.admission_authority_pubkey_b64url = Some(valid_pubkey());
@@ -236,7 +236,7 @@ mod tests {
             .to_b64url()
     }
 
-    fn run(mutate: impl FnOnce(&mut Config)) -> (Option<AdmissionState>, Vec<String>) {
+    fn run(mutate: impl FnOnce(&mut DeploymentRequest)) -> (Option<AdmissionState>, Vec<String>) {
         let mut config = legal_config();
         mutate(&mut config);
         classify_and_validate(&config)
@@ -378,10 +378,13 @@ mod tests {
     #[test]
     fn every_authority_parameter_is_refused_beside_an_off_gate() {
         for mutate in [
-            (|c: &mut Config| c.admission_authority_kid = Some("authority-1".to_string()))
-                as fn(&mut Config),
-            |c: &mut Config| c.admission_authority_pubkey_b64url = Some(valid_pubkey()),
-            |c: &mut Config| c.admission_redis_url = Some("redis://127.0.0.1:6379".to_string()),
+            (|c: &mut DeploymentRequest| {
+                c.admission_authority_kid = Some("authority-1".to_string())
+            }) as fn(&mut DeploymentRequest),
+            |c: &mut DeploymentRequest| c.admission_authority_pubkey_b64url = Some(valid_pubkey()),
+            |c: &mut DeploymentRequest| {
+                c.admission_redis_url = Some("redis://127.0.0.1:6379".to_string())
+            },
         ] {
             let (state, violations) = run(|c| {
                 c.admission = AdmissionKind::Off;

@@ -14,7 +14,7 @@
 //! interchangeable claims, and every posture statement derived from them would inherit
 //! the confusion.
 
-use crate::cli::ValidatedConfig;
+use crate::cli::ValidatedDeployment;
 use crate::config_state::ContinuationControlState;
 use crate::config_state::ReplayState;
 use crate::replay_tier::ReplayDurabilityTier;
@@ -55,7 +55,7 @@ impl ReplayPlan {
     ///
     /// Refusals that depend on which backends were COMPILED IN stay with materialization.
     /// They are facts about the build, not about the request.
-    pub fn from_validated(config: &ValidatedConfig) -> ReplayPlan {
+    pub fn from_validated(config: &ValidatedDeployment) -> ReplayPlan {
         let state = config.state().replay();
         // The tier is DERIVED from the state, not read beside it. Each arm therefore gets
         // the only tier its backend can serve, so no construction path pairs the etcd
@@ -163,7 +163,7 @@ pub fn host_clock_is_faulted(now_unix: i64) -> bool {
 /// opposite halves of it: this kid answers the Response slot, and it is never enrolled as
 /// a REQUEST signer. They cannot disagree about which key that is, because there is one
 /// resolved value and neither of them resolves it.
-pub fn response_issuer_kid(config: &ValidatedConfig) -> String {
+pub fn response_issuer_kid(config: &ValidatedDeployment) -> String {
     config.state().delegated_signing().issuer_kid().to_string()
 }
 
@@ -199,7 +199,7 @@ impl TrustEpochPlan {
     ///
     /// Infallible: `PushNetworked` is the state that HAS a source, so layer A has already
     /// established both that this deployment may carry one and that it does.
-    pub fn from_validated(config: &ValidatedConfig) -> TrustEpochPlan {
+    pub fn from_validated(config: &ValidatedDeployment) -> TrustEpochPlan {
         match config.state().trust_revocation() {
             crate::config_state::TrustRevocationState::PushNetworked {
                 epoch_url,
@@ -266,7 +266,7 @@ impl TrustReloadPlan {
 ///
 /// Everything the plane needs and nothing it could re-decide: the classified revocation
 /// state, the two locators, and the epoch mechanism normalized above it. `TrustPlane` used
-/// to receive the whole `ValidatedConfig` and answer "which posture is this?" for itself —
+/// to receive the whole `ValidatedDeployment` and answer "which posture is this?" for itself —
 /// a second derivation of a fact layer A had already classified.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrustPlan {
@@ -290,7 +290,7 @@ impl TrustPlan {
     /// with the signing plane, and a value derived inside one consumer is a value the other
     /// consumer must re-derive.
     pub fn from_validated(
-        config: &ValidatedConfig,
+        config: &ValidatedDeployment,
         response_kid: String,
         epoch: TrustEpochPlan,
     ) -> TrustPlan {
@@ -364,7 +364,7 @@ impl SigningPlan {
     /// second: deriving from the sibling that landed first, or from configuration, rather
     /// than from the authority above them.
     pub fn from_validated(
-        config: &ValidatedConfig,
+        config: &ValidatedDeployment,
         response_kid: String,
         epoch: TrustEpochPlan,
     ) -> SigningPlan {
@@ -427,7 +427,7 @@ impl ClientRevocationPlan {
     /// Infallible: `Static` and `Reloading` are the states that HAVE paths, and
     /// `Reloading` is the state that has a cadence, so layer A has already established
     /// that each value the variant requires is present.
-    pub fn from_validated(config: &ValidatedConfig) -> ClientRevocationPlan {
+    pub fn from_validated(config: &ValidatedDeployment) -> ClientRevocationPlan {
         use crate::config_state::CrlRevocationState as S;
         match config.state().crl_revocation() {
             S::None => ClientRevocationPlan::None,
@@ -481,7 +481,7 @@ impl TlsPlan {
     /// for delegated custody is a fact about the BUILD, and making this fallible for it
     /// would collapse the A/B split: the request is coherent either way, and only
     /// materialization can say whether this executable can serve it.
-    pub fn from_validated(config: &ValidatedConfig) -> TlsPlan {
+    pub fn from_validated(config: &ValidatedDeployment) -> TlsPlan {
         let values = config.config();
         TlsPlan {
             custody: config.state().tls_custody().clone(),
@@ -514,7 +514,7 @@ impl ContinuationControlPlan {
     ///
     /// Infallible: layer A already decided that this state is legal and that the locator
     /// is present where the state requires one, so there is no second refusal to make.
-    pub fn from_validated(config: &ValidatedConfig) -> ContinuationControlPlan {
+    pub fn from_validated(config: &ValidatedDeployment) -> ContinuationControlPlan {
         match config.state().continuation_control() {
             ContinuationControlState::Disabled => ContinuationControlPlan::Disabled,
             ContinuationControlState::Redis { endpoint } => ContinuationControlPlan::Redis {
@@ -536,7 +536,7 @@ impl ContinuationControlPlan {
 /// Its Redis endpoint is its OWN; it has nothing to do with which replay tier was
 /// chosen. Deriving it from replay once made admission unimplementable on the
 /// CP/linearizable tier, and the natural resolution was to turn the control off.
-pub fn admission_needs_control_runtime(config: &ValidatedConfig) -> bool {
+pub fn admission_needs_control_runtime(config: &ValidatedDeployment) -> bool {
     cfg!(feature = "redis_replay") && config.state().admission().is_enforced()
 }
 
@@ -550,7 +550,7 @@ pub fn admission_needs_control_runtime(config: &ValidatedConfig) -> bool {
 /// `#[cfg]` does, so a future contributor that names a feature-gated type would fail to
 /// build in the default lane rather than being silently excluded. Keep them that way.
 pub fn control_runtime_requirement(
-    config: &ValidatedConfig,
+    config: &ValidatedDeployment,
     replay: &ReplayPlan,
 ) -> crate::control_runtime::ControlRuntimeRequirement {
     crate::control_runtime::ControlRuntimeRequirement::any([
@@ -563,7 +563,7 @@ pub fn control_runtime_requirement(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::Config;
+    use crate::cli::DeploymentRequest;
 
     /// A configuration that gets all the way through parsing AND validation, so the
     /// mutation each test applies is the only thing under test.
@@ -606,29 +606,29 @@ mod tests {
         argv
     }
 
-    fn parse(extra: &[&str]) -> Result<Config, String> {
+    fn parse(extra: &[&str]) -> Result<DeploymentRequest, String> {
         crate::cli::parse_args(&base_argv(extra))
     }
 
     /// Plan a configuration that came through the parser intact.
     fn plan_for(extra: &[&str]) -> ReplayPlan {
         let config = parse(extra).expect("args parse");
-        let validated = ValidatedConfig::try_from(config).expect("config validates");
+        let validated = ValidatedDeployment::try_from(config).expect("config validates");
         ReplayPlan::from_validated(&validated)
     }
 
     /// Why a configuration is not a replay deployment at all.
     ///
     /// `parse_args` runs its own completeness checks, so an incomplete shared tier never
-    /// survives the command line. Those checks are not what protects the runtime: `Config`
+    /// survives the command line. Those checks are not what protects the runtime: `DeploymentRequest`
     /// has public fields and `run` accepts anything that validates, so an embedder that
     /// builds one in code meets only the boundary. Mutating a parsed config reproduces
     /// such a caller exactly — and since layer A now classifies replay, these refusals are
     /// the boundary's, not planning's.
-    fn refusal_for_mutated(extra: &[&str], mutate: impl FnOnce(&mut Config)) -> String {
+    fn refusal_for_mutated(extra: &[&str], mutate: impl FnOnce(&mut DeploymentRequest)) -> String {
         let mut config = parse(extra).expect("args parse");
         mutate(&mut config);
-        ValidatedConfig::try_from(config).expect_err("the mutation must be refused")
+        ValidatedDeployment::try_from(config).expect_err("the mutation must be refused")
     }
 
     const SHARED_REDIS: &[&str] = &[
@@ -758,7 +758,7 @@ mod tests {
     #[test]
     fn the_issuer_kid_falls_back_to_the_server_key_id() {
         let config = parse(SHARED_REDIS).expect("args parse");
-        let validated = ValidatedConfig::try_from(config).expect("config validates");
+        let validated = ValidatedDeployment::try_from(config).expect("config validates");
         assert_eq!(
             response_issuer_kid(&validated),
             "k1",
@@ -767,7 +767,7 @@ mod tests {
 
         let explicit = parse(&[SHARED_REDIS, &["--delegated-issuer-kid", "root-kms-1"]].concat())
             .expect("args parse");
-        let validated = ValidatedConfig::try_from(explicit).expect("config validates");
+        let validated = ValidatedDeployment::try_from(explicit).expect("config validates");
         assert_eq!(response_issuer_kid(&validated), "root-kms-1");
     }
 
@@ -815,7 +815,7 @@ mod tests {
             "redis://127.0.0.1:6379",
         ])
         .expect("args parse");
-        let validated = ValidatedConfig::try_from(both).expect("independent facts, both legal");
+        let validated = ValidatedDeployment::try_from(both).expect("independent facts, both legal");
         assert_eq!(
             ContinuationControlPlan::from_validated(&validated).needs_control_runtime(),
             REDIS
@@ -827,7 +827,7 @@ mod tests {
 
         // And the converse: the replay store's locator no longer reaches continuation.
         let no_continuation = parse(SHARED_LINEARIZABLE).expect("args parse");
-        let validated = ValidatedConfig::try_from(no_continuation).expect("validates");
+        let validated = ValidatedDeployment::try_from(no_continuation).expect("validates");
         assert_eq!(
             ContinuationControlPlan::from_validated(&validated),
             ContinuationControlPlan::Disabled
@@ -872,9 +872,9 @@ mod tests {
         "redis://127.0.0.1:6379",
     ];
 
-    fn validated(extra: &[&str]) -> ValidatedConfig {
+    fn validated(extra: &[&str]) -> ValidatedDeployment {
         let config = parse(&[SHARED_REDIS, extra].concat()).expect("args parse");
-        ValidatedConfig::try_from(config).expect("config validates")
+        ValidatedDeployment::try_from(config).expect("config validates")
     }
 
     /// The refresh posture comes from the STATE's witness, not from the request beside it.
@@ -1248,7 +1248,7 @@ mod tests {
     /// here, which was itself a symptom: the validation boundary did not check admission
     /// at all, so a half-configured gate reached planning. It does now (FF4), and a plan
     /// test must exercise a configuration a deployment could actually hold.
-    fn with_admission(mut config: crate::cli::Config) -> crate::cli::Config {
+    fn with_admission(mut config: crate::cli::DeploymentRequest) -> crate::cli::DeploymentRequest {
         config.admission = crate::cli::AdmissionKind::Required;
         config.admission_authority_kid = Some("admission-root-1".to_string());
         config.admission_authority_pubkey_b64url =
@@ -1261,12 +1261,12 @@ mod tests {
     /// being unimplementable on the CP/linearizable tier.
     #[test]
     fn admission_declares_independently_of_replay() {
-        let off = ValidatedConfig::try_from(parse(SHARED_LINEARIZABLE).expect("parse"))
+        let off = ValidatedDeployment::try_from(parse(SHARED_LINEARIZABLE).expect("parse"))
             .expect("validates");
         assert!(!admission_needs_control_runtime(&off));
 
         let on = with_admission(parse(SHARED_LINEARIZABLE).expect("parse"));
-        let on = ValidatedConfig::try_from(on).expect("validates");
+        let on = ValidatedDeployment::try_from(on).expect("validates");
         assert_eq!(admission_needs_control_runtime(&on), REDIS);
         assert!(
             !ReplayPlan::from_validated(&on).needs_control_runtime(),
@@ -1281,7 +1281,7 @@ mod tests {
 
         // Admission alone, on a tier that declares nothing.
         let admission_only = with_admission(parse(SHARED_LINEARIZABLE).expect("parse"));
-        let admission_only = ValidatedConfig::try_from(admission_only).expect("validates");
+        let admission_only = ValidatedDeployment::try_from(admission_only).expect("validates");
         let plan = ReplayPlan::from_validated(&admission_only);
         assert_eq!(
             control_runtime_requirement(&admission_only, &plan).is_required(),
@@ -1290,7 +1290,7 @@ mod tests {
         );
 
         // Nothing networked at all.
-        let none = ValidatedConfig::try_from(parse(SHARED_LINEARIZABLE).expect("parse"))
+        let none = ValidatedDeployment::try_from(parse(SHARED_LINEARIZABLE).expect("parse"))
             .expect("validates");
         let plan = ReplayPlan::from_validated(&none);
         assert_eq!(

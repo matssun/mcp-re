@@ -27,7 +27,7 @@
 //! done once, and `TrustPlan` and `SigningPlane` are consumers of the one answer
 //! (CF-09 — a fact may have two consumers, it must not have two authorities).
 
-use crate::cli::Config;
+use crate::cli::DeploymentRequest;
 use crate::cli::MAX_NEAR_ZERO_TRUST_RELOAD_SECS;
 use crate::revocation_tier::RevocationTier;
 use std::num::NonZeroU64;
@@ -170,13 +170,13 @@ impl TrustRevocationState {
     }
 }
 
-/// Recognise the requested state. Total: every `Config` names one.
+/// Recognise the requested state. Total: every `DeploymentRequest` names one.
 ///
 /// Total on purpose. A classifier that could fail would have to answer "which state is
 /// this?" and "is that state legal?" at once, and the second answer is what the caller
 /// accumulates across machines — so an illegal combination is reported as a violation of
 /// the state it most nearly requests, not as an unclassifiable config.
-fn classify(config: &Config) -> RequestedState {
+fn classify(config: &DeploymentRequest) -> RequestedState {
     match config.revocation_tier {
         RevocationTier::BoundedCache { t_secs } => RequestedState::BoundedCache { t_secs },
         RevocationTier::Live => RequestedState::Live,
@@ -191,7 +191,7 @@ fn classify(config: &Config) -> RequestedState {
 ///
 /// `None` is never a silent outcome: every path that reaches it has already pushed the
 /// violation naming the value that was missing.
-fn build(requested: RequestedState, config: &Config) -> Option<TrustRevocationState> {
+fn build(requested: RequestedState, config: &DeploymentRequest) -> Option<TrustRevocationState> {
     // A cadence that is present and zero names no legal state at all, so `build` yields
     // nothing rather than an absence — `Some(0)` must never become "no reload requested".
     let cadence = match config.trust_reload_secs {
@@ -229,7 +229,7 @@ fn build(requested: RequestedState, config: &Config) -> Option<TrustRevocationSt
 /// A separate predicate because the cadence is the whole revocation claim: a tier states
 /// how fast a key removed from `--trust` stops resolving, and nothing resolves faster than
 /// the file is re-read.
-fn cadence_violations(state: RequestedState, config: &Config) -> Vec<String> {
+fn cadence_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<String> {
     let mut out = Vec::new();
     if state.requires_cadence() && config.trust_reload_secs.is_none() {
         out.push(
@@ -290,7 +290,7 @@ fn cadence_violations(state: RequestedState, config: &Config) -> Vec<String> {
 }
 
 /// The epoch-source columns: which states may carry one, and what shape it must have.
-fn epoch_violations(state: RequestedState, config: &Config) -> Vec<String> {
+fn epoch_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<String> {
     let mut out = Vec::new();
     // X8. `PushInert` is the state that has no URL, so only the two non-Push states can
     // reach this: a configured source under a tier that never consumes it.
@@ -338,7 +338,9 @@ fn epoch_violations(state: RequestedState, config: &Config) -> Vec<String> {
 /// `None` means the request names a state whose witnesses are not all present — a `Live`
 /// or `push` tier with no cadence. The violation naming the missing value is beside it, so
 /// a `None` never travels without its reason.
-pub fn classify_and_validate(config: &Config) -> (Option<TrustRevocationState>, Vec<String>) {
+pub fn classify_and_validate(
+    config: &DeploymentRequest,
+) -> (Option<TrustRevocationState>, Vec<String>) {
     let requested = classify(config);
     let mut violations = cadence_violations(requested, config);
     violations.extend(epoch_violations(requested, config));
@@ -350,7 +352,7 @@ mod tests {
     use super::*;
     use crate::config_state::test_support::legal_config;
 
-    fn state_of(mutate: impl FnOnce(&mut Config)) -> TrustRevocationState {
+    fn state_of(mutate: impl FnOnce(&mut DeploymentRequest)) -> TrustRevocationState {
         let mut config = legal_config();
         mutate(&mut config);
         classify_and_validate(&config)
@@ -358,7 +360,7 @@ mod tests {
             .expect("the case names a state whose witnesses are present")
     }
 
-    fn violations_of(mutate: impl FnOnce(&mut Config)) -> Vec<String> {
+    fn violations_of(mutate: impl FnOnce(&mut DeploymentRequest)) -> Vec<String> {
         let mut config = legal_config();
         mutate(&mut config);
         classify_and_validate(&config).1
@@ -417,16 +419,16 @@ mod tests {
         );
     }
 
-    /// The guard is on the RUNTIME, not on argv. `Config` has public fields, so a caller
+    /// The guard is on the RUNTIME, not on argv. `DeploymentRequest` has public fields, so a caller
     /// that builds one in code reaches the same reloader — which is the altitude mistake
-    /// `ValidatedConfig` exists to correct, and the reason this is checked here rather than
+    /// `ValidatedDeployment` exists to correct, and the reason this is checked here rather than
     /// in the parser.
     #[test]
     fn a_programmatic_config_cannot_spin_the_trust_reloader() {
         let mut config = legal_config();
         config.revocation_tier = RevocationTier::Live;
         config.trust_reload_secs = Some(0);
-        let refusal = crate::cli::ValidatedConfig::try_from(config)
+        let refusal = crate::cli::ValidatedDeployment::try_from(config)
             .expect_err("a spinning reloader must not validate");
         assert!(refusal.contains("--trust-reload-secs 0"), "{refusal}");
     }
@@ -434,7 +436,7 @@ mod tests {
     // ---- the matrix: every legal state form is recognised AND accepted ----
 
     /// A legal form: the state it must be recognised as, and how to request it.
-    type LegalForm = (TrustRevocationState, Box<dyn Fn(&mut Config)>);
+    type LegalForm = (TrustRevocationState, Box<dyn Fn(&mut DeploymentRequest)>);
 
     #[test]
     fn every_legal_state_form_is_classified_and_accepted() {
@@ -444,7 +446,7 @@ mod tests {
                     t_secs: 60,
                     reload_secs: None,
                 },
-                Box::new(|c: &mut Config| {
+                Box::new(|c: &mut DeploymentRequest| {
                     c.revocation_tier = RevocationTier::BoundedCache { t_secs: 60 };
                     c.trust_reload_secs = None;
                 }),
@@ -454,7 +456,7 @@ mod tests {
                     t_secs: 60,
                     reload_secs: Some(TrustRevocationState::cadence(60)),
                 },
-                Box::new(|c: &mut Config| {
+                Box::new(|c: &mut DeploymentRequest| {
                     c.revocation_tier = RevocationTier::BoundedCache { t_secs: 60 };
                     c.trust_reload_secs = Some(60);
                 }),
@@ -463,7 +465,7 @@ mod tests {
                 TrustRevocationState::Live {
                     reload_secs: crate::config_state::TrustRevocationState::cadence(5),
                 },
-                Box::new(|c: &mut Config| {
+                Box::new(|c: &mut DeploymentRequest| {
                     c.revocation_tier = RevocationTier::Live;
                     c.trust_reload_secs = Some(5);
                 }),
@@ -473,7 +475,7 @@ mod tests {
                     t_secs: 30,
                     reload_secs: crate::config_state::TrustRevocationState::cadence(30),
                 },
-                Box::new(|c: &mut Config| {
+                Box::new(|c: &mut DeploymentRequest| {
                     c.revocation_tier = RevocationTier::Push { t_secs: 30 };
                     c.trust_reload_secs = Some(30);
                 }),
@@ -485,7 +487,7 @@ mod tests {
                     epoch_url: "redis://127.0.0.1:6379".to_string(),
                     epoch_key: "mcp-re:trust:epoch".to_string(),
                 },
-                Box::new(|c: &mut Config| {
+                Box::new(|c: &mut DeploymentRequest| {
                     c.revocation_tier = RevocationTier::Push { t_secs: 30 };
                     c.trust_reload_secs = Some(30);
                     c.trust_epoch_redis_url = Some("redis://127.0.0.1:6379".to_string());

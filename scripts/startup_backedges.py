@@ -14,8 +14,8 @@ would reward the wrong behaviour:
     reader, not dependencies; counting them rewards deleting documentation.
   * `#[cfg(test)]` modules — test wiring is not the runtime architecture.
 
-Both forms of reference are counted: `crate::cli::Config` and a bare `use crate::cli;`
-followed by `cli::Config`. Missing the second form under-reports by more than half.
+Both forms of reference are counted: `crate::cli::DeploymentRequest` and a bare `use crate::cli;`
+followed by `cli::DeploymentRequest`. Missing the second form under-reports by more than half.
 
 Run: python3 scripts/startup_backedges.py
 """
@@ -100,10 +100,10 @@ def selftest() -> int:
         "    #[cfg(test)]",
         "    fn only_for_tests() -> u8 { 1 }",
         "}",
-        "fn production(c: &cli::Config) {}",          # AFTER the inline attribute
+        "fn production(c: &cli::DeploymentRequest) {}",          # AFTER the inline attribute
         "#[cfg(test)]",
         "mod tests {",
-        "    fn t(c: &cli::Config) {}",
+        "    fn t(c: &cli::DeploymentRequest) {}",
         "}",
     ])
     kept = code_only(sample)

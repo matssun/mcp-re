@@ -47,7 +47,7 @@ option. It is not.
    needs a specification saying what an attestor may assert before attestation becomes
    authority by implication). If a refusal seems wrong, raise it — do not relocate,
    weaken, or route around it. A refusal belongs at the lowest boundary the state it
-   constrains can enter through, which for configuration is `ValidatedConfig`, never
+   constrains can enter through, which for configuration is `ValidatedDeployment`, never
    the composition root.
 
 10. **Run the local gate before anything else, and never fake a green.** One command:

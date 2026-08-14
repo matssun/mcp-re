@@ -43,7 +43,7 @@
 pub(crate) enum RuntimeState {
     /// Raw arguments parsed; nothing validated.
     Configured,
-    /// Past the unbypassable configuration boundary (`ValidatedConfig`).
+    /// Past the unbypassable configuration boundary (`ValidatedDeployment`).
     Validated,
     /// Pure planning done; no effect has been performed yet.
     Planned,
