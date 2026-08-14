@@ -2633,7 +2633,8 @@ pub fn unsafe_config_violations(config: &DeploymentRequest) -> Vec<String> {
 ///
 /// **Order is a separate contract.** Every violation is reported, not the first, and the
 /// sequence is what an operator reads. It is pinned by
-/// `tests/config_refusal_precedence_test.rs` so that reorganising this function cannot
+/// `tests/integration/config_refusal_precedence_test.rs` so that reorganising this
+/// function cannot
 /// silently reorder the diagnosis: machine validators are called at the position their
 /// clauses already occupied.
 pub fn validate_configuration(

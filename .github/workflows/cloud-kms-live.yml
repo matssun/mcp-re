@@ -5,7 +5,8 @@
 # support: a signature produced by a REAL KMS Sign / asymmetricSign MUST verify under
 # the UNMODIFIED mcp-re-core Ed25519 verifier, using the public key the same KMS reports
 # via GetPublicKey / getPublicKey. Compiling is NOT support; this live assertion is
-# (see mcp-re-proxy/tests/aws_kms_live_test.rs and gcp_kms_live_test.rs — both already
+# (see mcp-re-proxy/tests/integration_live/aws_kms_live_test.rs and
+# mcp-re-proxy/tests/gcp_kms_live_test.rs — both already
 # assert verify_ed25519(preimage, sig, response_public_key()) and a tampered-preimage
 # negative).
 #

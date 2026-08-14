@@ -89,7 +89,8 @@ jobs:
         run: rustup show && rustc --version && cargo --version
 
       # Provision an INDEPENDENT OpenSSL test OCSP responder + a good/revoked leaf
-      # pair. This follows the recipe documented in mcp-re-proxy/tests/ocsp_e2e_test.rs,
+      # pair. This follows the recipe documented in
+      # mcp-re-proxy/tests/integration_ext/ocsp_e2e_test.rs,
       # with CI-oriented adjustments for OpenSSL 3.x and GitHub Actions YAML (no heredoc).
       # Readiness is polled (no blind sleep) and the responder is kept alive for the
       # subsequent test step.

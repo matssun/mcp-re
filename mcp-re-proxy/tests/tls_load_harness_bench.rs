@@ -1456,7 +1456,8 @@ fn app_run_starts_and_drains_across_revocation_tiers() {
 }
 
 // `app_run_refuses_unbuildable_key_sources_and_replay_tiers` moved to
-// tests/app_startup_characterization_test.rs (ADR-MCPRE-056 Phase 0). It could never
+// tests/integration/app_startup_characterization_test.rs (ADR-MCPRE-056 Phase 0). It
+// could never
 // run here: this file is `redis_replay`-gated, so the default lane skips it, and its
 // own `cfg(not(any(aws_kms_keysource, ...)))` guard excluded it from the feature lane
 // where those backends ARE compiled. A test that executes in no lane is not coverage —
