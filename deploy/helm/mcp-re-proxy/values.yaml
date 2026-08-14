@@ -163,9 +163,14 @@ verifiedContextCarrier: disabled
 # tightens nothing already allowed). Set one of these to size the boundary against
 # your own inner plane rather than take that default.
 #
-#   maxInFlight       per-core ceiling, applied verbatim (wins if both are set)
+#   maxInFlight       per-core ceiling, applied verbatim
 #   maxInFlightTotal  fleet-wide target that the async fleet divides evenly across
 #                     cores; each core then enforces only its own share (lock-free)
+#
+# Set ONE. They are alternative ways to state the same limit at different altitudes,
+# so setting both is refused — at render here, and by the proxy itself. Which
+# aggregate a total implies is not known until the core count is resolved, so there is
+# no "they agree" case either.
 #
 # Size maxInFlightTotal against the inner plane's own concurrency, not the pod's
 # memory: the point is to shed at the boundary rather than queue in front of a

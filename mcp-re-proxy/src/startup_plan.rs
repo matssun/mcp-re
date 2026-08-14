@@ -1360,13 +1360,17 @@ mod tests {
         }
     }
 
-    /// The per-core flag wins when both are set, matching the CLI's own precedence. A
-    /// deployment that set both and silently got the smaller one would shed at a bound no
-    /// flag names. An explicit per-core ceiling divides nothing, so the repair leaves this
-    /// case exactly as it was.
+    /// Both-set is UNREACHABLE from a validated deployment — `cli::exclusive_in_flight_limits`
+    /// refuses it — but this is a total function over two `Option`s and must still be
+    /// defined. Pinned so that the arm agrees with `derived_per_core_ceiling`'s rather than
+    /// quietly growing a second opinion about an input neither of them should ever see.
     #[test]
-    fn the_per_core_bound_wins_when_both_are_set() {
+    fn the_both_set_arm_agrees_with_the_gate_on_an_input_layer_a_refuses() {
         assert_eq!(inner_plane_ceiling(Some(10), Some(999), 4), Some(40));
+        assert_eq!(
+            crate::async_fleet::derived_per_core_ceiling(Some(10), Some(999), 4),
+            Some(10),
+        );
     }
 
     /// A huge per-core bound on a many-core box must not wrap. Saturating rather than

@@ -86,9 +86,10 @@ pub struct FleetConfig {
     pub workers_per_shard: usize,
     /// `listen(2)` backlog for each per-core listener.
     pub listen_backlog: i32,
-    /// MCPRE-114: an optional FLEET-GLOBAL in-flight-request TARGET. When set (and
-    /// the per-core `ServerLimits::max_in_flight_requests` is not already set
-    /// explicitly), it is divided evenly across cores — each core's ceiling is
+    /// MCPRE-114: an optional FLEET-GLOBAL in-flight-request TARGET, the ALTERNATIVE to
+    /// the per-core `ServerLimits::max_in_flight_requests` rather than a companion to it —
+    /// layer A refuses a configuration that names both. When set, it is divided evenly
+    /// across cores — each core's ceiling is
     /// `ceil(total / cores)` — which keeps the request path lock-free ACROSS cores (no
     /// shared global semaphore on the hot path, per ADR-MCPRE-051 §1). `None` leaves the
     /// per-core ceiling as configured on `ServerOptions` (or unbounded).
@@ -301,9 +302,13 @@ fn apply_global_admission(
 
 /// MCPRE-114: the per-core in-flight ceiling given an (optional) explicit per-core
 /// ceiling, an (optional) fleet-global target, and the core count. An explicit
-/// per-core ceiling always wins; otherwise a global target is divided evenly
+/// per-core ceiling wins; otherwise a global target is divided evenly
 /// (`ceil(global / cores)`, at least 1); with neither, there is no ceiling. Pure and
 /// deterministic (unit-tested).
+///
+/// The both-set arm survives because this is a total function over two `Option`s, not
+/// because that input is legal: layer A refuses a configuration naming both
+/// (`cli::exclusive_in_flight_limits`), so no validated deployment reaches it.
 pub fn derived_per_core_ceiling(
     explicit_per_core: Option<usize>,
     global: Option<usize>,

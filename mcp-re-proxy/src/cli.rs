@@ -310,9 +310,12 @@ pub struct Config {
     /// behaviour all move it. Measure it with `scripts/runtime_topology_sweep.sh` rather
     /// than assuming a number carries across machines.
     pub workers_per_shard: usize,
-    /// MCPRE-114: fleet-GLOBAL in-flight ceiling, divided evenly across cores by
-    /// `async_fleet`. `None` = no global target (a per-core `limits
-    /// .max_in_flight_requests` may still apply; with neither there is no ceiling).
+    /// MCPRE-114: fleet-GLOBAL in-flight target, divided evenly across cores by
+    /// `async_fleet`. `None` = no global target, leaving the per-core
+    /// `limits.max_in_flight_requests`.
+    ///
+    /// The ALTERNATIVE to that per-core ceiling, never a companion to it: naming both is
+    /// refused ([`exclusive_in_flight_limits`]).
     pub max_in_flight_total: Option<usize>,
     /// Replay-cache backend.
     pub replay: ReplayKind,
@@ -1570,7 +1573,8 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             // --max-body-bytes BEFORE the verify gate. `--max-in-flight` overrides the
             // per-core ceiling directly; `--max-in-flight-total` sets a fleet-wide
             // target that async_fleet divides evenly across cores (lock-free: each
-            // core enforces only its own share). An EXPLICIT per-core ceiling wins.
+            // core enforces only its own share). The two are ALTERNATIVES —
+            // `exclusive_in_flight_limits` refuses a config that names both.
             "--max-in-flight" => {
                 let n: usize = value
                     .parse()
@@ -2554,6 +2558,32 @@ pub(crate) fn ingress_assertion_violation(config: &Config) -> Option<String> {
     )
 }
 
+/// `--max-in-flight` and `--max-in-flight-total` are ALTERNATIVE ways to state one
+/// admission limit, so naming both is a refusal rather than a precedence question.
+///
+/// They are not two values to reconcile: one is a per-core ceiling and the other a
+/// fleet-wide target, and which aggregate a total implies is not known until the core
+/// count is resolved. So there is no "they agree" case to exempt — equivalence is a
+/// property of the host, not of the request.
+///
+/// The rule the chart already enforced (`_helpers.tpl`: "set one OR the other, not both").
+/// The CLI accepted the pair and applied the per-core value, which left the operator's
+/// other explicit instruction doing nothing and saying nothing.
+pub(crate) fn exclusive_in_flight_limits(config: &Config) -> Option<String> {
+    let (Some(per_core), Some(total)) = (
+        config.limits.max_in_flight_requests,
+        config.max_in_flight_total,
+    ) else {
+        return None;
+    };
+    Some(format!(
+        "--max-in-flight {per_core} and --max-in-flight-total {total} are alternative ways \
+         to state the admission limit; set one, not both. --max-in-flight bounds each core \
+         directly; --max-in-flight-total is divided evenly across the resolved cores, so \
+         the two cannot be checked against each other before the core count is known."
+    ))
+}
+
 /// Collect the parse-time unsafe-configuration violations for `config`.
 ///
 /// The proxy has NO security toggle — it always runs the maximal-security posture,
@@ -2848,6 +2878,12 @@ fn legality_violations(config: &Config, decided: MachineViolations) -> Vec<Strin
                  fail-closed drop. Set a bounded value (default 30s)"
             ));
         }
+    }
+    // The two admission-limit flags are alternatives, not a pair with a precedence. Checked
+    // HERE and not only in `parse_args` because both are public fields: a config built in
+    // code names both and reaches the serving path with one instruction discarded.
+    if let Some(refusal) = exclusive_in_flight_limits(config) {
+        violations.push(refusal);
     }
     // The `Replay` machine: which shared store holds admitted nonces, and every locator
     // that store requires or excludes. Spliced where the `memory` refusal and the
@@ -4314,13 +4350,59 @@ mod tests {
         assert_eq!(config.max_in_flight_total, None);
 
         let mut a = minimal_durable();
+        a.splice(0..0, args(&["--max-in-flight", "32"]));
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(config.limits.max_in_flight_requests, Some(32));
+        assert_eq!(config.max_in_flight_total, None);
+        assert!(unsafe_config_violations(&config).is_empty());
+    }
+
+    /// The two flags are ALTERNATIVE ways to state one admission limit, so naming both is
+    /// refused rather than resolved by precedence.
+    ///
+    /// This replaces a contract: the per-core value used to win silently, which left the
+    /// operator's other explicit instruction doing nothing and saying nothing. The chart
+    /// already refused the pair (`_helpers.tpl`), so the two deployment surfaces disagreed
+    /// about whether the configuration was legal at all.
+    ///
+    /// The rule lives at the validation boundary, so it holds for a config built in CODE
+    /// as well — both are public fields, and the old precedence lived in the parser alone.
+    #[test]
+    fn naming_both_admission_limits_is_refused() {
+        let mut a = minimal_durable();
         a.splice(
             0..0,
             args(&["--max-in-flight", "32", "--max-in-flight-total", "256"]),
         );
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.limits.max_in_flight_requests, Some(32));
-        assert_eq!(config.max_in_flight_total, Some(256));
+        let refusal = parse_args(&a).expect_err("naming both admission limits must be refused");
+        assert!(
+            refusal.contains("--max-in-flight 32") && refusal.contains("256"),
+            "the refusal must name both values the operator gave: {refusal}"
+        );
+
+        // No "they happen to agree" exemption: whether a total is equivalent to a per-core
+        // ceiling depends on the resolved core count, which is a property of the host.
+        let mut same = minimal_durable();
+        same.splice(
+            0..0,
+            args(&["--max-in-flight", "256", "--max-in-flight-total", "256"]),
+        );
+        assert!(
+            parse_args(&same).is_err(),
+            "equal values are still two instructions where one is discarded"
+        );
+
+        // The same pair assembled in code, which meets no parser.
+        let mut b = minimal_durable();
+        b.splice(0..0, args(&["--max-in-flight-total", "256"]));
+        let mut config = parse_args(&b).expect("a fleet-wide target alone is legal");
+        config.limits.max_in_flight_requests = Some(32);
+        assert!(
+            unsafe_config_violations(&config)
+                .iter()
+                .any(|v| v.contains("--max-in-flight-total")),
+            "the boundary must refuse the pair however the config was produced"
+        );
     }
 
     /// The per-core DEFAULT must not out-rank an explicit fleet-wide target: with

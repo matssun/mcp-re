@@ -83,9 +83,10 @@ pub struct ServerLimits {
     /// than queued without bound — so tail latency stays bounded under overload
     /// instead of degrading unboundedly. `None` disables the ceiling (unbounded
     /// in-flight; the historical behavior). On the per-core fleet the effective
-    /// ceiling can also be derived from a fleet-global target
+    /// ceiling can instead be derived from a fleet-global target
     /// (`FleetConfig::max_in_flight_total`), divided evenly across cores so the
-    /// request path stays lock-free across cores. Bounds only the async
+    /// request path stays lock-free across cores; the two are alternatives, and naming
+    /// both is refused at the configuration boundary. Bounds only the async
     /// (`async_serve`) path; the blocking loop bounds concurrency via
     /// `max_concurrent_connections`.
     pub max_in_flight_requests: Option<usize>,
