@@ -95,15 +95,26 @@ impl ReplayPlan {
 /// configured flag names. The shedding decision would move from the admission gate, where
 /// it is deliberate and measured, to the inner pool, where it is an accident of core count.
 ///
-/// `--max-in-flight-requests` is per-core, so it multiplies; `--max-in-flight-total` is
-/// already fleet-wide. The per-core flag wins when both are set, matching the CLI's own
-/// precedence.
+/// # One derivation, two consumers
+///
+/// The admission gate does not enforce a fleet-wide number. It gives every core the
+/// per-core ceiling [`derived_per_core_ceiling`](crate::async_fleet::derived_per_core_ceiling)
+/// produces and lets each core enforce only its own share, so the aggregate the fleet
+/// actually admits is `per_core × cores` — whatever the operator wrote. When
+/// `--max-in-flight-total` does not divide evenly the gate rounds each core's share UP,
+/// and the aggregate therefore exceeds the requested total: `--max-in-flight-total 1000
+/// --cores 3` admits `ceil(1000/3) × 3 = 1002`.
+///
+/// That is the gate's own rounding, and this ceiling is a PROJECTION of it rather than a
+/// second reading of the same flags. A pool bounded at the requested 1000 against a gate
+/// admitting 1002 is exactly the capacity cliff above, two requests wide.
 pub fn inner_plane_ceiling(
     per_core: Option<usize>,
     total: Option<usize>,
     cores: usize,
 ) -> Option<usize> {
-    per_core.map(|n| n.saturating_mul(cores)).or(total)
+    crate::async_fleet::derived_per_core_ceiling(per_core, total, cores)
+        .map(|n| n.saturating_mul(cores.max(1)))
 }
 
 /// Whether that ceiling requires raising the inner plane's default bound.
@@ -1310,17 +1321,49 @@ mod tests {
         assert!(!host_clock_is_faulted(i64::MAX));
     }
 
-    /// The per-core flag multiplies by the core count; the fleet-wide flag does not.
+    /// Both flags reach the pool through the per-core ceiling the gate enforces, so both
+    /// multiply by the core count. `--max-in-flight-total` is written fleet-wide but is
+    /// not enforced fleet-wide.
     #[test]
-    fn the_per_core_bound_scales_with_cores_and_the_total_does_not() {
+    fn both_bounds_reach_the_pool_through_the_gates_per_core_ceiling() {
         assert_eq!(inner_plane_ceiling(Some(10), None, 8), Some(80));
-        assert_eq!(inner_plane_ceiling(None, Some(10), 8), Some(10));
+        assert_eq!(inner_plane_ceiling(None, Some(80), 8), Some(80));
         assert_eq!(inner_plane_ceiling(None, None, 8), None);
+    }
+
+    /// THE PROPERTY: when a fleet-wide target is projected into equal integer per-core
+    /// ceilings, every component enforcing aggregate capacity must use the aggregate that
+    /// projection implies — not the operator's original number.
+    ///
+    /// `--max-in-flight-total 1000 --cores 3` cannot be honoured exactly under equal
+    /// per-core partitioning. The gate resolves that by rounding each core's share up, so
+    /// the fleet admits 1002; a pool bounded at 1000 would shed the last two at a cliff no
+    /// flag names. The divisible case pins that the repair changes nothing there.
+    #[test]
+    fn a_total_that_does_not_divide_evenly_yields_the_aggregate_the_gate_admits() {
+        for (total, cores, expected) in [
+            (1000usize, 3usize, 1002usize), // ceil(1000/3) = 334, x3
+            (1000, 8, 1000),                // 125 x 8 — divides evenly, unchanged
+            (10, 4, 12),                    // ceil(10/4) = 3, x4
+            (3, 8, 8),                      // the floor of 1 per core
+        ] {
+            let per_core = crate::async_fleet::derived_per_core_ceiling(None, Some(total), cores);
+            assert_eq!(
+                inner_plane_ceiling(None, Some(total), cores),
+                Some(per_core.expect("a total yields a per-core ceiling") * cores),
+                "total {total} over {cores} cores"
+            );
+            assert_eq!(
+                inner_plane_ceiling(None, Some(total), cores),
+                Some(expected)
+            );
+        }
     }
 
     /// The per-core flag wins when both are set, matching the CLI's own precedence. A
     /// deployment that set both and silently got the smaller one would shed at a bound no
-    /// flag names.
+    /// flag names. An explicit per-core ceiling divides nothing, so the repair leaves this
+    /// case exactly as it was.
     #[test]
     fn the_per_core_bound_wins_when_both_are_set() {
         assert_eq!(inner_plane_ceiling(Some(10), Some(999), 4), Some(40));
