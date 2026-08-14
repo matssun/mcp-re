@@ -693,6 +693,13 @@ fn run_validated(
         .read_timeout
         .unwrap_or_else(|| Duration::from_secs(30));
     let pool = HttpInnerPool::from_url_strs(values.inner_http_urls.clone(), inner_timeout)?;
+    // Named where the pool that forwards to them is BUILT. Reporting them from the fleet
+    // instead would mean carrying the URLs through serving purely to print them, and the
+    // fleet does not forward — it accepts.
+    eprintln!(
+        "mcp-re-proxy: HTTP inner backends {:?}",
+        values.inner_http_urls
+    );
     // The pool is PROCESS-WIDE (one instance behind the `Arc` every core shares), so
     // its in-flight bound must not sit below the fleet's aggregate admission ceiling.
     // If it did, requests that passed every security gate would be answered with a
@@ -862,6 +869,11 @@ fn run_validated(
     // incomplete graph. That is the equivalence ADR-MCPRE-057 §9 asks for: the lifecycle
     // state and the ownership state are the same fact, not two facts kept in step by
     // convention.
+    // Composed BEFORE the runtime exists. `--bind` resolution can fail, and a failure
+    // after `finish` would drop a materialized runtime instead of tearing it down in the
+    // order it owns — the one thing that type is for.
+    let fleet_cfg = fleet_config(values)?;
+
     building.install_proxy(proxy);
     building.install_control(control_rt);
     let (runtime, lifecycle) = building.finish()?;
@@ -869,10 +881,37 @@ fn run_validated(
     runtime.serve(
         Arc::clone(&config_snapshot),
         Arc::new(serve_options),
-        values,
+        fleet_cfg,
         shutdown,
         lifecycle,
     )
+}
+
+/// The serving topology this deployment asked for, with `--bind` resolved.
+///
+/// The fleet's whole input. Composed here rather than inside serving because resolving a
+/// bind locator is a name lookup — an environment reading — and because it is the last
+/// place that legitimately holds the deployment request: what serving needs is a topology,
+/// and handing it the request instead would give it every other field as well.
+fn fleet_config(values: &cli::Config) -> Result<crate::async_fleet::FleetConfig, String> {
+    use std::net::ToSocketAddrs;
+
+    let addr = values
+        .bind
+        .to_socket_addrs()
+        .map_err(|e| format!("resolve --bind {}: {e}", values.bind))?
+        .next()
+        .ok_or_else(|| format!("--bind {} resolved to no address", values.bind))?;
+
+    Ok(crate::async_fleet::FleetConfig {
+        addr,
+        cores: values.cores, // 0 = auto (one worker per core); --cores pins it
+        workers_per_shard: values.workers_per_shard,
+        listen_backlog: crate::async_fleet::DEFAULT_LISTEN_BACKLOG,
+        // MCPRE-114: the operator's fleet-global target, divided evenly per core by
+        // `async_fleet::apply_global_admission`. `None` = no global target.
+        max_in_flight_total: values.max_in_flight_total,
+    })
 }
 
 /// ADR-MCPRE-051 §1/§3 — serve on the per-core async fleet forwarding over the
@@ -901,28 +940,9 @@ pub(crate) fn serve_fleet(
     proxy: Arc<HttpProfileProxy>,
     config_snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
     serve_options: Arc<crate::ServerOptions>,
-    config: &cli::Config,
+    fleet_cfg: crate::async_fleet::FleetConfig,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
-    use std::net::ToSocketAddrs;
-
-    // Resolve `--bind` to a concrete SocketAddr for the SO_REUSEPORT listeners.
-    let addr = config
-        .bind
-        .to_socket_addrs()
-        .map_err(|e| format!("resolve --bind {}: {e}", config.bind))?
-        .next()
-        .ok_or_else(|| format!("--bind {} resolved to no address", config.bind))?;
-
-    let fleet_cfg = crate::async_fleet::FleetConfig {
-        addr,
-        cores: config.cores, // 0 = auto (one worker per core); --cores pins it
-        workers_per_shard: config.workers_per_shard,
-        listen_backlog: crate::async_fleet::DEFAULT_LISTEN_BACKLOG,
-        // MCPRE-114: the operator's fleet-global ceiling, divided evenly per core by
-        // `async_fleet::apply_global_admission`. `None` = no global target.
-        max_in_flight_total: config.max_in_flight_total,
-    };
     // MCPRE-116: hand the fleet the SNAPSHOT, not a one-shot `load()`. The accept
     // loop re-reads it per connection, so the CRL hot-reload task's atomic swap is
     // observed by the next handshake instead of being written to a config nothing
@@ -954,10 +974,9 @@ pub(crate) fn serve_fleet(
     )
     .map_err(|e| format!("start async fleet: {e}"))?;
     eprintln!(
-        "mcp-re-proxy: async fleet serving on {} ({} per-core workers; HTTP inner backends {:?})",
+        "mcp-re-proxy: async fleet serving on {} ({} per-core workers)",
         fleet.local_addr(),
         fleet.worker_count(),
-        config.inner_http_urls,
     );
 
     // Block until the caller flips `shutdown`, then drain the fleet (bounded).
@@ -971,7 +990,7 @@ pub(crate) fn serve_fleet(
 }
 
 #[cfg(all(test, unix))]
-mod key_file_perm_tests {
+mod tests {
     use super::check_key_file_perms;
     use super::faulted_clock_refusal;
     use std::io::Write;
@@ -1306,7 +1325,7 @@ mod key_file_perm_tests {
 
         const BATCH: u64 = 2000;
         const CHILD_MARKER: &str = "MCP_RE_AUDIT_FLUSH_TEARDOWN_CHILD";
-        const TEST_NAME: &str = "app::key_file_perm_tests::\
+        const TEST_NAME: &str = "app::tests::\
                                  a_record_enqueued_immediately_before_teardown_still_reaches_stderr";
 
         if std::env::var_os(CHILD_MARKER).is_some() {
@@ -1342,6 +1361,18 @@ mod key_file_perm_tests {
         .output()
         .expect("the child scenario runs");
         let stderr = String::from_utf8_lossy(&child.stderr);
+        // `--exact` with a name nothing matches selects ZERO tests and exits 0, so the
+        // scenario would silently not run and the drain assertion below would fail with a
+        // message about flushing. `TEST_NAME` is a literal that no compiler check keeps in
+        // step with this module's path, so confirm the child actually ran the scenario.
+        // The child `exit`s before libtest prints its summary — that is the point of the
+        // scenario — so the evidence it ran is the line libtest prints on the way IN.
+        let ran = String::from_utf8_lossy(&child.stdout);
+        assert!(
+            ran.contains("running 1 test"),
+            "the child ran no test: {TEST_NAME:?} matches nothing in this binary. Fix the \
+             name before reading anything into the drain assertion.\n{ran}"
+        );
 
         let last = format!("audit seq={} ", BATCH - 1);
         assert!(
@@ -1434,6 +1465,41 @@ mod key_file_perm_tests {
         assert!(
             faulted_clock_refusal(EPOCH_CLOCK_FAULT_THRESHOLD_SECS, 3).is_none(),
             "a sane clock must not be refused however many CRLs are configured"
+        );
+    }
+
+    /// The fleet's input is the serving TOPOLOGY. Each field is carried across unchanged —
+    /// no normalization happens here, because `0` means "auto" to `resolve_topology` and a
+    /// value substituted at this point would hide which of the two decided.
+    #[test]
+    fn the_fleet_config_carries_the_topology_and_resolves_the_bind() {
+        let config = config_with(crate::cli::KeySourceKind::File, "/seed", "/key");
+        let fleet = super::fleet_config(&config).expect("the fixture binds a literal address");
+
+        assert_eq!(fleet.addr, "127.0.0.1:8443".parse().expect("literal"));
+        assert_eq!(fleet.cores, config.cores);
+        assert_eq!(fleet.workers_per_shard, config.workers_per_shard);
+        assert_eq!(fleet.max_in_flight_total, config.max_in_flight_total);
+        assert_eq!(
+            fleet.listen_backlog,
+            crate::async_fleet::DEFAULT_LISTEN_BACKLOG
+        );
+    }
+
+    /// A bind that resolves to nothing is refused BEFORE the runtime is assembled, so the
+    /// failure cannot drop a materialized runtime instead of tearing it down in order.
+    ///
+    /// The refusal names the flag: a bare address-parse error tells an operator nothing
+    /// about which of several address-shaped settings was rejected.
+    #[test]
+    fn an_unresolvable_bind_is_refused_and_names_the_flag() {
+        let mut config = config_with(crate::cli::KeySourceKind::File, "/seed", "/key");
+        config.bind = "missing-a-port".to_string();
+
+        let refusal = super::fleet_config(&config).expect_err("no port, no socket address");
+        assert!(
+            refusal.contains("--bind") && refusal.contains("missing-a-port"),
+            "the refusal must name the flag and the value: {refusal}"
         );
     }
 }

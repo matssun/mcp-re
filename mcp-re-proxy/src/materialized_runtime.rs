@@ -76,7 +76,6 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use crate::cli;
 use crate::config_snapshot;
 use crate::control_runtime::ControlRuntime;
 use crate::runtime_state::RuntimeEvent;
@@ -125,8 +124,9 @@ pub(crate) struct MaterializedRuntime {
 /// The whole of what separates a served shutdown from a startup that never bound, kept as
 /// one function so it is decided once and can be tested without standing up a fleet.
 ///
-/// `serve_fleet` fails only before a listener exists (resolving `--bind`, and starting the
-/// fleet) and otherwise returns `Ok` only after `shutdown_and_join`. So `Ok` proves both
+/// `serve_fleet` fails only before a listener exists (starting the fleet — the bind
+/// address is resolved before the runtime is assembled) and otherwise returns `Ok` only
+/// after `shutdown_and_join`. So `Ok` proves both
 /// that requests were accepted and that the drain completed, and `Err` proves that neither
 /// happened — which is why the failure case justifies NO event at all. `Serving` means the
 /// fleet is accepting requests and `FleetDrained` asserts a join returned; a fleet that
@@ -177,7 +177,7 @@ impl MaterializedRuntime {
         mut self,
         config_snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
         serve_options: Arc<ServerOptions>,
-        config: &cli::Config,
+        fleet_cfg: crate::async_fleet::FleetConfig,
         shutdown: Arc<AtomicBool>,
         mut lifecycle: RuntimeLifecycle,
     ) -> Result<(), String> {
@@ -189,11 +189,11 @@ impl MaterializedRuntime {
                 .expect("the runtime serves before it is torn down"),
         );
         let served =
-            crate::app::serve_fleet(proxy, config_snapshot, serve_options, config, shutdown);
+            crate::app::serve_fleet(proxy, config_snapshot, serve_options, fleet_cfg, shutdown);
 
         // WHICH lifecycle events are applied is decided by `served`, because `served` is
         // the only thing that knows whether any of them happened. `serve_fleet` fails ONLY
-        // before a listener exists — resolving `--bind`, and starting the fleet — and
+        // before a listener exists — starting the fleet — and
         // otherwise returns `Ok` only after `shutdown_and_join`. So `Ok` is simultaneously
         // the proof that the fleet accepted requests and the proof that it drained, and
         // `Err` is the proof that neither ever happened.
@@ -329,7 +329,8 @@ mod tests {
     /// without inspecting the result.
     #[test]
     fn a_serve_that_never_bound_justifies_no_lifecycle_event() {
-        let failed: Result<(), String> = Err("resolve --bind nope:1: failure".to_string());
+        let failed: Result<(), String> =
+            Err("start async fleet: Address already in use (os error 48)".to_string());
         assert!(
             serving_events(&failed).is_empty(),
             "a fleet that never bound neither served nor drained"
