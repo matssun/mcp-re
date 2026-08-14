@@ -82,13 +82,22 @@ pub struct ServerLimits {
     /// fail-closed with `503 Service Unavailable` BEFORE the handler runs, rather
     /// than queued without bound — so tail latency stays bounded under overload
     /// instead of degrading unboundedly. `None` disables the ceiling (unbounded
-    /// in-flight; the historical behavior). On the per-core fleet the effective
-    /// ceiling can instead be derived from a fleet-global target
-    /// (`FleetConfig::max_in_flight_total`), divided evenly across cores so the
-    /// request path stays lock-free across cores; the two are alternatives, and naming
-    /// both is refused at the configuration boundary. Bounds only the async
+    /// in-flight; the historical behavior). Bounds only the async
     /// (`async_serve`) path; the blocking loop bounds concurrency via
     /// `max_concurrent_connections`.
+    ///
+    /// # RESOLVED, not requested
+    ///
+    /// On the validated path this is not what an operator wrote. The admission limit is
+    /// stated once, in
+    /// [`Config::in_flight_limit`](crate::cli::Config::in_flight_limit), which can express
+    /// per-core, fleet-wide, or nothing at all; the boundary resolves that to a basis and
+    /// the composition root writes the per-core answer HERE. Setting this field on a
+    /// `Config` therefore states nothing — it is overwritten.
+    ///
+    /// The fail-safe default remains, and is the same constant the basis resolves an
+    /// unstated limit to, so a `ServerLimits` built directly — by a test, or an embedder
+    /// driving `async_serve` with no `Config` — is bounded on exactly the same terms.
     pub max_in_flight_requests: Option<usize>,
     /// MCPRE-115 (ADR-MCPRE-051 §6): the BOUNDED GRACE WINDOW for graceful drain on
     /// the async serving path. On shutdown each per-core [`serve`] loop stops
@@ -148,7 +157,9 @@ impl Default for ServerLimits {
             // a throughput policy rather than a memory bound, and it would shed inside
             // the ADR-MCPRE-051 §7 envelope (concurrency 128), which is a load-shaping
             // decision no default should make silently.
-            max_in_flight_requests: Some(256),
+            max_in_flight_requests: Some(
+                crate::config_state::in_flight_limit::DEFAULT_PER_CORE_IN_FLIGHT,
+            ),
             // >= request_deadline (so every admitted request can finish) and, in
             // production, < k8s terminationGracePeriodSeconds.
             drain_grace: Duration::from_secs(30),

@@ -671,10 +671,16 @@ fn run_validated(
     // the artifact is uninhabited and goes nowhere.
     #[cfg(not(feature = "online_ocsp"))]
     let _ = ocsp_checker;
+    // The admission limit the boundary resolved. The request states it once, at whichever
+    // altitude the operator chose; `ServerLimits` carries the per-core answer, and a
+    // fleet-wide basis leaves it for the fleet to divide once the core count is resolved.
+    let in_flight_limit = config.state().in_flight_limit();
+    let mut limits = values.limits.clone();
+    limits.max_in_flight_requests = in_flight_limit.per_core();
     let serve_options = ServerOptions {
         identity_policy: values.identity_source,
         identity_strategy,
-        limits: values.limits.clone(),
+        limits,
         max_client_cert_lifetime: values.max_client_cert_lifetime,
         client_revocation: client_revocation.clone(),
         #[cfg(feature = "online_ocsp")]
@@ -710,8 +716,8 @@ fn run_validated(
     // needs, and the wiring is this function's business.
     let cores = crate::async_fleet::resolve_core_count(values.cores);
     let ceiling = crate::startup_plan::inner_plane_ceiling(
-        values.limits.max_in_flight_requests,
-        values.max_in_flight_total,
+        in_flight_limit.per_core(),
+        in_flight_limit.fleet_total(),
         cores,
     );
     let pool = match crate::startup_plan::inner_plane_raise(
@@ -872,7 +878,7 @@ fn run_validated(
     // Composed BEFORE the runtime exists. `--bind` resolution can fail, and a failure
     // after `finish` would drop a materialized runtime instead of tearing it down in the
     // order it owns — the one thing that type is for.
-    let fleet_cfg = fleet_config(values)?;
+    let fleet_cfg = fleet_config(values, in_flight_limit)?;
 
     building.install_proxy(proxy);
     building.install_control(control_rt);
@@ -893,7 +899,13 @@ fn run_validated(
 /// bind locator is a name lookup — an environment reading — and because it is the last
 /// place that legitimately holds the deployment request: what serving needs is a topology,
 /// and handing it the request instead would give it every other field as well.
-fn fleet_config(values: &cli::Config) -> Result<crate::async_fleet::FleetConfig, String> {
+///
+/// The admission limit arrives as the RESOLVED basis rather than as request fields: the
+/// fleet needs the fleet-wide half of it, and which half exists is the boundary's answer.
+fn fleet_config(
+    values: &cli::Config,
+    in_flight_limit: crate::config_state::InFlightLimitBasis,
+) -> Result<crate::async_fleet::FleetConfig, String> {
     use std::net::ToSocketAddrs;
 
     let addr = values
@@ -908,9 +920,10 @@ fn fleet_config(values: &cli::Config) -> Result<crate::async_fleet::FleetConfig,
         cores: values.cores, // 0 = auto (one worker per core); --cores pins it
         workers_per_shard: values.workers_per_shard,
         listen_backlog: crate::async_fleet::DEFAULT_LISTEN_BACKLOG,
-        // MCPRE-114: the operator's fleet-global target, divided evenly per core by
-        // `async_fleet::apply_global_admission`. `None` = no global target.
-        max_in_flight_total: values.max_in_flight_total,
+        // MCPRE-114: a fleet-wide basis, divided evenly per core by
+        // `async_fleet::apply_global_admission`. `None` when the limit is stated per core,
+        // which `ServerLimits` already carries.
+        max_in_flight_total: in_flight_limit.fleet_total(),
     })
 }
 
@@ -1474,12 +1487,18 @@ mod tests {
     #[test]
     fn the_fleet_config_carries_the_topology_and_resolves_the_bind() {
         let config = config_with(crate::cli::KeySourceKind::File, "/seed", "/key");
-        let fleet = super::fleet_config(&config).expect("the fixture binds a literal address");
+        let basis = crate::config_state::in_flight_limit::classify(&config);
+        let fleet =
+            super::fleet_config(&config, basis).expect("the fixture binds a literal address");
 
         assert_eq!(fleet.addr, "127.0.0.1:8443".parse().expect("literal"));
         assert_eq!(fleet.cores, config.cores);
         assert_eq!(fleet.workers_per_shard, config.workers_per_shard);
-        assert_eq!(fleet.max_in_flight_total, config.max_in_flight_total);
+        assert_eq!(
+            fleet.max_in_flight_total,
+            basis.fleet_total(),
+            "the fleet is handed the fleet-wide half of the basis, and only that"
+        );
         assert_eq!(
             fleet.listen_backlog,
             crate::async_fleet::DEFAULT_LISTEN_BACKLOG
@@ -1496,7 +1515,11 @@ mod tests {
         let mut config = config_with(crate::cli::KeySourceKind::File, "/seed", "/key");
         config.bind = "missing-a-port".to_string();
 
-        let refusal = super::fleet_config(&config).expect_err("no port, no socket address");
+        let refusal = super::fleet_config(
+            &config,
+            crate::config_state::in_flight_limit::classify(&config),
+        )
+        .expect_err("no port, no socket address");
         assert!(
             refusal.contains("--bind") && refusal.contains("missing-a-port"),
             "the refusal must name the flag and the value: {refusal}"

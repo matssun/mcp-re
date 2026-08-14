@@ -36,6 +36,67 @@ SRC_ENTRY = re.compile(r'"(src/[A-Za-z0-9_/]+\.rs)"')
 GLOBBED = re.compile(r"srcs\s*=\s*glob\(")
 
 
+def declared_mods(file: Path) -> list[str]:
+    """The module names a Rust file declares, in source order."""
+    return sorted(set(MOD_DECL.findall(file.read_text(errors="replace"))))
+
+
+def check_module_tree(
+    crate: Path, rel_dir: str, decl_file: Path, listed: set[str], seen: set[str]
+) -> list[str]:
+    """Findings for every module `decl_file` declares, recursively.
+
+    RECURSIVE because a hand-list is flat but a module tree is not.
+    `mod config_state;` resolves to a DIRECTORY, and the submodules inside it are
+    hand-listed one by one — so a new `src/config_state/foo.rs` is exactly as
+    invisible to Bazel as a new `src/foo.rs`, and stopping at the directory checked
+    the one case that cannot drift while skipping the ones that can.
+    """
+    findings: list[str] = []
+    listed_stems = {Path(p).stem for p in listed}
+    where = f"src/{rel_dir}" if rel_dir else "src"
+
+    for mod in declared_mods(decl_file):
+        rel = f"{rel_dir}/{mod}" if rel_dir else mod
+        if rel in seen:
+            continue
+        seen.add(rel)
+
+        file_form = f"src/{rel}.rs"
+        dir_form = f"src/{rel}/mod.rs"
+        as_file = crate / file_form
+        as_dir = crate / "src" / rel
+
+        if file_form in listed:
+            # A leaf module, listed. Nothing below it.
+            continue
+        if dir_form in listed:
+            # A directory module whose own mod.rs is listed: its children are listed
+            # individually too, so descend.
+            findings.extend(
+                check_module_tree(crate, rel, crate / dir_form, listed, seen)
+            )
+            continue
+        if any(p.startswith(f"src/{rel}/") for p in listed):
+            # Covered by sibling entries without a listed mod.rs — still descend if we
+            # can find the declaration file.
+            if (crate / dir_form).is_file():
+                findings.extend(
+                    check_module_tree(crate, rel, crate / dir_form, listed, seen)
+                )
+            continue
+        if mod in listed_stems and not as_file.is_file() and not as_dir.is_dir():
+            # Listed under some other path and not resolvable here; nothing to check.
+            continue
+
+        findings.append(
+            f"{crate.name}/BUILD.bazel: `mod {mod};` in {where}/"
+            f"{'mod.rs' if rel_dir else 'lib.rs'} is not in the hand-listed srcs — "
+            f"cargo compiles it, Bazel cannot find it (E0583)"
+        )
+    return findings
+
+
 def check_crate(crate: Path) -> list[str]:
     """Findings for one crate. Empty when the BUILD globs or the list is complete."""
     build, lib = crate / "BUILD.bazel", crate / "src" / "lib.rs"
@@ -45,23 +106,8 @@ def check_crate(crate: Path) -> list[str]:
     if GLOBBED.search(build_text):
         return []  # cannot drift
 
-    findings: list[str] = []
     listed = {m for m in SRC_ENTRY.findall(build_text)}
-    listed_stems = {Path(p).stem for p in listed}
-
-    for mod in sorted(set(MOD_DECL.findall(lib.read_text(errors="replace")))):
-        # `mod foo;` resolves to src/foo.rs OR src/foo/mod.rs — a directory module is
-        # normally covered by a glob of its own; only flag when NEITHER form is listed.
-        if mod in listed_stems:
-            continue
-        if any(p.startswith(f"src/{mod}/") for p in listed):
-            continue
-        if (crate / "src" / mod).is_dir():
-            continue
-        findings.append(
-            f"{crate.name}/BUILD.bazel: `mod {mod};` in src/lib.rs is not in the "
-            f"hand-listed srcs — cargo compiles it, Bazel cannot find it (E0583)"
-        )
+    findings = check_module_tree(crate, "", lib, listed, set())
 
     for entry in sorted(listed):
         if not (crate / entry).is_file():
@@ -110,6 +156,32 @@ def selftest() -> int:
         f = scan(root)
         if len(f) != 1 or "does not exist" not in f[0]:
             print(f"SELFTEST FAILED: expected a stale-entry finding, got {f}")
+            return 1
+
+        # A NESTED module the hand-list misses. `mod alpha;` resolving to a directory
+        # used to end the walk, on the assumption that a directory module carries a glob
+        # of its own — but a hand-listed crate lists the directory's children one by one,
+        # so `src/alpha/deep.rs` drifts exactly as `src/deep.rs` does. This is the case
+        # that reached a 30-minute `bazel test //...` instead of this second.
+        (crate / "src" / "alpha.rs").unlink()
+        (crate / "src" / "alpha").mkdir()
+        (crate / "src" / "alpha" / "mod.rs").write_text("pub mod deep;\n")
+        (crate / "src" / "alpha" / "deep.rs").write_text("")
+        (crate / "BUILD.bazel").write_text(
+            'srcs = ["src/lib.rs", "src/alpha/mod.rs", "src/beta.rs"]\n'
+        )
+        f = scan(root)
+        if len(f) != 1 or "mod deep" not in f[0]:
+            print(f"SELFTEST FAILED: expected a nested missing-module finding, got {f}")
+            return 1
+
+        # And the same tree, complete, passes.
+        (crate / "BUILD.bazel").write_text(
+            'srcs = ["src/lib.rs", "src/alpha/mod.rs", "src/alpha/deep.rs", '
+            '"src/beta.rs"]\n'
+        )
+        if scan(root):
+            print("SELFTEST FAILED: a complete nested hand-list was flagged")
             return 1
 
         # A globbing BUILD is skipped entirely, even when it looks incomplete.

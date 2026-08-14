@@ -310,13 +310,18 @@ pub struct Config {
     /// behaviour all move it. Measure it with `scripts/runtime_topology_sweep.sh` rather
     /// than assuming a number carries across machines.
     pub workers_per_shard: usize,
-    /// MCPRE-114: fleet-GLOBAL in-flight target, divided evenly across cores by
-    /// `async_fleet`. `None` = no global target, leaving the per-core
-    /// `limits.max_in_flight_requests`.
+    /// MCPRE-114: the admission limit AS THE OPERATOR STATED IT — per core, fleet-wide, or
+    /// not at all.
     ///
-    /// The ALTERNATIVE to that per-core ceiling, never a companion to it: naming both is
-    /// refused ([`exclusive_in_flight_limits`]).
-    pub max_in_flight_total: Option<usize>,
+    /// One field, because there is one decision. The two flags are alternatives at
+    /// different altitudes, and holding them in two `Option`s made the illegal both-set
+    /// combination writable and made absence indistinguishable from a value equal to the
+    /// default. Neither is expressible here.
+    ///
+    /// `Unspecified` does NOT mean unbounded:
+    /// [`in_flight_limit`](crate::config_state::in_flight_limit) applies the fail-safe
+    /// per-core default at the validation boundary.
+    pub in_flight_limit: crate::config_state::InFlightLimitRequest,
     /// Replay-cache backend.
     pub replay: ReplayKind,
     /// Replay-cache file path (required when `replay == File`).
@@ -1003,12 +1008,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // ADR-MCPRE-051 §1: per-core worker count; 0 = auto (one per core).
     let mut cores: usize = 0;
     let mut workers_per_shard: usize = 0;
-    let mut max_in_flight_total: Option<usize> = None;
-    // Whether `--max-in-flight` was given. `ServerLimits::max_in_flight_requests` now
-    // carries a fail-safe DEFAULT, so its being `Some` no longer means the operator
-    // stated a per-core ceiling — and a default must not out-rank an explicit
-    // `--max-in-flight-total`.
-    let mut max_in_flight_explicit = false;
+    // The admission limit the operator states, if any. `Unspecified` until a flag names
+    // one; the fail-safe default is applied at the validation boundary, not here, so the
+    // request keeps the difference between a value chosen and a value never mentioned.
+    let mut in_flight_limit = crate::config_state::InFlightLimitRequest::Unspecified;
     let mut client_crl_reload_secs: Option<u64> = None;
     // #4030 online OCSP revocation: off by default; responder-URL override
     // optional; hard-fail (deny on indeterminate) by default.
@@ -1574,7 +1577,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             // per-core ceiling directly; `--max-in-flight-total` sets a fleet-wide
             // target that async_fleet divides evenly across cores (lock-free: each
             // core enforces only its own share). The two are ALTERNATIVES —
-            // `exclusive_in_flight_limits` refuses a config that names both.
+            // `second_admission_limit` refuses an argument list naming both.
             "--max-in-flight" => {
                 let n: usize = value
                     .parse()
@@ -1585,8 +1588,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                                 attacker-controlled buffering ahead of the verify gate"
                         .to_string());
                 }
-                limits.max_in_flight_requests = Some(n);
-                max_in_flight_explicit = true;
+                second_admission_limit(in_flight_limit, "--max-in-flight")?;
+                in_flight_limit = crate::config_state::InFlightLimitRequest::PerCore(
+                    std::num::NonZeroUsize::new(n).expect("zero is refused above"),
+                );
             }
             // MCPRE-116 / ADR-MCPS-023 §A1: how long one mTLS connection may serve
             // before it is gracefully closed and the peer must re-handshake. The
@@ -1623,7 +1628,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                             .to_string(),
                     );
                 }
-                max_in_flight_total = Some(n);
+                second_admission_limit(in_flight_limit, "--max-in-flight-total")?;
+                in_flight_limit = crate::config_state::InFlightLimitRequest::FleetTotal(
+                    std::num::NonZeroUsize::new(n).expect("zero is refused above"),
+                );
             }
             "--max-client-cert-lifetime" => max_client_cert_lifetime = parse_cert_lifetime(value)?,
             "--workers-per-shard" => {
@@ -1683,14 +1691,6 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             other => return Err(format!("unknown flag {other}")),
         }
         i += 2;
-    }
-
-    // A fleet-wide target divides across cores only when no explicit per-core ceiling
-    // was given (`derived_per_core_ceiling`). Clearing the DEFAULT here is what keeps
-    // that contract: without it the built-in per-core value would silently win over an
-    // operator's `--max-in-flight-total`.
-    if max_in_flight_total.is_some() && !max_in_flight_explicit {
-        limits.max_in_flight_requests = None;
     }
 
     let require =
@@ -1951,7 +1951,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         inner_http_urls,
         cores,
         workers_per_shard,
-        max_in_flight_total,
+        in_flight_limit,
         client_crl_reload_secs,
         client_ocsp,
         ocsp_responder_url,
@@ -2558,29 +2558,41 @@ pub(crate) fn ingress_assertion_violation(config: &Config) -> Option<String> {
     )
 }
 
-/// `--max-in-flight` and `--max-in-flight-total` are ALTERNATIVE ways to state one
-/// admission limit, so naming both is a refusal rather than a precedence question.
+/// Refuse a SECOND admission limit: the two flags are alternative ways to state one, so
+/// naming both — or the same one twice — is a refusal rather than a precedence question.
 ///
-/// They are not two values to reconcile: one is a per-core ceiling and the other a
-/// fleet-wide target, and which aggregate a total implies is not known until the core
-/// count is resolved. So there is no "they agree" case to exempt — equivalence is a
-/// property of the host, not of the request.
+/// They are not two values to reconcile. One bounds each core directly and the other is
+/// divided evenly across the resolved cores, so which aggregate a total implies is not
+/// known until the core count is; equivalence is a property of the host, not of the
+/// request. There is therefore no "they agree" case to exempt.
 ///
 /// The rule the chart already enforced (`_helpers.tpl`: "set one OR the other, not both").
-/// The CLI accepted the pair and applied the per-core value, which left the operator's
-/// other explicit instruction doing nothing and saying nothing.
-pub(crate) fn exclusive_in_flight_limits(config: &Config) -> Option<String> {
-    let (Some(per_core), Some(total)) = (
-        config.limits.max_in_flight_requests,
-        config.max_in_flight_total,
-    ) else {
-        return None;
+///
+/// # Why this is the parser's job and not the boundary's
+///
+/// [`InFlightLimitRequest`](crate::config_state::InFlightLimitRequest) holds ONE limit, so
+/// a `Config` naming both cannot be constructed — by a parser, an embedder or a test — and
+/// the boundary has no such state left to refuse. What remains is only reachable while
+/// READING an argument list, where "already set" is a fact about the input rather than
+/// about the request: without this, the second flag would silently overwrite the first.
+fn second_admission_limit(
+    current: crate::config_state::InFlightLimitRequest,
+    flag: &str,
+) -> Result<(), String> {
+    let stated = match current {
+        crate::config_state::InFlightLimitRequest::Unspecified => return Ok(()),
+        crate::config_state::InFlightLimitRequest::PerCore(n) => {
+            format!("--max-in-flight {n}")
+        }
+        crate::config_state::InFlightLimitRequest::FleetTotal(n) => {
+            format!("--max-in-flight-total {n}")
+        }
     };
-    Some(format!(
-        "--max-in-flight {per_core} and --max-in-flight-total {total} are alternative ways \
-         to state the admission limit; set one, not both. --max-in-flight bounds each core \
-         directly; --max-in-flight-total is divided evenly across the resolved cores, so \
-         the two cannot be checked against each other before the core count is known."
+    Err(format!(
+        "{stated} already states the admission limit; {flag} would state it a second time. \
+         --max-in-flight bounds each core directly and --max-in-flight-total is divided \
+         evenly across the resolved cores, so the two cannot be checked against each other \
+         before the core count is known. Set one."
     ))
 }
 
@@ -2644,6 +2656,9 @@ pub fn validate_configuration(config: &Config) -> Result<DeploymentConfigState, 
         crate::config_state::transport::classify_and_validate_crl(config);
     let (audit, retention, verified_context) = crate::config_state::evidence::classify(config);
     let mcp_transport_contract = crate::config_state::mcp_transport_contract::classify(config);
+    // Infallible: the request states one of three things and the default makes the third
+    // a basis too. Nothing to refuse — the illegal combination is not representable.
+    let in_flight_limit = crate::config_state::in_flight_limit::classify(config);
     // PASS 2 — the relations between machines, asked of the RECOGNISED states rather than
     // of the fields again.
     let cross = crate::config_state::cross_machine::validate(
@@ -2715,6 +2730,7 @@ pub fn validate_configuration(config: &Config) -> Result<DeploymentConfigState, 
             crl_revocation,
             custody,
             delegated_signing,
+            in_flight_limit,
             mcp_transport_contract,
             replay,
             retention,
@@ -2878,12 +2894,6 @@ fn legality_violations(config: &Config, decided: MachineViolations) -> Vec<Strin
                  fail-closed drop. Set a bounded value (default 30s)"
             ));
         }
-    }
-    // The two admission-limit flags are alternatives, not a pair with a precedence. Checked
-    // HERE and not only in `parse_args` because both are public fields: a config built in
-    // code names both and reaches the serving path with one instruction discarded.
-    if let Some(refusal) = exclusive_in_flight_limits(config) {
-        violations.push(refusal);
     }
     // The `Replay` machine: which shared store holds admitted nonces, and every locator
     // that store requires or excludes. Spliced where the `memory` refusal and the
@@ -3641,6 +3651,11 @@ mod tests {
         list.iter().map(|s| s.to_string()).collect()
     }
 
+    /// The admission-limit request holds `NonZeroUsize`, because both flags refuse 0.
+    fn nz(v: usize) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(v).expect("the fixture states a non-zero limit")
+    }
+
     // ---- KMS endpoint override validation (C054) --------------------------
 
     /// Parse `minimal()` plus one KMS endpoint override.
@@ -4336,25 +4351,82 @@ mod tests {
 
     /// MCPRE-114: the bounded-admission ceiling exists in `async_serve`/`async_fleet`
     /// but had NO CLI flag, so no shipped configuration could enable it — the proxy
-    /// always ran unbounded in-flight. Both knobs must reach the config, and the
-    /// no-flags case must be BOUNDED: unbounded in-flight is attacker-controlled
-    /// buffering ahead of the verify gate.
+    /// always ran unbounded in-flight. Each knob must reach the config, and the no-flags
+    /// case must be BOUNDED: unbounded in-flight is attacker-controlled buffering ahead of
+    /// the verify gate.
+    ///
+    /// The REQUEST is asserted, not the runtime field: `Unspecified` is a third thing, and
+    /// keeping it distinguishable from a value equal to the default is the point.
     #[test]
     fn admission_ceilings_are_configurable_and_bounded_by_default() {
+        use crate::config_state::InFlightLimitRequest;
+
         let config = parse_args(&minimal_durable()).expect("parse");
         assert_eq!(
-            config.limits.max_in_flight_requests,
-            Some(256),
+            config.in_flight_limit,
+            InFlightLimitRequest::Unspecified,
+            "no flag states no limit — the bounded default is the boundary's answer, not the \
+             parser's"
+        );
+        assert_eq!(
+            crate::config_state::in_flight_limit::classify(&config),
+            crate::config_state::InFlightLimitBasis::PerCore {
+                requests: nz(crate::config_state::in_flight_limit::DEFAULT_PER_CORE_IN_FLIGHT)
+            },
             "a per-core ceiling applies with no flags at all"
         );
-        assert_eq!(config.max_in_flight_total, None);
 
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--max-in-flight", "32"]));
         let config = parse_args(&a).expect("parse");
-        assert_eq!(config.limits.max_in_flight_requests, Some(32));
-        assert_eq!(config.max_in_flight_total, None);
+        assert_eq!(
+            config.in_flight_limit,
+            InFlightLimitRequest::PerCore(nz(32))
+        );
         assert!(unsafe_config_violations(&config).is_empty());
+
+        let mut b = minimal_durable();
+        b.splice(0..0, args(&["--max-in-flight-total", "256"]));
+        let config = parse_args(&b).expect("parse");
+        assert_eq!(
+            config.in_flight_limit,
+            InFlightLimitRequest::FleetTotal(nz(256))
+        );
+        assert!(unsafe_config_violations(&config).is_empty());
+    }
+
+    /// An explicit value EQUAL to the default is not the same request as no value at all.
+    ///
+    /// This is the distinction the parser used to destroy. `ServerLimits` carries a
+    /// fail-safe 256, so `Some(256)` meant either "the operator chose 256 per core" or "the
+    /// operator said nothing" — and once a fleet-wide target had to out-rank the default
+    /// but not an explicit value, the parser reconstructed the difference and encoded it by
+    /// writing `None` over the field.
+    #[test]
+    fn an_explicit_ceiling_equal_to_the_default_is_not_an_absent_one() {
+        use crate::config_state::InFlightLimitRequest;
+
+        let mut a = minimal_durable();
+        a.splice(
+            0..0,
+            args(&[
+                "--max-in-flight",
+                &crate::config_state::in_flight_limit::DEFAULT_PER_CORE_IN_FLIGHT.to_string(),
+            ]),
+        );
+        let stated = parse_args(&a).expect("parse").in_flight_limit;
+        let unstated = parse_args(&minimal_durable())
+            .expect("parse")
+            .in_flight_limit;
+
+        assert_eq!(
+            stated,
+            InFlightLimitRequest::PerCore(nz(
+                crate::config_state::in_flight_limit::DEFAULT_PER_CORE_IN_FLIGHT
+            ))
+        );
+        assert_eq!(unstated, InFlightLimitRequest::Unspecified);
+        assert_ne!(stated, unstated, "the request must keep the two apart");
     }
 
     /// The two flags are ALTERNATIVE ways to state one admission limit, so naming both is
@@ -4365,59 +4437,66 @@ mod tests {
     /// already refused the pair (`_helpers.tpl`), so the two deployment surfaces disagreed
     /// about whether the configuration was legal at all.
     ///
-    /// The rule lives at the validation boundary, so it holds for a config built in CODE
-    /// as well — both are public fields, and the old precedence lived in the parser alone.
+    /// The refusal is the PARSER's because the request type holds one limit: a `Config`
+    /// naming both cannot be built, so the boundary has no such state left to refuse.
+    /// Reading an argument list is the only place the combination still appears, and
+    /// without this the second flag would silently overwrite the first.
     #[test]
     fn naming_both_admission_limits_is_refused() {
-        let mut a = minimal_durable();
-        a.splice(
-            0..0,
-            args(&["--max-in-flight", "32", "--max-in-flight-total", "256"]),
-        );
-        let refusal = parse_args(&a).expect_err("naming both admission limits must be refused");
-        assert!(
-            refusal.contains("--max-in-flight 32") && refusal.contains("256"),
-            "the refusal must name both values the operator gave: {refusal}"
-        );
-
-        // No "they happen to agree" exemption: whether a total is equivalent to a per-core
-        // ceiling depends on the resolved core count, which is a property of the host.
-        let mut same = minimal_durable();
-        same.splice(
-            0..0,
-            args(&["--max-in-flight", "256", "--max-in-flight-total", "256"]),
-        );
-        assert!(
-            parse_args(&same).is_err(),
-            "equal values are still two instructions where one is discarded"
-        );
-
-        // The same pair assembled in code, which meets no parser.
-        let mut b = minimal_durable();
-        b.splice(0..0, args(&["--max-in-flight-total", "256"]));
-        let mut config = parse_args(&b).expect("a fleet-wide target alone is legal");
-        config.limits.max_in_flight_requests = Some(32);
-        assert!(
-            unsafe_config_violations(&config)
-                .iter()
-                .any(|v| v.contains("--max-in-flight-total")),
-            "the boundary must refuse the pair however the config was produced"
-        );
+        for pair in [
+            ["--max-in-flight", "32", "--max-in-flight-total", "256"],
+            ["--max-in-flight-total", "256", "--max-in-flight", "32"],
+            // No "they happen to agree" exemption: whether a total is equivalent to a
+            // per-core ceiling depends on the resolved core count, a property of the host.
+            ["--max-in-flight", "256", "--max-in-flight-total", "256"],
+            // The same flag twice is the same mistake.
+            ["--max-in-flight", "32", "--max-in-flight", "64"],
+        ] {
+            let mut a = minimal_durable();
+            a.splice(0..0, args(&pair));
+            let refusal =
+                parse_args(&a).expect_err("a second admission limit must be refused: {pair:?}");
+            assert!(
+                refusal.contains("already states the admission limit"),
+                "the refusal must say which instruction is being overwritten: {refusal}"
+            );
+        }
     }
 
-    /// The per-core DEFAULT must not out-rank an explicit fleet-wide target: with
-    /// only `--max-in-flight-total`, the per-core ceiling is cleared so
-    /// `derived_per_core_ceiling` divides the target across cores.
+    /// A fleet-wide target survives on its own, WITHOUT the parser clearing the per-core
+    /// default to make room for it. That erasure is gone: absence is now representable, so
+    /// the request says "fleet total" and the boundary resolves it.
+    ///
+    /// The case that was broken: an embedder assembling a `Config` from
+    /// `ServerLimits::default()` plus a fleet-wide target got the default 256 per core and
+    /// no diagnostic, because the provenance rule lived in the parser alone.
     #[test]
-    fn a_fleet_wide_target_alone_clears_the_per_core_default() {
+    fn a_fleet_wide_target_survives_without_erasing_the_per_core_default() {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--max-in-flight-total", "256"]));
         let config = parse_args(&a).expect("parse");
         assert_eq!(
-            config.limits.max_in_flight_requests, None,
-            "the default must yield to an explicit global target"
+            config.in_flight_limit,
+            crate::config_state::InFlightLimitRequest::FleetTotal(nz(256))
         );
-        assert_eq!(config.max_in_flight_total, Some(256));
+
+        let basis = crate::config_state::in_flight_limit::classify(&config);
+        assert_eq!(basis.fleet_total(), Some(256));
+        assert_eq!(
+            basis.per_core(),
+            None,
+            "a fleet-wide basis has no per-core answer until the core count is resolved"
+        );
+
+        // Assembled in code, which meets no parser: the same basis, for the same reason.
+        let mut built = parse_args(&minimal_durable()).expect("parse");
+        built.limits = crate::tls::ServerLimits::default();
+        built.in_flight_limit = crate::config_state::InFlightLimitRequest::FleetTotal(nz(1000));
+        assert_eq!(
+            crate::config_state::in_flight_limit::classify(&built).fleet_total(),
+            Some(1000),
+            "the fail-safe default in ServerLimits must not out-rank a stated fleet target"
+        );
     }
 
     /// The connection-age bound is what re-checks a client certificate against an

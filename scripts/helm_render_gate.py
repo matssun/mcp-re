@@ -113,17 +113,26 @@ def check_documented_in_flight_default() -> list[str]:
     and the "unbounded" wording invited setting a ceiling to escape a fail-open
     default that does not exist. Nothing coupled the prose to the constant, so all
     three could be individually plausible.
+
+    Read from `DEFAULT_PER_CORE_IN_FLIGHT`, the single constant both the validation
+    boundary and `ServerLimits::default()` use, so the chart is checked against the
+    value the proxy actually applies rather than against one of its two readers.
     """
-    limits = (REPO / "mcp-re-proxy" / "src" / "tls.rs").read_text(encoding="utf-8")
+    # The number lives in ONE place — the constant layer A resolves an unstated limit
+    # to, which `ServerLimits::default()` also reads. Following the constant rather
+    # than a literal in `ServerLimits` is what keeps this coupled to the value both
+    # paths actually use.
+    owner = (REPO / "mcp-re-proxy" / "src" / "config_state" / "in_flight_limit.rs")
     actual = ""
-    for line in limits.splitlines():
+    for line in owner.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
-        if stripped.startswith("max_in_flight_requests: Some("):
-            actual = stripped.split("Some(", 1)[1].split(")", 1)[0]
+        if stripped.startswith("pub const DEFAULT_PER_CORE_IN_FLIGHT: usize = "):
+            actual = stripped.split("= ", 1)[1].rstrip(";").strip()
             break
     if not actual:
-        return ["mcp-re-proxy/src/tls.rs declares no `max_in_flight_requests: Some(N)`; "
-                "the documented default can no longer be checked against the code"]
+        return ["mcp-re-proxy/src/config_state/in_flight_limit.rs declares no "
+                "`DEFAULT_PER_CORE_IN_FLIGHT`; the documented default can no longer be "
+                "checked against the code"]
     problems = []
     # `_helpers.tpl` is the third place the number reaches an operator, and the only
     # one they hit while the render is refusing them.

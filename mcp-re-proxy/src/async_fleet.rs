@@ -308,7 +308,8 @@ fn apply_global_admission(
 ///
 /// The both-set arm survives because this is a total function over two `Option`s, not
 /// because that input is legal: layer A refuses a configuration naming both
-/// (`cli::exclusive_in_flight_limits`), so no validated deployment reaches it.
+/// (`config_state::InFlightLimitRequest` holds one limit), so no validated deployment
+/// reaches it.
 pub fn derived_per_core_ceiling(
     explicit_per_core: Option<usize>,
     global: Option<usize>,

@@ -61,6 +61,7 @@ pub(crate) mod cross_machine;
 pub mod custody;
 pub mod delegated_signing;
 pub mod evidence;
+pub mod in_flight_limit;
 pub mod mcp_transport_contract;
 pub mod replay;
 pub mod tls_custody;
@@ -72,6 +73,7 @@ pub use continuation_control::ContinuationControlState;
 pub use custody::{AwsCredentialMode, CustodyState};
 pub use delegated_signing::DelegatedSigningFacts;
 pub use evidence::{AuditState, RetentionState, VerifiedContextState};
+pub use in_flight_limit::{InFlightLimitBasis, InFlightLimitRequest};
 pub use mcp_transport_contract::McpTransportContractState;
 pub use replay::ReplayState;
 pub use tls_custody::{DelegatedTlsKey, TlsCustodyState};
@@ -95,6 +97,7 @@ pub struct DeploymentConfigState {
     crl_revocation: CrlRevocationState,
     custody: CustodyState,
     delegated_signing: DelegatedSigningFacts,
+    in_flight_limit: InFlightLimitBasis,
     mcp_transport_contract: McpTransportContractState,
     replay: ReplayState,
     retention: RetentionState,
@@ -113,6 +116,7 @@ pub(crate) struct RecognisedStates {
     pub(crate) crl_revocation: CrlRevocationState,
     pub(crate) custody: CustodyState,
     pub(crate) delegated_signing: DelegatedSigningFacts,
+    pub(crate) in_flight_limit: InFlightLimitBasis,
     pub(crate) mcp_transport_contract: McpTransportContractState,
     pub(crate) replay: ReplayState,
     pub(crate) retention: RetentionState,
@@ -133,6 +137,7 @@ impl DeploymentConfigState {
             crl_revocation,
             custody,
             delegated_signing,
+            in_flight_limit,
             mcp_transport_contract,
             replay,
             retention,
@@ -148,6 +153,7 @@ impl DeploymentConfigState {
             crl_revocation,
             custody,
             delegated_signing,
+            in_flight_limit,
             mcp_transport_contract,
             replay,
             retention,
@@ -198,6 +204,14 @@ impl DeploymentConfigState {
     /// not a state a deployment can be in.
     pub fn replay(&self) -> &ReplayState {
         &self.replay
+    }
+
+    /// Which basis the admission limit is expressed in, with the default already applied.
+    ///
+    /// A resolved fact rather than a posture: the control is on in both variants, and the
+    /// two differ only in the altitude the operator stated it at.
+    pub fn in_flight_limit(&self) -> InFlightLimitBasis {
+        self.in_flight_limit
     }
 
     /// Whether the MCP transport/version contract is asserted, and for which versions.
@@ -293,6 +307,9 @@ mod tests {
             },
             audit: AuditState::Stderr,
             channel_binding: ChannelBindingState::ExactUriSan,
+            in_flight_limit: InFlightLimitBasis::PerCore {
+                requests: std::num::NonZeroUsize::new(256).expect("non-zero"),
+            },
             continuation_control: ContinuationControlState::Redis {
                 endpoint: "redis://127.0.0.1:6379".to_string(),
             },
