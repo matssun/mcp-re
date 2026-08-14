@@ -15,11 +15,16 @@
 mod common;
 
 mod admission_currency_serving_test;
+mod async_replay_test;
+mod config_snapshot_hot_reload_test;
 mod delegated_client_server_e2e_test;
 mod delegated_production_wiring_test;
 mod delegated_serving_test;
 mod forwarded_body_fidelity_test;
+mod http_inner_test;
 mod mrt_continuation_serving_test;
+mod mtls_client_leg_e2e_test;
+mod per_request_revocation_test;
 mod replay_race_harness_test;
 mod rfc9421_round_trip_test;
 mod root_authority_manifest_test;

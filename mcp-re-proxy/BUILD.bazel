@@ -467,46 +467,6 @@ nt_rust_library(
     edition = "2021",
     deps = _PROXY_LIB_DEPS,
 )
-# ADR-MCPRE-051 §3 (Phase 3): the async HTTP inner-plane transport suite — proves
-# HttpInnerPool delivers a verified JSON-RPC request to a stateless HTTP backend
-# (an in-process hyper server, no external infra) and returns its JSON response
-# bytes verbatim, with fail-closed on dead backend / non-2xx / oversize.
-nt_rust_test(
-    name = "http_inner_test",
-    srcs = ["tests/http_inner_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = ["async_serve"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_async",  # keep
-        "@crates_mcp_re//:bytes",
-        "@crates_mcp_re//:http-body-util",
-        "@crates_mcp_re//:hyper",
-        "@crates_mcp_re//:hyper-util",
-        "@crates_mcp_re//:serde",
-    "@crates_mcp_re//:serde_json",
-        "@crates_mcp_re//:tokio",
-    ],
-)
-# MCPRE-117 (ADR-MCPRE-051 §4, Phase 2): async replay tier SEAM suite — proves the
-# per-core L1 fast-rejects known replays without ever manufacturing a Fresh
-# (L1-never-Fresh), L1 eviction is safe, an L2 outage fails closed + recovers, and
-# cross-core many-tiers-over-one-L2 admit EXACTLY ONE Fresh under concurrency. On the
-# in-memory reference backend; async Redis/etcd live cross-replica is the infra lane.
-nt_rust_test(
-    name = "async_replay_test",
-    srcs = ["tests/async_replay_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = ["async_serve"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_async",  # keep
-        "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:tokio",
-    ],
-)
 # ADR-MCPRE-051 §6 bounded graceful drain: in-flight requests complete, zero
 # abandoned, and a stuck request cannot delay exit past the grace bound.
 nt_rust_test(
@@ -526,47 +486,6 @@ nt_rust_test(
         "@crates_mcp_re//:rcgen",
         "@crates_mcp_re//:rustls",
         "@crates_mcp_re//:rustls-pki-types",
-        "@crates_mcp_re//:tokio",
-    ],
-)
-# MCPRE-116 (ADR-MCPRE-051 §6): the serving fleet reads its TLS config PER CONNECTION
-# from the ServerConfigSnapshot, so the CRL hot-reload task's atomic swap takes effect
-# without a restart. Without this the reload is a dead wire — the fleet would keep
-# serving the config it captured at boot.
-nt_rust_test(
-    name = "config_snapshot_hot_reload_test",
-    srcs = ["tests/config_snapshot_hot_reload_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = ["async_serve"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_async",  # keep
-        "@crates_mcp_re//:rcgen",
-        "@crates_mcp_re//:rustls",
-        "@crates_mcp_re//:rustls-pki-types",
-        # Named by path (`tokio::net::TcpListener`) rather than imported, so cargo
-        # resolves it transitively while Bazel needs the edge stated.
-        "@crates_mcp_re//:tokio",
-    ],
-)
-# Revocation must take effect on the connection a revoked peer is ALREADY holding:
-# client authentication runs on a full handshake only, so before the per-request check
-# a reloaded CRL reached new connections alone.
-nt_rust_test(
-    name = "per_request_revocation_test",
-    srcs = ["tests/per_request_revocation_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = ["async_serve"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_async",  # keep
-        "@crates_mcp_re//:rcgen",
-        "@crates_mcp_re//:rustls",
-        "@crates_mcp_re//:rustls-pki-types",
-        # Named by path (`tokio::net::TcpListener`) rather than imported, so cargo
-        # resolves it transitively while Bazel needs the edge stated.
         "@crates_mcp_re//:tokio",
     ],
 )
@@ -754,11 +673,19 @@ nt_rust_test(
     crate_features = ["async_serve"],
     edition = "2021",
     deps = [
-        ":mcp_re_proxy_async",
         "//mcp-re-client-core:mcp_re_client_core",
         "//mcp-re-client-proxy:mcp_re_client_proxy",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
+        "//mcp-re-transport:mcp_re_transport",
+        ":mcp_re_proxy_async",
+        "@crates_mcp_re//:bytes",
+        "@crates_mcp_re//:http-body-util",
+        "@crates_mcp_re//:hyper",
+        "@crates_mcp_re//:hyper-util",
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls",
+        "@crates_mcp_re//:rustls-pki-types",
         "@crates_mcp_re//:serde",
         "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:sha2",
@@ -766,27 +693,6 @@ nt_rust_test(
     ],
 )
 
-nt_rust_test(
-    name = "mtls_client_leg_e2e_test",
-    srcs = ["tests/mtls_client_leg_e2e_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = ["async_serve"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_async",  # keep
-        "//mcp-re-client-core:mcp_re_client_core",
-        "//mcp-re-client-proxy:mcp_re_client_proxy",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
-        "//mcp-re-transport:mcp_re_transport",
-        "@crates_mcp_re//:rcgen",
-        "@crates_mcp_re//:rustls-pki-types",
-        "@crates_mcp_re//:serde",
-    "@crates_mcp_re//:serde_json",
-        "@crates_mcp_re//:tokio",
-    ],
-)
 # ADR-MCPRE-051 §7 load/SLO harness. `manual`: it stands up a primary+2-replica
 # Redis fleet via Docker (or an external MCP_RE_LOADGEN_REDIS_URL), which the Bazel
 # test sandbox cannot provide — so it is excluded from `bazel test //...` and driven
@@ -925,99 +831,67 @@ nt_rust_test(
     deps = _PROXY_LIB_DEPS + _PROXY_EXT_CRATES + [":mcp_re_proxy_ext"],
 )
 
+# The extended-backend integration suites, in ONE test binary.
+#
+# The third companion of `:integration_test`; the same rule governs membership. These
+# link `:mcp_re_proxy_ext`. Each suite keeps its own `#![cfg(feature = ...)]`, so a
+# backend feature still selects exactly its own suite — grouping changes what is linked
+# together, never what is selected.
+#
+# `MCP_RE_REQUIRE_LIVE_INFRA` is the CI opt-in: when set, a missing-infra SKIP
+# HARD-FAILS instead of passing.
+
+# `redis_replay_e2e_test`
 # #4028: cross-node replay rejection over a SHARED Redis. Self-skips (prints +
 # passes) unless MCP_RE_TEST_REDIS_URL is set, so it is green without a live Redis
 # yet proves multi-node safety when one is provided (Mac: `brew install redis`).
-nt_rust_test(
-    name = "redis_replay_e2e_test",
-    srcs = ["tests/redis_replay_e2e_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = _PROXY_EXT_FEATURES,
-    edition = "2021",
-    env_inherit = [
-        "MCP_RE_TEST_REDIS_URL",
-        # CI opt-in: when set, a missing-infra SKIP HARD-FAILS instead of passing.
-        "MCP_RE_REQUIRE_LIVE_INFRA",
-    ],
-    deps = [
-        ":mcp_re_proxy_ext",  # keep
-        "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:serde",
-    "@crates_mcp_re//:serde_json",
-        # MCPS-090: the live PTTL test probes PTTL on the exact key the cache
-        # inserted, to confirm the bounded-window TTL (not the now=0 epoch TTL).
-        "@crates_mcp_re//:redis",
-    ],
-)
+# `redis_continuation_e2e_test`
 # ADR-MCPS-047: the MRTR continuation store's REDIS backing. The store's safety
 # properties are properties of its raw commands — peek must be a non-destructive GET
 # (or an about-to-be-rejected request destroys a live approval leg) and consume must
 # report DEL's own count (that count, not the read, is what makes a continuation
 # answerable at most once across replicas). Neither is observable from the in-memory
 # store the serving tests use. Self-skips without MCP_RE_TEST_REDIS_URL.
-nt_rust_test(
-    name = "redis_continuation_e2e_test",
-    srcs = ["tests/redis_continuation_e2e_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = _PROXY_EXT_FEATURES,
-    edition = "2021",
-    env_inherit = [
-        "MCP_RE_TEST_REDIS_URL",
-        # CI opt-in: when set, a missing-infra SKIP HARD-FAILS instead of passing.
-        "MCP_RE_REQUIRE_LIVE_INFRA",
-    ],
-    deps = [
-        ":mcp_re_proxy_ext",  # keep
-        "@crates_mcp_re//:tokio",
-    ],
-)
+# `redis_trust_epoch_e2e_test`
 # MCPS-84 (ADR-MCPS-049 W2): live Redis trust-epoch source — an INCR on another
 # connection surfaces as FlushAll.
-nt_rust_test(
-    name = "redis_trust_epoch_e2e_test",
-    srcs = ["tests/redis_trust_epoch_e2e_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = _PROXY_EXT_FEATURES,
-    edition = "2021",
-    env_inherit = [
-        "MCP_RE_TEST_REDIS_URL",
-        "MCP_RE_REQUIRE_LIVE_INFRA",
-    ],
-    deps = [
-        ":mcp_re_proxy_ext",  # keep
-        "@crates_mcp_re//:redis",
-    ],
-)
+# `cpstore_etcd_e2e_test`
 # #69 (epic #68 v0.4 Axis 1): cross-node replay rejection + bounded lease TTL over
 # a SHARED etcd (the CP / LINEARIZABLE backend). Self-skips (prints + passes)
 # unless MCP_RE_TEST_ETCD_URL is set, so it is green without a live etcd yet proves
 # multi-node linearizable replay safety when one is provided
 # (Mac: `brew install etcd`, then run with --enable-v2=false v3 gateway on :2379).
+# `ocsp_e2e_test`
+# #4030: online OCSP Good/Revoked against an `openssl ocsp` test responder.
+# Self-skips unless MCP_RE_TEST_OCSP_RESPONDER_URL (+ DER paths) is set.
 nt_rust_test(
-    name = "cpstore_etcd_e2e_test",
-    srcs = ["tests/cpstore_etcd_e2e_test.rs"],
+    name = "integration_ext_test",
+    srcs = glob(["tests/integration_ext/*.rs"]),
     auto_cargo_toml = False,
     bazel_build_cfg = False,
-    crate_features = _PROXY_EXT_FEATURES,
     edition = "2021",
     env_inherit = [
+        "MCP_RE_TEST_REDIS_URL",
         "MCP_RE_TEST_ETCD_URL",
-        # CI opt-in: when set, a missing-infra SKIP HARD-FAILS instead of passing.
+        "MCP_RE_TEST_OCSP_RESPONDER_URL",
+        "MCP_RE_TEST_OCSP_ISSUER_DER",
+        "MCP_RE_TEST_OCSP_GOOD_DER",
+        "MCP_RE_TEST_OCSP_REVOKED_DER",
         "MCP_RE_REQUIRE_LIVE_INFRA",
     ],
     deps = [
-        ":mcp_re_proxy_ext",  # keep
+        ":mcp_re_proxy_ext",
         "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:serde",
-    "@crates_mcp_re//:serde_json",
-        # The live TTL probe base64-encodes the key + drives the etcd v3 gateway.
         "@crates_mcp_re//:base64",
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:redis",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
         "@crates_mcp_re//:ureq",
     ],
 )
+
 
 # #4034: PKCS#11 sign+verify against a HERMETIC in-tree mock provider
 # (tests/mock-pkcs11). Under `cargo` the test builds + loads the mock and RUNS for
@@ -1047,31 +921,6 @@ nt_rust_test(
     ],
 )
 
-# #4030: online OCSP Good/Revoked against an `openssl ocsp` test responder.
-# Self-skips unless MCP_RE_TEST_OCSP_RESPONDER_URL (+ DER paths) is set.
-nt_rust_test(
-    name = "ocsp_e2e_test",
-    srcs = ["tests/ocsp_e2e_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = _PROXY_EXT_FEATURES,
-    edition = "2021",
-    env_inherit = [
-        "MCP_RE_TEST_OCSP_RESPONDER_URL",
-        "MCP_RE_TEST_OCSP_ISSUER_DER",
-        "MCP_RE_TEST_OCSP_GOOD_DER",
-        "MCP_RE_TEST_OCSP_REVOKED_DER",
-        # CI opt-in: when set, a missing-infra SKIP HARD-FAILS instead of passing.
-        "MCP_RE_REQUIRE_LIVE_INFRA",
-    ],
-    deps = [
-        ":mcp_re_proxy_ext",  # keep
-        "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:serde",
-    "@crates_mcp_re//:serde_json",
-        "@crates_mcp_re//:rcgen",
-    ],
-)
 
 # ===========================================================================
 # Phase 1 OCI packaging of the PRODUCTION proxy artifact (mcp_re_proxy_ext).
