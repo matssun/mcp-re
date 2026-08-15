@@ -25,8 +25,6 @@ use crate::startup_posture::Seam;
 use crate::transport::ExactMatchBinding;
 use crate::transport::TransportBindingPolicy;
 use crate::HttpProfileProxy;
-use crate::IdentityStrategy;
-use crate::ReverseProxyMtlsProvider;
 use crate::ServerOptions;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::AudienceTuple;
@@ -331,10 +329,37 @@ fn audit_drain_line(drained: bool, report: bool) -> Option<String> {
 
 /// The serving path proper. Reachable only with a [`crate::cli::ValidatedDeployment`], which
 /// is the whole point: there is no route into it that skips the guards.
-// The composition root is long ON PURPOSE (§12): its length is the assembly it performs,
-// and shortening it by moving statements into helpers would hide ordering and ownership
-// where a reader cannot see them. The allowance is on this function alone rather than on
-// the module, so anything else here that grows past the threshold is still reported.
+// A documented threshold exception (CLAUDE.md case B), stated in the terms that rule asks
+// for rather than as "it is complicated". 531 lines, of which 290 are code — the rest is
+// this argument.
+//
+// WHAT INVARIANT REQUIRES LOCALITY. Two, and both are enforced rather than asserted:
+//
+//   1. ORDER OF EFFECTS IS BEHAVIOUR. What this function reports as it starts is an
+//      ORDERED transcript, and `tests/startup_transcript/` captures it from the shipped
+//      binary and asserts on the sequence — a `Vec`, not a set, because a posture line
+//      that moved across the trust/replay boundary would be a real change. Statements
+//      moved into helpers keep their order only by the call site's discipline, and that
+//      discipline is invisible at the point a later edit would break it.
+//   2. FAILURE RECLAIMS IN A STATED ORDER. After `MaterializingRuntime::begin`, every `?`
+//      drops the builder, which reclaims what is installed in the order it owns. The ~38
+//      fallible expressions below are one region for that reason: their unwinding is a
+//      property of a single scope, not of whatever order locals happen to be declared in.
+//
+// WHY THE SUBORDINATE RESPONSIBILITIES ARE NOT SEPARABLE. They largely are, and have been:
+// every classification this function used to perform inline now lives in `startup_plan`
+// (pure) or `config_state` (layer A), and every resource with a teardown obligation lives
+// in the plane that owns it. What remains is the assembly itself — the part whose content
+// IS the order and the ownership. Regions that are neither leave: `identity_strategy` was
+// the most recent, a pure three-way selection that had become readable only by reading an
+// `if` inside a 300-line body.
+//
+// WHAT COMPENSATES FOR THE SIZE. The startup transcript harness above (order, from the
+// real binary), `app_startup_characterization_test` (refusals reachable at this altitude),
+// and the plans' own unit tests (every pure decision, tested without starting a proxy).
+//
+// The allowance is on this function alone rather than on the module, so anything else here
+// that grows past the threshold is still reported.
 #[allow(clippy::too_many_lines)]
 fn run_validated(
     config: &crate::cli::ValidatedDeployment,
@@ -627,36 +652,11 @@ fn run_validated(
              stalled signer then costs one worker instead of a whole core."
         );
     }
-    // Select the identity strategy (MCPS-3840): direct mTLS (default) extracts the
-    // identity from the verified peer certificate; reverse-proxy mode reads it from
-    // the trusted forwarded header and ignores the local client cert. These are
-    // mutually exclusive on a connection (enforced at parse time, honoured here).
-    // ADR-MCPS-023 Tier 3 (issue #71): under `--transport-binding lb-assertion` the
-    // identity is NOT resolved at the connection seam — it is carried by the signed,
-    // request-bound assertion header and verified post-verification inside the proxy.
-    // The serve loop therefore selects the LbAssertion strategy so it extracts the
-    // assertion header (failing closed on a duplicate) instead of reading a local
-    // client cert or a forwarded identity header. The three strategies are mutually
-    // exclusive; the CLI forbids combining lb-assertion with a reverse-proxy header.
-    let identity_strategy = if values.binding == BindingKind::LbAssertion
-        || values.binding == BindingKind::AttestedIngress
-    {
-        // Both the v1 LB-assertion (Mode B) and the v2 attested-ingress (Mode C)
-        // paths carry identity in the signed assertion header — verified post-
-        // verification inside the proxy — not at the connection seam. The serve loop
-        // extracts the same `mcp-ingress-assertion` header (failing closed on a
-        // duplicate) for both.
-        IdentityStrategy::LbAssertion
-    } else {
-        match &values.reverse_proxy_identity_header {
-            None => IdentityStrategy::DirectTls,
-            Some(header) => IdentityStrategy::ReverseProxyHeader(ReverseProxyMtlsProvider::new(
-                header.clone(),
-                values.reverse_proxy_header_format,
-                values.identity_source,
-            )),
-        }
-    };
+    // Which field the connection seam reads the client's identity from. Decided purely,
+    // from configuration alone, in `startup_plan` — the three modes are mutually
+    // exclusive and `parse_args` already refused the combinations.
+    let identity_strategy = crate::startup_plan::identity_strategy(config);
+
     // ADR-MCPRE-056 §5.4: from here on, every optional capability states its posture in
     // BOTH directions through `posture`. `assert_complete` below refuses to start — in
     // every build profile — if any seam is left silent.

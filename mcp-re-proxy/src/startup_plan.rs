@@ -14,10 +14,13 @@
 //! interchangeable claims, and every posture statement derived from them would inherit
 //! the confusion.
 
+use crate::cli::BindingKind;
 use crate::cli::ValidatedDeployment;
 use crate::config_state::ContinuationControlState;
 use crate::config_state::ReplayState;
 use crate::replay_tier::ReplayDurabilityTier;
+use crate::tls::IdentityStrategy;
+use crate::transport::ReverseProxyMtlsProvider;
 
 /// The authoritative replay tier this deployment asked for.
 ///
@@ -165,6 +168,41 @@ pub fn host_clock_is_faulted(now_unix: i64) -> bool {
 /// resolved value and neither of them resolves it.
 pub fn response_issuer_kid(config: &ValidatedDeployment) -> String {
     config.state().delegated_signing().issuer_kid().to_string()
+}
+
+/// Where the connection seam reads the client's identity from.
+///
+/// Three mutually-exclusive modes, and the exclusivity is the whole content of the
+/// decision: an assertion-carried identity is verified INSIDE the proxy after signature
+/// verification, a forwarded header is read at the seam and the local client certificate
+/// is ignored, and direct mTLS reads the verified peer certificate. `parse_args` already
+/// refuses the combinations, so this chooses rather than validates.
+///
+/// Pure, and derived from configuration alone, which is why it is here rather than in the
+/// composition root: nothing about which field the identity comes from depends on what
+/// this process has managed to establish. Selecting it beside the wiring made a
+/// three-way exclusivity readable only by reading an `if`/`else` inside a 300-line
+/// assembly, and testable only by starting a proxy.
+pub fn identity_strategy(config: &ValidatedDeployment) -> IdentityStrategy {
+    let values = config.config();
+    // Mode B (lb-assertion) and Mode C (attested-ingress) both carry identity in the
+    // signed `mcp-ingress-assertion` header, verified post-verification inside the proxy
+    // rather than at the connection seam. The serve loop extracts the same header for
+    // both, failing closed on a duplicate.
+    if matches!(
+        values.binding,
+        BindingKind::LbAssertion | BindingKind::AttestedIngress
+    ) {
+        return IdentityStrategy::LbAssertion;
+    }
+    match &values.reverse_proxy_identity_header {
+        None => IdentityStrategy::DirectTls,
+        Some(header) => IdentityStrategy::ReverseProxyHeader(ReverseProxyMtlsProvider::new(
+            header.clone(),
+            values.reverse_proxy_header_format,
+            values.identity_source,
+        )),
+    }
 }
 
 /// The shared trust-epoch mechanism, interpreted ONCE (CF-09).
@@ -608,6 +646,53 @@ mod tests {
 
     fn parse(extra: &[&str]) -> Result<DeploymentRequest, String> {
         crate::cli::parse_args(&base_argv(extra))
+    }
+
+    fn strategy_for(extra: &[&str]) -> IdentityStrategy {
+        let mut argv: Vec<&str> = SHARED_REDIS.to_vec();
+        argv.extend_from_slice(extra);
+        let config = parse(&argv).expect("args parse");
+        let validated = ValidatedDeployment::try_from(config).expect("config validates");
+        identity_strategy(&validated)
+    }
+
+    /// A deployable configuration reads identity from the verified peer certificate.
+    ///
+    /// `DirectTls` is the only arm a `ValidatedDeployment` can select today. The other two
+    /// belong to capabilities the boundary refuses — see the test below — so this is not
+    /// "the default among three" but "the one that exists".
+    #[test]
+    fn a_deployable_configuration_reads_the_verified_peer_certificate() {
+        assert!(matches!(strategy_for(&[]), IdentityStrategy::DirectTls));
+    }
+
+    /// The other two arms are unreachable through the boundary, and that is the property
+    /// worth pinning.
+    ///
+    /// `ReverseProxyHeader` trusts a forwarded header any peer reaching the socket could
+    /// spoof; `LbAssertion` serves the two ingress-assertion modes. Both are refused by
+    /// `unsafe_config_violations`, so no command line reaches them — they are retained
+    /// capabilities (`docs/AGENT_INSTRUCTIONS.md` §9), not dead vocabulary, and the
+    /// distinction is exactly that a decision gates them rather than nothing does.
+    ///
+    /// This asserts the refusal rather than the strategy because that is what makes the
+    /// classifier's shape honest: if one of these ever becomes selectable, this fails and
+    /// the arm needs its own coverage rather than acquiring it silently.
+    #[test]
+    fn the_assertion_and_forwarded_identity_arms_are_refused_at_the_boundary() {
+        for extra in [
+            vec!["--reverse-proxy-identity-header", "x-client-id"],
+            vec!["--transport-binding", "lb-assertion"],
+            vec!["--transport-binding", "attested-ingress"],
+        ] {
+            let mut argv: Vec<&str> = SHARED_REDIS.to_vec();
+            argv.extend_from_slice(&extra);
+            assert!(
+                parse(&argv).is_err(),
+                "{extra:?} must be refused at the boundary; if it now starts, \
+                 identity_strategy has a reachable arm with no test"
+            );
+        }
     }
 
     /// Plan a configuration that came through the parser intact.
