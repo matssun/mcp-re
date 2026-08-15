@@ -54,8 +54,6 @@ fn base_args(m: &Material) -> Vec<String> {
         serving_fixtures::TRUST_DOMAIN,
         "--inner-http-url",
         "http://127.0.0.1:9/mcp",
-        "--replay-cache",
-        "shared",
         "--replay-redis-url",
         "redis://127.0.0.1:1",
         "--replay-durability-tier",
@@ -534,8 +532,6 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
             TRUST_DOMAIN,
             "--inner-http-url",
             "http://127.0.0.1:9/mcp",
-            "--replay-cache",
-            "shared",
             "--replay-redis-url",
             "redis://127.0.0.1:1",
             "--replay-durability-tier",
@@ -584,16 +580,6 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
     ]))
     .to_lowercase()
     .contains("pkcs11"));
-    // A file replay cache never reaches a build question: CF-01 made it a LAYER-A
-    // refusal, because no build can establish it, so there is no capability to name.
-    // Asserted at the boundary rather than through `run`, which it no longer reaches.
-    let file_refusal =
-        mcp_re_proxy::cli::parse_args(&mk(&["--replay-cache", "file", "--replay-path", "/tmp/x"]))
-            .expect_err("file is not a deployment state");
-    assert!(
-        file_refusal.contains("not a supported deployment state"),
-        "{file_refusal}"
-    );
     // The linearizable (CP) tier needs a cpstore_etcd build. The Redis replay locator is
     // dropped from the base first: it belongs to the OTHER replay state, and layer A now
     // refuses it beside a linearizable tier (CF-12), which would mask this build refusal.

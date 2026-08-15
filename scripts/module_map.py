@@ -55,7 +55,7 @@ PLANES: dict[str, list[str]] = {
         "materializing_runtime",
     ],
     "replay": [
-        "async_replay", "shared_replay", "durable_replay", "replay_plane", "replay_tier",
+        "async_replay", "shared_replay", "replay_plane", "replay_tier",
         "async_redis_store", "async_etcd_store", "redis_store", "etcd_store",
         "continuation_store", "redis_continuation_store", "admission_source",
         "redis_admission_source",

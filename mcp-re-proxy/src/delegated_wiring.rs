@@ -170,8 +170,6 @@ mod tests {
             "https://mcp.example.com/mcp?route=a",
             // A durable replay selection so parse-time unsafe-config checks pass; the
             // path is not opened at parse (this builder reads config fields only).
-            "--replay-cache",
-            "shared",
             "--replay-redis-url",
             "redis://127.0.0.1:6379",
             "--replay-durability-tier",

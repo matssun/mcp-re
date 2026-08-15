@@ -6,26 +6,33 @@
 //!
 //! | State | Required | Forbidden | Guards | Build |
 //! |---|---|---|---|---|
-//! | `SharedRedis` | `replay_redis_url`, a Redis quorum tier | `cpstore_etcd_endpoint`, `replay_path` | tier meets the strict minimum | `redis_replay` |
-//! | `SharedLinearizable` | `cpstore_etcd_endpoint`, the linearizable tier | `replay_redis_url`, `replay_path` | — | `cpstore_etcd` |
+//! | `SharedRedis` | `replay_redis_url`, a Redis quorum tier | `cpstore_etcd_endpoint` | tier meets the strict minimum | `redis_replay` |
+//! | `SharedLinearizable` | `cpstore_etcd_endpoint`, the linearizable tier | `replay_redis_url` | — | `cpstore_etcd` |
 //!
-//! `Memory`, `File`, and the two sub-strict Redis tiers are **input forms that refuse**.
-//! They never inhabit [`ReplayState`], because a validated state is one a deployment could
-//! be in and none of these can: `Memory` keeps nonces only in process memory, `File` has
-//! no materialization path in any build (CF-01), and the sub-strict tiers carry a replay
-//! window the strict posture does not accept.
+//! **The durability tier is the only selector.** There is no backend-KIND input beside it.
+//! Both states are shared, both are named by their tier, and each tier requires exactly the
+//! locator its own backend needs — so the tier plus its witness determines the state with
+//! nothing left over to choose.
 //!
-//! **`File`'s refusal is a product statement, not a build statement.** No build can
-//! establish it, so naming a missing capability would name one nothing supplies. Once a
-//! legal state IS classified, a missing `redis_replay` or `cpstore_etcd` is layer B and
-//! belongs to materialization.
+//! A request that declares no tier names no state. That absence is a REFUSAL, not a
+//! fallback to something weaker: there is no node-local store to drop back to, in this or
+//! any build.
+//!
+//! The two sub-strict Redis tiers are **input forms that refuse** — they carry a replay
+//! window the strict posture does not accept. They never inhabit [`ReplayState`], because a
+//! validated state is one a deployment could be in. They remain in
+//! [`ReplayDurabilityTier`] because the dispatcher gates on them at runtime, which is the
+//! backstop against a state constructed in-process rather than parsed.
+//!
+//! Once a legal state IS classified, a missing `redis_replay` or `cpstore_etcd` is layer B
+//! and belongs to materialization.
 //!
 //! **`replay_redis_url` is this machine's, exclusively (CF-12).** It once also decided
 //! where the MRTR continuation store lived, which is why `SharedLinearizable` could not
 //! forbid it without destroying cross-replica MRTR. `ContinuationControl` owns that fact
 //! now, so the forbidden cell can finally be stated.
 
-use crate::cli::{DeploymentRequest, ReplayKind};
+use crate::cli::DeploymentRequest;
 use crate::replay_tier::ReplayDurabilityTier;
 
 /// Which replay state a configuration requests. Only live states are representable.
@@ -96,45 +103,22 @@ enum RequestedState {
     SharedLinearizable,
 }
 
-/// Why a requested replay backend is not a deployment state at all.
-///
-/// Separate from the columns because these refusals are about the *input form*: there is
-/// no state to check the parameters of.
-fn rejected_input_form(config: &DeploymentRequest) -> Option<String> {
-    match config.replay {
-        ReplayKind::Memory => Some(
-            "--replay-cache memory is non-durable: it keeps admitted nonces only in process \
-             memory (and is the cache used when --replay-cache is omitted), so a proxy RESTART \
-             forgets them and re-opens a replay window for any still-fresh captured envelope \
-             until its expires_at+skew; production must use a durable replay store: \
-             --replay-cache shared with a redis-wait-quorum:<quorum>:<timeout_ms> or \
-             linearizable durability tier"
-                .to_string(),
-        ),
-        // CF-01. Phrased as what deployments exist, not as what this build or serving path
-        // can do: `ReplayPlan` has no file arm in any build, so there is no capability to
-        // name and no alternative path to point at.
-        ReplayKind::File => Some(
-            "--replay-cache file is not a supported deployment state in the current serving \
-             architecture; configure shared replay with an accepted durability tier: \
-             --replay-cache shared with --replay-durability-tier \
-             redis-wait-quorum:<quorum>:<timeout_ms> or linearizable"
-                .to_string(),
-        ),
-        ReplayKind::Shared => None,
-    }
-}
-
 /// Recognise which shared state the declared tier names, or why it names none.
+///
+/// The tier is the ONLY selector. There is no separate backend-kind input to reject first:
+/// both live states are shared, so a request either declares a tier that names one of them
+/// or it names no deployment at all.
 fn classify(config: &DeploymentRequest) -> Result<RequestedState, String> {
-    if let Some(refusal) = rejected_input_form(config) {
-        return Err(refusal);
-    }
     let Some(tier) = &config.replay_durability_tier else {
+        // Absence is a refusal, never a fallback. This is the clause that makes an
+        // otherwise-complete request with no replay configuration fail closed: there is no
+        // implicit store to drop back to, so saying nothing about replay is saying the
+        // deployment makes no replay-safety claim, and that does not start.
         return Err(
-            "--replay-cache shared requires --replay-durability-tier: the tier IS the \
-             horizontal replay-safety claim, and a shared store with none declared makes no \
-             claim at all"
+            "--replay-durability-tier is required: the tier IS the horizontal replay-safety \
+             claim, and a deployment that declares none makes no claim at all. Declare \
+             redis-wait-quorum:<quorum>:<timeout_ms> with --replay-redis-url, or \
+             linearizable with --cpstore-etcd-endpoint"
                 .to_string(),
         );
     };
@@ -157,21 +141,14 @@ fn classify(config: &DeploymentRequest) -> Result<RequestedState, String> {
 /// The required and forbidden locators of a recognised state.
 fn locator_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<String> {
     let mut out = Vec::new();
-    // Forbidden in BOTH live states: the only state `replay_path` parameterizes is not one
-    // a deployment can be in. It is `Option`-typed and mode-specific, so its presence is an
-    // operator statement rather than a default (CF-04).
-    if config.replay_path.is_some() {
-        out.push(
-            "--replay-path belongs to --replay-cache file, which is not a supported \
-             deployment state; a shared replay store keeps no local file. Remove \
-             --replay-path"
-                .to_string(),
-        );
-    }
     match state {
         RequestedState::SharedRedis { .. } => {
             if config.replay_redis_url.is_none() {
-                out.push("--replay-cache shared requires --replay-redis-url".to_string());
+                out.push(
+                    "a redis-wait-quorum tier requires --replay-redis-url: the tier names \
+                     the guarantee, the URL names the store that must deliver it"
+                        .to_string(),
+                );
             }
             if config.cpstore_etcd_endpoint.is_some() {
                 out.push(
@@ -250,8 +227,6 @@ mod tests {
     type Form = (ReplayState, fn(&mut DeploymentRequest));
 
     fn redis(config: &mut DeploymentRequest) {
-        config.replay = ReplayKind::Shared;
-        config.replay_path = None;
         config.replay_redis_url = Some("redis://127.0.0.1:6379".to_string());
         config.replay_durability_tier = Some(ReplayDurabilityTier::RedisWaitQuorum {
             quorum: 1,
@@ -260,8 +235,6 @@ mod tests {
     }
 
     fn linearizable(config: &mut DeploymentRequest) {
-        config.replay = ReplayKind::Shared;
-        config.replay_path = None;
         config.replay_redis_url = None;
         config.replay_durability_tier = Some(ReplayDurabilityTier::Linearizable);
         config.cpstore_etcd_endpoint = Some("http://127.0.0.1:2379".to_string());
@@ -348,34 +321,23 @@ mod tests {
         );
     }
 
-    /// The rejected input forms produce NO state — they are not deployments.
+    /// A request naming no durability tier names no state, and acquires none.
+    ///
+    /// The tier is the only selector, so its absence must produce nothing — not a weaker
+    /// state, and not a default.
     #[test]
-    fn memory_and_file_never_become_states() {
-        for kind in [ReplayKind::Memory, ReplayKind::File] {
-            let (state, violations) = run(|c| {
-                c.replay = kind;
-                c.replay_path = Some("/replay".to_string());
-            });
-            assert!(state.is_none(), "{kind:?} became a validated state");
-            assert!(!violations.is_empty());
-        }
-    }
-
-    /// CF-01: the refusal is about which deployments exist, not about this build.
-    #[test]
-    fn the_file_refusal_is_a_product_statement() {
-        let (_, violations) = run(|c| c.replay = ReplayKind::File);
-        let refusal = violations.first().expect("file is refused");
+    fn no_declared_tier_yields_no_state() {
+        let (state, violations) = run(|c| c.replay_durability_tier = None);
         assert!(
-            refusal.contains("not a supported deployment state"),
-            "{refusal}"
+            state.is_none(),
+            "a request with no declared tier must not become a validated state"
         );
-        for build_talk in ["build", "feature", "async serving path"] {
-            assert!(
-                !refusal.contains(build_talk),
-                "a layer-A refusal must not name {build_talk:?}: {refusal}"
-            );
-        }
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("--replay-durability-tier")),
+            "the refusal must name the missing tier: {violations:?}"
+        );
     }
 
     #[test]
@@ -466,19 +428,5 @@ mod tests {
             refusal.contains("--continuation-control-redis-url"),
             "the refusal must name what replaces the overloaded use: {refusal}"
         );
-    }
-
-    #[test]
-    fn a_path_for_a_state_no_deployment_can_be_in_is_refused_in_both_states() {
-        for mutate in [redis as fn(&mut DeploymentRequest), linearizable] {
-            let (_, violations) = run(|c| {
-                mutate(c);
-                c.replay_path = Some("/replay".to_string());
-            });
-            assert!(
-                violations.iter().any(|v| v.contains("--replay-path")),
-                "{violations:?}"
-            );
-        }
     }
 }

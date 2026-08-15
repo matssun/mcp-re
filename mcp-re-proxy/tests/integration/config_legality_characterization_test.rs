@@ -46,8 +46,6 @@ fn base() -> DeploymentRequest {
         "epoch-min",
         "--trust-domain",
         "mcp.example.com",
-        "--replay-cache",
-        "shared",
         "--replay-redis-url",
         "redis://127.0.0.1:6379",
         "--replay-durability-tier",
@@ -175,9 +173,8 @@ fn refused_at_the_boundary() {
     assert!(refusal.contains("--signing-key-seed"), "{refusal}");
 
     // Atlas §C.1, the Replay machine's forbidden and required columns. A CP-store
-    // endpoint on a state whose store is Redis; a shared store declaring no durability
-    // tier, when the tier IS the horizontal replay-safety claim; and a `--replay-path`
-    // for a state no deployment can be in.
+    // endpoint on a state whose store is Redis; and a deployment declaring no durability
+    // tier, when the tier IS the horizontal replay-safety claim and the only selector.
     for (name, mutate) in [
         (
             "cpstore_etcd_endpoint",
@@ -188,10 +185,6 @@ fn refused_at_the_boundary() {
         (
             "replay_durability_tier",
             Box::new(|c: &mut DeploymentRequest| c.replay_durability_tier = None),
-        ),
-        (
-            "replay_path",
-            Box::new(|c: &mut DeploymentRequest| c.replay_path = Some("/replay".to_string())),
         ),
     ] {
         let mut config = base();

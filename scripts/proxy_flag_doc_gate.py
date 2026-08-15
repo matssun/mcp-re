@@ -7,8 +7,9 @@ WHAT THIS PROVES, exactly: every `--flag` appearing in a fenced code block that 
 syntactic check over the documentation and one source file, and the claim stops there.
 
 WHAT IT DOES NOT PROVE: that the flag's VALUE is accepted. `--authz reference`,
-`--replay-cache memory`, `--replay-cache file`, `--revocation-list <path>`,
-`--client-ocsp require` and `--transport-binding lb-assertion|attested-ingress` are all
+`--revocation-list <path>`, `--client-ocsp require`,
+`--transport-binding lb-assertion|attested-ingress` and the two sub-strict
+`--replay-durability-tier` values are all
 spelled with flags that exist and are then refused by configuration validation, so a
 command line built entirely from flags this gate accepts can still fail to start. Value
 admissibility is `unsafe_config_violations`' business and is tested there.
@@ -17,8 +18,8 @@ Nor does it read prose: only fenced blocks that invoke the proxy. A paragraph ma
 removed flag in order to say it was removed, which is exactly what several guides do.
 
 WHY IT EXISTS. `docs/sidecar-deployment-guide.md` — the current guide for the shipped
-sidecar, not a superseded one — carried a worked command line passing `--authz reference`,
-`--revocation-list` and `--replay-cache file`, none of which starts, plus a flag table row
+sidecar, not a superseded one — carried a worked command line passing `--authz reference`
+and `--revocation-list`, neither of which starts, plus a flag table row
 for `--allow-env-keysource`, which stopped existing in `0a99957`. An operator
 following it gets a proxy that refuses to start and no reason to suspect the document. A
 flag that was DELETED is the case this gate catches outright; a flag whose VALUE became

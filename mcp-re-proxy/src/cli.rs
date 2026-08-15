@@ -144,20 +144,6 @@ pub enum VerifiedContextKind {
     Trusted,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReplayKind {
-    /// In-memory (lost on restart).
-    Memory,
-    /// Durable file-backed (SINGLE-NODE only).
-    File,
-    /// Shared, server-side-atomic cache for HORIZONTALLY-SCALED replay safety
-    /// (issue #3837). No production shared backend ships in this build (the Redis
-    /// adapter + crate repin + live-backend test are tracked separately), so
-    /// selecting `shared` parses but FAILS CLOSED at construction with a clear
-    /// "not yet available in this build" error (mirrors the env-keysource gate).
-    Shared,
-}
-
 /// Transport-binding policy selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BindingKind {
@@ -322,10 +308,6 @@ pub struct DeploymentRequest {
     /// [`in_flight_limit`](crate::config_state::in_flight_limit) applies the fail-safe
     /// per-core default at the validation boundary.
     pub in_flight_limit: crate::config_state::InFlightLimitRequest,
-    /// Replay-cache backend.
-    pub replay: ReplayKind,
-    /// Replay-cache file path (required when `replay == File`).
-    pub replay_path: Option<String>,
     /// Shared replay-store connection URL (required when `replay == Shared` and the
     /// declared tier is a Redis tier), e.g. `redis://127.0.0.1:6379` (issue #3837).
     ///
@@ -750,7 +732,6 @@ fn key_source_custody_refusal(
 /// every route into serving. They stay here because the parser is where an operator meets
 /// the clearer message first.
 fn shared_replay_refusal(
-    replay: ReplayKind,
     replay_durability_tier: Option<&crate::replay_tier::ReplayDurabilityTier>,
     replay_redis_url: Option<&str>,
     cpstore_etcd_endpoint: Option<&str>,
@@ -760,9 +741,20 @@ fn shared_replay_refusal(
     // declare it (fail closed rather than assume a tier). Checked BEFORE the
     // backend-endpoint requirement, because the declared tier decides WHICH
     // backend endpoint is required.
-    if replay == ReplayKind::Shared && replay_durability_tier.is_none() {
+    // Saying NOTHING about replay is not an incoherence — it is an absent state, and
+    // `config_state::replay` refuses it there. These clauses check that what the operator
+    // DID say hangs together; firing here on silence would move that refusal from
+    // validation to parsing and change which message a multiply-invalid command line
+    // meets first (§8.5).
+    if replay_durability_tier.is_none()
+        && replay_redis_url.is_none()
+        && cpstore_etcd_endpoint.is_none()
+    {
+        return None;
+    }
+    if replay_durability_tier.is_none() {
         return Some(
-            "--replay-cache shared requires --replay-durability-tier \
+            "--replay-durability-tier is required \
                     (redis-async | redis-wait-quorum:<quorum>:<timeout_ms> | linearizable | \
                     single-store-fail-closed)"
                 .to_string(),
@@ -778,28 +770,26 @@ fn shared_replay_refusal(
         replay_durability_tier,
         Some(crate::replay_tier::ReplayDurabilityTier::Linearizable)
     );
-    if replay == ReplayKind::Shared {
-        if tier_is_linearizable {
-            if cpstore_etcd_endpoint.is_none() {
-                return Some(
-                    "--replay-durability-tier linearizable requires a CP/linearizable store \
-                     endpoint: --cpstore-etcd-endpoint <http://host:2379> (the LINEARIZABLE \
-                     claim is forbidden without a configured CPStore; it is NEVER silently \
-                     downgraded to Redis or in-memory)"
-                        .to_string(),
-                );
-            }
-        } else if replay_redis_url.is_none() {
-            return Some("--replay-cache shared requires --replay-redis-url".to_string());
+    if tier_is_linearizable {
+        if cpstore_etcd_endpoint.is_none() {
+            return Some(
+                "--replay-durability-tier linearizable requires a CP/linearizable store \
+                 endpoint: --cpstore-etcd-endpoint <http://host:2379> (the LINEARIZABLE \
+                 claim is forbidden without a configured CPStore; it is NEVER silently \
+                 downgraded to Redis or in-memory)"
+                    .to_string(),
+            );
         }
+    } else if replay_redis_url.is_none() {
+        return Some("a redis durability tier requires --replay-redis-url".to_string());
     }
     // A `--cpstore-etcd-endpoint` set for any non-LINEARIZABLE configuration would
     // silently do nothing (a false belief that a CP store is in force), so reject it
     // (fail closed) — mirrors the dangling `--ocsp-responder-url` / KMS-TLS guards.
-    if cpstore_etcd_endpoint.is_some() && !(replay == ReplayKind::Shared && tier_is_linearizable) {
+    if cpstore_etcd_endpoint.is_some() && !tier_is_linearizable {
         return Some(
             "--cpstore-etcd-endpoint has no effect without \
-             --replay-cache shared --replay-durability-tier linearizable"
+             --replay-durability-tier linearizable"
                 .to_string(),
         );
     }
@@ -1028,8 +1018,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     let mut audit_sink = AuditSinkKind::Stderr;
     let mut retained_evidence_dir: Option<String> = None;
     let mut verified_context = VerifiedContextKind::Disabled;
-    let mut replay = ReplayKind::Memory;
-    let mut replay_path = None;
     let mut replay_redis_url = None;
     let mut continuation_control_redis_url = None;
     // MCPS-84: networked trust-epoch invalidation backend (optional; only under
@@ -1308,19 +1296,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
                 }
                 ocsp_responder_url = Some(value.clone());
             }
-            "--replay-cache" => {
-                replay = match value.as_str() {
-                    "memory" => ReplayKind::Memory,
-                    "file" => ReplayKind::File,
-                    "shared" => ReplayKind::Shared,
-                    other => {
-                        return Err(format!(
-                            "unknown --replay-cache '{other}' (memory|file|shared)"
-                        ))
-                    }
-                }
-            }
-            "--replay-path" => replay_path = Some(value.clone()),
             "--admission" => {
                 admission = match value.as_str() {
                     "off" => AdmissionKind::Off,
@@ -1695,9 +1670,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
 
     let require =
         |opt: Option<String>, name: &str| opt.ok_or_else(|| format!("missing required {name}"));
-    if replay == ReplayKind::File && replay_path.is_none() {
-        return Err("--replay-cache file requires --replay-path".to_string());
-    }
     // MCPRE-493: the admission gate's own coherence, consulted from the same predicate
     // the validation boundary uses. Kept HERE, at the position these checks always
     // occupied, so the diagnostic a CLI user meets first does not change (§K1).
@@ -1716,7 +1688,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     // Shared-replay coherence; the clauses live in `shared_replay_refusal` and the call
     // stays where they were (ADR-MCPRE-058 §8.5).
     if let Some(refusal) = shared_replay_refusal(
-        replay,
         replay_durability_tier.as_ref(),
         replay_redis_url.as_deref(),
         cpstore_etcd_endpoint.as_deref(),
@@ -1956,8 +1927,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
         client_ocsp,
         ocsp_responder_url,
         trust_path: require(trust_path, "--trust")?,
-        replay,
-        replay_path,
         admission,
         admission_authority_kid,
         admission_authority_pubkey_b64url,
@@ -2908,32 +2877,11 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // configuration of its own to refuse. Placed beside Replay because that is where an
     // operator reading about shared stores is looking, not because the two are related.
     violations.extend(decided.continuation_control);
-    // MCPS-79 (ADR-MCPS-049 clause 1): the FLEET dimension is orthogonal to the
-    // security posture. `--strict` alone is single-node strict, where the node is
-    // the sole verifier and `--replay-cache file` (ADR-MCPS-014, single-node
-    // durable) is a valid, self-consistent replay store. `--strict --fleet`
-    // declares the horizontally-scaled posture: a replayable request may reach a
-    // DIFFERENT verifier than the one that admitted the first nonce during the
-    // evidence-acceptance window, so a node-local cache (`memory`, lost on
-    // restart; or `file`, unshareable across processes) cannot maintain the
-    // cross-verifier replay guarantee. Both are rejected (not warned) so a fleet
-    // cannot silently run on node-local replay state. The required `shared` tier's
-    // quorum/durability strength is enforced by the block above; here we only
-    // reject the node-local KINDS, which is exactly what the `ReplayKind` seam
-    // (not the injected cache's coarse durability CLASS) can distinguish.
-    if config.fleet && (config.replay == ReplayKind::Memory || config.replay == ReplayKind::File) {
-        violations.push(format!(
-            "--fleet requires a shared replay cache: --replay-cache {} is node-local, so a \
-             request replayed to a peer verifier during the acceptance window would not be seen \
-             as a replay; use --replay-cache shared with a redis-wait-quorum:<quorum>:<timeout_ms> \
-             or linearizable durability tier",
-            match config.replay {
-                ReplayKind::Memory => "memory",
-                ReplayKind::File => "file",
-                ReplayKind::Shared => unreachable!(),
-            }
-        ));
-    }
+    // MCPS-79 (ADR-MCPS-049 clause 1) needed a clause here while a replay store could be
+    // node-local: `--fleet` had to reject the kinds a peer verifier could not see. No such
+    // kind is representable now — every classifiable replay state is shared, and a request
+    // that declares no durability tier names no state at all — so the fleet posture needs
+    // no replay clause of its own. The tier's own strength requirement is enforced above.
     // X7 — ChannelBinding × Tls: mTLS is terminated locally XOR a forwarded identity is
     // trusted. The two binding-kind clauses that used to close this list moved up into the
     // `ChannelBinding` machine's own position.
@@ -3646,7 +3594,6 @@ mod tests {
     use super::IdentityPolicy;
     use super::KeySourceKind;
     use super::OcspKind;
-    use super::ReplayKind;
     use super::ReverseProxyHeaderFormat;
     use mcp_re_core::SigningKey;
 
@@ -3667,8 +3614,6 @@ mod tests {
         // `minimal()` omits --replay-cache, which `unsafe_config_violations` refuses; that
         // refusal is unrelated to endpoint validation and would mask an accept case.
         a.extend(args(&[
-            "--replay-cache",
-            "shared",
             "--replay-redis-url",
             "redis://127.0.0.1:6379",
             "--replay-durability-tier",
@@ -3976,8 +3921,6 @@ mod tests {
     /// a durable backend — tests splice these flags into `minimal()`.
     fn durable_replay() -> Vec<String> {
         args(&[
-            "--replay-cache",
-            "shared",
             "--replay-redis-url",
             "redis://127.0.0.1:6379",
             "--replay-durability-tier",
@@ -4021,8 +3964,6 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--replay-cache",
-                "shared",
                 "--replay-redis-url",
                 "redis://127.0.0.1:6379",
                 "--pkcs11-tls-key-label",
@@ -4566,8 +4507,6 @@ mod tests {
         // A config WITHOUT the required trust epoch (built by hand, since `minimal()`
         // now includes it) fails closed — the epoch is mandatory for every deployment.
         let a = args(&[
-            "--replay-cache",
-            "shared",
             "--replay-redis-url",
             "redis://127.0.0.1:6379",
             "--replay-durability-tier",
@@ -4626,7 +4565,6 @@ mod tests {
         );
         assert!(config.mcp_protocol_versions.is_empty());
         assert_eq!(config.key_source, KeySourceKind::File);
-        assert_eq!(config.replay, ReplayKind::Shared);
         assert_eq!(config.binding, BindingKind::Exact);
         // Safe defaults: URI SAN identity, bounded resources.
         assert_eq!(config.identity_source, IdentityPolicy::UriSan);
@@ -5529,8 +5467,6 @@ mod tests {
         // A durable replay cache: `minimal()` omits it, and the unsafe-config guard
         // rejects the in-memory default before parsing gets this far.
         let durable = args(&[
-            "--replay-cache",
-            "shared",
             "--replay-redis-url",
             "redis://127.0.0.1:6379",
             "--replay-durability-tier",
@@ -5939,17 +5875,8 @@ mod tests {
         assert!(err.contains("--bind"), "got: {err}");
     }
 
-    #[test]
-    fn file_replay_requires_path() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--replay-cache", "file"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--replay-path"), "got: {err}");
-    }
-
-    // Issue #3837: `--replay-cache shared` parses (it is a real selection) and
-    // requires a connection URL. It must declare a strict-acceptable durability tier
-    // (the weaker `redis-async` tier is rejected, see
+    // A Redis quorum tier requires a connection URL, and must be strict-acceptable (the
+    // weaker `redis-async` tier is rejected, see
     // `strict_rejects_weak_replay_durability_tier`).
     #[test]
     fn parses_shared_replay_selection() {
@@ -5957,8 +5884,6 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--replay-cache",
-                "shared",
                 "--replay-redis-url",
                 "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
@@ -5966,7 +5891,6 @@ mod tests {
             ]),
         );
         let config = parse_args(&a).expect("parse");
-        assert_eq!(config.replay, ReplayKind::Shared);
         assert_eq!(
             config.replay_redis_url.as_deref(),
             Some("redis://127.0.0.1:6379")
@@ -5986,15 +5910,7 @@ mod tests {
         // (With no tier the earlier durability-tier guard fires first; that is
         // covered by `shared_replay_requires_durability_tier`.)
         let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--replay-cache",
-                "shared",
-                "--replay-durability-tier",
-                "redis-async",
-            ]),
-        );
+        a.splice(0..0, args(&["--replay-durability-tier", "redis-async"]));
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("--replay-redis-url"), "got: {err}");
     }
@@ -6005,12 +5921,7 @@ mod tests {
         let mut a = minimal();
         a.splice(
             0..0,
-            args(&[
-                "--replay-cache",
-                "shared",
-                "--replay-redis-url",
-                "redis://127.0.0.1:6379",
-            ]),
+            args(&["--replay-redis-url", "redis://127.0.0.1:6379"]),
         );
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("--replay-durability-tier"), "got: {err}");
@@ -6022,8 +5933,6 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--replay-cache",
-                "shared",
                 "--replay-redis-url",
                 "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
@@ -6047,15 +5956,7 @@ mod tests {
     #[test]
     fn linearizable_tier_without_cpstore_endpoint_fails_closed() {
         let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--replay-cache",
-                "shared",
-                "--replay-durability-tier",
-                "linearizable",
-            ]),
-        );
+        a.splice(0..0, args(&["--replay-durability-tier", "linearizable"]));
         let err = parse_args(&a).unwrap_err();
         assert!(
             err.contains("--cpstore-etcd-endpoint"),
@@ -6075,8 +5976,6 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--replay-cache",
-                "shared",
                 "--replay-durability-tier",
                 "linearizable",
                 "--cpstore-etcd-endpoint",
@@ -6084,7 +5983,6 @@ mod tests {
             ]),
         );
         let config = parse_args(&a).expect("parse");
-        assert_eq!(config.replay, ReplayKind::Shared);
         assert_eq!(
             config.replay_durability_tier,
             Some(crate::replay_tier::ReplayDurabilityTier::Linearizable)
@@ -6106,8 +6004,6 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--replay-cache",
-                "shared",
                 "--replay-redis-url",
                 "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
@@ -6149,8 +6045,6 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--replay-cache",
-                "shared",
                 "--replay-redis-url",
                 "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
@@ -6286,14 +6180,6 @@ mod tests {
                 "revocation tier '{flag}' must be rejected"
             );
         }
-    }
-
-    #[test]
-    fn unknown_replay_cache_lists_shared() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--replay-cache", "cluster"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("memory|file|shared"), "got: {err}");
     }
 
     // Issue #3837: in a DEFAULT build there is no shared replay backend, so
@@ -6821,8 +6707,6 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--replay-cache",
-                "shared",
                 "--replay-redis-url",
                 "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
@@ -6840,8 +6724,6 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--replay-cache",
-                "shared",
                 "--replay-redis-url",
                 "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
@@ -6857,41 +6739,6 @@ mod tests {
         );
     }
 
-    /// MCPS-79 (ADR-MCPS-049 clause 1): under `--fleet` a node-local FILE replay cache is
-    /// rejected — unshareable across verifiers, so a peer would not see a replayed nonce.
-    ///
-    /// CF-01 made `file` refused on its own grounds too, which is why this drives a
-    /// mutated config: the clause is now redundant against the accepted state set, since
-    /// every live replay state is already shared. It is kept, and kept in its position,
-    /// because it still fires on the rejected input form and it teaches the
-    /// cross-verifier property rather than the durability one.
-    #[test]
-    fn strict_fleet_rejects_file_replay_cache() {
-        let mut config = parse_args(&minimal_durable()).expect("the baseline validates");
-        config.fleet = true;
-        config.replay = ReplayKind::File;
-        config.replay_redis_url = None;
-        let err = unsafe_config_violations(&config)
-            .into_iter()
-            .find(|v| v.contains("--fleet"))
-            .expect("the fleet clause still fires");
-        assert!(err.contains("node-local"), "got: {err}");
-        assert!(err.contains("shared"), "got: {err}");
-    }
-
-    // MCPS-79: under --fleet the node-local in-memory cache is likewise rejected (it
-    // is also rejected as non-durable, #90 — but the --fleet reason must be present
-    // so the operator learns the cross-verifier property, not just the restart-
-    // durability one).
-    #[test]
-    fn strict_fleet_rejects_memory_replay_cache() {
-        let mut a = minimal(); // default replay backend is in-memory
-        a.splice(0..0, args(&["--fleet"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--fleet"), "got: {err}");
-        assert!(err.contains("node-local"), "got: {err}");
-    }
-
     // MCPS-79: --fleet ACCEPTS a shared cache at a strict-production durability tier
     // — the one posture that maintains cross-verifier replay state. No fleet
     // violation must remain.
@@ -6902,8 +6749,6 @@ mod tests {
             0..0,
             args(&[
                 "--fleet",
-                "--replay-cache",
-                "shared",
                 "--replay-redis-url",
                 "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
@@ -6980,49 +6825,17 @@ mod tests {
         );
     }
 
-    // #90 (ADR-MCPS-014/020): the DEFAULT replay backend is the non-durable
-    // in-memory cache, which loses admitted nonces on restart and re-opens a replay
-    // window for still-fresh captured envelopes. Under --strict it is a hard parse
-    // error directing the operator at a durable backend.
+    // #90 (ADR-MCPS-014/020): a command line that declares no replay configuration is a
+    // hard parse error, not a fall-back to something weaker. Saying nothing about replay
+    // must not become a way to run without it.
     #[test]
-    fn strict_rejects_in_memory_replay_default() {
-        // minimal() omits --replay-cache, so it defaults to the non-durable
-        // in-memory backend — always a strict/production violation.
+    fn omitting_replay_configuration_is_refused() {
         let err = parse_args(&minimal()).unwrap_err();
-        assert!(err.contains("--replay-cache memory"), "got: {err}");
-        // The remedy must name a state that can actually start. It named
-        // `--replay-cache file` until CF-01 — recommending, as the fix for a
-        // non-durable store, a store no build could establish.
-        assert!(err.contains("--replay-cache shared"), "got: {err}");
-        assert!(!err.contains("--replay-cache file"), "got: {err}");
-    }
-
-    /// CF-01: `file` is not a deployment state, and the refusal says so in those terms.
-    ///
-    /// This test asserted the opposite until 2026-08-12 — that a single-node durable file
-    /// cache was an acceptable production replay store. It was true of the blocking
-    /// serving loop and never became false in configuration: `ReplayPlan` simply grew no
-    /// file arm, so the state stayed admissible at the boundary while nothing could
-    /// establish it. The refusal must not be phrased as a missing build capability,
-    /// because no build supplies one.
-    #[test]
-    fn file_replay_is_not_a_deployment_state() {
-        let mut config = parse_args(&minimal_durable()).expect("the baseline validates");
-        config.replay = ReplayKind::File;
-        config.replay_redis_url = None;
-        config.replay_path = Some("/replay".to_string());
-        let violations = unsafe_config_violations(&config);
-        let refusal = violations
-            .iter()
-            .find(|v| v.contains("--replay-cache file"))
-            .unwrap_or_else(|| panic!("file must be refused; got {violations:?}"));
+        assert!(err.contains("--replay-durability-tier"), "got: {err}");
+        // The remedy must name states that can actually start.
         assert!(
-            refusal.contains("not a supported deployment state"),
-            "{refusal}"
-        );
-        assert!(
-            !refusal.contains("build"),
-            "a layer-A refusal names no build: {refusal}"
+            err.contains("redis-wait-quorum") || err.contains("linearizable"),
+            "the refusal must name a startable tier: {err}"
         );
     }
 
@@ -7035,8 +6848,6 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--replay-cache",
-                "shared",
                 "--replay-redis-url",
                 "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
@@ -7044,12 +6855,11 @@ mod tests {
             ]),
         );
         let config = parse_args(&a).expect("durable shared replay must parse");
-        assert_eq!(config.replay, ReplayKind::Shared);
         assert!(
             unsafe_config_violations(&config)
                 .iter()
-                .all(|v| !v.contains("--replay-cache memory")),
-            "a durable shared replay must not trip the in-memory replay violation"
+                .all(|v| !v.contains("--replay-durability-tier")),
+            "a durable shared replay must not trip the missing-tier violation"
         );
     }
 
@@ -7138,10 +6948,10 @@ mod tests {
     #[test]
     fn strict_reports_all_violations_at_once() {
         // The error aggregates every parse-time violation so the operator can fix
-        // the whole posture in one pass, not one error per restart. The bare
-        // in-memory replay default is itself a #90 violation and aggregates alongside
-        // the cert-lifetime and cn_legacy violations.
-        let mut a = minimal(); // in-memory replay default
+        // the whole posture in one pass, not one error per restart. A command line that
+        // declares no replay configuration is itself a violation and aggregates alongside
+        // the cert-lifetime and cn_legacy ones.
+        let mut a = minimal(); // declares no replay configuration
         a.splice(
             0..0,
             args(&[
@@ -7152,7 +6962,7 @@ mod tests {
             ]),
         );
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--replay-cache memory"), "got: {err}");
+        assert!(err.contains("--replay-durability-tier"), "got: {err}");
         assert!(err.contains("--max-client-cert-lifetime"), "got: {err}");
         assert!(err.contains("cn_legacy"), "got: {err}");
     }

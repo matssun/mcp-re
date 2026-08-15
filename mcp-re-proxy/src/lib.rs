@@ -75,7 +75,6 @@ pub mod delegated_wiring;
 // server key never leaves it. Generic mechanism (always compiled); the per-backend
 // raw signers are wired under their own feature gates.
 pub mod delegated_tls;
-pub mod durable_replay;
 // MCPRE-501 slice 3: the filesystem side of the SCITT retained-evidence split.
 // mcp-re-http-profile declares the store interface and stays pure; the fs lives here.
 pub mod retained_evidence;
@@ -308,7 +307,6 @@ pub use audit_sink::AuditSink;
 pub use audit_sink::CollectingAuditSink;
 pub use audit_sink::NoAuditSink;
 pub use audit_sink::StderrAuditSink;
-pub use durable_replay::DurableReplayCache;
 #[cfg(feature = "gcp_kms_keysource")]
 pub use gcp_kms_keysource::GcpKmsConfig;
 #[cfg(feature = "gcp_kms_keysource")]

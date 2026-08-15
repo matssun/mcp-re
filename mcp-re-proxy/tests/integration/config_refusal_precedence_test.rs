@@ -16,7 +16,7 @@
 //! Pinning is not endorsement. Some of this order is deliberate and some is the order the
 //! clauses were added in; this file records what it IS, so that changing it is a decision.
 
-use mcp_re_proxy::cli::{self, AuthzKind, BindingKind, DeploymentRequest, OcspKind, ReplayKind};
+use mcp_re_proxy::cli::{self, AuthzKind, BindingKind, DeploymentRequest, OcspKind};
 use mcp_re_proxy::IdentityPolicy;
 
 /// A legal configuration, from the parser, so every violation below is one this fixture
@@ -49,8 +49,6 @@ fn legal() -> DeploymentRequest {
         "epoch-min",
         "--trust-domain",
         "mcp.example.com",
-        "--replay-cache",
-        "shared",
         "--replay-redis-url",
         "redis://127.0.0.1:6379",
         "--replay-durability-tier",
@@ -92,12 +90,7 @@ fn keys(violations: &[String]) -> Vec<&'static str> {
         "--write-timeout-secs",
         "--request-deadline-secs",
         "--transport-identity-source cn_legacy",
-        "--replay-cache memory",
-        // Specific enough not to swallow the fleet clause, whose message quotes the same
-        // flag and value while saying something else entirely.
-        "--replay-cache file is not a supported",
         "--replay-durability-tier",
-        "--fleet requires",
         "--reverse-proxy-identity-header",
         "--transport-binding none",
     ];
@@ -137,7 +130,7 @@ fn the_boundary_refuses_in_this_order() {
     config.limits.write_timeout = None;
     config.limits.request_deadline = None;
     config.identity_source = IdentityPolicy::CnLegacy;
-    config.replay = ReplayKind::Memory;
+    config.replay_durability_tier = None;
     config.binding = BindingKind::None;
 
     let order = keys(&cli::unsafe_config_violations(&config));
@@ -170,7 +163,7 @@ fn the_boundary_refuses_in_this_order() {
             "--read-timeout-secs",
             "--write-timeout-secs",
             "--request-deadline-secs",
-            "--replay-cache memory",
+            "--replay-durability-tier",
         ],
         "the boundary's refusal order changed"
     );
@@ -186,11 +179,6 @@ fn the_trust_and_fleet_clauses_keep_their_places() {
     // The zero-cadence clause shares this position with the missing-cadence clause above —
     // they are the same guard answering two ways, so only one can fire per run and they
     // are pinned together rather than each claiming its own slot.
-    // X1 fires only on a node-local replay kind, and every LIVE replay state is now
-    // shared — so provoking it means naming a rejected input form, which is refused on
-    // its own grounds too. Both appear below, in their pinned positions.
-    config.replay = ReplayKind::File;
-    config.replay_redis_url = None;
     config.binding = BindingKind::LbAssertion;
     config.reverse_proxy_identity_header = Some("x-client-id".to_string());
 
@@ -207,8 +195,6 @@ fn the_trust_and_fleet_clauses_keep_their_places() {
             "--transport-binding lb-assertion places",
             "--ingress-",
             "--revocation-tier live|push requires",
-            "--replay-cache file is not a supported",
-            "--fleet requires",
             "--reverse-proxy-identity-header",
         ],
         "the boundary's refusal order changed"
@@ -225,11 +211,11 @@ fn the_boundary_reports_every_violation_not_the_first() {
     let mut config = legal();
     config.authz = AuthzKind::Reference;
     config.identity_source = IdentityPolicy::CnLegacy;
-    config.replay = ReplayKind::Memory;
+    config.replay_durability_tier = None;
 
     let refusal = mcp_re_proxy::cli::ValidatedDeployment::try_from(config)
         .expect_err("three violations must refuse");
-    for expected in ["--authz", "cn_legacy", "--replay-cache memory"] {
+    for expected in ["--authz", "cn_legacy", "--replay-durability-tier"] {
         assert!(
             refusal.contains(expected),
             "missing {expected} in: {refusal}"
@@ -248,8 +234,6 @@ fn the_zero_cadence_clause_takes_the_cadence_slot() {
     config.revocation_tier = mcp_re_proxy::revocation_tier::RevocationTier::Live;
     config.trust_reload_secs = Some(0);
     config.fleet = true;
-    config.replay = ReplayKind::File;
-    config.replay_redis_url = None;
     config.binding = BindingKind::LbAssertion;
     config.reverse_proxy_identity_header = Some("x-client-id".to_string());
 
@@ -260,8 +244,6 @@ fn the_zero_cadence_clause_takes_the_cadence_slot() {
             "--transport-binding lb-assertion places",
             "--ingress-",
             "--trust-reload-secs 0",
-            "--replay-cache file is not a supported",
-            "--fleet requires",
             "--reverse-proxy-identity-header",
         ],
         "the boundary's refusal order changed"

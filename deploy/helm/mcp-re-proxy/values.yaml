@@ -60,7 +60,7 @@ replay:
   durabilityTier: "redis-wait-quorum:2:2000"
   # Escape hatch for a plaintext `redis://` endpoint. The render-time guard refuses
   # a plaintext URL on the replay, trust-epoch and admission-currency hops — at any
-  # replica count, because the chart always renders --replay-cache shared and the
+  # replica count, because the chart always renders a shared replay store and the
   # keyspace is equally writable either way — unless this is explicitly true, so running
   # unencrypted is a decision someone wrote down rather than a default. Only
   # defensible where the hop is confined by other means (a fenced validation

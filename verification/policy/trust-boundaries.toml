@@ -92,7 +92,6 @@ paths = [
   "mcp-re-proxy/src/aws_sts.rs",
   "mcp-re-proxy/src/clock.rs",
   "mcp-re-proxy/src/continuation_store.rs",
-  "mcp-re-proxy/src/durable_replay.rs",
   "mcp-re-proxy/src/etcd_store.rs",
   "mcp-re-proxy/src/gcp_kms_keysource.rs",
   "mcp-re-proxy/src/ocsp.rs",

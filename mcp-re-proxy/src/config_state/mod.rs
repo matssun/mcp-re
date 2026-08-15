@@ -278,8 +278,6 @@ pub(crate) mod test_support {
             "epoch-min",
             "--trust-domain",
             "mcp.example.com",
-            "--replay-cache",
-            "shared",
             "--replay-redis-url",
             "redis://127.0.0.1:6379",
             "--replay-durability-tier",

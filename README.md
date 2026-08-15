@@ -230,14 +230,11 @@ production high-assurance profile.
 - Minimal runtime closure (ADR-MCPS-018): no Redis, no PKCS#11, no online-OCSP
   dependency is linked in.
 - **A default build does not start.** This is not a gap in its controls; it is the
-  consequence of two decisions meeting. Every replay input form other than
-  `--replay-cache shared` is refused by configuration validation — `memory` because
-  it forgets admitted nonces on restart (and it is the value when the flag is
-  omitted, so passing no replay flag does not start either), `file` because a single
-  file-backed cache does not fit the per-core share-nothing data plane. And both
-  shared states need a backend this build does not link: Redis needs `redis_replay`,
-  the linearizable CP store needs `cpstore_etcd`. No command line reaches a state
-  this build can materialize.
+  consequence of two decisions meeting. Replay protection is required, and every
+  replay state is shared — declaring no durability tier is refused rather than
+  falling back to anything node-local. And both shared states need a backend this
+  build does not link: Redis needs `redis_replay`, the linearizable CP store needs
+  `cpstore_etcd`. No command line reaches a state this build can materialize.
 - It remains the right build for compiling, unit-testing, and linking against the
   library. It is not a deployment target, and there is no single-node serving
   profile — see the deployment guide, whose replay table is authoritative.
@@ -265,11 +262,10 @@ cargo build --release -p mcp-re-proxy \
     --features pkcs11_keysource,redis_replay,online_ocsp
 ```
 
-**Every MCP-RE deployment uses the high-assurance profile** with
-`--replay-cache shared` and a durability tier, so all proxy nodes share replay
-state. This is not only a multi-node requirement: a per-node cache would not
-prevent cross-node replays, and no per-node cache is reachable anyway — a shared
-store is the only replay state that starts at all.
+**Every MCP-RE deployment uses the high-assurance profile** with a replay durability
+tier and its store, so all proxy nodes share replay state. This is not only a
+multi-node requirement: a per-node cache would not prevent cross-node replays, and no
+per-node cache exists to fall back on — every replay state is shared.
 
 ## What MCP-RE does not yet claim
 

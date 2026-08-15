@@ -1,12 +1,11 @@
 //! SHARED, server-side-ATOMIC replay cache for HORIZONTALLY-SCALED replay safety
-//! (issue #3837; complements the single-node [`DurableReplayCache`]).
+//! (issue #3837).
 //!
-//! The file-backed [`DurableReplayCache`](crate::durable_replay::DurableReplayCache)
-//! is single-node only: each proxy process sees only its own file, so running it
-//! across several nodes does NOT prevent cross-node replays. This module adds a
-//! shared cache behind the same `mcp_re_core::ReplayCache` trait so that multiple
-//! proxy processes / hosts share one replay-state store and a nonce accepted on
-//! one node is rejected as a replay on every other node.
+//! A node-local cache cannot prevent cross-node replays: each proxy process sees only
+//! its own state, so a nonce admitted on one node is unknown to every other. This module
+//! puts the store behind the same `mcp_re_core::ReplayCache` trait so that multiple proxy
+//! processes / hosts share one replay-state store and a nonce accepted on one node is
+//! rejected as a replay on every other node. It is the only shape a replay state takes.
 //!
 //! ## Layering — backend-agnostic core + opt-in backend adapter
 //!

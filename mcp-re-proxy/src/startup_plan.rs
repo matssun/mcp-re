@@ -632,8 +632,6 @@ mod tests {
     }
 
     const SHARED_REDIS: &[&str] = &[
-        "--replay-cache",
-        "shared",
         "--replay-durability-tier",
         "redis-wait-quorum:2:2000",
         "--replay-redis-url",
@@ -641,8 +639,6 @@ mod tests {
     ];
 
     const SHARED_LINEARIZABLE: &[&str] = &[
-        "--replay-cache",
-        "shared",
         "--replay-durability-tier",
         "linearizable",
         "--cpstore-etcd-endpoint",
@@ -657,37 +653,26 @@ mod tests {
     /// materialization arm that no configuration could produce. This is pinned so that a
     /// later change which makes validation accept memory has to fail a test rather than
     /// quietly restore a non-durable production tier.
-    #[test]
-    fn the_memory_tier_is_refused_by_validation_before_planning_sees_it() {
-        // Refused on the command line...
-        let from_argv = parse(&["--replay-cache", "memory"]).expect_err("memory must not parse");
-        assert!(
-            from_argv.contains("--replay-cache memory is non-durable"),
-            "{from_argv}"
-        );
-        // ...and refused for a caller that never touched the command line, which is the
-        // altitude that actually protects the runtime.
-        let err = refusal_for_mutated(SHARED_REDIS, |c| c.replay = crate::cli::ReplayKind::Memory);
-        assert!(
-            err.contains("--replay-cache memory is non-durable"),
-            "{err}"
-        );
-    }
-
-    /// A file cache is refused at the boundary, as a statement about which deployments
-    /// exist (CF-01).
+    /// A request that declares no durable replay configuration fails closed.
     ///
-    /// It used to validate and then fail one stage later, which is the defect: the two
-    /// stages disagreed about the same configuration, and the boundary's own refusal for
-    /// `memory` recommended `file` as the remedy. Planning no longer gets the chance to
-    /// disagree — it is a projection of a decision already made.
+    /// The durability tier is the only replay selector, and there is no node-local state to
+    /// fall back to, so saying nothing about replay must refuse rather than acquire an
+    /// implicit store. Checked at both altitudes because they can disagree: on the command
+    /// line, and for a caller that never touched one.
     #[test]
-    fn the_file_cache_is_not_a_deployment_state() {
-        let err = refusal_for_mutated(SHARED_REDIS, |c| c.replay = crate::cli::ReplayKind::File);
-        assert!(err.contains("not a supported deployment state"), "{err}");
+    fn a_request_with_no_durable_replay_configuration_fails_closed() {
+        // A command line carrying every other required flag but no replay configuration.
+        let from_argv = parse(&[]).expect_err("no replay configuration must not validate");
         assert!(
-            !err.contains("async serving path"),
-            "a layer-A refusal points at no serving path: {err}"
+            from_argv.contains("--replay-durability-tier"),
+            "the refusal must name what is missing: {from_argv}"
+        );
+
+        // And for a programmatic request, which is the altitude that guards the runtime.
+        let err = refusal_for_mutated(SHARED_REDIS, |c| c.replay_durability_tier = None);
+        assert!(
+            err.contains("--replay-durability-tier"),
+            "a request whose tier is cleared must be refused: {err}"
         );
     }
 
@@ -743,8 +728,6 @@ mod tests {
     #[test]
     fn planning_reaches_a_networked_tier_without_contacting_anything() {
         let plan = plan_for(&[
-            "--replay-cache",
-            "shared",
             "--replay-durability-tier",
             "redis-wait-quorum:2:2000",
             "--replay-redis-url",
@@ -805,8 +788,6 @@ mod tests {
         // The negative control for the split: a CP replay store AND a shared continuation
         // store, which the alias made impossible to state without overloading a field.
         let both = parse(&[
-            "--replay-cache",
-            "shared",
             "--replay-durability-tier",
             "linearizable",
             "--cpstore-etcd-endpoint",
@@ -840,8 +821,6 @@ mod tests {
     #[test]
     fn the_old_alias_is_refused_rather_than_reinterpreted() {
         let refusal = parse(&[
-            "--replay-cache",
-            "shared",
             "--replay-durability-tier",
             "linearizable",
             "--cpstore-etcd-endpoint",

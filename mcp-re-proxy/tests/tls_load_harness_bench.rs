@@ -648,8 +648,6 @@ fn spawn_proxy(
             &cert_lifetime,
             // Shared replay: the per-core async plane refuses node-local caches. The
             // fleet has 2 replicas, so `WAIT 2` is satisfiable.
-            "--replay-cache",
-            "shared",
             "--replay-redis-url",
             redis_url,
             "--replay-durability-tier",
@@ -1418,8 +1416,6 @@ fn app_run_starts_and_drains_across_revocation_tiers() {
             TRUST_DOMAIN,
             "--max-client-cert-lifetime",
             &cert_lifetime,
-            "--replay-cache",
-            "shared",
             "--replay-redis-url",
             &ru,
             "--replay-durability-tier",
@@ -1551,8 +1547,6 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
         // --fleet exercises the horizontally-scaled posture (cross-replica revocation-
         // lag diagnostics); the shared wait-quorum tier satisfies its guardrail.
         "--fleet",
-        "--replay-cache",
-        "shared",
         "--replay-redis-url",
         &redis_url,
         "--replay-durability-tier",

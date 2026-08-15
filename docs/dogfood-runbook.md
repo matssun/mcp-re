@@ -4,7 +4,8 @@
 > This runbook was written for the pre-ADR-051 architecture in which the **proxy
 > launched and env-minimized an inner stdio subprocess** (`--inner-command`,
 > `--inner-env*`, `--inner-rlimit-*`, `--inherit-env`). Those flags **no longer
-> exist**, and MCP-RE no longer owns any stdio serving/inner/bridge at all: the
+> exist**, nor do `--replay-cache` / `--replay-path` (deleted 2026-08-15: every replay
+> state is shared, so the durability tier is the only selector), and MCP-RE no longer owns any stdio serving/inner/bridge at all: the
 > PEP's inner plane is stateless Streamable-HTTP (`--inner-http-url`). To protect a
 > stdio-only MCP server today, front it with an **external** plain-MCP adapter
 > (e.g. FastMCP's stdio↔HTTP proxy) that exposes HTTP, and point the proxy's

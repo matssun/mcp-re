@@ -131,8 +131,6 @@ fn server_config() -> mcp_re_proxy::cli::DeploymentRequest {
         TARGET,
         "--route",
         "a",
-        "--replay-cache",
-        "shared",
         "--replay-redis-url",
         "redis://127.0.0.1:6379",
         "--replay-durability-tier",

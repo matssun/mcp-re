@@ -39,8 +39,8 @@ option. It is not.
 9. **Some capabilities are REFUSED, NOT REMOVED — do not "fix" either half.**
    Configuration validation refuses several things that are nonetheless still
    compiled: `--transport-binding attested-ingress` (Mode C) and `lb-assertion`
-   (Mode B), `--authz reference`, `--revocation-list`, `--client-ocsp require`, and
-   `--replay-cache memory` / `file`. Two opposite mistakes to avoid. Do **not** delete
+   (Mode B), `--authz reference`, `--revocation-list`, and `--client-ocsp require`.
+   Two opposite mistakes to avoid. Do **not** delete
    the code behind a refusal as "dead" — Mode C is retained deliberately, and its
    verifier is exercised by tests so it stays correct while unreachable. Do **not**
    wire one up to make it work; each is gated on a decision, not on effort (Mode C
@@ -49,6 +49,13 @@ option. It is not.
    weaken, or route around it. A refusal belongs at the lowest boundary the state it
    constrains can enter through, which for configuration is `ValidatedDeployment`, never
    the composition root.
+
+   `--replay-cache` **was** on this list and is now DELETED, by an explicit owner ruling
+   (2026-08-15): every legal replay state is shared, so the selector chose between one
+   live option and two refusals, and refusing was the only thing it still did. The
+   durability tier is the sole selector now. That is what raising a refusal looks like
+   when the answer turns out to be "the input should not exist" — it is not a precedent
+   for deleting the others, each of which still gates a decision rather than a vocabulary.
 
 10. **Run the local gate before anything else, and never fake a green.** One command:
    `scripts/local_gate.sh` (see [`docs/dev/local-gate-order.md`](dev/local-gate-order.md)).

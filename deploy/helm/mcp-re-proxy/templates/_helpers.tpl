@@ -65,12 +65,12 @@ durabilityTier; refuse to render an unsafe fleet chart.
 {{- fail "inner plane required (ADR-MCPRE-051 §3): set inner.httpUrls to one or more Streamable-HTTP backends. MCP-RE is HTTP-profile only — a stdio-only server is fronted by an EXTERNAL plain-MCP adapter (e.g. FastMCP) that exposes HTTP. The proxy launches no subprocess and fails closed with no --inner-http-url." -}}
 {{- end -}}
 {{/*
-deployment.yaml renders `--replay-cache shared` and `--replay-redis-url` for every
-install, so an empty URL is an argument the proxy refuses at startup rather than a
-node-local fallback. Required regardless of `fleet` for that reason.
+deployment.yaml renders `--replay-redis-url` and a durability tier for every install, so
+an empty URL is an argument the proxy refuses at startup. There is no node-local fallback
+to land on — every replay state is shared — so this is required regardless of `fleet`.
 */}}
 {{- if not .Values.replay.redisUrl -}}
-{{- fail "requires replay.redisUrl (a shared replay store): the chart always renders --replay-cache shared, and a node-local cache cannot maintain cross-verifier replay state" -}}
+{{- fail "requires replay.redisUrl (a shared replay store): every replay state is shared, and the proxy refuses a Redis durability tier with no store to deliver it" -}}
 {{- end -}}
 {{- if .Values.fleet -}}
 {{- if not (or (hasPrefix "redis-wait-quorum:" .Values.replay.durabilityTier) (eq .Values.replay.durabilityTier "linearizable")) -}}
@@ -121,8 +121,8 @@ The replay tier and the trust-epoch counter carry admitted nonces and the epoch 
 drives credential minting. Refuse a plaintext endpoint unless the operator has
 deliberately set replay.allowPlaintextRedis.
 
-Independent of `fleet`: deployment.yaml renders `--replay-cache shared` and
-`--replay-redis-url` for every install, so a single-replica install carries the same
+Independent of `fleet`: deployment.yaml renders `--replay-redis-url` and a durability
+tier for every install, so a single-replica install carries the same
 security state over the same hop. What is at stake here is who can write the keyspace,
 which does not depend on replica count.
 */}}

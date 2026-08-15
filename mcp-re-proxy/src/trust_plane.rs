@@ -1126,8 +1126,6 @@ mod handle_lifetime_tests {
             "https://localhost/",
             "--trust-domain",
             "example.org",
-            "--replay-cache",
-            "shared",
             "--replay-redis-url",
             "redis://127.0.0.1:6379",
             "--replay-durability-tier",

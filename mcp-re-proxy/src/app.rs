@@ -1097,8 +1097,6 @@ mod tests {
             "https://mcp.example.com/mcp",
             "--delegated-trust-epoch",
             "epoch-min",
-            "--replay-cache",
-            "shared",
             "--replay-redis-url",
             "redis://127.0.0.1:6379",
             "--replay-durability-tier",

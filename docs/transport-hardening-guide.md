@@ -115,33 +115,27 @@ construction. GCP-KMS custody has been exercised on live GKE via Workload
 Identity (v0.12.1). A non-exporting device never surrenders the private key; the
 proxy drives it through the `ResponseSigner` seam.
 
-## Durable replay cache
+## Replay protection
 
-Source: [`durable_replay.rs`](../mcp-re-proxy/src/durable_replay.rs).
+Source: [`shared_replay.rs`](../mcp-re-proxy/src/shared_replay.rs),
+[`replay_tier.rs`](../mcp-re-proxy/src/replay_tier.rs).
 
-Replay protection is keyed by the `(signer, audience, nonce)` triple (per
-ADR-MCPS-006) and is invoked only after signature verification succeeds.
-`--replay-cache`:
+Replay protection is keyed by the `(signer, audience, nonce)` triple (per ADR-MCPS-006)
+and is invoked only after signature verification succeeds, so invalid-signature garbage
+can never burn a legitimate nonce. A nonce need only be remembered until its request can
+no longer pass the freshness window, which is what bounds the store.
 
-- **`memory`** (default) — fast, but lost on restart.
-- **`file`** (requires `--replay-path`) — `DurableReplayCache`: survives process
-  restarts on one host with no external service. State is persisted on every
-  insert via temp-file + atomic rename, so a concurrent reader never sees a
-  half-written file. A persistence failure surfaces as
-  `mcp-re.replay_cache_unavailable` (fail closed) and the in-memory insert is rolled
-  back so a transient failure can be retried.
+Every replay store is shared. There is no backend-kind flag: `--replay-durability-tier`
+names the guarantee, and its locator (`--replay-redis-url` or `--cpstore-etcd-endpoint`)
+names the store that must deliver it. A deployment declaring no tier does not start —
+there is no node-local cache to fall back to, because a node-local cache cannot see a
+request replayed to a peer verifier within the acceptance window.
 
-Honest limits of the durable cache:
-
-- It is **single-node**, not distributed. Two processes sharing one file is
-  unsupported (last-writer-wins on rename can drop entries); pointing several
-  nodes at one file does NOT protect against cross-node replay (each sees only
-  its own file). A shared atomic backend (e.g. Redis) behind the same
-  `mcp_re_core::ReplayCache` trait is a documented **future** backend.
-- **External** rollback of the state file (snapshot restore, or a filesystem that
-  loses the latest write) is NOT detected — there is no monotonic counter — and
-  can reopen a replay window. Mitigate by keeping freshness windows short and not
-  restoring the file from stale snapshots.
+The tier is a **deployment assertion**: the proxy enforces what it controls (issuing
+`WAIT` and failing closed on insufficient acks) and surfaces the tier, but it cannot
+prove every external store-topology property. Two tiers meet the strict-production
+minimum — `redis-wait-quorum:<quorum>:<timeout_ms>` and `linearizable`. The weaker two
+parse but are refused as deployment states.
 
 ## Certificate revocation — three planes, and the short-lived-cert baseline
 

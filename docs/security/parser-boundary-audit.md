@@ -85,10 +85,10 @@ the parser. Sixth member of this file's parser-only family, after
 
 | Invariant | Enforced by |
 |---|---|
-| `--replay-cache shared` requires a durability tier | `startup_plan::ReplayPlan::from_config` — `ok_or` on the tier |
+| a replay state requires a durability tier | `startup_plan::ReplayPlan::from_config` — `ok_or` on the tier |
 | `linearizable` requires `--cpstore-etcd-endpoint` | same, `ok_or` on the endpoint |
 | non-linearizable shared requires `--replay-redis-url` | same, `ok_or` on the url |
-| `--replay-cache file` on the async path | same, refused outright |
+| a sub-strict durability tier | same, refused outright |
 | at least one `--inner-http-url` | `trust_plane.rs:264` |
 | delegated trust epoch required; `0 < overlap < ttl` | `delegated_wiring.rs:84–88` |
 | PKCS#11 / AWS / GCP required flags per key source | `build_key_source`, per source |

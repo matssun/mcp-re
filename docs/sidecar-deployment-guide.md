@@ -129,15 +129,23 @@ authorization-issuer keys. A bad key fails startup closed.
 | `--transport-identity-source uri_san` (default) / `dns_san` | Which client-cert field is the authoritative identity. (`cn_legacy` is refused.) |
 | `--max-client-cert-lifetime 1h` (default) | The v1 revocation posture. Accepts `1h`/`30m`/`3600` up to the 1h ceiling; `none`/`0` (disabled) and any value over the ceiling are refused. |
 
-### Replay cache (`durable_replay.rs`)
+### Replay store (`shared_replay.rs`, `replay_tier.rs`)
+
+Every replay store is shared. There is no backend-kind flag to choose one, because there
+is nothing to choose between: the durability tier names the guarantee, and the tier's own
+locator names the store that must deliver it. A command line that declares no tier does
+not start — absence is a refusal, not a fall back to something weaker.
 
 | Flag | Meaning |
 | --- | --- |
-| `--replay-cache memory` (the value when the flag is omitted) | **Refused.** In-memory and lost on restart, which re-opens a replay window for any captured envelope still inside `expires_at + skew`. Because it is also the default, a command line that passes no replay flag at all does not start. |
-| `--replay-cache file` | **Refused.** A single file-backed cache does not fit the per-core share-nothing data plane (ADR-MCPRE-051 §1). |
-| `--replay-cache shared` | The authoritative shared tier (Redis/etcd), and the only replay configuration that starts. **Required under `--fleet`.** See the Fleet Deployment Guide. |
-| `--replay-path <path>` | State-file path for the refused `file` cache. |
-| `--replay-redis-url` / `--replay-durability-tier` | Shared-tier endpoint + durability class (e.g. `redis-wait-quorum:2:2000`). |
+| `--replay-durability-tier redis-wait-quorum:<quorum>:<timeout_ms>` | Redis `SET NX` + `WAIT`. Requires `--replay-redis-url`. |
+| `--replay-durability-tier linearizable` | A CP / linearizable store. Requires `--cpstore-etcd-endpoint`. |
+| `--replay-redis-url <url>` | Where admitted nonces live, for a Redis tier. Refused beside a linearizable tier. |
+| `--cpstore-etcd-endpoint <url>` | The CP store's endpoint. Refused without a linearizable tier. |
+
+The two weaker tiers (`redis-async`, `single-store-fail-closed`) parse but are refused as
+deployment states: they carry a replay window the strict production posture does not
+accept.
 
 ### Evidence retention / transparency (ADR-MCPRE-054)
 
@@ -240,22 +248,22 @@ bazel run //mcp-re-proxy:mcp_re_proxy_cli -- \
   --transport-binding exact \
   --transport-identity-source uri_san \
   --max-client-cert-lifetime 1h \
-  --replay-cache shared \
   --replay-redis-url redis://127.0.0.1:8630 \
   --replay-durability-tier redis-wait-quorum:2:2000 \
   --inner-http-url http://127.0.0.1:8080/mcp
 ```
 
-Three flags earlier versions of this guide passed are refused by configuration
-validation and will keep the proxy from starting:
+Two flags earlier versions of this guide passed are refused by configuration validation
+and will keep the proxy from starting:
 
 * `--authz reference` — the reference profile is never the production authority, and
   authorization is not wired on the RFC 9421 serving path at all;
 * `--revocation-list` — its deny-list is read only by an authorization profile, and no
-  production profile has landed, so the list would revoke nothing;
-* `--replay-cache file` — a single file-backed cache does not fit the per-core
-  share-nothing data plane. `shared` with a durability tier is the only replay
-  configuration that starts (`memory` is refused for non-durability).
+  production profile has landed, so the list would revoke nothing.
+
+`--replay-cache` and `--replay-path` no longer exist. They selected between replay
+backends that are not deployment states, so the flags went with them: declare a
+durability tier and its locator instead.
 
 Port 8630 is `mcp_re_redis` in `config/ports.toml`, not Redis' own 6379.
 
