@@ -61,6 +61,25 @@ parse and are still refused as deployment states. They remain in the tier type b
 dispatcher gates on them at runtime, which guards a tier constructed in-process rather
 than parsed.
 
+### Fixed — the named release-gate lanes point at test binaries that exist
+
+Consolidating the proxy's test binaries renamed the units the workflows invoke by
+name, and nothing checked that table. Twenty-four `cargo test --test <name>`
+invocations across four workflows and two example scripts named binaries that no
+longer exist. Only four went red: the cloud-KMS lanes and several live-infra lanes
+are gated, so their breakage would have surfaced on a billed nightly run against a
+real endpoint. Two of the four red ones were ADR-MCPRE-051 §7 release gates — the
+cross-replica replay race and the inner-plane concurrency proof — which had been
+erroring out rather than running since the merge.
+
+Every lane now selects a module inside its merged binary and runs through
+`scripts/run_test_lane.sh`, which refuses a lane that exited 0 having run zero
+tests. That guard is not decoration: a missing *binary* exits 101, but a missing
+*filter* prints `0 passed` and exits 0, and the `--ignored` live-cloud lanes would
+select nothing twice over. `scripts/cargo_test_target_gate.py` asserts both halves
+statically — every `--test` names a real target, every `module::` filter names a
+module its binary declares — in the local gate and in CI.
+
 ### Outstanding — a false security claim awaits owner approval to correct (release-gating)
 
 `docs/spec/security-boundary.md` states that the proxy enforces the authorization profile

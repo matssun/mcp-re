@@ -36,20 +36,14 @@ cd "$REPO_ROOT"
 # Each suite is now a MODULE inside a merged test binary, so it is selected by a
 # name filter rather than by being its own `--test` target. A filter that matches
 # nothing exits 0, which would let this script report success having run no test —
-# so `run_suite` reads libtest's own count back and FAILS on zero.
+# so every lane goes through `run_test_lane.sh`, which reads libtest's own count
+# back and FAILS on zero. The CI release gates use the same wrapper; one guard
+# implementation, not two that can drift apart.
 run_suite() {
   local binary="$1" module="$2"
   shift 2
-  local out
-  out="$(cargo test --quiet -p mcp-re-proxy --test "$binary" "$@" -- "${module}::" 2>&1)"
-  echo "$out"
-  local passed
-  passed="$(sed -n 's/^test result: ok\. \([0-9]*\) passed.*/\1/p' <<<"$out" | tail -1)"
-  if [[ -z "$passed" || "$passed" -eq 0 ]]; then
-    echo "FAIL: filter '${module}::' in --test ${binary} selected NO tests" >&2
-    return 1
-  fi
-  echo "  (${passed} tests)"
+  "${REPO_ROOT}/scripts/run_test_lane.sh" \
+    cargo test --quiet -p mcp-re-proxy --test "$binary" "$@" -- "${module}::"
 }
 
 echo "== MCP-RE mTLS transport binding (real rustls handshake) =="

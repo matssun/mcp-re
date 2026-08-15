@@ -198,6 +198,17 @@ jobs:
           python3 scripts/conformance_claims_gate.py --selftest
           python3 scripts/conformance_claims_gate.py
 
+      # Named release-gate lanes are a table of test-binary names, and consolidating
+      # the proxy suites broke 24 of them across four workflows and two example
+      # scripts. Only four went red — the cloud-KMS and several live-infra lanes are
+      # gated, so their breakage would have surfaced the next time someone ran a
+      # billed nightly. This asserts every `--test` names a real target and every
+      # `module::` filter names a real module, before either is invoked.
+      - name: Cargo test-target gate
+        run: |
+          python3 scripts/cargo_test_target_gate.py --selftest
+          python3 scripts/cargo_test_target_gate.py
+
       # Lifecycle purity (ADR-MCPRE-056/057): `runtime_state.rs` and `exchange_state.rs`
       # are values, not behaviour. A `use` of a production module would let "is this
       # transition legal?" answer two ways on the same arguments, which is what SL-04
@@ -414,22 +425,33 @@ jobs:
       # These targets also run inside the whole-suite step above; naming them makes
       # each a required release gate whose failure is unambiguous. Fast (cached build).
 
+      # These suites now share the `integration_async` binary, so each lane selects
+      # by module filter. `run_test_lane.sh` refuses a filter that matches nothing:
+      # a missing BINARY exits 101, but a missing FILTER prints `0 passed` and exits
+      # 0, which would make a release gate green having measured nothing.
+
       # §4 — cross-core / cross-replica replay race: exactly one Fresh, N-1 Replay,
       # zero Fresh when the store is Unavailable (fail-closed). (#314)
       - name: Release gate — replay race
         run: >-
-          cargo test -p mcp-re-proxy --features async_serve
-          --test async_replay_test
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features async_serve
+          --test integration_async -- async_replay_test::
 
       # §6 — bounded graceful drain: in-flight requests complete, zero abandoned,
       # a stuck request cannot delay exit past the grace bound. (MCPRE-115)
+      # Still its own binary: it runs under RUST_TEST_THREADS=1, which is a property
+      # of a binary rather than of a test.
       - name: Release gate — bounded drain
-        run: cargo test -p mcp-re-proxy --features async_serve --test async_drain_test
+        run: >-
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features async_serve
+          --test async_drain_test
 
       # §3 — inner plane: concurrent in-flight (no serial pipe) + pool-exhaustion
       # backpressure fails closed without queuing. (MCPRE-118)
       - name: Release gate — inner-plane concurrency + backpressure
-        run: cargo test -p mcp-re-proxy --features async_serve --test http_inner_test
+        run: >-
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features async_serve
+          --test integration_async -- http_inner_test::
 
       # §7 — SLO gate mechanism self-check (MCPRE-110/123). Proves the gate logic
       # (correctness floors bite; declared capacity/scaling targets enforce; null

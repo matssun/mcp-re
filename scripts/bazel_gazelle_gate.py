@@ -67,6 +67,14 @@ ALLOW_NAMING_COLLISION = {
     "mcp_re_proxy_test",             # == :proxy_unit_test (crate=:mcp_re_proxy)
     "mcp-re-client_test",            # == :mcp_re_client_cli_test (crate=:mcp_re_client_cli)
     "emit_mtls_fixtures",          # == hand-named fixture-emitter bin
+    # The consolidated proxy suites: a cargo test target is named for its directory
+    # (`tests/integration_async/`), while every nt_rust_test in this repo ends in
+    # `_test`. Same unit, two naming conventions — Bazel ships :integration_test,
+    # :integration_async_test and :integration_ext_test over exactly these sources,
+    # so adopting gazelle's name would duplicate a target rather than add coverage.
+    "integration",
+    "integration_async",
+    "integration_ext",
 }
 
 # HITL / live-cloud: `#![cfg(feature="…kms…")]`; the live cases are `#[ignore]`,
@@ -97,6 +105,11 @@ ALLOW_HITL_LIVE = {
     # ADR-MCPRE-052 §I: live Cloud KMS trust-anchor rotation across two DISPOSABLE
     # KMS key versions (self-provisioned by docs/security/gcp-kms-root-rotation.sh).
     "gcp_kms_root_rotation_live_test",
+    # The binary those live suites were consolidated into. Every module inside it is
+    # already listed individually above; the merged target inherits their exemption
+    # rather than creating a new one, and there is deliberately no
+    # `:integration_live_test` — a Bazel target here would need live cloud endpoints.
+    "integration_live",
     # MCPRE-493: MEASURES cross-replica admission-revocation propagation against the
     # declared P bound. It needs a live Redis two replicas genuinely share — the whole
     # claim is that a revocation crosses a real store, so an in-process stand-in would
@@ -116,7 +129,17 @@ ALLOW_HITL_LIVE = {
 # that could never run. The guard it described now exists for real as
 # `scripts/tracked_secrets_gate.py`, a python CI gate that reads the git tree
 # directly, so it needs no cargo-lane exemption here.
-ALLOW_NON_HERMETIC: set[str] = set()
+ALLOW_NON_HERMETIC: set[str] = {
+    # mcp-re-test-paths' unit tests check the CARGO-side fallback table against the
+    # SOURCE TREE: that every workspace-relative path it names still exists, and that
+    # an unknown key is refused. Both resolve through `workspace_root()`, which reads
+    # `CARGO_MANIFEST_DIR` and walks up for the `[workspace]` manifest. Under the
+    # Bazel sandbox there is no manifest dir and no source tree, so the tests would
+    # panic on the environment rather than measure the table. The Bazel half of the
+    # same mapping needs no test: `$(rlocationpath f)` cannot resolve a file that is
+    # not in the tree, so the BUILD analysis already refuses what these assert.
+    "mcp_re_test_paths_test",
+}
 
 # Cargo-only test-support crates: a Cargo package that exists ONLY to be built
 # on-demand by a cargo test (via a nested `cargo build`) and loaded at runtime —

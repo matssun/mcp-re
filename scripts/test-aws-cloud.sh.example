@@ -57,8 +57,8 @@ export MCP_RE_AWS_KMS_KEY_ID="$KEY_ARN"
 # Runs ONLY the AWS live test target, so no other binary contributes a "0 tests"
 # exit-0. The test itself panics if its required env is absent.
 MCP_RE_AWS_KMS_ENDPOINT="$STANDARD_ENDPOINT" \
-cargo test -p mcp-re-proxy --features aws_kms_keysource \
-  --test aws_kms_live_test -- --ignored --nocapture
+scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features aws_kms_keysource \
+  --test integration_live -- --ignored aws_kms_live_test:: --nocapture
 
 # ── 2b. The delegated-root lane — what the cross-cloud claim actually rests on ──
 # ADR-MCPRE-052: the KMS root ISSUES a short-TTL credential and an in-memory
@@ -66,8 +66,8 @@ cargo test -p mcp-re-proxy --features aws_kms_keysource \
 # verifies; it does NOT reach the delegated authority, so it cannot by itself earn
 # the "delegated-root signing validated against AWS KMS" wording.
 MCP_RE_AWS_KMS_ENDPOINT="$STANDARD_ENDPOINT" \
-cargo test -p mcp-re-proxy --features aws_kms_keysource \
-  --test aws_kms_delegated_required_live_test -- --ignored --nocapture
+scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features aws_kms_keysource \
+  --test integration_live -- --ignored aws_kms_delegated_required_live_test:: --nocapture
 
 # ── 2c. Delegated-signing custody: the root is OFF the per-request path ───────
 # ADR-MCPRE-052 §4. Lane 2b proves the chain verifies; this one proves the load-
@@ -75,16 +75,16 @@ cargo test -p mcp-re-proxy --features aws_kms_keysource \
 # invokes KMS exactly ONCE. Without it, "delegated" describes the format and not
 # the cost, and a fleet would still be rate-limited by KMS per request.
 MCP_RE_AWS_KMS_ENDPOINT="$STANDARD_ENDPOINT" \
-cargo test -p mcp-re-proxy --features aws_kms_keysource \
-  --test aws_kms_delegated_signing_live_test -- --ignored --nocapture
+scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features aws_kms_keysource \
+  --test integration_live -- --ignored aws_kms_delegated_signing_live_test:: --nocapture
 
 # ── 2d. HTTP profile: a real KMS signature over an RFC 9421 base ──────────────
 # ADR-MCPRE-050. The carrier is the only thing that goes over the wire, so a KMS
 # signature that verifies in isolation but not through `verify_request` /
 # `verify_response` would earn nothing.
 MCP_RE_AWS_KMS_ENDPOINT="$STANDARD_ENDPOINT" \
-cargo test -p mcp-re-proxy --features aws_kms_keysource \
-  --test aws_kms_http_profile_live_test -- --ignored --nocapture
+scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features aws_kms_keysource \
+  --test integration_live -- --ignored aws_kms_http_profile_live_test:: --nocapture
 
 # ── 2e. Delegated TLS: the TLS private key stays in KMS ───────────────────────
 # Needs a SECOND, DISTINCT key — the point is that the TLS server key and the
@@ -93,8 +93,8 @@ cargo test -p mcp-re-proxy --features aws_kms_keysource \
 # SKIPPED (loudly) rather than silently degraded when the second key is absent.
 if [ -n "${MCP_RE_AWS_KMS_TLS_KEY_ID:-}" ]; then
   MCP_RE_AWS_KMS_ENDPOINT="$STANDARD_ENDPOINT" \
-  cargo test -p mcp-re-proxy --features aws_kms_keysource \
-    --test aws_kms_delegated_tls_live_test -- --ignored --nocapture
+  scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features aws_kms_keysource \
+    --test integration_live -- --ignored aws_kms_delegated_tls_live_test:: --nocapture
 else
   echo
   echo "SKIPPED: delegated-TLS lane — set MCP_RE_AWS_KMS_TLS_KEY_ID to a SECOND,"

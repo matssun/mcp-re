@@ -168,14 +168,23 @@ jobs:
       # two-replicas-over-one-store lane (MCPRE-117 AC — "cross-replica through the
       # full serving path"). All self-skip without a store, so
       # MCP_RE_REQUIRE_LIVE_INFRA=1 above is what makes them binding here.
+      # Two invocations because the suites live in two binaries: the store-level and
+      # OCSP suites in `integration_ext`, the race harness in `integration_async`.
+      # `run_test_lane.sh` refuses a lane that selected no tests — with the suites
+      # behind module filters, a typo would otherwise report `0 passed` and exit 0,
+      # and MCP_RE_REQUIRE_LIVE_INFRA=1 would have made nothing binding after all.
       - name: Run live-infra e2e (Redis replay + OCSP revocation)
         run: >-
-          cargo test -p mcp-re-proxy
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
           --features async_serve,redis_replay,online_ocsp
-          --test redis_replay_e2e_test
-          --test redis_trust_epoch_e2e_test
-          --test replay_race_harness_test
-          --test ocsp_e2e_test
+          --test integration_ext
+          -- redis_replay_e2e_test:: redis_trust_epoch_e2e_test:: ocsp_e2e_test::
+
+      - name: Run live-infra e2e (Redis replay race through the serving path)
+        run: >-
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
+          --features async_serve,redis_replay,online_ocsp
+          --test integration_async -- replay_race_harness_test::
 
       - name: Stop OpenSSL OCSP responder
         if: always()
@@ -234,7 +243,12 @@ jobs:
       # serving `HttpProfileProxy` (MCPRE-117 AC).
       - name: Run live-infra e2e (etcd replay)
         run: >-
-          cargo test -p mcp-re-proxy
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
           --features async_serve,cpstore_etcd
-          --test cpstore_etcd_e2e_test
-          --test replay_race_harness_test
+          --test integration_ext -- cpstore_etcd_e2e_test::
+
+      - name: Run live-infra e2e (etcd replay race through the serving path)
+        run: >-
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
+          --features async_serve,cpstore_etcd
+          --test integration_async -- replay_race_harness_test::
