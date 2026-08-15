@@ -79,6 +79,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # First, because every step below reads the environment this checks. The job
+      # PATH comes from the runner service's `.env`, not from the operator's login
+      # shell, so a host that verifies by hand can still fail here — and it failed as
+      # `ModuleNotFoundError: tomllib`, then as `verus: rustup not found`, neither of
+      # which names the runner environment that decided it.
+      - name: Runner environment preflight
+        run: ./scripts/verification_runner_preflight.sh
+
       - name: Report the pinned Verus identity
         run: |
           set -euo pipefail
@@ -120,6 +128,11 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+
+      # Same runner, same service PATH — this lane parses the same lock file with the
+      # same standard-library tomllib, and it failed the same way.
+      - name: Runner environment preflight
+        run: ./scripts/verification_runner_preflight.sh
 
       - name: Resolve the pinned extraction image
         id: image

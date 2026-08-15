@@ -119,6 +119,11 @@ stage_static() {
     && python3 tools/verification/test_verus_lane.py \
     && python3 tools/verification/test_measured_inputs.py \
     && python3 tools/verification/test_escape_hatches.py \
+    `# Ahead of the verdict, so a host that cannot run the verifier says so in those` \
+    `# words. Same script the CI lanes start with: the environment it checks is the` \
+    `# one both places depend on, and it names the fix instead of surfacing as a TOML` \
+    `# import error or a missing rustup deep inside Verus.` \
+    && ./scripts/verification_runner_preflight.sh \
     `# --gate, not --manifests: the manifests-only form validates the registry's shape` \
     `# and stops, so it never reads the code. Three uninterpreted spec functions sat` \
     `# unregistered in the TCB while this lane reported PASS, because the half that` \

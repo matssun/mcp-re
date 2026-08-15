@@ -78,6 +78,12 @@ This is a real constraint, not a staging preference: Charon does not build here 
 Nix, and installing Nix on this machine is out of scope. So the extracted-model pipeline
 runs only on the runner.
 
+What that runner must provide — the repository it is registered to, and the job PATH the
+service hands its steps — is
+[`docs/dev/verification-runner.md`](../docs/dev/verification-runner.md). Both lanes start
+with `scripts/verification_runner_preflight.sh`, so a rebuilt host reports the missing
+prerequisite instead of failing later inside Verus or a TOML parse.
+
 ### Extraction identity is a tuple, not a pair
 
 An earlier draft of this file said the identity was *(tool commit, image digest)*. That is
