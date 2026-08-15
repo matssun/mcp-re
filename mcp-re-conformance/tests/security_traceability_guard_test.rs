@@ -18,7 +18,10 @@
 //!      named source does not exist on disk;
 //!   4. the recorded `counts.entries` disagrees with the actual number of entries;
 //!   5. the four required server-cert-verification cases (trusted accepted,
-//!      untrusted rejected, wrong identity, expired) are not all present.
+//!      untrusted rejected, wrong identity, expired) are not all present;
+//!   6. the guard's own runfile table (`SOURCE_ENVS`) and the manifest's source
+//!      set disagree in either direction — a source with no runfile cannot be
+//!      read, and a runfile for a source nobody claims is a stale wiring claim.
 //!
 //! Every input is delivered through Bazel `data` runfiles and read from DISK at
 //! test time (resolved via `$(rlocationpath)` against `TEST_SRCDIR`/`RUNFILES_DIR`,
@@ -192,85 +195,116 @@ fn test_names_in_build(text: &str) -> Vec<String> {
     names
 }
 
-/// Map a manifest `source` workspace-relative path (e.g.
-/// `mcp-re-demo/tests/demo_negative_e2e_test.rs`) to the env var that delivers its
+/// Manifest `source` workspace-relative path → the env var that delivers its
 /// runfile. Sources are handed individually so the guard can read each one.
+///
+/// `the_source_table_names_exactly_the_manifest_sources` pins this to the
+/// manifest in both directions, because only one of them is self-announcing:
+/// a source with no entry here panics on first use, while an entry for a
+/// source the manifest does not name is simply never consulted again.
+const SOURCE_ENVS: &[(&str, &str)] = &[
+    (
+        "mcp-re-conformance/tests/method_transparency_test.rs",
+        "MCP_RE_SRC_METHOD_TRANSPARENCY",
+    ),
+    (
+        "mcp-re-conformance/tests/method_name_drift_guard_test.rs",
+        "MCP_RE_SRC_METHOD_NAME_DRIFT_GUARD",
+    ),
+    (
+        "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs",
+        "MCP_RE_SRC_AUDIT_VOCABULARY_GUARD",
+    ),
+    (
+        "mcp-re-conformance/tests/forbidden_claim_guard_test.rs",
+        "MCP_RE_SRC_FORBIDDEN_CLAIM_GUARD",
+    ),
+    (
+        "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+        "MCP_RE_SRC_RFC9421_SECURITY_PROPERTIES",
+    ),
+    // MCPRE-122 (ADR-MCPRE-052): the delegated-required validation matrix — the
+    // serving contract, the production wiring (serve/verify/rotate/fail-closed),
+    // the two-proxy client↔server round trip, and the frozen credential-
+    // verification corpus. See docs/spec/delegated-required-validation-matrix.md.
+    (
+        "mcp-re-proxy/tests/integration_async/delegated_serving_test.rs",
+        "MCP_RE_SRC_DELEGATED_SERVING",
+    ),
+    (
+        "mcp-re-proxy/tests/integration_async/delegated_production_wiring_test.rs",
+        "MCP_RE_SRC_DELEGATED_PROD_WIRING",
+    ),
+    (
+        "mcp-re-proxy/tests/integration_async/delegated_client_server_e2e_test.rs",
+        "MCP_RE_SRC_DELEGATED_E2E",
+    ),
+    (
+        "mcp-re-conformance/tests/delegation_vectors_test.rs",
+        "MCP_RE_SRC_DELEGATION_VECTORS",
+    ),
+    // ADR-MCPRE-052 trust-anchor (master/root key) lifecycle — rotation overlap,
+    // cutover, issuer revocation, and root issuance failure (§H of the matrix).
+    (
+        "mcp-re-proxy/tests/integration_async/root_key_lifecycle_test.rs",
+        "MCP_RE_SRC_ROOT_KEY_LIFECYCLE",
+    ),
+    // ADR-MCPRE-052 §I: signed trust-anchor-manifest root rotation with an
+    // auto-provisioned root (the hermetic twin of the live KMS lane).
+    (
+        "mcp-re-proxy/tests/integration_async/root_authority_manifest_test.rs",
+        "MCP_RE_SRC_ROOT_AUTHORITY_MANIFEST",
+    ),
+    // ADR-MCPS-047: stateless cross-replica MRT continuation — open-on-A/answer-on-B
+    // + fail-closed splice/one-shot binding.
+    (
+        "mcp-re-proxy/tests/integration_async/mrt_continuation_serving_test.rs",
+        "MCP_RE_SRC_MRT_CONTINUATION",
+    ),
+    // MCPS-72 (#252): the KMS-lifecycle offline negatives are in-crate
+    // `#[cfg(test)]` unit tests, so their `source` is a `src/*.rs` file (not a
+    // `tests/*.rs`). The generic provider-agnostic signer seam runs under the
+    // default-feature `proxy_unit_test`; the GCP/AWS backend negatives run under
+    // the both-KMS-features `proxy_ext_unit_test`. All three sources are read
+    // from DISK the same way (runfile via the guard BUILD `data`).
+    (
+        "mcp-re-proxy/src/kms_keysource.rs",
+        "MCP_RE_SRC_KMS_KEYSOURCE",
+    ),
+    (
+        "mcp-re-proxy/src/gcp_kms_keysource.rs",
+        "MCP_RE_SRC_GCP_KMS_KEYSOURCE",
+    ),
+    (
+        "mcp-re-proxy/src/aws_kms_keysource.rs",
+        "MCP_RE_SRC_AWS_KMS_KEYSOURCE",
+    ),
+    (
+        "mcp-re-transport/tests/mtls_client_test.rs",
+        "MCP_RE_SRC_MTLS_CLIENT",
+    ),
+    (
+        "mcp-re-proxy/tests/key_source_test.rs",
+        "MCP_RE_SRC_KEY_SOURCE",
+    ),
+    (
+        "mcp-re-proxy/tests/dev_env_key_source_test.rs",
+        "MCP_RE_SRC_DEV_ENV_KEY_SOURCE",
+    ),
+    // MCPS-62 (ADR-MCPS-023 §C, v0.10 Mode C): the Mode-C CLI guards + Mode-B
+    // strict-rejection conformance are in-crate `#[cfg(test)]` unit tests in
+    // `cli.rs` (run under `proxy_unit_test`).
+    ("mcp-re-proxy/src/cli.rs", "MCP_RE_SRC_CLI"),
+];
+
 fn source_env_for(source: &str) -> &'static str {
-    match source {
-        "mcp-re-conformance/tests/object_suite_test.rs" => "MCP_RE_SRC_OBJECT_SUITE",
-        "mcp-re-conformance/tests/discovery_enforcement_conformance_test.rs" => {
-            "MCP_RE_SRC_DISCOVERY_ENFORCEMENT_CONFORMANCE"
-        }
-        "mcp-re-conformance/tests/method_transparency_test.rs" => "MCP_RE_SRC_METHOD_TRANSPARENCY",
-        "mcp-re-conformance/tests/method_name_drift_guard_test.rs" => {
-            "MCP_RE_SRC_METHOD_NAME_DRIFT_GUARD"
-        }
-        "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs" => {
-            "MCP_RE_SRC_AUDIT_VOCABULARY_GUARD"
-        }
-        "mcp-re-conformance/tests/forbidden_claim_guard_test.rs" => {
-            "MCP_RE_SRC_FORBIDDEN_CLAIM_GUARD"
-        }
-        "mcp-re-conformance/tests/rfc9421_security_properties_test.rs" => {
-            "MCP_RE_SRC_RFC9421_SECURITY_PROPERTIES"
-        }
-        "mcp-re-proxy/tests/keyset_admission_test.rs" => "MCP_RE_SRC_KEYSET_ADMISSION",
-        // MCPRE-122 (ADR-MCPRE-052): the delegated-required validation matrix — the
-        // serving contract, the production wiring (serve/verify/rotate/fail-closed),
-        // the two-proxy client↔server round trip, and the frozen credential-
-        // verification corpus. See docs/spec/delegated-required-validation-matrix.md.
-        "mcp-re-proxy/tests/integration_async/delegated_serving_test.rs" => {
-            "MCP_RE_SRC_DELEGATED_SERVING"
-        }
-        "mcp-re-proxy/tests/integration_async/delegated_production_wiring_test.rs" => {
-            "MCP_RE_SRC_DELEGATED_PROD_WIRING"
-        }
-        "mcp-re-proxy/tests/integration_async/delegated_client_server_e2e_test.rs" => {
-            "MCP_RE_SRC_DELEGATED_E2E"
-        }
-        "mcp-re-conformance/tests/delegation_vectors_test.rs" => "MCP_RE_SRC_DELEGATION_VECTORS",
-        // ADR-MCPRE-052 trust-anchor (master/root key) lifecycle — rotation overlap,
-        // cutover, issuer revocation, and root issuance failure (§H of the matrix).
-        "mcp-re-proxy/tests/integration_async/root_key_lifecycle_test.rs" => {
-            "MCP_RE_SRC_ROOT_KEY_LIFECYCLE"
-        }
-        // ADR-MCPRE-052 §I: signed trust-anchor-manifest root rotation with an
-        // auto-provisioned root (the hermetic twin of the live KMS lane).
-        "mcp-re-proxy/tests/integration_async/root_authority_manifest_test.rs" => {
-            "MCP_RE_SRC_ROOT_AUTHORITY_MANIFEST"
-        }
-        // ADR-MCPS-047: stateless cross-replica MRT continuation — open-on-A/answer-on-B
-        // + fail-closed splice/one-shot binding.
-        "mcp-re-proxy/tests/integration_async/mrt_continuation_serving_test.rs" => {
-            "MCP_RE_SRC_MRT_CONTINUATION"
-        }
-        // MCPS-72 (#252): the KMS-lifecycle offline negatives are in-crate
-        // `#[cfg(test)]` unit tests, so their `source` is a `src/*.rs` file (not a
-        // `tests/*.rs`). The generic provider-agnostic signer seam runs under the
-        // default-feature `proxy_unit_test`; the GCP/AWS backend negatives run under
-        // the both-KMS-features `proxy_ext_unit_test`. All three sources are read
-        // from DISK the same way (runfile via the guard BUILD `data`).
-        "mcp-re-proxy/src/kms_keysource.rs" => "MCP_RE_SRC_KMS_KEYSOURCE",
-        "mcp-re-proxy/src/gcp_kms_keysource.rs" => "MCP_RE_SRC_GCP_KMS_KEYSOURCE",
-        "mcp-re-proxy/src/aws_kms_keysource.rs" => "MCP_RE_SRC_AWS_KMS_KEYSOURCE",
-        "mcp-re-transport/tests/mtls_client_test.rs" => "MCP_RE_SRC_MTLS_CLIENT",
-        "mcp-re-host/tests/host_session_test.rs" => "MCP_RE_SRC_HOST_SESSION",
-        "mcp-re-conformance/tests/http_harness_test.rs" => "MCP_RE_SRC_HTTP_HARNESS",
-        "mcp-re-proxy/tests/proxy_transport_test.rs" => "MCP_RE_SRC_PROXY_TRANSPORT",
-        "mcp-re-proxy/tests/proxy_test.rs" => "MCP_RE_SRC_PROXY",
-        "mcp-re-proxy/tests/key_source_test.rs" => "MCP_RE_SRC_KEY_SOURCE",
-        "mcp-re-proxy/tests/dev_env_key_source_test.rs" => "MCP_RE_SRC_DEV_ENV_KEY_SOURCE",
-        // MCPS-62 (ADR-MCPS-023 §C, v0.10 Mode C): the attested-ingress serve-level
-        // conformance vectors live in the Tier-3/Tier-4 assertion test file; the
-        // Mode-C CLI guards + Mode-B strict-rejection conformance are in-crate
-        // `#[cfg(test)]` unit tests in `cli.rs` (run under `proxy_unit_test`).
-        "mcp-re-proxy/tests/proxy_lb_assertion_test.rs" => "MCP_RE_SRC_PROXY_LB_ASSERTION",
-        "mcp-re-proxy/src/cli.rs" => "MCP_RE_SRC_CLI",
-        other => panic!(
-            "manifest 'source' {other:?} has no runfile wired in the guard BUILD target. \
+    let Some((_, env)) = SOURCE_ENVS.iter().find(|(path, _)| *path == source) else {
+        panic!(
+            "manifest 'source' {source:?} has no runfile wired in the guard BUILD target. \
              Add a data entry + env var for it (so the guard can read the test fn)."
-        ),
-    }
+        );
+    };
+    env
 }
 
 /// `true` iff the text declares a free function `fn <name>(` (the form every
@@ -327,6 +361,31 @@ fn entry_source_matches_target_package() {
     assert!(
         mismatches.is_empty(),
         "manifest entries whose source path does not belong to the target's package: {mismatches:?}"
+    );
+}
+
+/// The runfile table is exactly the manifest's source set — in BOTH directions.
+///
+/// `source_env_for` panics on a source it cannot deliver, which covers
+/// manifest ⊆ table. The reverse containment needs asserting: a table entry
+/// whose manifest entry is withdrawn stops being consulted, and an unreachable
+/// mapping is not inert — it is a claim that a source is still wired up, in a
+/// table `mcp-re-test-paths` mirrors for the cargo lane.
+#[test]
+fn the_source_table_names_exactly_the_manifest_sources() {
+    let m = manifest();
+    let declared: BTreeSet<&str> = entries(&m).iter().map(|e| entry_str(e, "source")).collect();
+    let tabled: BTreeSet<&str> = SOURCE_ENVS.iter().map(|(source, _)| *source).collect();
+    let orphaned: Vec<&&str> = tabled.difference(&declared).collect();
+    assert!(
+        orphaned.is_empty(),
+        "SOURCE_ENVS wires runfiles for source(s) the manifest no longer names — delete the \
+         entry (and its cargo fallback in mcp-re-test-paths) once nothing claims it: {orphaned:?}"
+    );
+    let unwired: Vec<&&str> = declared.difference(&tabled).collect();
+    assert!(
+        unwired.is_empty(),
+        "manifest names source(s) with no runfile wired in SOURCE_ENVS: {unwired:?}"
     );
 }
 
