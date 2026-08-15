@@ -61,6 +61,16 @@ parse and are still refused as deployment states. They remain in the tier type b
 dispatcher gates on them at runtime, which guards a tier constructed in-process rather
 than parsed.
 
+### Outstanding — a false security claim awaits owner approval to correct (release-gating)
+
+`docs/spec/security-boundary.md` states that the proxy enforces the authorization profile
+deny-before-dispatch. It does not: `--authz reference` is refused at configuration
+validation, so every accepted deployment runs with authorization off. The document is
+`type:HITL` and the author does not self-approve it, so the correction is authored rather
+than applied — see
+[`docs/spec/security-boundary-pending-correction.md`](docs/spec/security-boundary-pending-correction.md).
+**Do not ship a release with this claim standing.**
+
 ### Changed — a conformance category must have an executable witness
 
 `docs/conformance-guide.md` advertised four conformance categories. Two of them had no
@@ -88,8 +98,16 @@ harness were both deleted keeps advertising coverage that exists nowhere.
 configuration, so there is no implementation for its vectors to run against.
 `mcp-re-policy/tests/vectors/phase5_vectors.json` is retained — its generator is gone and
 this is the only remaining copy — but reclassified in place as preserved design input
-rather than evidence. Removed: `scripts/corpus_digest.py`, which hashed a corpus that is
-no longer in the tree.
+rather than evidence.
+
+Removed with it: `scripts/corpus_digest.py`, which hashed a corpus no longer in the tree,
+and the `mcp-re-conformance` **library**. That library had no consumer anywhere — no
+crate, test, or binary named `mcp_re_conformance::` — and its modules loaded the same
+absent corpus while its own docs described a `runner::RunReport` and a
+`target::ConformanceTarget` that do not exist. It also carried the only
+`mcp-re-conformance → mcp-re-proxy` dependency edge. The package keeps everything that
+carries evidence: the three corpora and the sixteen test targets that replay and guard
+them. It is now test-only and has no library.
 
 ## [0.16.0] — 2026-08-10
 

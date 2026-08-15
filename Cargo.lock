@@ -1012,7 +1012,6 @@ dependencies = [
  "mcp-re-core",
  "mcp-re-host",
  "mcp-re-http-profile",
- "mcp-re-proxy",
  "mcp-re-test-paths",
  "serde",
  "serde_json",
