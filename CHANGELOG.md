@@ -12,6 +12,55 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Removed — replay configuration is a durability tier and its witness; `--replay-cache` is gone (BREAKING)
+
+**Migration, in one line:** delete `--replay-cache` and `--replay-path` from your command
+lines and your chart values; keep `--replay-durability-tier` and its store locator.
+
+```
+removed:   --replay-cache memory | file | shared
+           --replay-path <path>
+
+required:  --replay-durability-tier redis-wait-quorum:<quorum>:<timeout_ms>
+             with --replay-redis-url <url>
+           — or —
+           --replay-durability-tier linearizable
+             with --cpstore-etcd-endpoint <url>
+```
+
+A command line still passing `--replay-cache shared` now fails with `unknown flag
+--replay-cache` rather than starting. The Helm chart no longer renders it; an install that
+pinned a chart version older than this one keeps working against its own proxy image, but
+a new chart with an old image (or the reverse) will not.
+
+**No replay backend is selected implicitly.** A deployment that declares no durability
+tier is refused at every ingress path — the parser, the validation boundary, and the
+classifier — rather than falling back to anything. There is nothing left to fall back to.
+
+**Why this is a security-model correction rather than a rename.** `--replay-cache` had one
+value that named a deployment and two that named refusals. `memory` kept admitted nonces
+in process memory, so a restart re-opened a replay window for every captured envelope
+still inside `expires_at + skew` — and it was also the value when the flag was omitted.
+`file` was refused under CF-01 as a state no build could establish. Keeping the selector
+meant keeping a type in which two of three variants were historical fiction, and keeping
+"missing configuration" as a path that quietly became the least safe option before being
+refused one stage later.
+
+Every representable replay state is now shared. That converts a rule into a property: the
+`--fleet` posture used to reject node-local replay kinds, and that clause is deleted
+because no such kind exists to reject. Fleet-safety is no longer a condition remembered at
+validation time; it holds by construction.
+
+Also removed: `mcp-re-proxy/src/durable_replay.rs` (`DurableReplayCache`), which
+implemented the `file` arm. No supported configuration had constructed it since CF-01.
+`SharedReplayCache` is unaffected — it is the shared store, exercised by the cross-replica
+coherence harness.
+
+The two sub-strict durability tiers (`redis-async`, `single-store-fail-closed`) still
+parse and are still refused as deployment states. They remain in the tier type because the
+dispatcher gates on them at runtime, which guards a tier constructed in-process rather
+than parsed.
+
 ## [0.16.0] — 2026-08-10
 
 ### Added — the exchange lifecycle is a value, and refusals derive their retry contract from it (ADR-MCPRE-057, ADR-MCPRE-058)
