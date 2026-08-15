@@ -189,6 +189,15 @@ jobs:
           python3 scripts/proxy_flag_doc_gate.py --selftest
           python3 scripts/proxy_flag_doc_gate.py
 
+      # Conformance is executable evidence, not documentation. An advertised category
+      # whose corpus or harness has been deleted keeps claiming coverage that exists
+      # nowhere, and a corpus with no harness is never executed — neither direction is
+      # self-announcing, so both are asserted here.
+      - name: Conformance-claims gate
+        run: |
+          python3 scripts/conformance_claims_gate.py --selftest
+          python3 scripts/conformance_claims_gate.py
+
       # Lifecycle purity (ADR-MCPRE-056/057): `runtime_state.rs` and `exchange_state.rs`
       # are values, not behaviour. A `use` of a production module would let "is this
       # transition legal?" answer two ways on the same arguments, which is what SL-04
@@ -235,7 +244,7 @@ jobs:
             echo
             echo '| Corpus | manifest SHA-256 | corpus digest |'
             echo '|---|---|---|'
-            for c in http-profile delegation-profile; do
+            for c in http-profile delegation-profile scitt; do
               m="mcp-re-conformance/tests/vectors/$c/manifest.json"
               manifest_sha="$(shasum -a 256 "$m" | cut -d' ' -f1)"
               corpus_dig="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['corpus_digest'])" "$m")"

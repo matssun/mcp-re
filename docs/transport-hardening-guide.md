@@ -25,7 +25,7 @@ verifications, each answering a different question:
 | --- | --- | --- |
 | **mTLS** | rustls client-cert verification | the **transport peer** — which channel the request arrived on |
 | **Message signature** | RFC 9421 HTTP Message Signature + RFC 9530 Content-Digest (`mcp-re-http-profile`) | the **request signer** — who produced this exact message |
-| **Authorization** | Phase-5 `PolicyEvaluator` | **may-act** — whether the actor is permitted to do this |
+| **Authorization** | none active — `--authz reference` is refused at configuration | **may-act** — whether the actor is permitted to do this. MCP-RE does not answer this today; the reference profile was bound to the retired object carrier and must be rebuilt on HTTP-profile request evidence. Authorize upstream of the proxy. |
 
 These are orthogonal. mTLS does not prove who signed the message; a valid message
 signature does not prove which channel it came over; neither proves the actor is

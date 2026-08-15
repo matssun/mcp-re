@@ -61,6 +61,36 @@ parse and are still refused as deployment states. They remain in the tier type b
 dispatcher gates on them at runtime, which guards a tier constructed in-process rather
 than parsed.
 
+### Changed — a conformance category must have an executable witness
+
+`docs/conformance-guide.md` advertised four conformance categories. Two of them had no
+harness anywhere in the tree. The guide named a corpus at `mcp-re-core/tests/vectors/`
+that does not exist, an aggregate `conformance_manifest.json` and `drift_guard_test` that
+do not exist, and a `PolicyEvaluator` type that does not exist; its corpus-pinning section
+published two digests and told the reader to reproduce them with a script that cannot run,
+because the bytes it hashes were deleted with the corpus.
+
+The guide now advertises the three categories that have both a corpus and a target that
+reaches it — HTTP profile, delegated-required credentials, and SCITT receipts — and states
+the pinning mechanism that is real: each corpus manifest carries a per-fixture SHA-256 and
+a `corpus_digest`, recomputed from the checked-in bytes at test time, with a tampered
+fixture as the negative control. Properties proven by targets rather than by vectors are
+pointed at the security traceability manifest, which is drift-guarded and does exist.
+
+`scripts/conformance_claims_gate.py` now holds the guide to the tree in both directions: an
+advertised category must name a corpus that exists and a declared `nt_rust_test` whose
+`data` reaches it, every corpus in the tree must be advertised, and a published
+`corpus_digest` must be recomputed by some harness that reaches its corpus. Both edges
+matter — a corpus with no harness is never executed, and a category whose corpus and
+harness were both deleted keeps advertising coverage that exists nowhere.
+
+**Phase-5 authorization is not a conformance category.** `--authz reference` is refused at
+configuration, so there is no implementation for its vectors to run against.
+`mcp-re-policy/tests/vectors/phase5_vectors.json` is retained — its generator is gone and
+this is the only remaining copy — but reclassified in place as preserved design input
+rather than evidence. Removed: `scripts/corpus_digest.py`, which hashed a corpus that is
+no longer in the tree.
+
 ## [0.16.0] — 2026-08-10
 
 ### Added — the exchange lifecycle is a value, and refusals derive their retry contract from it (ADR-MCPRE-057, ADR-MCPRE-058)

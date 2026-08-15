@@ -1,15 +1,15 @@
-//! MCP-RE conformance harness library (MCPS-010..013).
+//! Vector-replay plumbing for the object conformance target.
 //!
-//! Phase 3 black-box conformance runner. MCPS-010 lands the in-process **object
-//! target**: it runs the committed conformance vectors (the SINGLE SOURCE OF
-//! TRUTH at `components/mcp-re/mcp-re-core/tests/vectors/`) directly through
-//! `mcp_re_core::verify_request` / `verify_response` and produces a deterministic,
-//! machine-readable [`runner::RunReport`].
+//! **Nothing in the repository consumes this library.** No crate, test, or binary
+//! names `mcp_re_conformance::`, and the corpus these modules load —
+//! `mcp-re-core/tests/vectors/` — is not in the tree. The executable conformance
+//! evidence lives in this crate's `tests/`, which reach their corpora under
+//! `tests/vectors/` directly; see `docs/conformance-guide.md` for the categories
+//! and the harness that proves each one.
 //!
-//! The [`target::ConformanceTarget`] trait is the seam the transport harness
-//! reuses: MCPS-013 (Streamable HTTP) implements the same trait so the [`runner`]
-//! is transport-agnostic. MCP-RE is HTTP-profile only — the object and HTTP
-//! harnesses are the transport conformance surface; stdio is out of scope.
+//! Its disposition is an open ruling, not a settled design: either a harness
+//! wires it to a real corpus, or it is deleted. Do not cite it as the loader for
+//! any advertised conformance category — it is wired to none of them.
 //!
 //! Crate boundary (ADR-MCPS-011/012): `mcp-re-conformance` may use `std::fs`
 //! (vector loading) — `mcp-re-core` must not, and stays pure.

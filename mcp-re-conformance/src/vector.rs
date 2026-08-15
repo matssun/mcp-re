@@ -1,8 +1,8 @@
 //! Conformance-vector data model (MCPS-010).
 //!
-//! Mirrors the committed fixture schema produced by MCPS-002 under
-//! `components/mcp-re/mcp-re-core/tests/vectors/`. The vectors are the SINGLE SOURCE
-//! OF TRUTH — this module only deserializes them; it never owns a copy.
+//! Mirrors the fixture schema of the object-target corpus, which is not in the
+//! tree; no advertised conformance category is loaded through this model. See
+//! the crate docs — this module's disposition is an open ruling.
 //!
 //! A fixture file is one of three `kind`s:
 //!   - `"request"` / `"response"`: carries a `message` JSON object plus an

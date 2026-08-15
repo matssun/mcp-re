@@ -274,9 +274,9 @@ Vector `v4b_signed_wrong_hash_response` proves step 7 fires even when the signat
 
 Cites: [ADR-MCPS-011](https://github.com/matssun/mcp-re/discussions/360) (conformance-as-specification), [ADR-MCPS-018](https://github.com/matssun/mcp-re/discussions/367) (conformance-manifest authority).
 
-Vectors are the executable spec and are regenerated against the frozen vocabulary/identifier (the brief's are stale). They are committed JSON fixtures under `mcp-re-core/tests/vectors/` with a generator (a test-only Rust bin/fn using the core primitives) so they are reproducible. They are also re-run, transport-agnostically, over stdio and Streamable HTTP, so they constitute the Core AND transport conformance corpus.
+Vectors are the executable spec. They are committed JSON fixtures under `mcp-re-conformance/tests/vectors/`, one directory per profile, each regenerable from the profile implementation so a fixture's bytes are reproducible rather than hand-maintained. MCP-RE is HTTP-profile only, so the corpora are organised by profile — there is no transport axis to re-run them over.
 
-The **authoritative enumeration of every vector** (Core + Phase 5 authorization) lives in the conformance manifest — see [§12](#12-conformance-manifest-counts). Do not maintain a parallel count here.
+The **authoritative enumeration of every vector** is each corpus's own `manifest.json`, which lists its fixtures and publishes a digest over the set — see [§12](#12-conformance-manifest-counts). Do not maintain a parallel count here.
 
 Each fixture records: name, the message JSON (or raw bytes for the invalid-UTF-8 case), expected outcome (`verify_ok` or an exact `mcp-re.*` error token), and for OK request/response the resolver entry + test keypair seed. FIXED test keypairs (documented seed) are used so signatures are reproducible — never random in committed vectors.
 
@@ -297,12 +297,13 @@ Cites: [ADR-MCPS-011](https://github.com/matssun/mcp-re/discussions/360), [ADR-M
 
 Cites: [ADR-MCPS-018](https://github.com/matssun/mcp-re/discussions/367).
 
-This spec **does not hardcode** vector or test-target counts. The single source of truth is the drift-guarded manifest:
+This spec **does not hardcode** vector or test-target counts. Each corpus enumerates itself, and its harness re-derives that enumeration from the bytes on disk at test time:
 
-- Manifest: `mcp-re-conformance/conformance_manifest.json`
-- Drift guard: `//mcp-re-conformance:drift_guard_test` (MCPS-031)
+- Per-corpus manifests: `mcp-re-conformance/tests/vectors/<profile>/manifest.json` — the fixture list, a SHA-256 per fixture, and a `corpus_digest` over the set.
+- Which corpora exist, and which target proves each: the category table in [`docs/conformance-guide.md`](../conformance-guide.md), held to the tree in both directions by `scripts/conformance_claims_gate.py`.
+- Which security property each test target proves: `mcp-re-conformance/security_traceability_manifest.json`, guarded by `//mcp-re-conformance:security_traceability_guard_test`.
 
-The guard re-derives every count from reality (on-disk fixtures + BUILD files) and FAILS if a vector on disk is missing from the manifest, a manifest entry points at a non-existent vector, a recorded count is stale, or a `rust_test` target is added/removed without updating the manifest. To learn the current vector and test-target counts, read the manifest's `counts` block — never copy a frozen number into this spec.
+A corpus harness FAILS if a fixture's bytes do not match its published hash, if the corpus digest does not commit to the manifest's entries, or if a vector sits in the directory unpinned. To learn the current counts, read a corpus manifest — never copy a frozen number into this spec.
 
 ## 13. Production claim ceiling
 
