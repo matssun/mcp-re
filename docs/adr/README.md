@@ -21,6 +21,11 @@ authority now sits in the per-corpus manifests and the security traceability man
 labels are the owner's to change, and until they are, this index and the discussions
 disagree in a direction that favours the truth.
 
+**Retire this note with the labels.** Set #362 to `status:deprecated` and #367 to
+`status:superseded`, then delete this paragraph and the two `†` markers in the same change
+— an inconsistency note that outlives its inconsistency becomes permanent documentation of
+a problem that no longer exists.
+
 ## Index
 
 | ID | Title | Status |

@@ -10,8 +10,20 @@ correction rather than applying one. It is release-gating: the claim it corrects
 in the present tense, and a document called *security boundary* is the wrong place to
 leave that standing.
 
-**Owner action required:** approve or amend the replacement below, apply it to
-`security-boundary.md`, and delete this file.
+**Owner action required — do all five in ONE change, or none of them.** A partial
+application leaves the correction mechanism behind as the next fossil, which is the failure
+this file exists to correct:
+
+1. review the replacement below;
+2. approve the exact text (amend first if it is wrong — approving an amended text is fine,
+   approving text you have not read is not);
+3. apply it to `security-boundary.md`;
+4. delete this file;
+5. remove the `### Outstanding` entry from `CHANGELOG.md` in the same commit.
+
+Steps 4 and 5 are not tidying. Scaffolding that outlives its purpose reads as an open
+issue forever, and a release-gating entry nobody can discharge trains readers to ignore
+the heading.
 
 ## The defect
 
