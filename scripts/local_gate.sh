@@ -119,7 +119,12 @@ stage_static() {
     && python3 tools/verification/test_verus_lane.py \
     && python3 tools/verification/test_measured_inputs.py \
     && python3 tools/verification/test_escape_hatches.py \
-    && python3 tools/verification/verify --manifests \
+    `# --gate, not --manifests: the manifests-only form validates the registry's shape` \
+    `# and stops, so it never reads the code. Three uninterpreted spec functions sat` \
+    `# unregistered in the TCB while this lane reported PASS, because the half that` \
+    `# scans for escape hatches and runs Verus only ever ran in a CI job whose runner` \
+    `# is scoped to another repository. ~26s warm, which buys the whole verdict.` \
+    && python3 tools/verification/verify --gate \
     && python3 tools/scitt_fetch_service_key.py --selftest \
     && python3 scripts/slo_gate.py --selftest \
     && fmt_check \

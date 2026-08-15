@@ -435,3 +435,82 @@ introduced_by = "ADR-MCPRE-059 WP3"
 review_requirement = "Owner review; discharge requires a proof about the digest construction itself, i.e. crossing boundary.crypto_primitives."
 affected_contracts = ["contract://http_profile/block/continuation_verify"]
 tool_specific_mechanism = "verus:external_body"
+
+# --- Uninterpreted specification functions -----------------------------------
+#
+# `uninterp spec fn` is a trusted seam by construction: every theorem that mentions
+# one holds for ALL interpretations, so the declaration itself assumes nothing beyond
+# functionality — the same arguments give the same value. That is weaker than the
+# `external_body` entries above, which pin a body's behaviour, and it is registered
+# separately because the checker accounts for mechanisms per unit and these three are
+# declared in `verus_std_specs.rs`, which every http_profile unit compiles.
+
+[[assumption]]
+id = "ASM-0024"
+description = "`labeled_digest(label, bytes)` is a function of its arguments and nothing more."
+justification = """
+The declaration behind ASM-0023, stated where the checker can see it. Uninterpreted is
+the entire content: nothing about SHA-256 is claimed — not collision resistance, not
+preimage resistance, not injectivity. Only that the same label over the same bytes gives
+the same value.
+
+That is exactly enough to prove the binding DISCIPLINE (each handle is checked under its
+own required role label) and deliberately not enough to prove role SEPARATION, which
+needs `label_a != label_b ==> digest(label_a, x) != digest(label_b, y)`. That is a
+domain-separation property of the construction and it stays at
+`boundary.crypto_primitives`.
+"""
+scope = [
+    "unit://http_profile.admission_currency",
+    "unit://http_profile.artifact_typing",
+    "unit://http_profile.continuation_binding",
+    "unit://http_profile.continuation_unbypassability",
+    "unit://http_profile.freshness_window",
+]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 WP3"
+review_requirement = "Owner review; discharge requires crossing boundary.crypto_primitives with a proof about the digest construction."
+affected_contracts = ["contract://http_profile/block/continuation_verify"]
+tool_specific_mechanism = "verus:uninterp"
+
+[[assumption]]
+id = "ASM-0025"
+description = "`skew_of(policy)` is the deployment's configured clock skew, as a function of the policy object."
+justification = """
+Uninterpreted on purpose, and the purpose is strength rather than convenience: the
+freshness theorem must hold for WHATEVER skew a deployment configures, so the proof may
+assume nothing about the value — not a bound, not a sign, only that repeated reads of the
+same policy agree. Interpreting it would weaken the theorem to one configuration.
+
+The paired `external_body` getter is ASM-0007; this is the specification-level declaration
+that getter is presented through.
+"""
+scope = [
+    "unit://http_profile.admission_currency",
+    "unit://http_profile.artifact_typing",
+    "unit://http_profile.continuation_binding",
+    "unit://http_profile.continuation_unbypassability",
+    "unit://http_profile.freshness_window",
+]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 WP3"
+review_requirement = "Owner review; any change that makes the skew more than a per-policy constant."
+affected_contracts = ["contract://http_profile/verify/check_params"]
+tool_specific_mechanism = "verus:uninterp"
+
+[[assumption]]
+id = "ASM-0026"
+description = "`validity_of(policy)` is the widest accepted `expires - created`, as a function of the policy object."
+justification = "As ASM-0025, for the window-width bound. Paired with the `external_body` getter ASM-0008."
+scope = [
+    "unit://http_profile.admission_currency",
+    "unit://http_profile.artifact_typing",
+    "unit://http_profile.continuation_binding",
+    "unit://http_profile.continuation_unbypassability",
+    "unit://http_profile.freshness_window",
+]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 WP3"
+review_requirement = "Owner review; any change that makes the bound more than a per-policy constant."
+affected_contracts = ["contract://http_profile/verify/check_params"]
+tool_specific_mechanism = "verus:uninterp"
