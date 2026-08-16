@@ -74,11 +74,14 @@ fn keys(violations: &[String]) -> Vec<&'static str> {
         "--authz",
         "TLS signing is delegated XOR exported",
         "--transport-binding lb-assertion places",
-        // The deployment's own identity coordinates, then its locators, immediately before
-        // `--target-uri` — which is one of them, and was the only one the boundary decided.
+        // The `ServerIdentity` owner's two coordinates FIRST, then the two that are not
+        // part of the identity. `--audience` moved after `--server-signer`, which is a
+        // DELIBERATE reorder: the owner emits the coordinates it owns together, and an
+        // operator now reads one owner's diagnosis as a block instead of finding an
+        // audience parameter interleaved between them.
         "--trust-domain is empty",
-        "--audience is empty",
         "--server-signer is empty",
+        "--audience is empty",
         "--server-key-id is empty",
         "--bind is empty",
         "--tls-cert is empty",
@@ -196,11 +199,12 @@ fn the_boundary_refuses_in_this_order() {
             // an ABSENT flag and says nothing about an EMPTY value. They sit immediately
             // before `--target-uri` because it is one of them: the coordinates a verifier
             // uses to tell this deployment from another, then the locators that name what
-            // it loads. Stated one field at a time — they belong to a machine layer A does
-            // not have, and one merged clause would fix its diagnostic order in advance.
+            // it loads. The first two are `ServerIdentity`'s and are emitted by it; the
+            // next two have no owner and stay in the boundary's residue, which is why
+            // `--audience` now follows `--server-signer` rather than splitting the pair.
             "--trust-domain is empty",
-            "--audience is empty",
             "--server-signer is empty",
+            "--audience is empty",
             "--server-key-id is empty",
             "--bind is empty",
             "--tls-cert is empty",

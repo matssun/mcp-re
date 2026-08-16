@@ -162,6 +162,14 @@ pub fn validate_configuration(
         crate::config_state::transport::classify_and_validate_binding(config);
     let (crl_revocation, crl_violations) =
         crate::config_state::transport::classify_and_validate_crl(config);
+    // This deployment's own actor identity. It takes the RESOLVED issuer kid rather than
+    // re-reading the primitives it defaults from, so the keyid on the identity and the kid
+    // the credential chains to are one value (CF-10).
+    let (server_identity, server_identity_violations) =
+        crate::config_state::server_identity::classify_and_validate(
+            config,
+            delegated_signing.as_ref(),
+        );
     let (audit, retention, verified_context) = crate::config_state::evidence::classify(config);
     let mcp_transport_contract = crate::config_state::mcp_transport_contract::classify(config);
     // Infallible: the request states one of three things and the default makes the third
@@ -183,6 +191,7 @@ pub fn validate_configuration(
         custody: custody_violations,
         delegated_signing: delegated_signing_violations,
         replay: replay_violations,
+        server_identity: server_identity_violations,
         tls_custody: tls_custody_violations,
         trust_revocation: trust_violations,
         cross,
@@ -229,6 +238,9 @@ pub fn validate_configuration(
     let Some(tls_custody) = tls_custody else {
         return Err(unrecognised("tls-custody"));
     };
+    let Some(server_identity) = server_identity else {
+        return Err(unrecognised("server-identity"));
+    };
     Ok(DeploymentConfigState::new(
         crate::config_state::RecognisedStates {
             admission,
@@ -242,6 +254,7 @@ pub fn validate_configuration(
             mcp_transport_contract,
             replay,
             retention,
+            server_identity,
             tls_custody,
             trust_revocation,
             verified_context,
@@ -259,6 +272,7 @@ struct MachineViolations {
     custody: Vec<String>,
     delegated_signing: Vec<String>,
     replay: Vec<String>,
+    server_identity: Vec<String>,
     tls_custody: Vec<String>,
     trust_revocation: Vec<String>,
     cross: crate::config_state::cross_machine::CrossMachineViolations,
@@ -303,7 +317,13 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // are stated one field at a time, in the order an operator meets them, rather than as a
     // single "required strings" clause: they belong to a machine layer A does not yet have,
     // and collapsing them would fix the ordering of that machine's diagnostics in advance.
-    violations.extend(residue::identity_coordinate_violations(config));
+    // The `ServerIdentity` owner's two coordinates, at the position the identity clauses
+    // have always been read.
+    violations.extend(decided.server_identity);
+    // `--audience` is not one of them: it is consumed as an audience parameter, not as part
+    // of the identity, so its guard stays where no owner claims it.
+    violations.extend(residue::audience_violations(config));
+    violations.extend(residue::issuer_kid_default_violations(config));
     // The required locators, in the same shape and immediately after. Each of these IS
     // dereferenced at startup, so an empty one eventually fails — but that failure is an
     // observation about the environment, and "this string names nothing" is knowable without

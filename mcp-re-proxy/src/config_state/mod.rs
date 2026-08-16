@@ -64,6 +64,7 @@ pub mod evidence;
 pub mod in_flight_limit;
 pub mod mcp_transport_contract;
 pub mod replay;
+pub mod server_identity;
 pub mod tls_custody;
 pub mod transport;
 pub mod trust_revocation;
@@ -102,6 +103,7 @@ pub struct DeploymentConfigState {
     mcp_transport_contract: McpTransportContractState,
     replay: ReplayState,
     retention: RetentionState,
+    server_identity: server_identity::ServerIdentityFacts,
     tls_custody: TlsCustodyState,
     trust_revocation: TrustRevocationState,
     verified_context: VerifiedContextState,
@@ -121,6 +123,7 @@ pub(crate) struct RecognisedStates {
     pub(crate) mcp_transport_contract: McpTransportContractState,
     pub(crate) replay: ReplayState,
     pub(crate) retention: RetentionState,
+    pub(crate) server_identity: server_identity::ServerIdentityFacts,
     pub(crate) tls_custody: TlsCustodyState,
     pub(crate) trust_revocation: TrustRevocationState,
     pub(crate) verified_context: VerifiedContextState,
@@ -142,6 +145,7 @@ impl DeploymentConfigState {
             mcp_transport_contract,
             replay,
             retention,
+            server_identity,
             tls_custody,
             trust_revocation,
             verified_context,
@@ -158,6 +162,7 @@ impl DeploymentConfigState {
             mcp_transport_contract,
             replay,
             retention,
+            server_identity,
             tls_custody,
             trust_revocation,
             verified_context,
@@ -229,6 +234,14 @@ impl DeploymentConfigState {
     /// is minted under, and the two values whose defaulting rule this layer owns.
     pub fn delegated_signing(&self) -> &DelegatedSigningFacts {
         &self.delegated_signing
+    }
+
+    /// This deployment's own actor identity, derived once.
+    ///
+    /// Consumers take it rather than assembling one from `trust_domain`, `server_signer`
+    /// and a `"server"` literal — which is what two of them used to do.
+    pub fn server_identity(&self) -> &server_identity::ServerIdentityFacts {
+        &self.server_identity
     }
 
     /// Whether the TLS handshake key can leave the device it lives on.
@@ -307,6 +320,16 @@ mod tests {
             },
             audit: AuditState::Stderr,
             channel_binding: ChannelBindingState::ExactUriSan,
+            server_identity: crate::config_state::server_identity::classify_and_validate(
+                &crate::config_state::test_support::legal_config(),
+                crate::config_state::delegated_signing::classify_and_validate(
+                    &crate::config_state::test_support::legal_config(),
+                )
+                .0
+                .as_ref(),
+            )
+            .0
+            .expect("the legal fixture has an identity"),
             in_flight_limit: InFlightLimitBasis::PerCore {
                 requests: std::num::NonZeroUsize::new(256).expect("non-zero"),
             },

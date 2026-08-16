@@ -199,41 +199,53 @@ pub(super) fn authz_profile_violations(config: &DeploymentRequest) -> Vec<String
     out
 }
 
-/// The four coordinates minted into what this deployment signs are non-empty.
+/// `--audience` names something.
 ///
-/// **Why layer A enforces it.** Nothing dereferences them, so an empty one fails no startup step — it silently stops distinguishing this deployment from another that also set none.
+/// **Why layer A enforces it.** It is the audience a verifier binds a response to, and
+/// nothing dereferences it — an empty one fails no startup step and simply makes this
+/// deployment's evidence indistinguishable from any other deployment that also set none.
 ///
-/// **Why no narrower owner.** The deployment-identity aggregate has not been modelled as an owner. Whether these four are one `DeploymentIdentity` is an open ruling, not a fact this move should assume.
-pub(super) fn identity_coordinate_violations(config: &DeploymentRequest) -> Vec<String> {
+/// **Why no narrower owner.** It is consumed as an ordinary audience PARAMETER — into
+/// `AudienceTuple` beside `--target-uri` and `--route`, and into `CustodyConfig::aud` — not
+/// as part of an identity. `ServerIdentity` deliberately does not take it: grouping it with
+/// the identity coordinates because they were validated together is how a validation
+/// location gets mistaken for an owner. `DelegatedSigning` guards the RESOLVED
+/// `audience_hash` that this may default into, which is a different proposition.
+pub(super) fn audience_violations(config: &DeploymentRequest) -> Vec<String> {
     let mut out = Vec::new();
-    for (value, message) in [
-        (
-            config.trust_domain.as_str(),
-            "--trust-domain is empty: it is a component of every actor identity \
-             (role:trust_domain:subject:keyid), so an empty domain removes a coordinate \
-             from every actor this deployment names",
-        ),
-        (
-            config.audience.as_str(),
+    if config.audience.trim().is_empty() {
+        out.push(
             "--audience is empty: it is the audience verifiers bind a response to, so an \
              empty one makes this deployment's evidence indistinguishable from that of any \
-             other deployment that also set none",
-        ),
-        (
-            config.server_signer.as_str(),
-            "--server-signer is empty: it is minted as the issuer of every response, and an \
-             empty issuer names nobody for a verifier to resolve",
-        ),
-        (
-            config.server_key_id.as_str(),
+             other deployment that also set none"
+                .to_string(),
+        );
+    }
+    out
+}
+
+/// `--server-key-id` names something.
+///
+/// **Why layer A enforces it.** It is the default the delegation credential chains to, so
+/// an empty value leaves the credential naming no root key for a verifier to find.
+///
+/// **Why no narrower owner.** It has exactly ONE production consumer —
+/// `DelegatedSigningFacts` reads it as the fallback for `issuer_kid` — and that owner
+/// already refuses the RESOLVED kid when it comes out empty, naming `--server-key-id` in
+/// the remedy. This clause therefore adds only the case where `--delegated-issuer-kid` IS
+/// set, where nothing reads `--server-key-id` at all. Whether that case should still be
+/// refused is an open ruling: deleting the clause would ADMIT a configuration that is
+/// refused today, which is a change to what runs rather than to where a rule lives, so it
+/// is left standing and recorded rather than taken silently.
+pub(super) fn issuer_kid_default_violations(config: &DeploymentRequest) -> Vec<String> {
+    let mut out = Vec::new();
+    if config.server_key_id.trim().is_empty() {
+        out.push(
             "--server-key-id is empty: it names the response key in the trust store and is \
              the default the delegation credential chains to, so an empty value leaves both \
-             lookups searching for nothing",
-        ),
-    ] {
-        if value.trim().is_empty() {
-            out.push(message.to_string());
-        }
+             lookups searching for nothing"
+                .to_string(),
+        );
     }
     out
 }
@@ -449,7 +461,8 @@ pub(super) const INVENTORY: &[&str] = &[
     "ocsp_mode_violations",
     "ocsp_responder_url_violations",
     "authz_profile_violations",
-    "identity_coordinate_violations",
+    "audience_violations",
+    "issuer_kid_default_violations",
     "required_locator_violations",
     "target_uri_violations",
     "inner_plane_presence_violations",

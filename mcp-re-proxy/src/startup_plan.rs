@@ -408,17 +408,21 @@ impl SigningPlan {
     ) -> SigningPlan {
         let values = config.config();
         let facts = config.state().delegated_signing();
+        let identity = config.state().server_identity().actor();
         SigningPlan {
             custody: mcp_re_http_profile::CustodyConfig {
                 issuer_kid: response_kid,
-                iss: values.server_signer.clone(),
+                iss: identity.subject.clone(),
                 profile: mcp_re_http_profile::PROFILE_TAG.to_string(),
                 aud: values.audience.clone(),
                 audience_hash: facts.audience_hash().to_string(),
                 trust_epoch: facts.trust_epoch().to_string(),
-                server_role: "server".to_string(),
-                server_trust_domain: values.trust_domain.clone(),
-                server_subject: values.server_signer.clone(),
+                // The three identity components come from the ONE derived identity rather
+                // than from the primitives; a second assembly here is what let this and
+                // `app::run_validated` disagree about what the server's actor identity is.
+                server_role: identity.role.clone(),
+                server_trust_domain: identity.trust_domain.clone(),
+                server_subject: identity.subject.clone(),
                 ttl: values.delegated_ttl_secs,
                 overlap: values.delegated_overlap_secs,
             },

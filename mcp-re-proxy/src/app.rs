@@ -547,12 +547,9 @@ fn run_validated(
     let response_pub = key_source
         .response_public_key()
         .map_err(|e| e.to_string())?;
-    let server_identity = ActorIdentity {
-        role: "server".to_string(),
-        trust_domain: values.trust_domain.clone(),
-        subject: values.server_signer.clone(),
-        keyid: response_kid.clone(),
-    };
+    // Derived once by the `ServerIdentity` owner. Assembling one here from the primitives
+    // is what this consumer used to do, and what `SigningPlan` did independently.
+    let server_identity = config.state().server_identity().actor().clone();
     let resolve_actor = build_actor_resolver(
         building.trust().signers(),
         Arc::clone(&resolver),

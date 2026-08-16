@@ -60,6 +60,9 @@ _PROXY_LIB_SRCS = [
     "src/config_state/in_flight_limit.rs",
     "src/config_state/mcp_transport_contract.rs",
     "src/config_state/replay.rs",
+    # Who this deployment IS, derived once: the server ActorIdentity two consumers used to
+    # assemble independently from the same primitives.
+    "src/config_state/server_identity.rs",
     "src/config_state/mod.rs",
     "src/config_state/tls_custody.rs",
     "src/config_state/transport.rs",
