@@ -604,9 +604,12 @@ fn validated_kms_endpoint(flag: &str, value: &str) -> Result<String, String> {
 /// do nothing, leaving an operator believing the key is token- or KMS-resident while it is
 /// not. Refusing is the only way that belief can be kept true. Because that belief is a
 /// security state a programmatic config reaches without a parser, the rule is also applied
-/// at the validation boundary, through [`key_source_custody_violation`]. The
-/// contradictory-custody case — a delegated TLS selector alongside an exported `--tls-key`
-/// — is not here at all: it is `tls_signing_exclusivity_refusal`.
+/// at the validation boundary — by the [`Custody`](crate::config_state::custody) machine's
+/// required and forbidden columns, and, for the three delegated TLS-key selectors, by
+/// relation X2a, which decides them against the RECOGNISED custody state rather than
+/// against `key_source`. The contradictory-custody case — a delegated TLS selector
+/// alongside an exported `--tls-key` — is not here at all: it is relation X2b, reached
+/// through [`validate_tls_signing_exclusivity`].
 #[allow(clippy::too_many_arguments)]
 fn key_source_custody_refusal(
     key_source: KeySourceKind,
@@ -913,12 +916,34 @@ fn ingress_assertion_refusal(
                     .to_string(),
             );
         }
+        // (c2) A trusted identity that is the empty string is not a trusted identity. It
+        //      passes (c) because the LIST is non-empty, and then matches a v2 assertion
+        //      whose `ingress_identity` states nothing — turning the trusted set into a
+        //      hole. Asked immediately after presence: the witness exists, then the
+        //      witness means something, before any clause compares it with another.
+        if ingress_identities.iter().any(|id| id.trim().is_empty()) {
+            return Some(
+                "--ingress-identity is empty: an empty trusted identity matches an assertion \
+                 that names none, so the trusted set would admit rather than restrict"
+                    .to_string(),
+            );
+        }
         // (d) attested-ingress binds the assertion's audience to the node's own — it
         //     must be configured.
         if ingress_audience.is_none() {
             return Some(
                 "--transport-binding attested-ingress requires --ingress-audience <aud> \
                  (the node's expected assertion audience/route)"
+                    .to_string(),
+            );
+        }
+        // (d2) Same shape as (c2), one clause later: an empty audience is present but binds
+        //      the assertion to nothing, so two nodes' assertions become interchangeable —
+        //      the route binding this flag exists to establish.
+        if ingress_audience.is_some_and(|aud| aud.trim().is_empty()) {
+            return Some(
+                "--ingress-audience is empty: the audience binds a v2 assertion to this \
+                 node's route, and an empty one binds it to every node that also set none"
                     .to_string(),
             );
         }
@@ -2762,6 +2787,75 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // DELIBERATE precedence change — the mode's own undeployability is what an operator
     // needs first, and it was previously reported after every unrelated limit.
     violations.extend(decided.channel_binding);
+    // The deployment's own identity coordinates, immediately before `--target-uri`, which is
+    // one of them and was the only one checked here. Each is a REQUIRED `String`, so the
+    // parser's `require` closure is what makes it present and nothing downstream ever
+    // dereferences it — these are minted into what the proxy signs and compared by verifiers,
+    // never opened. An empty one is therefore not a startup failure but a coordinate that
+    // silently stops distinguishing this deployment from another that also set none. They
+    // are stated one field at a time, in the order an operator meets them, rather than as a
+    // single "required strings" clause: they belong to a machine layer A does not yet have,
+    // and collapsing them would fix the ordering of that machine's diagnostics in advance.
+    for (value, message) in [
+        (
+            config.trust_domain.as_str(),
+            "--trust-domain is empty: it is a component of every actor identity \
+             (role:trust_domain:subject:keyid), so an empty domain removes a coordinate \
+             from every actor this deployment names",
+        ),
+        (
+            config.audience.as_str(),
+            "--audience is empty: it is the audience verifiers bind a response to, so an \
+             empty one makes this deployment's evidence indistinguishable from that of any \
+             other deployment that also set none",
+        ),
+        (
+            config.server_signer.as_str(),
+            "--server-signer is empty: it is minted as the issuer of every response, and an \
+             empty issuer names nobody for a verifier to resolve",
+        ),
+        (
+            config.server_key_id.as_str(),
+            "--server-key-id is empty: it names the response key in the trust store and is \
+             the default the delegation credential chains to, so an empty value leaves both \
+             lookups searching for nothing",
+        ),
+    ] {
+        if value.trim().is_empty() {
+            violations.push(message.to_string());
+        }
+    }
+    // The required locators, in the same shape and immediately after. Each of these IS
+    // dereferenced at startup, so an empty one eventually fails — but that failure is an
+    // observation about the environment, and "this string names nothing" is knowable without
+    // one. ADR-MCPRE-056 §5.1 puts the purely-knowable half here, which is also the half
+    // that reads as a configuration defect rather than a missing file.
+    for (value, message) in [
+        (
+            config.bind.as_str(),
+            "--bind is empty: it names the address this proxy listens on, and an empty value \
+             resolves to no address rather than to a default",
+        ),
+        (
+            config.tls_cert.as_str(),
+            "--tls-cert is empty: it names the server certificate chain presented on every \
+             handshake",
+        ),
+        (
+            config.client_ca.as_str(),
+            "--client-ca is empty: it names the roots every client certificate is verified \
+             against, which is the whole of who may connect",
+        ),
+        (
+            config.trust_path.as_str(),
+            "--trust is empty: it names the trust document the request-signer set is read \
+             from, so an empty path leaves no signer trusted and no file to say so",
+        ),
+    ] {
+        if value.trim().is_empty() {
+            violations.push(message.to_string());
+        }
+    }
     // Sixth instance, and the one that reaches furthest into a served request: an empty or
     // scheme-less `--target-uri` does not weaken the request-target reconstruction check,
     // it disables it for every request, while `async_serve` documents the shape as
@@ -2780,6 +2874,20 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
             "the proxy serves over an async HTTP inner plane: pass --inner-http-url <url>. To \
              protect a local stdio MCP server, run it behind the mcp-re-stdio-bridge adapter \
              and point --inner-http-url at the bridge."
+                .to_string(),
+        );
+    }
+    // Structure of that list, immediately after its presence: a list holding `""` is not an
+    // empty list, so it satisfies the clause above and then contributes a backend the pool
+    // will never reach. The parser refuses an empty comma segment; the field is public.
+    if config
+        .inner_http_urls
+        .iter()
+        .any(|url| url.trim().is_empty())
+    {
+        violations.push(
+            "--inner-http-url contains an empty URL: every backend in the inner plane must \
+             name one, or the pool carries a member no request can be forwarded to"
                 .to_string(),
         );
     }
@@ -2854,6 +2962,45 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // off silently, which left the binary asserting a maximal-security posture while its
     // own defense was disabled. Each default is `Some(30s)`, so `None` here only ever comes
     // from an operator explicitly passing `0`.
+    // The freshness tolerance, held to the same bound the parser holds it to and
+    // `VerifierPolicy::new` re-checks. It is a range over a number, which is knowable here,
+    // and leaving it to the verifier's constructor meant a deployment learned about it after
+    // two planes had established resources. A negative skew narrows the window
+    // asymmetrically; one above the bound stops the freshness gate being a freshness gate.
+    if !(0..=mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND)
+        .contains(&config.max_clock_skew)
+    {
+        violations.push(format!(
+            "--max-clock-skew must be 0..={} seconds (§5.1 bounded skew), got {}: it is the \
+             tolerance applied to every verified request AND the replay retain_until, so \
+             outside this range the freshness gate stops bounding anything",
+            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
+            config.max_clock_skew
+        ));
+    }
+    // The two `ServerLimits` quantities that are legally PRESENT but illegally zero, stated
+    // ahead of the timeout clauses because they are the same class — a limit that disables
+    // the control it bounds — and an operator reading about limits should meet them together.
+    // Neither is `Option`, so absence is not the question and a fail-safe default already
+    // applies; only an explicit zero reaches here.
+    if config.limits.max_concurrent_connections == 0 {
+        violations.push(
+            "--max-connections 0 accepts no connection at all: there is no \"unlimited\" \
+             spelling, because an unbounded connection count is attacker-controlled \
+             buffering ahead of the verify gate. Set a positive ceiling"
+                .to_string(),
+        );
+    }
+    if config.limits.drain_grace.is_zero() {
+        violations.push(
+            "--drain-grace-secs 0 abandons every in-flight request on SIGTERM: the drain \
+             window is what lets an admitted request finish before the listener goes away, \
+             and the k8s invariant request_deadline <= drain_grace < \
+             terminationGracePeriodSeconds cannot hold with a zero window. Set a positive \
+             window (default 30s)"
+                .to_string(),
+        );
+    }
     for (value, flag) in [
         (config.limits.read_timeout, "--read-timeout-secs"),
         (config.limits.write_timeout, "--write-timeout-secs"),
@@ -3591,6 +3738,8 @@ mod tests {
     use super::AuditSinkKind;
     use super::AuthzKind;
     use super::BindingKind;
+    use super::DeploymentRequest;
+    use super::Duration;
     use super::IdentityPolicy;
     use super::KeySourceKind;
     use super::OcspKind;
@@ -4065,6 +4214,243 @@ mod tests {
                 .any(|v| v.contains("--admission is off")),
             "a degraded window without a gate is still a setting that reads as enforced"
         );
+    }
+
+    /// A flag a case must name in its refusal, and the mutation that provokes it.
+    type Case = (&'static str, fn(&mut DeploymentRequest));
+
+    /// A parsed baseline to mutate, for the boundary-gap controls below.
+    ///
+    /// Parsed rather than a struct literal for the reason `legal_config` gives: a test that
+    /// expects a refusal must be measuring its own mutation, not a defect it inherited.
+    fn parsed_baseline() -> DeploymentRequest {
+        parse_args(&minimal_durable()).expect("the base config parses")
+    }
+
+    /// Whether the boundary reports a violation containing `needle`.
+    fn boundary_reports(config: &DeploymentRequest, needle: &str) -> bool {
+        unsafe_config_violations(config)
+            .iter()
+            .any(|v| v.contains(needle))
+    }
+
+    /// G1 and G2. The deployment's identity coordinates, when present but meaningless.
+    ///
+    /// Requiredness for these lives in `parse_args`'s `require` closure, and the fields are
+    /// public `String`s — so an embedder or a test that builds the struct reaches the
+    /// serving path with an empty coordinate and no parser runs. Nothing downstream
+    /// dereferences them either: they are minted into what the proxy signs and compared by
+    /// verifiers, so an empty one fails no startup step, it just stops distinguishing this
+    /// deployment.
+    ///
+    /// Each case names ONE field, and the positive control below drives the same guard with
+    /// the baseline's real values, so a predicate that rejected everything would fail there.
+    #[test]
+    fn an_identity_coordinate_that_is_present_but_empty_is_refused() {
+        let cases: Vec<Case> = vec![
+            ("--trust-domain", |c| c.trust_domain = String::new()),
+            ("--audience", |c| c.audience = String::new()),
+            ("--server-signer", |c| c.server_signer = String::new()),
+            ("--server-key-id", |c| c.server_key_id = String::new()),
+            // Whitespace is not a coordinate either, and it is what a templated
+            // deployment produces when a variable resolves to nothing.
+            ("--trust-domain", |c| c.trust_domain = "   ".to_string()),
+        ];
+        for (flag, mutate) in cases {
+            let mut config = parsed_baseline();
+            mutate(&mut config);
+            assert!(
+                boundary_reports(&config, flag),
+                "{flag}: the boundary admitted an empty identity coordinate — {:?}",
+                unsafe_config_violations(&config)
+            );
+        }
+    }
+
+    /// The positive half of the clause above: the smallest meaningful value passes it.
+    #[test]
+    fn a_one_character_identity_coordinate_is_not_refused_as_empty() {
+        let mut config = parsed_baseline();
+        config.trust_domain = "a".to_string();
+        config.audience = "b".to_string();
+        config.server_signer = "c".to_string();
+        config.server_key_id = "d".to_string();
+        for flag in [
+            "--trust-domain is empty",
+            "--audience is empty",
+            "--server-signer is empty",
+            "--server-key-id is empty",
+        ] {
+            assert!(
+                !boundary_reports(&config, flag),
+                "{flag} fired on a one-character coordinate"
+            );
+        }
+    }
+
+    /// G2, the locator half. These ARE dereferenced at startup, so an empty one eventually
+    /// fails — but only as an observation about the environment, and after two planes have
+    /// established resources. That a string names nothing is knowable here (ADR-MCPRE-056
+    /// §5.1), and it reads as the configuration defect it is rather than as a missing file.
+    #[test]
+    fn a_required_locator_that_is_present_but_empty_is_refused() {
+        let cases: Vec<Case> = vec![
+            ("--bind", |c| c.bind = String::new()),
+            ("--tls-cert", |c| c.tls_cert = String::new()),
+            ("--client-ca", |c| c.client_ca = String::new()),
+            ("--trust is empty", |c| c.trust_path = String::new()),
+        ];
+        for (flag, mutate) in cases {
+            let mut config = parsed_baseline();
+            mutate(&mut config);
+            assert!(
+                boundary_reports(&config, flag),
+                "{flag}: the boundary admitted a locator that names nothing — {:?}",
+                unsafe_config_violations(&config)
+            );
+        }
+
+        // Positive half: the baseline's own locators, which name something.
+        let clean = parsed_baseline();
+        for flag in [
+            "--bind is empty",
+            "--tls-cert is empty",
+            "--client-ca is empty",
+            "--trust is empty",
+        ] {
+            assert!(
+                !boundary_reports(&clean, flag),
+                "{flag} fired on a real path"
+            );
+        }
+    }
+
+    /// The freshness tolerance, which the parser bounded and the boundary did not — so a
+    /// programmatic config reached `VerifierPolicy::new` and failed there, after the trust
+    /// and TLS planes had already read files and started workers.
+    #[test]
+    fn a_clock_skew_outside_the_bound_is_refused() {
+        for skew in [
+            -1,
+            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND + 1,
+        ] {
+            let mut config = parsed_baseline();
+            config.max_clock_skew = skew;
+            assert!(
+                boundary_reports(&config, "--max-clock-skew"),
+                "skew {skew} admitted — {:?}",
+                unsafe_config_violations(&config)
+            );
+        }
+
+        // Both ends of the legal range pass the same guard.
+        for skew in [0, mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND] {
+            let mut config = parsed_baseline();
+            config.max_clock_skew = skew;
+            assert!(
+                !boundary_reports(&config, "--max-clock-skew"),
+                "skew {skew} is inside the bound and must not be refused"
+            );
+        }
+    }
+
+    /// G5. A list holding `""` is not an empty list, so the presence clause is satisfied
+    /// while the pool carries a member no request can reach.
+    #[test]
+    fn an_inner_plane_holding_an_empty_url_is_refused() {
+        let mut config = parsed_baseline();
+        config
+            .inner_http_urls
+            .push(" ".repeat(3).trim_end().to_string());
+        config.inner_http_urls.push(String::new());
+        assert!(
+            boundary_reports(&config, "--inner-http-url contains an empty URL"),
+            "{:?}",
+            unsafe_config_violations(&config)
+        );
+
+        // Positive half: the baseline's own list, which names one real backend.
+        let clean = parsed_baseline();
+        assert!(!boundary_reports(
+            &clean,
+            "--inner-http-url contains an empty URL"
+        ));
+    }
+
+    /// G3. Zero drain grace is legally present and materially changes SIGTERM: every
+    /// admitted request is abandoned rather than allowed to finish.
+    #[test]
+    fn a_zero_drain_window_is_refused() {
+        let mut config = parsed_baseline();
+        config.limits.drain_grace = Duration::from_secs(0);
+        assert!(
+            boundary_reports(&config, "--drain-grace-secs 0"),
+            "{:?}",
+            unsafe_config_violations(&config)
+        );
+
+        // One second is a bad idea and a legal window; this guard is about zero.
+        let mut ok = parsed_baseline();
+        ok.limits.drain_grace = Duration::from_secs(1);
+        assert!(!boundary_reports(&ok, "--drain-grace-secs 0"));
+    }
+
+    /// G4. Same class as the drain window: present, and zero.
+    #[test]
+    fn a_zero_connection_ceiling_is_refused() {
+        let mut config = parsed_baseline();
+        config.limits.max_concurrent_connections = 0;
+        assert!(
+            boundary_reports(&config, "--max-connections 0"),
+            "{:?}",
+            unsafe_config_violations(&config)
+        );
+
+        let mut ok = parsed_baseline();
+        ok.limits.max_concurrent_connections = 1;
+        assert!(!boundary_reports(&ok, "--max-connections 0"));
+    }
+
+    /// G6. The attested-ingress witnesses, present but naming nothing.
+    ///
+    /// Asserted on the clause itself rather than on an empty violation list, because
+    /// `attested-ingress` may be refused independently by the `ChannelBinding` machine and
+    /// every violation is reported — so an empty-list assertion would prove nothing about
+    /// THIS clause either way.
+    #[test]
+    fn an_ingress_witness_that_is_present_but_empty_is_refused() {
+        let attested = |c: &mut DeploymentRequest| {
+            c.binding = BindingKind::AttestedIngress;
+            c.ingress_attestor_keys = vec![("attestor-1".to_string(), attestor_pub_b64())];
+            c.ingress_identities = vec!["ingress-1".to_string()];
+            c.ingress_audience = Some("https://mcp.example.com/mcp".to_string());
+            c.ingress_pinned_mtls = true;
+            c.reverse_proxy_identity_header = None;
+        };
+
+        let mut empty_identity = parsed_baseline();
+        attested(&mut empty_identity);
+        empty_identity.ingress_identities = vec!["ingress-1".to_string(), String::new()];
+        assert!(
+            boundary_reports(&empty_identity, "--ingress-identity is empty"),
+            "{:?}",
+            unsafe_config_violations(&empty_identity)
+        );
+
+        let mut empty_audience = parsed_baseline();
+        attested(&mut empty_audience);
+        empty_audience.ingress_audience = Some("  ".to_string());
+        assert!(
+            boundary_reports(&empty_audience, "--ingress-audience is empty"),
+            "{:?}",
+            unsafe_config_violations(&empty_audience)
+        );
+
+        // Positive half: with both witnesses meaningful, neither clause fires.
+        let mut ok = parsed_baseline();
+        attested(&mut ok);
+        assert!(!boundary_reports(&ok, "--ingress-identity is empty"));
+        assert!(!boundary_reports(&ok, "--ingress-audience is empty"));
     }
 
     /// The refusal states the REASON, and the reason is not "zero is not a policy".

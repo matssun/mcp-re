@@ -68,7 +68,20 @@ fn keys(violations: &[String]) -> Vec<&'static str> {
         "--authz",
         "TLS signing is delegated XOR exported",
         "--transport-binding lb-assertion places",
+        // The deployment's own identity coordinates, then its locators, immediately before
+        // `--target-uri` — which is one of them, and was the only one the boundary decided.
+        "--trust-domain is empty",
+        "--audience is empty",
+        "--server-signer is empty",
+        "--server-key-id is empty",
+        "--bind is empty",
+        "--tls-cert is empty",
+        "--client-ca is empty",
+        "--trust is empty",
         "--target-uri",
+        // Ahead of the general `--inner-http-url` key, which it contains: `find` takes the
+        // first match, so a more specific fragment has to come first or it is never seen.
+        "--inner-http-url contains an empty URL",
         "--inner-http-url",
         "--admission",
         "--aws-kms-endpoint",
@@ -76,6 +89,8 @@ fn keys(violations: &[String]) -> Vec<&'static str> {
         "--aws-sts-endpoint",
         "--key-source",
         "--ingress-",
+        // The structure of the list, before the clauses that read a different field.
+        "--client-crl contains an empty path",
         "--client-crl-reload-secs 0",
         "--client-crl-reload-secs has no effect",
         "--delegated-trust-epoch",
@@ -86,6 +101,11 @@ fn keys(violations: &[String]) -> Vec<&'static str> {
         "--revocation-tier live|push requires",
         "--trust-reload-secs 0",
         "--trust-reload-secs",
+        // The quantity guards, together and ahead of the timeouts they share a class with:
+        // each is a limit that disables the control it bounds.
+        "--max-clock-skew",
+        "--max-connections 0",
+        "--drain-grace-secs 0",
         "--read-timeout-secs",
         "--write-timeout-secs",
         "--request-deadline-secs",
@@ -118,8 +138,19 @@ fn the_boundary_refuses_in_this_order() {
     config.authz = AuthzKind::Reference;
     config.pkcs11_tls_key_label = Some("tls".to_string()); // with tls_key set: XOR violated
     config.target_uri = String::new();
+    config.trust_domain = String::new();
+    config.audience = String::new();
+    config.server_signer = String::new();
+    config.server_key_id = String::new();
+    config.bind = String::new();
+    config.tls_cert = String::new();
+    config.client_ca = String::new();
+    config.trust_path = String::new();
     config.inner_http_urls.clear();
-    config.client_crl_paths = vec!["/crl.pem".to_string()];
+    config.max_clock_skew = -1;
+    config.limits.max_concurrent_connections = 0;
+    config.limits.drain_grace = std::time::Duration::from_secs(0);
+    config.client_crl_paths = vec!["/crl.pem".to_string(), String::new()];
     config.client_crl_reload_secs = Some(0);
     config.delegated_trust_epoch = None;
     config.delegated_ttl_secs = 0;
@@ -147,6 +178,20 @@ fn the_boundary_refuses_in_this_order() {
             // and an operator should meet them before a limit or a timeout.
             "--transport-binding none",
             "--transport-identity-source cn_legacy",
+            // NEW. Requiredness for these lived in the parser's `require()`, which rejects
+            // an ABSENT flag and says nothing about an EMPTY value. They sit immediately
+            // before `--target-uri` because it is one of them: the coordinates a verifier
+            // uses to tell this deployment from another, then the locators that name what
+            // it loads. Stated one field at a time — they belong to a machine layer A does
+            // not have, and one merged clause would fix its diagnostic order in advance.
+            "--trust-domain is empty",
+            "--audience is empty",
+            "--server-signer is empty",
+            "--server-key-id is empty",
+            "--bind is empty",
+            "--tls-cert is empty",
+            "--client-ca is empty",
+            "--trust is empty",
             "--target-uri",
             // NEW, and it arrived from the trust plane rather than from nowhere: naming no
             // inner server was previously refused only after trust had read its document
@@ -154,12 +199,22 @@ fn the_boundary_refuses_in_this_order() {
             // required locators the parser checks and the boundary did not.
             "--inner-http-url",
             "--key-source",
+            // NEW, and ahead of the cadence clause because it is about a different field:
+            // a list member that names no file is a defect in the control the cadence
+            // would be re-reading.
+            "--client-crl contains an empty path",
             "--client-crl-reload-secs 0",
             "--delegated-trust-epoch",
             "--delegated-ttl-secs",
             "--delegated-overlap-secs",
             "--max-client-cert-lifetime",
             "--max-connection-age-secs",
+            // NEW. The quantity guards, grouped with the timeouts they share a class with
+            // — a limit that disables the control it bounds — and ahead of them because a
+            // skew outside its bound or a zero ceiling is the graver of the two.
+            "--max-clock-skew",
+            "--max-connections 0",
+            "--drain-grace-secs 0",
             "--read-timeout-secs",
             "--write-timeout-secs",
             "--request-deadline-secs",

@@ -107,7 +107,51 @@ pub fn classify_and_validate(
             .clone()
             .unwrap_or_else(|| config.audience.clone()),
     };
+    // Each fact is checked AFTER resolution, which is the only place the question can be
+    // asked once. An empty value arrives two ways — an operator passing the flag empty, or a
+    // defaulting source that is itself empty — and asking of the resolved fact covers both
+    // without this owner reading `server_key_id` and `audience` a second time to guess which
+    // happened (CF-10). A present-but-empty fact is not a witness: every one of these is
+    // minted verbatim into every delegation credential, where an empty issuer names no
+    // issuer and an empty epoch is the bare label the epoch exists to replace.
+    let empty_facts = empty_fact_violations(&facts);
+    if !empty_facts.is_empty() {
+        violations.extend(empty_facts);
+        return (None, violations);
+    }
     (Some(facts), violations)
+}
+
+/// The resolved facts that are present but say nothing.
+///
+/// Separate from [`ttl_violations`] because the two gate construction differently: a TTL out
+/// of range is a defect in a posture that is otherwise fully determined, while a fact that
+/// is empty leaves the posture uninhabitable, so no `DelegatedSigningFacts` is built.
+fn empty_fact_violations(facts: &DelegatedSigningFacts) -> Vec<String> {
+    [
+        (
+            facts.trust_epoch.as_str(),
+            "--delegated-trust-epoch is empty: the epoch is minted into every delegation \
+             credential as <base>#<counter>, and an empty base makes the cross-fleet kill \
+             switch unable to name the deployment it is revoking",
+        ),
+        (
+            facts.issuer_kid.as_str(),
+            "the delegated issuer kid resolves to empty: set --delegated-issuer-kid, or give \
+             --server-key-id a value, since the credential chains to whichever this resolves \
+             to and an empty kid names no root key for a verifier to find",
+        ),
+        (
+            facts.audience_hash.as_str(),
+            "the delegated audience scope resolves to empty: set --delegated-audience-hash, \
+             or give --audience a value, since an empty scope makes two deployments' \
+             credentials indistinguishable to the verifier that checks them",
+        ),
+    ]
+    .into_iter()
+    .filter(|(value, _)| value.is_empty())
+    .map(|(_, message)| message.to_string())
+    .collect()
 }
 
 /// The credential-lifetime guards.
@@ -185,6 +229,71 @@ mod tests {
                 .any(|v| v.contains("--delegated-trust-epoch")),
             "{violations:?}"
         );
+    }
+
+    /// G8. Each fact is refused when it is present but empty, by whichever route made it so.
+    ///
+    /// The mutation is made on the REQUEST, never on an argument list, because that is the
+    /// claim: `DeploymentRequest` has 76 public fields, so an embedder reaches the serving
+    /// path without a parser, and the parser's own non-empty guards would not run.
+    ///
+    /// The positive half of each case is the legal fixture, which resolves the same fact to
+    /// a meaningful value and is asserted clean by
+    /// `a_legal_request_resolves_every_fact_and_reports_nothing` — so a predicate that
+    /// simply rejected this owner outright would fail there.
+    #[test]
+    fn a_fact_that_resolves_to_empty_is_refused_however_it_got_that_way() {
+        for (name, mutate) in [
+            (
+                "--delegated-trust-epoch",
+                (|c: &mut DeploymentRequest| c.delegated_trust_epoch = Some(String::new()))
+                    as fn(&mut DeploymentRequest),
+            ),
+            ("the delegated issuer kid", |c| {
+                c.delegated_issuer_kid = Some(String::new())
+            }),
+            (
+                // The defaulting source is empty rather than the flag: the same fact, the
+                // same refusal, which is what asking of the RESOLVED value buys.
+                "the delegated issuer kid",
+                |c| {
+                    c.delegated_issuer_kid = None;
+                    c.server_key_id = String::new();
+                },
+            ),
+            ("the delegated audience scope", |c| {
+                c.delegated_audience_hash = Some(String::new())
+            }),
+            ("the delegated audience scope", |c| {
+                c.delegated_audience_hash = None;
+                c.audience = String::new();
+            }),
+        ] {
+            let (facts, violations) = run(mutate);
+            assert!(
+                facts.is_none(),
+                "{name}: an empty fact left the posture inhabitable"
+            );
+            assert!(
+                violations.iter().any(|v| v.contains(name)),
+                "{name}: not refused — {violations:?}"
+            );
+        }
+    }
+
+    /// The smallest meaningful value passes the same guard the empty one fails.
+    #[test]
+    fn a_one_character_fact_is_not_refused_by_the_emptiness_guard() {
+        let (facts, violations) = run(|c| {
+            c.delegated_trust_epoch = Some("e".to_string());
+            c.delegated_issuer_kid = Some("k".to_string());
+            c.delegated_audience_hash = Some("a".to_string());
+        });
+        assert!(violations.is_empty(), "{violations:?}");
+        let facts = facts.expect("a one-character fact is a fact");
+        assert_eq!(facts.trust_epoch(), "e");
+        assert_eq!(facts.issuer_kid(), "k");
+        assert_eq!(facts.audience_hash(), "a");
     }
 
     /// Both defaults are applied HERE, so downstream cannot observe that they existed.

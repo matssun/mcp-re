@@ -6,11 +6,16 @@
 //! measures that set from the outside: each case builds a `DeploymentRequest` in code carrying a
 //! state `parse_args` refuses, and records whether the boundary refuses it too.
 //!
-//! Every case below is currently ADMITTED. That is the finding, not an accident of the
-//! test: the relation is enforced in the argument parser alone, so it holds for a command
-//! line and not for the runtime. As each relation moves to the boundary, its case here
-//! flips and must be moved into [`refused_at_the_boundary`] — which is what makes this a
-//! characterization of the boundary rather than a list of things someone once checked.
+//! A case in [`cross_field_relations_are_unenforced_at_the_boundary`] is ADMITTED. That is
+//! the finding, not an accident of the test: the relation is enforced in the argument
+//! parser alone, so it holds for a command line and not for the runtime. As each relation
+//! moves to the boundary, its case flips and must be moved into
+//! [`refused_at_the_boundary`] — which is what makes this a characterization of the
+//! boundary rather than a list of things someone once checked.
+//!
+//! The required-value and numeric-range groups have made that move in full, so no test of
+//! theirs is left here: an empty identity coordinate, an empty locator, an out-of-bound
+//! clock skew and a zero connection or drain limit are all decided at the boundary now.
 
 use mcp_re_proxy::cli::{self, DeploymentRequest, ValidatedDeployment};
 
@@ -69,49 +74,6 @@ fn the_baseline_is_admitted() {
         ValidatedDeployment::try_from(base()).is_ok(),
         "the baseline must be legal, or every case below measures the wrong thing"
     );
-}
-
-/// Required identity and path values: present as a flag, unconstrained as a field.
-///
-/// `require()` in the parser rejects an ABSENT flag. It says nothing about an EMPTY value,
-/// and nothing at all about a config built in code. An empty `--audience` or `--trust`
-/// is not a cosmetic defect: the audience is half the RFC 9421 dispatch-boundary
-/// conjunction, and the trust path is where the request-signer set comes from.
-#[test]
-fn required_values_are_unconstrained_at_the_boundary() {
-    for (name, admitted) in [
-        ("bind", admitted(|c| c.bind = String::new())),
-        ("audience", admitted(|c| c.audience = String::new())),
-        (
-            "server_signer",
-            admitted(|c| c.server_signer = String::new()),
-        ),
-        (
-            "server_key_id",
-            admitted(|c| c.server_key_id = String::new()),
-        ),
-        ("trust_domain", admitted(|c| c.trust_domain = String::new())),
-        ("trust_path", admitted(|c| c.trust_path = String::new())),
-        ("client_ca", admitted(|c| c.client_ca = String::new())),
-        ("tls_cert", admitted(|c| c.tls_cert = String::new())),
-    ] {
-        assert!(
-            admitted,
-            "{name}: now refused at the boundary — move this case"
-        );
-    }
-}
-
-/// Numeric ranges the parser bounds and the boundary does not.
-///
-/// `max_clock_skew` is the freshness tolerance applied to every verified request and to
-/// the replay `retain_until`; the parser holds it to `0..=MAX_CLOCK_SKEW_BOUND` and the
-/// boundary accepts a day, or a negative value.
-#[test]
-fn numeric_ranges_are_unconstrained_at_the_boundary() {
-    assert!(admitted(|c| c.max_clock_skew = 86_400));
-    assert!(admitted(|c| c.max_clock_skew = -1));
-    assert!(admitted(|c| c.limits.max_concurrent_connections = 0));
 }
 
 /// Cross-field mode relations the parser decides and the boundary does not.
@@ -185,6 +147,91 @@ fn refused_at_the_boundary() {
         (
             "replay_durability_tier",
             Box::new(|c: &mut DeploymentRequest| c.replay_durability_tier = None),
+        ),
+    ] {
+        let mut config = base();
+        mutate(&mut config);
+        assert!(
+            ValidatedDeployment::try_from(config).is_err(),
+            "{name}: still admitted at the boundary"
+        );
+    }
+
+    // The deployment's own identity coordinates. Requiredness lived in the parser's
+    // `require()`, which rejects an ABSENT flag and says nothing about an EMPTY value —
+    // and nothing at all about a config built in code. Nothing downstream dereferences
+    // these: they are minted into what the proxy signs and compared by verifiers, so an
+    // empty one failed no startup step and simply stopped distinguishing this deployment.
+    for (name, mutate) in [
+        (
+            "trust_domain",
+            Box::new(|c: &mut DeploymentRequest| c.trust_domain = String::new())
+                as Box<dyn FnOnce(&mut DeploymentRequest)>,
+        ),
+        (
+            "audience",
+            Box::new(|c: &mut DeploymentRequest| c.audience = String::new()),
+        ),
+        (
+            "server_signer",
+            Box::new(|c: &mut DeploymentRequest| c.server_signer = String::new()),
+        ),
+        (
+            "server_key_id",
+            Box::new(|c: &mut DeploymentRequest| c.server_key_id = String::new()),
+        ),
+        // The locators. These ARE dereferenced at startup, so an empty one always failed
+        // eventually — but as an observation about the environment, raised after planes had
+        // established resources. That the string names nothing is knowable here
+        // (ADR-MCPRE-056 §5.1), and reads as the configuration defect it is.
+        (
+            "bind",
+            Box::new(|c: &mut DeploymentRequest| c.bind = String::new()),
+        ),
+        (
+            "tls_cert",
+            Box::new(|c: &mut DeploymentRequest| c.tls_cert = String::new()),
+        ),
+        (
+            "client_ca",
+            Box::new(|c: &mut DeploymentRequest| c.client_ca = String::new()),
+        ),
+        (
+            "trust_path",
+            Box::new(|c: &mut DeploymentRequest| c.trust_path = String::new()),
+        ),
+    ] {
+        let mut config = base();
+        mutate(&mut config);
+        assert!(
+            ValidatedDeployment::try_from(config).is_err(),
+            "{name}: an empty required value is still admitted at the boundary"
+        );
+    }
+
+    // The numeric ranges the parser bounded and the boundary did not. `max_clock_skew` is
+    // the freshness tolerance applied to every verified request AND to the replay
+    // `retain_until`, so outside its bound the gate stops bounding anything; it was left to
+    // `VerifierPolicy::new`, which is reached after two planes have started.
+    for (name, mutate) in [
+        (
+            "max_clock_skew above the bound",
+            Box::new(|c: &mut DeploymentRequest| c.max_clock_skew = 86_400)
+                as Box<dyn FnOnce(&mut DeploymentRequest)>,
+        ),
+        (
+            "a negative max_clock_skew",
+            Box::new(|c: &mut DeploymentRequest| c.max_clock_skew = -1),
+        ),
+        (
+            "a zero connection ceiling",
+            Box::new(|c: &mut DeploymentRequest| c.limits.max_concurrent_connections = 0),
+        ),
+        (
+            "a zero drain window",
+            Box::new(|c: &mut DeploymentRequest| {
+                c.limits.drain_grace = std::time::Duration::from_secs(0)
+            }),
         ),
     ] {
         let mut config = base();

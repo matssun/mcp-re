@@ -138,6 +138,23 @@ fn classify(config: &DeploymentRequest) -> Result<RequestedState, String> {
     }
 }
 
+/// A required locator that is present but names no store.
+///
+/// Asked immediately after presence, because `Option` can only express that a value was
+/// given and `Some("")` would otherwise satisfy the requirement of the state it inhabits —
+/// a linearizable claim resting on an endpoint that is the empty string. The sibling
+/// machines decide it the same way: `ContinuationControl` and the trust-epoch source both
+/// require a scheme, which is what separates an endpoint from a leftover string.
+fn locator_shape(flag: &str, value: Option<&str>, example: &str) -> Option<String> {
+    let value = value?;
+    (!value.contains("://")).then(|| {
+        format!(
+            "{flag} {value:?} is not a URL: give a scheme-bearing URL such as {example}, \
+             since the state this deployment requests is inhabited by the store it names"
+        )
+    })
+}
+
 /// The required and forbidden locators of a recognised state.
 fn locator_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<String> {
     let mut out = Vec::new();
@@ -150,6 +167,11 @@ fn locator_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<
                         .to_string(),
                 );
             }
+            out.extend(locator_shape(
+                "--replay-redis-url",
+                config.replay_redis_url.as_deref(),
+                "redis://host:6379",
+            ));
             if config.cpstore_etcd_endpoint.is_some() {
                 out.push(
                     "--cpstore-etcd-endpoint has no effect without \
@@ -166,6 +188,11 @@ fn locator_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<
                         .to_string(),
                 );
             }
+            out.extend(locator_shape(
+                "--cpstore-etcd-endpoint",
+                config.cpstore_etcd_endpoint.as_deref(),
+                "http://host:2379",
+            ));
             // CF-12's clean break. Before the split this value silently became the MRTR
             // continuation store's endpoint while replay ran on etcd — one field meaning
             // two different things depending on the tier beside it. It is refused rather
@@ -244,6 +271,49 @@ mod tests {
         let mut config = legal_config();
         mutate(&mut config);
         classify_and_validate(&config)
+    }
+
+    /// G7. `Some("")` satisfied the presence check of the state it was supposed to inhabit.
+    ///
+    /// Mutated on the REQUEST, never through an argument list: the parser's own non-empty
+    /// guard for `--cpstore-etcd-endpoint` cannot run for an embedder, and it never existed
+    /// at all for `--replay-redis-url`.
+    #[test]
+    fn a_required_locator_that_names_no_store_is_refused() {
+        let cases: Vec<Case> = vec![
+            ("--replay-redis-url", |c| {
+                redis(c);
+                c.replay_redis_url = Some(String::new());
+            }),
+            ("--cpstore-etcd-endpoint", |c| {
+                linearizable(c);
+                c.cpstore_etcd_endpoint = Some(String::new());
+            }),
+            // Not empty, but equally not an endpoint — the guard is about naming a store,
+            // and emptiness is only its most obvious failure.
+            ("--replay-redis-url", |c| {
+                redis(c);
+                c.replay_redis_url = Some("127.0.0.1:6379".to_string());
+            }),
+        ];
+        for (flag, mutate) in cases {
+            let (_, violations) = run(mutate);
+            assert!(
+                violations.iter().any(|v| v.contains(flag)),
+                "{flag}: not refused — {violations:?}"
+            );
+        }
+    }
+
+    /// The positive half: a scheme-bearing locator passes the same guard, so a predicate
+    /// that refused every configuration of this owner would fail here.
+    #[test]
+    fn a_scheme_bearing_locator_is_not_refused_by_the_shape_guard() {
+        for mutate in [redis as fn(&mut DeploymentRequest), linearizable] {
+            let (state, violations) = run(mutate);
+            assert!(violations.is_empty(), "{violations:?}");
+            assert!(state.is_some());
+        }
     }
 
     #[test]

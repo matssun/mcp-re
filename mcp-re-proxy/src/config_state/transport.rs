@@ -146,6 +146,20 @@ fn classify_crl(config: &DeploymentRequest) -> CrlRevocationState {
 pub fn classify_and_validate_crl(config: &DeploymentRequest) -> (CrlRevocationState, Vec<String>) {
     let state = classify_crl(config);
     let mut violations = Vec::new();
+    // Structure of the list itself, before anything that reads a member. Classification
+    // asks whether the list is empty, which a list holding `""` is not — so a deployment
+    // could reach `Static`/`Reloading`, announce that offline revocation is enforced, and
+    // hold one path that names no file. Placed ahead of the cadence clauses because those
+    // are about a different field: a member that names nothing is a defect in the control
+    // the cadence would be re-reading.
+    if config.client_crl_paths.iter().any(|path| path.is_empty()) {
+        violations.push(
+            "--client-crl contains an empty path: every listed CRL must name a file, or the \
+             deployment reports offline revocation as enforced while one of its lists \
+             revokes nothing"
+                .to_string(),
+        );
+    }
     if config.client_crl_reload_secs == Some(0) {
         violations.push(
             "--client-crl-reload-secs 0 makes the CRL reloader spin: the cadence is the sleep \
@@ -261,6 +275,32 @@ mod tests {
             assert!(
                 violations.is_empty(),
                 "{expected:?} refused: {violations:?}"
+            );
+        }
+    }
+
+    /// G5. A list holding `""` is not an empty list, so it classified as a configured
+    /// control while naming no file.
+    ///
+    /// The parser rejects an empty comma segment, but `client_crl_paths` is a public field:
+    /// this mutates the REQUEST, so no parser participates. The positive half is
+    /// `every_legal_crl_state_form_is_classified_and_accepted`, which drives the same guard
+    /// with a real path and asserts nothing is reported.
+    #[test]
+    fn a_crl_list_holding_an_empty_path_is_refused() {
+        for paths in [
+            vec![String::new()],
+            vec!["/crl.pem".to_string(), String::new()],
+        ] {
+            let (state, violations) = crl(|c| c.client_crl_paths = paths.clone());
+            assert_ne!(
+                state,
+                CrlRevocationState::None,
+                "{paths:?} classified as no CRL control at all, which would hide the defect"
+            );
+            assert!(
+                violations.iter().any(|v| v.contains("empty path")),
+                "{paths:?}: not refused — {violations:?}"
             );
         }
     }
