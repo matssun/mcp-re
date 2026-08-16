@@ -80,15 +80,19 @@ select nothing twice over. `scripts/cargo_test_target_gate.py` asserts both halv
 statically — every `--test` names a real target, every `module::` filter names a
 module its binary declares — in the local gate and in CI.
 
-### Outstanding — a false security claim awaits owner approval to correct (release-gating)
+### Fixed — the security boundary no longer claims an authorization control it does not run
 
-`docs/spec/security-boundary.md` states that the proxy enforces the authorization profile
-deny-before-dispatch. It does not: `--authz reference` is refused at configuration
-validation, so every accepted deployment runs with authorization off. The document is
-`type:HITL` and the author does not self-approve it, so the correction is authored rather
-than applied — see
-[`docs/spec/security-boundary-pending-correction.md`](docs/spec/security-boundary-pending-correction.md).
-**Do not ship a release with this claim standing.**
+`docs/spec/security-boundary.md` listed deny-before-dispatch authorization among the
+things MCP-RE protects, in the present tense. It does not: `--authz reference` is refused
+at configuration validation, so every accepted deployment runs with authorization off.
+The entry now states the boundary rather than the absence — MCP-RE answers *who signed
+this* and *which channel it arrived on*, never *may-act*, and authorization must be
+enforced upstream of the proxy. The document is `type:HITL`; the owner approved the
+replacement text and it is applied here.
+
+ADR-MCPS-013 (#362) and ADR-MCPS-018 (#367) moved to `status:deprecated` and
+`status:superseded`, so `docs/adr/README.md` no longer needs the note recording that the
+index and the discussion labels disagreed.
 
 ### Changed — a conformance category must have an executable witness
 

@@ -12,20 +12,6 @@ Every ADR discussion carries the `adr` label plus one status label. Filter:
 - [✅ Accepted](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr+label%3Astatus%3Aaccepted) · [✅ Implemented](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr+label%3Astatus%3Aimplemented) · [🟡 Proposed](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr+label%3Astatus%3Aproposed)
 - [↩️ Superseded](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr+label%3Astatus%3Asuperseded) · [🗄️ Deprecated](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr+label%3Astatus%3Adeprecated)
 
-**† Two rows are ahead of their discussion labels.** ADR-MCPS-013 and ADR-MCPS-018 both
-still carry `status:implemented`, and both are false: `--authz reference` is refused at
-configuration validation, so no deployment runs the reference authorization profile, and
-the aggregate conformance manifest ADR-MCPS-018 makes authoritative does not exist — that
-authority now sits in the per-corpus manifests and the security traceability manifest (see
-[`docs/conformance-guide.md`](../conformance-guide.md)). The rows are corrected here; the
-labels are the owner's to change, and until they are, this index and the discussions
-disagree in a direction that favours the truth.
-
-**Retire this note with the labels.** Set #362 to `status:deprecated` and #367 to
-`status:superseded`, then delete this paragraph and the two `†` markers in the same change
-— an inconsistency note that outlives its inconsistency becomes permanent documentation of
-a problem that no longer exists.
-
 ## Index
 
 | ID | Title | Status |
@@ -42,12 +28,12 @@ a problem that no longer exists.
 | [ADR-MCPS-010](https://github.com/matssun/mcp-re/discussions/359) | Incubation Strategy, Extension Identifier, and Preimage-Stability Rule | ↩️ Superseded |
 | [ADR-MCPS-011](https://github.com/matssun/mcp-re/discussions/360) | Workspace Structure, Phased Delivery, and Conformance-as-Specification | ✅ Implemented |
 | [ADR-MCPS-012](https://github.com/matssun/mcp-re/discussions/361) | Project Placement & Build Integration — components/mcps as an Isolated rules_rust Workspace | ✅ Implemented |
-| [ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362) | Delegated Authorization — AuthorizationProfile Abstraction and the Reference Signed Authorization Profile (Phase 5) | 🗄️ Deprecated † |
+| [ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362) | Delegated Authorization — AuthorizationProfile Abstraction and the Reference Signed Authorization Profile (Phase 5) | 🗄️ Deprecated |
 | [ADR-MCPS-014](https://github.com/matssun/mcp-re/discussions/363) | Phase 6 — Rust-Native Transport Hardening (RustlsDirectProvider, mTLS Channel Binding; Granian Decoupled) | ✅ Implemented |
 | [ADR-MCPS-015](https://github.com/matssun/mcp-re/discussions/364) | Client Host-Session Architecture | ✅ Implemented |
 | [ADR-MCPS-016](https://github.com/matssun/mcp-re/discussions/365) | Inner-Server Isolation Boundary | ✅ Implemented |
 | [ADR-MCPS-017](https://github.com/matssun/mcp-re/discussions/366) | Single-Node Production Claim Ceiling and Deferred Enterprise Capabilities | ↩️ Superseded |
-| [ADR-MCPS-018](https://github.com/matssun/mcp-re/discussions/367) | CI Reproducibility Posture and Conformance-Manifest Authority | ↩️ Superseded † |
+| [ADR-MCPS-018](https://github.com/matssun/mcp-re/discussions/367) | CI Reproducibility Posture and Conformance-Manifest Authority | ↩️ Superseded |
 | [ADR-MCPS-019](https://github.com/matssun/mcp-re/discussions/368) | Phase 7 External Backends (stub) | ✅ Implemented |
 | [ADR-MCPS-020](https://github.com/matssun/mcp-re/discussions/369) | Distributed Atomic Replay Store — Durability Contract for Horizontally-Scaled Replay Safety | ✅ Implemented |
 | [ADR-MCPS-021](https://github.com/matssun/mcp-re/discussions/370) | Shared Trust State — Bounded Trust-Propagation Window for Revocation and Rotation | ✅ Implemented |

@@ -166,10 +166,15 @@ This is the complete positive surface; nothing outside it should be implied.
   ([ADR-MCPS-006](https://github.com/matssun/mcp-re/discussions/355)). The
   durable replay cache is **single-node** — multi-node replay protection is
   forbidden (Section 2).
-- **Delegated authorization** (Phase 5, reference signed-authorization profile).
-  The proxy enforces the authorization profile **deny-before-dispatch** — an
-  unauthorized request never reaches the inner server
-  ([ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362)).
+- **Delegated authorization — NOT LIVE.** The reference signed-authorization profile
+  (Phase 5, [ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362)) was bound
+  to the retired object carrier and has not been rebuilt on HTTP-profile request
+  evidence. `--authz reference` is **refused at configuration validation**, so every
+  deployment runs with authorization off and MCP-RE answers **who signed this** and
+  **which channel it arrived on**, never **may-act**. Authorization must be enforced
+  upstream of the proxy. The preserved vectors at
+  `mcp-re-policy/tests/vectors/phase5_vectors.json` specify non-live semantics for a
+  future profile and are not evidence about any release; nothing executes them.
 - **Rust-native mTLS transport termination + transport binding + v1 revocation
   posture** (Phase 6 / 6.1). `mcp-re-proxy` terminates TLS itself
   (`RustlsDirectProvider`, rustls + ring), binds the verified transport peer to
