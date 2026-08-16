@@ -252,13 +252,65 @@ an open question this measurement does not answer** — it may well be one coher
 a 727-line parser of uniform arms is more reviewable than twelve modules that make a reader
 chase trivial control flow to find where `--bind` is read.
 
-The three edits the measurement does support, independent of any split:
+All three edits the measurement supported were taken (`e8156b8`, `aa8f934`), the boundary
+and request model moved (`70b2518`, `6593afc`), and the ownerless rules were enumerated
+(`3e60bc8`). What follows is the second measurement, of the object that resulted.
 
-- collapse the two custody-derived `require` branches so `Custody` and `TlsCustody` are the
-  only derivations of their own required-field columns;
-- give `delegated_signing` its default constants, and make the client-cert lifetime default
-  read `MAX_CLIENT_CERT_LIFETIME` instead of re-typing 3600;
-- rule on the six unreachable builders.
+## The structural map, and why ADR-058 closes here as a reviewed exception
 
-ADR-058 closes when the parser is reviewable by semantic unit. 727 is not a target, and a
-smaller number is not automatically better.
+The first measurement asked *what responsibilities remain*. That question is answered, so
+this one asks the different question: **what is the control-flow shape of what is left?**
+
+`parse_args`, 734 lines, measured separately from the 5,029-line `cli.rs`:
+
+| Block | Lines | What it is |
+|---|---:|---|
+| declarations and defaults | 130 | 27 defaults, each now sourced from an owner |
+| valueless flags + value acquisition | 44 | 5 boolean flags; **one** value-fetch site |
+| the dispatch `match` | 422 | **79 arms** |
+| tail | 139 | `require`, two coordinations, the struct literal, the handoff |
+
+The arm distribution is the decisive evidence:
+
+- **79 arms, median arm length 1 code line**
+- **32 arms are literally `x = Some(value.clone()),`**
+- only **two** arms exceed five lines — `--key-source` (15, holding the function's single
+  `#[cfg]`) and `--pkcs11-pin` (10, almost all of it the refusal text)
+- maximum nesting depth **2**
+- consume-next-token and missing-value handling occur **once**, not per arm
+- **two** multi-flag coordination points, both already isolated behind named logic:
+  `has_delegated_tls` and `second_admission_limit`
+
+What repeats is not structure but two spellings: 14 inline `parse().map_err(…)` and 10
+inline enum-spelling matches, each with a hand-written diagnostic.
+
+### Ruling: closed as B — a reviewed exception under R-3
+
+`parse_args` was remeasured after deployment legality, the request model and domain
+validation left the CLI layer. The remaining function is a shallow argv dispatch table over
+79 flags, with a median arm of one line, a single centralized value-fetch, maximum nesting
+depth two, and only two multi-flag coordination points, both already isolated by named
+logic. Further domain-oriented module decomposition would increase navigation cost without
+separating any additional semantic authority. The R-3 size threshold remains a review
+trigger; decomposition is not required for this implementation.
+
+The original defect was never the line count. It was that a large CLI function mixed
+parsing with deployment legality, domain policy, ownership decisions and runtime semantics,
+so a reader could not tell whether a branch decoded argv or decided whether a deployment
+was permitted. That mixture is gone. A `cli/custody.rs`-style split would now distribute a
+lookup table across files and make the CLI directory imitate the domain ownership model
+that was deliberately moved out of it.
+
+The two repeated parse shapes may eventually justify a helper — centralizing diagnostic
+consistency would be the reason — but that is ordinary maintenance and is deliberately not
+attached to this closure. A completed architectural campaign does not need a cosmetic
+edit to make its final diff look larger.
+
+### Where the remaining work is
+
+Not in this function. It is the 13-entry ownerless inventory in
+`config_state/validation/residue.rs`, where each reduction requires establishing an actual
+semantic owner. The two most recent entries to leave show what that looks like:
+`ServerIdentity` absorbed two coordinates because the same `ActorIdentity` was being
+assembled at two production sites, and the `--server-key-id` guard disappeared because
+`DelegatedSigningFacts` was already the authority over the resolved issuer kid.

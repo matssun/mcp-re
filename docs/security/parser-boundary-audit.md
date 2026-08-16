@@ -161,8 +161,10 @@ the validation boundary, in the machine or relation that owns it, and each is co
 control that builds the request programmatically so the parser cannot participate.
 
 This is a statement about *enforcement placement*, not about `parse_args`'s size. The
-function is 727 lines and its structural decomposition into a configuration compiler
-remains open engineering work — but it is now debt, not a security gap.
+structural question was measured separately and closed: see
+[`../dev/cli-responsibility-map.md`](../dev/cli-responsibility-map.md). The remaining
+function is a shallow 79-arm dispatch table with a median arm of one line, so ADR-MCPRE-058
+closes it as a reviewed R-3 exception rather than decomposing a lookup table across files.
 
 ## Negative controls
 
