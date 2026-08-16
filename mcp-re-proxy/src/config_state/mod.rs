@@ -244,7 +244,8 @@ impl DeploymentConfigState {
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use crate::cli::{self, DeploymentRequest};
+    use crate::cli;
+    use crate::deployment_request::DeploymentRequest;
 
     /// A configuration the parser accepts, for a machine's tests to mutate.
     ///

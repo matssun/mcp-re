@@ -32,7 +32,7 @@
 //! refusal for it here would narrow a vocabulary the product deliberately delegates.
 //! Whether it SHOULD be narrowed is a product question, and a different commit.
 
-use crate::cli::DeploymentRequest;
+use crate::deployment_request::DeploymentRequest;
 
 /// Which MCP transport-contract state a configuration requests.
 #[derive(Debug, Clone, PartialEq, Eq)]

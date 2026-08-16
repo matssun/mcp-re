@@ -105,7 +105,7 @@ impl Drop for Scratch {
 
 // ---- the real delegated-required server ------------------------------------
 
-fn server_config() -> mcp_re_proxy::cli::DeploymentRequest {
+fn server_config() -> mcp_re_proxy::deployment_request::DeploymentRequest {
     let args: Vec<String> = [
         "--bind",
         "127.0.0.1:8443",
@@ -839,7 +839,7 @@ fn a_chain_with_no_verified_hop_is_still_attested() {
 /// The `SigningPlan` `app::run` projects, so this lane drives the production wiring
 /// through the same plan the binary does — including the boundary that produces it.
 fn signing_plan(
-    config: &mcp_re_proxy::cli::DeploymentRequest,
+    config: &mcp_re_proxy::deployment_request::DeploymentRequest,
 ) -> mcp_re_proxy::startup_plan::SigningPlan {
     use mcp_re_proxy::startup_plan::{response_issuer_kid, SigningPlan, TrustEpochPlan};
     let validated = mcp_re_proxy::cli::ValidatedDeployment::try_from(config.clone())

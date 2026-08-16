@@ -174,7 +174,7 @@ fn dns(value: &str) -> SanType {
 // serving path, over real TLS.
 // ---------------------------------------------------------------------------
 
-fn server_config_args() -> mcp_re_proxy::cli::DeploymentRequest {
+fn server_config_args() -> mcp_re_proxy::deployment_request::DeploymentRequest {
     let args: Vec<String> = [
         "--bind",
         "127.0.0.1:8443",
@@ -541,7 +541,7 @@ fn an_untrusted_server_certificate_stops_the_signed_request_at_the_client() {
 /// The `SigningPlan` `app::run` projects, so this lane drives the production wiring
 /// through the same plan the binary does — including the boundary that produces it.
 fn signing_plan(
-    config: &mcp_re_proxy::cli::DeploymentRequest,
+    config: &mcp_re_proxy::deployment_request::DeploymentRequest,
 ) -> mcp_re_proxy::startup_plan::SigningPlan {
     use mcp_re_proxy::startup_plan::{response_issuer_kid, SigningPlan, TrustEpochPlan};
     let validated = mcp_re_proxy::cli::ValidatedDeployment::try_from(config.clone())

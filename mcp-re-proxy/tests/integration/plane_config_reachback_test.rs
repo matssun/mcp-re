@@ -112,13 +112,23 @@ const PROJECTED_PLANES: &[Plane] = &[
 ///
 /// Matched as WHOLE identifiers, not as substrings. `DeploymentRequest` as a substring also matches
 /// rustls' `ServerConfig` and this crate's `ServerConfigSnapshot`, which are the serving
-/// TLS configuration — a materialized artifact with nothing to do with `cli::DeploymentRequest`. A
+/// TLS configuration — a materialized artifact with nothing to do with `deployment_request::DeploymentRequest`. A
 /// rule that conflated them would be unsatisfiable for the TLS plane, and the way such a
 /// rule gets fixed is by deleting it.
 ///
 /// `ValidatedDeployment` is therefore listed separately: whole-identifier matching is what
 /// excludes `ServerConfig`, and it excludes this too.
-const CONFIGURATION_NAMES: &[&str] = &["cli", "DeploymentRequest", "ValidatedDeployment"];
+///
+/// `deployment_request` is listed beside `cli` rather than instead of it. The request model
+/// moved out of the parser's module, and a rule naming only `cli` would have stopped seeing
+/// a plane that imported `KeySourceKind` or `BindingKind` from its new home — the selector
+/// would still have matched every old spelling while answering a narrower question.
+const CONFIGURATION_NAMES: &[&str] = &[
+    "cli",
+    "deployment_request",
+    "DeploymentRequest",
+    "ValidatedDeployment",
+];
 
 /// Whether `line` names `ident` as a whole identifier rather than inside a longer one.
 fn names_identifier(line: &str, ident: &str) -> bool {
@@ -131,7 +141,7 @@ fn names_identifier(line: &str, ident: &str) -> bool {
 
 /// Whether `line` is a comment, and so reaches nothing.
 ///
-/// A doc comment naming `cli::DeploymentRequest` explains what the module does NOT do; a `//` line
+/// A doc comment naming `deployment_request::DeploymentRequest` explains what the module does NOT do; a `//` line
 /// naming it is commented-out code. Neither is a dependency, and the sibling
 /// `startup_backedges` gate already ruled the same way about paths in comments — measuring
 /// the spelling instead of the proposition is how these rules go wrong.
@@ -216,9 +226,12 @@ fn the_rule_would_catch_a_reach_back() {
         "the fixture must not pass for the wrong reason"
     );
     for source in [
-        "let c: &crate::cli::DeploymentRequest = todo!();",
+        "let c: &crate::deployment_request::DeploymentRequest = todo!();",
         "fn m(config: &ValidatedDeployment) {}",
-        "cli::DeploymentRequest::default();",
+        "deployment_request::DeploymentRequest::default();",
+        // The spelling the move made possible: a selector enum reached from the request
+        // model's new home, naming neither `cli` nor a configuration TYPE.
+        "use crate::deployment_request::KeySourceKind;",
     ] {
         assert!(
             CONFIGURATION_NAMES
@@ -231,7 +244,7 @@ fn the_rule_would_catch_a_reach_back() {
     for prose in [
         "/// Infallible: it does not take a `DeploymentRequest` and re-decide anything.",
         "//! [`build_delegated_signing`] replaced its `DeploymentRequest` parameter with a plan.",
-        "    // let c: &cli::DeploymentRequest = todo!();",
+        "    // let c: &deployment_request::DeploymentRequest = todo!();",
     ] {
         assert!(is_comment(prose), "not recognised as a comment: {prose:?}");
     }
@@ -256,7 +269,7 @@ fn the_rule_would_catch_a_reach_back() {
 /// legitimate, and report a violation that is not one.
 #[test]
 fn the_split_excludes_test_code() {
-    let source = "fn materialize() {}\n#[cfg(test)]\nmod tests {\n    use crate::cli::DeploymentRequest;\n}\n";
+    let source = "fn materialize() {}\n#[cfg(test)]\nmod tests {\n    use crate::deployment_request::DeploymentRequest;\n}\n";
     assert!(!production_half(source).contains("DeploymentRequest"));
     assert!(production_half(source).contains("materialize"));
 }

@@ -144,7 +144,7 @@ mod tests {
         )
     }
 
-    fn delegated_config() -> crate::cli::DeploymentRequest {
+    fn delegated_config() -> crate::deployment_request::DeploymentRequest {
         let args: Vec<String> = [
             "--bind",
             "127.0.0.1:8443",

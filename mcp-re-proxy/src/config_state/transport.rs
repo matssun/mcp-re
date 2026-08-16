@@ -31,7 +31,7 @@
 //! returns immediately, so it re-reads every CRL, rebuilds the rustls verifier and swaps
 //! the serving snapshot in a tight loop, burning a core with no diagnostic.
 
-use crate::cli::{BindingKind, DeploymentRequest};
+use crate::deployment_request::{BindingKind, DeploymentRequest};
 use crate::transport::IdentityPolicy;
 
 /// How a verified request signer is bound to the authenticated channel.

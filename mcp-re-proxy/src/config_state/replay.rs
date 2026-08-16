@@ -32,7 +32,7 @@
 //! forbid it without destroying cross-replica MRTR. `ContinuationControl` owns that fact
 //! now, so the forbidden cell can finally be stated.
 
-use crate::cli::DeploymentRequest;
+use crate::deployment_request::DeploymentRequest;
 use crate::replay_tier::ReplayDurabilityTier;
 
 /// Which replay state a configuration requests. Only live states are representable.

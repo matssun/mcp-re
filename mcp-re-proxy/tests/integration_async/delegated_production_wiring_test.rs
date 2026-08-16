@@ -83,7 +83,7 @@ fn audience() -> AudienceTuple {
 /// parser. Filesystem paths are placeholders — the delegated wiring reads config
 /// fields (audience, server-signer/-key-id, trust domain, ttl/overlap/epoch), not
 /// files. A durable replay selection satisfies the parse-time unsafe-config checks.
-fn delegated_config() -> mcp_re_proxy::cli::DeploymentRequest {
+fn delegated_config() -> mcp_re_proxy::deployment_request::DeploymentRequest {
     let args: Vec<String> = [
         "--bind",
         "127.0.0.1:8443",
@@ -163,7 +163,7 @@ fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
 /// the proxy plus the rotor so the test can drive controlled rotation/expiry (in the
 /// binary a background thread does this).
 fn build_proxy(
-    config: &mcp_re_proxy::cli::DeploymentRequest,
+    config: &mcp_re_proxy::deployment_request::DeploymentRequest,
 ) -> (HttpProfileProxy, mcp_re_proxy::ProdDelegatedRotor) {
     let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(config), root_key());
     let expected_audience = AudienceTuple {
@@ -423,7 +423,7 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
 /// The `SigningPlan` `app::run` projects, so this lane drives the production wiring
 /// through the same plan the binary does — including the boundary that produces it.
 fn signing_plan(
-    config: &mcp_re_proxy::cli::DeploymentRequest,
+    config: &mcp_re_proxy::deployment_request::DeploymentRequest,
 ) -> mcp_re_proxy::startup_plan::SigningPlan {
     use mcp_re_proxy::startup_plan::{response_issuer_kid, SigningPlan, TrustEpochPlan};
     let validated = mcp_re_proxy::cli::ValidatedDeployment::try_from(config.clone())

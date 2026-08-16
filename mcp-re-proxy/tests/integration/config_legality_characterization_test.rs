@@ -16,7 +16,8 @@
 //! `parse_args` used to be the only thing that refused, and the assertion is that a
 //! `DeploymentRequest` built in code — never passing a parser — is refused too.
 
-use mcp_re_proxy::cli::{self, DeploymentRequest, ValidatedDeployment};
+use mcp_re_proxy::cli::{self, ValidatedDeployment};
+use mcp_re_proxy::deployment_request::DeploymentRequest;
 
 /// The smallest command line that parses under the unconditional strict posture.
 ///

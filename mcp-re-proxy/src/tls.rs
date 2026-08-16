@@ -90,7 +90,7 @@ pub struct ServerLimits {
     ///
     /// On the validated path this is not what an operator wrote. The admission limit is
     /// stated once, in
-    /// [`DeploymentRequest::in_flight_limit`](crate::cli::DeploymentRequest::in_flight_limit), which can express
+    /// [`DeploymentRequest::in_flight_limit`](crate::deployment_request::DeploymentRequest::in_flight_limit), which can express
     /// per-core, fleet-wide, or nothing at all; the boundary resolves that to a basis and
     /// the composition root writes the per-core answer HERE. Setting this field on a
     /// `DeploymentRequest` therefore states nothing — it is overwritten.

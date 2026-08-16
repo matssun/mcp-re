@@ -31,7 +31,7 @@
 //! parser leaves empty in the device states, so its emptiness carries no intent and it is
 //! ignored there rather than forbidden.
 
-use crate::cli::{DeploymentRequest, KeySourceKind};
+use crate::deployment_request::{DeploymentRequest, KeySourceKind};
 
 /// How the AWS KMS states obtain the credentials they call KMS with.
 ///

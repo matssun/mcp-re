@@ -27,8 +27,8 @@
 //! done once, and `TrustPlan` and `SigningPlane` are consumers of the one answer
 //! (CF-09 — a fact may have two consumers, it must not have two authorities).
 
-use crate::cli::DeploymentRequest;
 use crate::cli::MAX_NEAR_ZERO_TRUST_RELOAD_SECS;
+use crate::deployment_request::DeploymentRequest;
 use crate::revocation_tier::RevocationTier;
 use std::num::NonZeroU64;
 

@@ -14,10 +14,10 @@
 //! interchangeable claims, and every posture statement derived from them would inherit
 //! the confusion.
 
-use crate::cli::BindingKind;
 use crate::cli::ValidatedDeployment;
 use crate::config_state::ContinuationControlState;
 use crate::config_state::ReplayState;
+use crate::deployment_request::BindingKind;
 use crate::replay_tier::ReplayDurabilityTier;
 use crate::tls::IdentityStrategy;
 use crate::transport::ReverseProxyMtlsProvider;
@@ -601,7 +601,7 @@ pub fn control_runtime_requirement(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::DeploymentRequest;
+    use crate::deployment_request::DeploymentRequest;
 
     /// A configuration that gets all the way through parsing AND validation, so the
     /// mutation each test applies is the only thing under test.
@@ -1312,8 +1312,10 @@ mod tests {
     /// here, which was itself a symptom: the validation boundary did not check admission
     /// at all, so a half-configured gate reached planning. It does now (FF4), and a plan
     /// test must exercise a configuration a deployment could actually hold.
-    fn with_admission(mut config: crate::cli::DeploymentRequest) -> crate::cli::DeploymentRequest {
-        config.admission = crate::cli::AdmissionKind::Required;
+    fn with_admission(
+        mut config: crate::deployment_request::DeploymentRequest,
+    ) -> crate::deployment_request::DeploymentRequest {
+        config.admission = crate::deployment_request::AdmissionKind::Required;
         config.admission_authority_kid = Some("admission-root-1".to_string());
         config.admission_authority_pubkey_b64url =
             Some("1i8Bah79Hk_feT60LNhEceG6nwzwTRKHtcxx9hYofLg".to_string());

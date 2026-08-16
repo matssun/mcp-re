@@ -17,7 +17,7 @@
 //! both custodies says the handshake key never leaves the device AND that a file copy of
 //! it exists — the exact belief the delegated modes are chosen to make true, being false.
 
-use crate::cli::DeploymentRequest;
+use crate::deployment_request::DeploymentRequest;
 
 /// Which key object a delegated handshake signature is made with.
 ///
@@ -121,8 +121,8 @@ pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<TlsCustodySt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::KeySourceKind;
     use crate::config_state::test_support::legal_config;
+    use crate::deployment_request::KeySourceKind;
 
     /// A selector this machine must record, and the configuration that requests it.
     type Form = (DelegatedTlsKey, fn(&mut DeploymentRequest));

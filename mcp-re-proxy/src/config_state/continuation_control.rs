@@ -22,7 +22,7 @@
 //! and a cargo feature with `Replay` is not a semantic edge. The endpoints may name the
 //! same Redis, and when they do that is an operator's deployment choice.
 
-use crate::cli::DeploymentRequest;
+use crate::deployment_request::DeploymentRequest;
 
 /// Which continuation-control state a configuration requests.
 ///

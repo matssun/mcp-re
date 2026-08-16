@@ -64,6 +64,11 @@ _PROXY_LIB_SRCS = [
     "src/config_state/tls_custody.rs",
     "src/config_state/transport.rs",
     "src/config_state/trust_revocation.rs",
+    # The CLI-neutral request model. Both the argument parser and the configuration state
+    # model depend on it; neither depends on the other.
+    "src/deployment_request/kinds.rs",
+    "src/deployment_request/mod.rs",
+    "src/deployment_request/secret_string.rs",
     # ADR-MCPS-028 §C: native GCP Cloud KMS Ed25519 response signer (blocking ureq
     # HTTPS + OAuth2 bearer; behind #[cfg(feature = "gcp_kms_keysource")], cfg'd out
     # of the default build). No async google-cloud SDK (ADR-MCPS-018 lean-sync).

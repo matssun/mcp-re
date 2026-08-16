@@ -16,7 +16,8 @@
 //! Pinning is not endorsement. Some of this order is deliberate and some is the order the
 //! clauses were added in; this file records what it IS, so that changing it is a decision.
 
-use mcp_re_proxy::cli::{self, AuthzKind, BindingKind, DeploymentRequest, OcspKind};
+use mcp_re_proxy::cli::{self};
+use mcp_re_proxy::deployment_request::{AuthzKind, BindingKind, DeploymentRequest, OcspKind};
 use mcp_re_proxy::IdentityPolicy;
 
 /// A legal configuration, from the parser, so every violation below is one this fixture

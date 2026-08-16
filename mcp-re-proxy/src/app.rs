@@ -13,12 +13,12 @@ use std::time::Duration;
 
 use crate::async_serve::ServedHttpRequest;
 use crate::cli;
-use crate::cli::BindingKind;
-use crate::cli::KeySourceKind;
 use crate::clock::now_unix;
 use crate::config_snapshot;
 use crate::config_state::CustodyState;
 use crate::config_state::TlsCustodyState;
+use crate::deployment_request::BindingKind;
+use crate::deployment_request::KeySourceKind;
 use crate::http_inner::HttpInnerPool;
 use crate::startup_posture::PostureLog;
 use crate::startup_posture::Seam;
@@ -245,21 +245,21 @@ fn check_key_file_perms(_path: &str, _allow_group_read: bool) -> Result<(), Stri
 /// binary's `main` is a thin shim over this; keeping it in the library makes the
 /// whole deployed serving path in-process-testable.
 ///
-/// The signature still takes a raw [`crate::cli::DeploymentRequest`], and validation happens HERE
+/// The signature still takes a raw [`crate::deployment_request::DeploymentRequest`], and validation happens HERE
 /// rather than being the caller's job. `DeploymentRequest` has 76 public fields, so a caller that
 /// builds one in code — an embedder, a harness, a test — used to reach the serving path
 /// having run none of the parse-time safety guards. Validating at the boundary closes
 /// that without breaking any existing caller: every guard now runs whichever way the
 /// config was produced, and nothing past this point sees an unchecked `DeploymentRequest`.
 pub fn run(
-    config: crate::cli::DeploymentRequest,
+    config: crate::deployment_request::DeploymentRequest,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
     // Whether the audit stream is this process's stderr has to be read BEFORE the config
     // is consumed, and it decides only whether the drain is REPORTED — the drain itself is
     // unconditional, because a sink installed by an embedder past this seam would still
     // have left records in the same global queue.
-    let audits_to_stderr = config.audit_sink == crate::cli::AuditSinkKind::Stderr;
+    let audits_to_stderr = config.audit_sink == crate::deployment_request::AuditSinkKind::Stderr;
     // The drain is placed around the WHOLE of the run rather than after `serve` returns, so
     // that every route out of this function passes through it: a clean drain, a serve that
     // failed, and a startup refused at the boundary. A teardown obligation discharged on
@@ -903,7 +903,7 @@ fn run_validated(
 /// The admission limit arrives as the RESOLVED basis rather than as request fields: the
 /// fleet needs the fleet-wide half of it, and which half exists is the boundary's answer.
 fn fleet_config(
-    values: &cli::DeploymentRequest,
+    values: &crate::deployment_request::DeploymentRequest,
     in_flight_limit: crate::config_state::InFlightLimitBasis,
 ) -> Result<crate::async_fleet::FleetConfig, String> {
     use std::net::ToSocketAddrs;
@@ -1038,11 +1038,11 @@ mod tests {
     /// drift from what the CLI actually produces. An empty `tls_key` is how the parser
     /// represents delegated TLS, so it is passed through rather than defaulted.
     fn config_with(
-        source: crate::cli::KeySourceKind,
+        source: crate::deployment_request::KeySourceKind,
         seed: &str,
         tls_key: &str,
-    ) -> crate::cli::DeploymentRequest {
-        use crate::cli::KeySourceKind;
+    ) -> crate::deployment_request::DeploymentRequest {
+        use crate::deployment_request::KeySourceKind;
         let (name, mut extra): (&str, Vec<&str>) = match source {
             KeySourceKind::File => ("file", vec![]),
             KeySourceKind::Env => ("env", vec![]), // unreachable outside dev_env_key_source
@@ -1130,7 +1130,7 @@ mod tests {
     /// Classified rather than hand-built, so these tests measure what the validation
     /// boundary actually recognises for the fixture above.
     fn custody_states(
-        config: &crate::cli::DeploymentRequest,
+        config: &crate::deployment_request::DeploymentRequest,
     ) -> (
         crate::config_state::CustodyState,
         crate::config_state::TlsCustodyState,
@@ -1152,7 +1152,7 @@ mod tests {
     #[test]
     fn the_pkcs11_pin_file_is_permission_checked() {
         use crate::app::key_files_read_from_disk;
-        use crate::cli::KeySourceKind;
+        use crate::deployment_request::KeySourceKind;
 
         let config = config_with(KeySourceKind::Pkcs11, "", "/tls.key");
         let (custody, tls_custody) = custody_states(&config);
@@ -1224,7 +1224,7 @@ mod tests {
     #[test]
     fn the_tls_key_is_checked_under_every_custody_mode() {
         use crate::app::key_files_read_from_disk;
-        use crate::cli::KeySourceKind;
+        use crate::deployment_request::KeySourceKind;
 
         // `Env` is omitted: it is rejected by the parser outside a
         // `dev_env_key_source` build, so it cannot be constructed here.
@@ -1255,7 +1255,7 @@ mod tests {
     #[test]
     fn a_delegated_tls_key_contributes_no_file_to_check() {
         use crate::app::key_files_read_from_disk;
-        use crate::cli::KeySourceKind;
+        use crate::deployment_request::KeySourceKind;
 
         let config = config_with(KeySourceKind::GcpKms, "", "");
         let (custody, tls_custody) = custody_states(&config);
@@ -1342,7 +1342,11 @@ mod tests {
         if std::env::var_os(CHILD_MARKER).is_some() {
             // A config the validation boundary refuses, so `run` returns without opening a
             // socket. The route out does not matter — the drain is on all of them.
-            let mut config = config_with(crate::cli::KeySourceKind::File, "/seed", "/tls.key");
+            let mut config = config_with(
+                crate::deployment_request::KeySourceKind::File,
+                "/seed",
+                "/tls.key",
+            );
             config.target_uri = String::new();
 
             // Attributed records, so the unattributed ceiling cannot drop any of them and
@@ -1484,7 +1488,11 @@ mod tests {
     /// value substituted at this point would hide which of the two decided.
     #[test]
     fn the_fleet_config_carries_the_topology_and_resolves_the_bind() {
-        let config = config_with(crate::cli::KeySourceKind::File, "/seed", "/key");
+        let config = config_with(
+            crate::deployment_request::KeySourceKind::File,
+            "/seed",
+            "/key",
+        );
         let basis = crate::config_state::in_flight_limit::classify(&config);
         let fleet =
             super::fleet_config(&config, basis).expect("the fixture binds a literal address");
@@ -1510,7 +1518,11 @@ mod tests {
     /// about which of several address-shaped settings was rejected.
     #[test]
     fn an_unresolvable_bind_is_refused_and_names_the_flag() {
-        let mut config = config_with(crate::cli::KeySourceKind::File, "/seed", "/key");
+        let mut config = config_with(
+            crate::deployment_request::KeySourceKind::File,
+            "/seed",
+            "/key",
+        );
         config.bind = "missing-a-port".to_string();
 
         let refusal = super::fleet_config(

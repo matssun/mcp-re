@@ -42,7 +42,8 @@
 //! The setting is refused there because it dangles, which is the true reason, and the
 //! width clause now sits inside the enforcing branch where its own reasoning holds.
 
-use crate::cli::{AdmissionAuthority, AdmissionKind, DeploymentRequest};
+use crate::cli::AdmissionAuthority;
+use crate::deployment_request::{AdmissionKind, DeploymentRequest};
 use mcp_re_core::VerificationKey;
 use std::num::NonZeroU64;
 

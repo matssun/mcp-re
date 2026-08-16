@@ -30,7 +30,8 @@
 //! `mcp_re_http_profile::CustodyConfig` is what would make that hold, and that is a
 //! different type in a different crate.
 
-use crate::cli::{DeploymentRequest, MAX_DELEGATED_TTL_SECS};
+use crate::cli::MAX_DELEGATED_TTL_SECS;
+use crate::deployment_request::DeploymentRequest;
 
 /// The delegated-key TTL `T` an operator did not state, in seconds.
 ///

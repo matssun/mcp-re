@@ -14,7 +14,7 @@
 //! rather than a record of the parts that happened to need checking, and it is why a later
 //! stage can read the posture off the classification instead of re-reading the field.
 
-use crate::cli::{AuditSinkKind, DeploymentRequest, VerifiedContextKind};
+use crate::deployment_request::{AuditSinkKind, DeploymentRequest, VerifiedContextKind};
 
 /// Where the per-request security record goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

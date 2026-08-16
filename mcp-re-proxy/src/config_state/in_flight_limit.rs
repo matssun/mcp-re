@@ -43,7 +43,7 @@
 
 use std::num::NonZeroUsize;
 
-use crate::cli::DeploymentRequest;
+use crate::deployment_request::DeploymentRequest;
 
 /// The admission limit as the OPERATOR stated it, absence included.
 ///

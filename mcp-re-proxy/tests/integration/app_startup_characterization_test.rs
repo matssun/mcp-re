@@ -304,7 +304,7 @@ fn a_programmatic_config_cannot_claim_an_ocsp_check_the_serving_path_never_makes
 
     // What an in-code caller can write. `parse_args` refuses the flag, so this is the
     // only shape the configuration can take.
-    config.client_ocsp = mcp_re_proxy::cli::OcspKind::Require;
+    config.client_ocsp = mcp_re_proxy::deployment_request::OcspKind::Require;
 
     let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
         .expect_err("a claim the serving path cannot deliver must be refused however it was built");
@@ -374,7 +374,7 @@ fn a_programmatic_config_cannot_enable_an_unaccepted_authz_profile() {
     let m = serving_fixtures::write_material();
     let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
 
-    config.authz = mcp_re_proxy::cli::AuthzKind::Reference;
+    config.authz = mcp_re_proxy::deployment_request::AuthzKind::Reference;
 
     let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
         .expect_err("an unaccepted authorization profile must be refused however it was built");
@@ -408,7 +408,7 @@ fn the_boundary_alone_refuses_an_lb_assertion_binding() {
     let m = serving_fixtures::write_material();
     let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
 
-    config.binding = mcp_re_proxy::cli::BindingKind::LbAssertion;
+    config.binding = mcp_re_proxy::deployment_request::BindingKind::LbAssertion;
 
     let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
         .expect_err("lb-assertion binding must be refused however it was built");
@@ -446,7 +446,7 @@ fn mode_c_attested_ingress_is_refused_at_the_configuration_boundary() {
     let m = serving_fixtures::write_material();
     let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
 
-    config.binding = mcp_re_proxy::cli::BindingKind::AttestedIngress;
+    config.binding = mcp_re_proxy::deployment_request::BindingKind::AttestedIngress;
 
     let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
         .expect_err("a non-deployable transport-binding mode must be refused");
@@ -640,29 +640,43 @@ fn a_programmatic_config_cannot_carry_delegated_custody_the_rotor_cannot_honour(
     #[allow(clippy::type_complexity)]
     let cases: Vec<(
         &str,
-        Box<dyn Fn(&mut mcp_re_proxy::cli::DeploymentRequest)>,
+        Box<dyn Fn(&mut mcp_re_proxy::deployment_request::DeploymentRequest)>,
         &str,
     )> = vec![
         (
             "no trust epoch",
-            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| c.delegated_trust_epoch = None),
+            Box::new(
+                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
+                    c.delegated_trust_epoch = None
+                },
+            ),
             "trust epoch",
         ),
         (
             "zero ttl",
-            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| c.delegated_ttl_secs = 0),
+            Box::new(
+                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
+                    c.delegated_ttl_secs = 0
+                },
+            ),
             "ttl",
         ),
         (
             "negative overlap",
-            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| c.delegated_overlap_secs = -1),
+            Box::new(
+                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
+                    c.delegated_overlap_secs = -1
+                },
+            ),
             "overlap",
         ),
         (
             "overlap at the ttl",
-            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
-                c.delegated_overlap_secs = c.delegated_ttl_secs
-            }),
+            Box::new(
+                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
+                    c.delegated_overlap_secs = c.delegated_ttl_secs
+                },
+            ),
             "overlap",
         ),
     ];
@@ -843,75 +857,93 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
     let cases: Vec<(
         &str,
         &str,
-        Box<dyn Fn(&mut mcp_re_proxy::cli::DeploymentRequest)>,
+        Box<dyn Fn(&mut mcp_re_proxy::deployment_request::DeploymentRequest)>,
     )> = vec![
         (
             "--aws-kms-endpoint",
             "loopback",
-            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
-                c.aws_kms_endpoint = Some("http://attacker.example/".to_string())
-            }),
+            Box::new(
+                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
+                    c.aws_kms_endpoint = Some("http://attacker.example/".to_string())
+                },
+            ),
         ),
         (
             "--gcp-kms-endpoint",
             "loopback",
-            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
-                c.gcp_kms_endpoint = Some("http://attacker.example/v1".to_string())
-            }),
+            Box::new(
+                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
+                    c.gcp_kms_endpoint = Some("http://attacker.example/v1".to_string())
+                },
+            ),
         ),
         (
             "--aws-kms-endpoint",
             "absolute https:// URL",
-            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
-                c.aws_kms_endpoint = Some("ftp://kms.internal/".to_string())
-            }),
+            Box::new(
+                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
+                    c.aws_kms_endpoint = Some("ftp://kms.internal/".to_string())
+                },
+            ),
         ),
         (
             "--aws-kms-endpoint",
             "has no host",
-            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
-                c.aws_kms_endpoint = Some("https://".to_string())
-            }),
+            Box::new(
+                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
+                    c.aws_kms_endpoint = Some("https://".to_string())
+                },
+            ),
         ),
         // R9-C001: an authority whose userinfo re-points the request. `url::Url::parse`
         // reads the host of every one of these as `evil.example.com`.
         (
             "--gcp-kms-endpoint",
             "userinfo",
-            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
-                c.gcp_kms_endpoint =
-                    Some("https://cloudkms.googleapis.com@evil.example.com".to_string())
-            }),
+            Box::new(
+                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
+                    c.gcp_kms_endpoint =
+                        Some("https://cloudkms.googleapis.com@evil.example.com".to_string())
+                },
+            ),
         ),
         (
             "--gcp-kms-endpoint",
             "userinfo",
-            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
-                c.gcp_kms_endpoint = Some("http://localhost:80@evil.example.com".to_string())
-            }),
+            Box::new(
+                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
+                    c.gcp_kms_endpoint = Some("http://localhost:80@evil.example.com".to_string())
+                },
+            ),
         ),
         (
             "--aws-kms-endpoint",
             "userinfo",
-            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
-                c.aws_kms_endpoint =
-                    Some("https://kms.us-east-1.amazonaws.com@evil.example.com".to_string())
-            }),
+            Box::new(
+                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
+                    c.aws_kms_endpoint =
+                        Some("https://kms.us-east-1.amazonaws.com@evil.example.com".to_string())
+                },
+            ),
         ),
         (
             "--aws-kms-endpoint",
             "userinfo",
-            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
-                c.aws_kms_endpoint = Some("http://127.0.0.1:4566@evil.example.com".to_string())
-            }),
+            Box::new(
+                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
+                    c.aws_kms_endpoint = Some("http://127.0.0.1:4566@evil.example.com".to_string())
+                },
+            ),
         ),
         (
             "--aws-sts-endpoint",
             "userinfo",
-            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
-                c.aws_sts_endpoint =
-                    Some("https://sts.eu-north-1.amazonaws.com@evil.example.com".to_string())
-            }),
+            Box::new(
+                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
+                    c.aws_sts_endpoint =
+                        Some("https://sts.eu-north-1.amazonaws.com@evil.example.com".to_string())
+                },
+            ),
         ),
     ];
 
@@ -986,28 +1018,41 @@ fn a_programmatic_config_cannot_carry_a_dangling_custody_or_ingress_selector() {
     let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
 
     #[allow(clippy::type_complexity)]
-    let cases: Vec<(&str, Box<dyn Fn(&mut mcp_re_proxy::cli::DeploymentRequest)>)> = vec![
+    let cases: Vec<(
+        &str,
+        Box<dyn Fn(&mut mcp_re_proxy::deployment_request::DeploymentRequest)>,
+    )> = vec![
         (
             "--gcp-kms-use-metadata",
-            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| c.gcp_kms_use_metadata = true),
+            Box::new(
+                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
+                    c.gcp_kms_use_metadata = true
+                },
+            ),
         ),
         (
             "--aws-kms-use-web-identity",
-            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
-                c.aws_kms_use_web_identity = true
-            }),
+            Box::new(
+                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
+                    c.aws_kms_use_web_identity = true
+                },
+            ),
         ),
         (
             "--ingress-lb-key",
-            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
-                c.ingress_lb_keys = vec![("lb-1".to_string(), "not-a-key".to_string())]
-            }),
+            Box::new(
+                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
+                    c.ingress_lb_keys = vec![("lb-1".to_string(), "not-a-key".to_string())]
+                },
+            ),
         ),
         (
             "--ingress-identity",
-            Box::new(|c: &mut mcp_re_proxy::cli::DeploymentRequest| {
-                c.ingress_identities = vec!["spiffe://x/ingress".to_string()]
-            }),
+            Box::new(
+                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
+                    c.ingress_identities = vec!["spiffe://x/ingress".to_string()]
+                },
+            ),
         ),
     ];
 

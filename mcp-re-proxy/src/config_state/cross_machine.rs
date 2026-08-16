@@ -12,10 +12,10 @@
 //!
 //! All six live here: X2a, X2b, X5, X6, X7, X9.
 
-use crate::cli::DeploymentRequest;
-use crate::cli::KeySourceKind;
 use crate::config_state::tls_custody::TlsCustodyState;
 use crate::config_state::trust_revocation::TrustRevocationState;
+use crate::deployment_request::DeploymentRequest;
+use crate::deployment_request::KeySourceKind;
 
 /// The relations, kept separate so each can be reported where its clause has always been
 /// read rather than in one block at the end (CF-11 — precedence changes deliberately).

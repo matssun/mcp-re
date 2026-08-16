@@ -58,6 +58,11 @@ pub mod cli;
 pub mod clock;
 /// The classified legal deployment state (layer A of the configuration state atlas).
 pub mod config_state;
+/// The CLI-neutral request model: what a deployment asks for, before anything judges it.
+///
+/// Both the argument parser and the configuration state model depend on it; neither
+/// depends on the other.
+pub mod deployment_request;
 // Issue #3838 (ADR-MCPS-014): a non-exporting reference `ResponseSigner` proving the
 // response-signing delegation seam — a backend whose key never leaves it can drive
 // the proxy's full signing path.
