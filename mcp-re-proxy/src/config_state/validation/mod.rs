@@ -321,9 +321,10 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // have always been read.
     violations.extend(decided.server_identity);
     // `--audience` is not one of them: it is consumed as an audience parameter, not as part
-    // of the identity, so its guard stays where no owner claims it.
+    // of the identity, so its guard stays where no owner claims it. `--server-key-id` is not
+    // guarded here at all — `DelegatedSigning` owns the resolved issuer kid, and the
+    // fallback is only required when the resolution actually reads it.
     violations.extend(residue::audience_violations(config));
-    violations.extend(residue::issuer_kid_default_violations(config));
     // The required locators, in the same shape and immediately after. Each of these IS
     // dereferenced at startup, so an empty one eventually fails — but that failure is an
     // observation about the environment, and "this string names nothing" is knowable without

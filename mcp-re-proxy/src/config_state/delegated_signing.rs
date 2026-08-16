@@ -398,4 +398,55 @@ mod tests {
             );
         }
     }
+
+    /// The fallback is required IF AND ONLY IF the resolution reads it.
+    ///
+    /// This owner is the sole authority over the resolved issuer kid. The boundary used to
+    /// carry a second clause refusing an empty `--server-key-id` unconditionally, which
+    /// enforced the wrong premise: the invariant is not "the fallback is always
+    /// meaningful", it is "a meaningful SOURCE for the resolved kid exists". With an
+    /// explicit `--delegated-issuer-kid` the fallback is read by nothing, and refusing on
+    /// it was dangling-input policy wearing requiredness as a disguise.
+    ///
+    /// All four branches are pinned, because three of them are admissions and an
+    /// admission that stops happening is the failure this test exists to catch.
+    #[test]
+    fn the_issuer_kid_fallback_is_required_only_where_the_resolution_reads_it() {
+        let cases: [(&str, bool, &str, bool); 4] = [
+            // (label, explicit override present, server_key_id, admitted)
+            ("explicit override, empty fallback", true, "", true),
+            (
+                "explicit override, present fallback",
+                true,
+                "server-key-1",
+                true,
+            ),
+            ("no override, present fallback", false, "server-key-1", true),
+            ("no override, empty fallback", false, "", false),
+        ];
+        for (label, explicit, key_id, admitted) in cases {
+            let mut config = legal_config();
+            config.delegated_issuer_kid = explicit.then(|| "root-issuer-9".to_string());
+            config.server_key_id = key_id.to_string();
+            let (facts, violations) = classify_and_validate(&config);
+            assert_eq!(
+                facts.is_some(),
+                admitted,
+                "{label}: expected admitted={admitted}, got violations {violations:?}"
+            );
+            let Some(facts) = facts else {
+                assert!(
+                    violations.iter().any(|v| v.contains("issuer kid")),
+                    "{label}: the refusal must name the resolved kid, got {violations:?}"
+                );
+                continue;
+            };
+            let expected = if explicit { "root-issuer-9" } else { key_id };
+            assert_eq!(
+                facts.issuer_kid(),
+                expected,
+                "{label}: the explicit override must win wherever it is present"
+            );
+        }
+    }
 }

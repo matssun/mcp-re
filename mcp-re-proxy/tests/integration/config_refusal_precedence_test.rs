@@ -74,15 +74,16 @@ fn keys(violations: &[String]) -> Vec<&'static str> {
         "--authz",
         "TLS signing is delegated XOR exported",
         "--transport-binding lb-assertion places",
-        // The `ServerIdentity` owner's two coordinates FIRST, then the two that are not
-        // part of the identity. `--audience` moved after `--server-signer`, which is a
-        // DELIBERATE reorder: the owner emits the coordinates it owns together, and an
-        // operator now reads one owner's diagnosis as a block instead of finding an
-        // audience parameter interleaved between them.
+        // The `ServerIdentity` owner's two coordinates, then `--audience`, which is not
+        // one of them. The reorder placing `--audience` after `--server-signer` is
+        // DELIBERATE: the owner emits the coordinates it owns together.
+        //
+        // `--server-key-id` is absent from this list on purpose. It has no clause of its
+        // own any more — `DelegatedSigning` refuses the RESOLVED issuer kid, and the
+        // fallback is required only where the resolution reads it.
         "--trust-domain is empty",
         "--server-signer is empty",
         "--audience is empty",
-        "--server-key-id is empty",
         "--bind is empty",
         "--tls-cert is empty",
         "--client-ca is empty",
@@ -200,12 +201,14 @@ fn the_boundary_refuses_in_this_order() {
             // before `--target-uri` because it is one of them: the coordinates a verifier
             // uses to tell this deployment from another, then the locators that name what
             // it loads. The first two are `ServerIdentity`'s and are emitted by it; the
-            // next two have no owner and stay in the boundary's residue, which is why
+            // next has no owner and stays in the boundary's residue, which is why
             // `--audience` now follows `--server-signer` rather than splitting the pair.
+            // This fixture names no trust epoch, so `DelegatedSigning` resolves no facts
+            // and its issuer-kid clause does not fire — the empty `--server-key-id` is
+            // simply not a defect here, which is the corrected premise.
             "--trust-domain is empty",
             "--server-signer is empty",
             "--audience is empty",
-            "--server-key-id is empty",
             "--bind is empty",
             "--tls-cert is empty",
             "--client-ca is empty",

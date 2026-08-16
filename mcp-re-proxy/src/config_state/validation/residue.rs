@@ -224,32 +224,6 @@ pub(super) fn audience_violations(config: &DeploymentRequest) -> Vec<String> {
     out
 }
 
-/// `--server-key-id` names something.
-///
-/// **Why layer A enforces it.** It is the default the delegation credential chains to, so
-/// an empty value leaves the credential naming no root key for a verifier to find.
-///
-/// **Why no narrower owner.** It has exactly ONE production consumer —
-/// `DelegatedSigningFacts` reads it as the fallback for `issuer_kid` — and that owner
-/// already refuses the RESOLVED kid when it comes out empty, naming `--server-key-id` in
-/// the remedy. This clause therefore adds only the case where `--delegated-issuer-kid` IS
-/// set, where nothing reads `--server-key-id` at all. Whether that case should still be
-/// refused is an open ruling: deleting the clause would ADMIT a configuration that is
-/// refused today, which is a change to what runs rather than to where a rule lives, so it
-/// is left standing and recorded rather than taken silently.
-pub(super) fn issuer_kid_default_violations(config: &DeploymentRequest) -> Vec<String> {
-    let mut out = Vec::new();
-    if config.server_key_id.trim().is_empty() {
-        out.push(
-            "--server-key-id is empty: it names the response key in the trust store and is \
-             the default the delegation credential chains to, so an empty value leaves both \
-             lookups searching for nothing"
-                .to_string(),
-        );
-    }
-    out
-}
-
 /// The four locators this deployment opens are non-empty.
 ///
 /// **Why layer A enforces it.** That a string names nothing is purely knowable (ADR-MCPRE-056 §5.1); that the file is absent is an observation for materialization.
@@ -462,7 +436,6 @@ pub(super) const INVENTORY: &[&str] = &[
     "ocsp_responder_url_violations",
     "authz_profile_violations",
     "audience_violations",
-    "issuer_kid_default_violations",
     "required_locator_violations",
     "target_uri_violations",
     "inner_plane_presence_violations",
