@@ -114,13 +114,14 @@ fn the_sidecar_guides_worked_example_is_a_configuration_the_proxy_will_start_wit
                  {rendered}\n\nparse_args said: {e}\n\nFix the guide, not this test."
             )
         });
-        mcp_re_proxy::config_state::validation::ValidatedDeployment::try_from(config).unwrap_or_else(|e| {
-            panic!(
-                "the sidecar guide documents a command line that PARSES but is refused \
+        mcp_re_proxy::config_state::validation::ValidatedDeployment::try_from(config)
+            .unwrap_or_else(|e| {
+                panic!(
+                    "the sidecar guide documents a command line that PARSES but is refused \
                  before serving:\n  {rendered}\n\nvalidation said: {e}\n\nFix the guide, \
                  not this test."
-            )
-        });
+                )
+            });
     }
 }
 
