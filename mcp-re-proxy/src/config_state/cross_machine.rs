@@ -85,8 +85,9 @@ fn x2a(kind: KeySourceKind, config: &DeploymentRequest) -> Vec<String> {
 /// relation to an owner whose material still lives in the request.
 fn x2b(tls_custody: Option<&TlsCustodyState>, config: &DeploymentRequest) -> Vec<String> {
     if tls_custody.is_some_and(TlsCustodyState::is_delegated) && !config.tls_key.is_empty() {
-        return vec![crate::cli::validate_tls_signing_exclusivity(true, true)
-            .expect_err("both custodies asserted")];
+        return vec![
+            validate_tls_signing_exclusivity(true, true).expect_err("both custodies asserted")
+        ];
     }
     Vec::new()
 }
@@ -99,7 +100,7 @@ fn x2b(tls_custody: Option<&TlsCustodyState>, config: &DeploymentRequest) -> Vec
 /// keeps one connection open — and both the lifetime ceiling and the CRL cadence stop
 /// being true statements about the deployment.
 fn x5(config: &DeploymentRequest) -> Vec<String> {
-    let ceiling = crate::cli::MAX_CLIENT_CERT_LIFETIME;
+    let ceiling = super::transport::MAX_CLIENT_CERT_LIFETIME;
     match config.limits.max_connection_age {
         None => vec![
             "--max-connection-age-secs 0 disables the connection-age bound: the client \
@@ -125,7 +126,7 @@ fn x5(config: &DeploymentRequest) -> Vec<String> {
 /// meaningful the moment an authorization profile exists to read it, and nothing about
 /// trust configuration changes then.
 fn x6(config: &DeploymentRequest) -> Vec<String> {
-    crate::cli::unenforceable_revocation_list_refusal(&config.revocation_list_paths)
+    unenforceable_revocation_list_refusal(&config.revocation_list_paths)
         .into_iter()
         .collect()
 }
@@ -181,6 +182,61 @@ pub(crate) fn validate(
         x7_local_mtls_xor_forwarded: x7(config),
         x9_trust_epoch_posture: x9(trust_revocation, config),
     }
+}
+
+/// Enforce the delegated-XOR-exported TLS-signing rule (ADR-MCPS-028 §G, issue
+/// #58): a source's TLS handshake key is EITHER delegated to a non-exporting
+/// device/KMS OR exported from a file, never both. A source that asserts both is
+/// contradictory — the operator could believe the key never leaves the device while a
+/// file copy also exists — so it FAILS CLOSED.
+///
+/// Pure and black-box-testable (no `DeploymentRequest`, no IO). Relation X2b is the caller,
+/// and it asks the question of two RECOGNISED states rather than of the fields, which is
+/// why there is no `DeploymentRequest` adapter here.
+pub fn validate_tls_signing_exclusivity(
+    has_delegated_tls: bool,
+    has_exported_tls_key: bool,
+) -> Result<(), String> {
+    if has_delegated_tls && has_exported_tls_key {
+        return Err(
+            "TLS signing is delegated XOR exported (ADR-MCPS-028 §G): a delegated-TLS \
+             key source must not also be given an exported --tls-key. Remove --tls-key \
+             when using a delegated (non-exporting device/KMS) TLS signer."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// The one decision about whether a policy-layer deny-list can be enforced.
+///
+/// `Some(diagnostic)` means it cannot. Today that is unconditional whenever paths are
+/// supplied: the deny-list is consumed by `LiveTrustResolver::resolve_with_revocation_id`,
+/// which only runs under an authorization profile, and no production profile has landed —
+/// `--authz reference` is itself refused. So a supplied list could only be silently
+/// ignored, and an operator would believe a compromised grant was revoked while it kept
+/// being authorized.
+///
+/// Refused rather than accepted-and-ignored (security-boundary §2: never surface a
+/// capability that is not delivered). v0.16 deliberately REFUSES rather than implementing
+/// enforcement — wiring it would be a new runtime capability, which this release does not
+/// add — and rather than deleting the flag, which would turn a security-correctness fix
+/// into a CLI compatibility decision. A later release can implement, deprecate or redefine
+/// it; this is the single place that would change.
+///
+/// A function for the same reason as [`online_ocsp_refusal`]: the prohibition is stated
+/// once, and relation X6 is where a `DeploymentRequest` meets it however it was built. Two
+/// copies of a condition is how the parser and the validation boundary drifted apart the
+/// first time.
+pub(crate) fn unenforceable_revocation_list_refusal(paths: &[String]) -> Option<String> {
+    (!paths.is_empty()).then(|| {
+        "--revocation-list supplies a policy-layer deny-list (ADR-MCPS-013), but it is \
+         consulted only by an authorization profile and no production profile is \
+         available (--authz is always off), so the list would enforce NOTHING. Remove \
+         --revocation-list; use the trust store and --revocation-tier for key \
+         revocation on the request path."
+            .to_string()
+    })
 }
 
 #[cfg(test)]
@@ -254,8 +310,10 @@ mod tests {
         assert!(!relations(|c| c.limits.max_connection_age = None)
             .x5_connection_outlives_credential
             .is_empty());
-        assert!(!relations(|c| c.limits.max_connection_age =
-            Some(crate::cli::MAX_CLIENT_CERT_LIFETIME + std::time::Duration::from_secs(1)))
+        assert!(!relations(|c| c.limits.max_connection_age = Some(
+            crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME
+                + std::time::Duration::from_secs(1)
+        ))
         .x5_connection_outlives_credential
         .is_empty());
     }
@@ -301,5 +359,24 @@ mod tests {
         });
         assert_eq!(found.x2b_exclusive_tls_custody.len(), 1);
         assert!(found.x2b_exclusive_tls_custody[0].contains("delegated XOR exported"));
+    }
+
+    #[test]
+    fn tls_signing_exclusivity_rejects_both_and_admits_either_or_neither() {
+        // ADR-MCPS-028 §G / issue #58: delegated XOR exported TLS signing.
+        // Exported only — the current default path — is fine.
+        assert!(super::validate_tls_signing_exclusivity(false, true).is_ok());
+        // Delegated only — what #59–#61 will configure — is fine.
+        assert!(super::validate_tls_signing_exclusivity(true, false).is_ok());
+        // Neither set — degenerate, not contradictory — is fine (the require()
+        // checks elsewhere catch a genuinely missing credential).
+        assert!(super::validate_tls_signing_exclusivity(false, false).is_ok());
+        // BOTH set — contradictory — fails closed.
+        let err = super::validate_tls_signing_exclusivity(true, true)
+            .expect_err("delegated AND exported TLS signing must be rejected");
+        assert!(
+            err.contains("delegated XOR exported"),
+            "the rejection must name the XOR rule, got: {err}"
+        );
     }
 }

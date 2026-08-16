@@ -31,6 +31,8 @@
 //! returns immediately, so it re-reads every CRL, rebuilds the rustls verifier and swaps
 //! the serving snapshot in a tight loop, burning a core with no diagnostic.
 
+use std::time::Duration;
+
 use crate::deployment_request::{BindingKind, DeploymentRequest};
 use crate::transport::IdentityPolicy;
 
@@ -75,7 +77,7 @@ pub enum CrlRevocationState {
 /// not states, so they produce no member of the model.
 fn classify_binding(config: &DeploymentRequest) -> Result<ChannelBindingState, Vec<String>> {
     let mut refusals = Vec::new();
-    if let Some(refusal) = crate::cli::undeployable_transport_binding_refusal(config.binding) {
+    if let Some(refusal) = undeployable_transport_binding_refusal(config.binding) {
         refusals.push(refusal);
     }
     match config.binding {
@@ -178,6 +180,48 @@ pub fn classify_and_validate_crl(config: &DeploymentRequest) -> (CrlRevocationSt
         );
     }
     (state, violations)
+}
+
+/// The ceiling on `--max-client-cert-lifetime` (ADR-MCPS-023 §A1, MCPS-57). A
+/// lifetime above this cannot honestly be audited as `short_lived_cert`, so the
+/// proxy rejects it. Matches the 1h default. Exported so test fixtures mint client
+/// certs whose validity window is within the SAME bound the proxy enforces — there
+/// is one source of truth, not a hand-picked magic number per fixture.
+pub const MAX_CLIENT_CERT_LIFETIME: Duration = Duration::from_secs(3600);
+
+/// The one decision about whether a transport-binding mode can be deployed.
+///
+/// `Some(diagnostic)` means it cannot. Mode-C attested ingress binds the request hash under
+/// the OWNER-SIGNED security boundary, and re-binding it to the RFC 9421 request-evidence
+/// digest is not designed yet — not merely unimplemented. Admitting it would require
+/// answering what the attestor is authorized to ASSERT versus what it is authorized to
+/// AUTHORIZE, and those are different claims:
+///
+/// > ingress A says "user U asked for operation X"
+/// > is NOT
+/// > ingress A holds authority "user U may perform X"
+///
+/// unless policy explicitly delegates that authority to A. Attestation must not become
+/// authority by implication. Until that is specified — attestor identity, what bytes the
+/// attestation binds, audience enforcement, replay, key rotation and revocation, and how an
+/// ingress attestation appears in the evidence chain — the mode is refused deliberately
+/// rather than left to whether the dormant builder happens to work.
+///
+/// Refused, NOT removed: attested ingress is the shape a broker-mediated deployment needs
+/// (an enterprise access broker attesting a request it forwarded under an authenticated
+/// customer context), so the capability is expected to be designed rather than deleted.
+///
+/// `--transport-binding lb-assertion` is refused separately, by the unsafe-configuration
+/// guard that names why a load balancer in the trusted computing base is unacceptable.
+pub(crate) fn undeployable_transport_binding_refusal(binding: BindingKind) -> Option<String> {
+    (binding == BindingKind::AttestedIngress).then(|| {
+        "--transport-binding attested-ingress is not a supported deployment mode: Mode-C \
+         attested ingress binds the request under the owner-signed security boundary, and \
+         its rebinding onto the RFC 9421 request evidence is not yet specified (what the \
+         attestor may assert, what its attestation binds, and how it appears in the \
+         evidence chain). Use --binding exact (end-to-end mTLS)."
+            .to_string()
+    })
 }
 
 #[cfg(test)]

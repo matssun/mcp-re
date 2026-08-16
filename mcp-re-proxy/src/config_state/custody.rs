@@ -280,10 +280,41 @@ fn forbidden_violations(kind: KeySourceKind, config: &DeploymentRequest) -> Vec<
 /// from the predicate this replaces, and it matches every other clause at this boundary;
 /// a configuration with one violation still reads exactly as before.
 pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<CustodyState>, Vec<String>) {
-    let mut violations = crate::cli::kms_endpoint_refusals(config);
+    let mut violations = kms_endpoint_refusals(config);
     violations.extend(required_violations(config.key_source, config));
     violations.extend(forbidden_violations(config.key_source, config));
     (classify(config), violations)
+}
+
+/// The KMS/STS endpoint overrides a [`DeploymentRequest`] carries, held to the rule wherever the
+/// config came from.
+///
+/// [`validated_kms_endpoint`] is the decision; this is only how a `DeploymentRequest` answers it, so
+/// the two call sites cannot drift into disagreeing about the rule. The three fields are
+/// public, and they carry the ROOT-KEY trust bootstrap — on GCP every request to them also
+/// carries a live workload-identity bearer token — so a config built in code must not be
+/// able to name a plaintext or attacker-chosen authority for them.
+pub(crate) fn kms_endpoint_refusals(config: &DeploymentRequest) -> Vec<String> {
+    [
+        ("--aws-kms-endpoint", config.aws_kms_endpoint.as_deref()),
+        ("--aws-sts-endpoint", config.aws_sts_endpoint.as_deref()),
+        ("--gcp-kms-endpoint", config.gcp_kms_endpoint.as_deref()),
+    ]
+    .into_iter()
+    .filter_map(|(flag, value)| validated_kms_endpoint(flag, value?).err())
+    .collect()
+}
+
+/// Validate an operator-supplied KMS endpoint override before anything is sent to it.
+///
+/// The decision itself is [`crate::kms_endpoint_policy::kms_endpoint_authority`]; this only prefixes the offending
+/// flag onto its refusal, so the command line, the validation boundary
+/// ([`kms_endpoint_refusals`]) and the three key-source constructors cannot drift into
+/// disagreeing about the rule.
+pub(crate) fn validated_kms_endpoint(flag: &str, value: &str) -> Result<String, String> {
+    crate::kms_endpoint_policy::kms_endpoint_authority(value)
+        .map(|_| value.to_string())
+        .map_err(|why| format!("{flag} {why}"))
 }
 
 #[cfg(test)]

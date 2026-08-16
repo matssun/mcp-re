@@ -1141,7 +1141,7 @@ fn a_programmatic_config_cannot_mint_an_unboundedly_long_lived_delegated_credent
 
     let m = serving_fixtures::write_material();
     let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
-    let ceiling = mcp_re_proxy::cli::MAX_DELEGATED_TTL_SECS;
+    let ceiling = mcp_re_proxy::config_state::delegated_signing::MAX_DELEGATED_TTL_SECS;
 
     let mut config = parsed.clone();
     config.delegated_ttl_secs = ceiling + 1;

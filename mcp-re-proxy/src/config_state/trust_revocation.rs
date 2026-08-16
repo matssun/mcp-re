@@ -27,7 +27,6 @@
 //! done once, and `TrustPlan` and `SigningPlane` are consumers of the one answer
 //! (CF-09 — a fact may have two consumers, it must not have two authorities).
 
-use crate::cli::MAX_NEAR_ZERO_TRUST_RELOAD_SECS;
 use crate::deployment_request::DeploymentRequest;
 use crate::revocation_tier::RevocationTier;
 use std::num::NonZeroU64;
@@ -346,6 +345,17 @@ pub fn classify_and_validate(
     violations.extend(epoch_violations(requested, config));
     (build(requested, config), violations)
 }
+
+/// The ceiling on `--trust-reload-secs` for the tiers that advertise a NEAR-ZERO
+/// revocation window (`live`, `push`).
+///
+/// Those tiers describe how fast a revoked request-signer key stops being honoured, and
+/// the only thing that removes a key from the resolver on a running replica is the
+/// `--trust` re-read. The cadence is therefore the real window, whatever the tier
+/// string says. One minute is the coarsest cadence for which "near-zero" survives
+/// contact with an incident: it is inside the 300s default connection-age bound, so a
+/// revocation reaches every peer within one connection lifetime.
+pub const MAX_NEAR_ZERO_TRUST_RELOAD_SECS: u64 = 60;
 
 #[cfg(test)]
 mod tests {

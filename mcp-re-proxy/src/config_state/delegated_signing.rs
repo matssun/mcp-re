@@ -30,7 +30,6 @@
 //! `mcp_re_http_profile::CustodyConfig` is what would make that hold, and that is a
 //! different type in a different crate.
 
-use crate::cli::MAX_DELEGATED_TTL_SECS;
 use crate::deployment_request::DeploymentRequest;
 
 /// The delegated-key TTL `T` an operator did not state, in seconds.
@@ -213,6 +212,19 @@ fn ttl_violations(config: &DeploymentRequest) -> Vec<String> {
     }
     out
 }
+
+/// The ceiling on `--delegated-ttl-secs` (ADR-MCPRE-052).
+///
+/// The credential's `exp` is the ONLY thing that ever expires a delegated response-signing
+/// key: advancing the trust epoch does not reach credentials already issued under it,
+/// because no verifier reads the counter. So the TTL IS the exposure window of an
+/// exfiltrated hot-path key, and an unbounded TTL turns the short-lived delegated key the
+/// specs describe into a long-lived one while every document still calls it short-lived.
+///
+/// One hour, the same ceiling as [`MAX_CLIENT_CERT_LIFETIME`]: both bound how long a
+/// credential the deployment cannot revoke stays usable, so they answer the same question
+/// and are held to the same number.
+pub const MAX_DELEGATED_TTL_SECS: i64 = 3600;
 
 #[cfg(test)]
 mod tests {

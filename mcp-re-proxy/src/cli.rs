@@ -13,7 +13,6 @@
 //! The request model itself is [`crate::deployment_request`], deliberately outside this
 //! module: the configuration state machines read a request without depending on the parser.
 
-use std::num::NonZeroU64;
 use std::time::Duration;
 
 use mcp_re_core::VerificationKey;
@@ -23,7 +22,6 @@ use crate::deployment_request::{
     OcspKind, SecretString, VerifiedContextKind,
 };
 
-use crate::config_state::AdmissionAvailability;
 #[cfg(feature = "aws_kms_keysource")]
 use crate::config_state::AwsCredentialMode;
 use crate::config_state::CustodyState;
@@ -45,18 +43,6 @@ use crate::key_source::KeySource;
 use crate::tls::ServerLimits;
 use crate::transport::IdentityPolicy;
 use crate::transport::ReverseProxyHeaderFormat;
-
-/// Validate an operator-supplied KMS endpoint override before anything is sent to it.
-///
-/// The decision itself is [`crate::kms_endpoint_policy::kms_endpoint_authority`]; this only prefixes the offending
-/// flag onto its refusal, so the command line, the validation boundary
-/// ([`kms_endpoint_refusals`]) and the three key-source constructors cannot drift into
-/// disagreeing about the rule.
-fn validated_kms_endpoint(flag: &str, value: &str) -> Result<String, String> {
-    crate::kms_endpoint_policy::kms_endpoint_authority(value)
-        .map(|_| value.to_string())
-        .map_err(|why| format!("{flag} {why}"))
-}
 
 /// Ingress-assertion coherence: the LB-assertion (Tier 3) and attested-ingress (Mode C)
 /// flag sets, as one rule.
@@ -358,7 +344,8 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     // v1 revocation posture: short-lived client certs, proxy-enforced. The default IS the
     // ceiling — an omitted flag lands on the strictest lifetime the boundary permits — so
     // it is read from the constant that states it rather than retyped beside it.
-    let mut max_client_cert_lifetime = Some(MAX_CLIENT_CERT_LIFETIME);
+    let mut max_client_cert_lifetime =
+        Some(crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME);
     // MCPS-79 (ADR-MCPS-049): horizontally-scaled deployment topology, off by
     // default. This selects the deployment TOPOLOGY (single-node vs multi-verifier
     // fleet); it does NOT relax security — the proxy always refuses an unsafe config.
@@ -1055,30 +1042,6 @@ impl TryFrom<DeploymentRequest> for ValidatedDeployment {
     }
 }
 
-/// Enforce the delegated-XOR-exported TLS-signing rule (ADR-MCPS-028 §G, issue
-/// #58): a source's TLS handshake key is EITHER delegated to a non-exporting
-/// device/KMS OR exported from a file, never both. A source that asserts both is
-/// contradictory — the operator could believe the key never leaves the device while a
-/// file copy also exists — so it FAILS CLOSED.
-///
-/// Pure and black-box-testable (no `DeploymentRequest`, no IO). Relation X2b is the caller,
-/// and it asks the question of two RECOGNISED states rather than of the fields, which is
-/// why there is no `DeploymentRequest` adapter here.
-pub fn validate_tls_signing_exclusivity(
-    has_delegated_tls: bool,
-    has_exported_tls_key: bool,
-) -> Result<(), String> {
-    if has_delegated_tls && has_exported_tls_key {
-        return Err(
-            "TLS signing is delegated XOR exported (ADR-MCPS-028 §G): a delegated-TLS \
-             key source must not also be given an exported --tls-key. Remove --tls-key \
-             when using a delegated (non-exporting device/KMS) TLS signer."
-                .to_string(),
-        );
-    }
-    Ok(())
-}
-
 /// The `--target-uri` shape the request-target reconstruction check depends on, as a pure
 /// rule over the configured value.
 ///
@@ -1122,72 +1085,6 @@ pub(crate) fn target_uri_violation(uri: &str) -> Option<String> {
     None
 }
 
-/// The ceiling on `--max-client-cert-lifetime` (ADR-MCPS-023 §A1, MCPS-57). A
-/// lifetime above this cannot honestly be audited as `short_lived_cert`, so the
-/// proxy rejects it. Matches the 1h default. Exported so test fixtures mint client
-/// certs whose validity window is within the SAME bound the proxy enforces — there
-/// is one source of truth, not a hand-picked magic number per fixture.
-pub const MAX_CLIENT_CERT_LIFETIME: Duration = Duration::from_secs(3600);
-
-/// The ceiling on `--trust-reload-secs` for the tiers that advertise a NEAR-ZERO
-/// revocation window (`live`, `push`).
-///
-/// Those tiers describe how fast a revoked request-signer key stops being honoured, and
-/// the only thing that removes a key from the resolver on a running replica is the
-/// `--trust` re-read. The cadence is therefore the real window, whatever the tier
-/// string says. One minute is the coarsest cadence for which "near-zero" survives
-/// contact with an incident: it is inside the 300s default connection-age bound, so a
-/// revocation reaches every peer within one connection lifetime.
-pub const MAX_NEAR_ZERO_TRUST_RELOAD_SECS: u64 = 60;
-
-/// The ceiling on `--delegated-ttl-secs` (ADR-MCPRE-052).
-///
-/// The credential's `exp` is the ONLY thing that ever expires a delegated response-signing
-/// key: advancing the trust epoch does not reach credentials already issued under it,
-/// because no verifier reads the counter. So the TTL IS the exposure window of an
-/// exfiltrated hot-path key, and an unbounded TTL turns the short-lived delegated key the
-/// specs describe into a long-lived one while every document still calls it short-lived.
-///
-/// One hour, the same ceiling as [`MAX_CLIENT_CERT_LIFETIME`]: both bound how long a
-/// credential the deployment cannot revoke stays usable, so they answer the same question
-/// and are held to the same number.
-pub const MAX_DELEGATED_TTL_SECS: i64 = 3600;
-
-/// The one decision about whether a transport-binding mode can be deployed.
-///
-/// `Some(diagnostic)` means it cannot. Mode-C attested ingress binds the request hash under
-/// the OWNER-SIGNED security boundary, and re-binding it to the RFC 9421 request-evidence
-/// digest is not designed yet — not merely unimplemented. Admitting it would require
-/// answering what the attestor is authorized to ASSERT versus what it is authorized to
-/// AUTHORIZE, and those are different claims:
-///
-/// > ingress A says "user U asked for operation X"
-/// > is NOT
-/// > ingress A holds authority "user U may perform X"
-///
-/// unless policy explicitly delegates that authority to A. Attestation must not become
-/// authority by implication. Until that is specified — attestor identity, what bytes the
-/// attestation binds, audience enforcement, replay, key rotation and revocation, and how an
-/// ingress attestation appears in the evidence chain — the mode is refused deliberately
-/// rather than left to whether the dormant builder happens to work.
-///
-/// Refused, NOT removed: attested ingress is the shape a broker-mediated deployment needs
-/// (an enterprise access broker attesting a request it forwarded under an authenticated
-/// customer context), so the capability is expected to be designed rather than deleted.
-///
-/// `--transport-binding lb-assertion` is refused separately, by the unsafe-configuration
-/// guard that names why a load balancer in the trusted computing base is unacceptable.
-pub(crate) fn undeployable_transport_binding_refusal(binding: BindingKind) -> Option<String> {
-    (binding == BindingKind::AttestedIngress).then(|| {
-        "--transport-binding attested-ingress is not a supported deployment mode: Mode-C \
-         attested ingress binds the request under the owner-signed security boundary, and \
-         its rebinding onto the RFC 9421 request evidence is not yet specified (what the \
-         attestor may assert, what its attestation binds, and how it appears in the \
-         evidence chain). Use --binding exact (end-to-end mTLS)."
-            .to_string()
-    })
-}
-
 /// The one decision about whether a configured authorization profile can be honored.
 ///
 /// `Some(diagnostic)` means it cannot. Two independent facts make it so, and the
@@ -1213,37 +1110,6 @@ pub(crate) fn unaccepted_authz_profile_refusal(authz: AuthzKind) -> Option<Strin
          (ADR-MCPS-013; Biscuit is the intended production profile), and authorization \
          enforcement is not wired on the RFC 9421 serving path in any case — the evaluator \
          must be rebuilt on the HTTP-profile request evidence first. Run --authz off."
-            .to_string()
-    })
-}
-
-/// The one decision about whether a policy-layer deny-list can be enforced.
-///
-/// `Some(diagnostic)` means it cannot. Today that is unconditional whenever paths are
-/// supplied: the deny-list is consumed by `LiveTrustResolver::resolve_with_revocation_id`,
-/// which only runs under an authorization profile, and no production profile has landed —
-/// `--authz reference` is itself refused. So a supplied list could only be silently
-/// ignored, and an operator would believe a compromised grant was revoked while it kept
-/// being authorized.
-///
-/// Refused rather than accepted-and-ignored (security-boundary §2: never surface a
-/// capability that is not delivered). v0.16 deliberately REFUSES rather than implementing
-/// enforcement — wiring it would be a new runtime capability, which this release does not
-/// add — and rather than deleting the flag, which would turn a security-correctness fix
-/// into a CLI compatibility decision. A later release can implement, deprecate or redefine
-/// it; this is the single place that would change.
-///
-/// A function for the same reason as [`online_ocsp_refusal`]: the prohibition is stated
-/// once, and relation X6 is where a `DeploymentRequest` meets it however it was built. Two
-/// copies of a condition is how the parser and the validation boundary drifted apart the
-/// first time.
-pub(crate) fn unenforceable_revocation_list_refusal(paths: &[String]) -> Option<String> {
-    (!paths.is_empty()).then(|| {
-        "--revocation-list supplies a policy-layer deny-list (ADR-MCPS-013), but it is \
-         consulted only by an authorization profile and no production profile is \
-         available (--authz is always off), so the list would enforce NOTHING. Remove \
-         --revocation-list; use the trust store and --revocation-tier for key \
-         revocation on the request path."
             .to_string()
     })
 }
@@ -1316,198 +1182,6 @@ fn ocsp_responder_violations(config: &DeploymentRequest) -> Vec<String> {
     out
 }
 
-/// Both halves of the authority are required, and the diagnostic must not tell an operator
-/// which half is missing in a way that implies the other alone would do.
-const MISSING_ADMISSION_AUTHORITY: &str =
-    "--admission optional|required requires --admission-authority-kid and \
-     --admission-authority-pubkey (an assertion is only evidence if the issuer is one this \
-     deployment trusts)";
-
-/// Every authority parameter is refused beside `--admission off`, the pubkey included: the
-/// three are one setting, and half of a dangling authority is no less misleading than all
-/// of it.
-const DANGLING_ADMISSION_AUTHORITY: &str =
-    "--admission-authority-kid / --admission-authority-pubkey / --admission-redis-url are \
-     set but --admission is off; enable it or remove them";
-
-/// A window configured on an enforcing deployment that never opens it. Refused for
-/// unreachability rather than for width: the number is fine, nothing will ever read it.
-const INERT_DEGRADED_BOUND: &str =
-    "--admission-degraded-bound-secs is set but --admission-allow-degraded is false; the \
-     bound is read only when degraded mode is on, so this window can never open. Pass \
-     --admission-allow-degraded true to use it, or remove it to fail closed on an \
-     unreachable authority";
-
-/// The degraded window is refused beside `--admission off` for the same reason as the
-/// authority triple, and NOT because a window would be too wide: no gate is built, so no
-/// window is opened at all.
-const DANGLING_DEGRADED_WINDOW: &str =
-    "--admission-allow-degraded / --admission-degraded-bound-secs are set but --admission \
-     is off; a degraded window tolerates an UNREACHABLE ADMISSION AUTHORITY, and with the \
-     gate off there is no authority to be unreachable and no window to widen. Enable \
-     --admission or remove them";
-
-/// What an enforcing admission posture cannot exist without, established once.
-///
-/// The key is the DECODED authority rather than its encoding: the check that it decodes is
-/// the same operation as decoding it, so a boundary that verifies and then discards the
-/// result forces every later stage to repeat the work and to carry an unreachable failure
-/// arm for a proposition already proved.
-pub(crate) struct AdmissionAuthority {
-    /// The key id an assertion must present.
-    pub(crate) kid: String,
-    /// The key that verifies it.
-    pub(crate) key: VerificationKey,
-    /// The shared authoritative record currency is compared against.
-    pub(crate) redis_url: String,
-    /// What this deployment does when that record cannot be reached. Derived here because
-    /// the two flags behind it are legal only in the combinations this function accepts.
-    pub(crate) availability: AdmissionAvailability,
-}
-
-/// The one decision about whether an admission-currency configuration can be enforced.
-///
-/// `Err(diagnostic)` means it cannot. `Ok(None)` is `--admission off`, the one state that
-/// needs no authority; `Ok(Some(..))` carries what the enforcing states are inhabited by.
-/// Every clause here is a property of the parsed configuration alone, so this is the
-/// boundary that owns them (ADR-MCPRE-056 §AA): `DeploymentRequest` has public fields, and until this
-/// moved, all four lived in `parse_args` where a programmatically built configuration
-/// walked past them.
-///
-/// # Why a zero degraded window is refused
-///
-/// Not because "zero is not a policy" — that reads as though the deployment merely gets
-/// nothing. `check_admission` compares the assertion's age against
-/// `degraded_propagation_bound + max_clock_skew`, so P is a FLOOR on the degraded window,
-/// never the whole of it. With degraded mode on and P zero, an unreachable authority still
-/// serves any assertion younger than the skew tolerance — a window in which a REVOKED
-/// workload keeps being admitted, on a deployment that asked for no window at all. Pinned
-/// by `admission::a_zero_p_still_leaves_a_degraded_window_the_width_of_the_clock_skew`.
-///
-/// A NEGATIVE bound does fail closed on every call, but it is refused by the same clause:
-/// a policy nobody can satisfy is not a safer spelling of "off".
-///
-/// That argument is about a gate that EXISTS, so the clause sits inside the enforcing
-/// branch. It used to sit outside it, refusing `P = 0` under `--admission off` too, where
-/// the reasoning does not hold: nothing is built, so no assertion is served for any window.
-/// The setting is still refused there — by the dangling-parameter clause, which is the
-/// true reason — and a positive window under `off`, which the old placement accepted, is
-/// refused with it.
-pub(crate) fn validated_admission_authority(
-    admission: AdmissionKind,
-    authority_kid: Option<&str>,
-    authority_pubkey_b64url: Option<&str>,
-    redis_url: Option<&str>,
-    allow_degraded: bool,
-    degraded_bound_secs: i64,
-) -> Result<Option<AdmissionAuthority>, String> {
-    // Clause order within the enforcing branch is the order these checks always ran in, so
-    // the diagnostic a CLI user meets first does not change (§K1).
-    let authority = if admission == AdmissionKind::Off {
-        // `Off` is a decision about a gate, so EVERY admission parameter dangling beside
-        // it is refused. Each one reads to an auditor as "admission is configured" while
-        // nothing is enforced, and none of them has an operational meaning without a gate.
-        if authority_kid.is_some() || authority_pubkey_b64url.is_some() || redis_url.is_some() {
-            return Err(DANGLING_ADMISSION_AUTHORITY.to_string());
-        }
-        // Including the degraded window. Tolerating an unreachable authority is meaningless
-        // when there is no authority to be unreachable: `Off` builds no gate, so no window
-        // of any width is ever opened. A non-zero bound is refused whatever its sign — a
-        // negative one is no more meaningful here than a positive one.
-        if allow_degraded || degraded_bound_secs != 0 {
-            return Err(DANGLING_DEGRADED_WINDOW.to_string());
-        }
-        None
-    } else {
-        // Enforcing admission needs BOTH an authority to verify assertions against and a
-        // source to check currency against. With neither, the gate would verify nothing
-        // while looking enabled — the most dangerous of the three states, because the
-        // deployment believes it has admission control.
-        let Some(pubkey) = authority_pubkey_b64url else {
-            return Err(MISSING_ADMISSION_AUTHORITY.to_string());
-        };
-        let Some(kid) = authority_kid else {
-            return Err(MISSING_ADMISSION_AUTHORITY.to_string());
-        };
-        // Decoded HERE rather than where the verifier is built: an unusable authority key
-        // is a property of the configuration, and catching it at materialization left the
-        // composition root as the only thing between a programmatic config and a gate with
-        // no usable issuer. The key travels onward from here, so this is the only decode.
-        let Ok(key) = VerificationKey::from_b64url(pubkey) else {
-            return Err(
-                "--admission-authority-pubkey is not a valid base64url-no-pad 32-byte \
-                 Ed25519 public key"
-                    .to_string(),
-            );
-        };
-        let Some(redis_url) = redis_url else {
-            return Err(
-                "--admission optional|required requires --admission-redis-url (the shared \
-                 authoritative record; without it every call fails closed on an unreachable \
-                 authority)"
-                    .to_string(),
-            );
-        };
-        // The two flags become the posture they describe, and the two legal combinations
-        // are the only ones that produce one.
-        let availability = if !allow_degraded {
-            // Both readers of the bound sit behind `if !allow_degraded_mode` early returns
-            // — `check_admission` and `degraded_window_exhausted` — so with degraded mode
-            // off the value is not merely unused, it is unreachable. An operator who set a
-            // window and left the mode off has configured a tolerance this deployment will
-            // never apply, and is one restart away from believing it did.
-            if degraded_bound_secs != 0 {
-                return Err(INERT_DEGRADED_BOUND.to_string());
-            }
-            AdmissionAvailability::FailClosed
-        } else {
-            // Nested under the enforcing branch, where the rationale below is TRUE: a gate
-            // exists, and P is the width of the window it opens on an unreachable
-            // authority. Every value the narrowing rejects — negative, and zero — is a
-            // value this clause refuses, so the conversion decides nothing the rule has
-            // not already decided.
-            let Some(bound_secs) = u64::try_from(degraded_bound_secs)
-                .ok()
-                .and_then(NonZeroU64::new)
-            else {
-                return Err("--admission-allow-degraded true requires a positive \
-                     --admission-degraded-bound-secs (P). P is a FLOOR on the degraded \
-                     window, not the whole of it: the PEP serves an unreachable authority \
-                     for P + --max-clock-skew seconds, so P=0 still admits a revoked \
-                     workload for the skew tolerance while claiming no window was configured"
-                    .to_string());
-            };
-            AdmissionAvailability::BoundedDegraded { bound_secs }
-        };
-        Some(AdmissionAuthority {
-            kid: kid.to_string(),
-            key,
-            redis_url: redis_url.to_string(),
-            availability,
-        })
-    };
-    Ok(authority)
-}
-
-/// The KMS/STS endpoint overrides a [`DeploymentRequest`] carries, held to the rule wherever the
-/// config came from.
-///
-/// [`validated_kms_endpoint`] is the decision; this is only how a `DeploymentRequest` answers it, so
-/// the two call sites cannot drift into disagreeing about the rule. The three fields are
-/// public, and they carry the ROOT-KEY trust bootstrap — on GCP every request to them also
-/// carries a live workload-identity bearer token — so a config built in code must not be
-/// able to name a plaintext or attacker-chosen authority for them.
-pub(crate) fn kms_endpoint_refusals(config: &DeploymentRequest) -> Vec<String> {
-    [
-        ("--aws-kms-endpoint", config.aws_kms_endpoint.as_deref()),
-        ("--aws-sts-endpoint", config.aws_sts_endpoint.as_deref()),
-        ("--gcp-kms-endpoint", config.gcp_kms_endpoint.as_deref()),
-    ]
-    .into_iter()
-    .filter_map(|(flag, value)| validated_kms_endpoint(flag, value?).err())
-    .collect()
-}
-
 /// Ingress-assertion coherence, read off a [`DeploymentRequest`], for the same reason as above: the
 /// clauses decide whether an operator can believe a request-binding ingress control is in
 /// force, and that belief is no more true when the config was built in code.
@@ -1571,7 +1245,7 @@ fn second_admission_limit(
 /// file mode and reuses the same fail-closed posture).
 ///
 /// ADR-MCPS-023 §A1 (v0.9, MCPS-57): a `--max-client-cert-lifetime` GREATER than
-/// [`MAX_CLIENT_CERT_LIFETIME`] is rejected. Mode-A's entire certificate-revocation
+/// [`crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME`] is rejected. Mode-A's entire certificate-revocation
 /// posture is short-lived certificates (on GCP the online-OCSP path is a no-op and
 /// CAS is CRL-only), so a long-lived cert cannot honestly be audited as
 /// `short_lived_cert`. DISABLED enforcement (`none`/`0`, i.e.
@@ -1904,14 +1578,16 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
              set a bounded lifetime (default 1h)"
                 .to_string(),
         ),
-        Some(lifetime) if lifetime > MAX_CLIENT_CERT_LIFETIME => violations.push(format!(
-            "--max-client-cert-lifetime {}s exceeds the ceiling of {}s: Mode-A's \
+        Some(lifetime) if lifetime > crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME => {
+            violations.push(format!(
+                "--max-client-cert-lifetime {}s exceeds the ceiling of {}s: Mode-A's \
              revocation posture is short-lived certificates, so a longer lifetime cannot be \
              audited as short_lived_cert; set a lifetime <= {}s",
-            lifetime.as_secs(),
-            MAX_CLIENT_CERT_LIFETIME.as_secs(),
-            MAX_CLIENT_CERT_LIFETIME.as_secs(),
-        )),
+                lifetime.as_secs(),
+                crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME.as_secs(),
+                crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME.as_secs(),
+            ))
+        }
         Some(_) => {}
     }
     // X5 — Limits × Tls: a connection may not outlive the credential that authenticated
@@ -2149,7 +1825,7 @@ fn parse_cert_lifetime(value: &str) -> Result<Option<Duration>, String> {
     let secs = n.checked_mul(multiplier).ok_or_else(|| {
         format!(
             "--max-client-cert-lifetime '{value}' does not fit in seconds; the ceiling is {}s",
-            MAX_CLIENT_CERT_LIFETIME.as_secs()
+            crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME.as_secs()
         )
     })?;
     Ok(if secs == 0 {
@@ -2590,73 +2266,6 @@ mod tests {
         }
     }
 
-    /// R9-C001 — an authority a URL parser reads differently from the text it shows.
-    ///
-    /// `ureq` resolves a request URL with `url::Url::parse` and connects to its
-    /// `host_str()`, which reads `https://cloudkms.googleapis.com@evil.example.com` as host
-    /// `evil.example.com` with the recognisable half demoted to userinfo. Verified against
-    /// url 2.5.8 (what ureq 2.12.1 links): every string below resolves to
-    /// `evil.example.com`. That host receives the root-key trust bootstrap — and on GCP a
-    /// live workload-identity bearer token authorizing `asymmetricSign` on the ROOT
-    /// response-signing key.
-    ///
-    /// `http://localhost:80@evil.example.com` is the case that also defeats the loopback
-    /// exception: deriving the loopback host with `rsplit_once(':')` BEFORE userinfo is
-    /// stripped reads `localhost`, so a plaintext bearer token left the machine under a
-    /// rule written to stop exactly that.
-    #[test]
-    fn a_kms_endpoint_whose_authority_carries_userinfo_is_refused() {
-        let hostile = [
-            "https://cloudkms.googleapis.com@evil.example.com",
-            "https://kms.us-east-1.amazonaws.com@evil.example.com/",
-            "https://sts.eu-north-1.amazonaws.com@evil.example.com",
-            "http://localhost:80@evil.example.com",
-            "http://127.0.0.1:8080@evil.example.com",
-            "http://localhost@evil.example.com",
-            "https://user:pass@evil.example.com",
-            "https://@evil.example.com",
-        ];
-        for flag in [
-            "--aws-kms-endpoint",
-            "--aws-sts-endpoint",
-            "--gcp-kms-endpoint",
-        ] {
-            for endpoint in hostile {
-                let err = super::validated_kms_endpoint(flag, endpoint)
-                    .expect_err("an authority carrying userinfo must be refused");
-                assert!(
-                    err.contains(flag) && err.contains("userinfo"),
-                    "{flag} {endpoint}: the refusal must name the flag and the reason, got \
-                     {err:?}"
-                );
-            }
-        }
-        // And through the two boundaries a config actually crosses: the argv match arms,
-        // and `kms_endpoint_refusals` for a `DeploymentRequest` built in code — the three fields are
-        // public, and an embedder reaches key-source construction without a parser.
-        for endpoint in hostile {
-            for flag in ["--aws-kms-endpoint", "--gcp-kms-endpoint"] {
-                let err = with_kms_endpoint(flag, endpoint).expect_err("refused at parse");
-                assert!(
-                    err.contains(flag) && err.contains("userinfo"),
-                    "got {err:?}"
-                );
-            }
-            let mut config =
-                with_kms_endpoint("--gcp-kms-endpoint", "https://kms.example.internal")
-                    .expect("the base config parses");
-            config.aws_kms_endpoint = Some(endpoint.to_string());
-            config.aws_sts_endpoint = Some(endpoint.to_string());
-            config.gcp_kms_endpoint = Some(endpoint.to_string());
-            let refusals = super::kms_endpoint_refusals(&config);
-            assert_eq!(
-                refusals.len(),
-                3,
-                "{endpoint}: every endpoint field must be held to the rule, got {refusals:?}"
-            );
-        }
-    }
-
     /// The same property one layer out: a host that is not a LITERAL name or address is
     /// read by a URL parser as some other host than the text shows — IDNA punycodes it,
     /// percent-encoding decodes it, a backslash or a stripped tab moves where the authority
@@ -2678,73 +2287,6 @@ mod tests {
             assert!(
                 with_kms_endpoint("--gcp-kms-endpoint", endpoint).is_err(),
                 "{endpoint:?} does not name a literal host and must be refused"
-            );
-        }
-    }
-
-    /// POSITIVE CONTROL for both refusals above, on all three flags.
-    ///
-    /// The endpoints an operator actually sets — the public Cloud KMS and KMS/STS hosts, a
-    /// regional or VPC-endpoint host, an in-cluster emulator with a port, and the loopback
-    /// `http://` emulator lane in every spelling — must still parse. A gate that refused
-    /// them all would satisfy every assertion above; that is precisely how round 8 shipped
-    /// three fail-closed regressions.
-    #[test]
-    fn the_kms_endpoints_an_operator_legitimately_sets_are_still_accepted() {
-        let legitimate = [
-            "https://cloudkms.googleapis.com",
-            "https://cloudkms.googleapis.com/",
-            "https://us-east1-cloudkms.googleapis.com",
-            "https://kms.us-east-1.amazonaws.com",
-            "https://sts.eu-north-1.amazonaws.com",
-            "https://vpce-0abc123-xy1z.kms.us-east-1.vpce.amazonaws.com",
-            "https://kms.emulator.svc.cluster.local:8443",
-            "https://10.0.0.5:8443",
-            // The LocalStack / KMS-emulator lane, in every spelling.
-            "http://localhost:4566",
-            "http://localhost:4566/",
-            "http://127.0.0.1:4566",
-            "http://127.0.0.1:4566/",
-            "http://[::1]:4566",
-            "http://localhost",
-            "http://127.0.0.1",
-            "http://[::1]",
-        ];
-        for flag in [
-            "--aws-kms-endpoint",
-            "--aws-sts-endpoint",
-            "--gcp-kms-endpoint",
-        ] {
-            for endpoint in legitimate {
-                let admitted = super::validated_kms_endpoint(flag, endpoint);
-                assert!(
-                    admitted.is_ok(),
-                    "{flag} {endpoint} is an endpoint an operator sets and must be accepted, \
-                     got {:?}",
-                    admitted.err()
-                );
-            }
-        }
-        // End to end through both boundaries. `--aws-sts-endpoint` is parsed only alongside
-        // `--aws-kms-use-web-identity` (an unrelated coherence rule), so its accept case is
-        // proved at the `DeploymentRequest` boundary, which is what `app::run` consults.
-        for endpoint in legitimate {
-            for flag in ["--aws-kms-endpoint", "--gcp-kms-endpoint"] {
-                assert!(
-                    with_kms_endpoint(flag, endpoint).is_ok(),
-                    "{flag} {endpoint} must parse"
-                );
-            }
-            let mut config =
-                with_kms_endpoint("--gcp-kms-endpoint", "https://kms.example.internal")
-                    .expect("the base config parses");
-            config.aws_kms_endpoint = Some(endpoint.to_string());
-            config.aws_sts_endpoint = Some(endpoint.to_string());
-            config.gcp_kms_endpoint = Some(endpoint.to_string());
-            assert_eq!(
-                super::kms_endpoint_refusals(&config),
-                Vec::<String>::new(),
-                "{endpoint} must be admissible on all three fields"
             );
         }
     }
@@ -6103,25 +5645,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn tls_signing_exclusivity_rejects_both_and_admits_either_or_neither() {
-        // ADR-MCPS-028 §G / issue #58: delegated XOR exported TLS signing.
-        // Exported only — the current default path — is fine.
-        assert!(super::validate_tls_signing_exclusivity(false, true).is_ok());
-        // Delegated only — what #59–#61 will configure — is fine.
-        assert!(super::validate_tls_signing_exclusivity(true, false).is_ok());
-        // Neither set — degenerate, not contradictory — is fine (the require()
-        // checks elsewhere catch a genuinely missing credential).
-        assert!(super::validate_tls_signing_exclusivity(false, false).is_ok());
-        // BOTH set — contradictory — fails closed.
-        let err = super::validate_tls_signing_exclusivity(true, true)
-            .expect_err("delegated AND exported TLS signing must be rejected");
-        assert!(
-            err.contains("delegated XOR exported"),
-            "the rejection must name the XOR rule, got: {err}"
-        );
-    }
-
     /// The leading PKCS#11-source flags (no `--tls-key`, no TLS label, no inner
     /// plane). Tests append the #59 toggles and then an `--inner-http-url` inner.
     fn pkcs11_lead_no_tls_key() -> Vec<String> {
@@ -6261,6 +5784,140 @@ mod tests {
             a.drain(i..i + 2);
             let e = parse_args(&a).unwrap_err();
             assert!(e.contains(miss), "missing {miss} must be named; got: {e}");
+        }
+    }
+
+    /// R9-C001 — an authority a URL parser reads differently from the text it shows.
+    ///
+    /// `ureq` resolves a request URL with `url::Url::parse` and connects to its
+    /// `host_str()`, which reads `https://cloudkms.googleapis.com@evil.example.com` as host
+    /// `evil.example.com` with the recognisable half demoted to userinfo. Verified against
+    /// url 2.5.8 (what ureq 2.12.1 links): every string below resolves to
+    /// `evil.example.com`. That host receives the root-key trust bootstrap — and on GCP a
+    /// live workload-identity bearer token authorizing `asymmetricSign` on the ROOT
+    /// response-signing key.
+    ///
+    /// `http://localhost:80@evil.example.com` is the case that also defeats the loopback
+    /// exception: deriving the loopback host with `rsplit_once(':')` BEFORE userinfo is
+    /// stripped reads `localhost`, so a plaintext bearer token left the machine under a
+    /// rule written to stop exactly that.
+    #[test]
+    fn a_kms_endpoint_whose_authority_carries_userinfo_is_refused() {
+        let hostile = [
+            "https://cloudkms.googleapis.com@evil.example.com",
+            "https://kms.us-east-1.amazonaws.com@evil.example.com/",
+            "https://sts.eu-north-1.amazonaws.com@evil.example.com",
+            "http://localhost:80@evil.example.com",
+            "http://127.0.0.1:8080@evil.example.com",
+            "http://localhost@evil.example.com",
+            "https://user:pass@evil.example.com",
+            "https://@evil.example.com",
+        ];
+        for flag in [
+            "--aws-kms-endpoint",
+            "--aws-sts-endpoint",
+            "--gcp-kms-endpoint",
+        ] {
+            for endpoint in hostile {
+                let err = crate::config_state::custody::validated_kms_endpoint(flag, endpoint)
+                    .expect_err("an authority carrying userinfo must be refused");
+                assert!(
+                    err.contains(flag) && err.contains("userinfo"),
+                    "{flag} {endpoint}: the refusal must name the flag and the reason, got \
+                     {err:?}"
+                );
+            }
+        }
+        // And through the two boundaries a config actually crosses: the argv match arms,
+        // and `kms_endpoint_refusals` for a `DeploymentRequest` built in code — the three fields are
+        // public, and an embedder reaches key-source construction without a parser.
+        for endpoint in hostile {
+            for flag in ["--aws-kms-endpoint", "--gcp-kms-endpoint"] {
+                let err = with_kms_endpoint(flag, endpoint).expect_err("refused at parse");
+                assert!(
+                    err.contains(flag) && err.contains("userinfo"),
+                    "got {err:?}"
+                );
+            }
+            let mut config =
+                with_kms_endpoint("--gcp-kms-endpoint", "https://kms.example.internal")
+                    .expect("the base config parses");
+            config.aws_kms_endpoint = Some(endpoint.to_string());
+            config.aws_sts_endpoint = Some(endpoint.to_string());
+            config.gcp_kms_endpoint = Some(endpoint.to_string());
+            let refusals = crate::config_state::custody::kms_endpoint_refusals(&config);
+            assert_eq!(
+                refusals.len(),
+                3,
+                "{endpoint}: every endpoint field must be held to the rule, got {refusals:?}"
+            );
+        }
+    }
+
+    /// POSITIVE CONTROL for both refusals above, on all three flags.
+    ///
+    /// The endpoints an operator actually sets — the public Cloud KMS and KMS/STS hosts, a
+    /// regional or VPC-endpoint host, an in-cluster emulator with a port, and the loopback
+    /// `http://` emulator lane in every spelling — must still parse. A gate that refused
+    /// them all would satisfy every assertion above; that is precisely how round 8 shipped
+    /// three fail-closed regressions.
+    #[test]
+    fn the_kms_endpoints_an_operator_legitimately_sets_are_still_accepted() {
+        let legitimate = [
+            "https://cloudkms.googleapis.com",
+            "https://cloudkms.googleapis.com/",
+            "https://us-east1-cloudkms.googleapis.com",
+            "https://kms.us-east-1.amazonaws.com",
+            "https://sts.eu-north-1.amazonaws.com",
+            "https://vpce-0abc123-xy1z.kms.us-east-1.vpce.amazonaws.com",
+            "https://kms.emulator.svc.cluster.local:8443",
+            "https://10.0.0.5:8443",
+            // The LocalStack / KMS-emulator lane, in every spelling.
+            "http://localhost:4566",
+            "http://localhost:4566/",
+            "http://127.0.0.1:4566",
+            "http://127.0.0.1:4566/",
+            "http://[::1]:4566",
+            "http://localhost",
+            "http://127.0.0.1",
+            "http://[::1]",
+        ];
+        for flag in [
+            "--aws-kms-endpoint",
+            "--aws-sts-endpoint",
+            "--gcp-kms-endpoint",
+        ] {
+            for endpoint in legitimate {
+                let admitted = crate::config_state::custody::validated_kms_endpoint(flag, endpoint);
+                assert!(
+                    admitted.is_ok(),
+                    "{flag} {endpoint} is an endpoint an operator sets and must be accepted, \
+                     got {:?}",
+                    admitted.err()
+                );
+            }
+        }
+        // End to end through both boundaries. `--aws-sts-endpoint` is parsed only alongside
+        // `--aws-kms-use-web-identity` (an unrelated coherence rule), so its accept case is
+        // proved at the `DeploymentRequest` boundary, which is what `app::run` consults.
+        for endpoint in legitimate {
+            for flag in ["--aws-kms-endpoint", "--gcp-kms-endpoint"] {
+                assert!(
+                    with_kms_endpoint(flag, endpoint).is_ok(),
+                    "{flag} {endpoint} must parse"
+                );
+            }
+            let mut config =
+                with_kms_endpoint("--gcp-kms-endpoint", "https://kms.example.internal")
+                    .expect("the base config parses");
+            config.aws_kms_endpoint = Some(endpoint.to_string());
+            config.aws_sts_endpoint = Some(endpoint.to_string());
+            config.gcp_kms_endpoint = Some(endpoint.to_string());
+            assert_eq!(
+                crate::config_state::custody::kms_endpoint_refusals(&config),
+                Vec::<String>::new(),
+                "{endpoint} must be admissible on all three fields"
+            );
         }
     }
 }
