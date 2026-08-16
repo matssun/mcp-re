@@ -1034,6 +1034,38 @@ mod tests {
         drop(sinkhole);
     }
 
+    /// A REFUSED connect fails closed at construction, promptly.
+    ///
+    /// The sibling of [`stalled_redis_fails_closed_within_timeout_not_hang`], which covers
+    /// the sinkhole (TCP accepts, never answers). Here nothing is listening, so the
+    /// connect is refused immediately — the store must surface `Unavailable` rather than
+    /// hand back a degraded connection that would let a proxy start with no replay safety,
+    /// and it must do so well inside the deadline rather than waiting it out.
+    #[test]
+    fn refused_redis_fails_closed_at_construction_not_after_the_deadline() {
+        let _guard = super::tests_support::connect_count_lock();
+        // Port 1 on loopback has nothing listening: the connect is REFUSED at once.
+        let connect_timeout = Duration::from_secs(2);
+        let start = std::time::Instant::now();
+        let result = RedisAtomicReplayStore::connect_with(
+            "redis://127.0.0.1:1/",
+            connect_timeout,
+            Some(connect_timeout),
+            Some(connect_timeout),
+            Box::new(|| 1_779_998_130),
+        );
+        let elapsed = start.elapsed();
+        assert!(
+            matches!(result, Err(ReplayStoreError::Unavailable { .. })),
+            "a refused connect must fail closed, not yield a usable store"
+        );
+        assert!(
+            elapsed < connect_timeout,
+            "a refused connect must fail closed PROMPTLY (well inside {connect_timeout:?}); \
+             took {elapsed:?}"
+        );
+    }
+
     /// A fake connection standing in for a `redis::Connection` — carries the
     /// generation that produced it so a test can prove the RETRY ran on a FRESH
     /// (re-opened) connection, not the broken one.

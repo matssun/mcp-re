@@ -32,6 +32,27 @@
 
 use crate::cli::{DeploymentRequest, MAX_DELEGATED_TTL_SECS};
 
+/// The delegated-key TTL `T` an operator did not state, in seconds.
+///
+/// It lives beside the guard that bounds it rather than in the parser that applies it: the
+/// owner deciding `0 < ttl <= MAX_DELEGATED_TTL_SECS` is the one that should say which
+/// value an omitted `--delegated-ttl-secs` means, or a later change to the ceiling could
+/// leave a default outside it with nothing to notice.
+pub const DEFAULT_DELEGATED_TTL_SECS: i64 = 300;
+
+/// The rotation-overlap window `O` an operator did not state, in seconds.
+///
+/// Paired with [`DEFAULT_DELEGATED_TTL_SECS`] by this owner's `0 < overlap < ttl` guard,
+/// which the two defaults must satisfy together — a pairing that is invisible where they
+/// are applied and obvious here.
+pub const DEFAULT_DELEGATED_OVERLAP_SECS: i64 = 60;
+
+const _: () = {
+    assert!(DEFAULT_DELEGATED_TTL_SECS > 0 && DEFAULT_DELEGATED_TTL_SECS <= MAX_DELEGATED_TTL_SECS);
+    assert!(DEFAULT_DELEGATED_OVERLAP_SECS > 0);
+    assert!(DEFAULT_DELEGATED_OVERLAP_SECS < DEFAULT_DELEGATED_TTL_SECS);
+};
+
 /// What layer A established about delegated response signing.
 ///
 /// Built only where the required value is present, so holding one is evidence that the

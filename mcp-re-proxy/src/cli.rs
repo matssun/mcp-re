@@ -891,8 +891,10 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     let mut gcp_kms_tls_key_version: Option<String> = None;
     let mut gcp_kms_use_metadata = false;
     let mut limits = ServerLimits::default();
-    // v1 revocation posture: short-lived client certs, proxy-enforced, default 1h.
-    let mut max_client_cert_lifetime = Some(Duration::from_secs(3600));
+    // v1 revocation posture: short-lived client certs, proxy-enforced. The default IS the
+    // ceiling — an omitted flag lands on the strictest lifetime the boundary permits — so
+    // it is read from the constant that states it rather than retyped beside it.
+    let mut max_client_cert_lifetime = Some(MAX_CLIENT_CERT_LIFETIME);
     // MCPS-79 (ADR-MCPS-049): horizontally-scaled deployment topology, off by
     // default. This selects the deployment TOPOLOGY (single-node vs multi-verifier
     // fleet); it does NOT relax security — the proxy always refuses an unsafe config.
@@ -1387,11 +1389,14 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
         || aws_kms_tls_key_id.is_some()
         || gcp_kms_tls_key_version.is_some();
 
-    // ADR-MCPRE-052 §4: the rotation window an operator did not state. `0 < overlap < ttl`
-    // is `DelegatedSigning`'s to hold; these are the values it holds, and the defaults are
-    // applied here because a default is what the CLI means by an omitted flag.
-    let delegated_ttl_secs_final = delegated_ttl_secs.unwrap_or(300);
-    let delegated_overlap_secs_final = delegated_overlap_secs.unwrap_or(60);
+    // ADR-MCPRE-052 §4: the rotation window an operator did not state. Applying it is the
+    // CLI's job — a default is what an omitted flag means — but choosing the values is not,
+    // so they are `DelegatedSigning`'s constants, checked there against the same
+    // `0 < overlap < ttl` guard they have to survive.
+    let delegated_ttl_secs_final = delegated_ttl_secs
+        .unwrap_or(crate::config_state::delegated_signing::DEFAULT_DELEGATED_TTL_SECS);
+    let delegated_overlap_secs_final = delegated_overlap_secs
+        .unwrap_or(crate::config_state::delegated_signing::DEFAULT_DELEGATED_OVERLAP_SECS);
 
     let config = DeploymentRequest {
         bind: require(bind, "--bind")?,
@@ -2690,48 +2695,22 @@ fn parse_cert_lifetime(value: &str) -> Result<Option<Duration>, String> {
     })
 }
 
-/// Build the configured ADR-MCPS-023 Tier-3 LB-signed, request-bound ingress
-/// assertion verifier (issue #71) from `config.ingress_lb_keys`, or `None` when the
-/// binding is not `lb-assertion`.
-///
-/// The validation boundary has ALREADY refused (fail closed) a `lb-assertion` deployment
-/// whose `--ingress-lb-key` bodies are not base64url 32-byte Ed25519 public keys, or that
-/// names none, or that repeats an id — so the per-key decode here cannot
-/// be reached with a malformed key in a well-formed config; it nonetheless surfaces
-/// a precise error rather than panicking if that invariant is ever violated. The
-/// yielded identity's [`IdentitySource`] mirrors the configured identity policy, so
-/// a Tier-3 identity reports the same source field the direct-TLS / reverse-proxy
-/// paths would.
-pub fn build_lb_assertion_binding(
-    config: &DeploymentRequest,
-) -> Result<Option<crate::transport::LbAssertionBinding>, String> {
-    if config.binding != BindingKind::LbAssertion {
-        return Ok(None);
-    }
-    let source = match config.identity_source {
-        IdentityPolicy::UriSan => crate::transport::IdentitySource::UriSan,
-        IdentityPolicy::DnsSan => crate::transport::IdentitySource::DnsSan,
-        IdentityPolicy::CnLegacy => crate::transport::IdentitySource::CommonName,
-    };
-    let mut binding = crate::transport::LbAssertionBinding::new(source);
-    for (key_id, key_b64) in &config.ingress_lb_keys {
-        let key = VerificationKey::from_b64url(key_b64).map_err(|_| {
-            format!(
-                "invalid --ingress-lb-key '{key_id}': the body must be a base64url-no-pad \
-                 32-byte Ed25519 public key"
-            )
-        })?;
-        binding.add_key(key_id.clone(), key);
-    }
-    Ok(Some(binding))
-}
-
 /// Build the ADR-MCPS-023 §C (Mode C) attested-ingress verifier from `config`, or
 /// `Ok(None)` when `binding != AttestedIngress`. The validation boundary has already
 /// refused a deployment missing the attestor keys, a trusted ingress identity, the
 /// audience or the pinned-mTLS acknowledgement (fail closed), and one whose attestor
 /// key is not a valid Ed25519 public key — this only reconstructs the verifier, failing
 /// closed with a precise error if any invariant were ever violated.
+///
+/// **Retained, not live.** No validated deployment reaches it:
+/// [`undeployable_transport_binding_refusal`] refuses Mode C in every build, because the
+/// rebinding of an attestation onto the RFC 9421 request evidence is not yet specified —
+/// a deferred capability rather than a rejected posture, on the same terms as
+/// [`build_ocsp_checker`]. Its test mints a real v2 assertion and verifies it through the
+/// built binding, so the capability stays correct rather than merely compiling. The
+/// lb-assertion builder had no such standing — that binding is refused because the LB
+/// belongs outside the trusted computing base, which is a ruling and not a gap — and it
+/// was deleted.
 pub fn build_attested_ingress_binding(
     config: &DeploymentRequest,
 ) -> Result<Option<crate::transport::LbAssertionV2Binding>, String> {
@@ -3023,200 +3002,6 @@ pub fn build_key_source(
     }
 }
 
-/// Build the SHARED replay cache selected by `--replay-cache shared` (issue
-/// #3837), backed by Redis under the `redis_replay` feature (issue #4028).
-///
-/// Under `--features redis_replay` this connects to `replay_redis_url` and wires
-/// a [`SharedReplayCache`](crate::shared_replay::SharedReplayCache) over a
-/// [`RedisAtomicReplayStore`](crate::redis_store::RedisAtomicReplayStore), giving
-/// real horizontally-scaled replay safety (a nonce accepted on one node is
-/// rejected as a replay on every node sharing that Redis). A connect failure
-/// fails closed with a clear error rather than degrading to a non-shared cache.
-///
-/// In a DEFAULT build the Redis backend is not compiled, so this mirrors
-/// [`build_key_source`]'s dev-only gate: `--replay-cache shared` always PARSES
-/// (so the message is precise), but it FAILS CLOSED here — there is no shared
-/// backend to construct.
-///
-/// `replay_redis_url` is the connection URL (already required by the `Replay` machine).
-/// `read_timeout` / `write_timeout` are the server's configured socket timeouts
-/// (`--read-timeout-secs` / `--write-timeout-secs`); they BOUND the Redis connect
-/// and each blocking replay op so a stalled backend fails closed (Unavailable)
-/// within a finite window instead of wedging the single-threaded serve loop
-/// (MCPS-090 / H-10). The connect timeout is derived from the read timeout (a
-/// stalled connect and a stalled read are the same hazard), falling back to a
-/// bounded default when the read timeout is disabled (`0`).
-#[cfg(feature = "redis_replay")]
-pub fn build_shared_replay_cache(
-    replay_redis_url: &str,
-    max_clock_skew: i64,
-    read_timeout: Option<Duration>,
-    write_timeout: Option<Duration>,
-    tier: &crate::replay_tier::ReplayDurabilityTier,
-) -> Result<Box<dyn mcp_re_core::ReplayCache + Send + Sync>, String> {
-    use crate::replay_tier::ReplayDurabilityTier;
-    // A disabled socket timeout would re-introduce the hang, so the connect
-    // timeout is always bounded: prefer the configured read timeout, else a
-    // bounded default.
-    let connect_timeout = read_timeout.unwrap_or(Duration::from_secs(30));
-    let store = crate::redis_store::RedisAtomicReplayStore::connect_with(
-        replay_redis_url,
-        connect_timeout,
-        read_timeout,
-        write_timeout,
-        crate::redis_store::system_clock(),
-    )
-    .map_err(|e| format!("shared replay cache: {e}"))?;
-    // Apply the declared durability tier (ADR-MCPS-020). REDIS_WAIT_QUORUM adds
-    // the per-insert WAIT; REDIS_ASYNC / SINGLE_STORE_FAIL_CLOSED are the plain
-    // SET NX PX path (the tier is the operator's topology assertion). LINEARIZABLE
-    // cannot be backed by Redis — it requires the CP/etcd backend — so it fails
-    // closed here rather than silently over-claiming.
-    let store = match tier {
-        ReplayDurabilityTier::RedisWaitQuorum { quorum, timeout_ms } => {
-            store.with_wait_quorum(*quorum, *timeout_ms)
-        }
-        ReplayDurabilityTier::RedisAsyncBounded | ReplayDurabilityTier::SingleStoreFailClosed => {
-            store
-        }
-        ReplayDurabilityTier::Linearizable => {
-            return Err(
-                "LINEARIZABLE durability tier requires a CP/linearizable store \
-                        (the etcd backend); the Redis backend cannot provide a \
-                        linearizable guarantee. Use redis-async, \
-                        redis-wait-quorum:<quorum>:<timeout_ms>, or \
-                        single-store-fail-closed."
-                    .to_string(),
-            );
-        }
-    };
-    Ok(Box::new(crate::shared_replay::SharedReplayCache::new(
-        Box::new(store),
-        max_clock_skew,
-    )))
-}
-
-/// Default-build fail-closed stub: no shared backend is compiled without the
-/// `redis_replay` feature, so `--replay-cache shared` fails closed here. See the
-/// feature-enabled variant above for the real Redis wiring.
-#[cfg(not(feature = "redis_replay"))]
-pub fn build_shared_replay_cache(
-    replay_redis_url: &str,
-    max_clock_skew: i64,
-    read_timeout: Option<Duration>,
-    write_timeout: Option<Duration>,
-    tier: &crate::replay_tier::ReplayDurabilityTier,
-) -> Result<Box<dyn mcp_re_core::ReplayCache + Send + Sync>, String> {
-    let _ = (
-        replay_redis_url,
-        max_clock_skew,
-        read_timeout,
-        write_timeout,
-        tier,
-    );
-    Err(
-        "shared replay cache backend is not yet available in this build (the Redis \
-         adapter is behind the non-default redis_replay feature; the etcd \
-         LINEARIZABLE backend is behind cpstore_etcd); use --replay-cache file for \
-         single-node durability"
-            .to_string(),
-    )
-}
-
-/// Build the CP / LINEARIZABLE replay cache selected by
-/// `--replay-durability-tier linearizable` (issue #69, epic #68 v0.4 Axis 1),
-/// backed by etcd under the `cpstore_etcd` feature.
-///
-/// Under `--features cpstore_etcd` this constructs a
-/// [`SharedReplayCache`](crate::shared_replay::SharedReplayCache) over an
-/// [`EtcdAtomicReplayStore`](crate::etcd_store::EtcdAtomicReplayStore) against the
-/// etcd v3 JSON gateway at `cpstore_etcd_endpoint`, giving the strongest
-/// horizontal replay-safety claim (conditional on etcd's durable-linearizable
-/// write contract, ADR-MCPS-020). The store opens connections lazily, so an
-/// unreachable etcd surfaces as a fail-closed `Unavailable` on the FIRST replay
-/// op rather than at construction.
-///
-/// `read_timeout` / `write_timeout` are the server's configured socket timeouts;
-/// the larger of the two BOUNDS each blocking etcd op so a stalled backend fails
-/// closed within a finite window instead of wedging the single-threaded serve
-/// loop (the same MCPS-090 / H-10 hazard the Redis path bounds). A disabled
-/// timeout (`0` ⇒ `None`) falls back to a bounded default.
-#[cfg(feature = "cpstore_etcd")]
-pub fn build_cpstore_replay_cache(
-    cpstore_etcd_endpoint: &str,
-    max_clock_skew: i64,
-    read_timeout: Option<Duration>,
-    write_timeout: Option<Duration>,
-) -> Result<Box<dyn mcp_re_core::ReplayCache + Send + Sync>, String> {
-    // A disabled socket timeout would re-introduce the hang, so the per-op timeout
-    // is always bounded: prefer the larger configured socket timeout, else a
-    // bounded default.
-    let timeout = match (read_timeout, write_timeout) {
-        (Some(r), Some(w)) => r.max(w),
-        (Some(t), None) | (None, Some(t)) => t,
-        (None, None) => Duration::from_secs(30),
-    };
-    let store = crate::etcd_store::EtcdAtomicReplayStore::connect_with(
-        cpstore_etcd_endpoint,
-        timeout,
-        crate::etcd_store::system_clock(),
-    );
-    Ok(Box::new(crate::shared_replay::SharedReplayCache::new(
-        Box::new(store),
-        max_clock_skew,
-    )))
-}
-
-/// Default-build fail-closed stub for the CP / LINEARIZABLE backend: the etcd
-/// adapter is compiled ONLY under the non-default `cpstore_etcd` feature, so
-/// `--replay-durability-tier linearizable` FAILS CLOSED here in a build without it
-/// (it never silently downgrades to Redis / in-memory). Mirrors the
-/// `build_shared_replay_cache` redis gate. See the feature-enabled variant above.
-#[cfg(not(feature = "cpstore_etcd"))]
-pub fn build_cpstore_replay_cache(
-    cpstore_etcd_endpoint: &str,
-    max_clock_skew: i64,
-    read_timeout: Option<Duration>,
-    write_timeout: Option<Duration>,
-) -> Result<Box<dyn mcp_re_core::ReplayCache + Send + Sync>, String> {
-    let _ = (
-        cpstore_etcd_endpoint,
-        max_clock_skew,
-        read_timeout,
-        write_timeout,
-    );
-    Err(
-        "LINEARIZABLE durability tier needs the cpstore_etcd feature, which is not \
-         available in this build (rebuild with --features cpstore_etcd); the \
-         LINEARIZABLE claim is forbidden without the CP/etcd backend and is NEVER \
-         downgraded to Redis or in-memory"
-            .to_string(),
-    )
-}
-
-pub fn load_revocation_list(paths: &[String]) -> Result<Vec<String>, String> {
-    let mut ids: Vec<String> = Vec::new();
-    for path in paths {
-        let text =
-            std::fs::read_to_string(path).map_err(|e| format!("revocation list {path}: {e}"))?;
-        let before = ids.len();
-        for line in text.lines() {
-            let id = line.trim();
-            if id.is_empty() || id.starts_with('#') {
-                continue;
-            }
-            ids.push(id.to_string());
-        }
-        if ids.len() == before {
-            return Err(format!(
-                "revocation list {path}: contains no revocation ids (fail closed rather \
-                 than load an empty deny-list)"
-            ));
-        }
-    }
-    Ok(ids)
-}
-
 /// Build the ONLINE OCSP checker selected by `--client-ocsp require` (#4030),
 /// or `None` when `--client-ocsp off` (the default). Compiled ONLY under the
 /// `online_ocsp` feature; the validation boundary already fails closed for `require` in
@@ -3242,7 +3027,6 @@ pub fn build_ocsp_checker(config: &DeploymentRequest) -> Option<crate::ocsp::Ocs
 #[cfg(test)]
 mod tests {
     use super::build_attested_ingress_binding;
-    use super::load_revocation_list;
     use super::parse_args;
     use super::unsafe_config_violations;
     use super::AuditSinkKind;
@@ -5910,26 +5694,6 @@ mod tests {
         );
     }
 
-    // #69 — the CP/LINEARIZABLE builder fails closed in a build WITHOUT the
-    // cpstore_etcd feature: the LINEARIZABLE claim is forbidden without the CP
-    // backend and is never downgraded. Compiled only when the feature is OFF.
-    #[cfg(not(feature = "cpstore_etcd"))]
-    #[test]
-    fn default_build_cpstore_replay_fails_closed() {
-        let err = super::build_cpstore_replay_cache(
-            "http://127.0.0.1:2379",
-            300,
-            Some(std::time::Duration::from_secs(30)),
-            Some(std::time::Duration::from_secs(30)),
-        )
-        .err()
-        .expect("a build without cpstore_etcd must refuse the LINEARIZABLE cache");
-        assert!(
-            err.contains("cpstore_etcd feature"),
-            "expected a clear feature-missing message; got: {err}"
-        );
-    }
-
     #[test]
     fn rejects_unknown_durability_tier() {
         let mut a = minimal();
@@ -6071,85 +5835,6 @@ mod tests {
                 "revocation tier '{flag}' must be rejected"
             );
         }
-    }
-
-    // Issue #3837: in a DEFAULT build there is no shared replay backend, so
-    // constructing the shared replay cache must FAIL CLOSED with the clear
-    // not-yet-available error — never silently degrade to a non-shared cache.
-    // Mirrors the env-keysource gate. Under `--features redis_replay` (#4028) the
-    // real Redis backend is wired instead, so this default-build assertion is
-    // compiled only when that feature is OFF.
-    #[cfg(not(feature = "redis_replay"))]
-    #[test]
-    fn default_build_shared_replay_fails_closed() {
-        let err = super::build_shared_replay_cache(
-            "redis://127.0.0.1:6379",
-            300,
-            Some(std::time::Duration::from_secs(30)),
-            Some(std::time::Duration::from_secs(30)),
-            &crate::replay_tier::ReplayDurabilityTier::RedisAsyncBounded,
-        )
-        .err()
-        .expect("this build must refuse the shared replay cache");
-        assert!(
-            err.contains("not yet available in this build"),
-            "expected a clear not-yet-available message; got: {err}"
-        );
-    }
-
-    // Phase 0 (production packaging): under `--features redis_replay` the shared
-    // replay cache wires the REAL Redis backend. If Redis is UNREACHABLE at startup
-    // (nothing listening → connection REFUSED), construction must FAIL CLOSED
-    // (return Err) so the proxy refuses to start rather than accepting traffic with
-    // no replay safety. This drives the production path end-to-end:
-    //   build_shared_replay_cache (cli.rs)
-    //     → RedisAtomicReplayStore::connect_with (redis_store.rs)
-    //       → bounded_connect → get_connection_with_timeout → connection refused
-    //         → ReplayStoreError::Unavailable → Err(String) out of the builder.
-    // Distinct from `stalled_redis_fails_closed_within_timeout_not_hang` in
-    // redis_store.rs, which covers the SINKHOLE (TCP accepts, never answers) case;
-    // here NOTHING is listening, so the connect is REFUSED immediately — fast and
-    // deterministic, NOT a slow timeout.
-    //
-    // RED without fail-closed: if `connect_with`/`bounded_connect` swallowed the
-    // connect error and returned a degraded non-failing cache, this returns Ok and
-    // the `expect` on `.err()` panics — the test fails. Proven by neutralization.
-    #[cfg(feature = "redis_replay")]
-    #[test]
-    fn connection_refused_redis_fails_closed_at_construction() {
-        // Port 1 on loopback has nothing listening → connection REFUSED at once.
-        let unreachable = "redis://127.0.0.1:1/";
-        // A bounded connect deadline; a refused connect returns well inside it.
-        let connect_timeout = std::time::Duration::from_secs(2);
-
-        let start = std::time::Instant::now();
-        let result = super::build_shared_replay_cache(
-            unreachable,
-            300,
-            Some(connect_timeout),
-            Some(std::time::Duration::from_secs(2)),
-            &crate::replay_tier::ReplayDurabilityTier::RedisAsyncBounded,
-        );
-        let elapsed = start.elapsed();
-
-        let err = result
-            .err()
-            .expect("an unreachable Redis must make the shared replay cache FAIL CLOSED");
-        // The builder maps the Unavailable store error into its "shared replay
-        // cache: ..." String — assert we got that fail-closed surface, not a
-        // degraded usable cache.
-        assert!(
-            err.contains("shared replay cache"),
-            "expected the fail-closed shared-replay-cache error; got: {err}"
-        );
-        // Connection-REFUSED is immediate: it must complete well within the bounded
-        // connect deadline (NOT hang to the full timeout). Generous upper bound to
-        // stay robust on a loaded CI box while still proving boundedness.
-        assert!(
-            elapsed < connect_timeout,
-            "refused connect must fail closed PROMPTLY (well inside the {connect_timeout:?} \
-             deadline); took {elapsed:?}"
-        );
     }
 
     #[test]
@@ -6346,45 +6031,6 @@ mod tests {
             err.contains("--authz reference") && err.contains("ADR-MCPS-013"),
             "expected a reference-authz refusal, got: {err}"
         );
-    }
-
-    #[test]
-    fn load_revocation_list_reads_ids_skipping_blanks_and_comments() {
-        let path = std::env::temp_dir().join(format!("mcp_re_rev_ok_{}.txt", std::process::id()));
-        std::fs::write(
-            &path,
-            "# revoked grants\ngrant-1\n\n  grant-2  \n# trailing comment\ngrant-3\n",
-        )
-        .expect("write");
-        let ids = load_revocation_list(&[path.to_string_lossy().into_owned()]).expect("load");
-        std::fs::remove_file(&path).ok();
-        assert_eq!(
-            ids,
-            vec![
-                "grant-1".to_string(),
-                "grant-2".to_string(),
-                "grant-3".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn load_revocation_list_missing_file_fails_closed() {
-        let path =
-            std::env::temp_dir().join(format!("mcp_re_rev_absent_{}.txt", std::process::id()));
-        std::fs::remove_file(&path).ok();
-        let err = load_revocation_list(&[path.to_string_lossy().into_owned()]).unwrap_err();
-        assert!(err.contains("revocation list"), "got: {err}");
-    }
-
-    #[test]
-    fn load_revocation_list_with_no_ids_fails_closed() {
-        let path =
-            std::env::temp_dir().join(format!("mcp_re_rev_empty_{}.txt", std::process::id()));
-        std::fs::write(&path, "# only comments\n\n   \n").expect("write");
-        let err = load_revocation_list(&[path.to_string_lossy().into_owned()]).unwrap_err();
-        std::fs::remove_file(&path).ok();
-        assert!(err.contains("no revocation ids"), "got: {err}");
     }
 
     #[test]
@@ -7113,28 +6759,6 @@ mod tests {
         let err = parse_args(&with_inner_http_url(pkcs11_lead_no_tls_key()))
             .expect_err("non-delegated pkcs11 must still require --tls-key");
         assert!(err.contains("--tls-key"), "got: {err}");
-    }
-
-    // `build_lb_assertion_binding` is never reached on the CLI happy path (the
-    // lb-assertion binding is refused at parse), so cover the pure builder directly by
-    // mutating a parsed DeploymentRequest — the wiring + the fail-closed key parse.
-    #[test]
-    fn build_lb_assertion_binding_wires_keys_and_fails_closed() {
-        let mut c = parse_args(&minimal_durable()).expect("parse");
-        assert!(
-            super::build_lb_assertion_binding(&c).expect("ok").is_none(),
-            "no binding when the selection is not lb-assertion"
-        );
-        c.binding = BindingKind::LbAssertion;
-        c.ingress_lb_keys = vec![("lb-1".to_string(), lb_pub_b64())];
-        assert!(super::build_lb_assertion_binding(&c)
-            .expect("build")
-            .is_some());
-        c.ingress_lb_keys = vec![("lb-x".to_string(), "not-a-key".to_string())];
-        assert!(
-            super::build_lb_assertion_binding(&c).is_err(),
-            "a malformed LB key must fail closed"
-        );
     }
 
     #[test]
