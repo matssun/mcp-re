@@ -2674,10 +2674,19 @@ fn parse_cert_lifetime(value: &str) -> Result<Option<Duration>, String> {
     let n: u64 = digits.parse().map_err(|_| {
         format!("invalid --max-client-cert-lifetime '{value}' (e.g. 1h, 30m, 3600, none)")
     })?;
-    Ok(if n == 0 {
+    // Checked, because the wrapped product is a DIFFERENT lifetime rather than a larger
+    // one: `5124095576030432h` wraps to 3584s, under the ceiling, so nothing downstream
+    // refuses it and the deployment enforces a bound the operator never wrote.
+    let secs = n.checked_mul(multiplier).ok_or_else(|| {
+        format!(
+            "--max-client-cert-lifetime '{value}' does not fit in seconds; the ceiling is {}s",
+            MAX_CLIENT_CERT_LIFETIME.as_secs()
+        )
+    })?;
+    Ok(if secs == 0 {
         None
     } else {
-        Some(Duration::from_secs(n * multiplier))
+        Some(Duration::from_secs(secs))
     })
 }
 
@@ -4453,6 +4462,24 @@ mod tests {
                 "input {input}"
             );
         }
+    }
+
+    /// A unit-suffixed lifetime whose product overflows `u64` is refused, not wrapped.
+    ///
+    /// `5124095576030432 * 3600` is congruent to 3584 mod 2^64, which is BELOW the
+    /// ceiling — so a wrapping multiply would be accepted by every clause downstream and
+    /// the deployment would enforce a lifetime bearing no relation to the argument. The
+    /// same input panics a debug build, which is why neither half of the behaviour is
+    /// acceptable.
+    #[test]
+    fn an_overflowing_client_cert_lifetime_is_refused_not_wrapped() {
+        let mut a = minimal_durable();
+        a.splice(
+            0..0,
+            args(&["--max-client-cert-lifetime", "5124095576030432h"]),
+        );
+        let err = parse_args(&a).expect_err("an overflowing lifetime is not a lifetime");
+        assert!(err.contains("--max-client-cert-lifetime"), "{err}");
     }
 
     #[test]
