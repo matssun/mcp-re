@@ -64,6 +64,8 @@ _PROXY_LIB_SRCS = [
     "src/config_state/tls_custody.rs",
     "src/config_state/transport.rs",
     "src/config_state/trust_revocation.rs",
+    # Layer A's boundary: assembly, report-all, and the refusal-precedence contract.
+    "src/config_state/validation/mod.rs",
     # The CLI-neutral request model. Both the argument parser and the configuration state
     # model depend on it; neither depends on the other.
     "src/deployment_request/kinds.rs",

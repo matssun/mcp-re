@@ -441,7 +441,7 @@ pub async fn serve<H: AsyncRequestHandler>(
 /// routes on and what this process CAN see, so it is the part whose assertion is
 /// checkable.
 ///
-/// An empty configured target is not checked here — `cli::target_uri_violation` refuses it
+/// An empty configured target is not checked here — `config_state::validation::target_uri_violation` refuses it
 /// at the validation boundary every config passes through, and the verifier fails closed on
 /// a blank covered value.
 fn target_uri_mismatch(configured: &str, received: &hyper::Uri) -> Option<String> {
@@ -458,7 +458,7 @@ fn target_uri_mismatch(configured: &str, received: &hyper::Uri) -> Option<String
 
 /// The origin-form (`/path`) of an ABSOLUTE `--target-uri`.
 ///
-/// `None` only for a target with no `://`, which `cli::target_uri_violation` refuses at the
+/// `None` only for a target with no `://`, which `config_state::validation::target_uri_violation` refuses at the
 /// validation boundary — so on the served path this is always `Some`, and the mismatch
 /// check is always live. The refusal is at the boundary rather than only in the parser
 /// because a `None` here reads as "no mismatch", which would disable this check silently

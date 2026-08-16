@@ -264,7 +264,7 @@ pub fn run(
     // that every route out of this function passes through it: a clean drain, a serve that
     // failed, and a startup refused at the boundary. A teardown obligation discharged on
     // one of three exits is the shape the rest of this round keeps finding.
-    let outcome = crate::cli::ValidatedDeployment::try_from(config)
+    let outcome = crate::config_state::validation::ValidatedDeployment::try_from(config)
         .and_then(|validated| run_validated(&validated, shutdown));
     drain_audit_stream(audits_to_stderr);
     outcome
@@ -327,7 +327,7 @@ fn audit_drain_line(drained: bool, report: bool) -> Option<String> {
     })
 }
 
-/// The serving path proper. Reachable only with a [`crate::cli::ValidatedDeployment`], which
+/// The serving path proper. Reachable only with a [`crate::config_state::validation::ValidatedDeployment`], which
 /// is the whole point: there is no route into it that skips the guards.
 // A documented threshold exception (CLAUDE.md case B), stated in the terms that rule asks
 // for rather than as "it is complicated". 531 lines, of which 290 are code — the rest is
@@ -362,7 +362,7 @@ fn audit_drain_line(drained: bool, report: bool) -> Option<String> {
 // that grows past the threshold is still reported.
 #[allow(clippy::too_many_lines)]
 fn run_validated(
-    config: &crate::cli::ValidatedDeployment,
+    config: &crate::config_state::validation::ValidatedDeployment,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
     let values = config.config();
@@ -404,7 +404,7 @@ fn run_validated(
     // Security posture note. The hard guards (cn_legacy, memory/weak replay,
     // over-ceiling/disabled cert lifetime, reverse-proxy ingress, lb-assertion,
     // node-local replay under --fleet) are ALL rejected at parse time by
-    // `cli::unsafe_config_violations` — the proxy never reaches here with them. Only
+    // `config_state::validation::unsafe_config_violations` — the proxy never reaches here with them. Only
     // the env key source (a dev/CI-only build, `dev_env_key_source`) is worth a
     // runtime note, since that build deliberately permits it.
     if values.key_source == KeySourceKind::Env {
@@ -438,7 +438,7 @@ fn run_validated(
         check_key_file_perms(path, values.allow_group_readable_key_files)?;
     }
     // A disabled (`none`/`0`) or over-ceiling `--max-client-cert-lifetime` is
-    // rejected at parse time (`cli::unsafe_config_violations`), so by here it is
+    // rejected at parse time (`config_state::validation::unsafe_config_violations`), so by here it is
     // always a bounded lifetime within the ceiling — no runtime check needed.
 
     // Key material + trust.

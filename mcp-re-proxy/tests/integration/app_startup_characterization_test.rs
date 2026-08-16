@@ -684,9 +684,10 @@ fn a_programmatic_config_cannot_carry_delegated_custody_the_rotor_cannot_honour(
     for (name, mutate, expected) in cases {
         let mut config = parsed.clone();
         mutate(&mut config);
-        let err = mcp_re_proxy::cli::ValidatedDeployment::try_from(config).expect_err(&format!(
-            "{name}: custody the rotor cannot honour must be refused"
-        ));
+        let err = mcp_re_proxy::config_state::validation::ValidatedDeployment::try_from(config)
+            .expect_err(&format!(
+                "{name}: custody the rotor cannot honour must be refused"
+            ));
         assert!(
             err.to_lowercase().contains(expected),
             "{name}: the refusal must name what is wrong; expected {expected:?}, got: {err}"
@@ -702,7 +703,7 @@ fn a_programmatic_config_cannot_carry_delegated_custody_the_rotor_cannot_honour(
         valid.delegated_overlap_secs > 0,
         "the control needs a genuinely valid overlap to be worth anything"
     );
-    mcp_re_proxy::cli::ValidatedDeployment::try_from(valid)
+    mcp_re_proxy::config_state::validation::ValidatedDeployment::try_from(valid)
         .expect("a valid delegated custody policy must be admitted");
 }
 

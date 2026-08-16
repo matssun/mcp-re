@@ -379,4 +379,43 @@ mod tests {
             "the rejection must name the XOR rule, got: {err}"
         );
     }
+
+    /// X7 refuses a forwarded identity header under EVERY binding, which is why the
+    /// attested-ingress restatement of it could be deleted rather than moved.
+    ///
+    /// `ingress_assertion_refusal` carried a clause refusing
+    /// `--reverse-proxy-identity-header` beside `--transport-binding attested-ingress`.
+    /// X7 refuses that header unconditionally, so the clause could never admit or refuse
+    /// anything X7 did not already decide — a second authority over one deployment fact,
+    /// and the weaker of the two. This is the control that deleting it admitted nothing:
+    /// the header is still refused under the binding the deleted clause named, and under
+    /// the default binding too.
+    #[test]
+    fn the_forwarded_identity_header_is_refused_under_every_binding() {
+        for binding in [
+            crate::deployment_request::BindingKind::Exact,
+            crate::deployment_request::BindingKind::AttestedIngress,
+            crate::deployment_request::BindingKind::LbAssertion,
+        ] {
+            let refusals = relations(|c| {
+                c.binding = binding;
+                c.reverse_proxy_identity_header = Some("x-forwarded-client-cert".to_string());
+            });
+            assert!(
+                refusals
+                    .x7_local_mtls_xor_forwarded
+                    .iter()
+                    .any(|r| r.contains("--reverse-proxy-identity-header")),
+                "{binding:?}: X7 must refuse the forwarded identity header"
+            );
+        }
+        // The positive control: without the header X7 has nothing to say, so the clause
+        // above is not simply refusing every configuration it is shown.
+        assert!(
+            relations(|c| c.binding = crate::deployment_request::BindingKind::AttestedIngress)
+                .x7_local_mtls_xor_forwarded
+                .is_empty(),
+            "X7 must refuse only the forwarded-identity posture"
+        );
+    }
 }

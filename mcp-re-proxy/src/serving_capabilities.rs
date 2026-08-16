@@ -102,7 +102,7 @@ const OCSP_OFF: &str = "ONLINE OCSP client-cert revocation = OFF: no responder i
 /// PEP, because revocation is decided during the TLS handshake.
 /// Takes no configuration, because no legal deployment can change the answer.
 ///
-/// `--client-ocsp require` is refused by [`crate::cli::online_ocsp_refusal`] from inside
+/// `--client-ocsp require` is refused by [`crate::config_state::validation::online_ocsp_refusal`] from inside
 /// `legality_violations`, which is on the only route to a `ValidatedDeployment` — so every
 /// validated deployment has `client_ocsp == Off`, `build_ocsp_checker` returns `None`, and
 /// this posture is OFF. Taking a `&DeploymentRequest` implied a choice the legality model does not

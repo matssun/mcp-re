@@ -14,7 +14,7 @@
 //! interchangeable claims, and every posture statement derived from them would inherit
 //! the confusion.
 
-use crate::cli::ValidatedDeployment;
+use crate::config_state::validation::ValidatedDeployment;
 use crate::config_state::ContinuationControlState;
 use crate::config_state::ReplayState;
 use crate::deployment_request::BindingKind;

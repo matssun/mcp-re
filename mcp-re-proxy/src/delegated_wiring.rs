@@ -135,8 +135,8 @@ mod tests {
     /// placeholders — nothing here opens a file.
     fn delegated_plan() -> crate::startup_plan::SigningPlan {
         let config = delegated_config();
-        let validated =
-            crate::cli::ValidatedDeployment::try_from(config).expect("the fixture must validate");
+        let validated = crate::config_state::validation::ValidatedDeployment::try_from(config)
+            .expect("the fixture must validate");
         crate::startup_plan::SigningPlan::from_validated(
             &validated,
             crate::startup_plan::response_issuer_kid(&validated),

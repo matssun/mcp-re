@@ -34,7 +34,7 @@ use crate::transport::ReverseProxyHeaderFormat;
 /// A deployment as REQUESTED: every field an operator can state, and nothing decided.
 ///
 /// A request is not a deployment. Whether the state it describes may run is
-/// [`ValidatedDeployment`](crate::cli::ValidatedDeployment)'s question, and holding one of
+/// [`ValidatedDeployment`](crate::config_state::validation::ValidatedDeployment)'s question, and holding one of
 /// these is evidence of nothing at all — the fields are public, so a test, an embedder or
 /// a composition root can build any combination, legal or not.
 ///

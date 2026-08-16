@@ -438,7 +438,7 @@ mod tests {
         let mut config = legal_config();
         config.revocation_tier = RevocationTier::Live;
         config.trust_reload_secs = Some(0);
-        let refusal = crate::cli::ValidatedDeployment::try_from(config)
+        let refusal = crate::config_state::validation::ValidatedDeployment::try_from(config)
             .expect_err("a spinning reloader must not validate");
         assert!(refusal.contains("--trust-reload-secs 0"), "{refusal}");
     }

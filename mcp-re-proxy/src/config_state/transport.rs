@@ -224,6 +224,202 @@ pub(crate) fn undeployable_transport_binding_refusal(binding: BindingKind) -> Op
     })
 }
 
+/// Ingress-assertion witnesses: the material a request-bound ingress binding verifies with.
+///
+/// `ChannelBinding`-LOCAL validity, which is why it lives beside the classifier rather than
+/// among the relations: every clause reads `binding` and the ingress material that binding
+/// names — nothing about another machine's state. The one clause that did reach outside
+/// (attested-ingress vs `--reverse-proxy-identity-header`) was a weaker restatement of X7,
+/// which refuses a forwarded identity header under EVERY binding, and it was deleted rather
+/// than moved: one authority, and X7 is the stronger one.
+/// Ingress-assertion coherence: the LB-assertion (Tier 3) and attested-ingress (Mode C)
+/// flag sets, as one rule.
+///
+/// Pure: it takes what it decides on and returns the refusal, so the clauses can be tested
+/// without building a `DeploymentRequest` or a command line.
+/// [`ingress_assertion_violation`] is how the validation boundary — the only caller — asks
+/// it of a `DeploymentRequest`.
+#[allow(clippy::too_many_arguments)]
+fn ingress_assertion_refusal(
+    binding: BindingKind,
+    ingress_lb_keys: &[(String, String)],
+    ingress_attestor_keys: &[(String, String)],
+    ingress_identities: &[String],
+    ingress_audience: Option<&str>,
+    ingress_pinned_mtls: bool,
+) -> Option<String> {
+    // ADR-MCPS-023 Tier 3 (issue #71): LB-signed request-bound ingress assertion.
+    // Fail CLOSED at the CLI trust boundary so the operator can never believe a
+    // request-binding control is in force when it is not.
+    //
+    // (a) Dangling `--ingress-lb-key` without `--transport-binding lb-assertion`
+    //     would SILENTLY do nothing (an illusion of request-bound ingress). Reject
+    //     it — mirrors the OCSP/reverse-proxy dangling-flag guards.
+    if !ingress_lb_keys.is_empty() && binding != BindingKind::LbAssertion {
+        return Some(
+            "--ingress-lb-key has no effect without --transport-binding lb-assertion".to_string(),
+        );
+    }
+    // (b) `lb-assertion` binding with NO trusted LB key can never verify any
+    //     assertion — it would reject every request. Require at least one key.
+    if binding == BindingKind::LbAssertion && ingress_lb_keys.is_empty() {
+        return Some(
+            "--transport-binding lb-assertion requires at least one --ingress-lb-key \
+             <keyid>:<base64url-ed25519-pub> (the trusted LB verification key)"
+                .to_string(),
+        );
+    }
+    // (c) Each configured LB key must be a valid base64url 32-byte Ed25519 public
+    //     key, and key ids must be unique — a malformed key or duplicate id is a
+    //     misconfiguration, refused before serving rather than at first request.
+    {
+        let mut seen_ids: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for (key_id, key_b64) in ingress_lb_keys {
+            if !seen_ids.insert(key_id.as_str()) {
+                return Some(format!(
+                    "duplicate --ingress-lb-key id '{key_id}' (each LB key id must be unique)"
+                ));
+            }
+            if mcp_re_core::VerificationKey::from_b64url(key_b64).is_err() {
+                return Some(format!(
+                    "invalid --ingress-lb-key '{key_id}': the body must be a base64url-no-pad \
+                     32-byte Ed25519 public key"
+                ));
+            }
+        }
+    }
+
+    // ADR-MCPS-023 §C (v0.10) Mode C attested ingress — fail CLOSED at the CLI trust
+    // boundary so an operator can never believe an attested-ingress control is in
+    // force when a piece of it is missing. Mode C is strict-ADMITTED but ONLY when
+    // fully configured: attestor keys, trusted ingress identities, the expected
+    // audience, and the explicit pinned-mTLS acknowledgement.
+    //
+    // (a) The Mode-C flags SILENTLY do nothing outside `attested-ingress` — reject
+    //     dangling ones (mirrors the `--ingress-lb-key` dangling guard).
+    if binding != BindingKind::AttestedIngress {
+        if !ingress_attestor_keys.is_empty() {
+            return Some(
+                "--ingress-attestor-key has no effect without --transport-binding attested-ingress"
+                    .to_string(),
+            );
+        }
+        if !ingress_identities.is_empty() {
+            return Some(
+                "--ingress-identity has no effect without --transport-binding attested-ingress"
+                    .to_string(),
+            );
+        }
+        if ingress_audience.is_some() {
+            return Some(
+                "--ingress-audience has no effect without --transport-binding attested-ingress"
+                    .to_string(),
+            );
+        }
+        if ingress_pinned_mtls {
+            return Some(
+                "--ingress-pinned-mtls has no effect without --transport-binding attested-ingress"
+                    .to_string(),
+            );
+        }
+    } else {
+        // (b) attested-ingress with NO trusted attestor key can never verify any
+        //     assertion — it would reject every request. Require at least one.
+        if ingress_attestor_keys.is_empty() {
+            return Some(
+                "--transport-binding attested-ingress requires at least one \
+                 --ingress-attestor-key <keyid>:<base64url-ed25519-pub> (the trusted \
+                 ingress-attestor verification key)"
+                    .to_string(),
+            );
+        }
+        // (c) attested-ingress with NO trusted ingress identity would reject every
+        //     assertion — require at least one.
+        if ingress_identities.is_empty() {
+            return Some(
+                "--transport-binding attested-ingress requires at least one \
+                 --ingress-identity <id> (a trusted ingress identity)"
+                    .to_string(),
+            );
+        }
+        // (c2) A trusted identity that is the empty string is not a trusted identity. It
+        //      passes (c) because the LIST is non-empty, and then matches a v2 assertion
+        //      whose `ingress_identity` states nothing — turning the trusted set into a
+        //      hole. Asked immediately after presence: the witness exists, then the
+        //      witness means something, before any clause compares it with another.
+        if ingress_identities.iter().any(|id| id.trim().is_empty()) {
+            return Some(
+                "--ingress-identity is empty: an empty trusted identity matches an assertion \
+                 that names none, so the trusted set would admit rather than restrict"
+                    .to_string(),
+            );
+        }
+        // (d) attested-ingress binds the assertion's audience to the node's own — it
+        //     must be configured.
+        if ingress_audience.is_none() {
+            return Some(
+                "--transport-binding attested-ingress requires --ingress-audience <aud> \
+                 (the node's expected assertion audience/route)"
+                    .to_string(),
+            );
+        }
+        // (d2) Same shape as (c2), one clause later: an empty audience is present but binds
+        //      the assertion to nothing, so two nodes' assertions become interchangeable —
+        //      the route binding this flag exists to establish.
+        if ingress_audience.is_some_and(|aud| aud.trim().is_empty()) {
+            return Some(
+                "--ingress-audience is empty: the audience binds a v2 assertion to this \
+                 node's route, and an empty one binds it to every node that also set none"
+                    .to_string(),
+            );
+        }
+        // (e) The pinned attestor→node channel (§C2) is load-bearing: without the
+        //     explicit `--ingress-pinned-mtls` acknowledgement, attested ingress
+        //     refuses to start (fail closed) — an attested-ingress posture must never
+        //     run without the pinned backend channel it depends on.
+        if !ingress_pinned_mtls {
+            return Some(
+                "--transport-binding attested-ingress requires --ingress-pinned-mtls: the \
+                 attestor→node hop MUST be a pinned mTLS channel (ADR-MCPS-023 §C2); \
+                 acknowledge it explicitly or do not enable attested ingress"
+                    .to_string(),
+            );
+        }
+        // (g) Each attestor key must be a valid base64url 32-byte Ed25519 public key,
+        //     and key ids must be unique.
+        let mut seen_ids: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for (key_id, key_b64) in ingress_attestor_keys {
+            if !seen_ids.insert(key_id.as_str()) {
+                return Some(format!(
+                    "duplicate --ingress-attestor-key id '{key_id}' (each attestor key id \
+                     must be unique)"
+                ));
+            }
+            if mcp_re_core::VerificationKey::from_b64url(key_b64).is_err() {
+                return Some(format!(
+                    "invalid --ingress-attestor-key '{key_id}': the body must be a \
+                     base64url-no-pad 32-byte Ed25519 public key"
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// Ingress-assertion coherence, read off a [`DeploymentRequest`], for the same reason as above: the
+/// clauses decide whether an operator can believe a request-binding ingress control is in
+/// force, and that belief is no more true when the config was built in code.
+pub(crate) fn ingress_assertion_violation(config: &DeploymentRequest) -> Option<String> {
+    ingress_assertion_refusal(
+        config.binding,
+        &config.ingress_lb_keys,
+        &config.ingress_attestor_keys,
+        &config.ingress_identities,
+        config.ingress_audience.as_deref(),
+        config.ingress_pinned_mtls,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

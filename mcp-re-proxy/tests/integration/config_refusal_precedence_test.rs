@@ -174,7 +174,7 @@ fn the_boundary_refuses_in_this_order() {
     config.replay_durability_tier = None;
     config.binding = BindingKind::None;
 
-    let order = keys(&cli::unsafe_config_violations(&config));
+    let order = keys(&mcp_re_proxy::config_state::validation::unsafe_config_violations(&config));
     assert_eq!(
         order,
         vec![
@@ -255,7 +255,7 @@ fn the_trust_and_fleet_clauses_keep_their_places() {
     config.binding = BindingKind::LbAssertion;
     config.reverse_proxy_identity_header = Some("x-client-id".to_string());
 
-    let order = keys(&cli::unsafe_config_violations(&config));
+    let order = keys(&mcp_re_proxy::config_state::validation::unsafe_config_violations(&config));
     assert_eq!(
         order,
         vec![
@@ -287,7 +287,7 @@ fn the_boundary_reports_every_violation_not_the_first() {
     config.identity_source = IdentityPolicy::CnLegacy;
     config.replay_durability_tier = None;
 
-    let refusal = mcp_re_proxy::cli::ValidatedDeployment::try_from(config)
+    let refusal = mcp_re_proxy::config_state::validation::ValidatedDeployment::try_from(config)
         .expect_err("three violations must refuse");
     for expected in ["--authz", "cn_legacy", "--replay-durability-tier"] {
         assert!(
@@ -311,7 +311,7 @@ fn the_zero_cadence_clause_takes_the_cadence_slot() {
     config.binding = BindingKind::LbAssertion;
     config.reverse_proxy_identity_header = Some("x-client-id".to_string());
 
-    let order = keys(&cli::unsafe_config_violations(&config));
+    let order = keys(&mcp_re_proxy::config_state::validation::unsafe_config_violations(&config));
     assert_eq!(
         order,
         vec![

@@ -67,6 +67,7 @@ pub mod replay;
 pub mod tls_custody;
 pub mod transport;
 pub mod trust_revocation;
+pub mod validation;
 
 pub use admission::{AdmissionAvailability, AdmissionState};
 pub use continuation_control::ContinuationControlState;
