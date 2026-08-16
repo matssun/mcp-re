@@ -975,8 +975,8 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
 /// request-binding control is in force when nothing enforces it — and neither belief gets
 /// truer because the config was built in code rather than parsed.
 ///
-/// The broken implementation this catches: calling `key_source_custody_refusal` and
-/// `ingress_assertion_refusal` only from `parse_args`.
+/// The broken implementation this catches: deciding custody coherence or ingress-assertion
+/// coherence in `parse_args`, on the one route into the runtime that has a command line.
 #[test]
 fn a_programmatic_config_cannot_carry_a_dangling_custody_or_ingress_selector() {
     use std::sync::atomic::AtomicBool;

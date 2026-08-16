@@ -6,16 +6,15 @@
 //! measures that set from the outside: each case builds a `DeploymentRequest` in code carrying a
 //! state `parse_args` refuses, and records whether the boundary refuses it too.
 //!
-//! A case in [`cross_field_relations_are_unenforced_at_the_boundary`] is ADMITTED. That is
-//! the finding, not an accident of the test: the relation is enforced in the argument
-//! parser alone, so it holds for a command line and not for the runtime. As each relation
-//! moves to the boundary, its case flips and must be moved into
-//! [`refused_at_the_boundary`] — which is what makes this a characterization of the
-//! boundary rather than a list of things someone once checked.
+//! This file carried a second test, of relations the parser decided and the boundary did
+//! not — cases recorded as ADMITTED, each to be moved into [`refused_at_the_boundary`] when
+//! its relation arrived. Every one has now moved, the last being a `--ocsp-responder-url`
+//! configured beside a mode that never reads it, so the ledger is closed and its test is
+//! gone rather than left standing over nothing.
 //!
-//! The required-value and numeric-range groups have made that move in full, so no test of
-//! theirs is left here: an empty identity coordinate, an empty locator, an out-of-bound
-//! clock skew and a zero connection or drain limit are all decided at the boundary now.
+//! What remains is the positive half of the same measurement: each case below is a state
+//! `parse_args` used to be the only thing that refused, and the assertion is that a
+//! `DeploymentRequest` built in code — never passing a parser — is refused too.
 
 use mcp_re_proxy::cli::{self, DeploymentRequest, ValidatedDeployment};
 
@@ -62,30 +61,12 @@ fn base() -> DeploymentRequest {
     cli::parse_args(&argv).expect("baseline parses")
 }
 
-fn admitted(mutate: impl FnOnce(&mut DeploymentRequest)) -> bool {
-    let mut config = base();
-    mutate(&mut config);
-    ValidatedDeployment::try_from(config).is_ok()
-}
-
 #[test]
 fn the_baseline_is_admitted() {
     assert!(
         ValidatedDeployment::try_from(base()).is_ok(),
         "the baseline must be legal, or every case below measures the wrong thing"
     );
-}
-
-/// Cross-field mode relations the parser decides and the boundary does not.
-///
-/// These are the state-legality relations proper — each names a control an operator would
-/// believe is in force.
-#[test]
-fn cross_field_relations_are_unenforced_at_the_boundary() {
-    // The dangling-OCSP-knob illusion the parser refuses by name.
-    assert!(admitted(
-        |c| c.ocsp_responder_url = Some("http://ocsp.example.com".to_string())
-    ));
 }
 
 /// Relations that have MOVED to the boundary, and the state each one now decides.
@@ -241,6 +222,16 @@ fn refused_at_the_boundary() {
             "{name}: still admitted at the boundary"
         );
     }
+
+    // The last case to move. A responder URL beside `--client-ocsp off` is not a mode this
+    // deployment is in — nothing consults a responder there — so the deployment carried a
+    // revocation authority it never asked, and the operator had a configured one to point
+    // at. Refused only by the parser until now.
+    let mut config = base();
+    config.ocsp_responder_url = Some("http://ocsp.example.com".to_string());
+    let refusal = ValidatedDeployment::try_from(config)
+        .expect_err("a responder no mode reads is a configured authority that answers nothing");
+    assert!(refusal.contains("--ocsp-responder-url"), "{refusal}");
 
     // The same source under the tier that DOES consume it is the legal state, and is
     // recognised as such rather than merely permitted.

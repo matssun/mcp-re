@@ -63,6 +63,11 @@ fn legal() -> DeploymentRequest {
 /// A distinguishing fragment per clause, in the order the boundary emits them.
 fn keys(violations: &[String]) -> Vec<&'static str> {
     const CLAUSES: &[&str] = &[
+        // Ahead of `--client-ocsp`, which the dangling clause names in its remedy: `find`
+        // takes the first containment match, so the mode's own key would swallow it. Two
+        // clauses about one flag, so neither key may be the bare flag name either.
+        "--ocsp-responder-url is empty",
+        "--ocsp-responder-url has no effect",
         "--client-ocsp",
         "--revocation-list",
         "--authz",
@@ -134,6 +139,10 @@ fn keys(violations: &[String]) -> Vec<&'static str> {
 fn the_boundary_refuses_in_this_order() {
     let mut config = legal();
     config.client_ocsp = OcspKind::Require;
+    // Empty, not dangling: `require` is the one mode that WOULD read a responder, so this
+    // fixture can only provoke the value's own clause. The dangling clause needs a mode
+    // that reads none, and is pinned in `the_trust_and_fleet_clauses_keep_their_places`.
+    config.ocsp_responder_url = Some(String::new());
     config.revocation_list_paths = vec!["/deny.json".to_string()];
     config.authz = AuthzKind::Reference;
     config.pkcs11_tls_key_label = Some("tls".to_string()); // with tls_key set: XOR violated
@@ -169,6 +178,10 @@ fn the_boundary_refuses_in_this_order() {
         order,
         vec![
             "--client-ocsp",
+            // NEW. The responder is the one OCSP parameter and has no machine, so its two
+            // columns sit beside the mode clause: the value's own shape first, then its
+            // relation to the mode, which is the order semantic dependency puts them in.
+            "--ocsp-responder-url is empty",
             "--revocation-list",
             "--authz",
             "TLS signing is delegated XOR exported",
@@ -231,6 +244,10 @@ fn the_trust_and_fleet_clauses_keep_their_places() {
     config.revocation_tier = mcp_re_proxy::revocation_tier::RevocationTier::Live;
     config.trust_reload_secs = None;
     config.fleet = true;
+    // A responder under the default `off` mode: configured, resolvable, and read by
+    // nothing. Pinned here because the fixture above must be in `require` to reach the
+    // mode clause, and `require` is the one mode this clause does not fire in.
+    config.ocsp_responder_url = Some("http://ocsp.example.com".to_string());
     // The zero-cadence clause shares this position with the missing-cadence clause above —
     // they are the same guard answering two ways, so only one can fire per run and they
     // are pinned together rather than each claiming its own slot.
@@ -241,6 +258,7 @@ fn the_trust_and_fleet_clauses_keep_their_places() {
     assert_eq!(
         order,
         vec![
+            "--ocsp-responder-url has no effect",
             // `lb-assertion` is refused twice: because the mode is not deployable, and
             // because its own required keys are absent. The order of the pair INVERTED
             // when the `ChannelBinding` machine took ownership — deliberately, and this is

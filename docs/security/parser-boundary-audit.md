@@ -24,9 +24,13 @@ distinction this audit uses:
 - **Parser-only** — enforced nowhere else. A bypass if the state it refuses is a security
   state.
 
-A parse-time check that duplicates a boundary check is not redundancy to remove: it is what
-keeps the diagnostic an operator meets first unchanged (ADR-MCPRE-058 §8.5). The rule lives
-in one shared predicate; both sites consult it.
+A parse-time check that duplicates a boundary check is redundancy to remove. It was kept
+for one migration, to hold the diagnostic an operator meets first unchanged while the rule
+moved (ADR-MCPRE-058 §8.5); once the rule is at the boundary the second call site buys
+nothing and costs an early return, which means a command line wrong in four ways is
+answered about one. `parse_args` now decides no legality at all: it reads syntax, records
+provenance, applies the CLI's own defaults, and hands the request to the same boundary
+every other caller meets.
 
 ## Method
 
@@ -75,11 +79,9 @@ True for argv, and only for argv. The impact is the one the parse-time diagnosti
 described: an ingress fanning several paths into one process would verify signatures over a
 `@target-uri` no request arrived at.
 
-**Fix.** The rule moved into `cli::target_uri_violation`, consulted by both `parse_args`
-(at the position it always occupied, so the CLI diagnostic is unchanged) and
+**Fix.** The rule moved into `cli::target_uri_violation`, consulted by
 `unsafe_config_violations`. The two downstream comments now name the boundary rather than
-the parser. Sixth member of this file's parser-only family, after
-`validate_tls_signing_exclusivity`.
+the parser.
 
 ### Verified covered — no action
 
@@ -104,51 +106,63 @@ ceiling, connection-age bound, revocation tier versus trust-reload cadence, slow
 timeouts, `cn_legacy` identity, non-durable replay, fleet replay locality,
 reverse-proxy header ingress, and `--transport-binding none|lb-assertion`.
 
-### Parser-only, and deliberately left there
+### Was parser-only, now closed at the boundary
 
-These are refused only by `parse_args`. Each was checked and is **not** a security bypass;
-the reasoning is recorded so a later reader does not have to redo it.
+This section recorded three families as parser-only-but-acceptable. Two of the three
+arguments were wrong, and recording them is more useful than deleting them: each was a
+defensible-sounding reason to leave an enforcement site where it did not belong.
 
-**Dangling-flag guards** — `--pkcs11-tls-key-label`, `--aws-kms-tls-key-id`,
-`--gcp-kms-tls-key-version`, `--aws-kms-use-web-identity`, `--aws-sts-endpoint`,
-`--gcp-kms-use-metadata`, `--cpstore-etcd-endpoint`, `--trust-epoch-redis-url`,
-`--ingress-lb-key`, the Mode-C ingress flags, `--ocsp-responder-url`.
+**Dangling-flag guards.** The argument was that a dangling flag leaves the posture the
+*other* flags describe, which the boundary assesses — so migrating would add noise without
+closing a hole. That holds for the resulting posture and misses the hazard the guard is
+about: an operator who believes a control is configured stops looking for one that is not.
+All of them are boundary clauses now, in their owners — the delegated-TLS selectors under
+relation X2a, the KMS credential-mode flags under `Custody`, `--cpstore-etcd-endpoint`
+under `Replay`, `--trust-epoch-redis-url` under `TrustRevocation` (X8), the ingress flags
+under `ChannelBinding`, and `--ocsp-responder-url` beside the OCSP mode clause it
+parameterizes. It was the last of them, and the only one that had no owner to move to
+until one was written.
 
-Each refuses a flag that would silently do nothing under the selected mode. The hazard is a
-false operator belief, which is real — but the *resulting posture* is the one the other
-flags describe, and that posture is itself assessed at the boundary. A dangling
-`--ingress-lb-key` under `--transport-binding exact` leaves a **stronger** binding in force,
-not a weaker one. Migrating these would add boundary noise without closing a hole.
+**`--trust-domain` must not be empty.** The argument — that an empty component still yields
+a distinct actor id, so there is no collision — was sound about collisions and answered the
+wrong question. An identity coordinate that is empty in two deployments is one coordinate
+fewer distinguishing them from each other, and the same reasoning applies to `--audience`,
+`--server-signer` and `--server-key-id`, none of which had a guard at all. All four are
+boundary clauses, stated one field at a time.
 
-The three delegated-TLS custody selectors are a partial exception: the *contradiction* they
-can form with an exported `--tls-key` is the finding already migrated;
-what remains parser-only is only the "wrong key source" dangling case.
+**Bounded-value guards.** The argument was that a resource bound is not an authorization
+decision. `--max-connections 0`, `--drain-grace-secs 0` and a `--client-crl-reload-secs`
+of zero are each a limit that disables the control it bounds, which is a security posture
+whatever tier it sits in; they are boundary clauses now, beside the slow-loris timeouts
+that were already there. `--max-in-flight` is the exception that stayed, and for a reason
+that is not a judgement call: `InFlightLimitRequest` holds a `NonZeroUsize`, so a
+programmatic zero is not reachable — the type closed it.
 
-**`--trust-domain` must not be empty.** The trust domain is one component of the
-`role:trust_domain:subject:keyid` actor id, and each component is escaped before the join
-(`block.rs:57–63`). An empty component therefore yields `role::subject:keyid`, which stays
-distinct from every populated one — no collision and no tautology. The guard exists to stop
-the historical `example.com` placeholder from being inherited by hand-rolled deployments,
-which is deployment hygiene rather than an enforceable invariant. Recorded, not migrated.
+### What is left in the parser
 
-**Bounded-value guards** — `--client-crl-reload-secs`, `--max-connections`,
-`--max-in-flight`, `--drain-grace-secs` must each be `> 0`. A programmatic zero is
-reachable. These are availability and resource bounds rather than authorization decisions,
-and the drain-grace one is exercised by the ADR-MCPRE-057 teardown work. Candidates for a
-later sweep; none of them admits an unauthorized request.
+Syntax, provenance, and the CLI's own normalization: unknown flag, missing value,
+unparsable number, an enum spelling that names no variant, splitting a comma-separated
+list, applying the default an omitted flag means, and the two rules that are about an
+*argument list* rather than about a deployment —
+
+- `--pkcs11-pin` is refused because the PIN is in this process's argv, which no
+  `DeploymentRequest` can express and no boundary can observe;
+- `second_admission_limit` refuses naming both admission-limit flags, because
+  `InFlightLimitRequest` holds one limit and a request naming two is unrepresentable —
+  "already set" is a fact about the input.
 
 ## Verdict against the release criterion
 
 > No runtime or security invariant depends solely on `parse_args`.
 
-**Satisfied**, for the class of invariant the criterion names — the ones that decide whether
-a request is admitted, whom it is attributed to, and what it is bound to. One genuine
-bypass was found and closed. What remains parser-only is dangling-flag hygiene, one
-placeholder guard, and four resource bounds, each recorded above with its reasoning.
+**Satisfied**, and no longer only for the class of invariant the criterion names. Nothing
+about deployment legality is decided in `parse_args`: every clause it used to hold is at
+the validation boundary, in the machine or relation that owns it, and each is covered by a
+control that builds the request programmatically so the parser cannot participate.
 
 This is a statement about *enforcement placement*, not about `parse_args`'s size. The
-function is still ~1300 lines and its structural decomposition into a configuration
-compiler remains open engineering work — but it is now debt, not a security gap.
+function is 727 lines and its structural decomposition into a configuration compiler
+remains open engineering work — but it is now debt, not a security gap.
 
 ## Negative controls
 
