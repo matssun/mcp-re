@@ -55,7 +55,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _evidence import write_bundle  # noqa: E402
-from _theorems import load_theorems, unestablished_theorems  # noqa: E402
+from _theorems import load_theorems, unsupported_theorems  # noqa: E402
 from _manifest import (  # noqa: E402
     LANE_VERDICTS,
     REPO_ROOT,
@@ -136,14 +136,15 @@ def validate_manifests() -> tuple[bool, list[str]]:
         return False, violations
     notes.append(f"policy revision {doc['policy_revision']}")
     notes.append(f"{len(doc.get('unit', []))} unit(s), {len(doc.get('edge', []))} edge(s)")
-    # Reported, never counted. A theorem no unit supports is a stated claim awaiting
-    # evidence; printing the count keeps the difference visible instead of leaving an
-    # unsupported claim to look like a registered one.
+    # Reported, never counted, and phrased as the structural fact it is. A resolving
+    # support closure is not assurance — the unit's evidence may be stale, BLOCKED, or
+    # resting on a dirty assumption — so this line says only that the closure resolves,
+    # and never that a theorem is established.
     declared = len(theorems.get("theorem", []))
-    unestablished = unestablished_theorems(theorems)
+    unsupported = unsupported_theorems(theorems)
     notes.append(
-        f"{declared} theorem(s), {len(unestablished)} not established by any unit"
-        + (f": {', '.join(unestablished)}" if unestablished else "")
+        f"{declared} theorem(s), {len(unsupported)} without structural support closure"
+        + (f": {', '.join(unsupported)}" if unsupported else "")
     )
     unresolved = unresolved_pins(toolchains)
     if unresolved:

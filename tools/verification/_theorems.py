@@ -12,8 +12,9 @@ Two things this module refuses to do, both deliberate:
 
   * It stores no review or approval field. An approval is evidence about a fingerprint
     (§14.7), and a stored status string cannot say which proposition was approved.
-  * It derives no reverse edge (§8.2). `established_theorems` reads the declared direction
-    only.
+  * It derives no reverse edge (§8.2). `structurally_supported_theorems` reads the declared
+    direction only, and its name says exactly how far that reaches: a resolving support
+    closure is not assurance, and nothing here may be read as "established" or "proved".
 
 The limit of the ID-permanence rule, stated rather than implied: this loader sees the tree
 as it stands, so it can enforce uniqueness and format but cannot see that an ID was
@@ -239,21 +240,30 @@ def validate_theorems(doc: dict, unit_ids: set[str]) -> dict:
     return doc
 
 
-def established_theorems(doc: dict) -> set[str]:
-    """The theorems this registry establishes, by the declared edges alone.
+def structurally_supported_theorems(doc: dict) -> set[str]:
+    """The theorems whose support closure RESOLVES, by the declared edges alone.
 
-    A theorem is established only if some review unit supports it AND every theorem it
-    depends on is established. A theorem with no supporting unit is therefore NOT
-    established — it is a stated claim awaiting evidence, and the difference is the whole
-    reason the layer exists. A deprecated theorem establishes nothing: it is retained so
-    historical evidence stays resolvable, not so it can carry a live closure.
+    A theorem is structurally supported only if some review unit supports it AND every
+    theorem it depends on is structurally supported. A theorem with no supporting unit is
+    therefore not structurally supported — it is a stated claim awaiting evidence, and the
+    difference is the whole reason the layer exists. A deprecated theorem supports nothing:
+    it is retained so historical evidence stays resolvable, not so it can carry a live
+    closure.
 
-    Support here means a resolvable declaration, not a measured one. Whether the unit's
-    evidence actually ran is the attestation layer's question, and it is answered lower
-    down — this function may never be read as "proved".
+    This is a structural property and it is named as one. It says the closure resolves to
+    real units and real premises; it says NOTHING about whether their evidence ran, is
+    fresh, is BLOCKED, or rests on an assumption whose review has gone dirty. A unit that
+    merely exists satisfies this function.
+
+    `established` is deliberately not the word, and is reserved for the later conjunction —
+    structural support AND fresh unit evidence AND established dependencies AND fresh
+    specification review AND fresh assumption review — which T2 makes derivable and T3
+    displays. A name that claims assurance this layer cannot see is exactly the over-read
+    ADR-MCPRE-059 exists to prevent, and it would be read as proof the moment it reached a
+    generated human view.
     """
     entries = {entry["id"]: entry for entry in doc.get("theorem", [])}
-    established = {
+    supported = {
         tid
         for tid, entry in entries.items()
         if entry.get("supported_by") and not entry.get("replaced_by")
@@ -261,21 +271,21 @@ def established_theorems(doc: dict) -> set[str]:
     changed = True
     while changed:
         changed = False
-        for tid in sorted(established):
+        for tid in sorted(supported):
             deps = entries[tid].get("depends_on", [])
-            if any(dep not in established for dep in deps):
-                established.discard(tid)
+            if any(dep not in supported for dep in deps):
+                supported.discard(tid)
                 changed = True
-    return established
+    return supported
 
 
-def unestablished_theorems(doc: dict) -> list[str]:
-    """Declared, live theorems that nothing establishes."""
-    established = established_theorems(doc)
+def unsupported_theorems(doc: dict) -> list[str]:
+    """Declared, live theorems whose support closure does not resolve."""
+    supported = structurally_supported_theorems(doc)
     return sorted(
         entry["id"]
         for entry in doc.get("theorem", [])
-        if entry["id"] not in established and not entry.get("replaced_by")
+        if entry["id"] not in supported and not entry.get("replaced_by")
     )
 
 
