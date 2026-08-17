@@ -286,6 +286,60 @@ def test_the_live_registry_validates_against_the_live_units():
     assert structurally_supported_theorems(registry) <= declared
 
 
+def test_a_depends_on_against_the_declared_proof_dependency_is_refused():
+    """The theorem edge and the unit edge are not a duplicated authority — one is about
+    evidence dirtiness, the other about which claim is a premise. But where both exist over
+    the same owners they state one relation twice and may not disagree.
+
+    This is a real error, not a hypothetical: it was drafted backwards from the prose
+    during T4 and caught only by reading `verification.toml`. `depends_on` runs consumer to
+    premise; the unit edge runs premise to consumer.
+    """
+    edges = [
+        {
+            "kind": "PROOF_DEPENDENCY",
+            "from": "core.time_rfc3339",
+            "to": "http_profile.freshness_window",
+        }
+    ]
+    premise = theorem(id="THM-0001", owner="core.time_rfc3339")
+    consumer = theorem(
+        id="THM-0002",
+        owner="http_profile.freshness_window",
+        supported_by=["unit://http_profile.freshness_window"],
+        depends_on=["THM-0001"],
+    )
+    # The declared direction: the consumer rests on the premise. Accepted.
+    validate_theorems(doc(premise, consumer), UNITS, edges)
+
+    # The inversion: the premise's own claim rests on its consumer's.
+    inverted_premise = theorem(id="THM-0001", owner="core.time_rfc3339", depends_on=["THM-0002"])
+    inverted_consumer = theorem(
+        id="THM-0002",
+        owner="http_profile.freshness_window",
+        supported_by=["unit://http_profile.freshness_window"],
+    )
+    try:
+        validate_theorems(doc(inverted_premise, inverted_consumer), UNITS, edges)
+    except ManifestError as exc:
+        assert "runs against the declared PROOF_DEPENDENCY" in str(exc), exc
+    else:
+        raise AssertionError("validation accepted an inverted dependency edge")
+
+
+def test_the_direction_check_is_off_when_no_edges_are_supplied():
+    """A caller that has not loaded the unit catalogue's edges must not silently appear to
+    have run the stronger validation. Omitting them skips the check rather than passing it.
+    """
+    inverted = theorem(id="THM-0001", owner="core.time_rfc3339", depends_on=["THM-0002"])
+    other = theorem(
+        id="THM-0002",
+        owner="http_profile.freshness_window",
+        supported_by=["unit://http_profile.freshness_window"],
+    )
+    validate_theorems(doc(inverted, other), UNITS)
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

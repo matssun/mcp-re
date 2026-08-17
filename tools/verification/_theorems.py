@@ -193,6 +193,41 @@ def _check_edges(doc: dict, ids: list[str], unit_ids: set[str]) -> None:
             )
 
 
+def _check_edge_directions(doc: dict, proof_edges: list[dict]) -> None:
+    """A theorem's `depends_on` may not contradict a unit-level `PROOF_DEPENDENCY`.
+
+    The two are not a duplicated authority — the unit edge is about how evidence dirtiness
+    propagates, the theorem edge about which claim is a premise of which. But where both
+    exist over the same pair of owners they are two statements of one relation, and they
+    may not disagree.
+
+    `verification.toml` writes the edge producer-first: dirtiness flows along the arrow, so
+    `from` is the LOWER unit and `to` consumes it. A theorem owned by `from` that depends on
+    a theorem owned by `to` therefore inverts the declared direction, which is exactly the
+    error this catches — a reviewer drafting from the prose reads "unbypassability
+    establishes that the check runs; the contract establishes what it guarantees" and
+    reasonably gets the arrow backwards.
+    """
+    if not proof_edges:
+        return
+    owner_of = {entry["id"]: entry["owner"] for entry in doc.get("theorem", [])}
+    # `depends_on` runs consumer -> premise, and the unit edge runs premise -> consumer.
+    # So the legal owner pair for a theorem edge is (edge.to, edge.from); the pair
+    # (edge.from, edge.to) is a claim owned by the premise unit resting on a claim owned by
+    # its consumer, which is the inversion.
+    inverted = {(edge["from"], edge["to"]) for edge in proof_edges}
+    for index, entry in enumerate(doc.get("theorem", [])):
+        for target in entry.get("depends_on", []):
+            pair = (owner_of[entry["id"]], owner_of.get(target))
+            if pair in inverted:
+                raise ManifestError(
+                    f"theorems.toml [[theorem]] #{index} ({entry['id']}): depends_on "
+                    f"{target!r} runs against the declared PROOF_DEPENDENCY. "
+                    f"verification.toml declares {pair[0]} -> {pair[1]}, so a claim owned "
+                    f"by {pair[0]} is the premise; {entry['id']} states the reverse."
+                )
+
+
 def _check_acyclic(doc: dict) -> None:
     """Reject a cycle in `depends_on`.
 
@@ -223,7 +258,9 @@ def _check_acyclic(doc: dict) -> None:
         walk(node, [])
 
 
-def validate_theorems(doc: dict, unit_ids: set[str]) -> dict:
+def validate_theorems(
+    doc: dict, unit_ids: set[str], proof_edges: list[dict] | None = None
+) -> dict:
     """Validate a parsed theorem registry against the declared review units."""
     where = "theorems.toml"
     _reject_unknown(where, doc, _TOP_KEYS)
@@ -236,6 +273,7 @@ def validate_theorems(doc: dict, unit_ids: set[str]) -> dict:
         )
     ids = _check_ids(doc)
     _check_edges(doc, ids, unit_ids)
+    _check_edge_directions(doc, proof_edges or [])
     _check_acyclic(doc)
     return doc
 
@@ -289,8 +327,13 @@ def unsupported_theorems(doc: dict) -> list[str]:
     )
 
 
-def load_theorems(unit_ids: set[str]) -> dict:
-    """Load and validate `verification/policy/theorems.toml`."""
+def load_theorems(unit_ids: set[str], proof_edges: list[dict] | None = None) -> dict:
+    """Load and validate `verification/policy/theorems.toml`.
+
+    `proof_edges` are `verification.toml`'s `PROOF_DEPENDENCY` entries. Passing them turns
+    on the direction check; omitting them skips it, so a caller that has not loaded the
+    unit catalogue's edges cannot silently claim the stronger validation.
+    """
     if not THEOREMS_TOML.exists():
         raise ManifestError("verification/policy/theorems.toml: missing")
     try:
@@ -298,4 +341,4 @@ def load_theorems(unit_ids: set[str]) -> dict:
             doc = tomllib.load(handle)
     except tomllib.TOMLDecodeError as exc:
         raise ManifestError(f"theorems.toml: unparsable: {exc}") from exc
-    return validate_theorems(doc, unit_ids)
+    return validate_theorems(doc, unit_ids, proof_edges)

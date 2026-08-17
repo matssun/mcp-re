@@ -58,7 +58,10 @@ def main() -> int:
         doc = load_verification()
         assumptions = load_assumptions()
         toolchains = load_toolchains()
-        theorems = load_theorems({unit["id"] for unit in doc.get("unit", [])})
+        theorems = load_theorems(
+            {unit["id"] for unit in doc.get("unit", [])},
+            [e for e in doc.get("edge", []) if e.get("kind") == "PROOF_DEPENDENCY"],
+        )
     except ManifestError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1

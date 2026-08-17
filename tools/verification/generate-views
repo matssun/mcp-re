@@ -31,7 +31,10 @@ from _views import render_all  # noqa: E402
 
 def rendered() -> dict[str, str]:
     doc = load_verification()
-    theorems = load_theorems({unit["id"] for unit in doc.get("unit", [])})
+    theorems = load_theorems(
+        {unit["id"] for unit in doc.get("unit", [])},
+        [e for e in doc.get("edge", []) if e.get("kind") == "PROOF_DEPENDENCY"],
+    )
     return render_all(theorems, doc, load_assumptions())
 
 
