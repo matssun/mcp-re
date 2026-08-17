@@ -126,6 +126,7 @@ stage_static() {
     && python3 tools/verification/test_escape_hatches.py \
     && python3 tools/verification/test_theorems.py \
     && python3 tools/verification/test_theorem_review.py \
+    && python3 tools/verification/test_views.py \
     `# A display, not a gate: run so a broken import or a renamed component surfaces here` \
     `# rather than the first time someone reaches for the review state.` \
     && python3 tools/verification/review >/dev/null \

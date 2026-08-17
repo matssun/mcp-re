@@ -28,7 +28,8 @@ before any verification toolchain exists — which is exactly the state they are
 | `verify-verus` | full `cargo verus verify` for the declared scope | refuses — Verus unpinned |
 | `verify-lean` | lake build and theorem check | refuses — pipeline unpinned |
 | `regenerate-lean` | Charon → LLBC → Aeneas → Lean extraction | refuses — pipeline unpinned |
-| `check-generated` | generated-model drift gate | reports "nothing to drift" |
+| `check-generated` | drift gate for BOTH generated artifacts: the Lean model and the assurance views | works for the views; Lean reports "nothing to drift" |
+| `generate-views` | renders `verification/generated/` from the three catalogues | works |
 | `review-frontier` | minimum review obligation | Phase 4; falls back to everything-dirty |
 | `review` | theorem fingerprints, review state, and the establishment conjunction | works |
 
@@ -47,6 +48,19 @@ reviewed (`verification/reviews/`), never a field on the object approved, so wea
 takes specification review dirty while every prover stays green — the property T2 exists to
 establish. Review records are source, unlike attestations, because a human approval is not
 re-derivable by re-running anything.
+
+`_views.py` renders the generated assurance views under `verification/generated/`, gated by
+`check-generated` — the same staleness owner as the Lean model, not a second gate. It owns
+one fact, the set of views that exist, so the generator and the drift gate cannot disagree
+about it; the renderers sit beside it split by what they read — `_theorem_views.py` for the
+registry alone, `_catalogue_views.py` for the derivations crossing all three catalogues,
+`_view_format.py` for the do-not-edit banner every page carries. That split is the
+invalidation boundary, not a file-length concession: a change to `verification.toml` cannot
+alter a byte of the theorem-only views. They are
+pure functions of the three catalogues, so they are byte-reproducible and may be committed;
+anything that reads the attestation store (the live blast radius, the frontier) stays in
+`review-frontier`, because a view of local machine state cannot be checked in. Reverse edges
+— an assumption's consumers, a unit's theorems — are computed at render time and never stored.
 
 Structural support is derived: a theorem is *structurally supported* only if a unit supports
 it and every theorem it depends on is, which is why an unsupported claim may be declared but

@@ -1,22 +1,32 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Generated-model drift gate — ADR-MCPRE-059, "Threat: generated Lean model is stale".
+"""Generated-artifact drift gate — ADR-MCPRE-059, "Threat: generated model is stale".
 
-Regenerates the extracted Lean model and compares it against what is checked in. A
-mismatch means the model no longer corresponds to the Rust it claims to describe, so any
-theorem proved against it constrains nothing. Stale generation MUST fail CI.
+Two generated artifacts, one gate, because staleness enforcement has a single owner (§16):
 
-This is also the control that makes hand-editing `generated/` detectable: a hand-edit
-survives review by looking like ordinary Lean, and is caught here by not surviving
+  * the extracted Lean model under `verification/lean/generated/`;
+  * the human assurance views under `verification/generated/` (Phase T3).
+
+Both are regenerated and compared against what is checked in. A mismatch means the artifact
+no longer corresponds to the source it claims to describe — a theorem proved against a
+stale model constrains nothing, and a view that disagrees with the catalogues states
+something no authority states.
+
+This is also the control that makes hand-editing detectable: an edit survives review by
+looking like ordinary Lean or ordinary Markdown, and is caught here by not surviving
 regeneration.
 
-While `generated/` is empty and the pipeline is unpinned there is nothing to drift, and
-this gate reports that state honestly rather than reporting a pass.
+Verdict semantics are unchanged and deliberate. Current views are a PRECONDITION for
+trusting the documents, never evidence about code, so a repository whose views are current
+and whose Lean model does not exist still reports `NOT_REQUIRED`. Letting view freshness
+report `PASS` would let a formal lane's aggregate rest on a Markdown comparison.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import sys
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -27,6 +37,11 @@ from _manifest import (  # noqa: E402
     load_toolchains,
     unresolved_pins,
 )
+
+_generator = SourceFileLoader("generate_views", str(Path(__file__).resolve().parent / "generate-views"))
+_spec = importlib.util.spec_from_loader("generate_views", _generator)
+generate_views = importlib.util.module_from_spec(_spec)
+_generator.exec_module(generate_views)
 
 GENERATED = REPO_ROOT / "verification" / "lean" / "generated"
 REQUIRED = {"charon", "aeneas", "lean", "aeneas_lean_backend"}
@@ -45,9 +60,22 @@ def generated_files() -> list[Path]:
 def main() -> int:
     try:
         toolchains = load_toolchains()
+        views = generate_views.rendered()
     except ManifestError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
+
+    # The views first: they are cheap, they need no toolchain, and a stale view is a
+    # document a reviewer may already have read.
+    drift = generate_views.differences(views)
+    if drift:
+        for entry in drift:
+            print(f"FAIL: {entry}", file=sys.stderr)
+        print(
+            "Regenerate with tools/verification/generate-views.", file=sys.stderr
+        )
+        return 1
+    print(f"check-generated: {len(views)} assurance view(s) current")
 
     missing = sorted(REQUIRED & set(unresolved_pins(toolchains)))
     present = generated_files()
