@@ -75,7 +75,10 @@ jobs:
       github.event_name != 'pull_request'
       || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 30
+    # The test lane compiles and runs each unit's declared battery, including integration
+    # targets, so this job now carries a Cargo build rather than only manifest parsing and
+    # a prover invocation.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 

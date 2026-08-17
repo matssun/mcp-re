@@ -53,6 +53,19 @@ description = "The runtime lifecycle relation: 11 states, 10 events, one closed 
 paths = ["mcp-re-proxy/src/runtime_state.rs"]
 exported_contracts = []
 evidence = ["test://proxy/runtime_lifecycle/transition_relation"]
+# The battery the URI above names, by the path libtest reports each test under. The lane
+# selects exactly these with `--exact`; a renamed or deleted member fails the lane rather
+# than quietly shrinking the evidence behind a green unit.
+tested_symbols = [
+  "lib#runtime_state::tests::every_state_event_pair_is_either_explicitly_legal_or_rejected",
+  "lib#runtime_state::tests::the_relation_has_exactly_ten_legal_transitions",
+  "lib#runtime_state::tests::no_event_moves_a_terminal_state",
+  "lib#runtime_state::tests::transitioning_is_reachable_only_from_draining_on_fleet_drained",
+  "lib#runtime_state::tests::only_serving_admits_new_requests",
+  "lib#runtime_state::tests::a_rejected_event_does_not_advance_the_lifecycle",
+  "lib#runtime_state::tests::the_ordinary_lifecycle_runs_from_configured_to_stopped",
+  "lib#runtime_state::tests::a_failed_materialization_ends_distinctly_from_a_served_shutdown",
+]
 pilot = "verus-candidate"
 
 [[unit]]
@@ -62,6 +75,10 @@ description = "RFC 7638 JWK thumbprint keyids: the canonical JWK form and the de
 paths = ["mcp-re-http-profile/src/keyid.rs"]
 exported_contracts = []
 evidence = ["test://http_profile/keyid/rfc8037_a3_known_answer"]
+# One member, because the URI names one known-answer test rather than a battery. The unit's
+# other two tests are real and pass, but nothing here claims them: widening the membership
+# to match the file would make the evidence entry say more than its name does.
+tested_symbols = ["lib#keyid::tests::rfc8037_a3_known_answer"]
 pilot = "lean-candidate"
 
 # ---------------------------------------------------------------------------
@@ -108,6 +125,20 @@ evidence = [
   "verus://core/time/parse_rfc3339_utc_total_and_bounded",
 ]
 assumptions = ["ASM-0001", "ASM-0002", "ASM-0003", "ASM-0004"]
+# Grammar and truncation, which is the whole of what `time.rs` tests: the accepted shapes,
+# the rejected ones, and the truncating treatment of fractional seconds.
+tested_symbols = [
+  "lib#time::tests::epoch_zero_parses_to_zero",
+  "lib#time::tests::one_second_past_epoch",
+  "lib#time::tests::known_2026_epoch",
+  "lib#time::tests::leap_day_2024_parses",
+  "lib#time::tests::fractional_seconds_are_truncated",
+  "lib#time::tests::fractional_dot_without_digits_is_rejected",
+  "lib#time::tests::out_of_range_month_rejected",
+  "lib#time::tests::out_of_range_day_and_time_rejected",
+  "lib#time::tests::numeric_offset_rejected",
+  "lib#time::tests::garbage_and_wrong_separators_rejected",
+]
 # The theorems this unit claims, by the name the prover reports. Deleting a specification
 # now fails the lane rather than leaving the crate's other proofs to answer for it.
 proved_symbols = [
@@ -138,6 +169,18 @@ evidence = [
   "verus://http_profile/verify/check_params_admission_implies_fresh",
 ]
 assumptions = ["ASM-0005", "ASM-0006", "ASM-0007", "ASM-0008", "ASM-0009", "ASM-0010"]
+# The window battery spans two targets, and says so. `policy.rs` pins what a legal window
+# and skew may be; the wire vectors in `tests/proof_path_test` exercise the admission
+# decision over stale and degenerate windows. `verify.rs`'s own unit tests are structured-
+# field strictness, not freshness, so they are not members here.
+tested_symbols = [
+  "lib#policy::tests::signature_validity_ceiling_defaults_and_validates",
+  "lib#policy::tests::default_is_ed25519_only_with_bounded_skew",
+  "lib#policy::tests::out_of_bounds_configuration_fails_closed",
+  "tests/proof_path_test#stale_window_fails_closed",
+  "tests/proof_path_test#degenerate_window_fails_closed_regardless_of_skew",
+  "tests/proof_path_test#the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not",
+]
 proved_symbols = ["mcp_re_http_profile::verify::check_params"]
 features = ["verify"]
 pilot = "verus-pilot"
@@ -171,6 +214,19 @@ evidence = [
   "verus://http_profile/admission/check_admission_currency",
 ]
 assumptions = ["ASM-0011", "ASM-0012", "ASM-0013", "ASM-0014"]
+# Currency and the degraded window: the nine cases `admission.rs` enumerates, which is the
+# battery the §7 theorem is stated over all inputs of.
+tested_symbols = [
+  "lib#admission::tests::a_current_admitted_workload_passes",
+  "lib#admission::tests::a_stale_generation_is_rejected_even_though_the_assertion_is_valid",
+  "lib#admission::tests::a_workload_revoked_after_issuance_is_refused",
+  "lib#admission::tests::a_suspended_assertion_never_permits_a_call",
+  "lib#admission::tests::an_untrusted_issuer_is_rejected",
+  "lib#admission::tests::a_binding_committing_to_the_wrong_state_is_rejected",
+  "lib#admission::tests::unreachable_state_fails_closed_by_default",
+  "lib#admission::tests::degraded_mode_serves_within_p_but_not_beyond",
+  "lib#admission::tests::a_zero_p_still_leaves_a_degraded_window_the_width_of_the_clock_skew",
+]
 proved_symbols = ["mcp_re_http_profile::admission::check_admission"]
 features = ["verify"]
 pilot = "verus-wp2"
@@ -200,6 +256,24 @@ evidence = [
   "verus://http_profile/artifact/typed_verifier_admits_only_its_own_type",
 ]
 assumptions = ["ASM-0018", "ASM-0019", "ASM-0020"]
+# The seven typed cases the section above says the theorem generalises past, plus the
+# block-level rule that a binding carries a digest and never token bytes, plus the wire-
+# level mismatch cases. The theorem's value is that it covers the inputs these do not.
+tested_symbols = [
+  "lib#artifact::tests::dpop_ath_binds_the_access_token",
+  "lib#artifact::tests::dpop_ath_mismatch_fails_with_artifact_binding_failed",
+  "lib#artifact::tests::mtls_x5t_binds_the_certificate",
+  "lib#artifact::tests::rar_binds_the_authorization_details",
+  "lib#artifact::tests::wrong_artifact_type_fails_closed",
+  "lib#artifact::tests::dispatch_matches_the_typed_verifiers",
+  "lib#artifact::tests::end_to_end_dpop_from_authorization_header",
+  "lib#block::tests::artifact_binding_carries_only_digest_and_reference_never_token_bytes",
+  "lib#block::tests::opaque_binding_with_reference_fields_fails_closed",
+  "lib#block::tests::reference_binding_missing_fields_fails_closed",
+  "tests/full_profile_test#artifact_binding_mismatch_fails",
+  "tests/full_profile_test#unverifiable_binding_without_material_fails_closed",
+  "tests/full_profile_test#caller_supplied_material_verifies_non_header_binding",
+]
 proved_symbols = [
   "mcp_re_http_profile::artifact::verify_artifact_binding",
   "mcp_re_http_profile::artifact::verify_dpop_ath",
@@ -239,6 +313,17 @@ evidence = [
   "verus://http_profile/dispatch/continuation_present_implies_verified",
 ]
 assumptions = ["ASM-0021"]
+# Unbypassability is a property of `prepare_http_dispatch`, so the battery is the dispatch
+# integration target rather than any unit test: `dispatch.rs` carries no test module, and a
+# battery declared over the lib alone would run zero of the cases that matter.
+tested_symbols = [
+  "tests/dispatch_test#continuation_round_trips_through_dispatch",
+  "tests/dispatch_test#continuation_changed_request_state_fails",
+  "tests/dispatch_test#continuation_wrong_previous_request_evidence_fails",
+  "tests/dispatch_test#continuation_wrong_input_required_response_evidence_fails",
+  "tests/dispatch_test#continuation_without_retained_context_fails_closed",
+  "tests/dispatch_test#failed_continuation_does_not_burn_the_nonce",
+]
 proved_symbols = ["mcp_re_http_profile::dispatch::prepare_http_dispatch"]
 features = ["verify"]
 pilot = "verus-wp2"
@@ -278,6 +363,14 @@ evidence = [
   "verus://http_profile/block/continuation_handles_match_in_role",
 ]
 assumptions = ["ASM-0023"]
+# The role-labelled binding discipline at the block layer: a continuation that verifies, and
+# the three ways a handle presented under the wrong input or the wrong role must not.
+tested_symbols = [
+  "lib#block::tests::continuation_round_trips_and_verifies",
+  "lib#block::tests::tampered_request_state_breaks_the_digest",
+  "lib#block::tests::splice_across_continuation_boundary_fails",
+  "lib#block::tests::wrong_continuation_type_is_malformed",
+]
 proved_symbols = ["mcp_re_http_profile::block::HttpContinuation::verify"]
 features = ["verify"]
 pilot = "verus-wp3"

@@ -21,6 +21,7 @@ before any verification toolchain exists — which is exactly the state they are
 | `verify` | umbrella; runs the lanes in the ADR's CI order and reports one verdict | works, report-only |
 | `verify --gate` | authoritative mode: a failing lane fails the build | works |
 | `verify --manifests` | validate the policy files and stop | works |
+| `verify-tests` | runs each unit's declared test battery, by target | works |
 | `check-assumptions` | the proof escape-hatch gate | works |
 | `fingerprint` | deterministic `ReviewFingerprint` per unit | works, partial components |
 | `evidence-graph` | declared units and typed edges | works; freshness is Phase 4 |
@@ -77,3 +78,6 @@ introduced, observed to fail, and reverted:
 | unregistered `assume` under `verification/` | escape-hatch failure |
 | the same `assume`, registered | passes, and reports it as registered |
 | `V1` unit declared with Verus unpinned | lane escalates `SKIPPED` → `FAIL` |
+| a `tested_symbol` renamed in the source | the battery's `--exact` selection matches nothing, and zero-selected is a lane FAIL |
+| a `tested_symbol` with no target prefix | malformed-symbol failure, never a default target |
+| `test://` evidence with no `tested_symbols` | manifest validation failure — an unrunnable claim is not evidence |

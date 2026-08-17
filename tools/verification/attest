@@ -74,8 +74,12 @@ def main() -> int:
     current = {
         unit["id"]: fingerprint_unit(unit, doc, toolchains, assumptions) for unit in units
     }
+    # Every lane a unit can claim, not the subset that happened to be implemented first.
+    # A lane missing from this tuple loads no records, so every unit claiming it refuses
+    # forever — a refusal no measurement can ever satisfy, which reads as a permanent
+    # defect in the units rather than an absent reader.
     records = {
-        lane: load_records(args.evidence, lane) for lane in ("verus", "lean")
+        lane: load_records(args.evidence, lane) for lane in ("test", "verus", "lean")
     }
 
     # The aggregate verdict is READ, never computed here. This command must never be able

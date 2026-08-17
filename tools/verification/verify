@@ -97,6 +97,7 @@ def _declared_verdict(output: str) -> str | None:
 LANES = [
     ("assumptions", "check-assumptions", False),
     ("generated-model", "check-generated", True),
+    ("test", "verify-tests", True),
     ("verus", "verify-verus", True),
     ("lean", "verify-lean", True),
 ]

@@ -117,6 +117,7 @@ stage_static() {
     && python3 tools/verification/test_invalidation.py \
     && python3 tools/verification/test_attest.py \
     && python3 tools/verification/test_verus_lane.py \
+    && python3 tools/verification/test_test_lane.py \
     && python3 tools/verification/test_measured_inputs.py \
     && python3 tools/verification/test_escape_hatches.py \
     `# Ahead of the verdict, so a host that cannot run the verifier says so in those` \
