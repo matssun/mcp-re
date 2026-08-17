@@ -109,6 +109,8 @@ stage_static() {
     && python3 scripts/proxy_flag_doc_gate.py \
     && python3 scripts/conformance_claims_gate.py --selftest \
     && python3 scripts/conformance_claims_gate.py \
+    && python3 scripts/verification_trigger_gate.py --selftest \
+    && python3 scripts/verification_trigger_gate.py \
     && python3 scripts/cargo_test_target_gate.py --selftest \
     && python3 scripts/cargo_test_target_gate.py \
     && python3 scripts/lifecycle_purity_gate.py --selftest \

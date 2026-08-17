@@ -36,6 +36,17 @@ on:
       - "mcp-re-core/src/**"
       - "mcp-re-http-profile/src/**"
       - "mcp-re-proxy/src/runtime_state.rs"
+      # The build inputs every ReviewFingerprint reads. A dependency bump moves
+      # Cargo.lock, which dirties every declared unit — so a lane that did not
+      # re-run on it would leave `main` carrying attestations over a dependency
+      # graph nothing measured. `scripts/verification_trigger_gate.py` fails the
+      # build if this set ever narrows below the fingerprint's again.
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "mcp-re-core/Cargo.toml"
+      - "mcp-re-http-profile/Cargo.toml"
+      - "mcp-re-proxy/Cargo.toml"
   push:
     branches: [main]
     paths:
@@ -45,6 +56,17 @@ on:
       - "mcp-re-core/src/**"
       - "mcp-re-http-profile/src/**"
       - "mcp-re-proxy/src/runtime_state.rs"
+      # The build inputs every ReviewFingerprint reads. A dependency bump moves
+      # Cargo.lock, which dirties every declared unit — so a lane that did not
+      # re-run on it would leave `main` carrying attestations over a dependency
+      # graph nothing measured. `scripts/verification_trigger_gate.py` fails the
+      # build if this set ever narrows below the fingerprint's again.
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "mcp-re-core/Cargo.toml"
+      - "mcp-re-http-profile/Cargo.toml"
+      - "mcp-re-proxy/Cargo.toml"
   workflow_dispatch:
 
 permissions:
