@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Write the generated assurance views — ADR-MCPRE-059 §9, Phase T3.
+
+Renders every view in `_views.render_all` under `verification/generated/`. Pure: the same
+catalogues produce the same bytes, with no timestamp, no run id and no host detail, because
+a view that differed between two runs would make the drift gate fire on noise and be
+switched off within a week.
+
+`--check` renders without writing and reports what differs. That is the mode
+`check-generated` uses, so the gate and the generator can never disagree about the answer.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _manifest import (  # noqa: E402
+    REPO_ROOT,
+    ManifestError,
+    load_assumptions,
+    load_verification,
+)
+from _theorems import load_theorems  # noqa: E402
+from _views import render_all  # noqa: E402
+
+
+def rendered() -> dict[str, str]:
+    doc = load_verification()
+    theorems = load_theorems({unit["id"] for unit in doc.get("unit", [])})
+    return render_all(theorems, doc, load_assumptions())
+
+
+def differences(views: dict[str, str]) -> list[str]:
+    """Views whose committed bytes differ from what the catalogues render right now.
+
+    Both directions are failures and both are reported: a file that is missing or stale
+    means the catalogues moved without regeneration, and a file whose content differs means
+    either that or a hand edit. The gate does not need to tell them apart — the remedy is
+    the same, and only regeneration produces a file that matches.
+    """
+    out: list[str] = []
+    for relative, content in sorted(views.items()):
+        path = REPO_ROOT / relative
+        if not path.is_file():
+            out.append(f"{relative}: missing")
+        elif path.read_text(encoding="utf-8") != content:
+            out.append(f"{relative}: differs from the catalogues")
+    root = REPO_ROOT / "verification" / "generated"
+    if root.is_dir():
+        expected = {REPO_ROOT / relative for relative in views}
+        for path in sorted(root.rglob("*.md")):
+            if path not in expected:
+                # A file nobody generates cannot be regenerated, so nothing can ever
+                # establish that it is current — and it sits in a directory whose whole
+                # promise is that everything in it is derived.
+                out.append(
+                    f"{path.relative_to(REPO_ROOT)}: not produced by any generator"
+                )
+    return out
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="report drift without writing; the mode check-generated uses",
+    )
+    args = parser.parse_args()
+
+    try:
+        views = rendered()
+    except ManifestError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    if args.check:
+        drift = differences(views)
+        for entry in drift:
+            print(f"FAIL: {entry}", file=sys.stderr)
+        if drift:
+            print(
+                "\nRegenerate with tools/verification/generate-views. A generated view is a\n"
+                "reading of the catalogues; one that disagrees with them is a document that\n"
+                "says something no authority states.",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"generated views: current ({len(views)} view(s))")
+        return 0
+
+    for relative, content in sorted(views.items()):
+        path = REPO_ROOT / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        print(f"  wrote {relative}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
