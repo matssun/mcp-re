@@ -22,6 +22,7 @@ derives, and it is not shown here because this view cannot see the attestations.
 | THM-0003 | Admission verdict integrity | http_profile.admission_currency | unit://http_profile.admission_currency | live |
 | THM-0004 | Admission anti-rollback | http_profile.admission_currency | unit://http_profile.admission_currency | live |
 | THM-0005 | Degraded admission requires deployment opt-in | http_profile.admission_currency | unit://http_profile.admission_currency | live |
+| THM-0006 | Presenter binding | http_profile.admission_currency | unit://http_profile.admission_currency | live |
 | THM-0007 | A typed artifact verifier admits only its own type | http_profile.artifact_typing | unit://http_profile.artifact_typing | live |
 | THM-0008 | No untyped artifact binding leaves the verifier as verified | http_profile.artifact_typing | unit://http_profile.artifact_typing | live |
 | THM-0009 | A presented continuation cannot bypass verification | http_profile.continuation_unbypassability | unit://http_profile.continuation_unbypassability | live |
@@ -77,6 +78,16 @@ derives, and it is not shown here because this view cannot see the attestations.
 **Security consequence.** No default deployment can reach a degraded admission; serving on a last-known snapshot is always a choice someone made.
 
 **Scope — what this does NOT establish.** Establishes the opt-in, not the bound. That a degraded verdict is confined to the propagation window P is enforced in the body and is not a conjunct of this contract. Says nothing about assertion authenticity or freshness (ASM-0012).
+
+**Review requirement.** Owner security-specification review
+
+### THM-0006 — Presenter binding
+
+**Statement.** A successful admission implies the admitted actor named by the assertion is the presenter of this call — the actor the verifier resolved from the request signature.
+
+**Security consequence.** An assertion describing some admitted workload cannot authorize a different presenter merely because the workload itself is admissible. Without it the assertion is a bearer token: anyone whose key the enforcement point resolves could copy an admitted peer's assertion into their own evidence block, derive the matching binding, and pass the gate.
+
+**Scope — what this does NOT establish.** Establishes that the actor named in the assertion equals the presenter argument. It does not establish that the presenter argument is itself correctly resolved from the request signature, which is the caller's obligation. Does not establish authenticity, issuer trust, audience validity, assertion freshness, or validity of the assertion's [nbf, exp] window; verify_admission_assertion is outside this proof cone under ASM-0012.
 
 **Review requirement.** Owner security-specification review
 

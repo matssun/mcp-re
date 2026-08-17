@@ -21,7 +21,7 @@ attestations this view cannot see.
 | object | a change to | re-establishes theorems | propagates to units |
 |---|---|---|---|
 | unit://core.time_rfc3339 | source, contracts or evidence | THM-0002 | _no consumer_ |
-| unit://http_profile.admission_currency | source, contracts or evidence | THM-0003, THM-0004, THM-0005 | _no consumer_ |
+| unit://http_profile.admission_currency | source, contracts or evidence | THM-0003, THM-0004, THM-0005, THM-0006 | _no consumer_ |
 | unit://http_profile.artifact_typing | source, contracts or evidence | THM-0007, THM-0008 | _no consumer_ |
 | unit://http_profile.continuation_binding | source, contracts or evidence | THM-0010 | http_profile.continuation_unbypassability (PROOF_DEPENDENCY) |
 | unit://http_profile.continuation_unbypassability | source, contracts or evidence | THM-0009 | _no consumer_ |
@@ -38,6 +38,7 @@ attestations this view cannot see.
 | THM-0003 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0004 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0005 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0006 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0007 | statement, consequence, scope or review requirement | specification review | THM-0008 |
 | THM-0008 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0009 | statement, consequence, scope or review requirement | specification review | _no dependent_ |

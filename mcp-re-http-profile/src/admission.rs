@@ -233,6 +233,11 @@ impl Default for AdmissionPolicy {
 pub struct VerifiedAdmission {
     pub admission_id: String,
     pub generation: u64,
+    /// The actor the assertion was issued to, which the check has compared against the
+    /// verifier-resolved presenter. Carried on the verdict so the postcondition can state
+    /// the comparison: without it the contract can only say a workload is admitted, and
+    /// nothing would catch a refactor that dropped the presenter check.
+    pub admitted_actor: String,
     pub status: AdmissionStatus,
     /// True when the verdict was reached in degraded mode (authoritative state
     /// unreachable, within the P bound). An auditor can tell a live-confirmed
@@ -390,12 +395,19 @@ fn s_seg_to_b64url(s_seg: &str) -> Result<String, HttpProfileError> {
 //   * a DEGRADED verdict implies the authoritative state was unreachable AND the
 //     deployment opted in — so no default deployment can reach a degraded admission;
 //   * every verdict carries the binding's own generation and `Admitted`, so the value the
-//     caller acts on cannot describe a different call than the one that was checked.
+//     caller acts on cannot describe a different call than the one that was checked;
+//   * the admitted actor IS the presenter, so an assertion describing some admitted
+//     workload cannot authorize a different caller merely because that workload is
+//     admissible. Stated over the verdict rather than left to the body, because the
+//     comparison below is the whole difference between "this caller is admitted" and "an
+//     admitted workload exists somewhere", and a contract silent about it would stay green
+//     through a refactor that dropped it.
 #[cfg_attr(feature = "verify", verus_spec(out =>
     ensures
         out matches Ok(v) ==> {
             &&& v.status == AdmissionStatus::Admitted
             &&& v.generation == binding.generation
+            &&& v.admitted_actor@ == presenter_actor_id@
             &&& !v.degraded ==> (authoritative matches Some(state)
                     && binding.generation == state.generation
                     && state.status == AdmissionStatus::Admitted)
@@ -427,7 +439,8 @@ pub fn check_admission(
     // request asserts — so a borrowed assertion names a different actor and is
     // refused. This is what makes the gate say "this caller is admitted" rather than
     // "an admitted workload exists somewhere".
-    if claims.mcp_re_admitted_actor != presenter_actor_id {
+    let presenter = presenter_actor_id.to_owned();
+    if claims.mcp_re_admitted_actor != presenter {
         return Err(HttpProfileError::AdmissionBindingMismatch);
     }
 
@@ -461,6 +474,7 @@ pub fn check_admission(
             Ok(VerifiedAdmission {
                 admission_id: claims.mcp_re_admission_id,
                 generation: claims.mcp_re_admission_generation,
+                admitted_actor: claims.mcp_re_admitted_actor,
                 status: AdmissionStatus::Admitted,
                 degraded: false,
             })
@@ -483,6 +497,7 @@ pub fn check_admission(
             Ok(VerifiedAdmission {
                 admission_id: claims.mcp_re_admission_id,
                 generation: claims.mcp_re_admission_generation,
+                admitted_actor: claims.mcp_re_admitted_actor,
                 status: AdmissionStatus::Admitted,
                 degraded: true,
             })
@@ -573,6 +588,43 @@ mod tests {
         let v = check(&c, Some(&auth), &AdmissionPolicy::default()).expect("current");
         assert_eq!(v.generation, 5);
         assert!(!v.degraded);
+    }
+
+    /// A borrowed assertion. Genuine, current, signed by the real authority, and
+    /// naming a workload that IS admitted — the only thing wrong with it is that it was
+    /// issued to somebody else.
+    ///
+    /// This battery had no such case: every other test here passes `TEST_ACTOR` as both
+    /// the assertion's actor and the presenter, so the comparison held by construction
+    /// and deleting it left all nine green. Without a presenter check the gate proves
+    /// "some admitted workload exists", not "this caller is admitted", and anyone whose
+    /// key the verifier resolves can copy an admitted peer's assertion into their own
+    /// evidence block and derive the matching binding.
+    #[test]
+    fn an_assertion_issued_to_another_actor_does_not_admit_this_caller() {
+        let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
+        let auth = AuthoritativeAdmission {
+            generation: 5,
+            status: AdmissionStatus::Admitted,
+        };
+        let err = check_admission(
+            &AdmissionBinding::opaque_from(&c),
+            &issue(&c),
+            "client:example.com:did:example:host-b:client-key-2",
+            Some(&auth),
+            crate::ids::PROFILE_TAG,
+            &["mcp.example.com"],
+            &AdmissionPolicy::default(),
+            NOW,
+            resolver(),
+        )
+        .expect_err("an assertion naming another actor must not admit this one");
+        assert!(matches!(err, HttpProfileError::AdmissionBindingMismatch));
+        // And the control: the same assertion, presented by the actor it names, passes.
+        // Without it the case above would also be satisfied by an assertion that is
+        // simply invalid, and would stop testing the presenter comparison at all.
+        check(&c, Some(&auth), &AdmissionPolicy::default())
+            .expect("the actor the assertion names is admitted");
     }
 
     /// The load-bearing case: an assertion that is signed, fresh, and says
