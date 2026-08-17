@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# ADR-MCPRE-059 §6.3 — the security theorem registry.
+#
+# The human security claim layer. A theorem is the proposition a reviewer cares about
+# ("a request cannot be admitted on stale freshness evidence alone"), stated once, with a
+# permanent identifier, above the evidence that supports it.
+#
+# It sits ON TOP OF the existing authorities and duplicates none of them:
+#
+#   this file                 the claim, its consequence, its scope, and two edges —
+#                             which review units support it, which theorems it rests on
+#   verification.toml         [[unit]]: source paths, contracts, evidence URIs, symbols,
+#                             features — everything below the claim
+#   assumptions.toml          ASM-NNNN: what is trusted, and where
+#   the attestations          what actually ran, and over which fingerprint
+#
+# A theorem therefore names NO path, symbol, feature, assumption, provider kind, or
+# evidence target. It resolves downward through `unit://`, and the evidence closure is
+# derived, never written here. Reverse edges (`consumed_by`, unit → theorems it
+# guarantees, dependents) are likewise derived and MUST NOT be stored (§8.2).
+#
+# Validated by `tools/verification/verify --manifests`, strictly: an unknown key is a
+# validation FAILURE, not a silently ignored field. A mistyped security declaration must
+# not read as an absent one.
+
+schema_version = 1
+
+# Required fields on every entry:
+#
+#   id                    stable, never reused: THM-NNNN
+#   title                 one line, the claim as a reviewer would name it
+#   statement             the proposition itself, precise enough to be reviewed
+#   security_consequence  what an attacker cannot do if it holds
+#   scope                 what it does NOT establish — the boundary of the claim
+#   owner                 the review unit that is the semantic authority for it,
+#                         as a `[[unit]]` id declared in verification.toml
+#   review_requirement    who must review a change to the statement
+#   supported_by          `unit://<id>` entries whose evidence supports the claim
+#   depends_on            THM-NNNN entries this claim rests on
+#
+# Optional:
+#
+#   replaced_by           THM-NNNN. Its PRESENCE is what marks a theorem deprecated;
+#                         there is no status string to go stale, and no field a reviewer
+#                         has to remember to flip.
+#
+# There is deliberately no review or approval field. An approval is evidence ABOUT a
+# fingerprint, recorded with the other attestations and keyed by the fingerprint it
+# reviewed (§14.7). A stored `review = "approved"` would not say which proposition was
+# approved, and would make a self-approving edit a one-file operation.
+#
+# ID allocation
+# -------------
+#
+#   * `THM-NNNN`, allocated in ascending order, four digits.
+#   * An ID is PERMANENT. It is never recycled, never renumbered, and never reassigned to
+#     a different proposition — the review history refers to it.
+#   * A theorem may be renamed, restated, decomposed, or deprecated under the same ID. The
+#     fingerprint, not the ID, carries the version: restating a claim changes
+#     `theorem_claim` and takes specification review DIRTY by derivation.
+#   * If a proposition changes so fundamentally that continuity would mislead a reviewer,
+#     allocate a NEW ID and deprecate the old one with `replaced_by`. The deprecated entry
+#     STAYS in this file so historical evidence remains resolvable.
+#   * Removing an entry outright is the one thing the loader cannot catch — it frees the
+#     ID for reuse and severs the history. Deprecate; do not delete.
+#
+# The registry is intentionally EMPTY.
+#
+# ADR-MCPRE-059's THM-0001 is an illustration in the ADR text, not a starter row. Mapping
+# the existing V1 units to real security claims is Phase T4, and it is expected to record
+# "this unit yields no claim worth stating separately" wherever that is the honest answer.
+# A theorem invented to populate the file would be exactly the unsupported claim this
+# layer exists to make visible.

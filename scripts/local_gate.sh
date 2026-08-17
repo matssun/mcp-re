@@ -122,6 +122,7 @@ stage_static() {
     && python3 tools/verification/test_test_lane.py \
     && python3 tools/verification/test_measured_inputs.py \
     && python3 tools/verification/test_escape_hatches.py \
+    && python3 tools/verification/test_theorems.py \
     `# Ahead of the verdict, so a host that cannot run the verifier says so in those` \
     `# words. Same script the CI lanes start with: the environment it checks is the` \
     `# one both places depend on, and it names the fix instead of surfacing as a TOML` \
