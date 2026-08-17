@@ -84,6 +84,7 @@ _UNIT_KEYS = {
     "features",
     "pilot",
     "proved_symbols",
+    "tested_symbols",
 }
 _EDGE_KEYS = {"kind", "from", "to", "contract", "sealed", "sealed_by", "rationale"}
 
@@ -261,6 +262,35 @@ def load_verification() -> dict:
                 f"{uwhere}: class {unit['class']} requires `proved_symbols`. A unit that "
                 f"claims formal evidence must name the symbols proved, or nothing "
                 f"distinguishes a deleted specification from a passing one."
+            )
+        # The same argument one class down. A `test://` URI names a battery, and a battery
+        # with no declared members is a description: the lane would have nothing to select,
+        # and "the tests passed" would mean "no test was asked for".
+        if any(str(entry).startswith("test://") for entry in unit.get("evidence", [])):
+            if not unit.get("tested_symbols"):
+                raise ManifestError(
+                    f"{uwhere}: declares test:// evidence but no `tested_symbols`. A "
+                    f"battery with no named members cannot be run, and an unrunnable "
+                    f"claim is not evidence."
+                )
+            for symbol in unit["tested_symbols"]:
+                target, _, path = str(symbol).partition("#")
+                # The target is required, not defaulted: a defaulted target lets a test
+                # that moved between the lib and an integration target keep reporting under
+                # the one it left.
+                if not path or not (
+                    target == "lib" or (target.startswith("tests/") and target[6:])
+                ):
+                    raise ManifestError(
+                        f"{uwhere}: tested_symbol {symbol!r} names no runnable target; "
+                        f"expected `lib#path::to::test` or `tests/<name>#path::to::test`"
+                    )
+        elif unit.get("tested_symbols"):
+            # Declared members with no `test://` URI claiming them would run a battery
+            # whose result no evidence entry reads — measurement nothing consumes.
+            raise ManifestError(
+                f"{uwhere}: declares `tested_symbols` but no test:// evidence entry "
+                f"claims them, so nothing consumes what the lane would measure."
             )
         contracts.update(unit.get("exported_contracts", []))
 

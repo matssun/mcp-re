@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""The test-evidence lane — ADR-MCPRE-059 §2, §9.
+
+Class V0 is "ordinary code: tests/conformance + Security Review Funnel". That sentence was
+policy with no executable half: units declared `test://` evidence, no lane resolved it, and
+`attest` refused every one of them for want of a record. The refusal was correct — absence
+of measurement is not measurement — but it was permanent, because nothing could ever supply
+the measurement it was waiting for. This lane is that half.
+
+**A `test://` URI is a claim, and a claim must resolve to something that runs.** The URI
+names a battery; `tested_symbols` names the battery's members. The lane selects exactly
+those, by `--exact`, and both directions are gated:
+
+  * a declared symbol that does not run is a FAIL, so deleting or renaming a test breaks
+    the lane instead of quietly shrinking the evidence behind a green unit;
+  * a symbol that runs but is `ignored` or `failed` is a FAIL, because a test that did not
+    execute establishes nothing a test which did not exist would not also establish.
+
+The selection is counted, never assumed. `--exact` matching nothing prints `running 0
+tests` and exits 0, which is this repository's standing hazard — a command exiting 0 having
+measured nothing is worse than a red one — so the lane compares the symbols that reported
+`ok` against the symbols declared and refuses on any difference.
+
+**A symbol names its target, because a test property includes the target the test exists
+in.** `lib#path::to::test` and `tests/dispatch_test#some_test` are different claims even
+when the test names match, and a battery that spans both is run as two selections rather
+than one hopeful filter. A target whose file is feature-gated compiles to zero tests
+without its feature; that is not a quiet pass here, it is the missing-symbol failure above.
+
+The unit's `features` are NOT passed to Cargo. They name the specification feature carrying
+the prover's text (`verify`), which is off in every production build and pulls in vstd;
+running the battery under it would measure a different crate than the one that ships.
+
+Like the Verus lane, the fingerprint is taken BEFORE the tests run and travels with the
+record, so the issuer can tell "these tests passed over this source" from "these tests
+passed over some source".
+"""
+
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _evidence import EvidenceRecord, write_record  # noqa: E402
+from _fingerprint import fingerprint_unit  # noqa: E402
+from _manifest import (  # noqa: E402
+    REPO_ROOT,
+    ManifestError,
+    load_assumptions,
+    load_toolchains,
+    load_verification,
+)
+
+EVIDENCE_STORE = REPO_ROOT / ".verification" / "evidence"
+
+#: libtest's per-test result line: `test block::tests::round_trips ... ok`.
+RESULT_LINE = re.compile(r"^test (\S+) \.\.\. (\w+)", re.MULTILINE)
+
+#: Separates a symbol's target from its path. `#` cannot occur in a Rust path, so the split
+#: is unambiguous and a symbol that omits the target is malformed rather than defaulted —
+#: defaulting it would let a moved test keep reporting under the target it left.
+TARGET_SEP = "#"
+
+
+def claims_test_evidence(unit: dict) -> bool:
+    return any(str(entry).startswith("test://") for entry in unit.get("evidence", []))
+
+
+def unit_crate(unit: dict) -> str | None:
+    """The Cargo package whose targets carry this unit's tests, or None.
+
+    Derived from the declared paths, never configured beside them: a unit whose source
+    moves to another crate must not keep testing the crate it left.
+    """
+    crates = set()
+    for path in unit["paths"]:
+        head = path.split("/", 1)[0]
+        if not (REPO_ROOT / head / "Cargo.toml").is_file():
+            return None
+        crates.add(head)
+    return crates.pop() if len(crates) == 1 else None
+
+
+def target_argv(target: str) -> list[str] | None:
+    """Cargo's selector for one test target, or None if the target is not a known form."""
+    if target == "lib":
+        return ["--lib"]
+    if target.startswith("tests/") and target.count("/") == 1 and target[6:]:
+        return ["--test", target[6:]]
+    return None
+
+
+def group_by_target(symbols: list[str]) -> tuple[dict[str, list[str]], list[str]]:
+    """Split `<target>#<path>` symbols into per-target selections, and the malformed ones."""
+    grouped: dict[str, list[str]] = defaultdict(list)
+    malformed: list[str] = []
+    for symbol in symbols:
+        target, _, path = symbol.partition(TARGET_SEP)
+        if not path or target_argv(target) is None:
+            malformed.append(symbol)
+            continue
+        grouped[target].append(path)
+    return dict(grouped), malformed
+
+
+def run_selection(crate: str, target: str, paths: list[str]) -> tuple[bool, str]:
+    """Run exactly `paths` in one target and say whether all of them passed.
+
+    `check=False` and libtest's own status: piping the run through anything replaces its
+    exit code with the pipeline's, which is how a failed test reads as a success.
+    """
+    argv = ["cargo", "test", "-p", crate, *target_argv(target), "--", "--exact", *paths]
+    proc = subprocess.run(
+        argv,
+        cwd=REPO_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    observed = dict(RESULT_LINE.findall(proc.stdout))
+    passed = {name for name, status in observed.items() if status == "ok"}
+    missing = sorted(set(paths) - passed)
+    if missing:
+        # One message for "never selected" and "selected but did not pass": the remedy
+        # differs, the evidentiary standing does not. Either way the claimed battery did not
+        # run to completion, so the unit has no test evidence from this target.
+        detail = ", ".join(f"{name} ({observed.get(name, 'never ran')})" for name in missing)
+        return False, f"{target}: {len(missing)} of {len(paths)} declared test(s) did not pass: {detail}"
+    if proc.returncode != 0:
+        return False, (
+            f"{target}: every declared test passed but the run exited {proc.returncode}; "
+            "the target did not complete, so the battery's result is unknown"
+        )
+    return True, f"{target}: {len(paths)} passed"
+
+
+def measure_unit(unit: dict) -> tuple[bool, str]:
+    """Whether this unit's whole declared battery passed, and what to record about it."""
+    crate = unit_crate(unit)
+    if crate is None:
+        return False, "the unit's paths name no single Cargo package to test"
+
+    symbols = sorted(unit.get("tested_symbols", []))
+    grouped, malformed = group_by_target(symbols)
+    if malformed:
+        return False, (
+            f"{len(malformed)} tested_symbol(s) name no runnable target "
+            f"({', '.join(malformed)}); expected `lib#path` or `tests/<name>#path`"
+        )
+
+    details: list[str] = []
+    failed = False
+    for target in sorted(grouped):
+        print(f"    {crate} {target}: {len(grouped[target])} test(s)")
+        ok, detail = run_selection(crate, target, grouped[target])
+        details.append(detail)
+        failed = failed or not ok
+    return not failed, "; ".join(details)
+
+
+def main() -> int:
+    try:
+        doc = load_verification()
+        toolchains = load_toolchains()
+        assumptions = load_assumptions()
+    except ManifestError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    units = [unit for unit in doc.get("unit", []) if claims_test_evidence(unit)]
+    if not units:
+        # NOT_REQUIRED, not SKIPPED: the manifest asks nothing of this lane. SKIPPED would
+        # mean it was required and deliberately not run.
+        print("verify-tests: NOT_REQUIRED — no unit declares test:// evidence")
+        print("VERDICT: NOT_REQUIRED")
+        return 0
+
+    failures = 0
+    for unit in units:
+        # Taken before the tests run: the record must say which source was measured, not
+        # which source exists when someone later reads it.
+        measured_at = fingerprint_unit(unit, doc, toolchains, assumptions)["fingerprint"]
+        print(f"verify-tests: {unit['id']}")
+        ok, detail = measure_unit(unit)
+        write_record(
+            EVIDENCE_STORE,
+            EvidenceRecord(
+                unit_id=unit["id"],
+                lane="test",
+                result="pass" if ok else "fail",
+                fingerprint=measured_at,
+                detail=detail,
+            ),
+        )
+        if ok:
+            print(f"  PASS: {detail}")
+        else:
+            print(f"  FAIL: {detail}", file=sys.stderr)
+            failures += 1
+
+    if failures:
+        print(
+            f"\nFAIL: {failures} of {len(units)} unit(s) did not pass their declared "
+            "test battery.",
+            file=sys.stderr,
+        )
+        print("VERDICT: FAIL")
+        return 1
+
+    print(f"\nverify-tests: PASS — {len(units)} unit(s) tested")
+    print("VERDICT: PASS")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
