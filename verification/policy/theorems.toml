@@ -39,6 +39,12 @@ schema_version = 1
 #   supported_by          `unit://<id>` entries whose evidence supports the claim
 #   depends_on            THM-NNNN entries this claim rests on
 #
+# A resolving `supported_by` is a STRUCTURAL fact, not assurance: it says the closure
+# reaches real units and real premises, never that their evidence ran, is fresh, or is
+# unblocked. "Established" is the later conjunction — structural support AND fresh unit
+# evidence AND established dependencies AND fresh specification review AND fresh
+# assumption review — and no tooling at this layer may claim it.
+#
 # Optional:
 #
 #   replaced_by           THM-NNNN. Its PRESENCE is what marks a theorem deprecated;

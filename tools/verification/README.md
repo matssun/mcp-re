@@ -41,9 +41,13 @@ A theorem holds the human claim and two edges: `supported_by = ["unit://…"]` a
 `depends_on = ["THM-…"]`. Everything below the claim keeps its existing owner, so a key
 restating a `[[unit]]` fact is refused by name, and a support edge that resolves to no unit
 fails closed rather than deriving an empty — and therefore vacuously satisfied — closure.
-Establishment is derived: a theorem is established only if a unit supports it and every
-theorem it depends on is established, which is why an unsupported claim may be declared but
-never reads as one.
+Structural support is derived: a theorem is *structurally supported* only if a unit supports
+it and every theorem it depends on is, which is why an unsupported claim may be declared but
+never reads as a supported one. That is a structural property and it is named as one — the
+unit's evidence may still be stale, `BLOCKED`, or resting on a dirty assumption. `established`
+is deliberately reserved for the later conjunction (structural support AND fresh unit evidence
+AND established dependencies AND fresh specification review AND fresh assumption review),
+which T2 makes derivable and T3 displays.
 
 ## Three verdicts, never conflated
 
@@ -95,4 +99,4 @@ introduced, observed to fail, and reverted:
 | a cycle in a theorem's `depends_on` | cycle failure naming the ring |
 | a theorem key restating a `[[unit]]` fact | duplicate-authority failure naming the owning file |
 | a stored `review = "approved"` in the registry | refused — an approval is evidence about a fingerprint |
-| a theorem no unit supports | declared, and reported as not established |
+| a theorem no unit supports | declared, and reported as without a structural support closure |

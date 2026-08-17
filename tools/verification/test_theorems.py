@@ -5,12 +5,12 @@ The single property under test: **a claim that resolves to nothing is refused, n
 satisfied vacuously.**
 
 Every case below is a way a registry could hold a security claim that reads as governed
-while establishing nothing:
+while its support closure resolves to nothing:
 
   * a support edge pointing at a unit that does not exist, which derives an empty evidence
     closure — and an empty closure is satisfied by everything;
   * a dependency, replacement, or owner that resolves nowhere;
-  * a cycle, where each claim is established by the next and none by evidence;
+  * a cycle, where each claim is supported by the next and none by a unit;
   * a mistyped key, which would drop a declaration while looking like one;
   * a key restating a fact `verification.toml` owns, which is how two authorities come to
     disagree;
@@ -32,9 +32,9 @@ sys.path.insert(0, str(HERE))
 
 from _manifest import ManifestError, load_verification  # noqa: E402
 from _theorems import (  # noqa: E402
-    established_theorems,
+    structurally_supported_theorems,
     load_theorems,
-    unestablished_theorems,
+    unsupported_theorems,
     validate_theorems,
 )
 
@@ -80,7 +80,7 @@ def test_a_well_formed_registry_validates():
 def test_an_empty_registry_validates():
     """The honest state before any claim is written. It must not need a placeholder row."""
     validate_theorems(doc(), UNITS)
-    assert established_theorems(doc()) == set()
+    assert structurally_supported_theorems(doc()) == set()
 
 
 # --- identity ------------------------------------------------------------------
@@ -117,34 +117,34 @@ def test_a_support_edge_of_the_wrong_scheme_is_refused():
     )
 
 
-def test_a_theorem_with_no_supporting_unit_is_not_established():
-    """Allowed to be declared — a claim may be stated before it is supported — but it must
-    never read as established. That distinction is what this layer is for."""
+def test_a_theorem_with_no_supporting_unit_has_no_support_closure():
+    """Allowed to be declared — a claim may be stated before it is supported — but its
+    support closure must not resolve. That distinction is what this layer is for."""
     registry = doc(theorem(supported_by=[]))
     validate_theorems(registry, UNITS)
-    assert established_theorems(registry) == set()
-    assert unestablished_theorems(registry) == ["THM-0001"]
+    assert structurally_supported_theorems(registry) == set()
+    assert unsupported_theorems(registry) == ["THM-0001"]
 
 
 def test_a_composed_theorem_is_no_stronger_than_what_it_rests_on():
-    """A supported claim depending on an unsupported one is not established. Otherwise a
-    composition launders an unsupported premise into an established conclusion."""
+    """A supported claim depending on an unsupported one has no support closure of its own.
+    Otherwise a composition launders an unsupported premise into a supported conclusion."""
     registry = doc(
         theorem(id="THM-0001", supported_by=[]),
         theorem(id="THM-0002", depends_on=["THM-0001"]),
     )
     validate_theorems(registry, UNITS)
-    assert established_theorems(registry) == set()
+    assert structurally_supported_theorems(registry) == set()
 
 
-def test_a_supported_composition_over_supported_premises_is_established():
+def test_a_supported_composition_over_supported_premises_resolves():
     registry = doc(
         theorem(id="THM-0001"),
         theorem(id="THM-0002", depends_on=["THM-0001"]),
     )
     validate_theorems(registry, UNITS)
-    assert established_theorems(registry) == {"THM-0001", "THM-0002"}
-    assert unestablished_theorems(registry) == []
+    assert structurally_supported_theorems(registry) == {"THM-0001", "THM-0002"}
+    assert unsupported_theorems(registry) == []
 
 
 # --- dependency edges ----------------------------------------------------------
@@ -159,7 +159,7 @@ def test_a_self_dependency_is_refused():
 
 
 def test_a_cycle_is_refused():
-    """Each claim established by the next, none by evidence."""
+    """Each claim supported by the next, none by a unit."""
     message = refused(
         theorem(id="THM-0001", depends_on=["THM-0002"]),
         theorem(id="THM-0002", depends_on=["THM-0003"]),
@@ -236,10 +236,10 @@ def test_a_deprecated_theorem_stays_resolvable_and_links_its_replacement():
         theorem(id="THM-0002"),
     )
     validate_theorems(registry, UNITS)
-    # Present, so historical evidence resolves — and establishing nothing, so it cannot
+    # Present, so historical evidence resolves — and supporting nothing, so it cannot
     # carry a live closure.
-    assert established_theorems(registry) == {"THM-0002"}
-    assert unestablished_theorems(registry) == []
+    assert structurally_supported_theorems(registry) == {"THM-0002"}
+    assert unsupported_theorems(registry) == []
 
 
 def test_a_replacement_link_to_nothing_is_refused():
@@ -274,15 +274,16 @@ def test_the_live_registry_validates_against_the_live_units():
     units = {unit["id"] for unit in load_verification().get("unit", [])}
     registry = load_theorems(units)
     assert registry["schema_version"] == 1
-    # Every declared theorem is either established or reported as not — no third state.
+    # Every live theorem is either structurally supported or reported as not — no third
+    # state, and neither reading is assurance on its own.
     declared = {entry["id"] for entry in registry.get("theorem", [])}
     live = {
         entry["id"]
         for entry in registry.get("theorem", [])
         if not entry.get("replaced_by")
     }
-    assert established_theorems(registry) | set(unestablished_theorems(registry)) == live
-    assert established_theorems(registry) <= declared
+    assert structurally_supported_theorems(registry) | set(unsupported_theorems(registry)) == live
+    assert structurally_supported_theorems(registry) <= declared
 
 
 if __name__ == "__main__":
