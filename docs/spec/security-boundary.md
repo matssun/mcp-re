@@ -195,19 +195,25 @@ This is the complete positive surface; nothing outside it should be implied.
   #3838) and are **not** required
   for signature verification or for horizontal scale.
 
-### Three separate checks — none replaces another
+### Two live checks, and one that is not live
 
 These are independent proofs and must not be conflated:
 
-- **mTLS** proves the **transport peer** (who holds the TLS client cert).
-- **The object signature** proves the **JSON-RPC signer** (who signed this exact
-  request/response object).
-- **Delegated authorization** proves **whether the signer may act** (is this
-  signer authorized for this method/tool/argument scope).
+- **mTLS** proves the **transport peer**: the party that demonstrates possession
+  of the TLS client credential.
+- **The RFC 9421 HTTP Message Signature** proves the **signer** for the **covered
+  components** of this request or response. Where the signature covers the RFC 9530
+  `Content-Digest`, it also binds the signature to the HTTP message content.
 
-A valid mTLS peer is not automatically a valid signer; a valid signer is not
-automatically authorized. All three checks are required and none substitutes for
-another.
+A valid mTLS peer is not automatically a valid message signer. Both live checks are
+required, and neither substitutes for the other.
+
+**Delegated authorization — whether that signer may act — is not currently a third
+live check.** The reference authorization profile was bound to the retired object
+carrier, `--authz reference` is refused during configuration validation, and no
+released deployment enforces that profile. A future authorization profile would add
+a third check. Today there are two; authorization must be enforced upstream of the
+proxy.
 
 ---
 
