@@ -30,6 +30,7 @@ before any verification toolchain exists — which is exactly the state they are
 | `regenerate-lean` | Charon → LLBC → Aeneas → Lean extraction | refuses — pipeline unpinned |
 | `check-generated` | generated-model drift gate | reports "nothing to drift" |
 | `review-frontier` | minimum review obligation | Phase 4; falls back to everything-dirty |
+| `review` | theorem fingerprints, review state, and the establishment conjunction | works |
 
 `_manifest.py` is the shared loader. Its validation is strict: an unknown key is a
 failure, not an ignored field, because a mistyped security declaration must not read as an
@@ -41,6 +42,12 @@ A theorem holds the human claim and two edges: `supported_by = ["unit://…"]` a
 `depends_on = ["THM-…"]`. Everything below the claim keeps its existing owner, so a key
 restating a `[[unit]]` fact is refused by name, and a support edge that resolves to no unit
 fails closed rather than deriving an empty — and therefore vacuously satisfied — closure.
+`_review.py` derives the human-review axes. An approval is a record naming the fingerprint it
+reviewed (`verification/reviews/`), never a field on the object approved, so weakening a claim
+takes specification review dirty while every prover stays green — the property T2 exists to
+establish. Review records are source, unlike attestations, because a human approval is not
+re-derivable by re-running anything.
+
 Structural support is derived: a theorem is *structurally supported* only if a unit supports
 it and every theorem it depends on is, which is why an unsupported claim may be declared but
 never reads as a supported one. That is a structural property and it is named as one — the
@@ -100,3 +107,9 @@ introduced, observed to fail, and reverted:
 | a theorem key restating a `[[unit]]` fact | duplicate-authority failure naming the owning file |
 | a stored `review = "approved"` in the registry | refused — an approval is evidence about a fingerprint |
 | a theorem no unit supports | declared, and reported as without a structural support closure |
+| a theorem statement weakened, prover untouched | specification review `STALE_CLAIM`, unit fingerprint unmoved |
+| a premise restated two levels down | every claim above it `STALE_DEPENDENCY_CLAIM` |
+| `review_requirement` relaxed | `STALE_REVIEW_REQUIREMENT` — an approval under a stronger bar is not one under a weaker |
+| a review record carrying `approved: true` | dropped by the closed record schema; the axis reads `UNREVIEWED` |
+| a review record predating the component set | `UNKNOWN`, never `REVIEWED` |
+| a stored approval key in any policy registry | `registry_approval_gate` failure naming the file and key |

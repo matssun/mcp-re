@@ -148,6 +148,28 @@ def _toolchain_identity(toolchains: dict) -> dict:
     return identity
 
 
+def canonical_digest(value) -> str:
+    """The one encoding every fingerprint in this module uses.
+
+    Single function rather than an inlined `json.dumps` per call site, because "how a
+    fingerprint is encoded" is exactly the fact that must not have two implementations: two
+    encoders that agree today and diverge later would make two records incomparable while
+    both look well-formed.
+    """
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def assumption_digest(entry: dict) -> str:
+    """A digest of WHAT AN ASSUMPTION TRUSTS — its whole registry entry.
+
+    Exposed because two axes read it: a unit's `trusted_assumptions` component, and the
+    assumption review axis, which is fresh only while the entry a reviewer ratified still
+    hashes the same.
+    """
+    return canonical_digest(entry)
+
+
 def _trusted_assumptions(unit_id: str, assumptions: dict) -> dict[str, str]:
     """Each in-scope assumption's id, mapped to a digest of WHAT IT TRUSTS.
 
@@ -159,8 +181,7 @@ def _trusted_assumptions(unit_id: str, assumptions: dict) -> dict[str, str]:
     for entry in assumptions.get("assumption", []):
         if f"unit://{unit_id}" not in entry.get("scope", []):
             continue
-        canonical = json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-        out[entry["id"]] = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        out[entry["id"]] = assumption_digest(entry)
     return out
 
 
@@ -205,12 +226,96 @@ def fingerprint_unit(unit: dict, doc: dict, toolchains: dict, assumptions: dict)
         "threat_model_revision": doc.get("threat_model_revision"),
         "review_policy_revision": doc["policy_revision"],
     }
-    canonical = json.dumps(
-        components, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    )
     return {
         "unit_id": unit["id"],
-        "fingerprint": "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        "fingerprint": canonical_digest(components),
+        "components": components,
+    }
+
+
+# ---------------------------------------------------------------------------
+# The theorem axis — ADR-MCPRE-059 §14.1, §14.3, §14.7
+# ---------------------------------------------------------------------------
+#
+# A theorem fingerprint is SEPARATE from the fingerprint of the units that support it, and
+# the separation is the whole mechanism §14.3 asks for:
+#
+#   * A theorem's supporting unit fingerprints are NOT components here. If they were,
+#     editing a line of Rust would invalidate the owner's approval of the specification —
+#     collapsing the proof axis and the specification-review axis into the single bit
+#     §14.7 exists to prevent.
+#   * Conversely a unit fingerprint carries no theorem component, so restating a claim
+#     leaves the prover green. That is exactly the situation the mutation test pins: the
+#     theorem moves from F1 to F2 while the review record still names F1, so specification
+#     review derives DIRTY with no legislative rule and no stored status string.
+#
+# Whether the two axes are BOTH fresh is a conjunction, computed in `_review`, and it is
+# the only place the word "established" is allowed to appear.
+
+#: Versioned independently of the unit encoding. Bumping one must not invalidate the other:
+#: they certify different things and are compared separately.
+THEOREM_ENCODING_VERSION = 1
+
+
+def _claim_digest(entry: dict) -> str:
+    """The canonical digest of the human claim — §14.1's `theorem_claim`.
+
+    Exactly `statement + security_consequence + scope`, as the ADR names them. `title` is
+    excluded because it is a label for humans, not part of the proposition; renaming a
+    theorem must not invalidate a review of what it says.
+    """
+    return canonical_digest(
+        {
+            "statement": entry["statement"],
+            "security_consequence": entry["security_consequence"],
+            "scope": entry["scope"],
+        }
+    )
+
+
+def _dependency_closure(theorem_id: str, by_id: dict[str, dict]) -> dict[str, str]:
+    """The transitive `depends_on` closure, each premise mapped to ITS claim digest.
+
+    Ids alone would let a premise be weakened — its statement narrowed, its scope widened —
+    without any dependent theorem moving, which is the composition-shaped version of the
+    same false green `trusted_assumptions` closes one layer down. The closure is transitive
+    because a claim rests on everything underneath it, not only its direct premises.
+
+    The registry's loader rejects cycles, so the walk terminates; `seen` is kept anyway, as
+    a fingerprint that could be made to hang by a malformed input is a denial of the gate.
+    """
+    out: dict[str, str] = {}
+    stack = list(by_id[theorem_id].get("depends_on", []))
+    seen: set[str] = {theorem_id}
+    while stack:
+        dep = stack.pop()
+        if dep in seen or dep not in by_id:
+            continue
+        seen.add(dep)
+        out[dep] = _claim_digest(by_id[dep])
+        stack.extend(by_id[dep].get("depends_on", []))
+    return out
+
+
+def fingerprint_theorem(entry: dict, theorems: dict) -> dict:
+    """Deterministic fingerprint over one theorem's specification.
+
+    `review_requirement` participates: an approval given under "Owner security-specification
+    review" is not an approval under a weaker requirement, so relaxing who must review is a
+    change to what the approval meant. Leaving it out would make the one edit that lowers
+    the review bar the one edit that dirties nothing.
+    """
+    by_id = {row["id"]: row for row in theorems.get("theorem", [])}
+    components = {
+        "encoding_version": THEOREM_ENCODING_VERSION,
+        "theorem_id": entry["id"],
+        "theorem_claim": _claim_digest(entry),
+        "theorem_dependencies": _dependency_closure(entry["id"], by_id),
+        "theorem_review_requirement": entry["review_requirement"],
+    }
+    return {
+        "theorem_id": entry["id"],
+        "fingerprint": canonical_digest(components),
         "components": components,
     }
 
