@@ -155,6 +155,61 @@ def check_filters(root: Path, targets: dict[str, set[str]]) -> list[str]:
     return failures
 
 
+def manifest_battery_targets(root: Path) -> list[tuple[str, str]]:
+    """Every (unit id, test binary) the verification manifest declares a battery in."""
+    import tomllib
+
+    manifest = root / "verification" / "policy" / "verification.toml"
+    if not manifest.is_file():
+        return []
+    doc = tomllib.load(manifest.open("rb"))
+    return [
+        (unit["id"], str(symbol).partition("#")[0][len("tests/"):])
+        for unit in doc.get("unit", [])
+        for symbol in unit.get("tested_symbols", [])
+        if str(symbol).partition("#")[0].startswith("tests/")
+    ]
+
+
+def check_manifest(root: Path, targets: dict[str, set[str]]) -> list[str]:
+    """Every `tests/<name>#…` battery member in the verification manifest names a real
+    target in its unit's crate.
+
+    The sixth table naming test binaries, and the reason this gate keeps growing sources:
+    `verification/policy/verification.toml` declares each review unit's test battery by
+    target, so renaming a test binary breaks a unit's evidence the same way it breaks a
+    release-gate step. The verification lane catches it too — `cargo test --test <missing>`
+    exits 101 and the declared symbols never run — but only after a full build, and only
+    on the runs that lane is triggered for.
+    """
+    import tomllib
+
+    manifest = root / "verification" / "policy" / "verification.toml"
+    if not manifest.is_file():
+        return []
+    doc = tomllib.load(manifest.open("rb"))
+    failures: list[str] = []
+    for unit in doc.get("unit", []):
+        crates = {str(path).split("/", 1)[0] for path in unit.get("paths", [])}
+        crate = crates.pop() if len(crates) == 1 else None
+        for symbol in unit.get("tested_symbols", []):
+            target, _, _path = str(symbol).partition("#")
+            if not target.startswith("tests/"):
+                continue
+            binary = target[len("tests/"):]
+            known = targets.get(crate, set()) if crate in targets else {
+                name for names in targets.values() for name in names
+            }
+            if binary not in known:
+                where = f"in package '{crate}'" if crate in targets else "anywhere"
+                failures.append(
+                    f"verification/policy/verification.toml: unit '{unit['id']}' declares "
+                    f"`{symbol}` but `{binary}` names no test target {where} — the unit's "
+                    "declared battery cannot run, so its evidence would refuse"
+                )
+    return failures
+
+
 def check(root: Path, targets: dict[str, set[str]]) -> list[str]:
     every = {name for names in targets.values() for name in names}
     failures: list[str] = []
@@ -224,6 +279,44 @@ def selftest() -> int:
                 failed = True
                 print(f"        got {failures}")
 
+    manifest_cases = [
+        (
+            "a battery naming a target that exists",
+            'paths = ["pkg/src/a.rs"]\ntested_symbols = ["tests/real_test#one"]\n',
+            "",
+        ),
+        (
+            "a battery naming a target that does not exist",
+            'paths = ["pkg/src/a.rs"]\ntested_symbols = ["tests/ghost_test#one"]\n',
+            "names no test target",
+        ),
+        (
+            "a lib member names no binary and is not checked here",
+            'paths = ["pkg/src/a.rs"]\ntested_symbols = ["lib#a::tests::one"]\n',
+            "",
+        ),
+        (
+            "a unit spanning two crates falls back to the union of all targets",
+            'paths = ["pkg/src/a.rs", "other/src/b.rs"]\n'
+            'tested_symbols = ["tests/other_test#one"]\n',
+            "",
+        ),
+    ]
+    for label, body, expected in manifest_cases:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            policy = root / "verification" / "policy"
+            policy.mkdir(parents=True)
+            (policy / "verification.toml").write_text(
+                f'[[unit]]\nid = "u"\n{body}', encoding="utf-8"
+            )
+            failures = check_manifest(root, targets)
+            ok = not failures if not expected else any(expected in f for f in failures)
+            print(f"  {'ok  ' if ok else 'FAIL'}  {label}")
+            if not ok:
+                failed = True
+                print(f"        got {failures}")
+
     if failed:
         print("cargo test-target gate: SELFTEST FAILED")
         return 1
@@ -236,7 +329,11 @@ def main(argv: list[str]) -> int:
         return selftest()
 
     targets = cargo_test_targets(REPO)
-    failures = check(REPO, targets) + check_filters(REPO, targets)
+    failures = (
+        check(REPO, targets)
+        + check_filters(REPO, targets)
+        + check_manifest(REPO, targets)
+    )
     if failures:
         print("cargo test-target gate: FAILED")
         for failure in failures:
@@ -248,7 +345,13 @@ def main(argv: list[str]) -> int:
         for pattern in SCAN_GLOBS
         for p in REPO.glob(pattern)
     )
-    print(f"cargo test-target gate: OK — {named} named `--test` lanes all exist")
+    # Both scopes are reported, because a summary naming only the lanes would read the
+    # same whether the manifest was examined or silently absent.
+    batteries = manifest_battery_targets(REPO)
+    print(
+        f"cargo test-target gate: OK — {named} named `--test` lanes and "
+        f"{len(batteries)} manifest battery target(s) all exist"
+    )
     return 0
 
 
