@@ -28,7 +28,7 @@ members = [
 
 [workspace.package]
 edition = "2021"
-version = "0.15.0"
+version = "0.16.0"
 license = "Apache-2.0"
 authors = ["Mats Sundvall"]
 repository = "https://github.com/matssun/mcp-re"
@@ -187,3 +187,33 @@ bytes = "1"
 lto = true
 codegen-units = 1
 opt-level = 3
+
+# Development build speed. None of this changes what is compiled — only how much debug
+# information is carried while doing it, which on this workspace is the dominant cost.
+#
+# The workspace links 85 test binaries per feature lane, each statically pulling in rustls,
+# ring, tokio and (in the feature lane) the AWS and Google SDKs, etcd and redis. Full
+# DWARF for every one of those dependencies is emitted, written, and then linked into every
+# binary that touches them, and none of it is ever read: nobody steps through `ring`.
+[profile.dev]
+# Enough for a symbolicated backtrace — file and line — without full DWARF for locals and
+# types. Panics in tests still name the failing line, which is the only thing this
+# workspace's debug information is actually used for.
+debug = "line-tables-only"
+# Leave debug info in the object files instead of running `dsymutil` to build a .dSYM
+# bundle per binary. That step is pure overhead when nothing consumes the bundle.
+split-debuginfo = "unpacked"
+
+# Dependencies get NO debug information at all. This is the large one: first-party code is
+# a small fraction of the graph, and the debug symbols for the other ~230 crates are most
+# of what makes both the build slow and `target/` enormous.
+[profile.dev.package."*"]
+debug = false
+
+# The test profile inherits from dev, but state it rather than rely on inheritance holding
+# after a future edit to either.
+[profile.test]
+debug = "line-tables-only"
+
+[profile.test.package."*"]
+debug = false

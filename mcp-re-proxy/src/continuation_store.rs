@@ -165,6 +165,14 @@ const CONTINUATION_KEY_DOMAIN: &[u8] = b"mcp-re/continuation-key/v1";
 ///
 /// Every field is length-prefixed so no tuple can be spelled as a different one by
 /// moving a boundary between them.
+///
+/// `actor_id` is `role:trust_domain:subject:keyid`, so the scope is the KEY, not the
+/// subject: both legs must be signed with the same key. This is a narrower identity than
+/// the replay tier's `principal`, which drops the keyid deliberately
+/// (`mcp_re_http_profile::replay`) — the two co-located designs do not use one notion of
+/// "the same actor", and the difference is load-bearing in both directions. Here it is
+/// what keeps a second key from collecting a human approval it did not ask for; there it
+/// is what keeps one subject's rotation from reading as several budgets.
 pub fn continuation_key(audience_id: &str, actor_id: &str, request_state: &[u8]) -> String {
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();

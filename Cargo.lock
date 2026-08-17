@@ -218,6 +218,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
+name = "convert_case"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
+
+[[package]]
 name = "core-foundation"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -963,7 +969,7 @@ checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
 
 [[package]]
 name = "mcp-re-client"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "libc",
  "mcp-re-client-core",
@@ -981,7 +987,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-client-core"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "mcp-re-core",
  "mcp-re-http-profile",
@@ -991,7 +997,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-client-proxy"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "mcp-re-client-core",
  "mcp-re-core",
@@ -1000,13 +1006,12 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-conformance"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "mcp-re-client-core",
  "mcp-re-core",
  "mcp-re-host",
  "mcp-re-http-profile",
- "mcp-re-proxy",
  "mcp-re-test-paths",
  "serde",
  "serde_json",
@@ -1015,7 +1020,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-core"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "base64 0.23.0",
  "ed25519-dalek",
@@ -1024,11 +1029,14 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
+ "verus_builtin",
+ "verus_builtin_macros",
+ "vstd",
 ]
 
 [[package]]
 name = "mcp-re-demo"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "mcp-re-core",
  "mcp-re-host",
@@ -1046,7 +1054,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-host"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "getrandom 0.4.3",
  "mcp-re-client-core",
@@ -1057,7 +1065,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-http-profile"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "base64 0.23.0",
  "ciborium",
@@ -1067,14 +1075,16 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "verus_builtin",
+ "verus_builtin_macros",
+ "vstd",
 ]
 
 [[package]]
 name = "mcp-re-policy"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "mcp-re-core",
- "mcp-re-host",
  "serde",
  "serde_json",
  "thiserror",
@@ -1082,7 +1092,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-proxy"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "asn1-rs",
  "base64 0.23.0",
@@ -1124,11 +1134,11 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-test-paths"
-version = "0.15.0"
+version = "0.16.0"
 
 [[package]]
 name = "mcp-re-transport"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "mcp-re-client-core",
  "mcp-re-client-proxy",
@@ -1956,6 +1966,71 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "verus_builtin"
+version = "0.0.0-2026-08-09-0044"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5f2985ebd252c492375e32f2bfcff6e6a04523009a0d624785d3468f3729158"
+
+[[package]]
+name = "verus_builtin_macros"
+version = "0.0.0-2026-08-09-0044"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57091b5661094900006f07621654a455ecf8ab40efc22981cb39b773ff7bc21c"
+dependencies = [
+ "convert_case",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+ "synstructure",
+ "verus_prettyplease",
+ "verus_syn",
+]
+
+[[package]]
+name = "verus_prettyplease"
+version = "0.0.0-2026-08-09-0044"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51fc115de5fb3806bc362060bb683024660ed2bc13c1183d1f01d464e4537139"
+dependencies = [
+ "proc-macro2",
+ "verus_syn",
+]
+
+[[package]]
+name = "verus_state_machines_macros"
+version = "0.0.0-2026-08-02-0125"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93f77ff8d121edb1bf2651335769a80a2f611da8573c3b498434a66b3162805f"
+dependencies = [
+ "indexmap",
+ "proc-macro2",
+ "quote",
+ "verus_syn",
+]
+
+[[package]]
+name = "verus_syn"
+version = "0.0.0-2026-08-02-0125"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f17237ea6d267e457d53ce36f55b315fc9edd26eb88c765dd95e035c0b415869"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
+name = "vstd"
+version = "0.0.0-2026-08-09-0044"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "512e38f177f75c473a03121bf0934a276468f78fea84c073f979d6670e862705"
+dependencies = [
+ "verus_builtin",
+ "verus_builtin_macros",
+ "verus_state_machines_macros",
+]
 
 [[package]]
 name = "want"

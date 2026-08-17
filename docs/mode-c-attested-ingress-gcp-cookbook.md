@@ -4,6 +4,14 @@
 (attested ingress)** in front of an `mcp-re-proxy` node on Google Cloud, and anyone
 reviewing what that posture does and does **not** prove.
 
+> **Mode C is NOT DEPLOYABLE as of v0.16.** `--transport-binding attested-ingress` is
+> refused by configuration validation: the proxy will not start with it. The mode is
+> retained as a future capability rather than removed, and its verifier keeps its tests,
+> but admitting it requires first stating what an attestor is permitted to assert and where
+> the node's own authority begins — attestation must not become authority by implication.
+> Until that specification lands, everything below describes a posture you cannot run.
+> Read it as a design record, not as an installation guide.
+
 **Status: NON-NORMATIVE.** This cookbook is the Google-specific companion to
 [ADR-MCPS-023 §C](https://github.com/matssun/mcp-re/discussions/372) (§C4). The **normative** surface is only the
 abstract contract in the ADR: the `mcp-re/lb-ingress-assertion/v2` field set, the
@@ -28,8 +36,8 @@ importantly, how to avoid the ways it can quietly become insecure.
 
 ## 1. What Mode C is (and is not)
 
-Mode C is **attested delegation**, an explicit opt-in posture that is legitimately
-admitted under `--strict`. It is **NOT** end-to-end client↔node mTLS (Mode A), and
+Mode C is **attested delegation**, an explicit opt-in posture. It is **NOT**
+end-to-end client↔node mTLS (Mode A), and
 the node **never** labels it `end_to_end_mtls`. In Mode C a controlled ingress
 attestor terminates or receives validated client mTLS, checks certificate
 revocation, and Ed25519-signs a request-bound assertion the node verifies over a
@@ -42,13 +50,13 @@ of the client key and **remains in the trusted computing base**.
 | Proof-of-possession witnessed by | the node | the **load balancer** (in the TCB) |
 | Node trusts | the client cert directly | the **attestor's signature** over the request-bound assertion |
 | Guarantee string | `end_to_end_mtls` | `attested_ingress_delegation` |
-| Strict mode | default | explicit opt-in |
+| Availability | the default, and the only binding that starts | refused by configuration validation |
 
 Use Mode C when you cannot terminate client mTLS at the node (a managed L7 load
 balancer sits in front and you want its DoS/TLS/routing features), but you still
 want a **cryptographic, per-request** binding of the client identity to the exact
-request — stronger than a forwarded, spoofable identity header (Mode B, which
-`--strict` rejects).
+request — stronger than a forwarded, spoofable identity header (Mode B, which is
+refused).
 
 ---
 
@@ -270,7 +278,6 @@ fail-closed inputs:
 
 ```
 mcp-re-proxy \
-  --strict \
   --transport-binding attested-ingress \
   --ingress-attestor-key attestor-1:<base64url-ed25519-public-key> \
   --ingress-identity   spiffe://example.org/ingress-attestor-1 \

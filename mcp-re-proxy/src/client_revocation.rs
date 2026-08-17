@@ -84,8 +84,9 @@ struct IssuerCrl {
     /// Revoked serials, each with leading zero bytes stripped so the two DER INTEGER
     /// spellings of the same number compare equal.
     revoked: HashSet<Vec<u8>>,
-    /// `nextUpdate`, if the CRL carries one. RFC 5280 permits its omission, and a CRL
-    /// without one never falls out of force (the same reading `crl_freshness` takes).
+    /// `nextUpdate`. RFC 5280 permits its omission, but a CRL without one is refused
+    /// at load — at startup and on every reload — so no index reaches this type
+    /// without it. The `Option` is the parse result, not an admissible state.
     next_update_unix: Option<i64>,
 }
 
@@ -358,6 +359,43 @@ mod tests {
             idx.verdict(ISSUER, b"\x01\x02\x03", 9_999),
             RevocationVerdict::Revoked,
             "a stale list still knows what it revoked"
+        );
+    }
+
+    /// PREMISE OF `tls_plane`'s POST-OWNER CONTRACT (ADR-MCPRE-056 §I.5.1).
+    ///
+    /// This is not ordinary revocation coverage. `TlsPlane` lets its serving snapshot
+    /// outlive the plane and perform NO fail-closed transition on drop, unlike the trust
+    /// and signing planes. That is only safe because an unrefreshed CRL converges on
+    /// REFUSING its issuer rather than on admitting it — which is what this asserts.
+    ///
+    /// The second half shows what the contract rests on: flip `allow_unknown_status` and
+    /// the same expired CRL starts ADMITTING. Production wires it to a hard `false` on
+    /// every verifier builder, with no operator knob.
+    ///
+    /// **If a knob for `allow_unknown_status` is introduced, `TlsPlane`'s post-owner
+    /// contract must be re-derived before that change lands** — a surviving snapshot would
+    /// otherwise become exactly the frozen authorization state `trust_plane` fails closed
+    /// to avoid.
+    #[test]
+    fn an_expired_crl_refuses_its_issuer_rather_than_admitting_it() {
+        let unrefreshed = index(&[], Some(5_000), false);
+        assert!(
+            unrefreshed.admits(ISSUER, b"\x09", 4_999),
+            "in force before nextUpdate, so an unlisted serial is admitted"
+        );
+        assert!(
+            !unrefreshed.admits(ISSUER, b"\x09", 5_000),
+            "past nextUpdate an unrefreshed CRL must refuse its issuer, not admit it — \
+             this is what lets a TLS snapshot safely outlive its reload worker"
+        );
+
+        // The counterfactual, stated so the dependency is visible rather than implied.
+        let if_unknown_were_admissible = index(&[], Some(5_000), true);
+        assert!(
+            if_unknown_were_admissible.admits(ISSUER, b"\x09", 5_000),
+            "with unknown status admissible the same expired CRL admits — the premise \
+             behind TlsPlane's post-owner contract would no longer hold"
         );
     }
 

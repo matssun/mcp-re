@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""The security evidence graph — ADR-MCPRE-059 §4, §5, Phase 4.
+
+A semantic overlay on the Cargo graph, not a replacement for it. Cargo answers "which
+package depends on which"; this answers "which security guarantee does the consumer rely
+on, is it proven or only reviewed, which test is evidence for it, which assumption makes
+the proof possible, and did the producer's contract change while its source did".
+
+Phase 4 derives state. Freshness is computed from the attestation store by `_graph`, never
+asserted: a unit with no attestation is UNKNOWN, which is dirty, and there is no path
+through this command from "could not establish" to FRESH.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _fingerprint import fingerprint_unit  # noqa: E402
+from _graph import evaluate, load_attestations  # noqa: E402
+from _manifest import (  # noqa: E402
+    REPO_ROOT,
+    ManifestError,
+    load_assumptions,
+    load_toolchains,
+    load_trust_boundaries,
+    load_verification,
+    unresolved_pins,
+)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--json", action="store_true", help="machine-readable output")
+    parser.add_argument(
+        "--attestations",
+        type=Path,
+        default=REPO_ROOT / ".verification" / "attestations",
+        help="attestation store to derive freshness against",
+    )
+    args = parser.parse_args()
+
+    try:
+        doc = load_verification()
+        assumptions = load_assumptions()
+        boundaries = load_trust_boundaries()
+        toolchains = load_toolchains()
+    except ManifestError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    units = doc.get("unit", [])
+    edges = doc.get("edge", [])
+    unresolved = unresolved_pins(toolchains)
+    current = {
+        unit["id"]: fingerprint_unit(unit, doc, toolchains, assumptions) for unit in units
+    }
+    derived = evaluate(units, edges, current, load_attestations(args.attestations))
+
+    graph = {
+        "policy_revision": doc["policy_revision"],
+        "unknown_is_dirty": doc["unknown_is_dirty"],
+        "units": [
+            {
+                "id": unit["id"],
+                "class": unit["class"],
+                "paths": unit["paths"],
+                "exported_contracts": unit.get("exported_contracts", []),
+                "evidence": unit.get("evidence", []),
+                "state": derived["states"][unit["id"]][0],
+                "reason": derived["states"][unit["id"]][1],
+            }
+            for unit in units
+        ],
+        "edges": [
+            {
+                "kind": edge["kind"],
+                "from": edge["from"],
+                "to": edge["to"],
+                "sealed": bool(edge.get("sealed")),
+            }
+            for edge in edges
+        ],
+        "assumptions": len(assumptions.get("assumption", [])),
+        # ADR-MCPRE-059 TRUSTS_ASSUMPTION, materialized. Reported per assumption rather
+        # than per unit so that a shared trust root is visible as one node several
+        # theorems stand on, instead of disappearing behind their separate green badges.
+        # Without this view, N units trusting one un-`ensures`d seam read as N independent
+        # security results; they are not.
+        "trusts_assumption": {
+            asm_id: sorted(
+                unit["id"] for unit in units if asm_id in unit.get("assumptions", [])
+            )
+            for asm_id in sorted(
+                {
+                    asm_id
+                    for unit in units
+                    for asm_id in unit.get("assumptions", [])
+                }
+            )
+        },
+        "trust_boundaries": [entry["id"] for entry in boundaries.get("boundary", [])],
+        "unresolved_toolchain_pins": unresolved,
+        "review_closure": derived["review_closure"],
+        "context_closure": derived["context_closure"],
+    }
+
+    if args.json:
+        print(json.dumps(graph, indent=2, sort_keys=True))
+        return 0
+
+    print(f"evidence graph @ policy {doc['policy_revision']}")
+    print(f"  units              {len(units)}")
+    for unit in units:
+        contracts = len(unit.get("exported_contracts", []))
+        state = derived["states"][unit["id"]][0]
+        print(
+            f"    {unit['id']:<32} {unit['class']}  {state:<14} "
+            f"contracts={contracts}  evidence={len(unit.get('evidence', []))}"
+        )
+    print(f"  typed edges        {len(edges)}")
+    sealed = sum(1 for edge in edges if edge.get("sealed"))
+    print(f"    sealed           {sealed}")
+    print(f"  assumptions        {graph['assumptions']}")
+    # Shared trust roots first, and named. An assumption several theorems stand on is one
+    # node, not several independent results, and the dashboard must not let it read as the
+    # latter (ADR-MCPRE-059 TRUSTS_ASSUMPTION).
+    trusts = graph["trusts_assumption"]
+    shared = {asm: ids for asm, ids in trusts.items() if len(ids) > 1}
+    print(f"    trusted by >1 unit {len(shared)}")
+    for asm, ids in sorted(shared.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        print(f"      {asm}  <- {len(ids)} units: {', '.join(ids)}")
+    for asm, ids in sorted(trusts.items()):
+        if len(ids) == 1:
+            print(f"      {asm}  <- {ids[0]}")
+    print(f"  trust boundaries   {len(graph['trust_boundaries'])}")
+    if unresolved:
+        print(f"  unresolved pins    {', '.join(unresolved)}")
+    print(f"  review closure     {len(derived['review_closure'])} unit(s)")
+    print(f"  context closure    {len(derived['context_closure'])} unit(s)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -108,8 +108,7 @@ impl Drop for Scratch {
 
 // ---- the real delegated-required server ------------------------------------
 
-fn server_config(replay_path: &std::path::Path) -> mcp_re_proxy::cli::Config {
-    let replay_path = replay_path.to_string_lossy().into_owned();
+fn server_config() -> mcp_re_proxy::deployment_request::DeploymentRequest {
     let args: Vec<String> = [
         "--bind",
         "127.0.0.1:8443",
@@ -135,10 +134,10 @@ fn server_config(replay_path: &std::path::Path) -> mcp_re_proxy::cli::Config {
         TARGET,
         "--route",
         "a",
-        "--replay-cache",
-        "file",
-        "--replay-path",
-        &replay_path,
+        "--replay-redis-url",
+        "redis://127.0.0.1:6379",
+        "--replay-durability-tier",
+        "redis-wait-quorum:1:100",
         "--delegated-trust-epoch",
         EPOCH,
         "--trust-domain",
@@ -179,10 +178,9 @@ fn server_resolver() -> ActorResolver {
     })
 }
 
-fn build_server(replay_path: &std::path::Path) -> HttpProfileProxy {
-    let config = server_config(replay_path);
-    let wiring = mcp_re_proxy::build_delegated_signing(&config, root_key())
-        .expect("build delegated signing wiring");
+fn build_server(backend_reply: &'static str) -> HttpProfileProxy {
+    let config = server_config();
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
     let mut rotor = wiring.rotor;
     rotor.rotate(NOW).expect("first delegated key");
     let expected_audience = AudienceTuple {
@@ -198,9 +196,7 @@ fn build_server(replay_path: &std::path::Path) -> HttpProfileProxy {
             fleet_strict: false,
             tier: None,
         },
-        Box::new(|_forwarded: &[u8]| -> Vec<u8> {
-            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
-        }),
+        Box::new(move |_forwarded: &[u8]| -> Vec<u8> { backend_reply.as_bytes().to_vec() }),
         300,
         Arc::clone(&wiring.signer),
     )
@@ -302,6 +298,18 @@ impl Drop for Sidecar {
 }
 
 fn start_sidecar(scratch: &Scratch, default_route: Option<&str>) -> Sidecar {
+    start_sidecar_with_backend(
+        scratch,
+        default_route,
+        r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#,
+    )
+}
+
+fn start_sidecar_with_backend(
+    scratch: &Scratch,
+    default_route: Option<&str>,
+    backend_reply: &'static str,
+) -> Sidecar {
     publish_manifest(&scratch.join("manifest.json"), 1, false);
     let trust = trust_config(scratch);
     let mut loader = AnchorLoader::new(&trust).expect("loader");
@@ -327,7 +335,7 @@ fn start_sidecar(scratch: &Scratch, default_route: Option<&str>) -> Sidecar {
     };
 
     let transport = InProcessServer {
-        server: Arc::new(build_server(&scratch.join("replay"))),
+        server: Arc::new(build_server(backend_reply)),
         rt: tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -347,6 +355,7 @@ fn start_sidecar(scratch: &Scratch, default_route: Option<&str>) -> Sidecar {
         default_route: default_route.map(str::to_owned),
         request_lifetime_secs: 300,
         max_in_flight: 8,
+        allow_any_host: false,
         // A FIXED clock, matching the server's: the point of this lane is the listener
         // and the anchors, not clock skew, and a fixed pair keeps the freshness gate
         // out of the way of what is being measured.
@@ -559,6 +568,58 @@ fn a_configured_default_route_serves_a_fixed_path() {
     assert_eq!(reply.verified_kind.as_deref(), Some("success"));
 }
 
+/// ADR-MCPRE-058 §10: a verified rejection must carry its execution / retry contract
+/// all the way to the party that decides whether to retry.
+///
+/// The ambassador replaced every verified receipt with a fixed generic JSON-RPC error —
+/// no wire code, no disposition — and served it as 200. A local agent receiving a
+/// post-dispatch refusal then saw a bare error and re-invoked, executing the side effect
+/// a second time. Here the server refuses AFTER the backend has run, so the receipt says
+/// `possibly_executed` / `unsafe_without_reconciliation`, and the assertion is that the
+/// local client can read it.
+#[test]
+fn a_verified_rejection_carries_its_execution_contract_to_the_local_client() {
+    let scratch = Scratch::new("post-dispatch-refusal");
+    // A reply the serving path cannot complete: `resultType` names a pause, and this
+    // server has no continuation store to record one in, so it fails closed after
+    // dispatch. The constant comes from the profile, never a literal.
+    static PAUSE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let pause: &'static str = PAUSE
+        .get_or_init(|| {
+            format!(
+                r#"{{"jsonrpc":"2.0","id":1,"result":{{"resultType":"{}","requestState":"st-1"}}}}"#,
+                mcp_re_client_core::INPUT_REQUIRED_RESULT_TYPE
+            )
+        })
+        .as_str();
+    let sidecar = start_sidecar_with_backend(&scratch, None, pause);
+
+    let reply = post(sidecar.addr, "/route/r1", CALL);
+    assert_eq!(reply.verified_kind.as_deref(), Some("verified-rejection"));
+    let parsed: serde_json::Value = serde_json::from_str(&reply.body).expect("json body");
+    let mcp_re_error = &parsed["error"]["data"]["mcp_re_error"];
+    assert!(
+        mcp_re_error["wire_code"].is_string(),
+        "the frozen reason must reach the caller: {}",
+        reply.body
+    );
+    assert_eq!(
+        mcp_re_error["execution_status"], "possibly_executed",
+        "the backend ran before the refusal: {}",
+        reply.body
+    );
+    assert_eq!(
+        mcp_re_error["retry_safety"], "unsafe_without_reconciliation",
+        "a blind retry re-executes the tool call: {}",
+        reply.body
+    );
+    assert!(
+        parsed.get("result").is_none(),
+        "a refusal is never a result: {}",
+        reply.body
+    );
+}
+
 /// The listener's HTTP surface is deliberately small, and each refusal is a refusal.
 /// A lenient path here would let one local caller's body be read as another's.
 #[test]
@@ -607,6 +668,61 @@ fn the_local_http_surface_refuses_everything_it_does_not_implement() {
         400,
         "a malformed local body never reaches the signer"
     );
+
+    // The browser guards. Each of these is a request a web page can make to
+    // 127.0.0.1 and a local MCP client never makes.
+    let body = CALL;
+    assert_eq!(
+        send(
+            sidecar.addr,
+            &format!(
+                "POST /route/r1 HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: https://evil.example\r\n\
+                 Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+        )
+        .status,
+        403,
+        "a cross-origin page must not get a tool call signed under this client's identity"
+    );
+    assert_eq!(
+        send(
+            sidecar.addr,
+            &format!(
+                "POST /route/r1 HTTP/1.1\r\nHost: rebound.evil.example\r\n\
+                 Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+        )
+        .status,
+        421,
+        "a DNS-rebound name is same-origin to the browser, so Host is what refuses it"
+    );
+    assert_eq!(
+        send(
+            sidecar.addr,
+            &format!(
+                "POST /route/r1 HTTP/1.1\r\nHost: localhost\r\nContent-Type: text/plain\r\n\
+                 Content-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+        )
+        .status,
+        415,
+        "a CORS-simple content type is the shape that needs no preflight"
+    );
+    assert_eq!(
+        send(
+            sidecar.addr,
+            &format!(
+                "POST /route/r1 HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+        )
+        .status,
+        415,
+        "an absent content type is not a JSON one"
+    );
 }
 
 /// Several local callers at once. An agent issuing parallel tool calls must not have
@@ -650,7 +766,8 @@ fn shutdown_waits_for_an_accepted_exchange_instead_of_dropping_it() {
     stream
         .write_all(
             format!(
-                "POST /route/r1 HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{}",
+                "POST /route/r1 HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\n\r\n{}",
                 CALL.len(),
                 head_bytes
             )
@@ -697,4 +814,20 @@ fn shutdown_waits_for_an_accepted_exchange_instead_of_dropping_it() {
         "serve waited {:?} after the last exchange drained",
         started.elapsed()
     );
+}
+
+/// The `SigningPlan` `app::run` projects, so this lane drives the production wiring
+/// through the same plan the binary does — including the boundary that produces it.
+fn signing_plan(
+    config: &mcp_re_proxy::deployment_request::DeploymentRequest,
+) -> mcp_re_proxy::startup_plan::SigningPlan {
+    use mcp_re_proxy::startup_plan::{response_issuer_kid, SigningPlan, TrustEpochPlan};
+    let validated =
+        mcp_re_proxy::config_state::validation::ValidatedDeployment::try_from(config.clone())
+            .expect("the fixture config must validate");
+    SigningPlan::from_validated(
+        &validated,
+        response_issuer_kid(&validated),
+        TrustEpochPlan::from_validated(&validated),
+    )
 }

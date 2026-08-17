@@ -53,6 +53,16 @@ pub mod aws_sigv4;
 #[cfg(feature = "aws_kms_keysource")]
 pub mod aws_sts;
 pub mod cli;
+/// Wall-clock acquisition — the one place the OS clock enters the proxy, and the module
+/// `boundary.clock` names.
+pub mod clock;
+/// The classified legal deployment state (layer A of the configuration state atlas).
+pub mod config_state;
+/// The CLI-neutral request model: what a deployment asks for, before anything judges it.
+///
+/// Both the argument parser and the configuration state model depend on it; neither
+/// depends on the other.
+pub mod deployment_request;
 // Issue #3838 (ADR-MCPS-014): a non-exporting reference `ResponseSigner` proving the
 // response-signing delegation seam — a backend whose key never leaves it can drive
 // the proxy's full signing path.
@@ -62,7 +72,7 @@ pub mod delegated_response_signer;
 // the cold-path rotor that keeps it fresh (root issuer off the request path).
 pub mod delegated_server_signer;
 // ADR-MCPRE-052 phase 2 (MCPRE-122): production wiring — build the delegated signer +
-// cold-path rotor from a parsed Config + a ROOT issuer (KMS/HSM/file ResponseSigner).
+// cold-path rotor from a parsed DeploymentRequest + a ROOT issuer (KMS/HSM/file ResponseSigner).
 // Delegated-signing is the only response-signing mode.
 pub mod delegated_wiring;
 // ADR-MCPS-028 §G: delegated TLS handshake signing — a rustls SigningKey that
@@ -70,13 +80,15 @@ pub mod delegated_wiring;
 // server key never leaves it. Generic mechanism (always compiled); the per-backend
 // raw signers are wired under their own feature gates.
 pub mod delegated_tls;
-pub mod durable_replay;
 // MCPRE-501 slice 3: the filesystem side of the SCITT retained-evidence split.
 // mcp-re-http-profile declares the store interface and stays pure; the fs lives here.
 pub mod retained_evidence;
 // ADR-MCPRE-054: the serving path's half of the SCITT vertical — retention on the
 // request path, and the reader an auditor reconstructs a chain through.
 pub mod transparency;
+/// Interpretation and validation of trust-document bytes — the authoritative boundary
+/// every construction path reaches, whether or not it meets a parser.
+pub mod trust_document;
 // ADR-MCPS-028 §C: native GCP Cloud KMS Ed25519 response signer over blocking HTTPS
 // (ureq) + OAuth2 bearer — NO async google-cloud SDK. Compiled ONLY under the
 // non-default `gcp_kms_keysource` feature.
@@ -84,6 +96,9 @@ pub mod audit_sink;
 #[cfg(feature = "gcp_kms_keysource")]
 pub mod gcp_kms_keysource;
 pub mod key_source;
+/// Whether an operator-supplied KMS/STS endpoint may be used at all — a security rule
+/// the command line, the validation boundary and the key sources all consume.
+pub mod kms_endpoint_policy;
 pub mod log_sink;
 // Test / embedding helpers that drive the async serving path synchronously
 // (a private current-thread runtime per call). NOT a serving path — the
@@ -141,6 +156,7 @@ pub mod http_profile_serve;
 // ADR-MCPS-021 Axis 2: the declared REVOCATION tier (Tier 1 bounded-cache / Tier 2
 // live / Tier 3 push) — semantic names, honest per-tier guarantee, tier-claim
 // ceiling. Pure type — in the default build. The Axis-2 analogue of replay_tier.
+pub mod revocation_resolver;
 pub mod revocation_tier;
 // ADR-MCPS-021 Tier 2: live strong trust check — consults the inner store on every
 // verification (no positive-trust caching), with an optional second live
@@ -174,7 +190,67 @@ pub mod async_serve;
 // core, each a current-thread tokio runtime with its own SO_REUSEPORT listener +
 // Linux CPU pinning, over one Proxy per core. THE production data plane.
 pub mod app;
+// ADR-MCPRE-056 §5.2: what startup INTENDS to build, decided from validated
+// configuration alone. Pure — no I/O, no environment, no clock — so a plan describes
+// intent and never doubles as evidence that the thing was established. Internal to the
+// crate: it is the composition root's own decomposition, not a surface anything outside
+// builds against.
 pub mod async_fleet;
+// ADR-MCPRE-057 §3: the global runtime lifecycle as a value, with one closed transition
+// relation. Represents which lifecycle transitions are LEGAL; it is not synchronization,
+// and does not replace the terminal latches that enforce those rules against in-flight
+// work on other threads (§5.4).
+pub(crate) mod runtime_state;
+// ADR-MCPRE-057 §4: the per-request lifecycle as a value, alongside the continuation and
+// backend machines it interacts with. Holds them as a tuple with invariants over
+// projections rather than as one combined enum, so that a refusal can state whether the
+// action was executed and whether the approval authorizing it was spent — facts no single
+// machine holds on its own.
+pub(crate) mod exchange_state;
+// ADR-MCPRE-057 §9 / ADR-MCPRE-058 §14: the owner of a partly-built runtime. Holds the
+// lifecycle and every resource acquired so far, so `Materialized` cannot be asserted over
+// an incomplete graph, and a failed materialization reclaims in the documented order
+// rather than by reverse-declaration unwinding (F3).
+pub(crate) mod materializing_runtime;
+// ADR-MCPRE-058 §7.2: the seven optional serving capabilities, each as one domain
+// operation producing what to attach and the posture line describing it. The composition
+// root states the order they are established in; what each one MEANS lives here.
+pub(crate) mod request_stages;
+pub(crate) mod serving_capabilities;
+pub mod startup_plan;
+// ADR-MCPRE-056 §5.4: the optional-capability posture vocabulary. Every seam states
+// whether it is ON or OFF, because silence cannot distinguish "not configured here"
+// from "not in this build". Declaring takes a value, so the OFF branch is a type
+// obligation rather than a convention.
+pub(crate) mod startup_posture;
+// ADR-MCPRE-056 §10: the assembled runtime. Owns every resource that has a teardown
+// obligation, and enforces the order they come apart in — drain, then each plane's own
+// post-owner transition, then the shared substrate the proxy bound clients to.
+pub(crate) mod materialized_runtime;
+// ADR-MCPRE-056 §9: owned background workers. A startup phase may not spawn a
+// long-lived thread whose lifetime is not represented by an owned value, so every
+// runtime worker belongs to a `WorkerSet` that halts and reclaims it on drop.
+pub(crate) mod managed_worker;
+// ADR-MCPRE-056 §8: the trust plane — the swappable trust store, its refresh workers,
+// and the two narrow live handles it hands out. Owns the authority to CHANGE trust
+// state; consumers get read/observe capabilities only.
+pub(crate) mod trust_plane;
+// ADR-MCPRE-056 §8 (ADR-MCPRE-052): the signing plane — owns the root issuer, the
+// delegated key snapshot and the rotation worker. A signer that outlives it is retired,
+// so it cannot keep signing off a key nothing rotates and no epoch advance can revoke.
+pub(crate) mod signing_plane;
+// ADR-MCPRE-056 §8 (ADR-MCPRE-051 §6): the TLS plane — serving TLS config, per-request
+// revocation index and the CRL reload worker. Its snapshot needs no fail-closed
+// transition on drop: a CRL states its own nextUpdate and unknown status is refused.
+pub(crate) mod tls_plane;
+// ADR-MCPRE-056 §8: the shared control runtime — execution substrate for every
+// networked control-plane client, distinct from the per-core serving runtimes. Owns
+// execution lifetime; consumers receive a tokio Handle, which conveys access only.
+pub(crate) mod control_runtime;
+// ADR-MCPRE-056 §6: the replay plane — establishes the planned tier and hands it over by
+// value. Owns nothing afterwards; the substrate its Redis arm binds to must outlive every
+// USE of the result, which the fleet drain discharges.
+pub(crate) mod replay_plane;
 // MCPRE-117 (ADR-MCPRE-051 §4): the async authoritative replay tier — the async
 // AtomicReplayStore + the per-core L1-never-Fresh fast-reject wrapper, so the
 // per-core data plane checks replay without blocking a runtime worker. Concrete
@@ -236,7 +312,6 @@ pub use audit_sink::AuditSink;
 pub use audit_sink::CollectingAuditSink;
 pub use audit_sink::NoAuditSink;
 pub use audit_sink::StderrAuditSink;
-pub use durable_replay::DurableReplayCache;
 #[cfg(feature = "gcp_kms_keysource")]
 pub use gcp_kms_keysource::GcpKmsConfig;
 #[cfg(feature = "gcp_kms_keysource")]

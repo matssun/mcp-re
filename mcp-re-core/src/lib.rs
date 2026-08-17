@@ -1,3 +1,8 @@
+// ADR-MCPRE-059 Phase 2: Verus attaches its loop annotations to loop *expressions*,
+// which needs `proc_macro_hygiene`. Gated with everything else in the lane, so a
+// production build sees no feature gate and stays on stable rustc.
+#![cfg_attr(feature = "verify", feature(proc_macro_hygiene))]
+
 //! MCP-RE Core — pure, dependency-free cryptographic verification crate for the
 //! MCP-RE security profile (a clean-room Zero Trust profile for MCP).
 //!
@@ -11,6 +16,24 @@
 //! Base64URL encoding (`encoding`), SHA-256 hash ids (`hash`), Ed25519 sign/verify
 //! (`crypto`), trust resolution (`resolver`), replay detection (`replay`), freshness
 //! (`time`), the JSON-RPC error wire (`wire`), and the audit taxonomy (`audit`).
+
+// ADR-MCPRE-059 Phase 2: present only under `--features verify`, which no production
+// build enables. Verus requires the prelude in the crate root to run at all.
+// ADR-MCPRE-059: `verify` is the Verus lane's feature, not a build feature. Verus's own
+// rustc driver defines `verus_keep_ghost`; an ordinary toolchain does not. Enabling this
+// feature in a normal build — `--all-features` is the way it will happen — therefore
+// fails here, with the reason, instead of failing deeper down on an unstable feature gate
+// nobody expected to be reading about.
+#[cfg(all(feature = "verify", not(verus_keep_ghost)))]
+compile_error!(
+    "feature `verify` carries Verus specifications and builds only under the pinned \
+     prover. Run `tools/verification/verify-verus`; do not enable it from cargo, and \
+     exclude it from any --all-features lane."
+);
+
+#[cfg(feature = "verify")]
+#[allow(unused_imports)]
+use vstd::prelude::*;
 
 // ADR-MCPRE-050: RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest (the
 // `mcp-re-http-profile` crate) is the sole carrier. This crate holds ONLY the
@@ -30,6 +53,12 @@ pub mod ids;
 pub mod replay;
 pub mod resolver;
 pub mod time;
+// ADR-MCPRE-059 Phase 2: the registered `std` assumptions the Verus lane needs. Not a
+// production module — it exists only while `--features verify` is on.
+#[cfg(feature = "verify")]
+mod verus_proofs;
+#[cfg(feature = "verify")]
+mod verus_std_specs;
 pub mod wire;
 
 // Re-export the profile-agnostic public surface at the crate root.

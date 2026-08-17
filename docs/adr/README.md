@@ -28,12 +28,12 @@ Every ADR discussion carries the `adr` label plus one status label. Filter:
 | [ADR-MCPS-010](https://github.com/matssun/mcp-re/discussions/359) | Incubation Strategy, Extension Identifier, and Preimage-Stability Rule | ↩️ Superseded |
 | [ADR-MCPS-011](https://github.com/matssun/mcp-re/discussions/360) | Workspace Structure, Phased Delivery, and Conformance-as-Specification | ✅ Implemented |
 | [ADR-MCPS-012](https://github.com/matssun/mcp-re/discussions/361) | Project Placement & Build Integration — components/mcps as an Isolated rules_rust Workspace | ✅ Implemented |
-| [ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362) | Delegated Authorization — AuthorizationProfile Abstraction and the Reference Signed Authorization Profile (Phase 5) | ✅ Implemented |
+| [ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362) | Delegated Authorization — AuthorizationProfile Abstraction and the Reference Signed Authorization Profile (Phase 5) | 🗄️ Deprecated |
 | [ADR-MCPS-014](https://github.com/matssun/mcp-re/discussions/363) | Phase 6 — Rust-Native Transport Hardening (RustlsDirectProvider, mTLS Channel Binding; Granian Decoupled) | ✅ Implemented |
 | [ADR-MCPS-015](https://github.com/matssun/mcp-re/discussions/364) | Client Host-Session Architecture | ✅ Implemented |
 | [ADR-MCPS-016](https://github.com/matssun/mcp-re/discussions/365) | Inner-Server Isolation Boundary | ✅ Implemented |
 | [ADR-MCPS-017](https://github.com/matssun/mcp-re/discussions/366) | Single-Node Production Claim Ceiling and Deferred Enterprise Capabilities | ↩️ Superseded |
-| [ADR-MCPS-018](https://github.com/matssun/mcp-re/discussions/367) | CI Reproducibility Posture and Conformance-Manifest Authority | ✅ Implemented |
+| [ADR-MCPS-018](https://github.com/matssun/mcp-re/discussions/367) | CI Reproducibility Posture and Conformance-Manifest Authority | ↩️ Superseded |
 | [ADR-MCPS-019](https://github.com/matssun/mcp-re/discussions/368) | Phase 7 External Backends (stub) | ✅ Implemented |
 | [ADR-MCPS-020](https://github.com/matssun/mcp-re/discussions/369) | Distributed Atomic Replay Store — Durability Contract for Horizontally-Scaled Replay Safety | ✅ Implemented |
 | [ADR-MCPS-021](https://github.com/matssun/mcp-re/discussions/370) | Shared Trust State — Bounded Trust-Propagation Window for Revocation and Rotation | ✅ Implemented |

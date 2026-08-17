@@ -100,10 +100,12 @@ fn retained_chain(bytes: &[u8]) -> ChainReconstruction {
                 ),
             })
             .collect(),
-        // The corpus record carries handles, not the submitted messages, so the
-        // identity of the submission is not reproducible from it. A fixed stand-in
-        // keeps the vector deterministic without pretending otherwise.
-        submitted_commitment: "interop-submitted".to_owned(),
+        // The submission identity is a digest over the submitted MESSAGES — method,
+        // target, bodies, signature headers. This artifact carries handles, so that
+        // digest is not reproducible from it, and an empty value is how a
+        // reconstruction says exactly that. The vector binds the verified prefix and
+        // claims nothing about which submission produced it.
+        submitted_commitment: String::new(),
     }
 }
 
@@ -188,6 +190,35 @@ fn the_retained_evidence_reproduces_the_committed_handles() {
     let mut truncated = retained.clone();
     truncated.hop_evidence.truncate(1);
     assert!(verify_retained_evidence(statement.commitment(), &truncated, None, None).is_err());
+}
+
+/// A retained record may not claim a submission identity the statement never made.
+///
+/// The frozen `s01` statement carries no `submitted_commitment`, so it identifies no
+/// submission. A reconstruction that supplies one is not a stronger reading of the same
+/// record: it asserts a binding the issuer's COSE_Sign1 never covered. The verifier
+/// refuses it rather than reporting the verified-prefix match as though it reached the
+/// submission — the archivist holding the record is exactly who would benefit from the
+/// weaker answer being indistinguishable from the stronger one.
+#[test]
+fn a_retained_record_cannot_claim_a_submission_the_statement_never_made() {
+    let statement = statement();
+    assert!(
+        !statement.commitment().identifies_a_submission(),
+        "the frozen s01 statement identifies no submission"
+    );
+
+    // Control: the same bytes, claiming nothing about the submission, bind on the
+    // verified prefix.
+    let retained = retained_chain(&artifact("retained-evidence.bin"));
+    verify_retained_evidence(statement.commitment(), &retained, None, None)
+        .expect("the verified prefix binds");
+
+    let mut claims_a_submission = retained.clone();
+    claims_a_submission.submitted_commitment = "interop-submitted".to_owned();
+    let err = verify_retained_evidence(statement.commitment(), &claims_a_submission, None, None)
+        .expect_err("a submission identity the statement never committed to is refused");
+    assert!(matches!(err, HttpProfileError::MalformedEvidence(_)));
 }
 
 /// A pin for a different key does not verify the receipt. The pin is what a run records;

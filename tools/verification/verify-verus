@@ -1,0 +1,297 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""The authoritative Verus lane — ADR-MCPRE-059 §16, Operational Rule 5.
+
+CI runs full verification for the selected scope (`cargo verus verify -p <crate>`).
+`cargo verus focus` is a local developer convenience and is NEVER authoritative evidence:
+a proof checked over part of a crate does not establish the crate's obligations, and a
+lane that accepted focus output would be reporting a proof it did not have.
+
+The lane resolves its prover from the pins in `verification/policy/toolchains.lock.toml`
+and never falls back to whatever `verus`/`z3` happen to be on PATH. A proof checked by a
+prover of unknown identity is not evidence, and reporting it as a pass would be exactly
+the "stale or mismatched cache accepted as proof" threat the ADR names.
+
+The install root is a path outside the repository, on a persistent runner, so agreeing on
+the path establishes nothing about the bytes there. Two independent identity checks run
+before any verdict is recorded, and the lane refuses if either is absent:
+
+  * the installed `vstd.vir` must digest to the `verus.vstd` identity the lock records —
+    the prover's specification library is what the proofs are stated against, and it is the
+    one large artifact the lock names by content;
+  * the release's `version.json` must declare the pinned commit, checked before the run
+    rather than taken from the run's own report.
+
+Neither is a signature, and a substituted binary that ships the pinned vstd still passes
+them. They close the case the lock previously only appeared to close: a recorded hash that
+nothing ever compared.
+
+A lane with no V1/V3 unit to check is NOT_REQUIRED, whether or not the toolchain is
+pinned: the manifest asks nothing of it, which is a legitimately empty lane rather than a
+failure. It is not SKIPPED, which would mean the lane was required and deliberately not
+run, and it is not PASS, which would mean a proof was checked.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _evidence import EvidenceRecord, write_record  # noqa: E402
+from _fingerprint import fingerprint_unit  # noqa: E402
+from _manifest import (  # noqa: E402
+    REPO_ROOT,
+    ManifestError,
+    load_assumptions,
+    load_toolchains,
+    load_verification,
+    unresolved_pins,
+)
+from _verus_results import evaluate_unit, parse_reports  # noqa: E402
+
+REQUIRED = {"verus", "verus.vstd", "verus.z3", "rust"}
+
+#: The lane builds into its own target directory. The `verify` feature pulls in vstd and
+#: switches on a nightly feature gate, so sharing `target/` with ordinary builds would
+#: mean each one invalidating the other's artifacts.
+LANE_TARGET_DIR = REPO_ROOT / "target" / "verification-verus"
+
+#: Where this lane deposits what it measured. The record is written for a FAILED unit too:
+#: a failure at a known fingerprint is evidence, and suppressing it would leave the last
+#: passing attestation standing while the proof is broken.
+EVIDENCE_STORE = REPO_ROOT / ".verification" / "evidence"
+
+
+def unit_target(unit: dict) -> tuple[str | None, list[str]]:
+    """The Cargo package and features that carry this unit's specifications.
+
+    Derived from the unit's declared paths rather than configured separately: a unit
+    whose paths move to another crate must not keep verifying the crate it left.
+    """
+    crates = {
+        path.split("/", 1)[0]
+        for path in unit["paths"]
+        if "/" in path and (REPO_ROOT / path.split("/", 1)[0] / "Cargo.toml").is_file()
+    }
+    if len(crates) != 1:
+        return None, []
+    return crates.pop(), list(unit.get("features", []))
+
+
+def installed_identity(toolchains: dict, install_root: Path) -> str | None:
+    """Why the installation at `install_root` is NOT the pinned prover, or None.
+
+    Content, not location. The lock records `verus.vstd.identity` and `verus.commit`; until
+    something compares them against the files on disk, both are decoration and the lane's
+    only real claim is that some executable exists at an agreed path.
+    """
+    pinned_vstd = str(toolchains["verus"].get("vstd", {}).get("identity", ""))
+    if not pinned_vstd.startswith("sha256:"):
+        return (
+            "the lock records no `verus.vstd.identity` digest, so the prover's "
+            "specification library cannot be identified"
+        )
+    vstd = install_root / "vstd.vir"
+    if not vstd.is_file():
+        return f"the pinned prover's specification library is missing at {vstd}"
+    digest = "sha256:" + hashlib.sha256(vstd.read_bytes()).hexdigest()
+    if digest != pinned_vstd:
+        return (
+            f"vstd identity mismatch: {vstd} digests to {digest[:23]}, the lock records "
+            f"{pinned_vstd[:23]}. The installation is not the pinned release."
+        )
+
+    pinned_commit = str(toolchains["verus"].get("commit", ""))
+    version_file = install_root / "version.json"
+    if not version_file.is_file():
+        return f"the pinned prover declares no identity: {version_file} is missing"
+    try:
+        declared = json.loads(version_file.read_text(encoding="utf-8"))["verus"]["commit"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return f"{version_file} does not declare a verus commit"
+    if declared != pinned_commit:
+        return (
+            f"installed prover declares commit {str(declared)[:12]}, the lock pins "
+            f"{pinned_commit[:12]}"
+        )
+    return None
+
+
+def main() -> int:
+    try:
+        toolchains = load_toolchains()
+        doc = load_verification()
+        assumptions = load_assumptions()
+    except ManifestError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    missing = sorted(REQUIRED & set(unresolved_pins(toolchains)))
+    verus_units = [unit for unit in doc.get("unit", []) if unit["class"] in {"V1", "V3"}]
+
+    if not verus_units:
+        # NOT_REQUIRED, not SKIPPED: the manifest asks nothing of this lane, which is a
+        # legitimate state and must not hold the aggregate back. SKIPPED would mean the
+        # lane was required and deliberately not run.
+        state = "unpinned" if missing else "pinned, lane not implemented"
+        print(f"verify-verus: NOT_REQUIRED — no V1/V3 unit declared ({state})")
+        print("VERDICT: NOT_REQUIRED")
+        if missing:
+            print(f"  unresolved: {', '.join(missing)}")
+            print(
+                "  pin these in verification/policy/toolchains.lock.toml to enable this lane"
+            )
+        return 0
+
+    if missing:
+        print(
+            "FAIL: units are declared V1/V3 but the Verus toolchain is unpinned "
+            f"({', '.join(missing)}).\n"
+            "A unit cannot claim Verus evidence that no pinned prover produced.",
+            file=sys.stderr,
+        )
+        return 1
+
+    pinned_commit = str(toolchains["verus"].get("commit", ""))
+    install_root = Path(toolchains["verus"]["install_root"])
+    cargo_verus = install_root / "cargo-verus"
+    if not cargo_verus.is_file():
+        print(
+            f"UNAVAILABLE: the pinned prover is not installed at {cargo_verus}.\n"
+            "Not a FAIL — an absent toolchain is a missing measurement, not a failed one —\n"
+            "and not a PASS, because nothing was proved.",
+            file=sys.stderr,
+        )
+        print("VERDICT: UNAVAILABLE")
+        return 1
+
+    # A wrong installation is a FAIL, not UNAVAILABLE: something IS installed at the pinned
+    # path and it is not what the lock describes, which is a stronger statement than "the
+    # measurement is missing" and must not be recoverable by installing anything.
+    wrong = installed_identity(toolchains, install_root)
+    if wrong is not None:
+        print(f"FAIL: {wrong}", file=sys.stderr)
+        print(
+            "The lock's recorded identity is compared against the installation before any "
+            "proof is\nattributed to it. Re-install the pinned release, or re-pin the lock "
+            "deliberately.",
+            file=sys.stderr,
+        )
+        print("VERDICT: FAIL")
+        return 1
+
+    failures = 0
+    for unit in verus_units:
+        # Taken BEFORE the prover runs, and recorded alongside the result: the record must
+        # say which source was measured, not which source exists when someone later reads
+        # it. This is the binding the issuer checks.
+        measured_at = fingerprint_unit(unit, doc, toolchains, assumptions)["fingerprint"]
+
+        def record(
+            result: str,
+            detail: str,
+            prover: dict | None = None,
+            unit_id: str = unit["id"],
+            fingerprint: str = measured_at,
+        ) -> None:
+            write_record(
+                EVIDENCE_STORE,
+                EvidenceRecord(
+                    unit_id=unit_id,
+                    lane="verus",
+                    result=result,
+                    fingerprint=fingerprint,
+                    detail=detail,
+                    prover=prover,
+                ),
+            )
+
+        crate, features = unit_target(unit)
+        if crate is None:
+            print(
+                f"FAIL: unit {unit['id']} is class {unit['class']} but its paths name no "
+                "crate this lane can verify.",
+                file=sys.stderr,
+            )
+            record("fail", "the unit's paths name no single crate this lane can verify")
+            failures += 1
+            continue
+
+        argv = [str(cargo_verus), "verify", "-p", crate]
+        for feature in features:
+            argv += ["--features", f"{crate}/{feature}"]
+        # Everything after `--` goes to the prover itself. The structured report is what
+        # this lane reads; the human-readable log is kept only for the failure message.
+        argv += ["--", "--output-json"]
+        print(f"verify-verus: {unit['id']} -> {' '.join(argv[1:])}")
+
+        # Cargo's fingerprint cache is the lane's enemy here: an unchanged crate is
+        # "Finished" without re-running the prover, so the invocation prints no
+        # verification-results line and exits 0 — indistinguishable, to this lane, from a
+        # crate carrying no proofs at all. Discarding the crate's own artifacts (not its
+        # dependencies') makes every run a real check. Found by the guard, which is what
+        # the guard is for.
+        env = {**os.environ, "CARGO_TARGET_DIR": str(LANE_TARGET_DIR)}
+        subprocess.run(
+            ["cargo", "clean", "-p", crate],
+            cwd=REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        # `check=False` and the tool's OWN returncode: piping Verus through anything
+        # replaces its status with the pipeline's, which is how a failed proof reads as a
+        # success. Streams are merged so a report interrupted by a compile error is still
+        # read from one place.
+        proc = subprocess.run(
+            argv,
+            cwd=REPO_ROOT,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+        output = proc.stdout
+        reports = parse_reports(output)
+        ok, detail = evaluate_unit(
+            reports,
+            crate,
+            list(unit.get("proved_symbols", [])),
+            pinned_commit,
+        )
+        prover = {"commit": pinned_commit}
+        if reports:
+            prover = {"commit": reports[0].commit, "version": reports[0].version}
+        if not ok or proc.returncode != 0:
+            print(f"  FAIL: {detail} (exit {proc.returncode})", file=sys.stderr)
+            print(output.strip()[-4000:], file=sys.stderr)
+            record("fail", f"{detail} (exit {proc.returncode})", prover)
+            failures += 1
+        else:
+            print(f"  PASS: {detail}")
+            record("pass", detail, prover)
+
+    if failures:
+        print(
+            f"\nFAIL: {failures} of {len(verus_units)} Verus unit(s) did not verify.",
+            file=sys.stderr,
+        )
+        print("VERDICT: FAIL")
+        return 1
+
+    print(f"\nverify-verus: PASS — {len(verus_units)} unit(s) verified")
+    print("VERDICT: PASS")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

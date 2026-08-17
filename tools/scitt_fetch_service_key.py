@@ -21,24 +21,43 @@ Supported discovery:
 
     pip install cbor2 requests
     python tools/scitt_fetch_service_key.py \
-        --service-uri https://transparency.example --kid <kid> --out service-key-pin.json
+        --service-uri https://transparency.example --kid <kid> \
+        --position-profile bound --out service-key-pin.json
 
 The `kid` should be the one the receipt names; pass `--any-single-key` for a service
 whose key set holds exactly one key and whose receipts carry no `kid`.
+
+**Why the profiles are arguments and not defaults.** A pin carries two properties of the
+SERVICE that no receipt can be asked for, because the receipt is the value under attack:
+which bytes the log hashes as its Merkle entry (`--leaf-profile`), and whether its
+receipts commit to their own `(tree_size, leaf_index)` (`--position-profile`). The Rust
+verifier defaults both to the weaker reading when the field is absent, so a pin that
+omits them silently pins the pre-v2 contract — under which a relayer may restate a small
+log's receipt as a position in a larger one and it still verifies. `--position-profile`
+is therefore required rather than defaulted: it is a thing an operator has to have
+established about the service and written down.
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import datetime
 import hashlib
+import io
 import json
 import os
 import sys
 import urllib.request
 
 SCHEMA = "mcp-re-scitt-service-trust-pin/v1"
+
+# The two service properties a pin records verbatim. The tokens are the serialized form
+# `ScittServiceTrustPin` reads (`ReceiptPositionProfile` and `StatementLeafProfile`), so
+# a value this tool accepts is a value the verifier accepts.
+POSITION_PROFILES = ("unbound", "bound")
+LEAF_PROFILES = ("statement-bytes", "statement-digest")
 
 # COSE_Key parameters (RFC 9052 §7) and algorithms (RFC 9053).
 KTY, KID, ALG, CRV, X, Y = 1, 2, 3, -1, -2, -3
@@ -249,16 +268,50 @@ def selftest() -> int:
     if len(installed) != 1 or not isinstance(installed[0], HttpsOnlyRedirectHandler):
         print(f"SELFTEST FAIL: fetch()'s opener consults {installed!r}, not the https-only handler")
         failures += 1
+
+    # The PIN's own contents. `position_profile` and `leaf_profile` default to the
+    # weaker reading on the Rust side, so a pin that omits them pins the pre-v2
+    # contract — and nothing downstream can tell that from a deliberate choice.
+    parser = _parser()
+    base = [
+        "--service-uri", "https://service.example",
+        "--any-single-key",
+        "--out", "/dev/null",
+    ]
+    try:
+        # argparse prints its usage to stderr on the way out; the case under test is the
+        # refusal, not the message.
+        with contextlib.redirect_stderr(io.StringIO()):
+            parser.parse_args(base)
+        print("SELFTEST FAIL: a pin was cut with no --position-profile; the verifier's "
+              "default is the weaker contract, so it must be stated")
+        failures += 1
+    except SystemExit:
+        pass
+    for position, leaf in (("bound", "statement-bytes"), ("unbound", "statement-digest")):
+        args = parser.parse_args(
+            base + ["--position-profile", position, "--leaf-profile", leaf]
+        )
+        pin = build_pin(
+            args,
+            "kid-1",
+            {"algorithm": "EdDSA", "public_key": {"x": "AAAA"}, "thumbprint": "TTTT"},
+            "https://service.example/.well-known/scitt-keys",
+            "DDDD",
+        )
+        if pin.get("position_profile") != position or pin.get("leaf_profile") != leaf:
+            print(f"SELFTEST FAIL: pin recorded {pin.get('position_profile')!r}/"
+                  f"{pin.get('leaf_profile')!r}, not {position!r}/{leaf!r}")
+            failures += 1
     if failures:
         print(f"{failures} case(s) failed — the https-only guard is not trustworthy.")
         return 1
-    print("selftest ok: 8 cases (redirect scheme guard, first-hop scheme guard, opener wiring)")
+    print("selftest ok: 11 cases (redirect scheme guard, first-hop scheme guard, opener "
+          "wiring, pin profile fields)")
     return 0
 
 
-def main() -> int:
-    if "--selftest" in sys.argv:
-        return selftest()
+def _parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--service-uri", required=True, help="service base URI, or the full JWKS URI")
     ap.add_argument("--method", choices=("well-known-scitt-keys", "jwks"),
@@ -274,6 +327,59 @@ def main() -> int:
                          "and the network chose the key.")
     ap.add_argument("--replace-pin", action="store_true",
                     help="allow overwriting an existing pin that names a different key")
+    ap.add_argument("--position-profile", choices=POSITION_PROFILES, required=True,
+                    help="whether this service's receipts MUST carry a position "
+                         "commitment. 'bound' refuses a receipt without one; 'unbound' "
+                         "is the pre-v2 contract, under which tree_size and leaf_index "
+                         "are unauthenticated hints a relayer may restate. Required "
+                         "because the verifier's own default is the weaker of the two, "
+                         "so an omitted field silently pins it.")
+    ap.add_argument("--leaf-profile", choices=LEAF_PROFILES, default="statement-bytes",
+                    help="which bytes this service's log hashes as the Merkle entry: the "
+                         "Signed Statement's own octets (the default) or a digest of "
+                         "them. It cannot be inferred from a receipt.")
+    return ap
+
+
+def build_pin(args, kid, fields: dict, uri: str, document_digest: str) -> dict:
+    """The pin artifact, exactly as it is written.
+
+    Separated from the fetch so the fields it must carry are assertable without a
+    network: a pin that omits `position_profile` or `leaf_profile` deserializes to the
+    weaker contract on the Rust side, which is not a difference any later reader of the
+    file can see.
+    """
+    return {
+        "schema": SCHEMA,
+        "service_identifier": args.service_identifier or args.service_uri,
+        "discovery_method": args.method,
+        "discovery_uri": uri,
+        "fetched_at": datetime.datetime.now(datetime.timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        # An EMPTY kid is written only for a service whose receipts genuinely carry
+        # none (`--any-single-key`), and `ScittServiceTrustPin::resolve` treats it as
+        # "matches an unlabelled receipt". Writing it for any other reason would make
+        # the pin match receipts it was never fetched for.
+        "kid": kid if kid is not None else "",
+        "algorithm": fields["algorithm"],
+        "public_key": fields["public_key"],
+        "public_key_thumbprint": fields["thumbprint"],
+        "discovery_document_digest": document_digest,
+        # Written ALWAYS, including for the values that match the verifier's defaults.
+        # An absent field and a field set to the default read identically to the
+        # verifier and completely differently to a reviewer: one says the operator
+        # decided, the other says the tool never asked.
+        "leaf_profile": args.leaf_profile,
+        "position_profile": args.position_profile,
+    }
+
+
+def main() -> int:
+    if "--selftest" in sys.argv:
+        return selftest()
+    ap = _parser()
     args = ap.parse_args()
 
     if args.method == "well-known-scitt-keys":
@@ -306,25 +412,7 @@ def main() -> int:
                             lambda e: e.get("kid"))
         fields = key_from_jwk(entry)
 
-    pin = {
-        "schema": SCHEMA,
-        "service_identifier": args.service_identifier or args.service_uri,
-        "discovery_method": args.method,
-        "discovery_uri": uri,
-        "fetched_at": datetime.datetime.now(datetime.timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z"),
-        # An EMPTY kid is written only for a service whose receipts genuinely carry
-        # none (`--any-single-key`), and `ScittServiceTrustPin::resolve` treats it as
-        # "matches an unlabelled receipt". Writing it for any other reason would make
-        # the pin match receipts it was never fetched for.
-        "kid": kid if kid is not None else "",
-        "algorithm": fields["algorithm"],
-        "public_key": fields["public_key"],
-        "public_key_thumbprint": fields["thumbprint"],
-        "discovery_document_digest": document_digest,
-    }
+    pin = build_pin(args, kid, fields, uri, document_digest)
     # Never SILENTLY replace an existing pin. Re-running the tool is how a pin gets
     # rotated, and it was also how a pin got swapped: the file was truncated
     # unconditionally, so a second run under an attacker's network chose the trust
@@ -353,6 +441,13 @@ def main() -> int:
     print(f"  from        {uri}")
     print(f"  doc digest  {document_digest}")
     print(f"  written to  {args.out}")
+    print(f"  leaf        {pin['leaf_profile']}")
+    print(f"  position    {pin['position_profile']}")
+    if pin["position_profile"] == "unbound":
+        print("\nWARNING: pinned UNBOUND. Receipts from this service are accepted without a")
+        print("position commitment, so tree_size and leaf_index stay unauthenticated hints:")
+        print("a relayer may restate this receipt at another position and it still verifies.")
+        print("Use --position-profile bound for a service whose receipts carry one.")
     print("\nThis records WHICH key was used. It is not a statement that the service is")
     print("trustworthy, that its log is append-only, or that its operator is independent.")
     return 0

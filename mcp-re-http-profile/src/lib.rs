@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#![cfg_attr(feature = "verify", feature(proc_macro_hygiene))]
 //! MCP-RE HTTP standards profile — minimal proof path (ADR-MCPRE-050, seed Work Item 3).
 //!
 //! RFC 9421 HTTP Message Signatures + RFC 9530 `Content-Digest` as the
@@ -28,6 +29,25 @@
 //! bindings, signed rejections, and MRTR continuation reuse the existing
 //! machinery and land with the full profile (ADR-MCPRE-050 parity gate).
 
+// ADR-MCPRE-059 Phase 2: Verus needs its prelude in the crate root, and attaches loop
+// annotations to expressions, which needs `proc_macro_hygiene`. Both are gated with the
+// rest of the lane, so a production build stays on stable rustc with no prover in sight.
+// ADR-MCPRE-059: `verify` is the Verus lane's feature, not a build feature. Verus's own
+// rustc driver defines `verus_keep_ghost`; an ordinary toolchain does not. Enabling this
+// feature in a normal build — `--all-features` is the way it will happen — therefore
+// fails here, with the reason, instead of failing deeper down on an unstable feature gate
+// nobody expected to be reading about.
+#[cfg(all(feature = "verify", not(verus_keep_ghost)))]
+compile_error!(
+    "feature `verify` carries Verus specifications and builds only under the pinned \
+     prover. Run `tools/verification/verify-verus`; do not enable it from cargo, and \
+     exclude it from any --all-features lane."
+);
+
+#[cfg(feature = "verify")]
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
 pub mod admission;
 pub mod artifact;
 pub mod block;
@@ -39,6 +59,7 @@ pub mod custody;
 pub mod delegation;
 pub mod digest;
 pub mod dispatch;
+pub mod envelope;
 pub mod error;
 pub mod evidence;
 pub mod ids;
@@ -55,6 +76,10 @@ pub mod sign;
 pub mod verify;
 
 pub use admission::check_admission;
+// ADR-MCPRE-059 Phase 2: the registered assumptions the Verus lane needs. Not a
+// production module — it exists only while `--features verify` is on.
+#[cfg(feature = "verify")]
+mod verus_std_specs;
 pub use admission::issue_admission_assertion;
 pub use admission::verify_admission_assertion;
 pub use admission::AdmissionBinding;
@@ -85,6 +110,7 @@ pub use block::CONTINUATION_TYPE_MCP_MRT;
 pub use body::authorization_bearer_bytes;
 pub use body::extract_meta_block;
 pub use body::insert_meta_block;
+pub use body::reject_unrepresentable_json;
 pub use bodyless::sign_accepted_202;
 pub use bodyless::sign_bodyless_request;
 pub use bodyless::sign_delegated_accepted_202;
@@ -131,6 +157,14 @@ pub use dispatch::DispatchConfig;
 pub use dispatch::DispatchError;
 pub use dispatch::DispatchOutcome;
 pub use dispatch::RetainedContinuation;
+pub use envelope::outstanding_id;
+pub use envelope::parse_response_body;
+pub use envelope::validate_request_envelope;
+pub use envelope::validate_response_envelope;
+pub use envelope::OutstandingId;
+pub use envelope::ResponseOutcome;
+pub use envelope::ValidatedEnvelope;
+pub use envelope::JSON_RPC_VERSION;
 pub use error::HttpProfileError;
 pub use evidence::RequestEvidence;
 pub use ids::ALG_ED25519;
@@ -158,6 +192,7 @@ pub use rejection::build_delegated_rejection;
 pub use rejection::build_delegated_rejection_preflight;
 pub use rejection::build_signed_rejection;
 pub use rejection::verify_signed_rejection;
+pub use rejection::ExecutionDisposition;
 pub use rejection::RejectionReason;
 pub use rejection::SignedRejection;
 pub use rejection::JSON_RPC_ERROR_CODE;

@@ -118,7 +118,15 @@ pub fn is_input_required(result: Option<&Value>) -> bool {
 pub fn input_required_state(body: &[u8]) -> Result<Option<String>, HttpProfileError> {
     let parsed: Value = serde_json::from_slice(body)
         .map_err(|_| HttpProfileError::MalformedEvidence("response body"))?;
-    let result = parsed.get("result");
+    input_required_state_of(parsed.get("result"))
+}
+
+/// The same three-way contract, over an ALREADY-PARSED `result` member.
+///
+/// The serving path validates the JSON-RPC envelope before it classifies, so by the time
+/// this question is asked the body has been parsed once already. Re-parsing the bytes to ask
+/// it again is how two readers of one message end up disagreeing about what it says.
+pub fn input_required_state_of(result: Option<&Value>) -> Result<Option<String>, HttpProfileError> {
     match classify_result_type(result) {
         ResultTypeClass::Complete => Ok(None),
         ResultTypeClass::Unrecognized => Err(HttpProfileError::UnrecognizedResultType),

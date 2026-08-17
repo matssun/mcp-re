@@ -11,51 +11,66 @@ how to use it, and the tests prove it.
 
 ## What the suite is
 
-The conformance corpus is the executable specification (ADR-MCPS-011,
-[view](https://github.com/matssun/mcp-re/discussions/360)). It is a set of
-committed JSON vectors plus harnesses that replay them, transport-agnostically,
-as in-process objects and over Streamable HTTP — so a vector that
-passes proves object/HTTP parity (MCP-RE is HTTP-profile only).
+The conformance corpus is the executable specification: committed JSON vectors
+plus harnesses that replay them against the real verifier. MCP-RE is
+HTTP-profile only — RFC 9421 message signatures with RFC 9530 content digests
+are the single carrier, and the corpora are organised by profile rather than by
+transport.
 
-The vectors fall into three categories:
+**A conformance category is a claim about executable evidence.** A category is
+advertised here only if it has both a corpus that exists and a test target that
+reaches it. `scripts/conformance_claims_gate.py` enforces exactly that, in both
+directions, so this table cannot drift away from the tree: a row whose corpus or
+harness has been deleted fails the gate, and so does a corpus that exists with
+no row advertising it.
 
-- **Core** — the frozen wire vocabulary, signing rule, safe value domain,
-  freshness/replay, trust resolution, message constraints, and the
-  request/response verification pipelines. Fixtures live under
-  `mcp-re-core/tests/vectors/`.
-- **Phase-5 authorization** — the delegated-authorization profile
-  (`PolicyEvaluator` + Reference Signed Authorization Profile, ADR-MCPS-013,
-  [view](https://github.com/matssun/mcp-re/discussions/362)). Fixtures live in
-  `mcp-re-policy/tests/vectors/phase5_vectors.json`.
-- **Phase-6 transport** — mTLS, transport binding, durable replay, and the
-  client-cert lifetime posture (ADR-MCPS-014,
-  [view](https://github.com/matssun/mcp-re/discussions/363)). These are exercised
-  by the `mcp-re-proxy` test targets and by re-running the Core corpus over the
-  HTTP harness.
-- **Delegated signing** — the ADR-MCPRE-052 delegated-required profile (frozen
-  `d01`–`d22` credential-verification corpus plus the serving / rotation /
-  fail-closed / two-proxy proofs). Its acceptance gate — each required behavior
-  mapped to the exact test that proves it, drift-guarded via the security
-  traceability manifest — is the
-  [Delegated-Required Validation Matrix](spec/delegated-required-validation-matrix.md).
+<!-- conformance-categories:begin -->
 
-### Counts live in the manifest, not here
+| Category | Corpus | Harness targets |
+| --- | --- | --- |
+| HTTP profile — RFC 9421 signatures, RFC 9530 digests, the frozen `mcp-re.*` rejection vocabulary | `mcp-re-conformance/tests/vectors/http-profile/` | `//mcp-re-conformance:http_profile_vectors_test`, `//mcp-re-conformance:rfc9421_cross_verification_test`, `//mcp-re-conformance:corpus_pinning_test` |
+| Delegated-required credentials — the frozen `d01`–`d22` credential-verification corpus (ADR-MCPRE-052) | `mcp-re-conformance/tests/vectors/delegation-profile/` | `//mcp-re-conformance:delegation_vectors_test`, `//mcp-re-conformance:delegation_cross_verification_test`, `//mcp-re-conformance:corpus_pinning_test` |
+| SCITT receipts — RFC 9943 transparency receipts, including third-party interop | `mcp-re-conformance/tests/vectors/scitt/` | `//mcp-re-conformance:scitt_vectors_test`, `//mcp-re-conformance:scitt_interop_test`, `//mcp-re-conformance:scitt_cross_verification_test` |
 
-The authoritative enumeration of every vector and every Bazel test target — and
-their counts — is the drift-guarded conformance manifest:
+<!-- conformance-categories:end -->
 
-- Manifest: [`mcp-re-conformance/conformance_manifest.json`](../mcp-re-conformance/conformance_manifest.json)
-- Drift guard: `//mcp-re-conformance:drift_guard_test`
-  (source: [`tests/drift_guard_test.rs`](../mcp-re-conformance/tests/drift_guard_test.rs))
+### Proofs that are target-backed rather than vector-backed
 
-This guide deliberately quotes **no** vector or target counts. To learn the
-current numbers, read the manifest's `counts` block. The guard re-derives every
-count from reality (on-disk fixtures + the `nt_rust_test` rules in the
-`BUILD.bazel` files) at test time and FAILS if: a vector on disk is missing from
-the manifest, a manifest entry names a non-existent vector, a recorded count is
-stale, or a test target was added/removed without a manifest update. So the
-manifest cannot silently rot — that is exactly why this guide points at it
-instead of hardcoding a number.
+Not every security property is expressed as a replayable vector. Transport
+hardening (mTLS termination, transport binding, client-certificate lifetime
+posture), the serving-path proofs, and the delegated serving/rotation/fail-closed
+behaviours are proven by test targets directly, with no fixture corpus to replay.
+
+Those are enumerated, property by property, in the drift-guarded security
+traceability manifest — which maps each claimed property to the exact Bazel
+target and test function that proves it:
+
+- Manifest: [`mcp-re-conformance/security_traceability_manifest.json`](../mcp-re-conformance/security_traceability_manifest.json)
+- Drift guard: `//mcp-re-conformance:security_traceability_guard_test`
+
+The guard fails if a manifest entry names a target no `BUILD.bazel` declares, a
+test function that no longer exists in its source, or a source with no runfile
+wired up. For the delegated-required profile specifically, the acceptance gate is
+the [Delegated-Required Validation Matrix](spec/delegated-required-validation-matrix.md).
+
+### Preserved vector sets that are NOT conformance
+
+`mcp-re-policy/tests/vectors/phase5_vectors.json` is a preserved authorization
+vector corpus. **It is not executed by any harness and is not a conformance
+category.** It specifies a signed-authorization profile that was bound to the
+retired object carrier; `--authz reference` is refused at the configuration
+boundary, so there is no implementation for those vectors to run against. The
+corpus is retained because its generator no longer exists and it is the only
+remaining copy — it is design input for a future authorization profile, not
+evidence about this release. See
+[`mcp-re-policy/tests/vectors/README.md`](../mcp-re-policy/tests/vectors/README.md).
+
+### Counts live in the manifests, not here
+
+This guide deliberately quotes **no** vector counts. Each corpus's `manifest.json`
+enumerates its own fixtures and publishes a `corpus_digest` over them; the
+harnesses re-derive both at test time. To learn the current numbers, read the
+corpus manifests.
 
 ## Build prerequisites
 
@@ -65,7 +80,9 @@ initialize, no dependency-sync step to run.
 
 You can also build the workspace with `cargo` directly (see the README for the
 Cargo build path); the Bazel path documented below is the canonical hermetic
-gate used in CI.
+gate used in CI. Note that the two lanes are not interchangeable: `cargo test
+--workspace` does not compile the non-default feature backends, and `bazel test
+//...` excludes the `manual`-tagged infra lane.
 
 ### Run the suite
 
@@ -73,107 +90,70 @@ gate used in CI.
 bazel test //... --test_output=errors
 ```
 
-That builds `mcp-re-core`, `mcp-re-conformance`, `mcp-re-host`, `mcp-re-policy`, and
-`mcp-re-proxy` and runs every `rust_test` target enumerated in the manifest. A
-failure fails the check and blocks merge.
+A failure fails the check and blocks merge.
 
 ## Running a subset
 
 The wildcard target runs everything; during development you often want one
-package or one target. The exact target labels are enumerated in the manifest's
-`bazel_test_targets` array — use those names rather than guessing. Examples (the
-labels are real, but always cross-check against the manifest):
+package or one target. The category table above names the real labels.
 
 ```bash
-# Just the Core crate + its vector replay.
-bazel test //mcp-re-core/...
-
-# Just the conformance harnesses (object / HTTP / acceptance).
+# Every conformance harness.
 bazel test //mcp-re-conformance/...
 
-# The drift guard alone (fast; proves the manifest matches reality).
-bazel test //mcp-re-conformance:drift_guard_test
+# One corpus.
+bazel test //mcp-re-conformance:http_profile_vectors_test
+
+# The claims gate alone (fast; proves this guide matches the tree).
+python3 scripts/conformance_claims_gate.py
 ```
 
-If you add or remove a vector fixture, or add/remove an `nt_rust_test` target,
-the drift guard will fail until you update the manifest to match. That is the
-intended workflow: the manifest is edited deliberately, in the same change that
-alters the corpus.
+If you add or remove a corpus, or add/remove a harness target, the claims gate
+fails until the table above matches. That is the intended workflow: the guide is
+edited deliberately, in the same change that alters the corpus.
 
 ## What a green run proves
 
-- Each Core vector reaches its recorded outcome (`verify_ok` or an exact
-  `mcp-re.*` error token) — and reaches the **same** outcome as an object, over
-  and over HTTP (transport parity).
-- The Phase-5 authorization vectors exercise the `PolicyEvaluator` + Reference
-  Profile to their recorded allow/deny verdicts.
-- The Phase-6 proxy targets exercise mTLS termination, transport binding, the
-  durable replay cache, and the client-cert lifetime posture.
-- The manifest's enumerated corpus and counts match what is physically on disk
-  and in the BUILD files.
+- **Frozen corpora reach their recorded verdicts.** Every committed vector
+  verifies (or is refused with the exact `mcp-re.*` token the fixture records),
+  and regenerating the fixtures reproduces the committed bytes.
+- **Cross-verification against an independent implementation.** Externally
+  produced signatures and credentials verify under the MCP-RE verifier, our
+  issuer reproduces the external bytes, and externally built negatives are
+  refused — so a green corpus is not merely self-consistent.
+- **The corpora are pinned by content.** Each fixture's bytes match the SHA-256
+  the manifest publishes, the `corpus_digest` commits to the whole set, no vector
+  sits in the directory unpinned, and a tampered fixture fails its hash rather
+  than being run.
+- **The advertised categories exist.** Every category above has a corpus and a
+  harness that reaches it, and every corpus in the tree is advertised.
 
 For what each layer is claimed to prove (and the single-node production ceiling),
-see the [Transport Hardening Guide](transport-hardening-guide.md) and
-ADR-MCPS-017 ([view](https://github.com/matssun/mcp-re/discussions/366)).
+see the [Transport Hardening Guide](transport-hardening-guide.md).
 
-## v0.8.0 draft-02 conformance corpus pinning
+## Corpus content pinning
 
-The v0.8.0 draft-02 corpus is pinned **by content, not only by Git tag**. A tag
-name records *which commit*; these digests record *which bytes*, so an
-independent reviewer can confirm they are recomputing against the same corpus
-object rather than trusting that `v0.8.0` still points where they expect.
+A tag or branch name records *which commit*; a digest records *which bytes*, so
+an independent reviewer can confirm they are recomputing against the same corpus
+object rather than trusting that a tag still points where they expect. A filename
+list has the same weakness one level down — it proves which files were MEANT to
+be there, not what was in them.
 
-Two pins, both recomputed from the checked-in corpus bytes by
-[`scripts/corpus_digest.py`](../scripts/corpus_digest.py):
+Each corpus therefore carries its pins in its own `manifest.json`:
 
-- **`manifest.json` SHA-256** — SHA-256 over the exact bytes of
-  `mcp-re-core/tests/vectors/draft-02/manifest.json`:
+- `fixtures[].sha256` — the bytes of each committed fixture;
+- `corpus_digest` — a digest over the whole fixture set, so adding or removing a
+  vector changes it.
 
-  ```
-  a1e7812772975f80aa628048081a354a1a52f7cc1bbe3de306ae69b706bfd7db
-  ```
+Both are recomputed from the checked-in bytes at test time —
+`//mcp-re-conformance:corpus_pinning_test` for the HTTP-profile and delegation
+corpora, `//mcp-re-conformance:scitt_vectors_test` for the SCITT corpus — and the
+pinning tests include the negative control that makes the mechanism worth having:
+a tampered fixture must fail its hash rather than run. CI publishes the digests
+into the job summary, so a release packet can quote the exact corpus that was
+tested.
 
-- **`draft02_file_hash_list_digest`** — SHA-256 over a deterministic file-hash
-  list covering **every** regular file in
-  `mcp-re-core/tests/vectors/draft-02` (the manifest included), sorted by
-  repository-relative path, one LF-terminated `\<path\>  sha256:\<hex\>` line per
-  file:
-
-  ```
-  1e9967f046feb2dbb20d40d13259fd991d4b5129fe62e85a01dc21c707d53130
-  ```
-
-### Reproduce the pins
-
-The script is the **normative definition** of these values: the pin is whatever
-the checked-in script recomputes from the checked-in corpus, not a value copied
-from a comment. It has no third-party dependencies — a fresh clone plus
-`python3` is enough.
-
-```bash
-# Print both pins (add --list to dump the exact per-file preimage).
-python3 scripts/corpus_digest.py
-
-# Fail (non-zero exit) if the corpus no longer matches the published pins.
-python3 scripts/corpus_digest.py --check \
-  a1e7812772975f80aa628048081a354a1a52f7cc1bbe3de306ae69b706bfd7db \
-  1e9967f046feb2dbb20d40d13259fd991d4b5129fe62e85a01dc21c707d53130
-```
-
-If the corpus changes intentionally, the digests change with it; regenerate them
-with the script and update the values here in the same change.
-
-### Scope of the independent recompute
-
-An independent from-fixture recompute reproduced the committed canonical
-preimage bytes and SHA-256 values for the oracle-bearing draft-02 vectors within
-its stated scope. This check validates the **canonical-preimage / hash oracle
-layer only** — the preimage bytes and their SHA-256 values. It does **not** claim
-Ed25519 signature validation, SDK interoperability, or live KMS/server behavior.
-
-> An earlier externally reported second digest (`75f06ec2…f06f`) could not be
-> reproduced from the checked-in corpus without its construction, so it is **not
-> normative** here. The normative corpus-list digest is the one emitted by
-> `scripts/corpus_digest.py` above. A conformance pin must be reproducible from
-> checked-in code and checked-in corpus bytes; anything that is not, we do not
-> publish as a pin.
+The pins are whatever the checked-in harness recomputes from the checked-in
+corpus, never a value copied into prose. This guide publishes no digest literals
+for that reason: a conformance pin must be reproducible from checked-in code and
+checked-in corpus bytes, and a number transcribed into a document is neither.

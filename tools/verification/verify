@@ -1,0 +1,249 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""The verification umbrella — ADR-MCPRE-059 "Authoritative CI loop".
+
+Runs the platform's checks in the ADR's order and reports a single verdict:
+
+    1. validate verification manifests
+    2. validate toolchain pins
+    3. detect assumption / TCB escape hatches
+    4. check generated-model freshness
+    5. full Verus verification
+    6. Lean build and proofs
+
+Report-only by default (Phase 1 deliverable 7): the platform reports its own health
+without blocking unrelated code, because a verification lane that can fail the build
+before it has ever produced a proof is a lane that will be disabled. `--gate` makes it
+authoritative — that is the flag CI flips once the pilots land.
+
+Each lane DECLARES its outcome on a single line, one of five:
+
+    VERDICT: NOT_REQUIRED | PASS | FAIL | UNAVAILABLE | SKIPPED
+
+Five rather than three, because three collapsed two pairs of genuinely different
+situations, and both collapses are places a false PASS gets in:
+
+    NOT_REQUIRED  the manifest asks nothing of this lane. Legitimate; does not hold the
+                  aggregate back, and is never counted as evidence either.
+    UNAVAILABLE   required, but could not execute — tools unpinned, lane absent on this
+                  host, container unreachable.
+    SKIPPED       required, could have executed, deliberately not executed.
+
+`UNAVAILABLE` and `SKIPPED` both force INCOMPLETE; they stay apart because one is an
+environment to fix and the other a decision to justify. Neither may read as success.
+
+A lane that exits 0 without declaring a verdict is FAIL, as is one declaring two different
+verdicts: both mean the lane cannot say what it did, and unknown is dirty (§2). The
+declaration is what separates "ran and was satisfied" from "ran nothing and returned 0" —
+a distinction no amount of reading the lane's prose can reliably recover.
+
+The aggregate is `aggregate_verdict`, and it distinguishes lanes that produce EVIDENCE
+(Verus, Lean, generated-model) from lanes that are PRECONDITIONS for trusting evidence
+(manifest validation, the assumption/TCB gate). A hygiene lane can withhold a pass by
+failing; its passing proves nothing about the code. So a repository with green hygiene
+gates and no proofs reports INCOMPLETE, not PASS — otherwise an empty manifest would read
+as a verified repository, which is "exits 0 having measured nothing" one level up again.
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _evidence import write_bundle  # noqa: E402
+from _manifest import (  # noqa: E402
+    LANE_VERDICTS,
+    REPO_ROOT,
+    ManifestError,
+    aggregate_verdict,
+    boundary_class_violations,
+    load_assumptions,
+    load_toolchains,
+    load_trust_boundaries,
+    load_verification,
+    unresolved_pins,
+)
+
+HERE = Path(__file__).resolve().parent
+
+def _declared_verdict(output: str) -> str | None:
+    """The verdict a lane declared, or None if it declared none.
+
+    Exactly one VERDICT: line is expected. Two contradicting lines are not a tie to be
+    broken here — they mean the lane does not know what it did, which is unknown, which
+    is dirty.
+    """
+    found = {
+        line.split(":", 1)[1].strip()
+        for line in output.splitlines()
+        if line.strip().startswith("VERDICT:")
+    }
+    if len(found) != 1:
+        return None
+    verdict = found.pop()
+    return verdict if verdict in LANE_VERDICTS else None
+
+
+#: (display name, script, is_formal).
+#:
+#: `is_formal` is what separates a lane that produces EVIDENCE from a lane that is a
+#: PRECONDITION for trusting evidence. The assumption/TCB gate can withhold a pass by
+#: failing, but its passing says nothing about the code — so it must never be able to
+#: carry the aggregate to PASS on its own.
+LANES = [
+    ("assumptions", "check-assumptions", False),
+    ("generated-model", "check-generated", True),
+    ("verus", "verify-verus", True),
+    ("lean", "verify-lean", True),
+]
+
+
+def gate_exit_code(aggregate: str, gate: bool) -> int:
+    """The process status `--gate` reports for an aggregate verdict.
+
+    Only PASS exits 0. INCOMPLETE is not a pass — it is the state in which no required lane
+    produced formal evidence, which is what a downgraded unit, a deleted unit, an
+    unavailable prover and a deliberately skipped lane all look like. An exit code that
+    cannot tell those from a proved repository makes the CI check green for a run that
+    measured nothing, and the exit code is the only thing CI reads.
+    """
+    if not gate:
+        return 0
+    return 0 if aggregate == "PASS" else 1
+
+
+def validate_manifests() -> tuple[bool, list[str]]:
+    notes: list[str] = []
+    try:
+        doc = load_verification()
+        assumptions = load_assumptions()
+        boundaries = load_trust_boundaries()
+        toolchains = load_toolchains()
+    except ManifestError as exc:
+        return False, [str(exc)]
+    # `max_class_without_assumption` is a gate, not a comment: a unit promoted past the
+    # class its crossed boundary permits over-reads what its proof establishes, and the
+    # platform would otherwise report PASS over that over-read.
+    violations = boundary_class_violations(doc, boundaries, assumptions)
+    if violations:
+        return False, violations
+    notes.append(f"policy revision {doc['policy_revision']}")
+    notes.append(f"{len(doc.get('unit', []))} unit(s), {len(doc.get('edge', []))} edge(s)")
+    unresolved = unresolved_pins(toolchains)
+    if unresolved:
+        notes.append(f"unresolved toolchain pins: {', '.join(unresolved)}")
+    return True, notes
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--gate",
+        action="store_true",
+        help="authoritative mode: any aggregate but PASS fails the build",
+    )
+    parser.add_argument(
+        "--manifests",
+        action="store_true",
+        help="validate the manifests only, then stop",
+    )
+    args = parser.parse_args()
+
+    print("=" * 70)
+    print("ADR-MCPRE-059 verification platform")
+    print("=" * 70)
+
+    ok, notes = validate_manifests()
+    status = "PASS" if ok else "FAIL"
+    print(f"\n[manifests] {status}")
+    for note in notes:
+        print(f"    {note}")
+    if not ok:
+        return 1
+    if args.manifests:
+        return 0
+
+    verdicts: dict[str, str] = {}
+    for name, script, _is_formal in LANES:
+        completed = subprocess.run(
+            [sys.executable, str(HERE / script)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        output = (completed.stdout + completed.stderr).strip()
+        if completed.returncode != 0:
+            verdict = "FAIL"
+        else:
+            # The lane states its own verdict on a VERDICT: line. Inferring it from the
+            # prose instead would mean a lane that exits 0 having done nothing reads as
+            # PASS purely because it did not happen to print the word SKIPPED — the
+            # "exits 0 having measured nothing" failure, one level up.
+            declared = _declared_verdict(output)
+            if declared is None:
+                verdict = "FAIL"
+                output = (
+                    f"{output}\n\nFAIL: lane exited 0 without declaring a verdict. "
+                    "A lane that does not say what it did has unknown provenance, and "
+                    "unknown is dirty."
+                ).strip()
+            else:
+                verdict = declared
+        verdicts[name] = verdict
+        print(f"\n[{name}] {verdict}")
+        for line in output.splitlines():
+            print(f"    {line}")
+
+    formal = {name for name, _script, is_formal in LANES if is_formal}
+    aggregate = aggregate_verdict(
+        [verdict for name, verdict in verdicts.items() if name in formal],
+        [verdict for name, verdict in verdicts.items() if name not in formal],
+    )
+    required_missing = [
+        name
+        for name, verdict in verdicts.items()
+        if verdict in {"UNAVAILABLE", "SKIPPED"}
+    ]
+    failed = [name for name, verdict in verdicts.items() if verdict == "FAIL"]
+    not_required = [
+        name for name, verdict in verdicts.items() if verdict == "NOT_REQUIRED"
+    ]
+
+    # Phase 3 of the evidence pipeline: the run's verdict becomes a record. Attestation is
+    # a separate phase precisely so that the thing which DECIDES pass is never the thing
+    # which STAMPS freshness; the issuer reads this and may not overrule it.
+    write_bundle(
+        REPO_ROOT / ".verification" / "evidence",
+        aggregate,
+        verdicts,
+        str(load_verification()["policy_revision"]),
+    )
+
+    print("\n" + "=" * 70)
+    if aggregate == "FAIL":
+        print(f"VERIFICATION: FAIL — {', '.join(failed)}")
+    elif aggregate == "INCOMPLETE":
+        if required_missing:
+            print(f"VERIFICATION: INCOMPLETE — required and missing: {', '.join(required_missing)}")
+        else:
+            print("VERIFICATION: INCOMPLETE — the manifest requires no formal evidence")
+        print("No required lane produced formal evidence. This is not a pass.")
+    else:
+        print("VERIFICATION: PASS")
+    if not_required:
+        # Reported, never counted. "The manifest asked nothing of Lean" and "Lean proved
+        # something" are different claims, and only the second is evidence.
+        print(f"(not required by this manifest: {', '.join(not_required)})")
+    if not args.gate:
+        print("(report-only — pass --gate to make this authoritative)")
+    print("=" * 70)
+
+    return gate_exit_code(aggregate, args.gate)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

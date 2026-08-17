@@ -8,6 +8,15 @@
 //! parse, then keyid resolution through the caller's trust seam, then the
 //! signature over the reconstructed base, then handle derivation.
 
+// ADR-MCPRE-059 Phase 2. Absent from every production build: the imports are
+// feature-gated and each specification rides a `cfg_attr` that expands to nothing
+// unless `--features verify` is on.
+#[cfg(feature = "verify")]
+use verus_builtin_macros::{verus_spec, verus_verify};
+#[cfg(feature = "verify")]
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
 use mcp_re_core::verify_ed25519_with;
 use mcp_re_core::McpReError;
 
@@ -250,6 +259,19 @@ fn split_parameters(value: &str) -> Vec<&str> {
 fn member_value<'a>(header_value: &'a str, label: &str) -> Result<&'a str, HttpProfileError> {
     let mut found: Option<&'a str> = None;
     for member in split_dictionary(header_value) {
+        // RFC 8941 §3.2's `dict-member` cannot be empty, so a leading, trailing or
+        // doubled comma is not a spelling of the same dictionary — it is not a
+        // dictionary. Skipping it silently, as an unparseable member, is the same
+        // wire-spelling collapse the `=` rule above refuses: `mcp-re=(...)` and
+        // `,mcp-re=(...),` would rebuild one signature base and verify under one
+        // signature, so an intermediary could add or strip a comma in the raw header
+        // and every consumer that logs, hashes, caches or diffs it would hold bytes
+        // other than the ones that were signed.
+        if member.is_empty() {
+            return Err(HttpProfileError::MalformedEvidence(
+                "empty dictionary member",
+            ));
+        }
         if let Some(rest) = member.strip_prefix(label) {
             if let Some(v) = rest.strip_prefix('=') {
                 if found.is_some() {
@@ -524,6 +546,28 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
 /// Algorithm acceptance and clock-skew tolerance are read from `policy`, never
 /// from the message (§13.1 / §5.1): the signature parameters state what the
 /// signer did, the policy states what this verifier accepts.
+// ADR-MCPRE-059 Phase 2 theorem — the live freshness rule (§5.1).
+//
+// This is the admission decision every served request passes through: if this function
+// returns Ok, the message's window contains `now` after widening by the policy's skew in
+// both directions, the window is non-degenerate, and it is no wider than the policy
+// allows. Nothing is assumed about the skew or the validity bound themselves — the
+// theorem holds for whatever a deployment configures, which is the property that matters,
+// since the attacker chooses `created`/`expires` and the operator chooses the policy.
+//
+// The window-width clause carries its saturation explicitly rather than quietly assuming
+// `expires - created` fits in an i64: it does not, for a hostile pair, and a theorem that
+// pretended otherwise would be false exactly where it is load-bearing.
+#[cfg_attr(feature = "verify", verus_spec(out =>
+    ensures
+        out matches Ok((created, expires, _nonce, _key_id, _algorithm)) ==> {
+            &&& created - crate::verus_std_specs::skew_of(policy) <= now
+            &&& now < expires + crate::verus_std_specs::skew_of(policy)
+            &&& created < expires
+            &&& (if expires - created > i64::MAX { i64::MAX as int } else { expires - created })
+                    <= crate::verus_std_specs::validity_of(policy)
+        },
+))]
 fn check_params(
     params: &SignatureParams,
     policy: &VerifierPolicy,
@@ -1676,6 +1720,37 @@ mod wire_form_tests {
         // OWS around the member-separating comma stays legal (RFC 8941 §4.2).
         assert_eq!(
             member_value("other=(\"@method\") , mcp-re=:YWJj:", "mcp-re").expect("comma OWS"),
+            ":YWJj:"
+        );
+    }
+
+    /// A comma that delimits nothing is not a spelling variant of the dictionary — RFC
+    /// 8941 has no empty `dict-member`. Ignored as "a member I could not parse", it let
+    /// an intermediary add or strip commas in the raw `Signature-Input`/`Signature`
+    /// header while the signature still verified.
+    #[test]
+    fn an_empty_dictionary_member_is_refused_not_ignored() {
+        for spelling in [
+            ",mcp-re=:YWJj:",
+            "mcp-re=:YWJj:,",
+            "mcp-re=:YWJj:,,other=1",
+            " , mcp-re=:YWJj:",
+            ",",
+            "",
+        ] {
+            assert_eq!(
+                member_value(spelling, "mcp-re").unwrap_err(),
+                HttpProfileError::MalformedEvidence("empty dictionary member"),
+                "{spelling:?} was read as the canonical dictionary",
+            );
+        }
+        // The canonical spelling, and a legitimate neighbouring member, are unaffected.
+        assert_eq!(
+            member_value("mcp-re=:YWJj:", "mcp-re").expect("canonical"),
+            ":YWJj:"
+        );
+        assert_eq!(
+            member_value("other=1, mcp-re=:YWJj:", "mcp-re").expect("a neighbour is legal"),
             ":YWJj:"
         );
     }

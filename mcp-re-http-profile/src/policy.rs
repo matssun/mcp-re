@@ -28,6 +28,15 @@
 //! configuration exceeding that cap fails closed at construction rather than
 //! silently widening the freshness window.
 
+// ADR-MCPRE-059 Phase 2. Absent from every production build: the imports are
+// feature-gated and each specification rides a `cfg_attr` that expands to nothing
+// unless `--features verify` is on.
+#[cfg(feature = "verify")]
+use verus_builtin_macros::{verus_spec, verus_verify};
+#[cfg(feature = "verify")]
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
 use crate::error::HttpProfileError;
 use crate::ids::ALG_ED25519;
 
@@ -173,12 +182,22 @@ impl VerifierPolicy {
     /// dispatch on it: "is this allowed" and "what verifies it" are answered
     /// together, and there is no way to ask the first without carrying the
     /// second. That is what closes the confusion path structurally.
+    // ADR-MCPRE-059 ASM-0009: algorithm acceptance is orthogonal to the freshness
+    // theorem, which claims nothing about which algorithm was resolved.
+    #[cfg_attr(feature = "verify", verus_verify(external_body))]
     pub fn accepted_algorithm(&self, token: &str) -> Option<ProfileAlgorithm> {
         let alg = ProfileAlgorithm::from_token(token)?;
         self.algorithms.contains(&alg).then_some(alg)
     }
 
     /// The validated skew tolerance, in seconds.
+    // ADR-MCPRE-059 ASM-0007: a field read, told to the verifier as an opaque function of
+    // the policy. The freshness theorem quantifies over whatever value a deployment
+    // configures, so nothing more than "it is this policy's skew" is needed or claimed.
+    #[cfg_attr(feature = "verify", verus_verify(external_body))]
+    #[cfg_attr(feature = "verify", verus_spec(out =>
+        ensures out == crate::verus_std_specs::skew_of(self),
+    ))]
     pub fn max_clock_skew(&self) -> i64 {
         self.max_clock_skew
     }
@@ -197,6 +216,11 @@ impl VerifierPolicy {
     }
 
     /// The widest accepted `expires - created`, in seconds.
+    // ADR-MCPRE-059 ASM-0008 — see `max_clock_skew`.
+    #[cfg_attr(feature = "verify", verus_verify(external_body))]
+    #[cfg_attr(feature = "verify", verus_spec(out =>
+        ensures out == crate::verus_std_specs::validity_of(self),
+    ))]
     pub fn max_signature_validity(&self) -> i64 {
         self.max_signature_validity
     }

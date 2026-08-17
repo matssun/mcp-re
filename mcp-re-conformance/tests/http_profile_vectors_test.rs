@@ -1258,10 +1258,10 @@ fn build_fixtures() -> Vec<Fixture> {
     // ----- signed-rejection fixtures (MCPRE-96) -----
     // A rejection is a signed response carrying error.data.mcp_re_error.wire_code.
     // `req` (from h01) is a fully signed request the server binds via ;req.
-    let reject_reason = RejectionReason {
-        wire_code: "mcp-re.invalid_audience",
-        message: "audience did not match this verifier (human text — do not trust)".into(),
-    };
+    let reject_reason = RejectionReason::new(
+        "mcp-re.invalid_audience",
+        "audience did not match this verifier (human text — do not trust)",
+    );
 
     // h18 — bound valid: the trusted wire code surfaces after the signature.
     let bound = build_signed_rejection(

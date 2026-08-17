@@ -460,7 +460,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-client-core"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "mcp-re-core",
  "mcp-re-http-profile",
@@ -470,7 +470,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-core"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -482,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-http-profile"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "base64",
  "ciborium",

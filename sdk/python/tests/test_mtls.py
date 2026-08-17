@@ -290,3 +290,95 @@ def test_an_empty_ca_bundle_is_refused(material, tmp_path):
     with pytest.raises(McpReSdkError) as raised:
         mtls_poster(_config(443), _options(material, server_ca=empty))
     assert "no certificate" in str(raised.value)
+
+
+# --- the aggregate response-read bound --------------------------------------------
+
+
+def test_the_response_read_is_bounded_in_wall_clock_not_only_per_recv():
+    """``timeout`` on the socket is a PER-RECV bound, and per-recv bounds nothing.
+
+    Every byte that arrives re-arms it, so a peer trickling just under it extends the
+    total read without limit while holding a ``CapacityLimiter`` slot;
+    ``max_concurrent_exchanges`` such responses wedge the whole client session with no
+    error and no timeout. The Rust client leg this module mirrors caps total read time
+    (MCPS-093 ``read_response_bounded``); this is that cap.
+
+    Driven against ``_read_bounded`` directly rather than a live trickling TLS server:
+    the property is the deadline, and a real socket adds only scheduling noise to it.
+    """
+    import time as _time
+
+    from mcp_re_sdk.mtls import _read_bounded
+
+    class _Trickle:
+        """One byte per read, slower than a real peer but never idle."""
+
+        def __init__(self) -> None:
+            self.reads = 0
+
+        def read(self, _amount: int) -> bytes:
+            self.reads += 1
+            _time.sleep(0.02)
+            return b"x"
+
+    options = MtlsOptions(
+        server_ca=b"unused",
+        client_cert="unused",
+        timeout=0.2,
+        max_response_bytes=1024 * 1024,
+    )
+    peer = _Trickle()
+    started = _time.monotonic()
+    with pytest.raises(MtlsTransportError) as raised:
+        _read_bounded(peer, options)
+    elapsed = _time.monotonic() - started
+    assert "aggregate response read" in str(raised.value)
+    assert elapsed < 5.0, f"the deadline did not bound the read ({elapsed:.1f}s)"
+    assert peer.reads > 1, "the reader must have been making progress, not stalled"
+
+
+def test_a_response_inside_both_bounds_still_reads_whole():
+    """The bound refuses a trickle, not an ordinary reply delivered in chunks."""
+
+    class _Chunked:
+        def __init__(self, payload: bytes) -> None:
+            self.rest = payload
+
+        def read(self, amount: int) -> bytes:
+            chunk, self.rest = self.rest[:amount], self.rest[amount:]
+            return chunk
+
+    from mcp_re_sdk.mtls import _read_bounded
+
+    options = MtlsOptions(
+        server_ca=b"unused", client_cert="unused", timeout=30.0, max_response_bytes=64
+    )
+    assert _read_bounded(_Chunked(b"hello world"), options) == b"hello world"
+
+    # And the byte ceiling still fails closed, one byte past it.
+    with pytest.raises(MtlsTransportError) as raised:
+        _read_bounded(_Chunked(b"y" * 65), options)
+    assert "max_response_bytes" in str(raised.value)
+
+
+def test_no_timeout_means_no_aggregate_bound_either():
+    """``timeout=None`` is the documented "no bound" knob. Honouring it on one of the two
+    bounds and not the other would be a different setting wearing the same name."""
+
+    class _Short:
+        def __init__(self) -> None:
+            self.done = False
+
+        def read(self, _amount: int) -> bytes:
+            if self.done:
+                return b""
+            self.done = True
+            return b"ok"
+
+    from mcp_re_sdk.mtls import _read_bounded
+
+    options = MtlsOptions(
+        server_ca=b"unused", client_cert="unused", timeout=None, max_response_bytes=64
+    )
+    assert _read_bounded(_Short(), options) == b"ok"

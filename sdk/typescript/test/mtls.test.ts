@@ -135,6 +135,39 @@ async function post(
   return poster("POST", cfg.targetUri, headers, Buffer.from("{}"));
 }
 
+/**
+ * A TLS server that DRIPS its response: one byte every `everyMs`, forever, under a
+ * content-length that will never be satisfied. This is the slow-loris shape a per-socket
+ * inactivity timer cannot bound — every byte re-arms it.
+ */
+function serveTrickle(everyMs: number): Promise<{ server: Server; port: number }> {
+  const timers: NodeJS.Timeout[] = [];
+  const server = createServer(
+    {
+      cert: pem("server.crt"),
+      key: pem("server.key"),
+      ca: pem("ca.crt"),
+      requestCert: true,
+      rejectUnauthorized: true,
+    },
+    (req, res) => {
+      req.resume();
+      req.on("end", () => {
+        res.setHeader("content-type", "application/json");
+        res.setHeader("content-length", "1000000");
+        res.writeHead(200);
+        timers.push(setInterval(() => res.write("x"), everyMs));
+      });
+    },
+  );
+  server.on("close", () => timers.forEach(clearInterval));
+  return new Promise((done) =>
+    server.listen(0, "127.0.0.1", () =>
+      done({ server, port: (server.address() as { port: number }).port }),
+    ),
+  );
+}
+
 /** Run `body` against a server presenting `certStem`, tearing it down either way. */
 async function withServer(
   certStem: string,
@@ -250,6 +283,30 @@ describe("the mTLS connect helper", () => {
   });
 
   // These need no server: the helper refuses the configuration outright.
+
+  tls("bounds the TOTAL response read, not only socket inactivity", async () => {
+    // `timeout` in Node is a per-socket INACTIVITY timer: every byte that arrives
+    // re-arms it, so a peer dripping just under it holds this exchange — and the
+    // transport semaphore slot it occupies — open indefinitely. Eight such responses
+    // wedge the whole client session with no error and no timeout. The Rust client leg
+    // this module mirrors caps total read time (MCPS-093); the SDKs never picked it up.
+    //
+    // The drip interval is well inside the bound, so ONLY an aggregate deadline can end
+    // this. Without one the poster's promise never settles and the test times out.
+    const { server, port } = await serveTrickle(50);
+    const started = Date.now();
+    try {
+      await expect(post(port, { connectPort: port, timeoutMs: 600 })).rejects.toThrow(
+        /aggregate response read/,
+      );
+    } finally {
+      await new Promise((done) => server.close(done));
+    }
+    expect(
+      Date.now() - started,
+      "the aggregate deadline did not bound the read",
+    ).toBeLessThan(5_000);
+  });
 
   it("refuses a plaintext target", () => {
     // An http:// target would be signed and sent in the clear, and the evidence would

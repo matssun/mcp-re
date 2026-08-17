@@ -441,8 +441,9 @@ pub async fn serve<H: AsyncRequestHandler>(
 /// routes on and what this process CAN see, so it is the part whose assertion is
 /// checkable.
 ///
-/// An empty configured target is not checked here — `--target-uri` is already required
-/// and non-empty at parse, and the verifier fails closed on a blank covered value.
+/// An empty configured target is not checked here — `config_state::validation::target_uri_violation` refuses it
+/// at the validation boundary every config passes through, and the verifier fails closed on
+/// a blank covered value.
 fn target_uri_mismatch(configured: &str, received: &hyper::Uri) -> Option<String> {
     if configured.is_empty() {
         return None;
@@ -457,8 +458,11 @@ fn target_uri_mismatch(configured: &str, received: &hyper::Uri) -> Option<String
 
 /// The origin-form (`/path`) of an ABSOLUTE `--target-uri`.
 ///
-/// `None` only for a target with no `://`, which `cli::parse_args` refuses — so on
-/// the served path this is always `Some`, and the mismatch check is always live.
+/// `None` only for a target with no `://`, which `config_state::validation::target_uri_violation` refuses at the
+/// validation boundary — so on the served path this is always `Some`, and the mismatch
+/// check is always live. The refusal is at the boundary rather than only in the parser
+/// because a `None` here reads as "no mismatch", which would disable this check silently
+/// for a config that never met a parser.
 fn origin_form_of(absolute: &str) -> Option<String> {
     let authority_start = absolute.find("://")? + 3;
     let authority = &absolute[authority_start..];
@@ -637,9 +641,14 @@ async fn serve_connection<H: AsyncRequestHandler>(
     // MAX CONNECTION AGE: the peer's certificate was validated — chain, CRL, validity
     // window — at the handshake and is never re-consulted on an established
     // connection. At the age bound the connection is GRACEFULLY shut down: in-flight
-    // requests finish, no new ones are accepted, and the peer's next request rides a
-    // fresh handshake that re-runs the verifier against the current CRL. Without this,
-    // a peer that never reconnects is never re-checked.
+    // requests finish and no new ones are accepted, so a peer that never reconnects
+    // is not served indefinitely on one admission decision.
+    //
+    // This bound alone does not force re-verification. A TLS 1.3 peer that resumes
+    // presents a PSK and sends no CertificateVerify, so the reconnection re-runs no
+    // chain or CRL check. Resumption tickets are bound to the trust-anchor epoch, so
+    // an anchor change invalidates them; a CRL reload does not. Per-request
+    // revocation is what holds against a revoked-but-resuming peer.
     let conn = builder.serve_connection(io, service);
     tokio::pin!(conn);
     match max_connection_age {
@@ -1039,15 +1048,27 @@ mod admission_bound_tests {
     /// credentials needs only as many concurrent connections as there are workers to
     /// occupy every one, since TLS 1.3 signs `CertificateVerify` before the client's
     /// `Certificate` is seen. Raising this to the pool size re-opens exactly that.
+    ///
+    /// The comparison is against the OTHER CONSTANT, not a copy of its value. This
+    /// assertion read `< 4`, which pins the wrong relation: lowering
+    /// `DELEGATED_TLS_WORKERS_PER_CORE` to 2 leaves `2 < 4` true and this test green while
+    /// the property it exists to protect — a worker left over for the rest of the core —
+    /// is violated. A guard on a literal only looks load-bearing.
     #[test]
     fn the_handshake_bound_leaves_workers_for_the_rest_of_the_core() {
         const {
             // A bound of zero would refuse every handshake.
             assert!(DELEGATED_TLS_HANDSHAKES_PER_CORE >= 1);
-            // Strictly below `async_fleet::DELEGATED_TLS_WORKERS_PER_CORE` (4), or a
-            // handshake flood occupies every worker on the core — its accept loop, its
-            // established connections and every in-flight request included.
-            assert!(DELEGATED_TLS_HANDSHAKES_PER_CORE < 4);
+            // The PROPERTY: a core under a full handshake flood still has a worker for its
+            // accept loop, its established connections and its in-flight requests. Stated
+            // as the subtraction rather than as an inequality against the pool size,
+            // because the leftover worker is the thing that matters — the ordering is just
+            // today's way of obtaining it.
+            assert!(
+                crate::async_fleet::DELEGATED_TLS_WORKERS_PER_CORE
+                    .saturating_sub(DELEGATED_TLS_HANDSHAKES_PER_CORE)
+                    >= 1
+            );
         }
     }
 }

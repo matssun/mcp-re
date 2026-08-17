@@ -560,9 +560,118 @@ impl DelegationPolicy {
     }
 }
 
+/// Whether the refused work had already reached the backend, as the server states it
+/// in the verified rejection body (ADR-MCPRE-058 §10 `execution_status`).
+///
+/// [`Unstated`](ExecutionStatus::Unstated) is NOT
+/// [`NotExecuted`](ExecutionStatus::NotExecuted). A receipt that says nothing leaves
+/// the question open, and collapsing the two here would turn "unknown whether it ran"
+/// into "it did not run" at the one place a caller decides whether to retry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecutionStatus {
+    /// The receipt carries no `execution_status`. Nothing is known from it.
+    Unstated,
+    /// The server states the work did not reach the backend.
+    NotExecuted,
+    /// The server states the work may already have run.
+    PossiblyExecuted,
+    /// A token this client does not recognize. Never resolved to either of the two
+    /// known states: an unknown disposition is not evidence that nothing ran.
+    Unrecognized(String),
+}
+
+/// What a retry of the refused request would cost, as the server states it
+/// (ADR-MCPRE-058 §10 `retry_safety`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RetrySafety {
+    /// The receipt carries no `retry_safety`. The server made no statement; a caller
+    /// that needs one must not read this as permission to retry.
+    Unstated,
+    /// The work may already have run. A blind retry re-executes it — the caller must
+    /// reconcile against the backend first.
+    UnsafeWithoutReconciliation,
+    /// The work did not run, but the human approval that authorized it is gone. A
+    /// retry cannot recover it; a new elicitation is required.
+    UnsafeWithoutNewElicitation,
+    /// A token this client does not recognize. Treated as a statement that was made
+    /// and not understood — never as its absence, and never as "safe".
+    Unrecognized(String),
+}
+
+/// The execution / retry contract a server derives from its exchange machine and signs
+/// into every rejection body (ADR-MCPRE-058 §10, SL-10), read back on the client.
+///
+/// The raw tokens are kept verbatim so a caller can log exactly what the peer said; the
+/// accessors classify them without ever inventing a state the receipt did not carry.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExecutionContract {
+    /// `error.data.mcp_re_error.execution_status`, verbatim.
+    pub execution_status: Option<String>,
+    /// `error.data.mcp_re_error.retry_safety`, verbatim.
+    pub retry_safety: Option<String>,
+    /// `error.data.mcp_re_error.continuation_status`, verbatim.
+    pub continuation_status: Option<String>,
+    /// `error.data.mcp_re_error.retention_status`, verbatim.
+    pub retention_status: Option<String>,
+}
+
+impl ExecutionContract {
+    /// Whether the receipt stated any part of the contract at all.
+    pub fn is_stated(&self) -> bool {
+        self.execution_status.is_some()
+            || self.retry_safety.is_some()
+            || self.continuation_status.is_some()
+            || self.retention_status.is_some()
+    }
+
+    /// The classified `execution_status`.
+    pub fn execution(&self) -> ExecutionStatus {
+        match self.execution_status.as_deref() {
+            None => ExecutionStatus::Unstated,
+            Some("not_executed") => ExecutionStatus::NotExecuted,
+            Some("possibly_executed") => ExecutionStatus::PossiblyExecuted,
+            Some(other) => ExecutionStatus::Unrecognized(other.to_owned()),
+        }
+    }
+
+    /// The classified `retry_safety`.
+    pub fn retry(&self) -> RetrySafety {
+        match self.retry_safety.as_deref() {
+            None => RetrySafety::Unstated,
+            Some("unsafe_without_reconciliation") => RetrySafety::UnsafeWithoutReconciliation,
+            Some("unsafe_without_new_elicitation") => RetrySafety::UnsafeWithoutNewElicitation,
+            Some(other) => RetrySafety::Unrecognized(other.to_owned()),
+        }
+    }
+
+    /// Whether a blind retry is refused by this receipt: the server stated a retry
+    /// hazard, or stated the work may already have run.
+    ///
+    /// A receipt that states NOTHING returns `false` — this reports what the server
+    /// said, and a caller that needs the difference between "stated safe" and "said
+    /// nothing" reads [`is_stated`](Self::is_stated) alongside it. There is no token
+    /// for "safe to retry": the contract only ever names hazards.
+    pub fn retry_is_refused(&self) -> bool {
+        !matches!(self.retry(), RetrySafety::Unstated)
+            || matches!(self.execution(), ExecutionStatus::PossiblyExecuted)
+    }
+
+    /// Whether the exchange consumed a continuation (a human approval) that a retry
+    /// cannot recover.
+    pub fn continuation_consumed(&self) -> bool {
+        self.continuation_status.as_deref() == Some("consumed")
+    }
+
+    /// Whether the server states its evidence-retention obligation failed for this
+    /// exchange — the audit store has no record of a call that may have run.
+    pub fn retention_failed(&self) -> bool {
+        self.retention_status.as_deref() == Some("failed")
+    }
+}
+
 /// The verified-response outcome the client hands its caller (ADR-MCPRE-052): a
 /// success, or a delegated REJECTION receipt (request-bound or preflight-unbound)
-/// carrying the server's frozen wire code.
+/// carrying the server's frozen wire code and its execution/retry contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DelegatedOutcome {
     /// A delegated-signed, request-bound SUCCESS response.
@@ -571,9 +680,13 @@ pub enum DelegatedOutcome {
     /// receipt (the server verified the request before a later fail-closed step)
     /// from a preflight-unbound one (the request never earned a trustworthy hash).
     /// `wire_code` is the server's frozen `mcp-re.*` reason from the verified body.
+    /// `execution` is the ADR-MCPRE-058 §10 execution/retry contract the same body
+    /// carries — the difference between a refusal that ran nothing and one whose
+    /// side effect a retry would perform twice.
     Rejection {
         bound: bool,
         wire_code: Option<String>,
+        execution: ExecutionContract,
     },
 }
 
@@ -665,11 +778,13 @@ pub fn verify_delegated_response<R: Into<ResolverOutcome>>(
     ) {
         Ok(verified) => {
             check_expected_server_signer(expectation, &verified)?;
+            let (wire_code, execution) = rejection_receipt(&response.body);
             Ok(VerifiedDelegatedResponse {
                 verified,
                 outcome: DelegatedOutcome::Rejection {
                     bound: true,
-                    wire_code: rejection_wire_code(&response.body),
+                    wire_code,
+                    execution,
                 },
             })
         }
@@ -682,11 +797,18 @@ pub fn verify_delegated_response<R: Into<ResolverOutcome>>(
         ) {
             Ok(verified) => {
                 check_expected_server_signer(expectation, &verified)?;
+                // The unbound signature binds nothing about the request, so a receipt
+                // that verifies here is not yet an answer to THIS request. Confirm the
+                // server produced it for the bytes this client sent before reporting a
+                // refusal at all.
+                check_unbound_receipt_is_about_this_request(response, &expectation.request)?;
+                let (wire_code, execution) = rejection_receipt(&response.body);
                 Ok(VerifiedDelegatedResponse {
                     verified,
                     outcome: DelegatedOutcome::Rejection {
                         bound: false,
-                        wire_code: rejection_wire_code(&response.body),
+                        wire_code,
+                        execution,
                     },
                 })
             }
@@ -773,14 +895,88 @@ pub fn verify_delegated_accepted_202_anchored_pinned(
     )
 }
 
-/// The server's frozen wire code from a (verified) rejection-receipt body
-/// (`error.data.mcp_re_error.wire_code`), if present. Read ONLY after verification.
-fn rejection_wire_code(body: &[u8]) -> Option<String> {
-    serde_json::from_slice::<Value>(body).ok().and_then(|v| {
-        v.pointer("/error/data/mcp_re_error/wire_code")
-            .and_then(|w| w.as_str())
-            .map(str::to_owned)
-    })
+/// The server's frozen wire code and its ADR-MCPRE-058 §10 execution/retry contract,
+/// from a (verified) rejection-receipt body's `error.data.mcp_re_error`.
+///
+/// Read ONLY after verification: the content-digest covered these bytes, so what comes
+/// back is what the server signed. One parse for both, because they are one object and
+/// a caller must never see the wire code without the disposition beside it.
+fn rejection_receipt(body: &[u8]) -> (Option<String>, ExecutionContract) {
+    let Ok(value) = serde_json::from_slice::<Value>(body) else {
+        return (None, ExecutionContract::default());
+    };
+    let Some(error) = value.pointer("/error/data/mcp_re_error") else {
+        return (None, ExecutionContract::default());
+    };
+    let field = |name: &str| error.get(name).and_then(Value::as_str).map(str::to_owned);
+    (
+        field("wire_code"),
+        ExecutionContract {
+            execution_status: field("execution_status"),
+            retry_safety: field("retry_safety"),
+            continuation_status: field("continuation_status"),
+            retention_status: field("retention_status"),
+        },
+    )
+}
+
+/// The `digest_alg` a preflight receipt uses for the digest of the bytes it received.
+/// It is the ONLY alg that names "these are the request bytes that reached me".
+const RECEIVED_DIGEST_ALG: &str = "sha-256-received";
+
+/// Confirm that a preflight-UNBOUND rejection receipt is at least about the request
+/// this client sent.
+///
+/// The unbound signature covers only response components — no `@method`, no
+/// `@target-uri`, no request digest — so on its own ANY preflight receipt the server
+/// ever emitted verifies as the answer to ANY in-flight request. An attacker who can
+/// substitute response bytes mints one on demand (send one unverifiable request, keep
+/// the signed refusal) and injects it as the answer to a victim's call, which may
+/// already have executed at the backend. That is the did-not-run/possibly-ran collapse
+/// the exchange machine exists to prevent, delivered with a valid signature.
+///
+/// The one request-derived value such a receipt does carry is the digest of the bytes
+/// the server received, in the response evidence block's `request_evidence` under the
+/// `sha-256-received` alg. The block rides in the body, so the covered
+/// `Content-Digest` and the verified response signature protect it: the server signed
+/// this digest, and a substituted receipt cannot carry a value the signer did not
+/// produce. Requiring it to equal the digest of the body THIS client sent narrows
+/// "any receipt for any request" to "a receipt the server produced for these exact
+/// request bytes".
+///
+/// It is a BYTE binding, not an instance binding: two transmissions of identical bytes
+/// share it, and the request nonce lives in a header the unbound signature does not
+/// cover. That residue is exactly why the outcome still reports `bound: false` — the
+/// caller is told this receipt is not tied to this transmission, and must not treat it
+/// as one. A receipt carrying no received-digest at all (`digest_alg: "none"`) is
+/// about no request and cannot be an answer to this one.
+fn check_unbound_receipt_is_about_this_request(
+    response: &HttpResponse,
+    request: &HttpRequest,
+) -> Result<(), HttpProfileError> {
+    let body: Value = serde_json::from_slice(&response.body)
+        .map_err(|_| HttpProfileError::MalformedEvidence("rejection receipt body"))?;
+    let evidence = body
+        .get("_meta")
+        .and_then(|meta| meta.get(mcp_re_http_profile::RESPONSE_EVIDENCE_BLOCK_KEY))
+        .and_then(|block| block.get("request_evidence"))
+        .ok_or(HttpProfileError::MalformedEvidence(
+            "rejection receipt carries no request_evidence",
+        ))?;
+    let alg = evidence.get("digest_alg").and_then(Value::as_str);
+    let value = evidence.get("digest_value").and_then(Value::as_str);
+    let (Some(alg), Some(value)) = (alg, value) else {
+        return Err(HttpProfileError::MalformedEvidence(
+            "rejection receipt request_evidence is not a digest",
+        ));
+    };
+    if alg != RECEIVED_DIGEST_ALG {
+        return Err(HttpProfileError::ResponseBindingMismatch);
+    }
+    if value != mcp_re_http_profile::content_digest_sha256(&request.body) {
+        return Err(HttpProfileError::ResponseBindingMismatch);
+    }
+    Ok(())
 }
 
 /// Verify the delegated-signed bodyless **202** a server returns for a one-way
@@ -1169,10 +1365,7 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason {
-            wire_code: "mcp-re.replay_detected",
-            message: "replayed".into(),
-        };
+        let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
         let resp = build_delegated_rejection(
             signed.request(),
             signed.evidence(),
@@ -1213,10 +1406,7 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason {
-            wire_code: "mcp-re.replay_detected",
-            message: "replayed".into(),
-        };
+        let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
         let resp = build_delegated_rejection(
             signed.request(),
             signed.evidence(),
@@ -1243,7 +1433,8 @@ mod delegated_tests {
             out.outcome,
             DelegatedOutcome::Rejection {
                 bound: true,
-                wire_code: Some("mcp-re.replay_detected".into())
+                wire_code: Some("mcp-re.replay_detected".into()),
+                execution: ExecutionContract::default(),
             }
         );
     }
@@ -1254,10 +1445,7 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason {
-            wire_code: "mcp-re.request_signature_invalid",
-            message: "bad request".into(),
-        };
+        let reason = RejectionReason::new("mcp-re.request_signature_invalid", "bad request");
         let resp = build_delegated_rejection_preflight(
             Some(signed.request()),
             &reason,
@@ -1283,9 +1471,289 @@ mod delegated_tests {
             out.outcome,
             DelegatedOutcome::Rejection {
                 bound: false,
-                wire_code: Some("mcp-re.request_signature_invalid".into())
+                wire_code: Some("mcp-re.request_signature_invalid".into()),
+                execution: ExecutionContract::default(),
             }
         );
+    }
+
+    /// A preflight-unbound receipt the server minted for SOMEBODY ELSE'S request must
+    /// not verify as the answer to this one.
+    ///
+    /// The unbound signature covers only response components, so before the
+    /// received-digest check every preflight receipt the server ever emitted was a
+    /// valid, freshness-current, audience-scoped refusal of any in-flight request — and
+    /// one is trivially minted on demand by sending a single unverifiable request. The
+    /// victim's call may already have executed at the backend.
+    #[test]
+    fn a_preflight_receipt_for_another_request_is_not_an_answer_to_this_one() {
+        let mine = signed();
+        // A different request: different params, so different body bytes.
+        let inputs = RequestSigningInputs::new(
+            CLIENT_KEY_ID.to_string(),
+            audience(),
+            bindings(),
+            "nonce-2-padded-to-the-128-bit-floor",
+            CREATED,
+            EXPIRES,
+        );
+        let params: Map<String, Value> = json!({ "name": "attacker-chosen" })
+            .as_object()
+            .cloned()
+            .unwrap();
+        let theirs = build_signed_request(
+            &json!(99),
+            "tools/call",
+            params,
+            TARGET,
+            &inputs,
+            &client_key(),
+        )
+        .expect("the attacker signs its own request");
+        assert_ne!(mine.request().body, theirs.request().body);
+
+        let mut custody = custody();
+        custody.ensure_active(NOW).expect("issue");
+        let snap = custody.active_snapshot().unwrap();
+        let reason = RejectionReason::new("mcp-re.request_signature_invalid", "bad request");
+        // The receipt the server genuinely emitted for the ATTACKER's request.
+        let spliced = build_delegated_rejection_preflight(
+            Some(theirs.request()),
+            &reason,
+            403,
+            &snap.server_signer,
+            &snap.credential,
+            snap.key.as_ref(),
+            &snap.delegated_kid,
+            NOW,
+            NOW + 300,
+        )
+        .expect("server builds a preflight rejection for the attacker's request");
+
+        // Presented as the answer to MY request, it must fail closed rather than
+        // arriving as an authoritative denial of a call that may already have run.
+        let err = verify_delegated_response(
+            &spliced,
+            &resolver(),
+            &expectation(&mine),
+            &policy(),
+            &StaticRevocationList::new(),
+            NOW,
+        )
+        .expect_err("a receipt about another request must not answer this one");
+        assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
+
+        // And the receipt the server produced for MY bytes still verifies, so the guard
+        // refuses splicing rather than the preflight path itself.
+        let mine_receipt = build_delegated_rejection_preflight(
+            Some(mine.request()),
+            &reason,
+            403,
+            &snap.server_signer,
+            &snap.credential,
+            snap.key.as_ref(),
+            &snap.delegated_kid,
+            NOW,
+            NOW + 300,
+        )
+        .expect("server builds a preflight rejection for this request");
+        let out = verify_delegated_response(
+            &mine_receipt,
+            &resolver(),
+            &expectation(&mine),
+            &policy(),
+            &StaticRevocationList::new(),
+            NOW,
+        )
+        .expect("the receipt for this request's bytes still verifies");
+        assert!(matches!(
+            out.outcome,
+            DelegatedOutcome::Rejection { bound: false, .. }
+        ));
+    }
+
+    /// A receipt with NO received-digest is about no request at all, so it cannot be
+    /// the answer to this one — the generic-receipt form of the same splice.
+    #[test]
+    fn a_preflight_receipt_about_no_request_answers_nothing() {
+        let signed = signed();
+        let mut custody = custody();
+        custody.ensure_active(NOW).expect("issue");
+        let snap = custody.active_snapshot().unwrap();
+        let reason = RejectionReason::new("mcp-re.request_signature_invalid", "bad request");
+        let generic = build_delegated_rejection_preflight(
+            None,
+            &reason,
+            403,
+            &snap.server_signer,
+            &snap.credential,
+            snap.key.as_ref(),
+            &snap.delegated_kid,
+            NOW,
+            NOW + 300,
+        )
+        .expect("server builds a receipt with no request context");
+        let err = verify_delegated_response(
+            &generic,
+            &resolver(),
+            &expectation(&signed),
+            &policy(),
+            &StaticRevocationList::new(),
+            NOW,
+        )
+        .expect_err("a receipt about no request must not answer this one");
+        assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
+    }
+
+    /// SL-10: the execution/retry contract the server derives from its exchange machine
+    /// reaches the client as typed state, not only as a wire code.
+    ///
+    /// Without it a post-dispatch refusal is indistinguishable from an ordinary outage,
+    /// and the caller's retry re-executes a tool call that already ran.
+    #[test]
+    fn a_post_dispatch_rejection_carries_its_execution_and_retry_contract() {
+        let signed = signed();
+        let mut custody = custody();
+        custody.ensure_active(NOW).expect("issue");
+        let snap = custody.active_snapshot().unwrap();
+        let reason = RejectionReason::new("mcp-re.upstream_unavailable", "backend already ran")
+            .with_execution(mcp_re_http_profile::ExecutionDisposition::PossiblyExecuted);
+        let resp = build_delegated_rejection(
+            signed.request(),
+            signed.evidence(),
+            &reason,
+            503,
+            &snap.server_signer,
+            &snap.credential,
+            snap.key.as_ref(),
+            &snap.delegated_kid,
+            NOW,
+            NOW + 300,
+        )
+        .expect("server builds a post-dispatch rejection");
+        let out = verify_delegated_response(
+            &resp,
+            &resolver(),
+            &expectation(&signed),
+            &policy(),
+            &StaticRevocationList::new(),
+            NOW,
+        )
+        .expect("client verifies the receipt");
+        let DelegatedOutcome::Rejection { execution, .. } = &out.outcome else {
+            panic!("a 503 receipt is a rejection, got {:?}", out.outcome);
+        };
+        assert!(execution.is_stated());
+        assert_eq!(execution.execution(), ExecutionStatus::PossiblyExecuted);
+        assert_eq!(execution.retry(), RetrySafety::UnsafeWithoutReconciliation);
+        assert!(execution.retry_is_refused());
+
+        // The destroyed-approval case is a DIFFERENT remedy and must not read as the
+        // reconciliation one: nothing ran, but the retry needs a new elicitation.
+        let reason = RejectionReason::new("mcp-re.evidence_retention_unavailable", "no store")
+            .with_execution(
+                mcp_re_http_profile::ExecutionDisposition::ApprovalSpentNothingExecuted,
+            );
+        let resp = build_delegated_rejection(
+            signed.request(),
+            signed.evidence(),
+            &reason,
+            503,
+            &snap.server_signer,
+            &snap.credential,
+            snap.key.as_ref(),
+            &snap.delegated_kid,
+            NOW,
+            NOW + 300,
+        )
+        .expect("server builds an approval-spent rejection");
+        let out = verify_delegated_response(
+            &resp,
+            &resolver(),
+            &expectation(&signed),
+            &policy(),
+            &StaticRevocationList::new(),
+            NOW,
+        )
+        .expect("client verifies the receipt");
+        let DelegatedOutcome::Rejection { execution, .. } = &out.outcome else {
+            panic!("a 503 receipt is a rejection");
+        };
+        assert_eq!(execution.execution(), ExecutionStatus::NotExecuted);
+        assert_eq!(execution.retry(), RetrySafety::UnsafeWithoutNewElicitation);
+        assert!(execution.continuation_consumed());
+        assert!(execution.retry_is_refused());
+    }
+
+    /// An UNSTATED contract is not a statement that nothing ran. Collapsing the two is
+    /// how "unknown whether it ran" becomes "safe to retry" at the one call site that
+    /// decides.
+    #[test]
+    fn an_unstated_contract_is_not_a_did_not_run_verdict() {
+        let empty = ExecutionContract::default();
+        assert!(!empty.is_stated());
+        assert_eq!(empty.execution(), ExecutionStatus::Unstated);
+        assert_ne!(empty.execution(), ExecutionStatus::NotExecuted);
+        assert_eq!(empty.retry(), RetrySafety::Unstated);
+        assert!(!empty.continuation_consumed());
+        assert!(!empty.retention_failed());
+
+        // A token this client does not know is a statement it did not understand —
+        // never absence, and never permission.
+        let unknown = ExecutionContract {
+            execution_status: Some("something_new".into()),
+            retry_safety: Some("also_new".into()),
+            ..ExecutionContract::default()
+        };
+        assert!(unknown.is_stated());
+        assert!(matches!(
+            unknown.execution(),
+            ExecutionStatus::Unrecognized(_)
+        ));
+        assert!(matches!(unknown.retry(), RetrySafety::Unrecognized(_)));
+        assert!(unknown.retry_is_refused());
+    }
+
+    /// `evidence_retention_indeterminate` says one thing more than the generic
+    /// post-dispatch case: the audit store has no record of a call that may have run.
+    #[test]
+    fn a_retention_failure_is_readable_as_such() {
+        let signed = signed();
+        let mut custody = custody();
+        custody.ensure_active(NOW).expect("issue");
+        let snap = custody.active_snapshot().unwrap();
+        let reason = RejectionReason::new(
+            mcp_re_core::McpReError::EvidenceRetentionIndeterminate.wire_code(),
+            "the evidence write failed after dispatch",
+        );
+        let resp = build_delegated_rejection(
+            signed.request(),
+            signed.evidence(),
+            &reason,
+            500,
+            &snap.server_signer,
+            &snap.credential,
+            snap.key.as_ref(),
+            &snap.delegated_kid,
+            NOW,
+            NOW + 300,
+        )
+        .expect("server builds a retention-indeterminate rejection");
+        let out = verify_delegated_response(
+            &resp,
+            &resolver(),
+            &expectation(&signed),
+            &policy(),
+            &StaticRevocationList::new(),
+            NOW,
+        )
+        .expect("client verifies the receipt");
+        let DelegatedOutcome::Rejection { execution, .. } = &out.outcome else {
+            panic!("a 500 receipt is a rejection");
+        };
+        assert_eq!(execution.execution(), ExecutionStatus::PossiblyExecuted);
+        assert!(execution.retention_failed());
+        assert!(execution.retry_is_refused());
     }
 
     #[test]
@@ -1362,10 +1830,7 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason {
-            wire_code: "mcp-re.request_signature_invalid",
-            message: "x".into(),
-        };
+        let reason = RejectionReason::new("mcp-re.request_signature_invalid", "x");
         // Build an UNBOUND signature but stamp a success status onto it.
         let mut resp = build_delegated_rejection_preflight(
             Some(signed.request()),
@@ -1524,10 +1989,7 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason {
-            wire_code: "mcp-re.replay_detected",
-            message: "replayed".into(),
-        };
+        let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
         let resp = build_delegated_rejection(
             signed.request(),
             signed.evidence(),
@@ -1598,10 +2060,7 @@ mod delegated_tests {
         );
 
         // The receipt is signed AT `late`, so its RFC 9421 freshness window is current.
-        let reason = RejectionReason {
-            wire_code: "mcp-re.replay_detected",
-            message: "replayed".into(),
-        };
+        let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
         let resp = build_delegated_rejection(
             signed.request(),
             signed.evidence(),

@@ -103,13 +103,13 @@ cd "$(git rev-parse --show-toplevel)"
 # Run ONLY the GCP live test targets -> no "0 tests" wall from other binaries.
 
 # 1. SERVER object-signing lane (positive + 3 negatives).
-cargo test -p mcp-re-proxy --features gcp_kms_keysource \
+scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features gcp_kms_keysource \
   --test gcp_kms_live_test -- --ignored --nocapture
 
 # 2. SERVER delegated-TLS lane: the TLS private key stays in GCP KMS; a real mTLS
 #    handshake completes only if the cloud signed it.
-cargo test -p mcp-re-proxy --features gcp_kms_keysource \
-  --test gcp_kms_delegated_tls_live_test -- --ignored --nocapture
+scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features gcp_kms_keysource \
+  --test integration_live -- --ignored gcp_kms_delegated_tls_live_test:: --nocapture
 
 # 3. SERVER delegated-REQUIRED lane (ADR-MCPRE-052 / MCPRE-122): the KMS root
 #    ISSUES a short-TTL credential and an in-memory delegated key signs the
@@ -117,21 +117,21 @@ cargo test -p mcp-re-proxy --features gcp_kms_keysource \
 #    Asserts zero per-request KMS ops at the serving altitude, plus the
 #    authority-flip, trust-epoch and revocation boundaries. This is the lane the
 #    cross-cloud delegated-root claim rests on; lane 1 does not reach it.
-cargo test -p mcp-re-proxy --features gcp_kms_keysource \
-  --test gcp_kms_delegated_required_live_test -- --ignored --nocapture
+scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features gcp_kms_keysource \
+  --test integration_live -- --ignored gcp_kms_delegated_required_live_test:: --nocapture
 
 # 3b. SERVER HTTP standards profile (RFC 9421 + RFC 9530) lane (ADR-MCPRE-050 /
 #     MCPRE-106): Cloud KMS signs an RFC 9421 request AND response through the
 #     profile's external-signer seam (sign_request_with_signer /
 #     sign_response_with_signer) that the unmodified verify_request /
 #     verify_response accept, with tamper + wrong-key negatives.
-cargo test -p mcp-re-proxy --features gcp_kms_keysource \
-  --test gcp_kms_http_profile_live_test -- --ignored --nocapture
+scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features gcp_kms_keysource \
+  --test integration_live -- --ignored gcp_kms_http_profile_live_test:: --nocapture
 
 # 4. SERVER delegated-SIGNING custody state machine on a KMS root: issuance,
 #    rotation, and verification with zero per-request KMS ops.
-cargo test -p mcp-re-proxy --features gcp_kms_keysource \
-  --test gcp_kms_delegated_signing_live_test -- --ignored --nocapture
+scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features gcp_kms_keysource \
+  --test integration_live -- --ignored gcp_kms_delegated_signing_live_test:: --nocapture
 
 # The client-side and four-hop KMS lanes are not invoked here: they targeted the
 # `mcp-re-client-proxy-cli` and `mcp-re-walkthrough` crates, neither of which is a

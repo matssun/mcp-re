@@ -17,6 +17,24 @@
 # WHY arm64. The SLO cluster is Graviton (see deploy/eks/mcp-re-slo-cluster.yaml), so
 # the image must be arm64. This project uses an aarch64 CodeBuild environment, which
 # builds it natively — no QEMU, and no emulated CPU anywhere near a measurement.
+#
+# HOW THE SOURCE ZIP IS PRODUCED. Exactly this, and nothing that zips the working tree:
+#
+#   git archive --format=zip HEAD -o /tmp/source.zip
+#   aws s3 cp /tmp/source.zip \
+#     "s3://mcp-re-build-$(aws sts get-caller-identity --query Account --output text)-<region>/source.zip"
+#
+# `git archive HEAD` emits TRACKED files at a commit. No other control governs this
+# transfer: `.dockerignore` is read by `docker build` inside the build container, long
+# after the tree is already in S3, and `.gcloudignore` governs a different upload
+# entirely — so neither one keeps a file out of the object below, and
+# `scripts/tracked_secrets_gate.py` (which checks those two files) says nothing about
+# it. Zipping the working directory would upload `work/` — where the runbooks tell an
+# operator to keep FILLED-IN cloud credential scripts, precisely because it is
+# gitignored — into an object readable by every principal with read on this bucket.
+#
+# `git archive` also means the built image corresponds to a commit, not to whatever a
+# developer happened to have on disk.
 AWSTemplateFormatVersion: "2010-09-09"
 Description: ECR repository and an arm64 CodeBuild project for the MCP-RE SLO bench image
 
@@ -130,6 +148,28 @@ Resources:
           phases:
             pre_build:
               commands:
+                # Fail closed if the uploaded context is a zipped working tree rather
+                # than a `git archive`. Nothing else inspects this transfer, and by the
+                # time the build runs the object is already in S3 — so this cannot
+                # un-upload anything, it refuses to BUILD from a context that carries
+                # operator credential material and makes the mistake visible at once.
+                - |
+                  for p in work .claude .aws .gcloud .kube .env; do
+                    if [ -e "$p" ]; then
+                      echo "REFUSING: '$p' is in the build context. Upload it with"
+                      echo "'git archive --format=zip HEAD', which emits tracked files only."
+                      exit 1
+                    fi
+                  done
+                - |
+                  leaked=$(find . -path ./target -prune -o \
+                    \( -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' \
+                       -o -name 'kubeconfig' -o -name '*seed.txt' \) -print | head -20)
+                  if [ -n "$leaked" ]; then
+                    echo "REFUSING: credential-shaped files in the build context:"
+                    echo "$leaked"
+                    exit 1
+                  fi
                 # The tag is READ FROM VERSION, never retyped — the same rule the
                 # Job runner follows. A literal here goes stale on the next bump and
                 # the Job then references a tag the registry does not hold.

@@ -1,0 +1,168 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# ADR-MCPRE-059 — declared trust boundaries.
+#
+# A trust boundary is a place where MCP-RE stops being able to prove and starts having to
+# trust. Naming them is what keeps a proof's meaning honest: a theorem about code on one
+# side of a boundary says nothing about the other side, and a reader who does not know
+# where the boundary runs will over-read the proof.
+#
+# This file is descriptive input to the evidence graph, not a gate on its own. Its effect
+# is that a unit whose paths cross a declared boundary cannot be promoted past the
+# verification class the boundary permits without an explicit, registered assumption
+# covering the crossing.
+
+schema_version = 1
+
+# ---------------------------------------------------------------------------
+# Boundaries, from the Phase 0 inventory
+# ---------------------------------------------------------------------------
+
+[[boundary]]
+id = "boundary.pkcs11"
+description = "PKCS#11 hardware token, reached through the raw cryptoki-sys FFI."
+kind = "ffi"
+paths = [
+  "mcp-re-proxy/src/pkcs11_native.rs",
+  "mcp-re-proxy/src/pkcs11_keysource.rs",
+]
+beyond = "The token's own implementation of key custody, signing, and object attributes."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.libc"
+description = "Kernel sockets, signals, and process credentials via libc."
+kind = "ffi"
+paths = [
+  "mcp-re-proxy/src/async_fleet.rs",
+  "mcp-re-proxy/src/app.rs",
+  "mcp-re-proxy/src/main.rs",
+  "mcp-re-client/src/main.rs",
+]
+beyond = "Kernel behaviour, including SO_REUSEPORT connection distribution and signal delivery."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.crypto_primitives"
+description = "Ed25519 and SHA-256 as implemented by ed25519-dalek and sha2."
+kind = "cryptographic"
+paths = [
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/hash.rs",
+]
+beyond = "Collision resistance, unforgeability, and the constant-time properties of the primitives themselves."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.external_kms"
+description = "AWS KMS, GCP KMS, and the delegated-signing authorities they root."
+kind = "external-service"
+paths = [
+  "mcp-re-proxy/src/aws_kms_keysource.rs",
+  "mcp-re-proxy/src/gcp_kms_keysource.rs",
+]
+beyond = "Whether the service performed the operation it reports having performed, with the key it names."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.clock"
+description = """
+ACQUISITION of wall-clock time from the operating system. The authority this boundary
+names is the act of asking the OS what time it is and treating the answer as true — not
+the handling of a timestamp that some caller already supplied.
+"""
+kind = "environment"
+# Every production site that calls `std::time::SystemTime::now()` directly, i.e. every
+# place the OS clock actually enters the system. Two of these are the wrappers the rest
+# of the codebase reads time through — `mcp-re-host/src/clock.rs` (`SystemClock`, the
+# injected `Clock` seam) and `mcp-re-proxy/src/clock.rs` (`now_unix()`). Callers of
+# those wrappers are NOT listed: they consume an already-acquired value and hold no
+# clock authority of their own, so listing them would model the call graph instead of
+# the authority.
+#
+# Each wrapper is a module that owns clock acquisition and nothing else, which is what
+# lets this boundary stay narrow: the declared surface is the code that exercises the
+# authority, not whatever larger module happens to contain it.
+paths = [
+  "mcp-re-client/src/main.rs",
+  "mcp-re-demo/src/demo_fixtures.rs",
+  "mcp-re-host/src/clock.rs",
+  "mcp-re-proxy/src/async_replay.rs",
+  "mcp-re-proxy/src/aws_kms_keysource.rs",
+  "mcp-re-proxy/src/aws_sts.rs",
+  "mcp-re-proxy/src/clock.rs",
+  "mcp-re-proxy/src/continuation_store.rs",
+  "mcp-re-proxy/src/etcd_store.rs",
+  "mcp-re-proxy/src/gcp_kms_keysource.rs",
+  "mcp-re-proxy/src/ocsp.rs",
+  "mcp-re-proxy/src/redis_store.rs",
+  "mcp-re-proxy/src/retained_evidence.rs",
+  "mcp-re-proxy/src/shared_replay.rs",
+  "mcp-re-proxy/src/tls.rs",
+  "mcp-re-proxy/src/trust_cache.rs",
+]
+beyond = "Whether wall-clock time is within the skew bound of any peer's."
+max_class_without_assumption = "V0"
+
+# --- what this boundary deliberately does NOT cover --------------------------------
+#
+# CORRECTION, 2026-08-11. This boundary previously declared
+# `paths = ["mcp-re-core/src/time.rs"]`, which was wrong in both directions: it named a
+# module that holds no clock authority, and it named none of the sixteen that do.
+#
+# The declaration was inert for as long as it was wrong. `max_class_without_assumption`
+# was validated as a string and enforced nowhere; when the enforcement was implemented
+# (`boundary_class_violations`), the contradiction surfaced immediately as
+# `unit core.time_rfc3339 is class V1 but its paths cross boundary.clock`. The unit was
+# never the defect. This entry was.
+#
+# It is repaired as an assurance-policy correction, not by relaxing the gate: no
+# assumption was registered (there was nothing to trust — the parser has no clock
+# dependency), and `core.time_rfc3339` remains V1 with its proof intact.
+#
+# 1. TIMESTAMP TRANSFORMATION IS NOT CLOCK ACQUISITION.
+#    `mcp-re-core/src/time.rs` converts between RFC 3339 text and Unix seconds. It reads
+#    no clock, and it cannot: `mcp-re-core` contains no `SystemTime`, no `Instant`, and
+#    no `UNIX_EPOCH`, which ADR-MCPS-011/012 manifest purity enforces. Per ADR-MCPS-006
+#    core pushes timestamps to its callers. Trusting the OS clock and transforming a
+#    value someone else supplied are different security responsibilities, and they do not
+#    share a boundary merely because both involve time.
+#
+# 2. MONOTONIC TIME IS A DIFFERENT AUTHORITY.
+#    Nine production files use `std::time::Instant` for local deadlines and elapsed-time
+#    measurement: mcp-re-client/src/serve.rs, mcp-re-transport/src/lib.rs, and
+#    mcp-re-proxy's async_serve.rs, cli.rs, delegated_tls.rs, http_inner.rs,
+#    managed_worker.rs, stage_timers.rs, trust_epoch.rs. `Instant` is monotonic and not
+#    comparable to any peer's clock, so it cannot participate in the skew question this
+#    boundary's `beyond` names. Whether the monotonic clock deserves a boundary of its
+#    own is an OPEN QUESTION for the owner; it is recorded here rather than silently
+#    folded into this one.
+#
+# 3. PARAMETER CONVERSION IS NOT ACQUISITION — but a file may do both.
+#    `mcp-re-proxy/src/ocsp.rs` converts a supplied instant in
+#    `system_time_to_unix(now: SystemTime)`, which on its own would not be acquisition.
+#    It is nonetheless LISTED, because it also reads the clock directly at ocsp.rs:322,
+#    supplying the reference instant against which an OCSP response's freshness — and so
+#    a revocation verdict — is decided.
+#
+#    This entry was briefly absent. The scan that produced the first list truncated each
+#    file at its FIRST `#[cfg(test)]`, which in ocsp.rs is an inline attribute at line
+#    248, discarding the production call 74 lines later. Fifteen files in the workspace
+#    carry such an early attribute. The lesson is recorded here rather than only in the
+#    fix: a boundary derived by scanning is only as sound as the scanner's notion of
+#    "production code", and that notion must be tested rather than assumed.
+#
+# The relationship this entry asserts is regression-tested against the source tree, not
+# just against today's manifest — see `test_the_clock_boundary_names_every_acquisition_site`
+# in tools/verification/test_measured_inputs.py, which re-derives the acquisition set and
+# fails when a new `SystemTime::now()` site appears undeclared.
+
+# ---------------------------------------------------------------------------
+# What is deliberately NOT a boundary
+# ---------------------------------------------------------------------------
+#
+# `mcp-re-core` and `mcp-re-http-profile` contain no `unsafe`, no FFI, no networking, no
+# async, and no filesystem access, enforced by their manifests under ADR-MCPS-011/012.
+# Inside those crates there is nothing to trust that is not either declared above or
+# ordinary Rust — which is why both pilot candidates for the extracted-model path were
+# drawn from there.

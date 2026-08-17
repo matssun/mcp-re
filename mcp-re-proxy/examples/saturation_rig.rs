@@ -330,8 +330,6 @@ fn spawn_proxy(
             "uri_san",
             "--max-client-cert-lifetime",
             &lifetime,
-            "--replay-cache",
-            "shared",
             "--replay-redis-url",
             redis,
             "--replay-durability-tier",

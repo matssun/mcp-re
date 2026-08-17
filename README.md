@@ -225,14 +225,19 @@ profile lands.
 which controls are available — do not conflate the lean default with the
 production high-assurance profile.
 
-### Lean default (no cargo features)
+### Lean default (no cargo features) — **not a serving binary**
 
 - Minimal runtime closure (ADR-MCPS-018): no Redis, no PKCS#11, no online-OCSP
   dependency is linked in.
-- Intended for local, dev, and minimal single-node deployments.
-- Shared replay protection, HSM/KMS key custody, and online OCSP revocation are
-  **unavailable** in this build: selecting `--replay-cache shared` or a PKCS#11
-  key source fails closed at startup rather than degrading.
+- **A default build does not start.** This is not a gap in its controls; it is the
+  consequence of two decisions meeting. Replay protection is required, and every
+  replay state is shared — declaring no durability tier is refused rather than
+  falling back to anything node-local. And both shared states need a backend this
+  build does not link: Redis needs `redis_replay`, the linearizable CP store needs
+  `cpstore_etcd`. No command line reaches a state this build can materialize.
+- It remains the right build for compiling, unit-testing, and linking against the
+  library. It is not a deployment target, and there is no single-node serving
+  profile — see the deployment guide, whose replay table is authoritative.
 
 Build with:
 
@@ -257,10 +262,10 @@ cargo build --release -p mcp-re-proxy \
     --features pkcs11_keysource,redis_replay,online_ocsp
 ```
 
-**Multi-node MCP-RE deployments MUST use the high-assurance profile** with
-`--replay-cache shared --replay-redis-url redis://...` so all proxy nodes share
-replay state. A per-node cache (the lean default) does not prevent cross-node
-replays.
+**Every MCP-RE deployment uses the high-assurance profile** with a replay durability
+tier and its store, so all proxy nodes share replay state. This is not only a
+multi-node requirement: a per-node cache would not prevent cross-node replays, and no
+per-node cache exists to fall back on — every replay state is shared.
 
 ## What MCP-RE does not yet claim
 

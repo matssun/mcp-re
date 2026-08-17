@@ -1,6 +1,62 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# MCP-RE — working rules
+# MCP-RE — code base standards
+
+## Rust Code Quality & Architecture Rules
+
+### Module & File Structure
+
+1. **One Main Type Per File**: Every major `struct`, `enum`, or `trait` must reside in its own file under a domain module (e.g., `src/domain/user_repository.rs`).
+2. **File Size Limit**: 200 lines of code (excluding unit tests) is the threshold for a
+   `.rs` file. Crossing it is a **mandatory design-review trigger, not an automatic
+   split** — see "Thresholds are review triggers" below. Let responsibility boundaries
+   drive a file split; never create arbitrary files merely to get under the number.
+3. **Module Re-exports**: Use `mod.rs` to encapsulate module internals and re-export public interfaces using `pub use`.
+
+### Function Boundaries & Security
+
+1. **Function Line Limit**: 60 lines of code is the threshold for a function. Crossing it
+   is a **mandatory design-review trigger, not an automatic split** — see "Thresholds are
+   review triggers" below. The usual outcome is decomposition into private helper
+   functions (`pub(crate)` or `fn`) or pipeline stages.
+2. **Cognitive Complexity**: Avoid nested `match` or `if let` statements deeper than 2 levels. Use early returns (`?` operator or `let-else` statements).
+3. **Security Code**: Parsing, authentication, and execution MUST be isolated into distinct types/functions. Do not combine I/O operations with cryptographic or authorization logic in the same function.
+
+### Thresholds are review triggers, not laws
+
+The 60-line function and 200-line file limits are **not** unconditional architectural
+laws. Crossing one creates a **mandatory review obligation**, not an automatic
+refactoring obligation. Above the threshold, do one of two things:
+
+- **A — decompose.** Identify the natural responsibilities and split along them. This is
+  the normal outcome, and it is the outcome whenever real seams exist.
+- **B — document an exception.** Explain why keeping the unit intact makes the
+  security/control argument materially clearer and safer.
+
+**"It is complicated" is not an exception.** A B-case must state concretely: why
+decomposition would damage the reasoning, what invariant requires locality, why the
+subordinate responsibilities cannot be separated, and what tests or review evidence
+compensate for the size.
+
+**Never split code merely to satisfy a number.** A rule that forces a split where one
+would destroy clarity produces the very thing these rules exist to prevent —
+architecture distorted to satisfy a metric.
+
+Note what an exception costs: using one where a sensible decomposition exists weakens
+the rule exactly where it was working. A threshold's job is to force you to look. When
+looking finds real seams, split; the threshold has then done its job.
+
+One coherent security invariant does **not** have to be one large function. Keep the
+overarching argument in the module documentation and let the subordinate checks be
+separately testable predicates — that usually makes the invariant easier to
+substantiate, not harder.
+
+### Testing Requirements
+
+1. Every file must include a `#[cfg(test)] mod tests` block at the bottom containing unit tests for the types defined in that specific file.
+2. Run `cargo clippy -- -D warnings` after every edit. Do not mark a task complete if Clippy emits warnings or functions exceed complexity thresholds.
+
+## Working rules
 
 Read [`docs/AGENT_INSTRUCTIONS.md`](docs/AGENT_INSTRUCTIONS.md) before editing any ADR,
 spec, or design doc. It states the current worldview (RFC 9421 + RFC 9530 is the one
@@ -33,6 +89,25 @@ The known instance: `tls_load_harness_bench` (the SLO load harness) is **not** a
 propagated into four documented places before anyone noticed. Use
 `scripts/local_slo_lane.sh`; `scripts/slo_invocation_gate.py` fails the build if the
 bad form comes back.
+
+**Never read a gate's result through a pipe.** `scripts/local_gate.sh --fast | tail`
+reports `tail`'s exit status, not the gate's — a failed gate reads as a clean pass, and
+this has already happened. Run gates unpiped and read the exit status, or read the
+`LOCAL GATE: PASS` / `LOCAL GATE: FAIL` line the script prints exactly once per run. No
+such line means the run did not finish.
+
+The general rule that instance is one case of:
+
+> **A test property includes the build/feature lane the test actually exists in.** A
+> passing lane that compiles the relevant test to zero tests is not evidence for that
+> property.
+
+Second known instance: `mcp-re-proxy/tests/async_drain_test.rs` is
+`#![cfg(feature = "async_serve")]`. A plain `cargo test --workspace` compiles it to
+**zero** tests and reports green, so cargo says nothing whatsoever about bounded drain
+or teardown ordering. Only `bazel test //...` runs it — the target sets
+`crate_features = ["async_serve"]` and `RUST_TEST_THREADS=1`. Before citing a drain or
+lifecycle result, confirm it came from the Bazel lane.
 
 ## Measure on a quiet box
 

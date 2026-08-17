@@ -86,13 +86,20 @@ pub struct FleetConfig {
     pub workers_per_shard: usize,
     /// `listen(2)` backlog for each per-core listener.
     pub listen_backlog: i32,
-    /// MCPRE-114: an optional FLEET-GLOBAL in-flight-request ceiling. When set (and
-    /// the per-core `ServerLimits::max_in_flight_requests` is not already set
-    /// explicitly), it is divided evenly across cores — each core's ceiling is
-    /// `ceil(total / cores)` — so the aggregate in-flight stays under `total` while
-    /// the request path remains lock-free ACROSS cores (no shared global semaphore on
-    /// the hot path, per ADR-MCPRE-051 §1). `None` leaves the per-core ceiling as
-    /// configured on `ServerOptions` (or unbounded).
+    /// MCPRE-114: an optional FLEET-GLOBAL in-flight-request TARGET, the ALTERNATIVE to
+    /// the per-core `ServerLimits::max_in_flight_requests` rather than a companion to it —
+    /// layer A refuses a configuration that names both. When set, it is divided evenly
+    /// across cores — each core's ceiling is
+    /// `ceil(total / cores)` — which keeps the request path lock-free ACROSS cores (no
+    /// shared global semaphore on the hot path, per ADR-MCPRE-051 §1). `None` leaves the
+    /// per-core ceiling as configured on `ServerOptions` (or unbounded).
+    ///
+    /// A target, not a cap: equal integer shares cannot express a total that does not
+    /// divide by the core count, and the division rounds UP, so the fleet admits
+    /// `ceil(total / cores) × cores` — at or above `total`, never below.
+    /// [`derived_per_core_ceiling`] is the one authority on that share, and every
+    /// component that must agree with the gate on aggregate capacity derives from it
+    /// (see [`crate::startup_plan::inner_plane_ceiling`]).
     pub max_in_flight_total: Option<usize>,
 }
 
@@ -271,8 +278,9 @@ where
 /// MCPRE-114: derive the per-core in-flight ceiling from an optional fleet-global
 /// target. When `global` is set AND the per-core ceiling is not already configured
 /// explicitly, set each core's `max_in_flight_requests` to `ceil(global / cores)` (at
-/// least 1) — so the aggregate stays under `global` while every core enforces only
-/// its own share (no shared cross-core semaphore). Otherwise the options are returned
+/// least 1) — every core then enforces only its own share, with no shared cross-core
+/// semaphore. The aggregate that results is `ceil(global / cores) × cores`, which is at
+/// or above `global` because the share rounds UP. Otherwise the options are returned
 /// unchanged (an explicit per-core ceiling wins; no global ⇒ no derivation).
 fn apply_global_admission(
     options: Arc<ServerOptions>,
@@ -294,9 +302,14 @@ fn apply_global_admission(
 
 /// MCPRE-114: the per-core in-flight ceiling given an (optional) explicit per-core
 /// ceiling, an (optional) fleet-global target, and the core count. An explicit
-/// per-core ceiling always wins; otherwise a global target is divided evenly
+/// per-core ceiling wins; otherwise a global target is divided evenly
 /// (`ceil(global / cores)`, at least 1); with neither, there is no ceiling. Pure and
 /// deterministic (unit-tested).
+///
+/// The both-set arm survives because this is a total function over two `Option`s, not
+/// because that input is legal: layer A refuses a configuration naming both
+/// (`config_state::InFlightLimitRequest` holds one limit), so no validated deployment
+/// reaches it.
 pub fn derived_per_core_ceiling(
     explicit_per_core: Option<usize>,
     global: Option<usize>,
@@ -315,7 +328,9 @@ pub fn derived_per_core_ceiling(
 /// It is not a throughput knob: on the exported-key path the runtime stays
 /// single-threaded, and raising this would not make a wedged token any less wedged —
 /// it only widens the window before the pool is exhausted.
-const DELEGATED_TLS_WORKERS_PER_CORE: usize = 4;
+/// `pub(crate)` so `async_serve`'s handshake bound can be checked AGAINST it rather than
+/// against a copy of its value. The two constants are one decision.
+pub(crate) const DELEGATED_TLS_WORKERS_PER_CORE: usize = 4;
 
 /// Resolve the configured core count: `0` → [`std::thread::available_parallelism`]
 /// (min 1), otherwise the configured value.

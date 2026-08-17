@@ -116,6 +116,22 @@ export interface VerifyResultJs {
   /** Whether a rejection receipt is bound to this client's request. */
   bound: boolean
   /**
+   * The ADR-MCPRE-058 §10 execution/retry contract the server derived from its
+   * exchange machine and signed into the rejection body. Absent on success and on a
+   * receipt that stated nothing.
+   *
+   * An ABSENT `execution_status` is not `"not_executed"`. The server states a
+   * disposition when it has one, and collapsing silence into "nothing ran" is
+   * exactly the read that makes a post-dispatch refusal look retry-safe.
+   */
+  executionStatus?: string
+  /** `retry_safety`: what a retry of this refused request would cost. */
+  retrySafety?: string
+  /** `continuation_status`: whether the exchange consumed a human approval. */
+  continuationStatus?: string
+  /** `retention_status`: whether the server's evidence-retention obligation failed. */
+  retentionStatus?: string
+  /**
    * The verified response's evidence-handle digest algorithm — the
    * `input_required_response_evidence` handle an MRTR answer leg binds to
    * (ADR-MCPS-047). Read from the VERIFIED response only.

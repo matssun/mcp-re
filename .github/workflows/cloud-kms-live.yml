@@ -5,7 +5,8 @@
 # support: a signature produced by a REAL KMS Sign / asymmetricSign MUST verify under
 # the UNMODIFIED mcp-re-core Ed25519 verifier, using the public key the same KMS reports
 # via GetPublicKey / getPublicKey. Compiling is NOT support; this live assertion is
-# (see mcp-re-proxy/tests/aws_kms_live_test.rs and gcp_kms_live_test.rs — both already
+# (see mcp-re-proxy/tests/integration_live/aws_kms_live_test.rs and
+# mcp-re-proxy/tests/gcp_kms_live_test.rs — both already
 # assert verify_ed25519(preimage, sig, response_public_key()) and a tampered-preimage
 # negative).
 #
@@ -139,49 +140,49 @@ jobs:
         run: rustup show && rustc --version && cargo --version
       - name: Run AWS KMS live verification (#[ignore] test, real endpoint)
         run: >-
-          cargo test -p mcp-re-proxy
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
           --features aws_kms_keysource
-          --test aws_kms_live_test
-          -- --ignored aws_kms_signature_verifies_under_mcp_re_core
+          --test integration_live
+          -- --ignored aws_kms_live_test::aws_kms_signature_verifies_under_mcp_re_core
       - name: Run AWS KMS delegated-REQUIRED serving + authority flip (#[ignore], real endpoint)
         # ADR-MCPRE-052: the KMS root ISSUES a short-TTL credential and an in-memory
         # delegated key signs the response. This is the lane the cross-cloud
         # delegated-root claim rests on; `aws_kms_live_test` above proves only that a
         # real KMS signature verifies, which does NOT reach the delegated authority.
         run: >-
-          cargo test -p mcp-re-proxy
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
           --features aws_kms_keysource
-          --test aws_kms_delegated_required_live_test
-          -- --ignored
+          --test integration_live
+          -- --ignored aws_kms_delegated_required_live_test::
       - name: Run AWS KMS delegated-signing custody (#[ignore], real endpoint)
         # ADR-MCPRE-052 §4: the load-bearing property is ZERO KMS operations on the
         # per-request signing path — N responses within one delegated key's life cost
         # exactly one KMS call. The delegated-required lane above proves the chain
         # verifies; this one proves the root is off the hot path.
         run: >-
-          cargo test -p mcp-re-proxy
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
           --features aws_kms_keysource
-          --test aws_kms_delegated_signing_live_test
-          -- --ignored
+          --test integration_live
+          -- --ignored aws_kms_delegated_signing_live_test::
       - name: Run AWS KMS HTTP-profile signing (#[ignore], real endpoint)
         # ADR-MCPRE-050: a real KMS signature over an RFC 9421 base that the
         # UNMODIFIED verify_request/verify_response accept, with tamper and
         # wrong-key negatives.
         run: >-
-          cargo test -p mcp-re-proxy
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
           --features aws_kms_keysource
-          --test aws_kms_http_profile_live_test
-          -- --ignored
+          --test integration_live
+          -- --ignored aws_kms_http_profile_live_test::
       - name: Run AWS KMS delegated TLS (#[ignore], real endpoint)
         # The TLS private key stays in KMS: a fully-validating mTLS handshake
         # completes only because a real KMS Sign produced the CertificateVerify.
         # Needs its own key, so it is conditional rather than silently degraded.
         if: ${{ env.MCP_RE_AWS_KMS_TLS_KEY_ID != '' }}
         run: >-
-          cargo test -p mcp-re-proxy
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
           --features aws_kms_keysource
-          --test aws_kms_delegated_tls_live_test
-          -- --ignored
+          --test integration_live
+          -- --ignored aws_kms_delegated_tls_live_test::
       - name: Note when delegated TLS was not exercised
         if: ${{ env.MCP_RE_AWS_KMS_TLS_KEY_ID == '' }}
         run: |
@@ -207,7 +208,7 @@ jobs:
         run: rustup show && rustc --version && cargo --version
       - name: Run GCP Cloud KMS live verification (#[ignore] test, real endpoint)
         run: >-
-          cargo test -p mcp-re-proxy
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
           --features gcp_kms_keysource
           --test gcp_kms_live_test
           -- --ignored gcp_kms_signature_verifies_under_mcp_re_core
@@ -217,17 +218,17 @@ jobs:
         # boundaries. The counterpart of the AWS step above; both clouds must prove
         # the same chain for the cross-cloud delegated-root claim.
         run: >-
-          cargo test -p mcp-re-proxy
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
           --features gcp_kms_keysource
-          --test gcp_kms_delegated_required_live_test
-          -- --ignored
+          --test integration_live
+          -- --ignored gcp_kms_delegated_required_live_test::
       - name: Run GCP Cloud KMS HTTP-profile (RFC 9421) verification (#[ignore], real endpoint)
         # Cloud KMS signs an RFC 9421 request + response through the HTTP profile's
         # external-signer seam (ADR-MCPRE-050 / MCPRE-106) that the unmodified
         # verify_request / verify_response accept. Same secrets. (The hermetic
         # offline lanes of this same test already run in the blocking cargo job.)
         run: >-
-          cargo test -p mcp-re-proxy
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
           --features gcp_kms_keysource
-          --test gcp_kms_http_profile_live_test
-          -- --ignored
+          --test integration_live
+          -- --ignored gcp_kms_http_profile_live_test::

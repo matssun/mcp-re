@@ -28,6 +28,11 @@ use crate::block::ArtifactBinding;
 use crate::block::ArtifactType;
 use crate::block::BindingType;
 use crate::error::HttpProfileError;
+#[cfg(feature = "verify")]
+use verus_builtin_macros::{verus_spec, verus_verify};
+#[cfg(feature = "verify")]
+#[allow(unused_imports)]
+use vstd::prelude::*;
 
 /// Extract the bearer credential from an `Authorization` header value. Only the
 /// `Bearer` scheme is recognized; the token bytes are the ASCII characters
@@ -43,12 +48,21 @@ pub fn bearer_token(authorization_header: &str) -> Option<&str> {
 }
 
 /// `base64url-no-pad(SHA-256(bytes))` — the shared thumbprint primitive.
+// ADR-MCPRE-059 ASM-0018: below `boundary.crypto_primitives`.
+#[cfg_attr(feature = "verify", verus_verify(external_body))]
 fn sha256_b64url(bytes: &[u8]) -> String {
     b64url_encode(&Sha256::digest(bytes))
 }
 
 /// Verify a DPoP `ath` binding (RFC 9449): the binding digest must equal the
 /// SHA-256 thumbprint of `access_token`.
+#[cfg_attr(feature = "verify", verus_spec(out =>
+    ensures
+        out matches Ok(()) ==> {
+            &&& binding.artifact_type == ArtifactType::OauthDpop
+            &&& binding.binding_type == BindingType::OpaqueDigest
+        },
+))]
 pub fn verify_dpop_ath(
     binding: &ArtifactBinding,
     access_token: &[u8],
@@ -59,6 +73,13 @@ pub fn verify_dpop_ath(
 
 /// Verify an mTLS `x5t#S256` binding (RFC 8705): the binding digest must equal
 /// the SHA-256 thumbprint of the client certificate's DER bytes.
+#[cfg_attr(feature = "verify", verus_spec(out =>
+    ensures
+        out matches Ok(()) ==> {
+            &&& binding.artifact_type == ArtifactType::OauthMtls
+            &&& binding.binding_type == BindingType::OpaqueDigest
+        },
+))]
 pub fn verify_mtls_x5t_s256(
     binding: &ArtifactBinding,
     cert_der: &[u8],
@@ -70,6 +91,13 @@ pub fn verify_mtls_x5t_s256(
 /// Verify a RAR binding (RFC 9396): the binding digest must equal the SHA-256
 /// thumbprint of the canonical `authorization_details` bytes. The caller
 /// supplies the canonical serialization; MCP-RE binds it, never interprets it.
+#[cfg_attr(feature = "verify", verus_spec(out =>
+    ensures
+        out matches Ok(()) ==> {
+            &&& binding.artifact_type == ArtifactType::OauthRar
+            &&& binding.binding_type == BindingType::OpaqueDigest
+        },
+))]
 pub fn verify_rar_details(
     binding: &ArtifactBinding,
     authorization_details_canonical: &[u8],
@@ -83,6 +111,22 @@ pub fn verify_rar_details(
 /// The four non-OAuth registry types have no typed verifier yet (MCPRE-95
 /// scope): they bind by digest/reference only and are rejected here so a caller
 /// cannot silently treat an un-verifiable type as verified.
+// ADR-MCPRE-059 WP2 — the typed-verifier theorem: a binding this function reports as
+// verified is one of the three OAuth types AND is the opaque-digest form. The four
+// registry types with no typed verifier can therefore never leave here as `Ok`, which is
+// the rule the module's last match arm exists to enforce and the one a caller silently
+// treating an un-verifiable type as verified would break.
+#[cfg_attr(feature = "verify", verus_spec(out =>
+    ensures
+        out matches Ok(()) ==> {
+            &&& binding.binding_type == BindingType::OpaqueDigest
+            &&& {
+                ||| binding.artifact_type == ArtifactType::OauthDpop
+                ||| binding.artifact_type == ArtifactType::OauthMtls
+                ||| binding.artifact_type == ArtifactType::OauthRar
+            }
+        },
+))]
 pub fn verify_artifact_binding(
     binding: &ArtifactBinding,
     credential: &[u8],
@@ -100,6 +144,13 @@ pub fn verify_artifact_binding(
     }
 }
 
+#[cfg_attr(feature = "verify", verus_spec(out =>
+    ensures
+        out matches Ok(()) ==> {
+            &&& binding.artifact_type == want
+            &&& binding.binding_type == BindingType::OpaqueDigest
+        },
+))]
 fn expect_type(binding: &ArtifactBinding, want: ArtifactType) -> Result<(), HttpProfileError> {
     // The typed OAuth proofs are always the opaque-digest form (the digest is
     // over the presented credential bytes, not an external reference).
@@ -109,6 +160,9 @@ fn expect_type(binding: &ArtifactBinding, want: ArtifactType) -> Result<(), Http
     binding.validate()
 }
 
+// ADR-MCPRE-059 ASM-0018: the digest comparison's MEANING is a statement about SHA-256,
+// so the typed-verifier theorem takes it as an opaque decision and claims nothing here.
+#[cfg_attr(feature = "verify", verus_verify(external_body))]
 fn compare(binding: &ArtifactBinding, credential: &[u8]) -> Result<(), HttpProfileError> {
     if sha256_b64url(credential) == binding.digest_value {
         Ok(())

@@ -90,10 +90,12 @@ software path.
 into strict MCP-RE as signed continuation evidence, fail-closed on arbitrary server
 push (ADR-MCPS-047, v0.8).
 
-**Enterprise ingress — two honest, strict-mode postures.** *Mode A*
-(`end_to_end_mtls`, default): the node terminates client mTLS and binds the peer to
-the request signer, with a short-lived-cert lifetime ceiling and static-CRL
-fail-closed-on-stale (v0.9). *Mode C* (`attested_ingress`, explicit opt-in, v0.10):
+**Enterprise ingress — one deployable posture, one designed.** *Mode A*
+(`end_to_end_mtls`, default, and the only binding v0.16 will start with): the node
+terminates client mTLS and binds the peer to the request signer, with a
+short-lived-cert lifetime ceiling and static-CRL fail-closed-on-stale (v0.9).
+*Mode C* (`attested_ingress`) is **refused by configuration validation as of v0.16**
+— retained as a future capability, not removed. Its design:
 a controlled ingress attestor signs a request-bound `mcp-re/lb-ingress-assertion/v2`
 assertion the node verifies over a pinned attestor→node channel — **attested
 delegation, not end-to-end mTLS** (the load balancer witnesses proof-of-possession
@@ -141,9 +143,10 @@ topology-independent zero-drop is **not** claimed.
   adapter is shipped but not yet live-proven**, so multi-cloud custody is not
   claimed until AWS is also live-proven;
 - **zero-window certificate revocation** — Mode A enforces short-lived certs plus a
-  static CRL that fails closed on staleness, and Mode C delivers dynamic mid-life
-  revocation via the attestor's CRL, but online OCSP stays non-default and
-  revocation latency is bounded by the CRL cadence, not zero;
+  static CRL that fails closed on staleness; online OCSP is refused in every v0.16
+  build, so revocation latency is bounded by the CRL cadence, not zero. (Mode C's
+  design delivers dynamic mid-life revocation via the attestor's CRL, but Mode C is
+  not deployable.)
 - OS-level sandboxing of wrapped servers and signed tool-manifest enforcement —
   these are gated on the high-assurance cargo features and are **not** in the lean
   default build;

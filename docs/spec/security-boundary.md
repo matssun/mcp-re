@@ -166,10 +166,15 @@ This is the complete positive surface; nothing outside it should be implied.
   ([ADR-MCPS-006](https://github.com/matssun/mcp-re/discussions/355)). The
   durable replay cache is **single-node** — multi-node replay protection is
   forbidden (Section 2).
-- **Delegated authorization** (Phase 5, reference signed-authorization profile).
-  The proxy enforces the authorization profile **deny-before-dispatch** — an
-  unauthorized request never reaches the inner server
-  ([ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362)).
+- **Delegated authorization — NOT LIVE.** The reference signed-authorization profile
+  (Phase 5, [ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362)) was bound
+  to the retired object carrier and has not been rebuilt on HTTP-profile request
+  evidence. `--authz reference` is **refused at configuration validation**, so every
+  deployment runs with authorization off and MCP-RE answers **who signed this** and
+  **which channel it arrived on**, never **may-act**. Authorization must be enforced
+  upstream of the proxy. The preserved vectors at
+  `mcp-re-policy/tests/vectors/phase5_vectors.json` specify non-live semantics for a
+  future profile and are not evidence about any release; nothing executes them.
 - **Rust-native mTLS transport termination + transport binding + v1 revocation
   posture** (Phase 6 / 6.1). `mcp-re-proxy` terminates TLS itself
   (`RustlsDirectProvider`, rustls + ring), binds the verified transport peer to
@@ -424,11 +429,19 @@ as post-0.5 work.
 ## 11. Strict-mode ingress postures (ADR-MCPS-023 §C amendment, v0.10)
 
 > **Delivery status.** Only posture **(A)** is reachable on the shipped RFC 9421
-> serving path. `--transport-binding attested-ingress` (and `lb-assertion`) parse, and
-> are then **refused at startup** — rebinding an owner-signed ingress assertion to the
-> request-evidence digest is pending owner authorization. The Mode-C verification code
-> (`build_attested_ingress_binding`, `LbAssertionV2Binding::verify`,
-> `AttestedIngressVerified`) exists and is unit-tested, and has **no non-test caller**.
+> serving path. As of v0.16 `--transport-binding attested-ingress` and
+> `--transport-binding lb-assertion` are **refused by configuration validation**, each
+> naming its own mode — no path into the runtime, command line or programmatic, can
+> carry either. The serving path does not consult an ingress assertion, so the identity
+> a request would be bound to is not the one the assertion carries.
+>
+> Mode C is **retained** as a future capability rather than removed. Its verification
+> code (`build_attested_ingress_binding`, `LbAssertionV2Binding::verify`,
+> `AttestedIngressVerified`) has no non-test caller but is exercised end to end by
+> tests that mint a signed assertion and verify it through a built verifier, so the
+> capability stays correct while it is unreachable. Admitting it requires first stating
+> what an attestor is permitted to assert and where the node's own authority begins.
+>
 > The rest of this section is therefore the specified design, not a delivered posture:
 > no deployment can run Mode C today, and the three §C2 audit trust facts below are
 > emitted by nothing. Fail-closed — a chart or command line that selects it does not

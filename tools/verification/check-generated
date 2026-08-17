@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Generated-model drift gate — ADR-MCPRE-059, "Threat: generated Lean model is stale".
+
+Regenerates the extracted Lean model and compares it against what is checked in. A
+mismatch means the model no longer corresponds to the Rust it claims to describe, so any
+theorem proved against it constrains nothing. Stale generation MUST fail CI.
+
+This is also the control that makes hand-editing `generated/` detectable: a hand-edit
+survives review by looking like ordinary Lean, and is caught here by not surviving
+regeneration.
+
+While `generated/` is empty and the pipeline is unpinned there is nothing to drift, and
+this gate reports that state honestly rather than reporting a pass.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _manifest import (  # noqa: E402
+    REPO_ROOT,
+    ManifestError,
+    load_toolchains,
+    unresolved_pins,
+)
+
+GENERATED = REPO_ROOT / "verification" / "lean" / "generated"
+REQUIRED = {"charon", "aeneas", "lean", "aeneas_lean_backend"}
+
+
+def generated_files() -> list[Path]:
+    if not GENERATED.exists():
+        return []
+    return [
+        path
+        for path in sorted(GENERATED.rglob("*"))
+        if path.is_file() and path.name != ".gitkeep"
+    ]
+
+
+def main() -> int:
+    try:
+        toolchains = load_toolchains()
+    except ManifestError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    missing = sorted(REQUIRED & set(unresolved_pins(toolchains)))
+    present = generated_files()
+
+    if present and missing:
+        print(
+            f"FAIL: {len(present)} generated file(s) exist but the extraction pipeline is "
+            f"unpinned ({', '.join(missing)}).\n"
+            "Their provenance cannot be established, and unknown provenance is dirty — "
+            "never fresh.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if not present:
+        print("check-generated: no generated model — nothing to drift")
+        print("VERDICT: NOT_REQUIRED")
+        return 0
+
+    print(
+        "FAIL: generated files exist and the pipeline is pinned, but drift checking is "
+        "not implemented yet.\n"
+        "Implement regeneration-and-compare here before trusting any extracted model.",
+        file=sys.stderr,
+    )
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

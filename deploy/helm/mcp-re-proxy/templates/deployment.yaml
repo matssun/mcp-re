@@ -117,13 +117,10 @@ spec:
             {{- end }}
             # There is NO security toggle: the proxy always runs the maximal-security
             # posture and refuses any unsafe config at startup. `--fleet` selects the
-            # horizontally-scaled TOPOLOGY (it does not relax security) and additionally
-            # rejects node-local replay caches.
+            # horizontally-scaled TOPOLOGY (it does not relax security).
             {{- if .Values.fleet }}
             - "--fleet"
             {{- end }}
-            - "--replay-cache"
-            - "shared"
             - "--replay-redis-url"
             - {{ .Values.replay.redisUrl | quote }}
             - "--replay-durability-tier"

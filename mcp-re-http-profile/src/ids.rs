@@ -3,10 +3,22 @@
 //! v0.11 grill E-1/E-2). These strings are wire vocabulary: changing any of
 //! them is a profile change requiring an ADR.
 
+// ADR-MCPRE-059 Phase 2: gated with the rest of the lane; absent from production.
+#[cfg(feature = "verify")]
+use verus_builtin_macros::{verus_spec, verus_verify};
+#[cfg(feature = "verify")]
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
 /// The profile id, carried as the RFC 9421 `tag` signature parameter on BOTH
 /// request and response signatures (E-1: one profile-id tag, no per-direction
 /// tag values).
-pub const PROFILE_TAG: &str = "mcp-re-http-v1";
+// The lifetime is spelled out rather than elided, which clippy would otherwise call
+// redundant: Verus's const rewriting cannot reconstruct an elided one, and this is the
+// only id here the freshness proof reads.
+#[allow(clippy::redundant_static_lifetimes)]
+#[cfg_attr(feature = "verify", verus_verify)]
+pub const PROFILE_TAG: &'static str = "mcp-re-http-v1";
 
 /// The request signature label (the `Signature-Input` / `Signature` dictionary
 /// member name).
@@ -24,7 +36,9 @@ pub const ALG_ED25519: &str = "ed25519";
 /// Digest algorithm token in the split evidence form (matches the draft-02
 /// `authorization_binding` convention: `digest_alg` + bare base64url
 /// `digest_value`, no prefix form — v0.11 grill E-5).
-pub const EVIDENCE_DIGEST_ALG: &str = "sha256";
+#[allow(clippy::redundant_static_lifetimes)]
+#[cfg_attr(feature = "verify", verus_verify)]
+pub const EVIDENCE_DIGEST_ALG: &'static str = "sha256";
 
 // --- evidence-handle domain separation (#416 rev 2 §7.1/§7.3, MCPRE-430) -----
 //
@@ -48,15 +62,21 @@ pub const EVIDENCE_DIGEST_ALG: &str = "sha256";
 // never contain a NUL, so no (label, input) pair can collide with another.
 
 /// Role label for a handle over a REQUEST's RFC 9421 signature base.
-pub const EVIDENCE_LABEL_REQUEST: &str = "mcp-re-http-v1/request-evidence";
+#[allow(clippy::redundant_static_lifetimes)]
+#[cfg_attr(feature = "verify", verus_verify)]
+pub const EVIDENCE_LABEL_REQUEST: &'static str = "mcp-re-http-v1/request-evidence";
 
 /// Role label for a handle over a RESPONSE's RFC 9421 signature base.
-pub const EVIDENCE_LABEL_RESPONSE: &str = "mcp-re-http-v1/response-evidence";
+#[allow(clippy::redundant_static_lifetimes)]
+#[cfg_attr(feature = "verify", verus_verify)]
+pub const EVIDENCE_LABEL_RESPONSE: &'static str = "mcp-re-http-v1/response-evidence";
 
 /// Role label for a handle over the opaque MRTR `requestState` bytes. Distinct
 /// from both signature-base roles: `requestState` is opaque server data, never a
 /// signature base, and must not be substitutable for one.
-pub const EVIDENCE_LABEL_REQUEST_STATE: &str = "mcp-re-http-v1/request-state";
+#[allow(clippy::redundant_static_lifetimes)]
+#[cfg_attr(feature = "verify", verus_verify)]
+pub const EVIDENCE_LABEL_REQUEST_STATE: &'static str = "mcp-re-http-v1/request-state";
 
 /// `_meta` key of the request-side body evidence block (E-3: no new HTTP
 /// header fields; MCP evidence rides in the JSON-RPC body, protected because

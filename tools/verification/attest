@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Issue freshness records from measured evidence — ADR-MCPRE-059 §2, §5.
+
+The freshness engine has been able to DERIVE states since Phase 4, but nothing wrote the
+records it derives them from, so every unit read `UNKNOWN` and the invalidation rules had
+never run on a real unit. This is the missing half.
+
+**This command is not a verifier and must never become one.** It measures nothing, runs no
+prover, and inspects no source. It consumes the machine evidence records the lanes wrote,
+each bound to the fingerprint it was measured at, and turns them into attestations. The
+implementation it exists to make impossible is:
+
+    "a lane printed PASS earlier, so stamp whatever the tree contains now"
+
+so the fingerprint in the record must equal the fingerprint of the tree now, or nothing is
+written. See `_evidence.decide_issuance` for the three refusal grounds.
+
+Idempotent. The record is a pure function of the unit's inputs and the lane results; there
+is no timestamp, no run id, no counter. Attesting three times produces the same bytes three
+times, because "attested more recently" must never be able to mean "fresher" — freshness is
+fingerprints, not clocks.
+
+Usage:
+    tools/verification/attest                 # every unit, from the recorded lane evidence
+    tools/verification/attest --unit <id>
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _evidence import decide_issuance, load_bundle, load_records  # noqa: E402
+from _fingerprint import fingerprint_unit  # noqa: E402
+from _manifest import (  # noqa: E402
+    ManifestError,
+    load_assumptions,
+    load_toolchains,
+    load_verification,
+)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_STORE = REPO_ROOT / ".verification" / "attestations"
+DEFAULT_EVIDENCE = REPO_ROOT / ".verification" / "evidence"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--unit", help="only this unit id; default is every unit")
+    parser.add_argument("--store", type=Path, default=DEFAULT_STORE)
+    parser.add_argument(
+        "--evidence",
+        type=Path,
+        default=DEFAULT_EVIDENCE,
+        help="machine evidence records written by the verification lanes",
+    )
+    args = parser.parse_args()
+
+    try:
+        doc = load_verification()
+        toolchains = load_toolchains()
+        assumptions = load_assumptions()
+    except ManifestError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    units = doc.get("unit", [])
+    edges = doc.get("edge", [])
+    current = {
+        unit["id"]: fingerprint_unit(unit, doc, toolchains, assumptions) for unit in units
+    }
+    records = {
+        lane: load_records(args.evidence, lane) for lane in ("verus", "lean")
+    }
+
+    # The aggregate verdict is READ, never computed here. This command must never be able
+    # to conclude that a run passed; if the bundle is absent it has no completed run to
+    # attest against, and an absent verdict is not a pass.
+    bundle = load_bundle(args.evidence)
+    if bundle is None:
+        print(
+            f"FAIL: no evidence bundle in {args.evidence}. Attestation consumes a "
+            "completed verification run; it does not decide one.\n"
+            "  run: tools/verification/verify --gate",
+            file=sys.stderr,
+        )
+        return 1
+    aggregate = str(bundle.get("aggregate", "UNKNOWN"))
+    print(f"  aggregate verdict from the last verification run: {aggregate}")
+
+    # Decided over the WHOLE graph even when one unit was asked for: a prerequisite's
+    # evidence governs whether its consumer may be issued, so narrowing the input would
+    # narrow the check rather than the output.
+    decisions = decide_issuance(units, edges, current, records, aggregate)
+
+    selected = [unit for unit in units if not args.unit or unit["id"] == args.unit]
+    if args.unit and not selected:
+        print(f"FAIL: no unit {args.unit!r} declared", file=sys.stderr)
+        return 1
+
+    args.store.mkdir(parents=True, exist_ok=True)
+    refusals = 0
+    for unit in selected:
+        unit_id = unit["id"]
+        decision, evidence, reason = decisions[unit_id]
+        if decision == "REFUSE":
+            refusals += 1
+            print(f"  REFUSED  {unit_id:<44} {reason}")
+            continue
+        record = {
+            "unit_id": unit_id,
+            "fingerprint": current[unit_id]["fingerprint"],
+            "components": current[unit_id]["components"],
+            "consumed_contracts": {},
+            "evidence": evidence,
+        }
+        path = args.store / f"{unit_id}.json"
+        path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        label = "attested" if decision == "ISSUE_PASS" else "recorded FAIL"
+        print(
+            f"  {label:<8} {unit_id:<44} "
+            f"{current[unit_id]['fingerprint'][7:23]}  {evidence or '{}'}"
+        )
+
+    if refusals:
+        print(
+            f"\nFAIL: refused to issue {refusals} attestation(s). An attestation the "
+            "evidence does not support is the false green this system exists to prevent.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

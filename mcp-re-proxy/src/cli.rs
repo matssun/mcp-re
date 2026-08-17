@@ -1,17 +1,37 @@
-//! Configuration + wiring for the production `mcp-re-proxy` CLI (MCPS-029,
-//! ADR-MCPS-014; folds in MCPS-018 #3807).
+//! The production `mcp-re-proxy` command line, and the validation boundary it hands to.
 //!
-//! The pure, testable pieces of the binary live here: argument parsing, the
-//! trust-file loader, the subprocess inner server, and the builders that turn a
-//! [`Config`] into a [`KeySource`] / [`TrustResolver`] / [`Proxy`]. `main.rs` is a
-//! thin shell that parses, builds, and runs the blocking serve loop.
+//! Three things live here, and the order is the pipeline:
+//!
+//! - [`parse_args`] — argv to a [`DeploymentRequest`]. Syntax, provenance and the CLI's own
+//!   defaults; it decides no deployment legality, which is why any other way of building a
+//!   request reaches the same answer.
+//! - [`ValidatedDeployment`] and [`unsafe_config_violations`] — the layer-A boundary every
+//!   request meets however it was built.
+//! - the builders that materialize a validated deployment into a [`KeySource`], consulted
+//!   by `app::run`.
+//!
+//! The request model itself is [`crate::deployment_request`], deliberately outside this
+//! module: the configuration state machines read a request without depending on the parser.
 
 use std::time::Duration;
 
-use mcp_re_core::InMemoryTrustResolver;
 use mcp_re_core::VerificationKey;
-use serde_json::Value;
 
+use crate::deployment_request::{
+    AdmissionKind, AuditSinkKind, AuthzKind, BindingKind, DeploymentRequest, KeySourceKind,
+    OcspKind, SecretString, VerifiedContextKind,
+};
+
+#[cfg(feature = "aws_kms_keysource")]
+use crate::config_state::AwsCredentialMode;
+use crate::config_state::CustodyState;
+#[cfg(any(
+    feature = "pkcs11_keysource",
+    feature = "aws_kms_keysource",
+    feature = "gcp_kms_keysource"
+))]
+use crate::config_state::DelegatedTlsKey;
+use crate::config_state::TlsCustodyState;
 // MCPS-076 (audit gap G-3): EnvKeySource is dev/CI-only — compiled only under the
 // non-default `dev_env_key_source` feature.
 #[cfg(feature = "dev_env_key_source")]
@@ -23,600 +43,9 @@ use crate::tls::ServerLimits;
 use crate::transport::IdentityPolicy;
 use crate::transport::ReverseProxyHeaderFormat;
 
-/// A secret string that does not leak through `Debug` and is scrubbed on drop.
-///
-/// [`Config`] derives `Debug`, so any structured log, panic message, or debug print of
-/// the config would otherwise carry the PKCS#11 User PIN verbatim. The PIN is the
-/// credential that unlocks a token holding the response-signing and (optionally) TLS
-/// private keys, so it belongs in the same custody class as the keys themselves.
-///
-/// `Zeroizing` wipes the heap allocation when the value drops. That is a best effort
-/// against a core dump or a freed-page read, not a guarantee: the string was already
-/// copied by whatever read it in, and `Clone` (needed because `Config` is `Clone`)
-/// makes another copy. It removes the copies this code controls.
-#[derive(Clone, PartialEq, Eq)]
-pub struct SecretString(zeroize::Zeroizing<String>);
-
-impl SecretString {
-    /// Wrap a secret value.
-    pub fn new(value: impl Into<String>) -> Self {
-        SecretString(zeroize::Zeroizing::new(value.into()))
-    }
-
-    /// Borrow the secret. Every call site is a place the value can escape — keep them
-    /// few and close to the API that consumes it.
-    pub fn expose(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Debug for SecretString {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // No length either: a PIN's length is worth guessing with.
-        f.write_str("SecretString(redacted)")
-    }
-}
-
-/// Where key material is read from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeySourceKind {
-    /// Files on disk (locations are paths).
-    File,
-    /// Environment variables (locations are variable names).
-    Env,
-    /// PKCS#11 token (issue #4034): the Ed25519 response-signing key lives on a
-    /// hardware/software token and is exercised only via `C_Sign` — it never
-    /// leaves the device. The TLS cert/key/CA still come from files in this
-    /// build. Honored ONLY in a build with the `pkcs11_keysource` feature; a
-    /// default build parses it but FAILS CLOSED at construction (mirrors `Env`).
-    Pkcs11,
-    /// AWS KMS (ADR-MCPS-028 §B): the Ed25519 response-signing key lives in AWS KMS
-    /// and is exercised only via `Sign` — it never leaves KMS. The TLS cert/key/CA
-    /// still come from files in this build (`--signing-key-seed` is accepted but
-    /// UNUSED, as with `Pkcs11`). Credentials come from the standard AWS env vars.
-    /// Honored ONLY in a build with the `aws_kms_keysource` feature; a default build
-    /// parses it but FAILS CLOSED at construction (mirrors `Pkcs11`).
-    AwsKms,
-    /// GCP Cloud KMS (ADR-MCPS-028 §C): the Ed25519 response-signing key lives in
-    /// Cloud KMS and is exercised only via `asymmetricSign`. TLS material is from
-    /// files (`--signing-key-seed` accepted but UNUSED). The OAuth2 bearer comes
-    /// from `MCP_RE_GCP_ACCESS_TOKEN` or the metadata server (`--gcp-kms-use-metadata`).
-    /// Honored ONLY in a build with the `gcp_kms_keysource` feature; a default build
-    /// parses it but FAILS CLOSED at construction.
-    GcpKms,
-}
-
-/// Replay-cache backend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AdmissionKind {
-    /// Admission is not enforced. A call's admission binding, if it carries one, is
-    /// verified evidence that decides nothing — the pre-MCPRE-493 behaviour.
-    Off,
-    /// Enforced when present. For a rollout that has not reached every client yet.
-    Optional,
-    /// Enforced always: a call with no admission evidence is refused. The only
-    /// setting under which "every served call acted under a current admission" is a
-    /// true statement about this deployment.
-    Required,
-}
-
-/// Where the ADR-MCPS-035 per-request security record goes.
-///
-/// The record is the deployment's only per-request attribution surface: which actor
-/// was admitted, which calls were refused and under exactly which frozen `mcp-re.*`
-/// wire code. It is therefore ON unless a deployment names the opposite — the absent
-/// case must not be the one that leaves an incident unreconstructable — and the
-/// startup line states which posture is in force either way.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AuditSinkKind {
-    /// No per-request security record is emitted.
-    None,
-    /// One structured `key=value` line per decision on the proxy's stderr diagnostic
-    /// channel — the same channel the startup lines and rotation warnings use.
-    Stderr,
-}
-
-/// Whether the PEP writes its own verified context into the body forwarded to the
-/// inner server (#415 rev 2 §10).
-///
-/// The caller-supplied reserved key is stripped either way; this selects only
-/// whether the PEP's own context is then written in its place.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VerifiedContextKind {
-    /// Forward the stripped body with no verified context. The inner server makes no
-    /// authorization decision on PEP-resolved identity.
-    Disabled,
-    /// Write the PEP's verified context into the forwarded body. Selecting this
-    /// ASSERTS that nothing but this PEP can reach the inner server — the carrier is
-    /// unsigned, so the channel is the only thing making it trustworthy, and no check
-    /// here can confirm that property.
-    Trusted,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReplayKind {
-    /// In-memory (lost on restart).
-    Memory,
-    /// Durable file-backed (SINGLE-NODE only).
-    File,
-    /// Shared, server-side-atomic cache for HORIZONTALLY-SCALED replay safety
-    /// (issue #3837). No production shared backend ships in this build (the Redis
-    /// adapter + crate repin + live-backend test are tracked separately), so
-    /// selecting `shared` parses but FAILS CLOSED at construction with a clear
-    /// "not yet available in this build" error (mirrors the env-keysource gate).
-    Shared,
-}
-
-/// Transport-binding policy selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BindingKind {
-    /// No transport binding (the mTLS identity is ignored).
-    None,
-    /// Exact match: request `signer` must equal the verified transport identity.
-    Exact,
-    /// ADR-MCPS-023 Tier 3 (issue #71): the verified transport identity comes from
-    /// an LB-signed, request-bound ingress assertion (the node cryptographically
-    /// verifies the LB tied the asserted client identity to THIS request hash),
-    /// then binds exactly to the request signer. Honestly downgraded — NOT
-    /// `end_to_end_mtls`. Requires at least one `--ingress-lb-key`.
-    LbAssertion,
-    /// ADR-MCPS-023 §C (v0.10) Mode C **attested ingress**: the verified transport
-    /// identity comes from a controlled ingress attestor's request-bound
-    /// `mcp-re/lb-ingress-assertion/v2` assertion, verified over the pinned
-    /// attestor→node channel, then bound exactly to the request signer. Unlike
-    /// `LbAssertion` (Mode B, strict-rejected) this is a strict-ADMITTED, explicit-
-    /// opt-in posture — but it is *attested delegation*, NOT `end_to_end_mtls`: the
-    /// load balancer witnesses proof-of-possession and stays in the trusted
-    /// computing base. Requires `--ingress-attestor-key`, `--ingress-identity`,
-    /// `--ingress-audience`, and the explicit `--ingress-pinned-mtls` acknowledgement.
-    AttestedIngress,
-}
-
-/// ONLINE client-cert OCSP revocation selection (#4030). The online sibling of
-/// the offline `--client-crl` posture.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OcspKind {
-    /// No online OCSP check (the default). Revocation, if any, comes only from
-    /// the offline `--client-crl` set.
-    Off,
-    /// Require an online OCSP check at connection time. A verified client leaf is
-    /// rejected on `Revoked` (always) and, failing closed, on
-    /// `Unknown`/unreachable/timeout/parse error too (there is no soft-fail
-    /// relaxation). Honored ONLY in a build with the `online_ocsp` feature; a
-    /// default build parses it but FAILS CLOSED at construction (mirrors the
-    /// env-keysource / shared-replay gates).
-    Require,
-}
-
-/// Authorization-policy selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AuthzKind {
-    /// No authorization policy.
-    Off,
-    /// The reference signed-authorization profile.
-    Reference,
-}
-
-/// Fully-parsed CLI configuration.
-#[derive(Debug, Clone)]
-pub struct Config {
-    /// Listen address, e.g. `127.0.0.1:8443`.
-    pub bind: String,
-    /// Expected audience (this server's identity).
-    pub audience: String,
-    /// Response-signing signer identity.
-    pub server_signer: String,
-    /// Response-signing key id.
-    pub server_key_id: String,
-    /// Symmetric clock skew (seconds), applied to BOTH the RFC 9421 freshness gate
-    /// and the replay `retain_until`. Bounded `0..=VerifierPolicy::MAX_CLOCK_SKEW_BOUND`
-    /// at parse time.
-    pub max_clock_skew: i64,
-    /// Accepted `Mcp-Protocol-Version` values (§4.1). Empty = no MCP transport
-    /// contract is enforced.
-    pub mcp_protocol_versions: Vec<String>,
-    /// The canonical RFC 9421 `@target-uri` this deployment binds requests to
-    /// (ADR-MCPRE-050); client and server sign it byte-for-byte.
-    pub target_uri: String,
-    /// The trust domain assigned to resolved actors (RFC 9421 ActorIdentity).
-    pub trust_domain: String,
-    /// Optional audience route/tenant discriminator.
-    pub route: Option<String>,
-    /// Where key material is read from.
-    pub key_source: KeySourceKind,
-    /// Location (path or env var) of the Base64URL Ed25519 signing-key seed.
-    pub signing_key_seed: String,
-    /// Location of the PEM TLS server certificate chain.
-    pub tls_cert: String,
-    /// Location of the PEM TLS server private key.
-    pub tls_key: String,
-    /// Location of the PEM client-CA trust anchors.
-    pub client_ca: String,
-    /// Paths to offline client-certificate revocation lists (CRLs), PEM or DER
-    /// (#3839). Each `--client-crl` value (comma-separated and/or repeated) adds a
-    /// file; empty disables revocation checking (the pre-#3839 behavior). OFFLINE
-    /// only — there is no online OCSP / distribution-point fetching.
-    ///
-    /// These bytes feed TWO checks: the handshake verifier, and the PER-REQUEST
-    /// revoked-serial index (`client_revocation`). The second is what makes revocation
-    /// take effect on a connection the peer is already holding — client authentication
-    /// runs on a full handshake only, so without it a keep-alive or HTTP/2 connection
-    /// serves every later request on a certificate nothing re-checks.
-    pub client_crl_paths: Vec<String>,
-    /// ADR-MCPRE-051 §6 (MCPRE-116) in-process CRL hot-reload cadence, in seconds.
-    /// `None` (default) keeps the static-snapshot posture (reload requires a
-    /// restart). `Some(n)` spawns a background task that every `n` seconds re-reads
-    /// the `--client-crl` files and atomically swaps in a rebuilt verifier AND a
-    /// rebuilt per-request revoked-serial index — so a refreshed CRL is honored
-    /// WITHOUT a restart, on established connections as well as new ones. A failed
-    /// reload keeps the last-good config (which still fails closed once its CRL passes
-    /// `nextUpdate`). Has no effect without `--client-crl`.
-    ///
-    /// This cadence is therefore the revocation-latency bound for every peer, not only
-    /// for peers that happen to reconnect.
-    pub client_crl_reload_secs: Option<u64>,
-    /// ONLINE OCSP client-cert revocation selection (#4030). `Off` (default) does
-    /// no online check; `Require` checks the leaf's OCSP responder at connection
-    /// time. Honored ONLY in an `online_ocsp` build; a default build fails closed
-    /// at construction when `Require` is selected.
-    pub client_ocsp: OcspKind,
-    /// Explicit OCSP responder URL overriding the leaf's AIA OCSP URL (#4030).
-    /// `None` uses the AIA URL from the certificate. Only meaningful when
-    /// `client_ocsp == Require`.
-    pub ocsp_responder_url: Option<String>,
-    /// Path to the JSON trust file (request signers + authorization issuers).
-    pub trust_path: String,
-    /// ADR-MCPRE-051 §3: stateless Streamable-HTTP inner backend URL(s) for the
-    /// ASYNC serving path. The proxy serves on the per-core async fleet
-    /// (SO_REUSEPORT + tokio) and forwards verified requests over the pooled
-    /// `HttpInnerPool` to these backends (round-robin). Each `--inner-http-url`
-    /// value (comma-separated and/or repeated) adds a backend. At least one is
-    /// REQUIRED — the proxy has no in-tree stdio inner mode (MCPRE-118); a
-    /// stdio-only server is fronted by the out-of-TCB `mcp-re-stdio-bridge`.
-    pub inner_http_urls: Vec<String>,
-    /// ADR-MCPRE-051 §1: number of serving SHARDS (each an `SO_REUSEPORT` listener with
-    /// its own runtime). `0` (default) means auto.
-    ///
-    /// Auto is no longer "one shard per core": it is `ceil(cpus / workers_per_shard)`,
-    /// which on a 14-cpu host gives 2 shards of 8 rather than 14 of 1. Shards are
-    /// scheduling silos — Tokio steals work only within a runtime — so over-sharding
-    /// starves ready tasks. Pinning an explicit count still makes the scaling benchmark
-    /// reproducible.
-    pub cores: usize,
-    /// ADR-MCPRE-051 §1: Tokio worker threads inside EACH serving shard. `0` (default)
-    /// means auto — `min(8, cpus)`; an explicit `1` restores the single-threaded
-    /// share-nothing shard.
-    ///
-    /// Depth is what buys throughput: on the cold §7 anchor lane, 1 worker measured
-    /// 5,320 rps against 15,454 at 8, and on the warm saturation rig 10,362 against
-    /// 44,803. Replay integrity does not depend on single-threaded sequencing — admission
-    /// is a server-side atomic `SET NX PX` and `Fresh` can only come from a winning L2
-    /// insert — so two workers racing one nonce is the case the tier already handles
-    /// across replicas.
-    ///
-    /// This is configuration rather than a constant because the optimum is a property of
-    /// the host: cache domains, SMT, P/E-core asymmetry and epoll-vs-kqueue wakeup
-    /// behaviour all move it. Measure it with `scripts/runtime_topology_sweep.sh` rather
-    /// than assuming a number carries across machines.
-    pub workers_per_shard: usize,
-    /// MCPRE-114: fleet-GLOBAL in-flight ceiling, divided evenly across cores by
-    /// `async_fleet`. `None` = no global target (a per-core `limits
-    /// .max_in_flight_requests` may still apply; with neither there is no ceiling).
-    pub max_in_flight_total: Option<usize>,
-    /// Replay-cache backend.
-    pub replay: ReplayKind,
-    /// Replay-cache file path (required when `replay == File`).
-    pub replay_path: Option<String>,
-    /// Shared replay-store connection URL (required when `replay == Shared` and the
-    /// declared tier is a Redis tier), e.g. `redis://127.0.0.1:6379` (issue #3837).
-    pub replay_redis_url: Option<String>,
-    /// MCPRE-493: what a request carrying NO admission evidence means here —
-    /// `off` (admission not enforced at all), `optional`, or `required`. Anything
-    /// but `off` requires an authority to verify assertions against and a source to
-    /// check currency against; a gate with neither would verify nothing.
-    pub admission: AdmissionKind,
-    /// The admission authority's root key id, as named in an assertion's
-    /// `issuer_kid`. A kid never introduces trust: an assertion naming any other
-    /// issuer is refused.
-    pub admission_authority_kid: Option<String>,
-    /// The admission authority's Ed25519 public key, base64url, no padding.
-    pub admission_authority_pubkey_b64url: Option<String>,
-    /// Redis URL of the shared authoritative admission record — the tier a
-    /// revocation is written to and every replica reads. Separate from
-    /// `replay_redis_url` on purpose: admission state and replay state have
-    /// different owners, lifetimes and blast radii, and collapsing them would make
-    /// one outage two.
-    pub admission_redis_url: Option<String>,
-    /// P (seconds): how long a replica may keep serving on the LAST-KNOWN state when
-    /// the authority is unreachable. Meaningful only with
-    /// `admission_allow_degraded`.
-    pub admission_degraded_bound_secs: i64,
-    /// Whether degraded mode is permitted at all. Off by default: an unreachable
-    /// authority fails closed. Enabling it trades a bounded window of stale-admission
-    /// risk for availability, and that is a deployment's call to make explicitly.
-    pub admission_allow_degraded: bool,
-    /// ADR-MCPS-021 Axis 2: how often `--trust` is re-read, in seconds. `None` means
-    /// read once at startup — under which no revocation tier can revoke a
-    /// request-signer key on a running replica, because every tier resolves against
-    /// that one snapshot. Enabling it bounds the exposure window at the cadence.
-    pub trust_reload_secs: Option<u64>,
-    /// ADR-MCPS-035: where the per-request security record goes. `Stderr` by default,
-    /// because the absent case has to be the safe one: an invocation that does not go
-    /// through the Helm chart — the container run directly, a harness, a hand-rolled
-    /// unit file — would otherwise serve production traffic with no per-request
-    /// attribution, and a compromise cannot be scoped after the fact from records that
-    /// were never written. Turning it off is available but explicit (`--audit-sink
-    /// none`), and the startup line states which posture is in force either way.
-    pub audit_sink: AuditSinkKind,
-    /// ADR-MCPRE-054: where retained evidence goes. `None` by default — nothing is
-    /// retained and the request path is unchanged.
-    ///
-    /// Setting it changes what the deployment STORES about every call: the full request
-    /// and response messages, which is what a later SCITT statement commits to and what
-    /// an auditor recomputes the handles from. That is a data-retention decision, which
-    /// is why it is opt-in and named rather than derived from some other flag. Once set,
-    /// a store failure refuses the exchange with `mcp-re.evidence_retention_unavailable`.
-    pub retained_evidence_dir: Option<String>,
-    /// #415 rev 2 §10: whether the PEP writes its own verified context into the body
-    /// forwarded to the inner server. `Disabled` by default because `Trusted` asserts
-    /// an unverifiable property of the inner channel.
-    pub verified_context: VerifiedContextKind,
-    /// MCPS-84 (ADR-MCPS-049 W2): Redis URL for the networked trust-epoch
-    /// invalidation source (ADR-021 Tier 3 / `--revocation-tier push`). When set,
-    /// the Push tier watches this Redis's monotonic epoch key and flushes the trust
-    /// cache on an advance; when `None`, Push runs at its inert bounded-`T`
-    /// fallback. Consumed only under the `redis_replay` feature.
-    pub trust_epoch_redis_url: Option<String>,
-    /// The Redis key holding the monotonic trust epoch (default
-    /// [`crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY`]).
-    pub trust_epoch_key: Option<String>,
-    /// CP / linearizable replay-store (etcd v3 JSON gateway) endpoint, e.g.
-    /// `http://127.0.0.1:2379` (issue #69, epic #68 v0.4 Axis 1). REQUIRED when the
-    /// declared durability tier is `LINEARIZABLE`, and meaningless otherwise — a
-    /// dangling value is a hard parse error (fail closed). Selecting `LINEARIZABLE`
-    /// WITHOUT this endpoint is rejected at parse time, never silently downgraded
-    /// to Redis / in-memory (ADR-MCPS-020).
-    pub cpstore_etcd_endpoint: Option<String>,
-    /// Declared replay-store durability tier (ADR-MCPS-020). Required when
-    /// `replay == Shared` — the tier is an explicit deployment assertion that
-    /// determines the horizontal replay-safety claim. `None` for single-node
-    /// `Memory` / `File` backends.
-    pub replay_durability_tier: Option<crate::replay_tier::ReplayDurabilityTier>,
-    /// Declared revocation tier (ADR-MCPS-021 Axis 2). Selects how strong a
-    /// revocation-propagation window the deployment asserts: Tier 1
-    /// (`bounded-cache:<T>`, the default), Tier 2 (`live`), or Tier 3
-    /// (`push:<T>`). The proxy surfaces the tier's own honest guarantee and
-    /// CANNOT surface a window stronger than the configured tier proves. Defaults
-    /// to bounded-cache with the deployment-default window `T` so absent-flag
-    /// behavior is byte-for-byte the Tier-1 posture.
-    pub revocation_tier: crate::revocation_tier::RevocationTier,
-    /// Transport-binding selection.
-    pub binding: BindingKind,
-    /// The authoritative identity field (no implicit fallback). For the default
-    /// direct-TLS path this is the client-certificate field; for reverse-proxy
-    /// mode it selects which forwarded-header field is authoritative.
-    pub identity_source: IdentityPolicy,
-    /// Reverse-proxy ingress (MCPS-3840): when `Some`, the proxy reads the
-    /// verified client identity from this TRUSTED forwarded header (set by an
-    /// upstream mTLS-terminating reverse proxy) instead of extracting it from a
-    /// locally-terminated client certificate. Enabling this is an explicit
-    /// operator assertion that the listening socket is reachable ONLY by the
-    /// trusted upstream. Mutually exclusive with local client-cert identity.
-    pub reverse_proxy_identity_header: Option<String>,
-    /// The wire format of the trusted reverse-proxy identity header (plain
-    /// identity string or Envoy XFCC). Only meaningful when
-    /// `reverse_proxy_identity_header` is set.
-    pub reverse_proxy_header_format: ReverseProxyHeaderFormat,
-    /// ADR-MCPS-023 Tier 3 (issue #71): the trusted LB verification keys for
-    /// LB-signed request-bound ingress assertions, as `(key_id, base64url-ed25519-pub)`
-    /// pairs from repeatable `--ingress-lb-key <keyid>:<base64-pub>`. Required (and
-    /// only meaningful) when `binding == LbAssertion`; an unknown asserted key id
-    /// fails closed. Empty for every other binding mode.
-    pub ingress_lb_keys: Vec<(String, String)>,
-    /// ADR-MCPS-023 §C (Mode C): the trusted ingress-attestor verification keys for
-    /// `mcp-re/lb-ingress-assertion/v2` assertions, as `(key_id, base64url-ed25519-pub)`
-    /// pairs from repeatable `--ingress-attestor-key <keyid>:<base64-pub>`. Required
-    /// (and only meaningful) when `binding == AttestedIngress`; an unknown asserted
-    /// key id fails closed. Empty for every other binding mode.
-    pub ingress_attestor_keys: Vec<(String, String)>,
-    /// ADR-MCPS-023 §C (Mode C): the ingress identities the node trusts, from
-    /// repeatable `--ingress-identity <id>`. A v2 assertion whose `ingress_identity`
-    /// is not in this set fails closed. Required when `binding == AttestedIngress`.
-    pub ingress_identities: Vec<String>,
-    /// ADR-MCPS-023 §C (Mode C): the node's own audience; a v2 assertion's `audience`
-    /// must equal it (route/audience binding). Set from `--ingress-audience`;
-    /// required when `binding == AttestedIngress`.
-    pub ingress_audience: Option<String>,
-    /// ADR-MCPS-023 §C2 (Mode C): the explicit operator acknowledgement, via
-    /// `--ingress-pinned-mtls`, that the attestor→node hop is a pinned mTLS channel
-    /// (or equivalent pinned workload identity). Mode C REQUIRES it — absent, the
-    /// proxy refuses to start (fail closed), so an attested-ingress posture can
-    /// never run without the pinned backend channel it depends on.
-    pub ingress_pinned_mtls: bool,
-    /// Authorization-policy selection.
-    pub authz: AuthzKind,
-    /// Offline policy-layer revocation deny-list paths (ADR-MCPS-013). Each
-    /// `--revocation-list` value (comma-separated and/or repeated) adds a file of
-    /// newline-delimited revoked `revocation_id`s. Loaded once at startup (OFFLINE
-    /// only — restart to update). Empty means no grant deny-list is configured.
-    pub revocation_list_paths: Vec<String>,
-    /// PKCS#11 module (provider `.so`/`.dylib`) path. Required when
-    /// `key_source == Pkcs11` (issue #4034).
-    pub pkcs11_module: Option<String>,
-    /// Path the PKCS#11 token User PIN is read from. Required when
-    /// `key_source == Pkcs11`.
-    ///
-    /// The PIN itself is deliberately NOT a field here. Two reasons, and the config
-    /// carrying the path rather than the value answers both:
-    ///
-    /// * There is no way to pass it on argv. A process's command line is world-readable
-    ///   on every platform this runs on (`ps`, `/proc/<pid>/cmdline`), so
-    ///   `--pkcs11-pin <pin>` published the credential that unlocks the token holding
-    ///   the response-signing (and optionally TLS) private keys to every local user for
-    ///   the lifetime of the process.
-    /// * [`Config`] derives `Debug` and is cloned freely, so a PIN stored here would
-    ///   ride along into any structured log, panic message, or debug print. Keeping only
-    ///   the path means there is nothing to redact.
-    ///
-    /// The file is read once, at key-source construction, into a short-lived
-    /// [`SecretString`], and is held to the same permission floor as the other key files
-    /// (`key_file_mode_is_insecure`) — the PIN is protected by the same mechanism as the
-    /// keys it unlocks.
-    pub pkcs11_pin_file: Option<String>,
-    /// PKCS#11 token label selecting the slot whose token holds the signing key
-    /// (token labels are stable across reboots; slot ids are not). Required when
-    /// `key_source == Pkcs11`.
-    pub pkcs11_token_label: Option<String>,
-    /// CKA_LABEL of the Ed25519 signing-key object on the token. Required when
-    /// `key_source == Pkcs11`.
-    pub pkcs11_key_label: Option<String>,
-    /// CKA_LABEL of the Ed25519 TLS-key object on the token (issue #59,
-    /// ADR-MCPS-028 §G). OPTIONAL and independent of `pkcs11_key_label` — a separate
-    /// security principal. When `Some`, the TLS handshake is DELEGATED to the
-    /// token-resident TLS key (the TLS private key never leaves the device) and an
-    /// exported `--tls-key` is rejected by [`validate_tls_signing_exclusivity`].
-    /// `None` keeps the file-backed TLS path (issue #4034). Only meaningful when
-    /// `key_source == Pkcs11`.
-    pub pkcs11_tls_key_label: Option<String>,
-    /// AWS region for the AWS KMS key source. Required when `key_source == AwsKms`
-    /// (ADR-MCPS-028 §B).
-    pub aws_kms_region: Option<String>,
-    /// AWS KMS key id / ARN / alias. Required when `key_source == AwsKms`.
-    pub aws_kms_key_id: Option<String>,
-    /// Optional AWS KMS endpoint override (emulator/test endpoint).
-    pub aws_kms_endpoint: Option<String>,
-    /// AWS KMS key id / ARN / alias of the SECOND, DISTINCT Ed25519 KMS key that
-    /// custodies the TLS server key (issue #60, ADR-MCPS-028 §G). OPTIONAL and
-    /// independent of `aws_kms_key_id` (the object-signing key) — a separate
-    /// security principal the operator SHOULD scope with a distinct authz policy.
-    /// When `Some`, the TLS handshake is DELEGATED to KMS (the TLS private key never
-    /// leaves KMS) and an exported `--tls-key` is rejected by
-    /// [`validate_tls_signing_exclusivity`]; `None` keeps the file-backed TLS path.
-    /// Only meaningful when `key_source == AwsKms` (reuses `--aws-kms-region` /
-    /// `--aws-kms-endpoint`).
-    pub aws_kms_tls_key_id: Option<String>,
-    /// Take the AWS KMS credentials from **IRSA** — exchange the projected
-    /// service-account token at `AWS_WEB_IDENTITY_TOKEN_FILE` for temporary
-    /// credentials via STS — instead of the static `AWS_ACCESS_KEY_ID` /
-    /// `AWS_SECRET_ACCESS_KEY` pair. The AWS counterpart of
-    /// `--gcp-kms-use-metadata`, and the flag that lets an EKS deployment hold no
-    /// long-lived IAM key material at all.
-    pub aws_kms_use_web_identity: bool,
-    /// Optional STS endpoint override for the IRSA exchange (tests/emulators).
-    /// Defaults to the REGIONAL `https://sts.<region>.amazonaws.com`.
-    pub aws_sts_endpoint: Option<String>,
-    /// GCP Cloud KMS key-version resource path
-    /// (`projects/.../cryptoKeyVersions/N`). Required when `key_source == GcpKms`
-    /// (ADR-MCPS-028 §C).
-    pub gcp_kms_key_version: Option<String>,
-    /// Optional GCP Cloud KMS endpoint override (emulator/test endpoint).
-    pub gcp_kms_endpoint: Option<String>,
-    /// GCP Cloud KMS key-version resource path of the SECOND, DISTINCT
-    /// `EC_SIGN_ED25519` key version that custodies the TLS server key (issue #61,
-    /// ADR-MCPS-028 §G). OPTIONAL and independent of `gcp_kms_key_version` (the
-    /// object-signing key) — a separate security principal the operator SHOULD scope
-    /// with a distinct IAM policy. When `Some`, the TLS handshake is DELEGATED to
-    /// Cloud KMS (the TLS private key never leaves KMS) and an exported `--tls-key`
-    /// is rejected by [`validate_tls_signing_exclusivity`]; `None` keeps the
-    /// file-backed TLS path. Only meaningful when `key_source == GcpKms` (reuses
-    /// `--gcp-kms-endpoint` / `--gcp-kms-use-metadata`).
-    pub gcp_kms_tls_key_version: Option<String>,
-    /// Use the GCE/GKE metadata server (workload identity) for the GCP KMS OAuth2
-    /// token instead of an operator-supplied `MCP_RE_GCP_ACCESS_TOKEN`.
-    pub gcp_kms_use_metadata: bool,
-    /// Connection resource limits (DoS defense).
-    pub limits: ServerLimits,
-    /// Maximum client-certificate lifetime (v1 revocation posture). Defaults to
-    /// 1 hour; `None` disables enforcement (strongly discouraged).
-    pub max_client_cert_lifetime: Option<Duration>,
-    /// Horizontally-scaled deployment TOPOLOGY (MCPS-79, ADR-MCPS-049 clause 1,
-    /// `--fleet`). This is a topology selector, NOT a security toggle — the proxy
-    /// always runs the maximal-security posture and refuses unsafe configs. A single
-    /// node is the sole verifier, so single-node durable replay (`--replay-cache
-    /// file`, ADR-MCPS-014) is valid. Under `--fleet` a replayable request may reach
-    /// a DIFFERENT verifier than the one that saw the first nonce during the
-    /// evidence-acceptance window, so node-local replay caches (`memory` and `file`)
-    /// are REJECTED and a shared replay cache with an adequate durability tier is
-    /// required.
-    pub fleet: bool,
-    /// Delegated-key TTL `T` in seconds (ADR-MCPRE-052 §4). The rotor mints a
-    /// successor within the overlap window before each key's `exp`. Default 300s.
-    pub delegated_ttl_secs: i64,
-    /// Delegated-key rotation-overlap window `O` in seconds (0 < O < T). The successor
-    /// is minted at `exp − O` so signing never gaps. Default 60s.
-    pub delegated_overlap_secs: i64,
-    /// The trust epoch minted into every delegation credential (ADR-MCPRE-052 §7 hard
-    /// gate). REQUIRED (a verifier admits only credentials whose epoch is in its
-    /// accepted set), and load-bearing — it must be coordinated with verifiers, so
-    /// there is no silent default.
-    pub delegated_trust_epoch: Option<String>,
-    /// The root issuer key id the delegation credential chains to (its `issuer_kid`,
-    /// resolved by verifiers for the Response slot). Defaults to `--server-key-id`.
-    pub delegated_issuer_kid: Option<String>,
-    /// The service/audience-scope hash the delegated key is scoped to
-    /// (`mcp_re_audience_hash`). Defaults to `--audience`; must match the verifier's
-    /// expected audience hash.
-    pub delegated_audience_hash: Option<String>,
-    /// Accept a key file that is group-READABLE (never group-writable, never
-    /// world-anything) when its group is one this process is in — the Kubernetes
-    /// `fsGroup` mount model, which the strict `0600` floor makes unsatisfiable for a
-    /// non-root pod (C053b). Explicit opt-in; the default posture is unchanged.
-    pub allow_group_readable_key_files: bool,
-}
-
-/// Parse CLI arguments (excluding argv[0]) into a [`Config`]. Returns a
+/// Parse CLI arguments (excluding argv[0]) into a [`DeploymentRequest`]. Returns a
 /// human-readable error string on any missing/invalid argument.
-/// Validate an operator-supplied KMS endpoint override before anything is sent to it.
-///
-/// These overrides carry the ROOT-KEY trust bootstrap: `getPublicKey` fetches the
-/// `spki_der`/verify key that the verify-before-return guardrail is measured against, and
-/// on GCP every request also carries a live workload-identity bearer token. An unvalidated
-/// override therefore hands a replayable credential to whatever host is named and lets a
-/// substituted endpoint supply an attacker-chosen root signing key that every local
-/// fail-closed check then passes self-consistently.
-///
-/// So: `https://` always; `http://` ONLY to loopback, which keeps the LocalStack / KMS
-/// emulator lane working without letting a plaintext credential leave the machine.
-/// Anything else is refused at parse, before a credential is minted.
-fn validated_kms_endpoint(flag: &str, value: &str) -> Result<String, String> {
-    let rest = if let Some(rest) = value.strip_prefix("https://") {
-        return non_empty_authority(flag, value, rest).map(|()| value.to_string());
-    } else if let Some(rest) = value.strip_prefix("http://") {
-        rest
-    } else {
-        return Err(format!(
-            "{flag} must be an absolute https:// URL (got {value:?}); this endpoint carries the \
-             root-key trust bootstrap and, on GCP, a live bearer token"
-        ));
-    };
-    non_empty_authority(flag, value, rest)?;
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    let host = match authority.rsplit_once(':') {
-        // Bracketed IPv6 literal: the last colon may belong to the address.
-        Some((h, _)) if !authority.starts_with('[') || h.ends_with(']') => h,
-        _ => authority,
-    };
-    if matches!(host, "localhost" | "127.0.0.1" | "[::1]") {
-        return Ok(value.to_string());
-    }
-    Err(format!(
-        "{flag} may only use http:// for a loopback emulator (localhost, 127.0.0.1, [::1]); \
-         got host {host:?}. A plaintext endpoint exfiltrates the KMS credential and lets a \
-         substituted host supply the root verify key"
-    ))
-}
-
-/// Reject a URL whose authority is empty (`https://`, `http:///v1`), which would otherwise
-/// produce a request URL with no host.
-fn non_empty_authority(flag: &str, value: &str, rest: &str) -> Result<(), String> {
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    if authority.is_empty() {
-        return Err(format!("{flag} has no host: {value:?}"));
-    }
-    Ok(())
-}
-
-pub fn parse_args(args: &[String]) -> Result<Config, String> {
+pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     let mut bind = None;
     let mut audience = None;
     let mut server_signer = None;
@@ -647,12 +76,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // ADR-MCPRE-051 §1: per-core worker count; 0 = auto (one per core).
     let mut cores: usize = 0;
     let mut workers_per_shard: usize = 0;
-    let mut max_in_flight_total: Option<usize> = None;
-    // Whether `--max-in-flight` was given. `ServerLimits::max_in_flight_requests` now
-    // carries a fail-safe DEFAULT, so its being `Some` no longer means the operator
-    // stated a per-core ceiling — and a default must not out-rank an explicit
-    // `--max-in-flight-total`.
-    let mut max_in_flight_explicit = false;
+    // The admission limit the operator states, if any. `Unspecified` until a flag names
+    // one; the fail-safe default is applied at the validation boundary, not here, so the
+    // request keeps the difference between a value chosen and a value never mentioned.
+    let mut in_flight_limit = crate::config_state::InFlightLimitRequest::Unspecified;
     let mut client_crl_reload_secs: Option<u64> = None;
     // #4030 online OCSP revocation: off by default; responder-URL override
     // optional; hard-fail (deny on indeterminate) by default.
@@ -669,9 +96,8 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut audit_sink = AuditSinkKind::Stderr;
     let mut retained_evidence_dir: Option<String> = None;
     let mut verified_context = VerifiedContextKind::Disabled;
-    let mut replay = ReplayKind::Memory;
-    let mut replay_path = None;
     let mut replay_redis_url = None;
+    let mut continuation_control_redis_url = None;
     // MCPS-84: networked trust-epoch invalidation backend (optional; only under
     // --revocation-tier push).
     let mut trust_epoch_redis_url = None;
@@ -729,8 +155,11 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut gcp_kms_tls_key_version: Option<String> = None;
     let mut gcp_kms_use_metadata = false;
     let mut limits = ServerLimits::default();
-    // v1 revocation posture: short-lived client certs, proxy-enforced, default 1h.
-    let mut max_client_cert_lifetime = Some(Duration::from_secs(3600));
+    // v1 revocation posture: short-lived client certs, proxy-enforced. The default IS the
+    // ceiling — an omitted flag lands on the strictest lifetime the boundary permits — so
+    // it is read from the constant that states it rather than retyped beside it.
+    let mut max_client_cert_lifetime =
+        Some(crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME);
     // MCPS-79 (ADR-MCPS-049): horizontally-scaled deployment topology, off by
     // default. This selects the deployment TOPOLOGY (single-node vs multi-verifier
     // fleet); it does NOT relax security — the proxy always refuses an unsafe config.
@@ -799,19 +228,6 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 max_clock_skew = value
                     .parse()
                     .map_err(|_| "invalid --max-clock-skew".to_string())?;
-                // Bounded at parse time, matching `VerifierPolicy::new`: a negative
-                // skew narrows the window asymmetrically and a skew above the bound
-                // stops the freshness gate being a freshness gate. Refused here so the
-                // operator learns at the command line, not from a startup failure.
-                if !(0..=mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND)
-                    .contains(&max_clock_skew)
-                {
-                    return Err(format!(
-                        "--max-clock-skew must be 0..={} seconds (§5.1 bounded skew), got {}",
-                        mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
-                        max_clock_skew
-                    ));
-                }
             }
             // §4.1 MCP transport contract. Repeatable; each occurrence adds an
             // accepted `Mcp-Protocol-Version`. Absent = no transport contract.
@@ -840,7 +256,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             }
             // #4034 PKCS#11 key source.
             "--pkcs11-module" => pkcs11_module = Some(value.clone()),
-            // The PIN is read from a FILE, never argv. See `Config::pkcs11_pin_file`.
+            // The PIN is read from a FILE, never argv. See `DeploymentRequest::pkcs11_pin_file`.
             "--pkcs11-pin-file" => pkcs11_pin_file = Some(value.clone()),
             // Still recognised, only to REFUSE it with the reason and the replacement.
             // Falling through to "unknown flag" would be a worse error for the one
@@ -865,73 +281,40 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             // ADR-MCPS-028 §B AWS KMS / §C GCP Cloud KMS key-source parameters.
             "--aws-kms-region" => aws_kms_region = Some(value.clone()),
             "--aws-kms-key-id" => aws_kms_key_id = Some(value.clone()),
-            "--aws-kms-endpoint" => {
-                aws_kms_endpoint = Some(validated_kms_endpoint("--aws-kms-endpoint", value)?)
-            }
+            "--aws-kms-endpoint" => aws_kms_endpoint = Some(value.clone()),
             "--aws-kms-tls-key-id" => aws_kms_tls_key_id = Some(value.clone()),
-            "--aws-sts-endpoint" => {
-                aws_sts_endpoint = Some(validated_kms_endpoint("--aws-sts-endpoint", value)?)
-            }
+            "--aws-sts-endpoint" => aws_sts_endpoint = Some(value.clone()),
             "--gcp-kms-key-version" => gcp_kms_key_version = Some(value.clone()),
-            "--gcp-kms-endpoint" => {
-                gcp_kms_endpoint = Some(validated_kms_endpoint("--gcp-kms-endpoint", value)?)
-            }
+            "--gcp-kms-endpoint" => gcp_kms_endpoint = Some(value.clone()),
             "--gcp-kms-tls-key-version" => gcp_kms_tls_key_version = Some(value.clone()),
             "--signing-key-seed" => signing_key_seed = Some(value.clone()),
             "--tls-cert" => tls_cert = Some(value.clone()),
             "--tls-key" => tls_key = Some(value.clone()),
             "--client-ca" => client_ca = Some(value.clone()),
-            // #3839: repeatable and/or comma-separated CRL file paths. An empty
-            // segment (e.g. a trailing comma) is rejected so a typo cannot
-            // silently load zero CRLs and quietly disable revocation checking.
+            // #3839: repeatable and/or comma-separated CRL file paths. Splitting is the
+            // CLI's encoding; whether a resulting path names a file is the
+            // `CrlRevocation` machine's, so a trailing comma reaches it as the empty
+            // path it produced.
             "--client-crl" => {
-                for segment in value.split(',') {
-                    if segment.is_empty() {
-                        return Err(format!(
-                            "invalid --client-crl '{value}' (empty path segment)"
-                        ));
-                    }
-                    client_crl_paths.push(segment.to_string());
-                }
+                client_crl_paths.extend(value.split(',').map(str::to_string));
             }
             // ADR-MCPRE-051 §3: stateless HTTP inner backend URL(s) for the async
-            // serving path. Comma-separated and/or repeated; empty segment is a hard
-            // parse error (fail closed rather than silently drop a backend).
+            // serving path. Comma-separated and/or repeated, on the same terms.
             "--inner-http-url" => {
-                for segment in value.split(',') {
-                    if segment.is_empty() {
-                        return Err(format!(
-                            "invalid --inner-http-url '{value}' (empty URL segment)"
-                        ));
-                    }
-                    inner_http_urls.push(segment.to_string());
-                }
+                inner_http_urls.extend(value.split(',').map(str::to_string));
             }
-            // ADR-MCPRE-051 §6 (MCPRE-116): in-process CRL hot-reload cadence. Must
-            // be a positive whole number of seconds (0 or unparseable is a hard
-            // parse error — fail closed rather than silently disable/spin).
+            // ADR-MCPRE-051 §6 (MCPRE-116): in-process CRL hot-reload cadence, in whole
+            // seconds. Whether zero is a cadence is the machine's question.
             "--client-crl-reload-secs" => {
-                let secs: u64 = value.parse().map_err(|_| {
+                client_crl_reload_secs = Some(value.parse().map_err(|_| {
                     "invalid --client-crl-reload-secs (expected a positive integer)".to_string()
-                })?;
-                if secs == 0 {
-                    return Err("--client-crl-reload-secs must be greater than 0".to_string());
-                }
-                client_crl_reload_secs = Some(secs);
+                })?);
             }
             "--trust" => trust_path = Some(value.clone()),
             // ADR-MCPS-013: repeatable and/or comma-separated revocation deny-list
-            // file paths. An empty segment (e.g. a trailing comma) is rejected so a
-            // typo cannot silently load zero ids and quietly disable revocation.
+            // file paths, on the same terms as the two lists above.
             "--revocation-list" => {
-                for segment in value.split(',') {
-                    if segment.is_empty() {
-                        return Err(format!(
-                            "invalid --revocation-list '{value}' (empty path segment)"
-                        ));
-                    }
-                    revocation_list_paths.push(segment.to_string());
-                }
+                revocation_list_paths.extend(value.split(',').map(str::to_string));
             }
             // #4030 online OCSP revocation mode.
             "--client-ocsp" => {
@@ -941,26 +324,8 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                     other => return Err(format!("unknown --client-ocsp '{other}' (off|require)")),
                 }
             }
-            // #4030 AIA-override responder URL. Must be non-empty when present.
-            "--ocsp-responder-url" => {
-                if value.trim().is_empty() {
-                    return Err("--ocsp-responder-url requires a non-empty URL".to_string());
-                }
-                ocsp_responder_url = Some(value.clone());
-            }
-            "--replay-cache" => {
-                replay = match value.as_str() {
-                    "memory" => ReplayKind::Memory,
-                    "file" => ReplayKind::File,
-                    "shared" => ReplayKind::Shared,
-                    other => {
-                        return Err(format!(
-                            "unknown --replay-cache '{other}' (memory|file|shared)"
-                        ))
-                    }
-                }
-            }
-            "--replay-path" => replay_path = Some(value.clone()),
+            // #4030 AIA-override responder URL.
+            "--ocsp-responder-url" => ocsp_responder_url = Some(value.clone()),
             "--admission" => {
                 admission = match value.as_str() {
                     "off" => AdmissionKind::Off,
@@ -1033,18 +398,13 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 }
             }
             "--replay-redis-url" => replay_redis_url = Some(value.clone()),
+            "--continuation-control-redis-url" => {
+                continuation_control_redis_url = Some(value.clone())
+            }
             "--trust-epoch-redis-url" => trust_epoch_redis_url = Some(value.clone()),
             "--trust-epoch-key" => trust_epoch_key = Some(value.clone()),
             // #69: the CP / etcd endpoint for the LINEARIZABLE durability tier.
-            "--cpstore-etcd-endpoint" => {
-                if value.trim().is_empty() {
-                    return Err(
-                        "--cpstore-etcd-endpoint requires a non-empty etcd v3 gateway URL"
-                            .to_string(),
-                    );
-                }
-                cpstore_etcd_endpoint = Some(value.clone());
-            }
+            "--cpstore-etcd-endpoint" => cpstore_etcd_endpoint = Some(value.clone()),
             "--replay-durability-tier" => {
                 replay_durability_tier =
                     Some(crate::replay_tier::ReplayDurabilityTier::parse(value)?)
@@ -1111,22 +471,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             }
             // ADR-MCPS-023 §C (Mode C): a trusted ingress identity. Repeatable. A v2
             // assertion whose `ingress_identity` is not in this set fails closed.
-            "--ingress-identity" => {
-                if value.trim().is_empty() {
-                    return Err(
-                        "--ingress-identity requires a non-empty ingress identity".to_string()
-                    );
-                }
-                ingress_identities.push(value.clone());
-            }
+            "--ingress-identity" => ingress_identities.push(value.clone()),
             // ADR-MCPS-023 §C (Mode C): the node's own audience; a v2 assertion's
             // `audience` must equal it (route/audience binding).
-            "--ingress-audience" => {
-                if value.trim().is_empty() {
-                    return Err("--ingress-audience requires a non-empty audience".to_string());
-                }
-                ingress_audience = Some(value.clone());
-            }
+            "--ingress-audience" => ingress_audience = Some(value.clone()),
             "--transport-identity-source" => {
                 identity_source = match value.as_str() {
                     "uri_san" => IdentityPolicy::UriSan,
@@ -1139,16 +487,11 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                     }
                 }
             }
+            // The trusted forwarded header name. Presence of this flag selects
+            // reverse-proxy ingress mode (mTLS terminated upstream), which relation X7
+            // refuses outright.
             "--reverse-proxy-identity-header" => {
-                // The trusted forwarded header name. Presence of this flag selects
-                // reverse-proxy ingress mode (mTLS terminated upstream).
-                if value.trim().is_empty() {
-                    return Err(
-                        "--reverse-proxy-identity-header requires a non-empty header name"
-                            .to_string(),
-                    );
-                }
-                reverse_proxy_identity_header = Some(value.clone());
+                reverse_proxy_identity_header = Some(value.clone())
             }
             "--reverse-proxy-header-format" => {
                 reverse_proxy_header_format = match value.as_str() {
@@ -1192,13 +535,9 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 limits.write_timeout = parse_timeout(value, "--write-timeout-secs")?
             }
             "--max-connections" => {
-                let n: usize = value
+                limits.max_concurrent_connections = value
                     .parse()
                     .map_err(|_| "invalid --max-connections".to_string())?;
-                if n == 0 {
-                    return Err("--max-connections must be > 0".to_string());
-                }
-                limits.max_concurrent_connections = n;
             }
             // MCPRE-114: bounded per-request ADMISSION control. A ceiling always
             // applies — `ServerLimits::default()` carries a per-core one — because
@@ -1207,7 +546,8 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             // --max-body-bytes BEFORE the verify gate. `--max-in-flight` overrides the
             // per-core ceiling directly; `--max-in-flight-total` sets a fleet-wide
             // target that async_fleet divides evenly across cores (lock-free: each
-            // core enforces only its own share). An EXPLICIT per-core ceiling wins.
+            // core enforces only its own share). The two are ALTERNATIVES —
+            // `second_admission_limit` refuses an argument list naming both.
             "--max-in-flight" => {
                 let n: usize = value
                     .parse()
@@ -1218,8 +558,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                                 attacker-controlled buffering ahead of the verify gate"
                         .to_string());
                 }
-                limits.max_in_flight_requests = Some(n);
-                max_in_flight_explicit = true;
+                second_admission_limit(in_flight_limit, "--max-in-flight")?;
+                in_flight_limit = crate::config_state::InFlightLimitRequest::PerCore(
+                    std::num::NonZeroUsize::new(n).expect("zero is refused above"),
+                );
             }
             // MCPRE-116 / ADR-MCPS-023 §A1: how long one mTLS connection may serve
             // before it is gracefully closed and the peer must re-handshake. The
@@ -1235,15 +577,11 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             // minus any preStop delay) cannot be satisfied from the chart alone while
             // this value is a hardcoded constant.
             "--drain-grace-secs" => {
-                let secs: u64 = value
-                    .parse()
-                    .map_err(|_| "invalid --drain-grace-secs".to_string())?;
-                if secs == 0 {
-                    return Err("--drain-grace-secs must be > 0: a zero drain window \
-                                abandons every in-flight request on SIGTERM"
-                        .to_string());
-                }
-                limits.drain_grace = Duration::from_secs(secs);
+                limits.drain_grace = Duration::from_secs(
+                    value
+                        .parse()
+                        .map_err(|_| "invalid --drain-grace-secs".to_string())?,
+                );
             }
             "--max-in-flight-total" => {
                 let n: usize = value
@@ -1256,7 +594,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                             .to_string(),
                     );
                 }
-                max_in_flight_total = Some(n);
+                second_admission_limit(in_flight_limit, "--max-in-flight-total")?;
+                in_flight_limit = crate::config_state::InFlightLimitRequest::FleetTotal(
+                    std::num::NonZeroUsize::new(n).expect("zero is refused above"),
+                );
             }
             "--max-client-cert-lifetime" => max_client_cert_lifetime = parse_cert_lifetime(value)?,
             "--workers-per-shard" => {
@@ -1291,553 +632,53 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             }
             // ADR-MCPRE-052 §7 trust epoch minted into every credential (the hard
             // gate). Required under delegated-required; coordinated with verifiers.
-            "--delegated-trust-epoch" => {
-                if value.trim().is_empty() {
-                    return Err("--delegated-trust-epoch requires a non-empty epoch".to_string());
-                }
-                delegated_trust_epoch = Some(value.clone());
-            }
+            "--delegated-trust-epoch" => delegated_trust_epoch = Some(value.clone()),
             // ADR-MCPRE-052: the root issuer key id the credential chains to. Defaults
             // to --server-key-id.
-            "--delegated-issuer-kid" => {
-                if value.trim().is_empty() {
-                    return Err("--delegated-issuer-kid requires a non-empty key id".to_string());
-                }
-                delegated_issuer_kid = Some(value.clone());
-            }
+            "--delegated-issuer-kid" => delegated_issuer_kid = Some(value.clone()),
             // ADR-MCPRE-052: the audience-scope hash the delegated key is scoped to.
             // Defaults to --audience.
-            "--delegated-audience-hash" => {
-                if value.trim().is_empty() {
-                    return Err("--delegated-audience-hash requires a non-empty value".to_string());
-                }
-                delegated_audience_hash = Some(value.clone());
-            }
+            "--delegated-audience-hash" => delegated_audience_hash = Some(value.clone()),
             other => return Err(format!("unknown flag {other}")),
         }
         i += 2;
     }
 
-    // A fleet-wide target divides across cores only when no explicit per-core ceiling
-    // was given (`derived_per_core_ceiling`). Clearing the DEFAULT here is what keeps
-    // that contract: without it the built-in per-core value would silently win over an
-    // operator's `--max-in-flight-total`.
-    if max_in_flight_total.is_some() && !max_in_flight_explicit {
-        limits.max_in_flight_requests = None;
-    }
-
     let require =
         |opt: Option<String>, name: &str| opt.ok_or_else(|| format!("missing required {name}"));
-    if replay == ReplayKind::File && replay_path.is_none() {
-        return Err("--replay-cache file requires --replay-path".to_string());
-    }
-    // MCPRE-493: enforcing admission needs BOTH an authority to verify assertions
-    // against and a source to check currency against. With neither, the gate would
-    // verify nothing while looking enabled — the most dangerous of the three states,
-    // because the deployment believes it has admission control.
-    if admission != AdmissionKind::Off {
-        if admission_authority_kid.is_none() || admission_authority_pubkey_b64url.is_none() {
-            return Err("--admission optional|required requires \
-                        --admission-authority-kid and --admission-authority-pubkey \
-                        (an assertion is only evidence if the issuer is one this \
-                        deployment trusts)"
-                .to_string());
-        }
-        if admission_redis_url.is_none() {
-            return Err(
-                "--admission optional|required requires --admission-redis-url \
-                        (the shared authoritative record; without it every call fails \
-                        closed on an unreachable authority)"
-                    .to_string(),
-            );
-        }
-    }
-    // A degraded window of zero is not a window: it would fail closed on every
-    // unreachable-authority call while claiming a degraded mode is available.
-    if admission_allow_degraded && admission_degraded_bound_secs <= 0 {
-        return Err("--admission-allow-degraded true requires a positive \
-                    --admission-degraded-bound-secs (P); degraded mode is a BOUNDED \
-                    window, and an unbounded or zero one is not a policy"
-            .to_string());
-    }
-    if admission == AdmissionKind::Off
-        && (admission_redis_url.is_some() || admission_authority_kid.is_some())
-    {
-        // A dangling admission setting reads as "admission is configured" to anyone
-        // auditing the command line, while nothing is enforced.
-        return Err(
-            "--admission-authority-kid / --admission-redis-url are set but \
-                    --admission is off; enable it or remove them"
-                .to_string(),
-        );
-    }
-    // ADR-MCPS-020: the durability tier is an explicit deployment assertion that
-    // determines the horizontal replay-safety claim, so a shared store MUST
-    // declare it (fail closed rather than assume a tier). Checked BEFORE the
-    // backend-endpoint requirement, because the declared tier decides WHICH
-    // backend endpoint is required.
-    if replay == ReplayKind::Shared && replay_durability_tier.is_none() {
-        return Err("--replay-cache shared requires --replay-durability-tier \
-                    (redis-async | redis-wait-quorum:<quorum>:<timeout_ms> | linearizable | \
-                    single-store-fail-closed)"
-            .to_string());
-    }
-    // #69 (epic #68 v0.4 Axis 1): the declared tier selects the backend, which
-    // selects the required endpoint. The LINEARIZABLE tier needs a CP / linearizable
-    // store (etcd), so it requires `--cpstore-etcd-endpoint`; every other (Redis)
-    // tier requires `--replay-redis-url`. Selecting LINEARIZABLE WITHOUT the etcd
-    // endpoint is a HARD config-construction error here — NEVER a silent downgrade
-    // to Redis / in-memory (ADR-MCPS-020 fail-closed).
-    let tier_is_linearizable = matches!(
-        replay_durability_tier,
-        Some(crate::replay_tier::ReplayDurabilityTier::Linearizable)
-    );
-    if replay == ReplayKind::Shared {
-        if tier_is_linearizable {
-            if cpstore_etcd_endpoint.is_none() {
-                return Err(
-                    "--replay-durability-tier linearizable requires a CP/linearizable store \
-                     endpoint: --cpstore-etcd-endpoint <http://host:2379> (the LINEARIZABLE \
-                     claim is forbidden without a configured CPStore; it is NEVER silently \
-                     downgraded to Redis or in-memory)"
-                        .to_string(),
-                );
-            }
-        } else if replay_redis_url.is_none() {
-            return Err("--replay-cache shared requires --replay-redis-url".to_string());
-        }
-    }
-    // A `--cpstore-etcd-endpoint` set for any non-LINEARIZABLE configuration would
-    // silently do nothing (a false belief that a CP store is in force), so reject it
-    // (fail closed) — mirrors the dangling `--ocsp-responder-url` / KMS-TLS guards.
-    if cpstore_etcd_endpoint.is_some() && !(replay == ReplayKind::Shared && tier_is_linearizable) {
-        return Err("--cpstore-etcd-endpoint has no effect without \
-             --replay-cache shared --replay-durability-tier linearizable"
-            .to_string());
-    }
-    // EnvKeySource is a dev/CI-only downgrade and is compiled in ONLY under the
-    // `dev_env_key_source` feature; a production build cannot even parse
-    // `--key-source env` (the match arm does not exist), so no runtime ack is needed
-    // — the build feature IS the acknowledgement.
-    // #4034 PKCS#11 key source: the module path, User PIN, token label, and
-    // signing-key object label are all required when this source is selected.
-    // Each is checked here (not in build_key_source) so a missing flag is a clear
-    // parse error regardless of which feature the binary was built with.
-    if key_source == KeySourceKind::Pkcs11 {
-        if pkcs11_module.is_none() {
-            return Err("--key-source pkcs11 requires --pkcs11-module <path>".to_string());
-        }
-        if pkcs11_pin_file.is_none() {
-            return Err(
-                "--key-source pkcs11 requires --pkcs11-pin-file <path>; the User PIN is \
-                 never accepted on argv, which is world-readable via ps and \
-                 /proc/<pid>/cmdline"
-                    .to_string(),
-            );
-        }
-        if pkcs11_token_label.is_none() {
-            return Err("--key-source pkcs11 requires --pkcs11-token-label <label>".to_string());
-        }
-        if pkcs11_key_label.is_none() {
-            return Err("--key-source pkcs11 requires --pkcs11-key-label <label>".to_string());
-        }
-    }
-    // #59: the TLS-key label selects the SEPARATE token object that custodies the
-    // TLS key. It only has meaning for the PKCS#11 source; a dangling label on any
-    // other source would silently do nothing (a false belief that the TLS key is
-    // token-resident), so reject it (fail closed).
-    if pkcs11_tls_key_label.is_some() && key_source != KeySourceKind::Pkcs11 {
-        return Err("--pkcs11-tls-key-label has no effect without --key-source pkcs11".to_string());
-    }
-    // ADR-MCPS-028 §B AWS KMS: region + key id are required when this source is
-    // selected (credentials come from AWS_* env vars; the endpoint is optional).
-    // Checked here so a missing flag is a clear parse error regardless of feature.
-    if key_source == KeySourceKind::AwsKms {
-        if aws_kms_region.is_none() {
-            return Err("--key-source aws-kms requires --aws-kms-region <region>".to_string());
-        }
-        if aws_kms_key_id.is_none() {
-            return Err(
-                "--key-source aws-kms requires --aws-kms-key-id <key-id|arn|alias>".to_string(),
-            );
-        }
-    }
-    // #60: the TLS-key id selects the SEPARATE KMS key that custodies the TLS key.
-    // It only has meaning for the AWS KMS source; a dangling id on any other source
-    // would silently do nothing (a false belief that the TLS key is KMS-resident),
-    // so reject it (fail closed) — mirrors the `--pkcs11-tls-key-label` guard.
-    if aws_kms_tls_key_id.is_some() && key_source != KeySourceKind::AwsKms {
-        return Err("--aws-kms-tls-key-id has no effect without --key-source aws-kms".to_string());
-    }
-    // The custody path an operator believes they selected must be the one they get.
-    // On any other key source these two would silently do nothing, leaving a
-    // deployment that thinks it holds no static IAM key material while holding it.
-    if aws_kms_use_web_identity && key_source != KeySourceKind::AwsKms {
-        return Err(
-            "--aws-kms-use-web-identity has no effect without --key-source aws-kms".to_string(),
-        );
-    }
-    if aws_sts_endpoint.is_some() && !aws_kms_use_web_identity {
-        return Err(
-            "--aws-sts-endpoint has no effect without --aws-kms-use-web-identity".to_string(),
-        );
-    }
-    // ADR-MCPS-028 §C GCP Cloud KMS: the key-version resource path is required.
-    if key_source == KeySourceKind::GcpKms && gcp_kms_key_version.is_none() {
-        return Err("--key-source gcp-kms requires --gcp-kms-key-version \
-             <projects/.../cryptoKeyVersions/N>"
-            .to_string());
-    }
-    // #61: the TLS-key-version selects the SEPARATE Cloud KMS key version that
-    // custodies the TLS key. It only has meaning for the GCP KMS source; a dangling
-    // version on any other source would silently do nothing (a false belief that the
-    // TLS key is KMS-resident), so reject it (fail closed) — mirrors the
-    // `--aws-kms-tls-key-id` / `--pkcs11-tls-key-label` guards.
-    if gcp_kms_tls_key_version.is_some() && key_source != KeySourceKind::GcpKms {
-        return Err(
-            "--gcp-kms-tls-key-version has no effect without --key-source gcp-kms".to_string(),
-        );
-    }
-    // The metadata-server flag only has meaning for the GCP KMS source; a dangling
-    // `--gcp-kms-use-metadata` would silently do nothing, so reject it.
-    if gcp_kms_use_metadata && key_source != KeySourceKind::GcpKms {
-        return Err(
-            "--gcp-kms-use-metadata has no effect without --key-source gcp-kms".to_string(),
-        );
-    }
-    // ADR-MCPRE-051 §3: the async serving path forwards verified requests over the
-    // pooled HttpInnerPool to one or more stateless HTTP inner backends, so at least
-    // one `--inner-http-url` MUST be configured (fail closed rather than start with
-    // no inner plane).
-    if inner_http_urls.is_empty() {
-        return Err(
-            "missing required inner server: --inner-http-url <url> (async HTTP inner plane)"
-                .to_string(),
-        );
-    }
-
-    // MCPS-3840 reverse-proxy ingress: identity comes EITHER from a locally-
-    // terminated client certificate OR from a trusted forwarded header, never
-    // both (the two identity sources are mutually exclusive). When the header
-    // strategy is selected, the proxy does NOT extract identity from a local
-    // client cert, so a configured local client-cert-lifetime enforcement is
-    // contradictory (there is no local client cert to bound). Require it be
-    // explicitly disabled (`--max-client-cert-lifetime none`) so the operator
-    // cannot believe a local-cert control is in force when it is not.
-    if reverse_proxy_identity_header.is_some() && max_client_cert_lifetime.is_some() {
-        return Err(
-            "--reverse-proxy-identity-header terminates mTLS UPSTREAM, so the local \
-             client-certificate identity path is disabled and a local \
-             --max-client-cert-lifetime cannot be enforced; pass \
-             --max-client-cert-lifetime none to acknowledge that local client-cert \
-             controls do not apply in reverse-proxy mode"
-                .to_string(),
-        );
-    }
-
-    // ADR-MCPS-023 Tier 3 (issue #71): LB-signed request-bound ingress assertion.
-    // Fail CLOSED at the CLI trust boundary so the operator can never believe a
-    // request-binding control is in force when it is not.
-    //
-    // (a) Dangling `--ingress-lb-key` without `--transport-binding lb-assertion`
-    //     would SILENTLY do nothing (an illusion of request-bound ingress). Reject
-    //     it — mirrors the OCSP/reverse-proxy dangling-flag guards.
-    if !ingress_lb_keys.is_empty() && binding != BindingKind::LbAssertion {
-        return Err(
-            "--ingress-lb-key has no effect without --transport-binding lb-assertion".to_string(),
-        );
-    }
-    // (b) `lb-assertion` binding with NO trusted LB key can never verify any
-    //     assertion — it would reject every request. Require at least one key.
-    if binding == BindingKind::LbAssertion && ingress_lb_keys.is_empty() {
-        return Err(
-            "--transport-binding lb-assertion requires at least one --ingress-lb-key \
-             <keyid>:<base64url-ed25519-pub> (the trusted LB verification key)"
-                .to_string(),
-        );
-    }
-    // (c) Each configured LB key must be a valid base64url 32-byte Ed25519 public
-    //     key, and key ids must be unique — a malformed key or duplicate id is a
-    //     misconfiguration, rejected at parse time rather than at first request.
-    {
-        let mut seen_ids: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-        for (key_id, key_b64) in &ingress_lb_keys {
-            if !seen_ids.insert(key_id.as_str()) {
-                return Err(format!(
-                    "duplicate --ingress-lb-key id '{key_id}' (each LB key id must be unique)"
-                ));
-            }
-            if mcp_re_core::VerificationKey::from_b64url(key_b64).is_err() {
-                return Err(format!(
-                    "invalid --ingress-lb-key '{key_id}': the body must be a base64url-no-pad \
-                     32-byte Ed25519 public key"
-                ));
-            }
-        }
-    }
-
-    // ADR-MCPS-023 §C (v0.10) Mode C attested ingress — fail CLOSED at the CLI trust
-    // boundary so an operator can never believe an attested-ingress control is in
-    // force when a piece of it is missing. Mode C is strict-ADMITTED but ONLY when
-    // fully configured: attestor keys, trusted ingress identities, the expected
-    // audience, and the explicit pinned-mTLS acknowledgement.
-    //
-    // (a) The Mode-C flags SILENTLY do nothing outside `attested-ingress` — reject
-    //     dangling ones (mirrors the `--ingress-lb-key` dangling guard).
-    if binding != BindingKind::AttestedIngress {
-        if !ingress_attestor_keys.is_empty() {
-            return Err(
-                "--ingress-attestor-key has no effect without --transport-binding attested-ingress"
-                    .to_string(),
-            );
-        }
-        if !ingress_identities.is_empty() {
-            return Err(
-                "--ingress-identity has no effect without --transport-binding attested-ingress"
-                    .to_string(),
-            );
-        }
-        if ingress_audience.is_some() {
-            return Err(
-                "--ingress-audience has no effect without --transport-binding attested-ingress"
-                    .to_string(),
-            );
-        }
-        if ingress_pinned_mtls {
-            return Err(
-                "--ingress-pinned-mtls has no effect without --transport-binding attested-ingress"
-                    .to_string(),
-            );
-        }
-    } else {
-        // (b) attested-ingress with NO trusted attestor key can never verify any
-        //     assertion — it would reject every request. Require at least one.
-        if ingress_attestor_keys.is_empty() {
-            return Err(
-                "--transport-binding attested-ingress requires at least one \
-                 --ingress-attestor-key <keyid>:<base64url-ed25519-pub> (the trusted \
-                 ingress-attestor verification key)"
-                    .to_string(),
-            );
-        }
-        // (c) attested-ingress with NO trusted ingress identity would reject every
-        //     assertion — require at least one.
-        if ingress_identities.is_empty() {
-            return Err(
-                "--transport-binding attested-ingress requires at least one \
-                 --ingress-identity <id> (a trusted ingress identity)"
-                    .to_string(),
-            );
-        }
-        // (d) attested-ingress binds the assertion's audience to the node's own — it
-        //     must be configured.
-        if ingress_audience.is_none() {
-            return Err(
-                "--transport-binding attested-ingress requires --ingress-audience <aud> \
-                 (the node's expected assertion audience/route)"
-                    .to_string(),
-            );
-        }
-        // (e) The pinned attestor→node channel (§C2) is load-bearing: without the
-        //     explicit `--ingress-pinned-mtls` acknowledgement, attested ingress
-        //     refuses to start (fail closed) — an attested-ingress posture must never
-        //     run without the pinned backend channel it depends on.
-        if !ingress_pinned_mtls {
-            return Err(
-                "--transport-binding attested-ingress requires --ingress-pinned-mtls: the \
-                 attestor→node hop MUST be a pinned mTLS channel (ADR-MCPS-023 §C2); \
-                 acknowledge it explicitly or do not enable attested ingress"
-                    .to_string(),
-            );
-        }
-        // (f) Mode C resolves identity from the signed v2 assertion, so a trusted
-        //     reverse-proxy identity header would be a second, silently-ignored
-        //     identity source — reject the combination.
-        if reverse_proxy_identity_header.is_some() {
-            return Err(
-                "--transport-binding attested-ingress resolves identity from the signed v2 \
-                 assertion and is mutually exclusive with --reverse-proxy-identity-header"
-                    .to_string(),
-            );
-        }
-        // (g) Each attestor key must be a valid base64url 32-byte Ed25519 public key,
-        //     and key ids must be unique.
-        let mut seen_ids: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-        for (key_id, key_b64) in &ingress_attestor_keys {
-            if !seen_ids.insert(key_id.as_str()) {
-                return Err(format!(
-                    "duplicate --ingress-attestor-key id '{key_id}' (each attestor key id \
-                     must be unique)"
-                ));
-            }
-            if mcp_re_core::VerificationKey::from_b64url(key_b64).is_err() {
-                return Err(format!(
-                    "invalid --ingress-attestor-key '{key_id}': the body must be a \
-                     base64url-no-pad 32-byte Ed25519 public key"
-                ));
-            }
-        }
-    }
-
-    // #4063 (MCPS-088) online-OCSP gating — fail CLOSED at the CLI trust boundary.
-    // These arms ensure an operator can never believe an OCSP control is in force
-    // when it is not, and that `require` is rejected outright in a build that
-    // cannot perform the verified online check.
-    //
-    // (a) The OCSP knobs are only honored under `--client-ocsp require`. A dangling
-    //     `--ocsp-responder-url` without it would SILENTLY do nothing — a dangerous
-    //     illusion of a revocation posture — so it is a hard error. (Online OCSP
-    //     ALWAYS hard-fails on an indeterminate result; there is no soft-fail knob.)
-    if client_ocsp != OcspKind::Require && ocsp_responder_url.is_some() {
-        return Err("--ocsp-responder-url has no effect without --client-ocsp require".to_string());
-    }
-    // (b) `--client-ocsp require` is refused unconditionally: the online-OCSP check is
-    //     unreachable on the serving path. `ocsp_rejection` is called only from
-    //     `connection_rejection`, which only the blocking serve loops use; the
-    //     production data plane is the per-core async fleet (ADR-MCPRE-051 §1), which
-    //     calls `connection_rejection_for_chain` and performs only the offline
-    //     cert-lifetime + CRL checks. Accepting `require` would print "ONLINE OCSP
-    //     client-cert revocation enabled" at startup while admitting every revoked
-    //     client certificate — the forbidden-claim shape (security-boundary §2). This
-    //     holds with OR without the `online_ocsp` feature: without it the code is
-    //     absent, with it the code is present but never called. Refused until the async
-    //     path performs the responder round-trip off the runtime worker.
-    if client_ocsp == OcspKind::Require {
-        return Err(
-            "--client-ocsp require cannot be honored: online OCSP is implemented only on \
-             the blocking serve loop, while the production data plane is the per-core \
-             async fleet, which performs no OCSP revocation check. Accepting it would \
-             announce enforcement that does not happen. Use --client-crl (with \
-             --client-crl-reload-secs for restart-free refresh) for client-certificate \
-             revocation on the async serving path."
-                .to_string(),
-        );
-    }
-    // (c) Under the feature, OCSP checks the LOCALLY-terminated client cert, which
-    //     does not exist in reverse-proxy (forwarded-header) ingress mode.
-    #[cfg(feature = "online_ocsp")]
-    if client_ocsp == OcspKind::Require && reverse_proxy_identity_header.is_some() {
-        return Err(
-            "--client-ocsp require checks the locally-terminated client certificate, \
-             which is absent in reverse-proxy mode (--reverse-proxy-identity-header); \
-             online OCSP cannot apply there"
-                .to_string(),
-        );
-    }
-
-    // ADR-MCPS-028 §G / issue #58+#59+#60+#61: a source's TLS key is EITHER delegated
-    // to a non-exporting device/KMS XOR exported from a file — never both. The
-    // delegated selectors are `--pkcs11-tls-key-label` (#59, token-resident),
-    // `--aws-kms-tls-key-id` (#60, AWS-KMS-resident) and `--gcp-kms-tls-key-version`
-    // (#61, Cloud-KMS-resident); any makes the TLS key non-exporting, so an exported
-    // `--tls-key` alongside it is contradictory (the operator would believe the key
-    // never leaves the device while a file copy also exists) and fails closed here,
-    // before the proxy is constructed.
+    // #59/#60/#61: a delegated TLS selector makes the handshake key device-resident, and
+    // that decides whether `--tls-key` names a file this deployment reads. Read here
+    // because it is what the struct literal below needs, not as a check: whether the two
+    // custodies may be asserted together is relation X2b's.
     let has_delegated_tls = pkcs11_tls_key_label.is_some()
         || aws_kms_tls_key_id.is_some()
         || gcp_kms_tls_key_version.is_some();
-    let has_exported_tls_key = tls_key.is_some();
-    validate_tls_signing_exclusivity(has_delegated_tls, has_exported_tls_key)?;
 
-    // MCPS-84: a networked trust-epoch backend is only consumed by the Push
-    // revocation tier. Reject (not silently ignore) a `--trust-epoch-redis-url`
-    // paired with any other tier, so the operator does not believe a networked
-    // trust invalidation is active when it is inert.
-    if trust_epoch_redis_url.is_some()
-        && !matches!(
-            revocation_tier,
-            crate::revocation_tier::RevocationTier::Push { .. }
-        )
-    {
-        return Err(
-            "--trust-epoch-redis-url requires --revocation-tier push:<T> (the trust-epoch source \
-             drives the ADR-021 Tier-3 push cache; it is inert under any other tier)"
-                .to_string(),
-        );
-    }
+    // ADR-MCPRE-052 §4: the rotation window an operator did not state. Applying it is the
+    // CLI's job — a default is what an omitted flag means — but choosing the values is not,
+    // so they are `DelegatedSigning`'s constants, checked there against the same
+    // `0 < overlap < ttl` guard they have to survive.
+    let delegated_ttl_secs_final = delegated_ttl_secs
+        .unwrap_or(crate::config_state::delegated_signing::DEFAULT_DELEGATED_TTL_SECS);
+    let delegated_overlap_secs_final = delegated_overlap_secs
+        .unwrap_or(crate::config_state::delegated_signing::DEFAULT_DELEGATED_OVERLAP_SECS);
 
-    // ADR-MCPRE-052 (MCPRE-122): delegated-signing is the ONLY response-signing mode.
-    // Fail CLOSED at the CLI trust boundary — the trust epoch is required and the
-    // rotation window must be sane, for every deployment.
-    let (delegated_ttl_secs_final, delegated_overlap_secs_final) = {
-        // (a) The trust epoch is the ADR-MCPRE-052 §7 hard gate; a verifier admits
-        //     only credentials whose epoch is in its accepted set, so it MUST be
-        //     supplied explicitly (no silent default that verifiers would reject).
-        if delegated_trust_epoch.is_none() {
-            return Err(
-                "--delegated-trust-epoch <epoch> is required (the trust epoch minted into every \
-                 delegation credential; it must be coordinated with verifiers — ADR-MCPRE-052 §7)"
-                    .to_string(),
-            );
-        }
-        // (b) TTL and overlap must satisfy 0 < overlap < ttl so the rotor mints a
-        //     successor before the predecessor expires (no signing gap).
-        let ttl = delegated_ttl_secs.unwrap_or(300);
-        let overlap = delegated_overlap_secs.unwrap_or(60);
-        if ttl <= 0 {
-            return Err("--delegated-ttl-secs must be greater than 0".to_string());
-        }
-        if overlap <= 0 || overlap >= ttl {
-            return Err(format!(
-                "--delegated-overlap-secs must satisfy 0 < overlap < ttl (got overlap={overlap}, \
-                 ttl={ttl})"
-            ));
-        }
-        (ttl, overlap)
-    };
-
-    let config = Config {
+    let config = DeploymentRequest {
         bind: require(bind, "--bind")?,
         audience: require(audience, "--audience")?,
         server_signer: require(server_signer, "--server-signer")?,
         server_key_id: require(server_key_id, "--server-key-id")?,
         max_clock_skew,
         mcp_protocol_versions,
-        // The RFC 9421 `@target-uri` binding (ADR-MCPRE-050). REQUIRED and non-empty:
-        // an empty target makes both sides of the audience/target conjunction the same
-        // empty string, so the dispatch-boundary binding degrades to a tautology and
-        // two deployments sharing an `--audience` become indistinguishable to the
-        // verifier. Refused here rather than served as a binding that binds nothing.
-        target_uri: {
-            let uri = require(target_uri, "--target-uri")?;
-            if uri.trim().is_empty() {
-                return Err(
-                    "--target-uri must not be empty: an empty target makes the audience/target \
-                     binding a tautology (both sides compare equal) instead of binding this \
-                     deployment's dispatch boundary"
-                        .to_string(),
-                );
-            }
-            // ABSOLUTE form is required, and this is the check `async_serve`'s
-            // `origin_form_of` says already exists. It did not: a relative or
-            // scheme-less target (`/mcp`, `host/mcp`) yields no origin form, which
-            // makes the received-vs-configured path comparison return "consistent"
-            // for every request and disables the reconstruction check silently. The
-            // verifier's own audience comparison cannot catch it either — both sides
-            // are the same configured string.
-            if !uri.contains("://") {
-                return Err(format!(
-                    "--target-uri {uri:?} is not an absolute URI: it must be \
-                     <scheme>://<authority><path> (e.g. https://proxy.internal:8600/mcp). \
-                     A scheme-less target disables the request-target reconstruction check \
-                     entirely, so an ingress fanning several paths into one process would \
-                     verify signatures over a @target-uri the request never arrived at"
-                ));
-            }
-            uri
-        },
+        // The RFC 9421 `@target-uri` binding (ADR-MCPRE-050). REQUIRED; what shape it must
+        // have is [`target_uri_violation`], at the boundary.
+        target_uri: require(target_uri, "--target-uri")?,
         // REQUIRED. It used to default to the placeholder `example.com`, which the
         // Helm chart refuses outright as a shared-identity hazard — so the binary
         // silently accepted the one value the chart exists to reject, and a
         // hand-rolled or scripted deployment inherited an identity coordinate shared
         // with every other install that also never set it.
-        trust_domain: {
-            let value = require(trust_domain, "--trust-domain")?;
-            if value.trim().is_empty() {
-                return Err("--trust-domain must not be empty".to_string());
-            }
-            value
-        },
+        trust_domain: require(trust_domain, "--trust-domain")?,
         route,
         key_source,
         // Required only where the seed is actually READ. Under a non-exporting
@@ -1872,13 +713,11 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         inner_http_urls,
         cores,
         workers_per_shard,
-        max_in_flight_total,
+        in_flight_limit,
         client_crl_reload_secs,
         client_ocsp,
         ocsp_responder_url,
         trust_path: require(trust_path, "--trust")?,
-        replay,
-        replay_path,
         admission,
         admission_authority_kid,
         admission_authority_pubkey_b64url,
@@ -1890,6 +729,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         retained_evidence_dir,
         verified_context,
         replay_redis_url,
+        continuation_control_redis_url,
         trust_epoch_redis_url,
         trust_epoch_key,
         cpstore_etcd_endpoint,
@@ -1932,360 +772,50 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         delegated_audience_hash,
     };
 
-    // ADR-MCPS-013: the reference signed-authorization profile is a real,
-    // signature-verifying profile, but it is a CONFORMANCE/reference implementation,
-    // NOT the long-term production authority (Biscuit is the intended first serious
-    // external profile). It is never accepted as the sole production authorization
-    // authority — there is no ack to override this. Until a production authz profile
-    // lands, run with `--authz off`.
-    if config.authz == AuthzKind::Reference {
-        return Err(
-            "--authz reference selects the reference/conformance signed-authorization \
-             profile, which is NOT accepted as the production authorization authority \
-             (ADR-MCPS-013; Biscuit is the intended production profile). Run --authz off \
-             until a production authorization profile is available."
-                .to_string(),
-        );
-    }
-
-    // ADR-MCPS-013: the policy-layer deny-list is consumed by the authorization layer
-    // (`LiveTrustResolver::resolve_with_revocation_id`), which only runs under an authz
-    // profile. `--authz reference` is refused just above and no production profile has
-    // landed, so authz is `Off` in every parseable config and a supplied deny-list
-    // could only be silently ignored — an operator would believe a compromised grant
-    // was revoked while it kept being authorized. Refused rather than accepted-and-
-    // ignored (security-boundary §2: never surface a capability that is not delivered).
-    if !config.revocation_list_paths.is_empty() {
-        return Err(
-            "--revocation-list supplies a policy-layer deny-list (ADR-MCPS-013), but it is \
-             consulted only by an authorization profile and no production profile is \
-             available (--authz is always off), so the list would enforce NOTHING. Remove \
-             --revocation-list; use the trust store and --revocation-tier for key \
-             revocation on the request path."
-                .to_string(),
-        );
-    }
-
-    // The proxy ALWAYS runs the maximal-security posture — there is no toggle. Any
-    // unsafe configuration is refused at parse time (never merely warned). The
-    // decision lives in the pure [`unsafe_config_violations`] helper so it is
-    // black-box testable and shared with `main.rs` (which adds the filesystem-
-    // dependent key-file-permission check). The proxy never even constructs when a
-    // parse-time violation is present.
-    let violations = unsafe_config_violations(&config);
-    if !violations.is_empty() {
-        return Err(format!(
-            "mcp-re-proxy refuses unsafe configuration:\n  - {}",
-            violations.join("\n  - ")
-        ));
-    }
-
-    Ok(config)
+    // Whether the deployment this argument list describes is one that may run is not the
+    // parser's question, and the answer is the same however the request was built. Every
+    // violation is reported, not the first — a command line missing four things is worth
+    // one pass, not four.
+    crate::config_state::validation::ValidatedDeployment::try_from(config)
+        .map(crate::config_state::validation::ValidatedDeployment::into_inner)
 }
 
-/// Enforce the delegated-XOR-exported TLS-signing rule (ADR-MCPS-028 §G, issue
-/// #58): a source's TLS handshake key is EITHER delegated to a non-exporting
-/// device/KMS (`has_delegated_tls`) OR exported from a file (`has_exported_tls_key`),
-/// never both. A source that asserts both is contradictory — the operator could
-/// believe the key never leaves the device while a file copy also exists — so this
-/// FAILS CLOSED at parse time, before the proxy is constructed.
+/// Refuse a SECOND admission limit: the two flags are alternative ways to state one, so
+/// naming both — or the same one twice — is a refusal rather than a precedence question.
 ///
-/// Pure and black-box-testable (no `Config`, no IO). The backend issues (#59–#61)
-/// drive `has_delegated_tls` from their CLI flag; #58 wires the call with the
-/// current values so the seam is exercised, not dead code.
-pub fn validate_tls_signing_exclusivity(
-    has_delegated_tls: bool,
-    has_exported_tls_key: bool,
+/// They are not two values to reconcile. One bounds each core directly and the other is
+/// divided evenly across the resolved cores, so which aggregate a total implies is not
+/// known until the core count is; equivalence is a property of the host, not of the
+/// request. There is therefore no "they agree" case to exempt.
+///
+/// The rule the chart already enforced (`_helpers.tpl`: "set one OR the other, not both").
+///
+/// # Why this is the parser's job and not the boundary's
+///
+/// [`InFlightLimitRequest`](crate::config_state::InFlightLimitRequest) holds ONE limit, so
+/// a `DeploymentRequest` naming both cannot be constructed — by a parser, an embedder or a test — and
+/// the boundary has no such state left to refuse. What remains is only reachable while
+/// READING an argument list, where "already set" is a fact about the input rather than
+/// about the request: without this, the second flag would silently overwrite the first.
+fn second_admission_limit(
+    current: crate::config_state::InFlightLimitRequest,
+    flag: &str,
 ) -> Result<(), String> {
-    if has_delegated_tls && has_exported_tls_key {
-        return Err(
-            "TLS signing is delegated XOR exported (ADR-MCPS-028 §G): a delegated-TLS \
-             key source must not also be given an exported --tls-key. Remove --tls-key \
-             when using a delegated (non-exporting device/KMS) TLS signer."
-                .to_string(),
-        );
-    }
-    Ok(())
-}
-
-/// The ceiling on `--max-client-cert-lifetime` (ADR-MCPS-023 §A1, MCPS-57). A
-/// lifetime above this cannot honestly be audited as `short_lived_cert`, so the
-/// proxy rejects it. Matches the 1h default. Exported so test fixtures mint client
-/// certs whose validity window is within the SAME bound the proxy enforces — there
-/// is one source of truth, not a hand-picked magic number per fixture.
-pub const MAX_CLIENT_CERT_LIFETIME: Duration = Duration::from_secs(3600);
-
-/// The ceiling on `--trust-reload-secs` for the tiers that advertise a NEAR-ZERO
-/// revocation window (`live`, `push`).
-///
-/// Those tiers describe how fast a revoked request-signer key stops being honoured, and
-/// the only thing that removes a key from the resolver on a running replica is the
-/// `--trust` re-read. The cadence is therefore the real window, whatever the tier
-/// string says. One minute is the coarsest cadence for which "near-zero" survives
-/// contact with an incident: it is inside the 300s default connection-age bound, so a
-/// revocation reaches every peer within one connection lifetime.
-pub const MAX_NEAR_ZERO_TRUST_RELOAD_SECS: u64 = 60;
-
-/// Collect the parse-time unsafe-configuration violations for `config`.
-///
-/// The proxy has NO security toggle — it always runs the maximal-security posture,
-/// so this is applied unconditionally. This is the pure, black-box-testable core:
-/// each returned string names the offending flag and how to fix it. It covers ONLY
-/// the conditions knowable from the parsed [`Config`] — the group/world-readable
-/// key-file check is filesystem-dependent and lives in `main.rs` (which reads the
-/// file mode and reuses the same fail-closed posture).
-///
-/// ADR-MCPS-023 §A1 (v0.9, MCPS-57): a `--max-client-cert-lifetime` GREATER than
-/// [`MAX_CLIENT_CERT_LIFETIME`] is rejected. Mode-A's entire certificate-revocation
-/// posture is short-lived certificates (on GCP the online-OCSP path is a no-op and
-/// CAS is CRL-only), so a long-lived cert cannot honestly be audited as
-/// `short_lived_cert`. DISABLED enforcement (`none`/`0`, i.e.
-/// `max_client_cert_lifetime == None`) is likewise rejected.
-///
-/// The postures rejected here are the pure-config, platform-independent fail-open
-/// ones: reverse-proxy header ingress (M10/M22), a non-durable/weak replay tier
-/// (#90/ADR-MCPS-020), lb-assertion binding, and cn_legacy identity.
-pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
-    let mut violations = Vec::new();
-    // ADR-MCPS-023 §A1 (MCPS-57): `None` disables enforcement outright; a lifetime
-    // above the ceiling would let a NOT-short-lived cert be audited as
-    // `short_lived_cert`. Both fail closed.
-    match config.max_client_cert_lifetime {
-        None => violations.push(
-            "--max-client-cert-lifetime none/0 disables client-cert lifetime enforcement; \
-             set a bounded lifetime (default 1h)"
-                .to_string(),
-        ),
-        Some(lifetime) if lifetime > MAX_CLIENT_CERT_LIFETIME => violations.push(format!(
-            "--max-client-cert-lifetime {}s exceeds the ceiling of {}s: Mode-A's \
-             revocation posture is short-lived certificates, so a longer lifetime cannot be \
-             audited as short_lived_cert; set a lifetime <= {}s",
-            lifetime.as_secs(),
-            MAX_CLIENT_CERT_LIFETIME.as_secs(),
-            MAX_CLIENT_CERT_LIFETIME.as_secs(),
-        )),
-        Some(_) => {}
-    }
-    // A client certificate's chain, CRL status and validity window are checked at the
-    // TLS handshake and never again on an established connection. Without a
-    // connection-age bound a peer holding a stolen or revoked certificate keeps full
-    // authenticated access for as long as it keeps one connection open — so the
-    // `--max-client-cert-lifetime` ceiling above and the CRL reload cadence both stop
-    // being true statements about the deployment.
-    match config.limits.max_connection_age {
-        None => violations.push(
-            "--max-connection-age-secs 0 disables the connection-age bound: the client \
-             certificate is validated only at the handshake, so a peer that never \
-             reconnects is never re-checked against an expiry or a reloaded CRL. Set a \
-             bounded age (default 300s)"
-                .to_string(),
-        ),
-        Some(age) if age > MAX_CLIENT_CERT_LIFETIME => violations.push(format!(
-            "--max-connection-age-secs {}s exceeds the client-cert lifetime ceiling of {}s: \
-             a connection would outlive the credential that authenticated it",
-            age.as_secs(),
-            MAX_CLIENT_CERT_LIFETIME.as_secs(),
-        )),
-        Some(_) => {}
-    }
-    // ADR-MCPS-021 Axis 2: LIVE and PUSH both advertise a revocation window measured
-    // in the store being consulted or re-consulted. With `--trust` read once at
-    // startup there is nothing behind either: a Tier-3 flush evicts entries that
-    // immediately re-resolve to the identical key, and Tier 2's per-request round trip
-    // hits a frozen map. Refused rather than warned, because the operator asked for a
-    // near-zero window and would otherwise be told at startup that they had one.
-    if matches!(
-        config.revocation_tier,
-        crate::revocation_tier::RevocationTier::Live
-            | crate::revocation_tier::RevocationTier::Push { .. }
-    ) && config.trust_reload_secs.is_none()
-    {
-        violations.push(
-            "--revocation-tier live|push requires --trust-reload-secs: both tiers state a              revocation window in terms of consulting the trust store, but with --trust read              once at startup the store cannot change, so revoking a request-signer key would              need a restart of every replica while the startup line claims otherwise"
-                .to_string(),
-        );
-    }
-    // The cadence is not merely PRESENT-or-absent: it IS the window. A tier's revocation
-    // claim is a statement about how fast a key removed from `--trust` stops resolving,
-    // and nothing resolves faster than the file is re-read — so a present-but-useless
-    // cadence makes the claim exactly as false as an absent one. Each tier is held to
-    // the strongest window it advertises.
-    if let Some(secs) = config.trust_reload_secs {
-        let (ceiling, claim) = match config.revocation_tier {
-            // "near-zero, no positive caching" — bounded by the general near-zero ceiling.
-            crate::revocation_tier::RevocationTier::Live => (
-                MAX_NEAR_ZERO_TRUST_RELOAD_SECS,
-                "--revocation-tier live states a NEAR-ZERO revocation window (the store is \
-                 consulted on every verification)"
-                    .to_string(),
-            ),
-            // Near-zero when the epoch source is healthy, bounded T otherwise — so the
-            // store has to be able to change within T as well as within the near-zero
-            // ceiling.
-            crate::revocation_tier::RevocationTier::Push { t_secs } => (
-                MAX_NEAR_ZERO_TRUST_RELOAD_SECS.min(t_secs.max(1) as u64),
-                format!(
-                    "--revocation-tier push:{t_secs} states a near-zero window with a bounded \
-                     {t_secs}s fallback"
-                ),
-            ),
-            // The declared window T is the whole claim: cached active state is usable
-            // only until T, then fail closed. A store that cannot change within T cannot
-            // deliver it.
-            crate::revocation_tier::RevocationTier::BoundedCache { t_secs } => (
-                t_secs.max(1) as u64,
-                format!(
-                    "--revocation-tier bounded-cache:{t_secs} states that revocation is \
-                     enforced fleet-wide within {t_secs}s"
-                ),
-            ),
-        };
-        if secs > ceiling {
-            violations.push(format!(
-                "--trust-reload-secs {secs} is longer than the revocation window the declared \
-                 tier claims: {claim}, but a key removed from --trust keeps resolving until the \
-                 file is re-read, which is every {secs}s. Set --trust-reload-secs <= {ceiling}, \
-                 or declare a tier whose window the deployment can keep"
-            ));
+    let stated = match current {
+        crate::config_state::InFlightLimitRequest::Unspecified => return Ok(()),
+        crate::config_state::InFlightLimitRequest::PerCore(n) => {
+            format!("--max-in-flight {n}")
         }
-    }
-    // MCPS-093/094: the socket timeouts and the aggregate read-phase deadline ARE the
-    // slow-loris defense — a peer trickling bytes just under `read_timeout` is stopped
-    // by `request_deadline`, and with either gone a handful of connections pin serve
-    // slots up to `max_concurrent_connections` with nothing to drop them.
-    //
-    // An out-of-range value was already rejected LOUDLY, with the stated reason that
-    // "the control can never be turned off by out-of-range input". `0` turned the same
-    // control off silently, which left the binary asserting a maximal-security posture
-    // while its own defense was disabled. Each default is `Some(30s)`, so `None` here
-    // only ever comes from an operator explicitly passing `0`.
-    for (value, flag) in [
-        (config.limits.read_timeout, "--read-timeout-secs"),
-        (config.limits.write_timeout, "--write-timeout-secs"),
-        (config.limits.request_deadline, "--request-deadline-secs"),
-    ] {
-        if value.is_none() {
-            violations.push(format!(
-                "{flag} 0 disables a slow-loris defense: a peer that trickles bytes then \
-                 holds a serve slot indefinitely, up to --max-connections, with no \
-                 fail-closed drop. Set a bounded value (default 30s)"
-            ));
+        crate::config_state::InFlightLimitRequest::FleetTotal(n) => {
+            format!("--max-in-flight-total {n}")
         }
-    }
-    if config.identity_source == IdentityPolicy::CnLegacy {
-        violations.push(
-            "--transport-identity-source cn_legacy is a deprecated, insecure identity binding; \
-             use uri_san or dns_san"
-                .to_string(),
-        );
-    }
-    // ADR-MCPS-014/020 (#90): the DEFAULT replay backend is `Memory`, an
-    // in-process cache whose admitted nonces live ONLY in process memory. A proxy
-    // restart loses every admitted nonce, re-opening a replay window for any
-    // captured envelope that is still within its `expires_at + skew` freshness
-    // window at restart time — the exposure is the in-restart-window captured-but-
-    // still-fresh envelope (the atomic check-and-insert means a nonce re-admitted
-    // AFTER its freshness window cannot verify). ADR-020 treats durable /
-    // cross-instance replay as the production posture, so under strict/production
-    // the non-durable in-memory default is rejected (not merely warned), mirroring
-    // the fail-open relaxation guards. `File` (single-node durable) and `Shared`
-    // (horizontally durable) survive on their own durability merits and are
-    // assessed by the tier check below.
-    if config.replay == ReplayKind::Memory {
-        violations.push(
-            "--replay-cache memory is non-durable: it keeps admitted nonces only in process \
-             memory (and is the cache used when --replay-cache is omitted), so a proxy RESTART \
-             forgets them and re-opens a replay window for any still-fresh captured envelope \
-             until its expires_at+skew; production must use a durable replay store: \
-             --replay-cache file (single-node durability) or --replay-cache shared (horizontal \
-             durability)"
-                .to_string(),
-        );
-    }
-    // ADR-MCPS-020: under strict/production a shared replay store must declare a
-    // durability tier of REDIS_WAIT_QUORUM or stronger. REDIS_ASYNC carries a
-    // bounded-but-real failover replay window, and SINGLE_STORE_FAIL_CLOSED is a
-    // single point of availability failure — both are rejected (not just warned)
-    // so production cannot silently run on the weaker replay-safety claim.
-    if config.replay == ReplayKind::Shared {
-        if let Some(tier) = &config.replay_durability_tier {
-            if !tier.meets_strict_production_minimum() {
-                violations.push(format!(
-                    "--replay-durability-tier {} is weaker than the strict-production minimum; \
-                     declare redis-wait-quorum:<quorum>:<timeout_ms> or a linearizable tier",
-                    tier.wire_name()
-                ));
-            }
-        }
-    }
-    // MCPS-79 (ADR-MCPS-049 clause 1): the FLEET dimension is orthogonal to the
-    // security posture. `--strict` alone is single-node strict, where the node is
-    // the sole verifier and `--replay-cache file` (ADR-MCPS-014, single-node
-    // durable) is a valid, self-consistent replay store. `--strict --fleet`
-    // declares the horizontally-scaled posture: a replayable request may reach a
-    // DIFFERENT verifier than the one that admitted the first nonce during the
-    // evidence-acceptance window, so a node-local cache (`memory`, lost on
-    // restart; or `file`, unshareable across processes) cannot maintain the
-    // cross-verifier replay guarantee. Both are rejected (not warned) so a fleet
-    // cannot silently run on node-local replay state. The required `shared` tier's
-    // quorum/durability strength is enforced by the block above; here we only
-    // reject the node-local KINDS, which is exactly what the `ReplayKind` seam
-    // (not the injected cache's coarse durability CLASS) can distinguish.
-    if config.fleet && (config.replay == ReplayKind::Memory || config.replay == ReplayKind::File) {
-        violations.push(format!(
-            "--fleet requires a shared replay cache: --replay-cache {} is node-local, so a \
-             request replayed to a peer verifier during the acceptance window would not be seen \
-             as a replay; use --replay-cache shared with a redis-wait-quorum:<quorum>:<timeout_ms> \
-             or linearizable durability tier",
-            match config.replay {
-                ReplayKind::Memory => "memory",
-                ReplayKind::File => "file",
-                ReplayKind::Shared => unreachable!(),
-            }
-        ));
-    }
-    // #4082 (M10/M22): reverse-proxy identity-header ingress takes the verified
-    // identity from a forwarded header and trusts, on the operator's word alone,
-    // that the socket is reachable ONLY by the upstream — a process that can
-    // reach the socket can SPOOF any identity. Strict refuses to enable this
-    // documented spoofable posture silently.
-    if config.reverse_proxy_identity_header.is_some() {
-        violations.push(
-            "--reverse-proxy-identity-header trusts a forwarded identity header that any peer \
-             able to reach the socket can spoof; production must terminate mTLS locally (omit \
-             --reverse-proxy-identity-header)"
-                .to_string(),
-        );
-    }
-    // #4082 (M11): `--transport-binding none` ignores the mTLS channel identity,
-    // so a request signed by identity A can be presented over a channel
-    // authenticated as identity B. The channel-to-signer binding must be enforced
-    // in production.
-    if config.binding == BindingKind::None {
-        violations.push(
-            "--transport-binding none ignores the mTLS channel identity, decoupling the \
-             verified request signer from the authenticated channel; production must bind \
-             them (--transport-binding exact)"
-                .to_string(),
-        );
-    }
-    // ADR-MCPS-023 Tier 3 (issue #71): `--transport-binding lb-assertion` is a
-    // cryptographically request-bound ingress assertion, but the load balancer
-    // still terminates the client's mTLS and is in the trusted computing base —
-    // this is request-bound INGRESS assertion, NOT end-to-end client↔node binding
-    // (NOT end_to_end_mtls). Strict/production refuses to enable the downgraded
-    // posture silently, mirroring the trusted-ingress-header refusal above.
-    if config.binding == BindingKind::LbAssertion {
-        violations.push(
-            "--transport-binding lb-assertion places the load balancer in the trusted \
-             computing base (the LB terminates the client mTLS and signs a request-bound \
-             assertion); this is request-bound ingress assertion, NOT end-to-end \
-             client↔node mTLS; production must bind end-to-end (--transport-binding exact \
-             with locally-terminated client mTLS)"
-                .to_string(),
-        );
-    }
-    violations
+    };
+    Err(format!(
+        "{stated} already states the admission limit; {flag} would state it a second time. \
+         --max-in-flight bounds each core directly and --max-in-flight-total is divided \
+         evenly across the resolved cores, so the two cannot be checked against each other \
+         before the core count is known. Set one."
+    ))
 }
 
 /// Whether a Unix file mode is group- or world-accessible (MCPS-3842). Pure
@@ -2421,57 +951,40 @@ fn parse_cert_lifetime(value: &str) -> Result<Option<Duration>, String> {
     let n: u64 = digits.parse().map_err(|_| {
         format!("invalid --max-client-cert-lifetime '{value}' (e.g. 1h, 30m, 3600, none)")
     })?;
-    Ok(if n == 0 {
+    // Checked, because the wrapped product is a DIFFERENT lifetime rather than a larger
+    // one: `5124095576030432h` wraps to 3584s, under the ceiling, so nothing downstream
+    // refuses it and the deployment enforces a bound the operator never wrote.
+    let secs = n.checked_mul(multiplier).ok_or_else(|| {
+        format!(
+            "--max-client-cert-lifetime '{value}' does not fit in seconds; the ceiling is {}s",
+            crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME.as_secs()
+        )
+    })?;
+    Ok(if secs == 0 {
         None
     } else {
-        Some(Duration::from_secs(n * multiplier))
+        Some(Duration::from_secs(secs))
     })
 }
 
-/// Build the configured ADR-MCPS-023 Tier-3 LB-signed, request-bound ingress
-/// assertion verifier (issue #71) from `config.ingress_lb_keys`, or `None` when the
-/// binding is not `lb-assertion`.
-///
-/// `parse_args` has ALREADY validated (fail closed) that, under `lb-assertion`,
-/// every `--ingress-lb-key` body is a base64url 32-byte Ed25519 public key and that
-/// at least one key is present with unique ids — so the per-key decode here cannot
-/// be reached with a malformed key in a well-formed config; it nonetheless surfaces
-/// a precise error rather than panicking if that invariant is ever violated. The
-/// yielded identity's [`IdentitySource`] mirrors the configured identity policy, so
-/// a Tier-3 identity reports the same source field the direct-TLS / reverse-proxy
-/// paths would.
-pub fn build_lb_assertion_binding(
-    config: &Config,
-) -> Result<Option<crate::transport::LbAssertionBinding>, String> {
-    if config.binding != BindingKind::LbAssertion {
-        return Ok(None);
-    }
-    let source = match config.identity_source {
-        IdentityPolicy::UriSan => crate::transport::IdentitySource::UriSan,
-        IdentityPolicy::DnsSan => crate::transport::IdentitySource::DnsSan,
-        IdentityPolicy::CnLegacy => crate::transport::IdentitySource::CommonName,
-    };
-    let mut binding = crate::transport::LbAssertionBinding::new(source);
-    for (key_id, key_b64) in &config.ingress_lb_keys {
-        let key = VerificationKey::from_b64url(key_b64).map_err(|_| {
-            format!(
-                "invalid --ingress-lb-key '{key_id}': the body must be a base64url-no-pad \
-                 32-byte Ed25519 public key"
-            )
-        })?;
-        binding.add_key(key_id.clone(), key);
-    }
-    Ok(Some(binding))
-}
-
 /// Build the ADR-MCPS-023 §C (Mode C) attested-ingress verifier from `config`, or
-/// `Ok(None)` when `binding != AttestedIngress`. `parse_args` has already enforced
-/// that the attestor keys, ≥1 trusted ingress identity, the audience, and the
-/// pinned-mTLS acknowledgement are all present (fail closed) and that every attestor
-/// key is a valid Ed25519 public key — this only reconstructs the verifier, failing
+/// `Ok(None)` when `binding != AttestedIngress`. The validation boundary has already
+/// refused a deployment missing the attestor keys, a trusted ingress identity, the
+/// audience or the pinned-mTLS acknowledgement (fail closed), and one whose attestor
+/// key is not a valid Ed25519 public key — this only reconstructs the verifier, failing
 /// closed with a precise error if any invariant were ever violated.
+///
+/// **Retained, not live.** No validated deployment reaches it:
+/// [`undeployable_transport_binding_refusal`] refuses Mode C in every build, because the
+/// rebinding of an attestation onto the RFC 9421 request evidence is not yet specified —
+/// a deferred capability rather than a rejected posture, on the same terms as
+/// [`build_ocsp_checker`]. Its test mints a real v2 assertion and verifies it through the
+/// built binding, so the capability stays correct rather than merely compiling. The
+/// lb-assertion builder had no such standing — that binding is refused because the LB
+/// belongs outside the trusted computing base, which is a ruling and not a gap — and it
+/// was deleted.
 pub fn build_attested_ingress_binding(
-    config: &Config,
+    config: &DeploymentRequest,
 ) -> Result<Option<crate::transport::LbAssertionV2Binding>, String> {
     if config.binding != BindingKind::AttestedIngress {
         return Ok(None);
@@ -2501,134 +1014,194 @@ pub fn build_attested_ingress_binding(
     Ok(Some(binding))
 }
 
-/// Build the configured [`KeySource`].
+/// Which key object a delegated PKCS#11 handshake uses, if this deployment delegates to
+/// PKCS#11 at all.
 ///
-/// MCPS-076 (audit gap G-3): [`KeySourceKind::Env`] is honored ONLY in a build with
+/// Written as a match rather than assumed from the custody source. X2a guarantees the
+/// selector agrees with `Custody`, but a projection that RELIED on that guarantee would be
+/// recovering a proof instead of reading a state — and the match costs one arm.
+#[cfg(feature = "pkcs11_keysource")]
+fn delegated_pkcs11_label(tls_custody: &TlsCustodyState) -> Option<&str> {
+    match tls_custody {
+        TlsCustodyState::Delegated {
+            selector: DelegatedTlsKey::Pkcs11 { key_label },
+        } => Some(key_label),
+        _ => None,
+    }
+}
+
+/// The same, for a distinct AWS KMS TLS key.
+#[cfg(feature = "aws_kms_keysource")]
+fn delegated_aws_key_id(tls_custody: &TlsCustodyState) -> Option<&str> {
+    match tls_custody {
+        TlsCustodyState::Delegated {
+            selector: DelegatedTlsKey::AwsKms { key_id },
+        } => Some(key_id),
+        _ => None,
+    }
+}
+
+/// The same, for a distinct GCP Cloud KMS TLS key version.
+#[cfg(feature = "gcp_kms_keysource")]
+fn delegated_gcp_key_version(tls_custody: &TlsCustodyState) -> Option<&str> {
+    match tls_custody {
+        TlsCustodyState::Delegated {
+            selector: DelegatedTlsKey::GcpKms { key_version },
+        } => Some(key_version),
+        _ => None,
+    }
+}
+
+/// The exported handshake-key locator, or empty under delegated custody.
+///
+/// Empty is not a missing value here: `Delegated` does not carry one, because carrying it
+/// would make the combination X2b forbids representable, and the delegated path never
+/// consults `tls_server_key`.
+fn exported_tls_key(tls_custody: &TlsCustodyState) -> &str {
+    match tls_custody {
+        TlsCustodyState::Exported { key_path } => key_path,
+        TlsCustodyState::Delegated { .. } => "",
+    }
+}
+
+/// Build the configured [`KeySource`] from the classified custody states.
+///
+/// MCPS-076 (audit gap G-3): [`CustodyState::EnvSeed`] is honored ONLY in a build with
 /// the non-default `dev_env_key_source` feature. A default (production) build does
 /// not compile [`EnvKeySource`] at all and FAILS CLOSED here with a clear error —
-/// `--key-source env` still parses (so the message is precise), but no env-backed
-/// key can be constructed.
-pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
-    match config.key_source {
-        KeySourceKind::File => Ok(Box::new(FileKeySource {
-            signing_key_seed_path: config.signing_key_seed.clone(),
-            tls_cert_path: config.tls_cert.clone(),
-            tls_key_path: config.tls_key.clone(),
-            client_ca_path: config.client_ca.clone(),
+/// `--key-source env` still parses and still classifies (so the message is precise), but
+/// no env-backed key can be constructed. That refusal is layer B: a statement about this
+/// executable, not about the request.
+///
+/// # The two locators that are not owned by either state
+///
+/// `tls_cert` and `client_ca` belong to no custody machine — all five states consume them,
+/// and shared use is not semantic ownership. They are STRINGS WHOSE INTERPRETATION THE
+/// CUSTODY STATE DECIDES: filesystem paths under every state but [`CustodyState::EnvSeed`],
+/// where they name environment variables. The same is true of the exported TLS key locator
+/// carried by [`TlsCustodyState::Exported`].
+pub fn build_key_source(
+    custody: &CustodyState,
+    tls_custody: &TlsCustodyState,
+    tls_cert: &str,
+    client_ca: &str,
+) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
+    let tls_key = exported_tls_key(tls_custody);
+    match custody {
+        CustodyState::FileSeed { seed_path } => Ok(Box::new(FileKeySource {
+            signing_key_seed_path: seed_path.clone(),
+            tls_cert_path: tls_cert.to_string(),
+            tls_key_path: tls_key.to_string(),
+            client_ca_path: client_ca.to_string(),
         })),
         #[cfg(feature = "dev_env_key_source")]
-        KeySourceKind::Env => Ok(Box::new(EnvKeySource {
-            signing_key_seed_var: config.signing_key_seed.clone(),
-            tls_cert_var: config.tls_cert.clone(),
-            tls_key_var: config.tls_key.clone(),
-            client_ca_var: config.client_ca.clone(),
+        CustodyState::EnvSeed { env_var } => Ok(Box::new(EnvKeySource {
+            signing_key_seed_var: env_var.clone(),
+            tls_cert_var: tls_cert.to_string(),
+            tls_key_var: tls_key.to_string(),
+            client_ca_var: client_ca.to_string(),
         })),
         #[cfg(not(feature = "dev_env_key_source"))]
-        KeySourceKind::Env => Err(KeyError::NotFound(
+        CustodyState::EnvSeed { .. } => Err(KeyError::NotFound(
             "env key source is development-only; rebuild with \
              --features dev_env_key_source (production must use --key-source file)"
                 .to_string(),
         )),
-        // #4034 PKCS#11 token-backed source. `parse_args` already guaranteed the
-        // four pkcs11 flags are present when this kind is selected, so unwrapping
-        // them here cannot be reached with a `None`; surface a clear error rather
-        // than panicking if that invariant is ever violated.
+        // #4034 PKCS#11 token-backed source. The state carries all four values, so there
+        // is nothing to unwrap and no arm for material that went missing.
         #[cfg(feature = "pkcs11_keysource")]
-        KeySourceKind::Pkcs11 => {
-            let require = |opt: &Option<String>, flag: &str| -> Result<String, KeyError> {
-                opt.clone().ok_or_else(|| {
-                    KeyError::NotFound(format!("--key-source pkcs11 requires {flag}"))
-                })
-            };
-            let module = require(&config.pkcs11_module, "--pkcs11-module")?;
+        CustodyState::Pkcs11 {
+            module,
+            pin_file,
+            token_label,
+            key_label,
+        } => {
             // Read the User PIN here, at the one point it is used, so it exists for as
-            // short a window as possible and never lands in `Config` (which is `Debug`
+            // short a window as possible and never lands in `DeploymentRequest` (which is `Debug`
             // and freely cloned). The file must be no more readable than a key file:
             // it unlocks the token holding the signing keys.
-            let pin_file = require(&config.pkcs11_pin_file, "--pkcs11-pin-file")?;
-            let pin = read_pkcs11_pin(&pin_file)?;
-            let token_label = require(&config.pkcs11_token_label, "--pkcs11-token-label")?;
-            let key_label = require(&config.pkcs11_key_label, "--pkcs11-key-label")?;
+            let pin = read_pkcs11_pin(pin_file)?;
             // #59: an optional SECOND token object holds the Ed25519 TLS key. When
             // present, `open` builds the delegated TLS signer and the proxy never
             // reads `--tls-key` from disk (the exclusivity guard already forbade it).
             Ok(Box::new(crate::pkcs11_keysource::Pkcs11KeySource::open(
-                &module,
+                module,
                 pin.expose(),
-                &token_label,
-                &key_label,
-                &config.tls_cert,
-                &config.tls_key,
-                &config.client_ca,
-                config.pkcs11_tls_key_label.as_deref(),
+                token_label,
+                key_label,
+                tls_cert,
+                tls_key,
+                client_ca,
+                delegated_pkcs11_label(tls_custody),
             )?))
         }
         // Default build: the PKCS#11 backend is not compiled, so `--key-source
         // pkcs11` FAILS CLOSED here (mirrors the env-keysource gate). The flag
         // still PARSES so the message is precise; no token-backed key is built.
         #[cfg(not(feature = "pkcs11_keysource"))]
-        KeySourceKind::Pkcs11 => Err(KeyError::NotFound(
+        CustodyState::Pkcs11 { .. } => Err(KeyError::NotFound(
             "pkcs11 key source requires the pkcs11_keysource feature (build with \
              --features pkcs11_keysource); not available in this build"
                 .to_string(),
         )),
         // ADR-MCPS-028 §B: AWS KMS object-signing key, TLS material from files. The
-        // response-signing key never leaves KMS. `parse_args` guaranteed region +
-        // key id are present; surface a clear error rather than panic if not.
+        // response-signing key never leaves KMS.
         #[cfg(feature = "aws_kms_keysource")]
-        KeySourceKind::AwsKms => {
-            let require = |opt: &Option<String>, flag: &str| -> Result<String, KeyError> {
-                opt.clone().ok_or_else(|| {
-                    KeyError::NotFound(format!("--key-source aws-kms requires {flag}"))
-                })
-            };
-            let region = require(&config.aws_kms_region, "--aws-kms-region")?;
+        CustodyState::AwsKms {
+            region,
+            key_id,
+            endpoint,
+            credentials,
+        } => {
             let kms_config = crate::aws_kms_keysource::AwsKmsConfig {
                 region: region.clone(),
-                key_id: require(&config.aws_kms_key_id, "--aws-kms-key-id")?,
-                endpoint: config.aws_kms_endpoint.clone(),
+                key_id: key_id.clone(),
+                endpoint: endpoint.clone(),
             };
             // IRSA or the static env pair — never both, never a fallback between
             // them. A deployment that asked for web identity and cannot mint through
             // it must fail, not quietly sign with whatever keys are in the process
-            // environment.
-            let backend = if config.aws_kms_use_web_identity {
-                crate::aws_kms_keysource::AwsKmsEd25519Backend::from_web_identity(
-                    &kms_config,
-                    config.aws_sts_endpoint.clone(),
-                )?
-            } else {
-                crate::aws_kms_keysource::AwsKmsEd25519Backend::from_env(&kms_config)?
+            // environment. One posture, so there is no pair of flags to combine wrongly.
+            let backend = match credentials {
+                AwsCredentialMode::WebIdentity { sts_endpoint } => {
+                    crate::aws_kms_keysource::AwsKmsEd25519Backend::from_web_identity(
+                        &kms_config,
+                        sts_endpoint.clone(),
+                    )?
+                }
+                AwsCredentialMode::StaticEnv => {
+                    crate::aws_kms_keysource::AwsKmsEd25519Backend::from_env(&kms_config)?
+                }
             };
-            let tls = FileKeySource {
-                signing_key_seed_path: config.signing_key_seed.clone(),
-                tls_cert_path: config.tls_cert.clone(),
-                tls_key_path: config.tls_key.clone(),
-                client_ca_path: config.client_ca.clone(),
-            };
+            let tls = FileKeySource::tls_only(tls_cert, tls_key, client_ca);
             // #60: a configured TLS-key id custodies the TLS server key in a SECOND,
             // DISTINCT KMS key (independent of the object-signing key). Its own
             // `AwsKmsEd25519Backend` (same region/endpoint, the TLS key id) drives the
             // delegated TLS handshake signature; the proxy then never reads `--tls-key`
             // from disk (the exclusivity guard already forbade it). `None` keeps the
             // file-backed TLS path.
-            match &config.aws_kms_tls_key_id {
+            match delegated_aws_key_id(tls_custody) {
                 Some(tls_key_id) => {
                     let tls_kms_config = crate::aws_kms_keysource::AwsKmsConfig {
-                        region,
-                        key_id: tls_key_id.clone(),
-                        endpoint: config.aws_kms_endpoint.clone(),
+                        region: region.clone(),
+                        key_id: tls_key_id.to_string(),
+                        endpoint: endpoint.clone(),
                     };
                     // The TLS key takes the SAME custody path as the object-signing
                     // key: a deployment cannot end up with one KMS principal reached
                     // through IRSA and the other through static keys.
-                    let tls_backend = if config.aws_kms_use_web_identity {
-                        crate::aws_kms_keysource::AwsKmsEd25519Backend::from_web_identity(
-                            &tls_kms_config,
-                            config.aws_sts_endpoint.clone(),
-                        )?
-                    } else {
-                        crate::aws_kms_keysource::AwsKmsEd25519Backend::from_env(&tls_kms_config)?
+                    let tls_backend = match credentials {
+                        AwsCredentialMode::WebIdentity { sts_endpoint } => {
+                            crate::aws_kms_keysource::AwsKmsEd25519Backend::from_web_identity(
+                                &tls_kms_config,
+                                sts_endpoint.clone(),
+                            )?
+                        }
+                        AwsCredentialMode::StaticEnv => {
+                            crate::aws_kms_keysource::AwsKmsEd25519Backend::from_env(
+                                &tls_kms_config,
+                            )?
+                        }
                     };
                     Ok(Box::new(
                         crate::kms_keysource::KmsKeySource::new_with_delegated_tls(
@@ -2647,49 +1220,36 @@ pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource + Send + Sy
         // Default build: the AWS KMS backend is not compiled, so `--key-source
         // aws-kms` FAILS CLOSED here (mirrors the pkcs11 gate). The flag still PARSES.
         #[cfg(not(feature = "aws_kms_keysource"))]
-        KeySourceKind::AwsKms => Err(KeyError::NotFound(
+        CustodyState::AwsKms { .. } => Err(KeyError::NotFound(
             "aws-kms key source requires the aws_kms_keysource feature (build with \
              --features aws_kms_keysource); not available in this build"
                 .to_string(),
         )),
         // ADR-MCPS-028 §C: GCP Cloud KMS object-signing key, TLS material from files.
         #[cfg(feature = "gcp_kms_keysource")]
-        KeySourceKind::GcpKms => {
-            let key_version = config.gcp_kms_key_version.clone().ok_or_else(|| {
-                KeyError::NotFound(
-                    "--key-source gcp-kms requires --gcp-kms-key-version".to_string(),
-                )
-            })?;
+        CustodyState::GcpKms {
+            key_version,
+            endpoint,
+            use_metadata,
+        } => {
             let kms_config = crate::gcp_kms_keysource::GcpKmsConfig {
-                key_version_name: key_version,
-                endpoint: config.gcp_kms_endpoint.clone(),
+                key_version_name: key_version.clone(),
+                endpoint: endpoint.clone(),
             };
-            let backend = crate::gcp_kms_keysource::GcpKmsEd25519Backend::new(
-                &kms_config,
-                config.gcp_kms_use_metadata,
-            )?;
-            let tls = FileKeySource {
-                signing_key_seed_path: config.signing_key_seed.clone(),
-                tls_cert_path: config.tls_cert.clone(),
-                tls_key_path: config.tls_key.clone(),
-                client_ca_path: config.client_ca.clone(),
-            };
-            // #61: a configured TLS-key-version custodies the TLS server key in a
-            // SECOND, DISTINCT Cloud KMS key version (independent of the
-            // object-signing key). Its own `GcpKmsEd25519Backend` (same
-            // endpoint/token source, the TLS key-version) drives the delegated TLS
-            // handshake signature; the proxy then never reads `--tls-key` from disk
-            // (the exclusivity guard already forbade it). `None` keeps the
-            // file-backed TLS path.
-            match &config.gcp_kms_tls_key_version {
+            let backend =
+                crate::gcp_kms_keysource::GcpKmsEd25519Backend::new(&kms_config, *use_metadata)?;
+            let tls = FileKeySource::tls_only(tls_cert, tls_key, client_ca);
+            // #61: the GCP counterpart of #60 — a SECOND, DISTINCT key version custodies
+            // the TLS server key, and the proxy never reads `--tls-key` from disk.
+            match delegated_gcp_key_version(tls_custody) {
                 Some(tls_key_version) => {
                     let tls_kms_config = crate::gcp_kms_keysource::GcpKmsConfig {
-                        key_version_name: tls_key_version.clone(),
-                        endpoint: config.gcp_kms_endpoint.clone(),
+                        key_version_name: tls_key_version.to_string(),
+                        endpoint: endpoint.clone(),
                     };
                     let tls_backend = crate::gcp_kms_keysource::GcpKmsEd25519Backend::new(
                         &tls_kms_config,
-                        config.gcp_kms_use_metadata,
+                        *use_metadata,
                     )?;
                     Ok(Box::new(
                         crate::kms_keysource::KmsKeySource::new_with_delegated_tls(
@@ -2706,7 +1266,7 @@ pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource + Send + Sy
             }
         }
         #[cfg(not(feature = "gcp_kms_keysource"))]
-        KeySourceKind::GcpKms => Err(KeyError::NotFound(
+        CustodyState::GcpKms { .. } => Err(KeyError::NotFound(
             "gcp-kms key source requires the gcp_kms_keysource feature (build with \
              --features gcp_kms_keysource); not available in this build"
                 .to_string(),
@@ -2714,452 +1274,10 @@ pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource + Send + Sy
     }
 }
 
-/// Build the SHARED replay cache selected by `--replay-cache shared` (issue
-/// #3837), backed by Redis under the `redis_replay` feature (issue #4028).
-///
-/// Under `--features redis_replay` this connects to `replay_redis_url` and wires
-/// a [`SharedReplayCache`](crate::shared_replay::SharedReplayCache) over a
-/// [`RedisAtomicReplayStore`](crate::redis_store::RedisAtomicReplayStore), giving
-/// real horizontally-scaled replay safety (a nonce accepted on one node is
-/// rejected as a replay on every node sharing that Redis). A connect failure
-/// fails closed with a clear error rather than degrading to a non-shared cache.
-///
-/// In a DEFAULT build the Redis backend is not compiled, so this mirrors
-/// [`build_key_source`]'s dev-only gate: `--replay-cache shared` always PARSES
-/// (so the message is precise), but it FAILS CLOSED here — there is no shared
-/// backend to construct.
-///
-/// `replay_redis_url` is the connection URL (already required by `parse_args`).
-/// `read_timeout` / `write_timeout` are the server's configured socket timeouts
-/// (`--read-timeout-secs` / `--write-timeout-secs`); they BOUND the Redis connect
-/// and each blocking replay op so a stalled backend fails closed (Unavailable)
-/// within a finite window instead of wedging the single-threaded serve loop
-/// (MCPS-090 / H-10). The connect timeout is derived from the read timeout (a
-/// stalled connect and a stalled read are the same hazard), falling back to a
-/// bounded default when the read timeout is disabled (`0`).
-#[cfg(feature = "redis_replay")]
-pub fn build_shared_replay_cache(
-    replay_redis_url: &str,
-    max_clock_skew: i64,
-    read_timeout: Option<Duration>,
-    write_timeout: Option<Duration>,
-    tier: &crate::replay_tier::ReplayDurabilityTier,
-) -> Result<Box<dyn mcp_re_core::ReplayCache + Send + Sync>, String> {
-    use crate::replay_tier::ReplayDurabilityTier;
-    // A disabled socket timeout would re-introduce the hang, so the connect
-    // timeout is always bounded: prefer the configured read timeout, else a
-    // bounded default.
-    let connect_timeout = read_timeout.unwrap_or(Duration::from_secs(30));
-    let store = crate::redis_store::RedisAtomicReplayStore::connect_with(
-        replay_redis_url,
-        connect_timeout,
-        read_timeout,
-        write_timeout,
-        crate::redis_store::system_clock(),
-    )
-    .map_err(|e| format!("shared replay cache: {e}"))?;
-    // Apply the declared durability tier (ADR-MCPS-020). REDIS_WAIT_QUORUM adds
-    // the per-insert WAIT; REDIS_ASYNC / SINGLE_STORE_FAIL_CLOSED are the plain
-    // SET NX PX path (the tier is the operator's topology assertion). LINEARIZABLE
-    // cannot be backed by Redis — it requires the CP/etcd backend — so it fails
-    // closed here rather than silently over-claiming.
-    let store = match tier {
-        ReplayDurabilityTier::RedisWaitQuorum { quorum, timeout_ms } => {
-            store.with_wait_quorum(*quorum, *timeout_ms)
-        }
-        ReplayDurabilityTier::RedisAsyncBounded | ReplayDurabilityTier::SingleStoreFailClosed => {
-            store
-        }
-        ReplayDurabilityTier::Linearizable => {
-            return Err(
-                "LINEARIZABLE durability tier requires a CP/linearizable store \
-                        (the etcd backend); the Redis backend cannot provide a \
-                        linearizable guarantee. Use redis-async, \
-                        redis-wait-quorum:<quorum>:<timeout_ms>, or \
-                        single-store-fail-closed."
-                    .to_string(),
-            );
-        }
-    };
-    Ok(Box::new(crate::shared_replay::SharedReplayCache::new(
-        Box::new(store),
-        max_clock_skew,
-    )))
-}
-
-/// Default-build fail-closed stub: no shared backend is compiled without the
-/// `redis_replay` feature, so `--replay-cache shared` fails closed here. See the
-/// feature-enabled variant above for the real Redis wiring.
-#[cfg(not(feature = "redis_replay"))]
-pub fn build_shared_replay_cache(
-    replay_redis_url: &str,
-    max_clock_skew: i64,
-    read_timeout: Option<Duration>,
-    write_timeout: Option<Duration>,
-    tier: &crate::replay_tier::ReplayDurabilityTier,
-) -> Result<Box<dyn mcp_re_core::ReplayCache + Send + Sync>, String> {
-    let _ = (
-        replay_redis_url,
-        max_clock_skew,
-        read_timeout,
-        write_timeout,
-        tier,
-    );
-    Err(
-        "shared replay cache backend is not yet available in this build (the Redis \
-         adapter is behind the non-default redis_replay feature; the etcd \
-         LINEARIZABLE backend is behind cpstore_etcd); use --replay-cache file for \
-         single-node durability"
-            .to_string(),
-    )
-}
-
-/// Build the CP / LINEARIZABLE replay cache selected by
-/// `--replay-durability-tier linearizable` (issue #69, epic #68 v0.4 Axis 1),
-/// backed by etcd under the `cpstore_etcd` feature.
-///
-/// Under `--features cpstore_etcd` this constructs a
-/// [`SharedReplayCache`](crate::shared_replay::SharedReplayCache) over an
-/// [`EtcdAtomicReplayStore`](crate::etcd_store::EtcdAtomicReplayStore) against the
-/// etcd v3 JSON gateway at `cpstore_etcd_endpoint`, giving the strongest
-/// horizontal replay-safety claim (conditional on etcd's durable-linearizable
-/// write contract, ADR-MCPS-020). The store opens connections lazily, so an
-/// unreachable etcd surfaces as a fail-closed `Unavailable` on the FIRST replay
-/// op rather than at construction.
-///
-/// `read_timeout` / `write_timeout` are the server's configured socket timeouts;
-/// the larger of the two BOUNDS each blocking etcd op so a stalled backend fails
-/// closed within a finite window instead of wedging the single-threaded serve
-/// loop (the same MCPS-090 / H-10 hazard the Redis path bounds). A disabled
-/// timeout (`0` ⇒ `None`) falls back to a bounded default.
-#[cfg(feature = "cpstore_etcd")]
-pub fn build_cpstore_replay_cache(
-    cpstore_etcd_endpoint: &str,
-    max_clock_skew: i64,
-    read_timeout: Option<Duration>,
-    write_timeout: Option<Duration>,
-) -> Result<Box<dyn mcp_re_core::ReplayCache + Send + Sync>, String> {
-    // A disabled socket timeout would re-introduce the hang, so the per-op timeout
-    // is always bounded: prefer the larger configured socket timeout, else a
-    // bounded default.
-    let timeout = match (read_timeout, write_timeout) {
-        (Some(r), Some(w)) => r.max(w),
-        (Some(t), None) | (None, Some(t)) => t,
-        (None, None) => Duration::from_secs(30),
-    };
-    let store = crate::etcd_store::EtcdAtomicReplayStore::connect_with(
-        cpstore_etcd_endpoint,
-        timeout,
-        crate::etcd_store::system_clock(),
-    );
-    Ok(Box::new(crate::shared_replay::SharedReplayCache::new(
-        Box::new(store),
-        max_clock_skew,
-    )))
-}
-
-/// Default-build fail-closed stub for the CP / LINEARIZABLE backend: the etcd
-/// adapter is compiled ONLY under the non-default `cpstore_etcd` feature, so
-/// `--replay-durability-tier linearizable` FAILS CLOSED here in a build without it
-/// (it never silently downgrades to Redis / in-memory). Mirrors the
-/// `build_shared_replay_cache` redis gate. See the feature-enabled variant above.
-#[cfg(not(feature = "cpstore_etcd"))]
-pub fn build_cpstore_replay_cache(
-    cpstore_etcd_endpoint: &str,
-    max_clock_skew: i64,
-    read_timeout: Option<Duration>,
-    write_timeout: Option<Duration>,
-) -> Result<Box<dyn mcp_re_core::ReplayCache + Send + Sync>, String> {
-    let _ = (
-        cpstore_etcd_endpoint,
-        max_clock_skew,
-        read_timeout,
-        write_timeout,
-    );
-    Err(
-        "LINEARIZABLE durability tier needs the cpstore_etcd feature, which is not \
-         available in this build (rebuild with --features cpstore_etcd); the \
-         LINEARIZABLE claim is forbidden without the CP/etcd backend and is NEVER \
-         downgraded to Redis or in-memory"
-            .to_string(),
-    )
-}
-
-/// Parse the trust file into `(signer, key_id, verification_key)` entries so the
-/// serving path can build the RFC 9421 [`mcp_re_http_profile::ResolvedActor`]
-/// resolver (keyid → structured actor). Same fail-closed duplicate rejection as
-/// [`load_trust`].
-pub fn load_trust_entries(bytes: &[u8]) -> Result<Vec<(String, String, VerificationKey)>, String> {
-    let value: Value = serde_json::from_slice(bytes).map_err(|e| format!("trust file: {e}"))?;
-    let array = value.as_array().ok_or("trust file must be a JSON array")?;
-    let mut out = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for entry in array {
-        let signer = entry["signer"]
-            .as_str()
-            .ok_or("trust entry missing signer")?;
-        let key_id = entry["key_id"]
-            .as_str()
-            .ok_or("trust entry missing key_id")?;
-        if !seen.insert(key_id.to_string()) {
-            return Err(format!(
-                "trust file: duplicate key_id {key_id} (RFC 9421 resolver keys on key_id)"
-            ));
-        }
-        let pk = entry["public_key"]
-            .as_str()
-            .ok_or("trust entry missing public_key")?;
-        let key = VerificationKey::from_b64url(pk)
-            .map_err(|_| format!("trust entry {signer}#{key_id}: invalid public_key"))?;
-        out.push((signer.to_string(), key_id.to_string(), key));
-    }
-    Ok(out)
-}
-
-/// The `kid -> signer` map for keys this file enrols FOR THE REQUEST SLOT.
-///
-/// The SignerSlot type exists so trust resolution — not a role string read after the
-/// fact — decides which slot a key may sign in. That only means something if the trust
-/// file can express it. Previously it could not: every entry whose `key_id` was not
-/// the response kid was granted the request slot unconditionally, so a key enrolled
-/// for another purpose (this same file carries authorization-issuer keys) silently
-/// became a full request-signing credential, and its resolved actor id then flowed
-/// into the replay key, the Mode-A transport binding and the audit record.
-///
-/// An entry may now declare `"slots": ["request"]`. The rules:
-///
-///   * `slots` present  — authoritative. A key that does not list `request` is not a
-///     request signer, whatever else it is in the file for.
-///   * `slots` absent   — treated as `["request"]`, which is exactly the historical
-///     behaviour, so an existing trust file keeps working. Declaring slots is how an
-///     operator NARROWS a key; it is not a new requirement.
-///
-/// `response_kid` is excluded either way: the deployment's own issuer key must never
-/// be presentable as a client credential.
-pub fn load_trust_request_signers(
-    bytes: &[u8],
-    response_kid: &str,
-) -> Result<std::collections::HashMap<String, String>, String> {
-    let value: Value = serde_json::from_slice(bytes).map_err(|e| format!("trust file: {e}"))?;
-    let array = value.as_array().ok_or("trust file must be a JSON array")?;
-    let mut out = std::collections::HashMap::new();
-    for entry in array {
-        let signer = entry["signer"]
-            .as_str()
-            .ok_or("trust entry missing signer")?;
-        let key_id = entry["key_id"]
-            .as_str()
-            .ok_or("trust entry missing key_id")?;
-        if key_id == response_kid {
-            continue;
-        }
-        let request_slot = match entry.get("slots") {
-            None => true,
-            Some(slots) => {
-                let listed = slots.as_array().ok_or_else(|| {
-                    format!("trust entry {signer}#{key_id}: slots must be an array")
-                })?;
-                let mut found = false;
-                for slot in listed {
-                    match slot.as_str() {
-                        Some("request") => found = true,
-                        // Named so a typo is a startup failure rather than a silently
-                        // narrower key that then fails every request at verify time.
-                        Some(other) if other == "response" || other == "authorization-issuer" => {}
-                        _ => {
-                            return Err(format!(
-                                "trust entry {signer}#{key_id}: unknown slot {slot}                                  (request|response|authorization-issuer)"
-                            ))
-                        }
-                    }
-                }
-                found
-            }
-        };
-        if request_slot {
-            out.insert(key_id.to_string(), signer.to_string());
-        }
-    }
-    Ok(out)
-}
-
-/// Load a JSON trust file into an [`InMemoryTrustResolver`]. The file is an array
-/// of `{ "signer", "key_id", "public_key" }` (the public key Base64URL-no-pad) with an
-/// optional `"slots"` array; it carries both request-signer keys and
-/// authorization-issuer keys, and `slots` is what separates them (see
-/// [`load_trust_request_signers`]).
-pub fn load_trust(bytes: &[u8]) -> Result<InMemoryTrustResolver, String> {
-    let value: Value = serde_json::from_slice(bytes).map_err(|e| format!("trust file: {e}"))?;
-    let array = value.as_array().ok_or("trust file must be a JSON array")?;
-    let mut resolver = InMemoryTrustResolver::new();
-    // Fail closed on a duplicate (signer, key_id): the resolver's `insert` is
-    // last-write-wins, so a second entry sharing the key coordinate — with a
-    // DIFFERENT public_key — would silently swap the trusted key. Reject at load
-    // rather than trust the file ordering, mirroring the duplicate-header rigor
-    // applied elsewhere.
-    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
-    for entry in array {
-        let signer = entry["signer"]
-            .as_str()
-            .ok_or("trust entry missing signer")?;
-        let key_id = entry["key_id"]
-            .as_str()
-            .ok_or("trust entry missing key_id")?;
-        if !seen.insert((signer.to_string(), key_id.to_string())) {
-            return Err(format!(
-                "trust file: duplicate entry for {signer}#{key_id} (last-write-wins \
-                 key substitution refused)"
-            ));
-        }
-        let pk = entry["public_key"]
-            .as_str()
-            .ok_or("trust entry missing public_key")?;
-        let key = VerificationKey::from_b64url(pk)
-            .map_err(|_| format!("trust entry {signer}#{key_id}: invalid public_key"))?;
-        resolver.insert(signer, key_id, key);
-    }
-    Ok(resolver)
-}
-
-/// Wrap the base trust resolver according to the declared revocation tier
-/// (ADR-MCPS-021, Axis 2), so the configured tier actually GOVERNS runtime
-/// behavior instead of only labeling a startup line.
-///
-/// - [`RevocationTier::BoundedCache`] → a Tier-1 [`BoundedTrustCache`] caching
-///   active state for at most `T`.
-/// - [`RevocationTier::Live`] → a Tier-2 [`LiveTrustResolver`] that consults the
-///   inner store on every call (no positive caching), so a store revocation is
-///   visible on the very next request.
-/// - [`RevocationTier::Push`] → a Tier-3 [`PushInvalidationTrustCache`] over an
-///   in-process [`InMemoryInvalidationChannel`]. NOTE: no networked event source
-///   ships yet, so the reference channel delivers no external pushes and the cache
-///   operates at its honest bounded-`T` fallback (exactly what
-///   [`RevocationTier::Push`]'s `guarantee()` already states). The wrapping is
-///   still correct: it is the same code path a real push backend will drive, and
-///   it never claims a near-zero window the channel cannot prove.
-///
-/// Pure and unit-testable: the `clock` is injected (tests pass a controllable one),
-/// and the negative TTL is the named [`crate::trust_cache::DEFAULT_NEGATIVE_TTL_SECS`].
-pub fn build_revocation_resolver(
-    tier: &crate::revocation_tier::RevocationTier,
-    base: Box<dyn mcp_re_core::TrustResolver + Send + Sync>,
-    clock: crate::trust_cache::UnixClock,
-) -> Box<dyn mcp_re_core::TrustResolver + Send + Sync> {
-    build_revocation_resolver_with_channel(tier, base, clock, None)
-}
-
-/// As [`build_revocation_resolver`], but for the [`RevocationTier::Push`]
-/// (ADR-MCPS-021 Tier 3) tier a caller may inject a networked
-/// [`InvalidationChannel`](crate::push_trust::InvalidationChannel) — e.g. the
-/// MCPS-84 Redis trust-epoch source. When `push_channel` is `None` the Push tier
-/// falls back to the inert in-process reference channel (today's default:
-/// bounded-`T`, no networked pushes). Non-Push tiers ignore `push_channel`.
-pub fn build_revocation_resolver_with_channel(
-    tier: &crate::revocation_tier::RevocationTier,
-    base: Box<dyn mcp_re_core::TrustResolver + Send + Sync>,
-    clock: crate::trust_cache::UnixClock,
-    push_channel: Option<Box<dyn crate::push_trust::InvalidationChannel + Send + Sync>>,
-) -> Box<dyn mcp_re_core::TrustResolver + Send + Sync> {
-    let negative_ttl_secs = crate::trust_cache::DEFAULT_NEGATIVE_TTL_SECS;
-    match tier {
-        crate::revocation_tier::RevocationTier::BoundedCache { t_secs } => Box::new(
-            crate::trust_cache::BoundedTrustCache::new(base, *t_secs, negative_ttl_secs, clock),
-        ),
-        crate::revocation_tier::RevocationTier::Live => {
-            Box::new(crate::live_trust::LiveTrustResolver::new(base))
-        }
-        crate::revocation_tier::RevocationTier::Push { t_secs } => {
-            // Tier 3: use the injected networked channel (MCPS-84 Redis trust-epoch
-            // source) when present; otherwise the in-process reference channel is
-            // inert and the cache runs at its bounded-`T` fallback (the honest
-            // guarantee when no push backend is wired).
-            let channel = push_channel
-                .unwrap_or_else(|| Box::new(crate::push_trust::InMemoryInvalidationChannel::new()));
-            Box::new(crate::push_trust::PushInvalidationTrustCache::new(
-                base,
-                *t_secs,
-                negative_ttl_secs,
-                clock,
-                channel,
-            ))
-        }
-    }
-}
-
-/// Load the configured offline client-certificate revocation lists (#3839) into
-/// the DER form rustls' `WebPkiClientVerifier` consumes. Each path may hold one or
-/// more CRLs in PEM (`-----BEGIN X509 CRL-----`) or a single raw DER CRL. Fails
-/// closed: a missing or malformed CRL file is a hard startup error (`Err`) rather
-/// than a silently-skipped revocation check. An empty `paths` yields an empty vec
-/// (revocation checking disabled — the pre-#3839 behavior).
-///
-/// OFFLINE only: these bytes are read once at startup and never refreshed over the
-/// network. Online OCSP / CRL-distribution-point fetching is deliberately NOT done
-/// here and is deferred to a follow-up (it needs an HTTP client + a live
-/// responder, which would expand the firewalled supply chain).
-pub fn load_client_crls(
-    paths: &[String],
-) -> Result<Vec<rustls_pki_types::CertificateRevocationListDer<'static>>, String> {
-    use rustls_pki_types::pem::PemObject;
-    use rustls_pki_types::CertificateRevocationListDer;
-
-    let mut crls: Vec<CertificateRevocationListDer<'static>> = Vec::new();
-    for path in paths {
-        let bytes = std::fs::read(path).map_err(|e| format!("client CRL {path}: {e}"))?;
-        // Try PEM first (one file may carry several `X509 CRL` blocks). If the file
-        // contains no PEM CRL block, treat the whole file as a single DER CRL.
-        let pem: Vec<CertificateRevocationListDer<'static>> =
-            CertificateRevocationListDer::pem_slice_iter(&bytes)
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| format!("client CRL {path}: malformed PEM: {e}"))?;
-        if pem.is_empty() {
-            // No PEM CRL block found → interpret the bytes as one DER CRL. Empty
-            // input cannot be a valid DER CRL, so reject it (fail closed) rather
-            // than load a no-op file.
-            if bytes.is_empty() {
-                return Err(format!("client CRL {path}: file is empty"));
-            }
-            crls.push(CertificateRevocationListDer::from(bytes));
-        } else {
-            crls.extend(pem);
-        }
-    }
-    Ok(crls)
-}
-
-/// Load offline policy-layer revocation ids (ADR-MCPS-013) from zero or more
-/// newline-delimited files. Each non-blank, non-`#`-comment line (trimmed) is one
-/// opaque `revocation_id`. If `paths` is empty, returns an empty list.
-/// Mirrors [`load_client_crls`]: OFFLINE only (loaded once at startup; restart to update)
-/// and FAIL CLOSED — a missing/unreadable file, or a file that yields zero ids, is an error rather than a silently empty deny-list
-/// that would quietly disable revocation.
-pub fn load_revocation_list(paths: &[String]) -> Result<Vec<String>, String> {
-    let mut ids: Vec<String> = Vec::new();
-    for path in paths {
-        let text =
-            std::fs::read_to_string(path).map_err(|e| format!("revocation list {path}: {e}"))?;
-        let before = ids.len();
-        for line in text.lines() {
-            let id = line.trim();
-            if id.is_empty() || id.starts_with('#') {
-                continue;
-            }
-            ids.push(id.to_string());
-        }
-        if ids.len() == before {
-            return Err(format!(
-                "revocation list {path}: contains no revocation ids (fail closed rather \
-                 than load an empty deny-list)"
-            ));
-        }
-    }
-    Ok(ids)
-}
-
 /// Build the ONLINE OCSP checker selected by `--client-ocsp require` (#4030),
 /// or `None` when `--client-ocsp off` (the default). Compiled ONLY under the
-/// `online_ocsp` feature; `parse_args` already fails closed for `require` in a
-/// build without the feature, so this is only reached with the backend present.
+/// `online_ocsp` feature; the validation boundary already fails closed for `require` in
+/// every build, so this is only reached with the backend present.
 ///
 /// The checker uses `ocsp_responder_url` as the AIA override (else the leaf's
 /// AIA OCSP URL) and ALWAYS fails closed on an indeterminate result (the
@@ -3167,7 +1285,7 @@ pub fn load_revocation_list(paths: &[String]) -> Result<Vec<String>, String> {
 /// mandatory timeout (fail closed on timeout) so it can never wedge the blocking
 /// serve loop.
 #[cfg(feature = "online_ocsp")]
-pub fn build_ocsp_checker(config: &Config) -> Option<crate::ocsp::OcspChecker> {
+pub fn build_ocsp_checker(config: &DeploymentRequest) -> Option<crate::ocsp::OcspChecker> {
     match config.client_ocsp {
         OcspKind::Off => None,
         // Hard-fail (fail closed) always: OCSP has no soft-fail knob any more.
@@ -3181,39 +1299,40 @@ pub fn build_ocsp_checker(config: &Config) -> Option<crate::ocsp::OcspChecker> {
 #[cfg(test)]
 mod tests {
     use super::build_attested_ingress_binding;
-    use super::load_revocation_list;
-    use super::load_trust;
     use super::parse_args;
-    use super::unsafe_config_violations;
     use super::AuditSinkKind;
     use super::AuthzKind;
     use super::BindingKind;
+    use super::DeploymentRequest;
+    use super::Duration;
     use super::IdentityPolicy;
     use super::KeySourceKind;
     use super::OcspKind;
-    use super::ReplayKind;
     use super::ReverseProxyHeaderFormat;
+    use crate::config_state::validation::unsafe_config_violations;
     use mcp_re_core::SigningKey;
-    use mcp_re_core::TrustResolver;
-    use std::sync::Arc;
-    use std::sync::Mutex;
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
     }
 
+    /// The admission-limit request holds `NonZeroUsize`, because both flags refuse 0.
+    fn nz(v: usize) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(v).expect("the fixture states a non-zero limit")
+    }
+
     // ---- KMS endpoint override validation (C054) --------------------------
 
     /// Parse `minimal()` plus one KMS endpoint override.
-    fn with_kms_endpoint(flag: &str, endpoint: &str) -> Result<super::Config, String> {
+    fn with_kms_endpoint(flag: &str, endpoint: &str) -> Result<super::DeploymentRequest, String> {
         let mut a = minimal();
         // `minimal()` omits --replay-cache, which `unsafe_config_violations` refuses; that
         // refusal is unrelated to endpoint validation and would mask an accept case.
         a.extend(args(&[
-            "--replay-cache",
-            "file",
-            "--replay-path",
-            "/tmp/mcp-re-cli-kms-endpoint-test",
+            "--replay-redis-url",
+            "redis://127.0.0.1:6379",
+            "--replay-durability-tier",
+            "redis-wait-quorum:1:100",
         ]));
         a.push(flag.to_string());
         a.push(endpoint.to_string());
@@ -3275,6 +1394,31 @@ mod tests {
             assert!(
                 with_kms_endpoint("--aws-kms-endpoint", endpoint).is_err(),
                 "{endpoint} has no authority and must be refused"
+            );
+        }
+    }
+
+    /// The same property one layer out: a host that is not a LITERAL name or address is
+    /// read by a URL parser as some other host than the text shows — IDNA punycodes it,
+    /// percent-encoding decodes it, a backslash or a stripped tab moves where the authority
+    /// ends.
+    #[test]
+    fn a_kms_endpoint_host_that_is_not_a_literal_is_refused() {
+        for endpoint in [
+            // url 2.5.8 punycodes this to xn--example-4fg.com (the 'а' is Cyrillic).
+            "https://exa\u{0430}mple.com",
+            "https://cloudkms.googleapis.com%40evil.example.com",
+            "https://cloudkms.googleapis.com\\@evil.example.com",
+            "https://cloudkms.googleapis.com\t@evil.example.com",
+            // A FULLWIDTH digit three: not a port any parser will read as 443.
+            "https://cloudkms.googleapis.com:44\u{FF13}",
+            "https://cloudkms.googleapis.com:notaport",
+            "https://cloudkms.googleapis.com?x=1",
+            "https://cloudkms.googleapis.com#frag",
+        ] {
+            assert!(
+                with_kms_endpoint("--gcp-kms-endpoint", endpoint).is_err(),
+                "{endpoint:?} does not name a literal host and must be refused"
             );
         }
     }
@@ -3357,17 +1501,81 @@ mod tests {
     /// production posture, so ANY config that must parse SUCCESSFULLY has to declare
     /// a durable backend — tests splice these flags into `minimal()`.
     fn durable_replay() -> Vec<String> {
-        args(&["--replay-cache", "file", "--replay-path", "/replay"])
+        args(&[
+            "--replay-redis-url",
+            "redis://127.0.0.1:6379",
+            "--replay-durability-tier",
+            "redis-wait-quorum:1:100",
+        ])
     }
 
-    /// `minimal()` plus a durable replay backend — the smallest config that PARSES
-    /// under the unconditional strict/production posture (the bare in-memory default
-    /// is rejected, #90). Success tests that do not exercise replay selection build
-    /// on this.
+    /// `minimal()` plus a replay backend that is a legal deployment state — the smallest
+    /// config that both parses and validates. Success tests that do not exercise replay
+    /// selection build on this.
+    ///
+    /// It named `--replay-cache file` until CF-01: the in-memory default was refused and
+    /// `file` was what the refusal recommended, so the canonical fixture was a state no
+    /// build could materialize. That it went unnoticed is the finding — a whole suite of
+    /// success tests asserted things about a deployment that could not start.
     fn minimal_durable() -> Vec<String> {
         let mut a = minimal();
         a.splice(0..0, durable_replay());
         a
+    }
+
+    /// [`minimal_durable`] with one flag and its value removed.
+    ///
+    /// A test about ONE absent flag has to supply every other required one, or the
+    /// refusal it reads is the parser reporting a different absence. Removing from a
+    /// complete list says which flag the test is about; restating the list by hand says
+    /// it only until the next required flag is added.
+    fn minimal_durable_without(flag: &str) -> Vec<String> {
+        let mut a = minimal_durable();
+        let at = a
+            .iter()
+            .position(|arg| arg == flag)
+            .expect("the flag being removed is in the complete list");
+        a.drain(at..at + 2);
+        a
+    }
+
+    /// A command line wrong in three ways is answered about all three, in one pass.
+    ///
+    /// This is what the parser exchanged its early returns for. It used to hold three
+    /// clause groups of its own and return at the first, so an operator fixed one thing,
+    /// re-ran, and met the next; the groups' relative order was the whole contract, and it
+    /// was a property of `parse_args` rather than of the deployment. Legality is now
+    /// decided once, for every route into the runtime, and the CLI reads the same list any
+    /// other caller gets.
+    ///
+    /// The ORDER of that list is pinned by
+    /// `tests/integration/config_refusal_precedence_test.rs`, over the boundary rather
+    /// than over a command line. What is pinned here is the completeness a
+    /// `.contains()` assertion cannot see when it is one of three: all three appear.
+    #[test]
+    fn a_command_line_wrong_three_ways_is_answered_about_all_three() {
+        // A shared replay store with no durability tier, a PKCS#11 TLS label on a source
+        // that is not PKCS#11, and an LB key with no lb-assertion binding.
+        let mut a = minimal();
+        a.splice(
+            0..0,
+            args(&[
+                "--replay-redis-url",
+                "redis://127.0.0.1:6379",
+                "--pkcs11-tls-key-label",
+                "tls-on-token",
+                "--ingress-lb-key",
+                "lb-1:1i8Bah79Hk_feT60LNhEceG6nwzwTRKHtcxx9hYofLg",
+            ]),
+        );
+        let err = parse_args(&a).unwrap_err();
+        for expected in [
+            "--replay-durability-tier",
+            "--pkcs11-tls-key-label",
+            "--ingress-lb-key",
+        ] {
+            assert!(err.contains(expected), "missing {expected} in: {err}");
+        }
     }
 
     // --- MCPRE-493 admission currency ----------------------------------------
@@ -3384,6 +1592,343 @@ mod tests {
             "--admission-redis-url",
             "redis://127.0.0.1:6379",
         ])
+    }
+
+    /// The degraded-window rule was the LAST parse-only admission invariant, and unlike
+    /// the others nothing downstream re-checked it: the composition root passed
+    /// `allow_degraded` and P straight into `AdmissionPolicy`. So a `DeploymentRequest` built in code
+    /// reached the serving path with degraded mode on and no window configured, and got
+    /// one `--max-clock-skew` wide — a revoked workload served against an unreachable
+    /// authority on a deployment that asked for no degraded window at all.
+    ///
+    /// Reached by mutating a parsed config, because `parse_args` now consults the same
+    /// predicate: going through it would prove only that SOMETHING refused.
+    #[test]
+    fn a_programmatic_config_cannot_open_a_degraded_window_it_did_not_configure() {
+        // The dangerous shape: the gate is ENABLED, so the window it opens is real.
+        let mut a = minimal_durable();
+        a.splice(0..0, admission_args("required"));
+        let mut config = parse_args(&a).expect("a complete admission config parses");
+        config.admission_allow_degraded = true;
+        config.admission_degraded_bound_secs = 0;
+        let violations = unsafe_config_violations(&config);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("--admission-degraded-bound-secs")),
+            "the validation boundary must refuse a zero degraded window on an ENABLED \
+             gate, got {violations:?}"
+        );
+
+        // And with the gate off, where the setting enforces nothing but still reads as
+        // configured to anyone auditing the deployment. Refused as a DANGLING parameter:
+        // the width argument above does not apply, because no window is opened at all.
+        let mut off = parse_args(&minimal_durable()).expect("the base config parses");
+        off.admission_allow_degraded = true;
+        off.admission_degraded_bound_secs = 0;
+        assert!(
+            unsafe_config_violations(&off)
+                .iter()
+                .any(|v| v.contains("--admission is off")),
+            "a degraded window without a gate is still a setting that reads as enforced"
+        );
+    }
+
+    /// A flag a case must name in its refusal, and the mutation that provokes it.
+    type Case = (&'static str, fn(&mut DeploymentRequest));
+
+    /// A parsed baseline to mutate, for the boundary-gap controls below.
+    ///
+    /// Parsed rather than a struct literal for the reason `legal_config` gives: a test that
+    /// expects a refusal must be measuring its own mutation, not a defect it inherited.
+    fn parsed_baseline() -> DeploymentRequest {
+        parse_args(&minimal_durable()).expect("the base config parses")
+    }
+
+    /// Whether the boundary reports a violation containing `needle`.
+    fn boundary_reports(config: &DeploymentRequest, needle: &str) -> bool {
+        unsafe_config_violations(config)
+            .iter()
+            .any(|v| v.contains(needle))
+    }
+
+    /// G1 and G2. The deployment's identity coordinates, when present but meaningless.
+    ///
+    /// Requiredness for these lives in `parse_args`'s `require` closure, and the fields are
+    /// public `String`s — so an embedder or a test that builds the struct reaches the
+    /// serving path with an empty coordinate and no parser runs. Nothing downstream
+    /// dereferences them either: they are minted into what the proxy signs and compared by
+    /// verifiers, so an empty one fails no startup step, it just stops distinguishing this
+    /// deployment.
+    ///
+    /// Each case names ONE field, and the positive control below drives the same guard with
+    /// the baseline's real values, so a predicate that rejected everything would fail there.
+    #[test]
+    fn an_identity_coordinate_that_is_present_but_empty_is_refused() {
+        let cases: Vec<Case> = vec![
+            ("--trust-domain", |c| c.trust_domain = String::new()),
+            ("--audience", |c| c.audience = String::new()),
+            ("--server-signer", |c| c.server_signer = String::new()),
+            ("--server-key-id", |c| c.server_key_id = String::new()),
+            // Whitespace is not a coordinate either, and it is what a templated
+            // deployment produces when a variable resolves to nothing.
+            ("--trust-domain", |c| c.trust_domain = "   ".to_string()),
+        ];
+        for (flag, mutate) in cases {
+            let mut config = parsed_baseline();
+            mutate(&mut config);
+            assert!(
+                boundary_reports(&config, flag),
+                "{flag}: the boundary admitted an empty identity coordinate — {:?}",
+                unsafe_config_violations(&config)
+            );
+        }
+    }
+
+    /// The positive half of the clause above: the smallest meaningful value passes it.
+    #[test]
+    fn a_one_character_identity_coordinate_is_not_refused_as_empty() {
+        let mut config = parsed_baseline();
+        config.trust_domain = "a".to_string();
+        config.audience = "b".to_string();
+        config.server_signer = "c".to_string();
+        config.server_key_id = "d".to_string();
+        for flag in [
+            "--trust-domain is empty",
+            "--audience is empty",
+            "--server-signer is empty",
+            "--server-key-id is empty",
+        ] {
+            assert!(
+                !boundary_reports(&config, flag),
+                "{flag} fired on a one-character coordinate"
+            );
+        }
+    }
+
+    /// G2, the locator half. These ARE dereferenced at startup, so an empty one eventually
+    /// fails — but only as an observation about the environment, and after two planes have
+    /// established resources. That a string names nothing is knowable here (ADR-MCPRE-056
+    /// §5.1), and it reads as the configuration defect it is rather than as a missing file.
+    #[test]
+    fn a_required_locator_that_is_present_but_empty_is_refused() {
+        let cases: Vec<Case> = vec![
+            ("--bind", |c| c.bind = String::new()),
+            ("--tls-cert", |c| c.tls_cert = String::new()),
+            ("--client-ca", |c| c.client_ca = String::new()),
+            ("--trust is empty", |c| c.trust_path = String::new()),
+        ];
+        for (flag, mutate) in cases {
+            let mut config = parsed_baseline();
+            mutate(&mut config);
+            assert!(
+                boundary_reports(&config, flag),
+                "{flag}: the boundary admitted a locator that names nothing — {:?}",
+                unsafe_config_violations(&config)
+            );
+        }
+
+        // Positive half: the baseline's own locators, which name something.
+        let clean = parsed_baseline();
+        for flag in [
+            "--bind is empty",
+            "--tls-cert is empty",
+            "--client-ca is empty",
+            "--trust is empty",
+        ] {
+            assert!(
+                !boundary_reports(&clean, flag),
+                "{flag} fired on a real path"
+            );
+        }
+    }
+
+    /// The freshness tolerance, which the parser bounded and the boundary did not — so a
+    /// programmatic config reached `VerifierPolicy::new` and failed there, after the trust
+    /// and TLS planes had already read files and started workers.
+    #[test]
+    fn a_clock_skew_outside_the_bound_is_refused() {
+        for skew in [
+            -1,
+            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND + 1,
+        ] {
+            let mut config = parsed_baseline();
+            config.max_clock_skew = skew;
+            assert!(
+                boundary_reports(&config, "--max-clock-skew"),
+                "skew {skew} admitted — {:?}",
+                unsafe_config_violations(&config)
+            );
+        }
+
+        // Both ends of the legal range pass the same guard.
+        for skew in [0, mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND] {
+            let mut config = parsed_baseline();
+            config.max_clock_skew = skew;
+            assert!(
+                !boundary_reports(&config, "--max-clock-skew"),
+                "skew {skew} is inside the bound and must not be refused"
+            );
+        }
+    }
+
+    /// G5. A list holding `""` is not an empty list, so the presence clause is satisfied
+    /// while the pool carries a member no request can reach.
+    #[test]
+    fn an_inner_plane_holding_an_empty_url_is_refused() {
+        let mut config = parsed_baseline();
+        config
+            .inner_http_urls
+            .push(" ".repeat(3).trim_end().to_string());
+        config.inner_http_urls.push(String::new());
+        assert!(
+            boundary_reports(&config, "--inner-http-url contains an empty URL"),
+            "{:?}",
+            unsafe_config_violations(&config)
+        );
+
+        // Positive half: the baseline's own list, which names one real backend.
+        let clean = parsed_baseline();
+        assert!(!boundary_reports(
+            &clean,
+            "--inner-http-url contains an empty URL"
+        ));
+    }
+
+    /// G3. Zero drain grace is legally present and materially changes SIGTERM: every
+    /// admitted request is abandoned rather than allowed to finish.
+    #[test]
+    fn a_zero_drain_window_is_refused() {
+        let mut config = parsed_baseline();
+        config.limits.drain_grace = Duration::from_secs(0);
+        assert!(
+            boundary_reports(&config, "--drain-grace-secs 0"),
+            "{:?}",
+            unsafe_config_violations(&config)
+        );
+
+        // One second is a bad idea and a legal window; this guard is about zero.
+        let mut ok = parsed_baseline();
+        ok.limits.drain_grace = Duration::from_secs(1);
+        assert!(!boundary_reports(&ok, "--drain-grace-secs 0"));
+    }
+
+    /// G4. Same class as the drain window: present, and zero.
+    #[test]
+    fn a_zero_connection_ceiling_is_refused() {
+        let mut config = parsed_baseline();
+        config.limits.max_concurrent_connections = 0;
+        assert!(
+            boundary_reports(&config, "--max-connections 0"),
+            "{:?}",
+            unsafe_config_violations(&config)
+        );
+
+        let mut ok = parsed_baseline();
+        ok.limits.max_concurrent_connections = 1;
+        assert!(!boundary_reports(&ok, "--max-connections 0"));
+    }
+
+    /// G6. The attested-ingress witnesses, present but naming nothing.
+    ///
+    /// Asserted on the clause itself rather than on an empty violation list, because
+    /// `attested-ingress` may be refused independently by the `ChannelBinding` machine and
+    /// every violation is reported — so an empty-list assertion would prove nothing about
+    /// THIS clause either way.
+    #[test]
+    fn an_ingress_witness_that_is_present_but_empty_is_refused() {
+        let attested = |c: &mut DeploymentRequest| {
+            c.binding = BindingKind::AttestedIngress;
+            c.ingress_attestor_keys = vec![("attestor-1".to_string(), attestor_pub_b64())];
+            c.ingress_identities = vec!["ingress-1".to_string()];
+            c.ingress_audience = Some("https://mcp.example.com/mcp".to_string());
+            c.ingress_pinned_mtls = true;
+            c.reverse_proxy_identity_header = None;
+        };
+
+        let mut empty_identity = parsed_baseline();
+        attested(&mut empty_identity);
+        empty_identity.ingress_identities = vec!["ingress-1".to_string(), String::new()];
+        assert!(
+            boundary_reports(&empty_identity, "--ingress-identity is empty"),
+            "{:?}",
+            unsafe_config_violations(&empty_identity)
+        );
+
+        let mut empty_audience = parsed_baseline();
+        attested(&mut empty_audience);
+        empty_audience.ingress_audience = Some("  ".to_string());
+        assert!(
+            boundary_reports(&empty_audience, "--ingress-audience is empty"),
+            "{:?}",
+            unsafe_config_violations(&empty_audience)
+        );
+
+        // Positive half: with both witnesses meaningful, neither clause fires.
+        let mut ok = parsed_baseline();
+        attested(&mut ok);
+        assert!(!boundary_reports(&ok, "--ingress-identity is empty"));
+        assert!(!boundary_reports(&ok, "--ingress-audience is empty"));
+    }
+
+    /// The refusal states the REASON, and the reason is not "zero is not a policy".
+    ///
+    /// P is a floor on the degraded window, never the whole of it — the PEP serves an
+    /// unreachable authority for `P + --max-clock-skew` seconds. An operator told only
+    /// that zero is disallowed would reasonably set P=1 and believe they had a one-second
+    /// window. Pinned against the profile-layer test that measures the real width.
+    ///
+    /// Asked of an ENFORCING deployment, because that is the only place the width argument
+    /// is true: with the gate off no window is opened, and the refusal there is about a
+    /// dangling parameter instead.
+    #[test]
+    fn the_degraded_window_refusal_names_the_clock_skew_term() {
+        let mut a = minimal_durable();
+        a.splice(0..0, admission_args("required"));
+        let mut config = parse_args(&a).expect("a complete admission config parses");
+        config.admission_allow_degraded = true;
+        config.admission_degraded_bound_secs = 0;
+        let refusal = unsafe_config_violations(&config)
+            .into_iter()
+            .find(|v| v.contains("--admission-degraded-bound-secs"))
+            .expect("refused");
+        assert!(
+            refusal.contains("--max-clock-skew"),
+            "the operator has to be told the skew term widens the window, got: {refusal}"
+        );
+    }
+
+    /// An authority key that cannot decode is a property of the CONFIGURATION, so the
+    /// boundary owns it. It used to be caught only where the verifier was built, which
+    /// left a programmatic config reaching materialization with an unusable issuer.
+    #[test]
+    fn a_programmatic_config_cannot_carry_an_undecodable_admission_authority_key() {
+        let mut config = parse_args(&minimal_durable()).expect("the base config parses");
+        config.admission = super::AdmissionKind::Required;
+        config.admission_authority_kid = Some("admission-root-1".to_string());
+        config.admission_authority_pubkey_b64url = Some("not-a-key".to_string());
+        config.admission_redis_url = Some("redis://127.0.0.1:6379".to_string());
+        let violations = unsafe_config_violations(&config);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("--admission-authority-pubkey")),
+            "an undecodable authority key must be refused at the boundary, got {violations:?}"
+        );
+    }
+
+    /// A complete admission configuration must NOT be refused — otherwise the checks
+    /// above would pass against a predicate that simply refuses everything.
+    #[test]
+    fn a_complete_admission_configuration_raises_no_violation() {
+        let mut a = minimal_durable();
+        a.splice(0..0, admission_args("required"));
+        let config = parse_args(&a).expect("a complete admission config parses");
+        assert!(
+            unsafe_config_violations(&config).is_empty(),
+            "a complete admission configuration must be admissible: {:?}",
+            unsafe_config_violations(&config)
+        );
     }
 
     #[test]
@@ -3554,42 +2099,152 @@ mod tests {
 
     /// MCPRE-114: the bounded-admission ceiling exists in `async_serve`/`async_fleet`
     /// but had NO CLI flag, so no shipped configuration could enable it — the proxy
-    /// always ran unbounded in-flight. Both knobs must reach the config, and the
-    /// no-flags case must be BOUNDED: unbounded in-flight is attacker-controlled
-    /// buffering ahead of the verify gate.
+    /// always ran unbounded in-flight. Each knob must reach the config, and the no-flags
+    /// case must be BOUNDED: unbounded in-flight is attacker-controlled buffering ahead of
+    /// the verify gate.
+    ///
+    /// The REQUEST is asserted, not the runtime field: `Unspecified` is a third thing, and
+    /// keeping it distinguishable from a value equal to the default is the point.
     #[test]
     fn admission_ceilings_are_configurable_and_bounded_by_default() {
+        use crate::config_state::InFlightLimitRequest;
+
         let config = parse_args(&minimal_durable()).expect("parse");
         assert_eq!(
-            config.limits.max_in_flight_requests,
-            Some(256),
+            config.in_flight_limit,
+            InFlightLimitRequest::Unspecified,
+            "no flag states no limit — the bounded default is the boundary's answer, not the \
+             parser's"
+        );
+        assert_eq!(
+            crate::config_state::in_flight_limit::classify(&config),
+            crate::config_state::InFlightLimitBasis::PerCore {
+                requests: nz(crate::config_state::in_flight_limit::DEFAULT_PER_CORE_IN_FLIGHT)
+            },
             "a per-core ceiling applies with no flags at all"
         );
-        assert_eq!(config.max_in_flight_total, None);
+
+        let mut a = minimal_durable();
+        a.splice(0..0, args(&["--max-in-flight", "32"]));
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(
+            config.in_flight_limit,
+            InFlightLimitRequest::PerCore(nz(32))
+        );
+        assert!(unsafe_config_violations(&config).is_empty());
+
+        let mut b = minimal_durable();
+        b.splice(0..0, args(&["--max-in-flight-total", "256"]));
+        let config = parse_args(&b).expect("parse");
+        assert_eq!(
+            config.in_flight_limit,
+            InFlightLimitRequest::FleetTotal(nz(256))
+        );
+        assert!(unsafe_config_violations(&config).is_empty());
+    }
+
+    /// An explicit value EQUAL to the default is not the same request as no value at all.
+    ///
+    /// This is the distinction the parser used to destroy. `ServerLimits` carries a
+    /// fail-safe 256, so `Some(256)` meant either "the operator chose 256 per core" or "the
+    /// operator said nothing" — and once a fleet-wide target had to out-rank the default
+    /// but not an explicit value, the parser reconstructed the difference and encoded it by
+    /// writing `None` over the field.
+    #[test]
+    fn an_explicit_ceiling_equal_to_the_default_is_not_an_absent_one() {
+        use crate::config_state::InFlightLimitRequest;
 
         let mut a = minimal_durable();
         a.splice(
             0..0,
-            args(&["--max-in-flight", "32", "--max-in-flight-total", "256"]),
+            args(&[
+                "--max-in-flight",
+                &crate::config_state::in_flight_limit::DEFAULT_PER_CORE_IN_FLIGHT.to_string(),
+            ]),
         );
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.limits.max_in_flight_requests, Some(32));
-        assert_eq!(config.max_in_flight_total, Some(256));
+        let stated = parse_args(&a).expect("parse").in_flight_limit;
+        let unstated = parse_args(&minimal_durable())
+            .expect("parse")
+            .in_flight_limit;
+
+        assert_eq!(
+            stated,
+            InFlightLimitRequest::PerCore(nz(
+                crate::config_state::in_flight_limit::DEFAULT_PER_CORE_IN_FLIGHT
+            ))
+        );
+        assert_eq!(unstated, InFlightLimitRequest::Unspecified);
+        assert_ne!(stated, unstated, "the request must keep the two apart");
     }
 
-    /// The per-core DEFAULT must not out-rank an explicit fleet-wide target: with
-    /// only `--max-in-flight-total`, the per-core ceiling is cleared so
-    /// `derived_per_core_ceiling` divides the target across cores.
+    /// The two flags are ALTERNATIVE ways to state one admission limit, so naming both is
+    /// refused rather than resolved by precedence.
+    ///
+    /// This replaces a contract: the per-core value used to win silently, which left the
+    /// operator's other explicit instruction doing nothing and saying nothing. The chart
+    /// already refused the pair (`_helpers.tpl`), so the two deployment surfaces disagreed
+    /// about whether the configuration was legal at all.
+    ///
+    /// The refusal is the PARSER's because the request type holds one limit: a `DeploymentRequest`
+    /// naming both cannot be built, so the boundary has no such state left to refuse.
+    /// Reading an argument list is the only place the combination still appears, and
+    /// without this the second flag would silently overwrite the first.
     #[test]
-    fn a_fleet_wide_target_alone_clears_the_per_core_default() {
+    fn naming_both_admission_limits_is_refused() {
+        for pair in [
+            ["--max-in-flight", "32", "--max-in-flight-total", "256"],
+            ["--max-in-flight-total", "256", "--max-in-flight", "32"],
+            // No "they happen to agree" exemption: whether a total is equivalent to a
+            // per-core ceiling depends on the resolved core count, a property of the host.
+            ["--max-in-flight", "256", "--max-in-flight-total", "256"],
+            // The same flag twice is the same mistake.
+            ["--max-in-flight", "32", "--max-in-flight", "64"],
+        ] {
+            let mut a = minimal_durable();
+            a.splice(0..0, args(&pair));
+            let refusal =
+                parse_args(&a).expect_err("a second admission limit must be refused: {pair:?}");
+            assert!(
+                refusal.contains("already states the admission limit"),
+                "the refusal must say which instruction is being overwritten: {refusal}"
+            );
+        }
+    }
+
+    /// A fleet-wide target survives on its own, WITHOUT the parser clearing the per-core
+    /// default to make room for it. That erasure is gone: absence is now representable, so
+    /// the request says "fleet total" and the boundary resolves it.
+    ///
+    /// The case that was broken: an embedder assembling a `DeploymentRequest` from
+    /// `ServerLimits::default()` plus a fleet-wide target got the default 256 per core and
+    /// no diagnostic, because the provenance rule lived in the parser alone.
+    #[test]
+    fn a_fleet_wide_target_survives_without_erasing_the_per_core_default() {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--max-in-flight-total", "256"]));
         let config = parse_args(&a).expect("parse");
         assert_eq!(
-            config.limits.max_in_flight_requests, None,
-            "the default must yield to an explicit global target"
+            config.in_flight_limit,
+            crate::config_state::InFlightLimitRequest::FleetTotal(nz(256))
         );
-        assert_eq!(config.max_in_flight_total, Some(256));
+
+        let basis = crate::config_state::in_flight_limit::classify(&config);
+        assert_eq!(basis.fleet_total(), Some(256));
+        assert_eq!(
+            basis.per_core(),
+            None,
+            "a fleet-wide basis has no per-core answer until the core count is resolved"
+        );
+
+        // Assembled in code, which meets no parser: the same basis, for the same reason.
+        let mut built = parse_args(&minimal_durable()).expect("parse");
+        built.limits = crate::tls::ServerLimits::default();
+        built.in_flight_limit = crate::config_state::InFlightLimitRequest::FleetTotal(nz(1000));
+        assert_eq!(
+            crate::config_state::in_flight_limit::classify(&built).fleet_total(),
+            Some(1000),
+            "the fail-safe default in ServerLimits must not out-rank a stated fleet target"
+        );
     }
 
     /// The connection-age bound is what re-checks a client certificate against an
@@ -3604,7 +2259,7 @@ mod tests {
         assert!(unsafe_config_violations(&config).is_empty());
 
         // `parse_args` applies `unsafe_config_violations` unconditionally, so
-        // disabling the bound never produces a Config at all.
+        // disabling the bound never produces a DeploymentRequest at all.
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--max-connection-age-secs", "0"]));
         let err = parse_args(&a).expect_err("a disabled connection-age bound is refused");
@@ -3653,34 +2308,9 @@ mod tests {
 
     #[test]
     fn missing_trust_epoch_is_rejected() {
-        // A config WITHOUT the required trust epoch (built by hand, since `minimal()`
-        // now includes it) fails closed — the epoch is mandatory for every deployment.
-        let a = args(&[
-            "--replay-cache",
-            "file",
-            "--replay-path",
-            "/replay",
-            "--bind",
-            "127.0.0.1:8443",
-            "--audience",
-            "did:example:server-1",
-            "--server-signer",
-            "did:example:server-1",
-            "--server-key-id",
-            "server-key-1",
-            "--signing-key-seed",
-            "/seed",
-            "--tls-cert",
-            "/cert",
-            "--tls-key",
-            "/key",
-            "--client-ca",
-            "/ca",
-            "--trust",
-            "/trust.json",
-            "--inner-http-url",
-            "http://127.0.0.1:8080/mcp",
-        ]);
+        // A config complete but for the required trust epoch fails closed — the epoch is
+        // mandatory for every deployment.
+        let a = minimal_durable_without("--delegated-trust-epoch");
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("--delegated-trust-epoch"), "got: {err}");
     }
@@ -3714,7 +2344,6 @@ mod tests {
         );
         assert!(config.mcp_protocol_versions.is_empty());
         assert_eq!(config.key_source, KeySourceKind::File);
-        assert_eq!(config.replay, ReplayKind::File);
         assert_eq!(config.binding, BindingKind::Exact);
         // Safe defaults: URI SAN identity, bounded resources.
         assert_eq!(config.identity_source, IdentityPolicy::UriSan);
@@ -3755,6 +2384,24 @@ mod tests {
                 "input {input}"
             );
         }
+    }
+
+    /// A unit-suffixed lifetime whose product overflows `u64` is refused, not wrapped.
+    ///
+    /// `5124095576030432 * 3600` is congruent to 3584 mod 2^64, which is BELOW the
+    /// ceiling — so a wrapping multiply would be accepted by every clause downstream and
+    /// the deployment would enforce a lifetime bearing no relation to the argument. The
+    /// same input panics a debug build, which is why neither half of the behaviour is
+    /// acceptable.
+    #[test]
+    fn an_overflowing_client_cert_lifetime_is_refused_not_wrapped() {
+        let mut a = minimal_durable();
+        a.splice(
+            0..0,
+            args(&["--max-client-cert-lifetime", "5124095576030432h"]),
+        );
+        let err = parse_args(&a).expect_err("an overflowing lifetime is not a lifetime");
+        assert!(err.contains("--max-client-cert-lifetime"), "{err}");
     }
 
     #[test]
@@ -3829,13 +2476,19 @@ mod tests {
         assert!(parse_args(&a).unwrap_err().contains("der"));
     }
 
+    /// A blank forwarded-header name is refused, though not for being blank: relation X7
+    /// refuses the forwarded-identity posture whatever it names. Kept as the tripwire for
+    /// that — if X7 is ever narrowed, this fails, and the emptiness rule then belongs to
+    /// the owner of the header rather than back here.
     #[test]
     fn empty_reverse_proxy_header_name_errors() {
         let mut a = minimal();
         a.splice(0..0, args(&["--reverse-proxy-identity-header", "   "]));
-        assert!(parse_args(&a)
-            .unwrap_err()
-            .contains("non-empty header name"));
+        let err = parse_args(&a).unwrap_err();
+        assert!(
+            err.contains("--reverse-proxy-identity-header"),
+            "got: {err}"
+        );
     }
 
     // ---- ADR-MCPS-023 Tier 3 (issue #71): LB-signed request-bound assertion ----
@@ -3975,40 +2628,139 @@ mod tests {
     }
 
     #[test]
-    fn parses_attested_ingress_binding_fully_configured() {
-        // Attested ingress is strict-ADMITTED, so a durable-replay base parses.
+    fn a_fully_configured_mode_c_clears_every_completeness_check_and_is_still_refused() {
+        // Mode-C is deliberately non-deployable in v0.16 (ADR-MCPRE-056 §Y6): refused, not
+        // removed. This config is COMPLETE — attestor key, ingress identity, audience and
+        // the pinned-mTLS acknowledgement are all present — so the refusal it receives must
+        // be the MODE refusal and not a completeness diagnostic. That is what keeps the
+        // completeness validation meaningful while the mode is unsupported: if one of those
+        // checks broke, this test would start reporting its error instead.
         let mut a = minimal_durable();
         a.splice(0..0, attested_ingress_flags());
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.binding, BindingKind::AttestedIngress);
-        assert_eq!(config.ingress_attestor_keys.len(), 1);
-        assert_eq!(
-            config.ingress_identities,
-            vec!["spiffe://example.org/ingress-1"]
+        let err = parse_args(&a).expect_err("Mode C is not a supported deployment mode");
+        assert!(
+            err.contains("attested-ingress is not a supported deployment mode"),
+            "a complete Mode-C config must be refused for the MODE, not for its shape; \
+             got: {err}"
         );
-        assert_eq!(
-            config.ingress_audience.as_deref(),
-            Some("did:example:server-1")
-        );
-        assert!(config.ingress_pinned_mtls);
-        // The verifier builds.
-        assert!(build_attested_ingress_binding(&config)
-            .expect("build")
-            .is_some());
     }
 
     #[test]
-    fn attested_ingress_is_admitted_under_strict() {
-        // Unlike Mode B (lb-assertion), Mode C is a strict-ADMITTED explicit opt-in.
-        let mut a = minimal();
-        a.splice(0..0, durable_replay());
-        a.splice(0..0, attested_ingress_flags());
-        let config = parse_args(&a).expect("Mode C must be admitted under the strict posture");
-        assert_eq!(config.binding, BindingKind::AttestedIngress);
+    fn mode_c_is_refused_by_the_unsafe_configuration_guard_itself() {
+        // Mode C is refused at the validation boundary, so the guard — not the composition
+        // root — is what has to hold the refusal.
+        //
+        // Reached by mutating a parsed config rather than through `parse_args`, because
+        // `parse_args` now ends at this same guard: going through it would prove only that
+        // SOMETHING refused, not that this guard did.
+        let mut config = parse_args(&minimal_durable()).expect("the base config parses");
+        config.binding = BindingKind::AttestedIngress;
+        let violations = unsafe_config_violations(&config);
         assert!(
-            unsafe_config_violations(&config).is_empty(),
-            "Mode C is strict-admitted: it must raise no strict violations, got {:?}",
-            unsafe_config_violations(&config)
+            violations
+                .iter()
+                .any(|v| v.contains("attested-ingress is not a supported deployment mode")),
+            "the unsafe-configuration guard must be what refuses Mode C, got {violations:?}"
+        );
+    }
+
+    /// A complete Mode-C [`DeploymentRequest`], assembled by mutating a parsed base rather than
+    /// through `parse_args` — the boundary refuses the mode, so no parsed path can
+    /// produce one. The `did:` audience and ingress identity match
+    /// [`attested_ingress_flags`].
+    fn mode_c_config() -> super::DeploymentRequest {
+        let mut config = parse_args(&minimal_durable()).expect("the base config parses");
+        config.binding = BindingKind::AttestedIngress;
+        config.identity_source = IdentityPolicy::UriSan;
+        config.ingress_attestor_keys = vec![("attestor-1".to_string(), attestor_pub_b64())];
+        config.ingress_identities = vec!["spiffe://example.org/ingress-1".to_string()];
+        config.ingress_audience = Some("did:example:server-1".to_string());
+        config.ingress_pinned_mtls = true;
+        config
+    }
+
+    #[test]
+    fn the_retained_mode_c_verifier_still_admits_an_assertion_from_its_configured_attestor() {
+        // Mode C is refused for deployment but RETAINED as a capability, so its verifier
+        // has to stay correct rather than merely compile. Minting a real assertion and
+        // verifying it through the built binding is what proves the builder actually
+        // transferred all three configured facts: an implementation that skipped
+        // `add_key`, skipped `permit_ingress_identity`, or passed the wrong audience
+        // would fail this with `UnknownKeyId`, `UntrustedIngressIdentity`, or
+        // `AudienceMismatch` respectively.
+        let binding = build_attested_ingress_binding(&mode_c_config())
+            .expect("a complete Mode-C config builds its verifier")
+            .expect("the verifier is present for the attested-ingress binding");
+
+        let request_hash = mcp_re_core::sha256_hash_id(b"an in-hand request body");
+        let now = 1_800_000_000_i64;
+        let assertion = crate::transport::LbAssertionV2 {
+            key_id: "attestor-1".to_string(),
+            ingress_identity: "spiffe://example.org/ingress-1".to_string(),
+            asserted_client_identity: "spiffe://example.org/agent-1".to_string(),
+            request_hash: request_hash.clone(),
+            audience: "did:example:server-1".to_string(),
+            cert_verification_result: crate::transport::AttestedCertVerification::Verified,
+            revocation_result: crate::transport::AttestedRevocation::Good,
+            validation_time: now,
+            crl_next_update: now + 86_400,
+            expires_at: None,
+        };
+        let attestor = SigningKey::from_seed_bytes(&[9u8; 32]);
+        let wire = assertion.to_wire(&attestor.sign(&assertion.signing_preimage()));
+
+        let verified = binding
+            .verify(&wire, &request_hash, now)
+            .expect("the configured attestor's assertion must verify");
+        assert_eq!(
+            verified.client_identity.value,
+            "spiffe://example.org/agent-1"
+        );
+        assert_eq!(
+            verified.client_identity.source,
+            crate::transport::IdentitySource::UriSan,
+            "the configured identity source must be the one stamped on the yielded identity"
+        );
+    }
+
+    #[test]
+    fn the_mode_c_verifier_is_built_only_for_the_attested_ingress_binding() {
+        let config = parse_args(&minimal_durable()).expect("the base config parses");
+        assert!(
+            build_attested_ingress_binding(&config)
+                .expect("a non-Mode-C config is not an error")
+                .is_none(),
+            "no verifier may be built for a binding other than attested-ingress"
+        );
+    }
+
+    #[test]
+    fn a_mode_c_verifier_missing_its_audience_fails_closed_rather_than_defaulting() {
+        // The audience is what scopes an assertion to THIS node. Building a verifier
+        // with an empty or defaulted audience would admit assertions minted for another
+        // route, so the absent case must be an error and not a fallback.
+        let mut config = mode_c_config();
+        config.ingress_audience = None;
+        let err = build_attested_ingress_binding(&config)
+            .expect_err("a Mode-C verifier without an audience must not be built");
+        assert!(
+            err.contains("--ingress-audience"),
+            "the failure must name the missing audience, got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_mode_c_verifier_rejects_an_unusable_attestor_key_rather_than_dropping_it() {
+        // Silently skipping a key that will not decode would build a verifier that
+        // trusts fewer attestors than configured and fails closed later at request
+        // time, where the cause is far from the configuration that caused it.
+        let mut config = mode_c_config();
+        config.ingress_attestor_keys = vec![("attestor-1".to_string(), "not-a-key".to_string())];
+        let err = build_attested_ingress_binding(&config)
+            .expect_err("an undecodable attestor key must not be silently dropped");
+        assert!(
+            err.contains("attestor-1"),
+            "the failure must name the offending key id, got: {err}"
         );
     }
 
@@ -4116,40 +2868,57 @@ mod tests {
         assert!(parse_args(&a).unwrap_err().contains("Ed25519 public key"));
     }
 
+    /// Attested ingress beside a forwarded identity header is still refused — by X7.
+    ///
+    /// The proposition is unchanged: Mode C resolves identity from the signed assertion, so
+    /// a trusted reverse-proxy header would be a second, silently-ignored identity source.
+    /// What changed is which authority states it. `ingress_assertion_refusal` carried a
+    /// clause saying the two were "mutually exclusive"; relation X7 refuses a forwarded
+    /// identity header under EVERY binding, which is strictly stronger, so the clause was a
+    /// second authority over one fact and was deleted rather than moved. The assertion now
+    /// names the surviving one — see
+    /// `cross_machine::tests::the_forwarded_identity_header_is_refused_under_every_binding`
+    /// for the control that the deletion admits nothing.
     #[test]
     fn attested_ingress_rejects_reverse_proxy_header() {
-        // Mode C resolves identity from the assertion; a reverse-proxy identity
-        // header would be a silently-ignored second source → reject the combination.
         let mut a = minimal();
         let mut flags = attested_ingress_flags();
-        // A reverse-proxy header disables the local client-cert path, so acknowledge
-        // that first — otherwise the cert-lifetime guard fires before the Mode-C one.
         flags.extend(args(&[
             "--reverse-proxy-identity-header",
             "x-forwarded-client-cert",
-            "--max-client-cert-lifetime",
-            "none",
         ]));
         a.splice(0..0, flags);
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("mutually exclusive"), "got: {err}");
+        assert!(
+            err.contains("--reverse-proxy-identity-header"),
+            "the forwarded-identity posture must be refused by name, got: {err}"
+        );
     }
 
+    /// Reverse-proxy ingress cannot be deployed beside a local client-certificate control.
+    ///
+    /// The parser used to refuse this pair and name the remedy: disable the local control
+    /// with `--max-client-cert-lifetime none`. That remedy was never a deployment — the
+    /// boundary refuses a disabled lifetime outright — so the two layers disagreed about
+    /// what a legal configuration is. Relation X7 settles it in one direction: mTLS is
+    /// terminated locally XOR a forwarded identity is trusted, and the forwarded posture
+    /// is refused, so there is no reverse-proxy deployment for the pair to be a conflict
+    /// in.
     #[test]
     fn reverse_proxy_mode_conflicts_with_local_cert_lifetime() {
-        // The default 1h client-cert lifetime is a LOCAL-mTLS control. Enabling
-        // reverse-proxy mode (mTLS terminated upstream) while it is still in force
-        // is contradictory and must fail closed at parse time.
-        let mut a = minimal();
+        let mut a = minimal_durable();
         a.splice(
             0..0,
             args(&["--reverse-proxy-identity-header", "x-forwarded-client-cert"]),
         );
         let err = parse_args(&a).unwrap_err();
         assert!(
-            err.contains("reverse-proxy-identity-header")
-                && err.contains("max-client-cert-lifetime none"),
-            "expected a mutual-exclusion error pointing at the fix; got: {err}"
+            err.contains("--reverse-proxy-identity-header"),
+            "got: {err}"
+        );
+        assert!(
+            !err.contains("--max-client-cert-lifetime none"),
+            "the refusal must not name a remedy the boundary also refuses; got: {err}"
         );
     }
 
@@ -4202,7 +2971,7 @@ mod tests {
         assert_eq!(
             config.pkcs11_pin_file.as_deref(),
             Some("/etc/mcp-re/pkcs11-pin"),
-            "the config carries the PIN's PATH; the PIN itself is not a Config field"
+            "the config carries the PIN's PATH; the PIN itself is not a DeploymentRequest field"
         );
         assert_eq!(config.pkcs11_token_label.as_deref(), Some("mcp-re-test"));
         assert_eq!(
@@ -4266,7 +3035,7 @@ mod tests {
 
     #[test]
     fn a_secret_string_does_not_print_its_value_or_length() {
-        // C049: Config derives Debug and is cloned freely. The PIN is no longer a Config
+        // C049: DeploymentRequest derives Debug and is cloned freely. The PIN is no longer a DeploymentRequest
         // field at all, but the type that carries it in transit must not leak either.
         let secret = super::SecretString::new("hunter2");
         let rendered = format!("{secret:?}");
@@ -4363,7 +3132,7 @@ mod tests {
         a.splice(0..0, pkcs11_flags());
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.key_source, KeySourceKind::Pkcs11);
-        let err = super::build_key_source(&config)
+        let err = key_source_from(&config)
             .err()
             .expect("default build must refuse a pkcs11 key source");
         let rendered = err.to_string();
@@ -4374,12 +3143,31 @@ mod tests {
         );
     }
 
+    /// Build the key source the way `run()` does — from the classified custody states
+    /// rather than from the request, so a layer-B refusal is measured through the same
+    /// path production takes.
+    fn key_source_from(
+        config: &super::DeploymentRequest,
+    ) -> Result<Box<dyn super::KeySource + Send + Sync>, super::KeyError> {
+        let (custody, violations) = crate::config_state::custody::classify_and_validate(config);
+        assert!(violations.is_empty(), "fixture refused: {violations:?}");
+        let (tls_custody, violations) =
+            crate::config_state::tls_custody::classify_and_validate(config);
+        assert!(violations.is_empty(), "fixture refused: {violations:?}");
+        super::build_key_source(
+            &custody.expect("the fixture names a custody state"),
+            &tls_custody.expect("the fixture names a TLS custody state"),
+            &config.tls_cert,
+            &config.client_ca,
+        )
+    }
+
     // MCPS-076: the File key source is always constructible (default + dev builds).
     #[test]
     fn file_key_source_is_always_constructible() {
         let config = parse_args(&minimal_durable()).expect("parse");
         assert_eq!(config.key_source, KeySourceKind::File);
-        assert!(super::build_key_source(&config).is_ok());
+        assert!(key_source_from(&config).is_ok());
     }
 
     // ADR-MCPS-028 §B/§C: cloud-KMS key-source CLI wiring.
@@ -4498,7 +3286,12 @@ mod tests {
     fn aws_kms_web_identity_is_off_by_default_and_on_when_named() {
         // A durable replay cache: `minimal()` omits it, and the unsafe-config guard
         // rejects the in-memory default before parsing gets this far.
-        let durable = args(&["--replay-cache", "file", "--replay-path", "/replay"]);
+        let durable = args(&[
+            "--replay-redis-url",
+            "redis://127.0.0.1:6379",
+            "--replay-durability-tier",
+            "redis-wait-quorum:1:100",
+        ]);
 
         let mut a = minimal();
         a.splice(0..0, durable.clone());
@@ -4717,7 +3510,7 @@ mod tests {
         a.splice(0..0, aws_kms_flags());
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.key_source, KeySourceKind::AwsKms);
-        let err = super::build_key_source(&config)
+        let err = key_source_from(&config)
             .err()
             .expect("default build must refuse an aws-kms key source");
         assert!(
@@ -4734,7 +3527,7 @@ mod tests {
         a.splice(0..0, gcp_kms_flags());
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.key_source, KeySourceKind::GcpKms);
-        let err = super::build_key_source(&config)
+        let err = key_source_from(&config)
             .err()
             .expect("default build must refuse a gcp-kms key source");
         assert!(
@@ -4902,17 +3695,8 @@ mod tests {
         assert!(err.contains("--bind"), "got: {err}");
     }
 
-    #[test]
-    fn file_replay_requires_path() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--replay-cache", "file"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--replay-path"), "got: {err}");
-    }
-
-    // Issue #3837: `--replay-cache shared` parses (it is a real selection) and
-    // requires a connection URL. It must declare a strict-acceptable durability tier
-    // (the weaker `redis-async` tier is rejected, see
+    // A Redis quorum tier requires a connection URL, and must be strict-acceptable (the
+    // weaker `redis-async` tier is rejected, see
     // `strict_rejects_weak_replay_durability_tier`).
     #[test]
     fn parses_shared_replay_selection() {
@@ -4920,8 +3704,6 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--replay-cache",
-                "shared",
                 "--replay-redis-url",
                 "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
@@ -4929,7 +3711,6 @@ mod tests {
             ]),
         );
         let config = parse_args(&a).expect("parse");
-        assert_eq!(config.replay, ReplayKind::Shared);
         assert_eq!(
             config.replay_redis_url.as_deref(),
             Some("redis://127.0.0.1:6379")
@@ -4945,18 +3726,14 @@ mod tests {
 
     #[test]
     fn shared_replay_requires_url() {
-        // A Redis tier is declared, so the missing piece is the connection URL.
-        // (With no tier the earlier durability-tier guard fires first; that is
-        // covered by `shared_replay_requires_durability_tier`.)
+        // A Redis tier the strict posture accepts is declared, so the missing piece is the
+        // connection URL. (A sub-strict tier names no state at all, and is refused for
+        // that instead; with no tier the durability-tier clause fires, covered by
+        // `shared_replay_requires_durability_tier`.)
         let mut a = minimal();
         a.splice(
             0..0,
-            args(&[
-                "--replay-cache",
-                "shared",
-                "--replay-durability-tier",
-                "redis-async",
-            ]),
+            args(&["--replay-durability-tier", "redis-wait-quorum:1:100"]),
         );
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("--replay-redis-url"), "got: {err}");
@@ -4968,12 +3745,7 @@ mod tests {
         let mut a = minimal();
         a.splice(
             0..0,
-            args(&[
-                "--replay-cache",
-                "shared",
-                "--replay-redis-url",
-                "redis://127.0.0.1:6379",
-            ]),
+            args(&["--replay-redis-url", "redis://127.0.0.1:6379"]),
         );
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("--replay-durability-tier"), "got: {err}");
@@ -4985,8 +3757,6 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--replay-cache",
-                "shared",
                 "--replay-redis-url",
                 "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
@@ -5010,23 +3780,12 @@ mod tests {
     #[test]
     fn linearizable_tier_without_cpstore_endpoint_fails_closed() {
         let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--replay-cache",
-                "shared",
-                "--replay-durability-tier",
-                "linearizable",
-            ]),
-        );
+        a.splice(0..0, args(&["--replay-durability-tier", "linearizable"]));
         let err = parse_args(&a).unwrap_err();
         assert!(
-            err.contains("--cpstore-etcd-endpoint"),
+            err.contains("--replay-durability-tier linearizable requires")
+                && err.contains("--cpstore-etcd-endpoint"),
             "LINEARIZABLE without a CPStore endpoint must fail closed naming the flag; got: {err}"
-        );
-        assert!(
-            err.to_lowercase().contains("never") || err.to_lowercase().contains("forbidden"),
-            "the error must state the claim is not silently downgraded; got: {err}"
         );
     }
 
@@ -5038,8 +3797,6 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--replay-cache",
-                "shared",
                 "--replay-durability-tier",
                 "linearizable",
                 "--cpstore-etcd-endpoint",
@@ -5047,7 +3804,6 @@ mod tests {
             ]),
         );
         let config = parse_args(&a).expect("parse");
-        assert_eq!(config.replay, ReplayKind::Shared);
         assert_eq!(
             config.replay_durability_tier,
             Some(crate::replay_tier::ReplayDurabilityTier::Linearizable)
@@ -5069,12 +3825,10 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--replay-cache",
-                "shared",
                 "--replay-redis-url",
                 "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
-                "redis-async",
+                "redis-wait-quorum:1:100",
                 "--cpstore-etcd-endpoint",
                 "http://127.0.0.1:2379",
             ]),
@@ -5086,34 +3840,12 @@ mod tests {
         );
     }
 
-    // #69 — the CP/LINEARIZABLE builder fails closed in a build WITHOUT the
-    // cpstore_etcd feature: the LINEARIZABLE claim is forbidden without the CP
-    // backend and is never downgraded. Compiled only when the feature is OFF.
-    #[cfg(not(feature = "cpstore_etcd"))]
-    #[test]
-    fn default_build_cpstore_replay_fails_closed() {
-        let err = super::build_cpstore_replay_cache(
-            "http://127.0.0.1:2379",
-            300,
-            Some(std::time::Duration::from_secs(30)),
-            Some(std::time::Duration::from_secs(30)),
-        )
-        .err()
-        .expect("a build without cpstore_etcd must refuse the LINEARIZABLE cache");
-        assert!(
-            err.contains("cpstore_etcd feature"),
-            "expected a clear feature-missing message; got: {err}"
-        );
-    }
-
     #[test]
     fn rejects_unknown_durability_tier() {
         let mut a = minimal();
         a.splice(
             0..0,
             args(&[
-                "--replay-cache",
-                "shared",
                 "--replay-redis-url",
                 "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
@@ -5249,93 +3981,6 @@ mod tests {
                 "revocation tier '{flag}' must be rejected"
             );
         }
-    }
-
-    #[test]
-    fn unknown_replay_cache_lists_shared() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--replay-cache", "cluster"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("memory|file|shared"), "got: {err}");
-    }
-
-    // Issue #3837: in a DEFAULT build there is no shared replay backend, so
-    // constructing the shared replay cache must FAIL CLOSED with the clear
-    // not-yet-available error — never silently degrade to a non-shared cache.
-    // Mirrors the env-keysource gate. Under `--features redis_replay` (#4028) the
-    // real Redis backend is wired instead, so this default-build assertion is
-    // compiled only when that feature is OFF.
-    #[cfg(not(feature = "redis_replay"))]
-    #[test]
-    fn default_build_shared_replay_fails_closed() {
-        let err = super::build_shared_replay_cache(
-            "redis://127.0.0.1:6379",
-            300,
-            Some(std::time::Duration::from_secs(30)),
-            Some(std::time::Duration::from_secs(30)),
-            &crate::replay_tier::ReplayDurabilityTier::RedisAsyncBounded,
-        )
-        .err()
-        .expect("this build must refuse the shared replay cache");
-        assert!(
-            err.contains("not yet available in this build"),
-            "expected a clear not-yet-available message; got: {err}"
-        );
-    }
-
-    // Phase 0 (production packaging): under `--features redis_replay` the shared
-    // replay cache wires the REAL Redis backend. If Redis is UNREACHABLE at startup
-    // (nothing listening → connection REFUSED), construction must FAIL CLOSED
-    // (return Err) so the proxy refuses to start rather than accepting traffic with
-    // no replay safety. This drives the production path end-to-end:
-    //   build_shared_replay_cache (cli.rs)
-    //     → RedisAtomicReplayStore::connect_with (redis_store.rs)
-    //       → bounded_connect → get_connection_with_timeout → connection refused
-    //         → ReplayStoreError::Unavailable → Err(String) out of the builder.
-    // Distinct from `stalled_redis_fails_closed_within_timeout_not_hang` in
-    // redis_store.rs, which covers the SINKHOLE (TCP accepts, never answers) case;
-    // here NOTHING is listening, so the connect is REFUSED immediately — fast and
-    // deterministic, NOT a slow timeout.
-    //
-    // RED without fail-closed: if `connect_with`/`bounded_connect` swallowed the
-    // connect error and returned a degraded non-failing cache, this returns Ok and
-    // the `expect` on `.err()` panics — the test fails. Proven by neutralization.
-    #[cfg(feature = "redis_replay")]
-    #[test]
-    fn connection_refused_redis_fails_closed_at_construction() {
-        // Port 1 on loopback has nothing listening → connection REFUSED at once.
-        let unreachable = "redis://127.0.0.1:1/";
-        // A bounded connect deadline; a refused connect returns well inside it.
-        let connect_timeout = std::time::Duration::from_secs(2);
-
-        let start = std::time::Instant::now();
-        let result = super::build_shared_replay_cache(
-            unreachable,
-            300,
-            Some(connect_timeout),
-            Some(std::time::Duration::from_secs(2)),
-            &crate::replay_tier::ReplayDurabilityTier::RedisAsyncBounded,
-        );
-        let elapsed = start.elapsed();
-
-        let err = result
-            .err()
-            .expect("an unreachable Redis must make the shared replay cache FAIL CLOSED");
-        // The builder maps the Unavailable store error into its "shared replay
-        // cache: ..." String — assert we got that fail-closed surface, not a
-        // degraded usable cache.
-        assert!(
-            err.contains("shared replay cache"),
-            "expected the fail-closed shared-replay-cache error; got: {err}"
-        );
-        // Connection-REFUSED is immediate: it must complete well within the bounded
-        // connect deadline (NOT hang to the full timeout). Generous upper bound to
-        // stay robust on a loaded CI box while still proving boundedness.
-        assert!(
-            elapsed < connect_timeout,
-            "refused connect must fail closed PROMPTLY (well inside the {connect_timeout:?} \
-             deadline); took {elapsed:?}"
-        );
     }
 
     #[test]
@@ -5500,11 +4145,15 @@ mod tests {
         assert!(err.contains("enforce NOTHING"), "got: {err}");
     }
 
+    /// A trailing or doubled comma must not silently contribute a deny-list entry that
+    /// names no file. The split is the CLI's; what the resulting list may contain is X6's,
+    /// which refuses a deny-list no authorization profile will read at all.
     #[test]
     fn empty_revocation_list_segment_is_rejected() {
         let mut a = minimal();
         a.splice(0..0, args(&["--revocation-list", "/a,,/b"]));
-        assert!(parse_args(&a).unwrap_err().contains("empty path segment"));
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--revocation-list"), "got: {err}");
     }
 
     #[test]
@@ -5531,45 +4180,6 @@ mod tests {
     }
 
     #[test]
-    fn load_revocation_list_reads_ids_skipping_blanks_and_comments() {
-        let path = std::env::temp_dir().join(format!("mcp_re_rev_ok_{}.txt", std::process::id()));
-        std::fs::write(
-            &path,
-            "# revoked grants\ngrant-1\n\n  grant-2  \n# trailing comment\ngrant-3\n",
-        )
-        .expect("write");
-        let ids = load_revocation_list(&[path.to_string_lossy().into_owned()]).expect("load");
-        std::fs::remove_file(&path).ok();
-        assert_eq!(
-            ids,
-            vec![
-                "grant-1".to_string(),
-                "grant-2".to_string(),
-                "grant-3".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn load_revocation_list_missing_file_fails_closed() {
-        let path =
-            std::env::temp_dir().join(format!("mcp_re_rev_absent_{}.txt", std::process::id()));
-        std::fs::remove_file(&path).ok();
-        let err = load_revocation_list(&[path.to_string_lossy().into_owned()]).unwrap_err();
-        assert!(err.contains("revocation list"), "got: {err}");
-    }
-
-    #[test]
-    fn load_revocation_list_with_no_ids_fails_closed() {
-        let path =
-            std::env::temp_dir().join(format!("mcp_re_rev_empty_{}.txt", std::process::id()));
-        std::fs::write(&path, "# only comments\n\n   \n").expect("write");
-        let err = load_revocation_list(&[path.to_string_lossy().into_owned()]).unwrap_err();
-        std::fs::remove_file(&path).ok();
-        assert!(err.contains("no revocation ids"), "got: {err}");
-    }
-
-    #[test]
     fn repeated_client_crl_flags_accumulate() {
         let mut a = minimal_durable();
         a.splice(
@@ -5586,27 +4196,15 @@ mod tests {
     #[test]
     fn empty_client_crl_segment_errors() {
         // A trailing comma (or empty value) must not silently load zero CRLs and
-        // quietly disable revocation — it is a clear error.
+        // quietly disable revocation — it is a clear error. The `CrlRevocation` machine
+        // owns what the resulting list may contain.
         let mut a = minimal();
         a.splice(0..0, args(&["--client-crl", "/a.crl,"]));
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("empty path segment"), "got: {err}");
-    }
-
-    #[test]
-    fn missing_client_crl_file_fails_closed() {
-        // A configured-but-unreadable CRL path is a hard error, never a silently
-        // skipped revocation check.
-        let err =
-            super::load_client_crls(&["/no/such/MCPS3839_MISSING.crl".to_string()]).unwrap_err();
-        assert!(err.contains("MCPS3839_MISSING"), "got: {err}");
-    }
-
-    #[test]
-    fn no_crl_paths_loads_empty_vec() {
-        // The no-CRL path: empty input → empty vec (revocation disabled), no error.
-        let crls = super::load_client_crls(&[]).expect("empty load");
-        assert!(crls.is_empty());
+        assert!(
+            err.contains("--client-crl contains an empty path"),
+            "got: {err}"
+        );
     }
 
     // --- #4030 online OCSP flag parsing -------------------------------------
@@ -5678,7 +4276,7 @@ mod tests {
             args(&["--client-ocsp", "require", "--ocsp-responder-url", "   "]),
         );
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("non-empty URL"), "got: {err}");
+        assert!(err.contains("--ocsp-responder-url is empty"), "got: {err}");
     }
 
     /// `--client-ocsp require` fails closed in EVERY build configuration — the check
@@ -5716,78 +4314,6 @@ mod tests {
         assert!(err.contains("cannot be honored"), "got: {err}");
     }
 
-    #[test]
-    fn loads_a_trust_file() {
-        let key = SigningKey::from_seed_bytes(&[1u8; 32])
-            .public_key()
-            .to_b64url();
-        let json = format!(
-            r#"[{{"signer":"did:example:agent-1","key_id":"key-1","public_key":"{key}"}}]"#
-        );
-        let resolver = load_trust(json.as_bytes()).expect("load");
-        assert!(resolver.resolve("did:example:agent-1", "key-1").is_ok());
-        assert!(resolver.resolve("did:example:agent-1", "other").is_err());
-    }
-
-    #[test]
-    fn trust_file_with_bad_key_errors() {
-        let json = r#"[{"signer":"s","key_id":"k","public_key":"!!!not-base64"}]"#;
-        assert!(load_trust(json.as_bytes()).is_err());
-    }
-
-    #[test]
-    fn trust_file_with_duplicate_key_id_is_rejected() {
-        // Audit LOW (ledger `54aadf7b6257f126`): two entries sharing (signer,key_id)
-        // but DIFFERENT public_key must fail closed, not silently last-write-wins
-        // (a key-substitution primitive via an appended entry).
-        let k1 = SigningKey::from_seed_bytes(&[1u8; 32])
-            .public_key()
-            .to_b64url();
-        let k2 = SigningKey::from_seed_bytes(&[2u8; 32])
-            .public_key()
-            .to_b64url();
-        let json = format!(
-            r#"[{{"signer":"s","key_id":"k","public_key":"{k1}"}},
-                {{"signer":"s","key_id":"k","public_key":"{k2}"}}]"#
-        );
-        let err =
-            load_trust(json.as_bytes()).expect_err("duplicate (signer,key_id) must be refused");
-        assert!(err.contains("duplicate entry"), "got: {err}");
-    }
-
-    #[test]
-    fn trust_file_duplicate_same_key_is_also_rejected() {
-        // Uniform posture: even an exact-duplicate entry is a malformed file, not a
-        // silently-tolerated redundancy.
-        let k = SigningKey::from_seed_bytes(&[3u8; 32])
-            .public_key()
-            .to_b64url();
-        let json = format!(
-            r#"[{{"signer":"s","key_id":"k","public_key":"{k}"}},
-                {{"signer":"s","key_id":"k","public_key":"{k}"}}]"#
-        );
-        assert!(load_trust(json.as_bytes()).is_err());
-    }
-
-    #[test]
-    fn trust_file_same_signer_distinct_key_ids_is_fine() {
-        // The dedup is on the (signer,key_id) PAIR — one signer legitimately holds
-        // multiple key ids (rotation), which must still load.
-        let k1 = SigningKey::from_seed_bytes(&[4u8; 32])
-            .public_key()
-            .to_b64url();
-        let k2 = SigningKey::from_seed_bytes(&[5u8; 32])
-            .public_key()
-            .to_b64url();
-        let json = format!(
-            r#"[{{"signer":"s","key_id":"k1","public_key":"{k1}"}},
-                {{"signer":"s","key_id":"k2","public_key":"{k2}"}}]"#
-        );
-        let resolver = load_trust(json.as_bytes()).expect("distinct key ids load");
-        assert!(resolver.resolve("s", "k1").is_ok());
-        assert!(resolver.resolve("s", "k2").is_ok());
-    }
-
     // --- MCPS-3842 strict/production posture ("reject, not warn") ------------
     //
     // The strict/production posture is UNCONDITIONAL: the proxy always rejects an
@@ -5807,6 +4333,29 @@ mod tests {
         );
     }
 
+    /// The boundary consults that rule, so the refusal holds however the config was built.
+    ///
+    /// `parse_args` cannot produce this config — that is the point. The state is only
+    /// reachable by setting the public field, which is what a programmatic caller does.
+    #[test]
+    fn the_validation_boundary_refuses_a_target_uri_that_binds_nothing() {
+        let mut config = parse_args(&minimal_durable()).expect("the durable fixture parses");
+        assert!(
+            !unsafe_config_violations(&config)
+                .iter()
+                .any(|violation| violation.contains("--target-uri")),
+            "the parsed fixture's absolute target must not be a violation"
+        );
+
+        config.target_uri = "/mcp".to_string();
+        assert!(
+            unsafe_config_violations(&config)
+                .iter()
+                .any(|violation| violation.contains("--target-uri")),
+            "a scheme-less target must be refused at the boundary, not only by the parser"
+        );
+    }
+
     // ADR-MCPS-020: strict/production rejects a shared store declared at a tier
     // weaker than REDIS_WAIT_QUORUM.
     #[test]
@@ -5815,8 +4364,6 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--replay-cache",
-                "shared",
                 "--replay-redis-url",
                 "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
@@ -5834,8 +4381,6 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--replay-cache",
-                "shared",
                 "--replay-redis-url",
                 "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
@@ -5851,36 +4396,6 @@ mod tests {
         );
     }
 
-    // MCPS-79 (ADR-MCPS-049 clause 1): under --fleet a node-local FILE replay cache
-    // is rejected — it is durable on ONE node but unshareable across verifiers, so a
-    // peer would not see a replayed nonce. Contrast
-    // `single_node_accepts_file_replay_cache`: the same file cache is valid WITHOUT
-    // --fleet (single verifier). This is the orthogonality of the fleet dimension
-    // and the (always-on) strict posture made executable.
-    #[test]
-    fn strict_fleet_rejects_file_replay_cache() {
-        let mut a = minimal();
-        a.splice(0..0, durable_replay());
-        a.splice(0..0, args(&["--fleet"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--fleet"), "got: {err}");
-        assert!(err.contains("node-local"), "got: {err}");
-        assert!(err.contains("shared"), "got: {err}");
-    }
-
-    // MCPS-79: under --fleet the node-local in-memory cache is likewise rejected (it
-    // is also rejected as non-durable, #90 — but the --fleet reason must be present
-    // so the operator learns the cross-verifier property, not just the restart-
-    // durability one).
-    #[test]
-    fn strict_fleet_rejects_memory_replay_cache() {
-        let mut a = minimal(); // default replay backend is in-memory
-        a.splice(0..0, args(&["--fleet"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--fleet"), "got: {err}");
-        assert!(err.contains("node-local"), "got: {err}");
-    }
-
     // MCPS-79: --fleet ACCEPTS a shared cache at a strict-production durability tier
     // — the one posture that maintains cross-verifier replay state. No fleet
     // violation must remain.
@@ -5891,8 +4406,6 @@ mod tests {
             0..0,
             args(&[
                 "--fleet",
-                "--replay-cache",
-                "shared",
                 "--replay-redis-url",
                 "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
@@ -5969,34 +4482,17 @@ mod tests {
         );
     }
 
-    // #90 (ADR-MCPS-014/020): the DEFAULT replay backend is the non-durable
-    // in-memory cache, which loses admitted nonces on restart and re-opens a replay
-    // window for still-fresh captured envelopes. Under --strict it is a hard parse
-    // error directing the operator at a durable backend.
+    // #90 (ADR-MCPS-014/020): a command line that declares no replay configuration is a
+    // hard parse error, not a fall-back to something weaker. Saying nothing about replay
+    // must not become a way to run without it.
     #[test]
-    fn strict_rejects_in_memory_replay_default() {
-        // minimal() omits --replay-cache, so it defaults to the non-durable
-        // in-memory backend — always a strict/production violation.
+    fn omitting_replay_configuration_is_refused() {
         let err = parse_args(&minimal()).unwrap_err();
-        assert!(err.contains("--replay-cache memory"), "got: {err}");
-        // The message must direct to BOTH durable options (single-node + horizontal).
-        assert!(err.contains("--replay-cache file"), "got: {err}");
-        assert!(err.contains("--replay-cache shared"), "got: {err}");
-    }
-
-    // #90: the durable single-node `file` backend is NOT a strict violation — a
-    // proxy restart re-reads its admitted nonces from disk, so no restart window
-    // re-opens. The minimal config with `--replay-cache file` must parse Ok with no
-    // replay strict violation.
-    #[test]
-    fn strict_accepts_file_replay_backend() {
-        let config = parse_args(&minimal_durable()).expect("durable file replay must parse");
-        assert_eq!(config.replay, ReplayKind::File);
+        assert!(err.contains("--replay-durability-tier"), "got: {err}");
+        // The remedy must name states that can actually start.
         assert!(
-            unsafe_config_violations(&config)
-                .iter()
-                .all(|v| !v.contains("--replay-cache")),
-            "a durable file replay must not be a replay strict violation"
+            err.contains("redis-wait-quorum") || err.contains("linearizable"),
+            "the refusal must name a startable tier: {err}"
         );
     }
 
@@ -6009,8 +4505,6 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--replay-cache",
-                "shared",
                 "--replay-redis-url",
                 "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
@@ -6018,12 +4512,11 @@ mod tests {
             ]),
         );
         let config = parse_args(&a).expect("durable shared replay must parse");
-        assert_eq!(config.replay, ReplayKind::Shared);
         assert!(
             unsafe_config_violations(&config)
                 .iter()
-                .all(|v| !v.contains("--replay-cache memory")),
-            "a durable shared replay must not trip the in-memory replay violation"
+                .all(|v| !v.contains("--replay-durability-tier")),
+            "a durable shared replay must not trip the missing-tier violation"
         );
     }
 
@@ -6112,10 +4605,10 @@ mod tests {
     #[test]
     fn strict_reports_all_violations_at_once() {
         // The error aggregates every parse-time violation so the operator can fix
-        // the whole posture in one pass, not one error per restart. The bare
-        // in-memory replay default is itself a #90 violation and aggregates alongside
-        // the cert-lifetime and cn_legacy violations.
-        let mut a = minimal(); // in-memory replay default
+        // the whole posture in one pass, not one error per restart. A command line that
+        // declares no replay configuration is itself a violation and aggregates alongside
+        // the cert-lifetime and cn_legacy ones.
+        let mut a = minimal(); // declares no replay configuration
         a.splice(
             0..0,
             args(&[
@@ -6126,7 +4619,7 @@ mod tests {
             ]),
         );
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--replay-cache memory"), "got: {err}");
+        assert!(err.contains("--replay-durability-tier"), "got: {err}");
         assert!(err.contains("--max-client-cert-lifetime"), "got: {err}");
         assert!(err.contains("cn_legacy"), "got: {err}");
     }
@@ -6258,25 +4751,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn tls_signing_exclusivity_rejects_both_and_admits_either_or_neither() {
-        // ADR-MCPS-028 §G / issue #58: delegated XOR exported TLS signing.
-        // Exported only — the current default path — is fine.
-        assert!(super::validate_tls_signing_exclusivity(false, true).is_ok());
-        // Delegated only — what #59–#61 will configure — is fine.
-        assert!(super::validate_tls_signing_exclusivity(true, false).is_ok());
-        // Neither set — degenerate, not contradictory — is fine (the require()
-        // checks elsewhere catch a genuinely missing credential).
-        assert!(super::validate_tls_signing_exclusivity(false, false).is_ok());
-        // BOTH set — contradictory — fails closed.
-        let err = super::validate_tls_signing_exclusivity(true, true)
-            .expect_err("delegated AND exported TLS signing must be rejected");
-        assert!(
-            err.contains("delegated XOR exported"),
-            "the rejection must name the XOR rule, got: {err}"
-        );
-    }
-
     /// The leading PKCS#11-source flags (no `--tls-key`, no TLS label, no inner
     /// plane). Tests append the #59 toggles and then an `--inner-http-url` inner.
     fn pkcs11_lead_no_tls_key() -> Vec<String> {
@@ -6359,30 +4833,10 @@ mod tests {
     /// belief the TLS key is token-resident), so it fails closed.
     #[test]
     fn pkcs11_tls_label_without_pkcs11_source_is_rejected() {
-        let a = args(&[
-            "--bind",
-            "127.0.0.1:8443",
-            "--audience",
-            "did:example:server-1",
-            "--server-signer",
-            "did:example:server-1",
-            "--server-key-id",
-            "server-key-1",
-            "--signing-key-seed",
-            "/seed",
-            "--tls-cert",
-            "/cert",
-            "--tls-key",
-            "/key",
-            "--client-ca",
-            "/ca",
-            "--trust",
-            "/trust.json",
-            "--pkcs11-tls-key-label",
-            "mcp-re-tls",
-            "--inner-http-url",
-            "http://127.0.0.1:8080/mcp",
-        ]);
+        // Without `--tls-key`, so the only thing wrong with this deployment is where the
+        // label says its handshake key lives.
+        let mut a = minimal_durable_without("--tls-key");
+        a.extend(args(&["--pkcs11-tls-key-label", "mcp-re-tls"]));
         let err = parse_args(&a).expect_err("dangling TLS label must be rejected");
         assert!(
             err.contains("--pkcs11-tls-key-label has no effect without --key-source pkcs11"),
@@ -6398,209 +4852,6 @@ mod tests {
         let err = parse_args(&with_inner_http_url(pkcs11_lead_no_tls_key()))
             .expect_err("non-delegated pkcs11 must still require --tls-key");
         assert!(err.contains("--tls-key"), "got: {err}");
-    }
-
-    // ---- ADR-MCPS-021 Axis 2: build_revocation_resolver wiring ----------------
-    //
-    // These prove the helper does not merely label the tier but CHANGES runtime
-    // behavior: Tier 2 (Live) reflects a store revocation immediately (no caching),
-    // while Tier 1 (BoundedCache) caches within T. Uses the same ScriptedResolver
-    // test-double style as `trust_cache` / `live_trust`.
-
-    use super::build_revocation_resolver;
-    use crate::revocation_tier::RevocationTier;
-    use crate::trust_cache::UnixClock;
-    use mcp_re_core::TrustResolverError;
-    use mcp_re_core::VerificationKey;
-    use std::sync::atomic::AtomicI64;
-    use std::sync::atomic::AtomicUsize;
-    use std::sync::atomic::Ordering as AtomicOrdering;
-
-    const SEED_A_REV: [u8; 32] = [1u8; 32];
-
-    fn rev_key() -> VerificationKey {
-        SigningKey::from_seed_bytes(&SEED_A_REV).public_key()
-    }
-
-    /// A resolver whose outcome the test flips, counting inner consultations to
-    /// prove caching (or its absence). Mirrors the other modules' doubles.
-    struct ScriptedRevResolver {
-        outcome: Mutex<Result<VerificationKey, TrustResolverError>>,
-        calls: AtomicUsize,
-    }
-    impl ScriptedRevResolver {
-        fn new(initial: Result<VerificationKey, TrustResolverError>) -> Self {
-            ScriptedRevResolver {
-                outcome: Mutex::new(initial),
-                calls: AtomicUsize::new(0),
-            }
-        }
-        fn set(&self, outcome: Result<VerificationKey, TrustResolverError>) {
-            *self.outcome.lock().unwrap() = outcome;
-        }
-        fn calls(&self) -> usize {
-            self.calls.load(AtomicOrdering::SeqCst)
-        }
-    }
-    impl TrustResolver for ScriptedRevResolver {
-        fn resolve(
-            &self,
-            _signer: &str,
-            _key_id: &str,
-        ) -> Result<VerificationKey, TrustResolverError> {
-            self.calls.fetch_add(1, AtomicOrdering::SeqCst);
-            self.outcome.lock().unwrap().clone()
-        }
-    }
-
-    /// Box a shared scripted resolver as the helper's `base`, keeping a handle.
-    fn base_over(inner: Arc<ScriptedRevResolver>) -> Box<dyn TrustResolver + Send + Sync> {
-        struct Shared(Arc<ScriptedRevResolver>);
-        impl TrustResolver for Shared {
-            fn resolve(
-                &self,
-                signer: &str,
-                key_id: &str,
-            ) -> Result<VerificationKey, TrustResolverError> {
-                self.0.resolve(signer, key_id)
-            }
-        }
-        Box::new(Shared(inner))
-    }
-
-    fn fixed_clock(start: i64) -> (UnixClock, Arc<AtomicI64>) {
-        let now = Arc::new(AtomicI64::new(start));
-        let handle = now.clone();
-        let clock: UnixClock = Box::new(move || now.load(AtomicOrdering::SeqCst));
-        (clock, handle)
-    }
-
-    #[test]
-    fn live_tier_wrapping_reflects_a_store_revocation_immediately() {
-        // Proves Tier 2 (Live) was actually APPLIED: the wrapped resolver consults
-        // the inner store on every call, so a store-side revocation is rejected on
-        // the next request with no T wait and no caching.
-        let inner = Arc::new(ScriptedRevResolver::new(Ok(rev_key())));
-        let (clock, _now) = fixed_clock(1000);
-        let resolver =
-            build_revocation_resolver(&RevocationTier::Live, base_over(inner.clone()), clock);
-
-        resolver
-            .resolve("did:host", "key-1")
-            .expect("active resolves");
-        // Store flips to Revoked; NO clock advance (Live has no propagation window).
-        inner.set(Err(TrustResolverError::Revoked));
-        assert_eq!(
-            resolver.resolve("did:host", "key-1").unwrap_err(),
-            TrustResolverError::Revoked,
-            "Live wrapping reflects a store revocation immediately"
-        );
-        assert_eq!(
-            inner.calls(),
-            2,
-            "Live consults the inner store every call (no positive caching)"
-        );
-    }
-
-    #[test]
-    fn bounded_cache_tier_wrapping_caches_within_t() {
-        // Proves Tier 1 (BoundedCache) was actually APPLIED: within T a second
-        // resolve is served from cache and the inner store is consulted only once
-        // — the opposite of the Live behavior above, so the two tiers are
-        // genuinely distinct at runtime.
-        let inner = Arc::new(ScriptedRevResolver::new(Ok(rev_key())));
-        let (clock, _now) = fixed_clock(1000);
-        let resolver = build_revocation_resolver(
-            &RevocationTier::BoundedCache { t_secs: 60 },
-            base_over(inner.clone()),
-            clock,
-        );
-
-        resolver
-            .resolve("did:host", "key-1")
-            .expect("active resolves");
-        // A store revocation within T is NOT seen — the cached active entry holds.
-        inner.set(Err(TrustResolverError::Revoked));
-        resolver
-            .resolve("did:host", "key-1")
-            .expect("within T the cached active entry is served");
-        assert_eq!(
-            inner.calls(),
-            1,
-            "BoundedCache consults the inner store once within T (caching is in effect)"
-        );
-    }
-
-    #[test]
-    fn push_tier_wrapping_behaves_as_bounded_t_with_an_inert_channel() {
-        // Tier 3 over the inert in-process channel (no networked event source ships)
-        // behaves exactly as bounded-T: within T a second resolve is a cache hit; a
-        // store revocation is not picked up until T elapses.
-        let inner = Arc::new(ScriptedRevResolver::new(Ok(rev_key())));
-        let (clock, now) = fixed_clock(1000);
-        let resolver = build_revocation_resolver(
-            &RevocationTier::Push { t_secs: 60 },
-            base_over(inner.clone()),
-            clock,
-        );
-
-        resolver
-            .resolve("did:host", "key-1")
-            .expect("active resolves");
-        inner.set(Err(TrustResolverError::Revoked));
-        // Within T: still a cache hit (the inert channel delivers no push).
-        resolver
-            .resolve("did:host", "key-1")
-            .expect("within T the bounded-T fallback serves the cached entry");
-        assert_eq!(
-            inner.calls(),
-            1,
-            "inert-channel Tier 3 is bounded-T (cache hit within T)"
-        );
-        // Past T: the bounded window caps exposure and the revocation is picked up.
-        now.store(1000 + 60, AtomicOrdering::SeqCst);
-        assert_eq!(
-            resolver.resolve("did:host", "key-1").unwrap_err(),
-            TrustResolverError::Revoked,
-            "past T the bounded fallback re-resolves and picks up the revocation"
-        );
-        assert_eq!(inner.calls(), 2);
-    }
-
-    // `build_lb_assertion_binding` is never reached on the CLI happy path (the
-    // lb-assertion binding is refused at parse), so cover the pure builder directly by
-    // mutating a parsed Config — the wiring + the fail-closed key parse.
-    #[test]
-    fn build_lb_assertion_binding_wires_keys_and_fails_closed() {
-        let mut c = parse_args(&minimal_durable()).expect("parse");
-        assert!(
-            super::build_lb_assertion_binding(&c).expect("ok").is_none(),
-            "no binding when the selection is not lb-assertion"
-        );
-        c.binding = BindingKind::LbAssertion;
-        c.ingress_lb_keys = vec![("lb-1".to_string(), lb_pub_b64())];
-        assert!(super::build_lb_assertion_binding(&c)
-            .expect("build")
-            .is_some());
-        c.ingress_lb_keys = vec![("lb-x".to_string(), "not-a-key".to_string())];
-        assert!(
-            super::build_lb_assertion_binding(&c).is_err(),
-            "a malformed LB key must fail closed"
-        );
-    }
-
-    #[test]
-    fn load_trust_rejects_malformed_entries() {
-        assert!(load_trust(br#"{"not":"an array"}"#).is_err());
-        assert!(load_trust(br#"[{"key_id":"k","public_key":"x"}]"#)
-            .unwrap_err()
-            .contains("signer"));
-        assert!(load_trust(br#"[{"signer":"s","public_key":"x"}]"#)
-            .unwrap_err()
-            .contains("key_id"));
-        assert!(load_trust(br#"[{"signer":"s","key_id":"k"}]"#)
-            .unwrap_err()
-            .contains("public_key"));
     }
 
     #[test]
@@ -6639,6 +4890,140 @@ mod tests {
             a.drain(i..i + 2);
             let e = parse_args(&a).unwrap_err();
             assert!(e.contains(miss), "missing {miss} must be named; got: {e}");
+        }
+    }
+
+    /// R9-C001 — an authority a URL parser reads differently from the text it shows.
+    ///
+    /// `ureq` resolves a request URL with `url::Url::parse` and connects to its
+    /// `host_str()`, which reads `https://cloudkms.googleapis.com@evil.example.com` as host
+    /// `evil.example.com` with the recognisable half demoted to userinfo. Verified against
+    /// url 2.5.8 (what ureq 2.12.1 links): every string below resolves to
+    /// `evil.example.com`. That host receives the root-key trust bootstrap — and on GCP a
+    /// live workload-identity bearer token authorizing `asymmetricSign` on the ROOT
+    /// response-signing key.
+    ///
+    /// `http://localhost:80@evil.example.com` is the case that also defeats the loopback
+    /// exception: deriving the loopback host with `rsplit_once(':')` BEFORE userinfo is
+    /// stripped reads `localhost`, so a plaintext bearer token left the machine under a
+    /// rule written to stop exactly that.
+    #[test]
+    fn a_kms_endpoint_whose_authority_carries_userinfo_is_refused() {
+        let hostile = [
+            "https://cloudkms.googleapis.com@evil.example.com",
+            "https://kms.us-east-1.amazonaws.com@evil.example.com/",
+            "https://sts.eu-north-1.amazonaws.com@evil.example.com",
+            "http://localhost:80@evil.example.com",
+            "http://127.0.0.1:8080@evil.example.com",
+            "http://localhost@evil.example.com",
+            "https://user:pass@evil.example.com",
+            "https://@evil.example.com",
+        ];
+        for flag in [
+            "--aws-kms-endpoint",
+            "--aws-sts-endpoint",
+            "--gcp-kms-endpoint",
+        ] {
+            for endpoint in hostile {
+                let err = crate::config_state::custody::validated_kms_endpoint(flag, endpoint)
+                    .expect_err("an authority carrying userinfo must be refused");
+                assert!(
+                    err.contains(flag) && err.contains("userinfo"),
+                    "{flag} {endpoint}: the refusal must name the flag and the reason, got \
+                     {err:?}"
+                );
+            }
+        }
+        // And through the two boundaries a config actually crosses: the argv match arms,
+        // and `kms_endpoint_refusals` for a `DeploymentRequest` built in code — the three fields are
+        // public, and an embedder reaches key-source construction without a parser.
+        for endpoint in hostile {
+            for flag in ["--aws-kms-endpoint", "--gcp-kms-endpoint"] {
+                let err = with_kms_endpoint(flag, endpoint).expect_err("refused at parse");
+                assert!(
+                    err.contains(flag) && err.contains("userinfo"),
+                    "got {err:?}"
+                );
+            }
+            let mut config =
+                with_kms_endpoint("--gcp-kms-endpoint", "https://kms.example.internal")
+                    .expect("the base config parses");
+            config.aws_kms_endpoint = Some(endpoint.to_string());
+            config.aws_sts_endpoint = Some(endpoint.to_string());
+            config.gcp_kms_endpoint = Some(endpoint.to_string());
+            let refusals = crate::config_state::custody::kms_endpoint_refusals(&config);
+            assert_eq!(
+                refusals.len(),
+                3,
+                "{endpoint}: every endpoint field must be held to the rule, got {refusals:?}"
+            );
+        }
+    }
+
+    /// POSITIVE CONTROL for both refusals above, on all three flags.
+    ///
+    /// The endpoints an operator actually sets — the public Cloud KMS and KMS/STS hosts, a
+    /// regional or VPC-endpoint host, an in-cluster emulator with a port, and the loopback
+    /// `http://` emulator lane in every spelling — must still parse. A gate that refused
+    /// them all would satisfy every assertion above; that is precisely how round 8 shipped
+    /// three fail-closed regressions.
+    #[test]
+    fn the_kms_endpoints_an_operator_legitimately_sets_are_still_accepted() {
+        let legitimate = [
+            "https://cloudkms.googleapis.com",
+            "https://cloudkms.googleapis.com/",
+            "https://us-east1-cloudkms.googleapis.com",
+            "https://kms.us-east-1.amazonaws.com",
+            "https://sts.eu-north-1.amazonaws.com",
+            "https://vpce-0abc123-xy1z.kms.us-east-1.vpce.amazonaws.com",
+            "https://kms.emulator.svc.cluster.local:8443",
+            "https://10.0.0.5:8443",
+            // The LocalStack / KMS-emulator lane, in every spelling.
+            "http://localhost:4566",
+            "http://localhost:4566/",
+            "http://127.0.0.1:4566",
+            "http://127.0.0.1:4566/",
+            "http://[::1]:4566",
+            "http://localhost",
+            "http://127.0.0.1",
+            "http://[::1]",
+        ];
+        for flag in [
+            "--aws-kms-endpoint",
+            "--aws-sts-endpoint",
+            "--gcp-kms-endpoint",
+        ] {
+            for endpoint in legitimate {
+                let admitted = crate::config_state::custody::validated_kms_endpoint(flag, endpoint);
+                assert!(
+                    admitted.is_ok(),
+                    "{flag} {endpoint} is an endpoint an operator sets and must be accepted, \
+                     got {:?}",
+                    admitted.err()
+                );
+            }
+        }
+        // End to end through both boundaries. `--aws-sts-endpoint` is parsed only alongside
+        // `--aws-kms-use-web-identity` (an unrelated coherence rule), so its accept case is
+        // proved at the `DeploymentRequest` boundary, which is what `app::run` consults.
+        for endpoint in legitimate {
+            for flag in ["--aws-kms-endpoint", "--gcp-kms-endpoint"] {
+                assert!(
+                    with_kms_endpoint(flag, endpoint).is_ok(),
+                    "{flag} {endpoint} must parse"
+                );
+            }
+            let mut config =
+                with_kms_endpoint("--gcp-kms-endpoint", "https://kms.example.internal")
+                    .expect("the base config parses");
+            config.aws_kms_endpoint = Some(endpoint.to_string());
+            config.aws_sts_endpoint = Some(endpoint.to_string());
+            config.gcp_kms_endpoint = Some(endpoint.to_string());
+            assert_eq!(
+                crate::config_state::custody::kms_endpoint_refusals(&config),
+                Vec::<String>::new(),
+                "{endpoint} must be admissible on all three fields"
+            );
         }
     }
 }

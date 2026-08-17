@@ -21,7 +21,10 @@ the properties that matter are the same ones:
 - **one connection per exchange**, matching the proxy's framing.
 - **every bound fails closed**: a connect/read that stalls past ``timeout``, or a
   response past ``max_response_bytes``, raises rather than hanging or allocating without
-  bound.
+  bound. ``timeout`` is BOTH the per-socket bound and an aggregate wall-clock bound on
+  reading the response, because the first alone bounds nothing: every byte re-arms it,
+  so a peer trickling under it holds an exchange — and its concurrency slot —
+  indefinitely.
 
 There is no way to turn verification off. A helper with a ``verify=False`` knob is how
 mTLS deployments quietly become TLS-shaped plaintext, and the evidence layer above it
@@ -37,6 +40,7 @@ from __future__ import annotations
 import http.client
 import socket
 import ssl
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -93,8 +97,9 @@ class MtlsOptions:
     #: a port-forward, a test listener. The identity proven is still ``server_name``.
     connect_address: Optional[Tuple[str, int]] = None
 
-    #: Bound on connect and on each socket operation, in seconds. ``None`` disables it,
-    #: which lets a stalled peer hold an exchange open indefinitely.
+    #: Bound on connect, on each socket operation, and — as an aggregate wall clock — on
+    #: reading the whole response, in seconds. ``None`` disables all three, which lets a
+    #: stalled peer hold an exchange open indefinitely.
     timeout: Optional[float] = _DEFAULT_TIMEOUT
     #: Response bytes read before failing closed.
     max_response_bytes: int = _DEFAULT_MAX_RESPONSE_BYTES
@@ -188,6 +193,49 @@ class _MtlsConnection(http.client.HTTPSConnection):
         self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
 
 
+#: How much of the response is taken per read while the aggregate deadline is checked.
+#: A whole-response read cannot be interrupted, so the body is taken in pieces.
+_READ_CHUNK_BYTES = 64 * 1024
+
+
+def _read_bounded(response, options: MtlsOptions) -> bytes:
+    """Read the response body under BOTH bounds: the byte ceiling and a wall clock.
+
+    ``options.timeout`` on the socket is a PER-RECV bound: every byte that arrives
+    re-arms it, so a peer trickling just under it extends the total read without limit.
+    Each stalled exchange also holds a ``CapacityLimiter`` slot, so
+    ``max_concurrent_exchanges`` of them wedge the whole client session with no error and
+    no timeout. The Rust client leg this module mirrors caps total read time at the same
+    value (MCPS-093 ``read_response_bounded``); this is that cap.
+
+    ``timeout is None`` disables the per-recv bound, and disables this one too — that
+    knob means "no bound", and honouring it on one of the two would be a different
+    setting wearing the same name.
+
+    One byte past ``max_response_bytes`` is enough to know the ceiling was exceeded, and
+    stops a hostile length from being allocated to find out.
+    """
+    ceiling = options.max_response_bytes
+    deadline = None if options.timeout is None else time.monotonic() + options.timeout
+    chunks: list[bytes] = []
+    size = 0
+    while size <= ceiling:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise MtlsTransportError(
+                f"the aggregate response read exceeded {options.timeout}s "
+                f"(slow-loris trickle)"
+            )
+        want = min(_READ_CHUNK_BYTES, ceiling + 1 - size)
+        chunk = response.read(want)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        size += len(chunk)
+    if size > ceiling:
+        raise MtlsTransportError(f"response exceeded max_response_bytes ({ceiling})")
+    return b"".join(chunks)
+
+
 def _exchange(
     server_name: str,
     port: int,
@@ -222,13 +270,7 @@ def _exchange(
         connection.endheaders(body)
 
         response = connection.getresponse()
-        # One byte past the ceiling is enough to know it was exceeded, and stops a
-        # hostile length from being allocated to find out.
-        payload = response.read(options.max_response_bytes + 1)
-        if len(payload) > options.max_response_bytes:
-            raise MtlsTransportError(
-                f"response exceeded max_response_bytes ({options.max_response_bytes})"
-            )
+        payload = _read_bounded(response, options)
         # Lowercased and in wire order: the profile matches header names
         # case-insensitively, and the signature base is built from what arrived.
         return HttpReply(

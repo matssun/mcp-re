@@ -12,6 +12,402 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Removed — replay configuration is a durability tier and its witness; `--replay-cache` is gone (BREAKING)
+
+**Migration, in one line:** delete `--replay-cache` and `--replay-path` from your command
+lines and your chart values; keep `--replay-durability-tier` and its store locator.
+
+```
+removed:   --replay-cache memory | file | shared
+           --replay-path <path>
+
+required:  --replay-durability-tier redis-wait-quorum:<quorum>:<timeout_ms>
+             with --replay-redis-url <url>
+           — or —
+           --replay-durability-tier linearizable
+             with --cpstore-etcd-endpoint <url>
+```
+
+A command line still passing `--replay-cache shared` now fails with `unknown flag
+--replay-cache` rather than starting. The Helm chart no longer renders it; an install that
+pinned a chart version older than this one keeps working against its own proxy image, but
+a new chart with an old image (or the reverse) will not.
+
+**No replay backend is selected implicitly.** A deployment that declares no durability
+tier is refused at every ingress path — the parser, the validation boundary, and the
+classifier — rather than falling back to anything. There is nothing left to fall back to.
+
+**Why this is a security-model correction rather than a rename.** `--replay-cache` had one
+value that named a deployment and two that named refusals. `memory` kept admitted nonces
+in process memory, so a restart re-opened a replay window for every captured envelope
+still inside `expires_at + skew` — and it was also the value when the flag was omitted.
+`file` was refused under CF-01 as a state no build could establish. Keeping the selector
+meant keeping a type in which two of three variants were historical fiction, and keeping
+"missing configuration" as a path that quietly became the least safe option before being
+refused one stage later.
+
+Every representable replay state is now shared. That converts a rule into a property: the
+`--fleet` posture used to reject node-local replay kinds, and that clause is deleted
+because no such kind exists to reject. Fleet-safety is no longer a condition remembered at
+validation time; it holds by construction.
+
+Also removed: `mcp-re-proxy/src/durable_replay.rs` (`DurableReplayCache`), which
+implemented the `file` arm. No supported configuration had constructed it since CF-01.
+`SharedReplayCache` is unaffected — it is the shared store, exercised by the cross-replica
+coherence harness.
+
+The two sub-strict durability tiers (`redis-async`, `single-store-fail-closed`) still
+parse and are still refused as deployment states. They remain in the tier type because the
+dispatcher gates on them at runtime, which guards a tier constructed in-process rather
+than parsed.
+
+### Fixed — the named release-gate lanes point at test binaries that exist
+
+Consolidating the proxy's test binaries renamed the units the workflows invoke by
+name, and nothing checked that table. Twenty-four `cargo test --test <name>`
+invocations across four workflows and two example scripts named binaries that no
+longer exist. Only four went red: the cloud-KMS lanes and several live-infra lanes
+are gated, so their breakage would have surfaced on a billed nightly run against a
+real endpoint. Two of the four red ones were ADR-MCPRE-051 §7 release gates — the
+cross-replica replay race and the inner-plane concurrency proof — which had been
+erroring out rather than running since the merge.
+
+Every lane now selects a module inside its merged binary and runs through
+`scripts/run_test_lane.sh`, which refuses a lane that exited 0 having run zero
+tests. That guard is not decoration: a missing *binary* exits 101, but a missing
+*filter* prints `0 passed` and exits 0, and the `--ignored` live-cloud lanes would
+select nothing twice over. `scripts/cargo_test_target_gate.py` asserts both halves
+statically — every `--test` names a real target, every `module::` filter names a
+module its binary declares — in the local gate and in CI.
+
+### Fixed — the security boundary no longer claims an authorization control it does not run
+
+`docs/spec/security-boundary.md` listed deny-before-dispatch authorization among the
+things MCP-RE protects, in the present tense. It does not: `--authz reference` is refused
+at configuration validation, so every accepted deployment runs with authorization off.
+The entry now states the boundary rather than the absence — MCP-RE answers *who signed
+this* and *which channel it arrived on*, never *may-act*, and authorization must be
+enforced upstream of the proxy. The document is `type:HITL`; the owner approved the
+replacement text and it is applied here.
+
+ADR-MCPS-013 (#362) and ADR-MCPS-018 (#367) moved to `status:deprecated` and
+`status:superseded`, so `docs/adr/README.md` no longer needs the note recording that the
+index and the discussion labels disagreed.
+
+### Changed — a conformance category must have an executable witness
+
+`docs/conformance-guide.md` advertised four conformance categories. Two of them had no
+harness anywhere in the tree. The guide named a corpus at `mcp-re-core/tests/vectors/`
+that does not exist, an aggregate `conformance_manifest.json` and `drift_guard_test` that
+do not exist, and a `PolicyEvaluator` type that does not exist; its corpus-pinning section
+published two digests and told the reader to reproduce them with a script that cannot run,
+because the bytes it hashes were deleted with the corpus.
+
+The guide now advertises the three categories that have both a corpus and a target that
+reaches it — HTTP profile, delegated-required credentials, and SCITT receipts — and states
+the pinning mechanism that is real: each corpus manifest carries a per-fixture SHA-256 and
+a `corpus_digest`, recomputed from the checked-in bytes at test time, with a tampered
+fixture as the negative control. Properties proven by targets rather than by vectors are
+pointed at the security traceability manifest, which is drift-guarded and does exist.
+
+`scripts/conformance_claims_gate.py` now holds the guide to the tree in both directions: an
+advertised category must name a corpus that exists and a declared `nt_rust_test` whose
+`data` reaches it, every corpus in the tree must be advertised, and a published
+`corpus_digest` must be recomputed by some harness that reaches its corpus. Both edges
+matter — a corpus with no harness is never executed, and a category whose corpus and
+harness were both deleted keeps advertising coverage that exists nowhere.
+
+**Phase-5 authorization is not a conformance category.** `--authz reference` is refused at
+configuration, so there is no implementation for its vectors to run against.
+`mcp-re-policy/tests/vectors/phase5_vectors.json` is retained — its generator is gone and
+this is the only remaining copy — but reclassified in place as preserved design input
+rather than evidence.
+
+Removed with it: `scripts/corpus_digest.py`, which hashed a corpus no longer in the tree,
+and the `mcp-re-conformance` **library**. That library had no consumer anywhere — no
+crate, test, or binary named `mcp_re_conformance::` — and its modules loaded the same
+absent corpus while its own docs described a `runner::RunReport` and a
+`target::ConformanceTarget` that do not exist. It also carried the only
+`mcp-re-conformance → mcp-re-proxy` dependency edge. The package keeps everything that
+carries evidence: the three corpora and the sixteen test targets that replay and guard
+them. It is now test-only and has no library.
+
+## [0.16.0] — 2026-08-10
+
+### Added — the exchange lifecycle is a value, and refusals derive their retry contract from it (ADR-MCPRE-057, ADR-MCPRE-058)
+
+The serving path has always moved through a fixed sequence of states; until now no value
+held which one it was in. Each state was a position of the program counter, and a refusal
+answered "may the client simply retry this?" from its own position in the function.
+
+That could not be answered locally. It needs two facts at once — whether the backend ran,
+and whether a human's approval was already spent — and one reachable combination was
+unrepresented: a continuation consumed to enforce one-shot, followed by a refusal before
+the dispatch. The approval is destroyed, the action never ran, and an ordinary retry cannot
+recover it. Such refusals now carry
+`retry_safety: unsafe_without_new_elicitation` with `continuation_status: consumed`.
+
+`exchange_state.rs` holds the lifecycle as a closed transition relation with an explicit
+execution threshold, plus four sibling projections — the fate of the approval this exchange
+spent, whether the backend can have acted, who authored the response bytes, and the fate of
+the continuation leg this exchange's own reply opens. Correctness lives in invariants over
+that tuple rather than in an enumeration of it, and the consequence of an exchange is
+monotone by construction: no transition and no store observation can move it to a weaker
+claim about what has happened.
+
+Nothing about the request-side wire format changed for an exchange that succeeds.
+
+### Changed — every post-dispatch failure now states that the call may have executed
+
+Refusals below the execution threshold used to say nothing about it. Exactly one code
+carried the contract — `mcp-re.evidence_retention_indeterminate`, which the rejection
+builder special-cased by name — so an unrecognized `resultType`, a response-signing
+failure, a 202 that could not be signed, and a continuation-record failure at **HTTP 503**
+all returned a bare status after the tool had already run. 503 is the status clients retry,
+and the retry carries a fresh nonce that passes replay admission.
+
+Every rejection emitted at or after the inner dispatch now carries:
+
+```json
+{ "execution_status": "possibly_executed", "retry_safety": "unsafe_without_reconciliation" }
+```
+
+derived from the exchange machine rather than from a list of wire codes, so a
+post-dispatch exit added later cannot silently fail to be on the list.
+`evidence_retention_indeterminate` keeps its more specific body, which additionally names
+which obligation failed.
+
+Pre-dispatch refusals are unchanged, and still report that nothing executed.
+
+### Changed — a backend reply must be a legal JSON-RPC 2.0 response before it is signed
+
+MCP requires MCP messages to follow JSON-RPC 2.0. MCP-RE did not check it. A backend reply
+was signed and served with no verification that `jsonrpc` was `"2.0"`, that the response
+`id` matched the request it answered, or that exactly one of `result` / `error` was
+present — and a body that was not JSON at all was signed as opaque payload, whereupon the
+client's own verifier rejected a message the enforcement boundary had vouched for.
+
+Worse, what checking existed was **conditional on unrelated configuration**: the only real
+envelope inspection lived inside the MRTR open-leg recorder, which returns early when no
+continuation store is wired. Whether MCP-RE refused a malformed protocol response depended
+on whether an operator had configured Redis.
+
+Validation is now unconditional and runs before the signature. A reply that is not a legal
+response to the outstanding request is refused with **502 `mcp-re.upstream_response_invalid`**.
+
+The check stops at the protocol control envelope — syntax, `jsonrpc`, `id` correlation,
+`result` XOR `error`, the `error` member's shape, and the MCP `resultType` /`requestState`
+lifecycle members. Everything else inside `result` remains opaque application payload that
+MCP-RE carries and signs without reading. A JSON-RPC error is treated as what it is: a
+valid terminal protocol response, distinct from both a malformed reply and a transport
+failure.
+
+### Changed — MCP-RE no longer returns an `input_required` response it cannot honour
+
+**Deployments using elicitation / multi-round-trip flows must configure continuation
+storage.**
+
+A deployment with no continuation store served an `input_required` reply with a 200 and
+then refused every answer leg that followed, as `mcp-re.continuation_binding_failed` — a
+code that on the wire reads like an attack signal. The proxy was emitting a state
+transition it had kept nothing to honour, and the client discovered it one leg later.
+
+The refusal now happens where the obligation is incurred:
+**503 `mcp-re.replay_cache_unavailable`** with `execution_status: possibly_executed`. Set
+`--replay-redis-url` to serve these flows. The startup posture line already announced this
+seam as OFF; it now announces a refusal rather than a deferred one.
+
+### Changed — an inner-transport failure is no longer served as a successful response
+
+The inner-server seam returned bytes and nothing else, so six outcomes arrived identical
+and were signed at **HTTP 200** as `-32603 "inner server unavailable"` — indistinguishable
+from the backend genuinely replying with that error:
+
+```text
+no in-flight permit / every backend ejected   nothing was transmitted
+connect error, per-request timeout            transmitted, no answer — execution UNKNOWN
+non-2xx status, non-JSON body                 the backend answered, unusably
+```
+
+A timeout is the textbook may-have-executed case, and serving it as a signed 200 was the
+strongest available signal that the exchange had completed normally.
+
+The seam now reports which outcome occurred, and the exchange derives consequence from it:
+
+| outcome | now | retry |
+| --- | --- | --- |
+| the plane cannot begin a dispatch | 503 `mcp-re.inner_plane_unavailable`, refused **before** the execution threshold | safe — nothing was transmitted |
+| transport failed after transmission | 504 `mcp-re.inner_dispatch_indeterminate` | `possibly_executed` |
+| the backend answered unusably | 502 `mcp-re.upstream_response_invalid` | `possibly_executed` |
+
+The rejection body is still a JSON-RPC error object, so parsers are unaffected; the status
+and the added consequence statement are what changed. A refused connection is deliberately
+classified as indeterminate rather than as a definite non-execution, because the transport
+cannot prove nothing reached the peer.
+
+Local saturation and a fully-ejected backend set are the cases that got strictly better:
+they are facts about the proxy, knowable without transmitting anything, and are now
+retry-safe refusals instead of exchanges that had to report `possibly_executed`.
+
+### Fixed — terminal trust staleness and signing retirement could be reversed by an in-flight worker
+
+Both the trust and delegated-signing planes retire their artifact on drop and then halt
+their worker, but a worker observes its halt only between cycles. A trust reload already
+mid-read could complete afterwards and call `mark_fresh`, reviving a resolver whose only
+remaining job was to refuse; a delegated mint already in flight could publish after
+`retire`, handing a signer that outlived its plane a fresh key and a fresh `exp` that
+nothing rotates and no trust-epoch advance can revoke.
+
+Neither is closeable by ordering at the drop site — the two steps are on different threads.
+Each child machine now distinguishes "temporarily unhealthy, and allowed to recover" from
+"the owner is terminating, and recovery is forbidden", with a terminal latch for the
+second. The recoverable transitions stay recoverable.
+
+### Fixed — three configuration rules could be bypassed by a programmatically built `Config`
+
+Each rule was enforced in `parse_args` and nowhere else, so a `Config` assembled in code —
+an embedder, a harness, a bespoke launcher — reached the serving path having met no parser.
+All three now live at the validation boundary, which no route into the runtime can skip.
+Command-line users see the same diagnostics as before.
+
+* **An empty or scheme-less `--target-uri` disabled the request-target reconstruction
+  check** rather than weakening it. The comparison is answerable only for an absolute
+  target, and the "no mismatch" answer propagated for every request while the deployment
+  went on reporting the binding as in force. The verifier's own audience comparison cannot
+  catch it: both sides are the same configured string.
+* **Contradictory TLS-key custody** — a delegated, non-exporting handshake key asserted
+  alongside an exported one — means the key is custodied in a device it is supposed never
+  to leave while a copy of it sits in a file on the pod. Nothing downstream noticed,
+  because the key-source builder ignores a selector belonging to another source.
+* **`--admission-allow-degraded` with a zero propagation bound.** The old diagnostic
+  claimed a zero window "would fail closed on every unreachable-authority call". It does
+  not: P is a floor on the degraded window, never the whole of it, so an unreachable
+  authority still admitted any assertion younger than the clock-skew tolerance — a window
+  in which a revoked workload keeps being served, on a deployment that configured no window
+  at all.
+
+### Changed — every optional capability states ON or OFF at startup (ADR-MCPRE-056)
+
+Four seams — the verified-context carrier, online OCSP, the MCP transport contract and
+admission currency — announced themselves only when enabled, so an operator reading a
+startup transcript could not tell "this capability is off here" from "this build does not
+have it". Those call for different responses (set a flag versus replace the binary), and
+the cost of guessing wrong is that a security control stays off.
+
+All seven optional capabilities now declare a posture exactly once, and the proxy refuses
+to serve unless every one of them has — in every build profile, not only under debug
+assertions. Each OFF line names what turns the capability on, or why nothing can, and says
+what the deployment does not enforce without it.
+
+### Changed — the composition root, the runtime lifecycle, and teardown have owners
+
+Startup was a single 782-line function in which roughly 38 fallible steps held their
+successful acquisitions as plain locals, so a later failure unwound them in reverse
+declaration order rather than the documented teardown order. Resources are now owned the
+moment they are acquired, and the runtime lifecycle is a value with a closed transition
+relation rather than a set of program-counter positions.
+
+No behaviour changes on a successful startup. A FAILED startup now releases resources in
+the documented order.
+
+### Fixed — the trust store published two locks that could be read torn
+
+The verification keys and the kid → signer coordinate were held in separate locks under a
+comment saying both "must move in the same swap". They did not: between the two write
+locks the store held a resolver from one read of the trust file and a signer map from the
+previous one. The window failed closed, but by accident of how resolution consumes the
+composite pair rather than by anything the publication guaranteed. Both views now come from
+one read, behind one lock.
+
+### Added — the formal-verification platform, phases 0–4 (ADR-MCPRE-059, in progress)
+
+An evidence graph that computes freshness rather than reporting structure: a unit is fresh
+only while every input its previous conclusion depended on still hashes the same, with no
+mutable clean flag anywhere. Attestations record the fingerprint components rather than a
+single digest, because "something moved" cannot tell a reviewer which input moved.
+
+This is developer-facing infrastructure with no runtime surface. The ADR is not complete
+and the Verus pilot boundary is unresolved — Verus verifies per crate, and the candidate
+lifecycle modules live in a crate large enough that the trusted computing base would
+swamp the theorem.
+
+
+### Changed — `--authz reference` states its refusal once, at the validation boundary
+
+The refusal of the reference authorization profile was stated in two places with two
+different diagnostics — one at parse time, one about 180 lines into startup. Both were
+true and both fired, so nothing could slip past either; but one prohibition enforced at
+two arbitrary altitudes is ambiguous about which layer owns it, and the two messages had
+already drifted apart. They are now one predicate carrying both facts (the reference
+profile is never the production authority, and authorization is not wired on the RFC 9421
+serving path at all), consulted by parse-time validation and by the programmatic boundary.
+
+A programmatically built configuration now refuses before any resource is materialized
+rather than partway through startup. Command-line users see no change.
+
+### Changed — the two undeployable transport bindings are refused at the validation boundary
+
+`--transport-binding lb-assertion` (Mode B) and `--transport-binding attested-ingress`
+(Mode C) are refused by configuration validation rather than by the composition root. No
+mode became deployable and none was removed; both were already refused before any request
+was served.
+
+The two halves were different problems. `lb-assertion` was refused by configuration
+validation *and* again in the composition root — one rule at two altitudes, which is not
+redundant defence but a duplicated invariant waiting to drift; the second copy is gone.
+`attested-ingress` was refused in the composition root and nowhere else, so a caller
+assembling a `Config` in code — an embedder, a harness, a bespoke launcher — reached the
+serving path carrying a binding whose verifier the async fleet does not consult, with
+identity coming from wherever the fallback strategy took it. That refusal moved to the
+boundary, where no construction path skips it.
+
+They also now refuse separately, naming the mode. One shared message read as a single
+unsupported feature when they are two decisions with different futures.
+
+Mode C is **retained** as a future capability rather than deleted; its verifier keeps its
+tests. Admitting it will require stating, in the specification, what an attestor is
+permitted to assert and where the node's own authority begins.
+
+Operators passing either flag see the refusal earlier in startup, naming the specific mode.
+
+### Fixed — `--revocation-list` could bypass its refusal off the parsed path
+
+Fixed programmatic configuration validation so `--revocation-list` cannot bypass the
+existing CLI refusal. No policy changed and no capability was added: the flag was already
+refused, because the policy-layer deny-list is consumed only by an authorization profile
+and no production profile has landed, so a supplied list would enforce nothing.
+
+The refusal lived only in `parse_args`, and `revocation_list_paths` is a public field of
+`Config`, so a caller building one in code reached the serving path carrying a revocation
+control that nothing reads — an operator would believe a compromised grant was revoked
+while it kept being authorized. The decision now lives in one predicate consulted from both
+`parse_args` (which keeps the flag's diagnostic and its place in the refusal order) and
+`unsafe_config_violations`, which `ValidatedConfig::try_from` runs and which no route into
+the runtime skips.
+
+Operators passing `--revocation-list` on the command line see no change: it was refused
+before and is refused now, with the same message. Whether the capability is later
+implemented, formally deprecated or redefined is left to a future release.
+
+### Fixed — `--client-ocsp require` could bypass its refusal off the parsed path
+
+Fixed programmatic configuration validation so `client_ocsp = Require` cannot bypass the
+existing CLI refusal. No policy changed: the flag was already refused, because online OCSP
+is implemented only on the blocking serve loop while the production data plane is the
+per-core async fleet, which performs no responder round trip. What changed is that *all*
+construction paths now enforce that same restriction.
+
+The refusal lived only in `parse_args`. `Config` has public fields, so a caller building
+one in code — an embedder, a harness, a bespoke launcher — could set `client_ocsp` and
+reach the serving path, where startup announced `ONLINE OCSP client-cert revocation
+enabled` on a deployment that admits every revoked client certificate. The decision now
+lives in one predicate consulted from both `parse_args` (which keeps the flag's specific
+diagnostic and its position in the refusal order) and `unsafe_config_violations`, which is
+what `ValidatedConfig::try_from` runs and which no route into the runtime can skip.
+
+Operators passing `--client-ocsp require` on the command line see no change: it was
+refused before and is refused now, with the same message pointing at `--client-crl`.
+
 ## [0.15.0] — 2026-08-06
 
 ### Changed — TLS session resumption is restored, bound to a trust epoch (ADR-MCPRE-055)

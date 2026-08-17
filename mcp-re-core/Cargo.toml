@@ -1,6 +1,6 @@
 [package]
 name = "mcp-re-core"
-version = "0.15.0"
+version = "0.16.0"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -16,6 +16,36 @@ ed25519-dalek = { workspace = true }
 sha2 = { workspace = true }
 base64 = { workspace = true }
 thiserror = { workspace = true }
+
+# ADR-MCPRE-059 Phase 2: the Verus lane. Optional and off by default, so a
+# production build resolves, compiles, and links exactly as it did before —
+# `cargo tree` shows none of these, and the specification text disappears with
+# the `cfg_attr` that carries it. Enabled only by `cargo verus verify
+# --features verify`, which is the sole consumer of `[package.metadata.verus]`
+# below. Versions are the ones `verification/policy/toolchains.lock.toml` pins;
+# a Verus bump moves both or neither.
+[dependencies.vstd]
+version = "=0.0.0-2026-08-09-0044"
+optional = true
+
+[dependencies.verus_builtin]
+version = "=0.0.0-2026-08-09-0044"
+optional = true
+
+[dependencies.verus_builtin_macros]
+version = "=0.0.0-2026-08-09-0044"
+optional = true
+
+[features]
+verify = ["dep:vstd", "dep:verus_builtin", "dep:verus_builtin_macros"]
+
+[package.metadata.verus]
+verify = true
+
+# `verus_keep_ghost` is defined by the prover's rustc driver, never by cargo. Declared so
+# the guard in lib.rs does not read as a typo'd cfg on an ordinary build.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)'] }
 
 [dev-dependencies]
 hex = { workspace = true }

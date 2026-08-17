@@ -94,6 +94,14 @@ pub enum HttpProfileError {
     ///
     /// [`McpReError::ContinuationTypeUnsupported`]: mcp_re_core::McpReError::ContinuationTypeUnsupported
     UnrecognizedResultType,
+    /// The UPSTREAM (inner) server's reply is not a legal JSON-RPC 2.0 / MCP response
+    /// to the request it answers (ADR-MCPRE-058 §10, ruling D5). The `&'static str`
+    /// names the clause violated, for the operator debugging the backend.
+    ///
+    /// Deliberately NOT folded onto [`HttpProfileError::MalformedEvidence`]: that names
+    /// the CALLER's evidence being structurally invalid, and an operator reading its
+    /// token goes and looks at the client. This says the backend answered badly.
+    UpstreamResponseInvalid(&'static str),
     /// The covered `Mcp-Method` transport header disagrees with the JSON-RPC
     /// `method` in the covered body (#415 rev 2 §4.1, MCPRE-425). Both are
     /// protected, so this is the signer stating two different methods — evidence
@@ -265,6 +273,10 @@ impl HttpProfileError {
             // does not implement, so it cannot be classified and must not be
             // treated as an ordinary terminal answer.
             HttpProfileError::UnrecognizedResultType => "mcp-re.continuation_type_unsupported",
+            // The backend answered, and what it said is not a legal response. Its own
+            // frozen token, because "the caller's evidence is malformed" sends an
+            // operator to the wrong system.
+            HttpProfileError::UpstreamResponseInvalid(_) => "mcp-re.upstream_response_invalid",
             // Delegated signing-key attestation (ADR-MCPRE-052 §8).
             HttpProfileError::DelegationCredentialMissing => "mcp-re.delegation_credential_missing",
             HttpProfileError::DelegationCredentialInvalid => "mcp-re.delegation_credential_invalid",
@@ -355,6 +367,7 @@ mod tests {
                 | HttpProfileError::ReceiptPositionMismatch
                 | HttpProfileError::ReceiptIssuerUntrusted
                 | HttpProfileError::UnrecognizedResultType
+                | HttpProfileError::UpstreamResponseInvalid(_)
                 | HttpProfileError::TrustResolverUnavailable
                 | HttpProfileError::DelegationCredentialMissing
                 | HttpProfileError::DelegationCredentialInvalid
@@ -401,6 +414,7 @@ mod tests {
             HttpProfileError::ReceiptInclusionInvalid,
             HttpProfileError::ReceiptIssuerUntrusted,
             HttpProfileError::UnrecognizedResultType,
+            HttpProfileError::UpstreamResponseInvalid("clause"),
             HttpProfileError::TrustResolverUnavailable,
             HttpProfileError::DelegationCredentialMissing,
             HttpProfileError::DelegationCredentialInvalid,

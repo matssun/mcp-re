@@ -8,10 +8,27 @@ MCP-RE is an experimental third-party security extension proposal for MCP.
 
 It is not an official MCP extension unless accepted through the official MCP governance and proposal process.
 
-**v0.15.0 — prepared, not yet released (2026-08-06).** The version is bumped and the
+**v0.16.0 — prepared, not yet released (2026-08-10).** The version is bumped and the
 changelog written, but a release exists once it is merged, tagged and the images are built
 at that tag; none of that has happened, so "current release" below still reads v0.14.0.
-The serving runtime's topology changed
+
+This release makes the serving path's **exchange lifecycle a value** with an explicit
+execution threshold (ADR-MCPRE-057, ADR-MCPRE-058), and the consequences are wire-visible.
+Every refusal at or after the inner dispatch now states `execution_status:
+possibly_executed` instead of returning a bare status a client would retry; a backend reply
+must be a legal JSON-RPC 2.0 response before MCP-RE will sign it; an inner-transport timeout
+is a 504 rather than a signed 200 carrying an error body; and the proxy no longer returns an
+`input_required` response it has kept nothing to honour — **deployments using elicitation
+must now configure continuation storage**. Three configuration rules that could be bypassed
+by a programmatically built `Config` moved to the validation boundary, and two terminal
+runtime states (trust staleness, delegated-signing retirement) can no longer be reversed by
+an in-flight worker. Full detail in [`CHANGELOG.md`](../CHANGELOG.md).
+
+**v0.15.0 — tagged 2026-08-06 and pushed to `origin`.** Whether its images were built at
+that tag is not answerable from this tree; the "current release" line below still reads
+v0.14.0 and was not updated when the tag landed, so one of the two is stale and it is an
+owner call which. Its content is summarised here rather than dropped, since it reaches most
+users alongside v0.16.0. The serving runtime's topology changed
 (ADR-MCPRE-051 §1 amended) — each shard now carries a Tokio worker pool instead of a
 single thread, and `--cores` / `--workers-per-shard` are independent knobs. The local §7
 anchor moved 5,530.9 → 15,454.9 rps and was re-baselined to v6. A live GKE run on
@@ -107,9 +124,15 @@ The current demonstration and live-validation package proves:
 - **Mode A (`end_to_end_mtls`, default)** — the node terminates client mTLS and
   binds the verified peer to the request signer, with a certificate-revocation
   honesty pass: a strict short-lived-cert lifetime ceiling and static-CRL
-  fail-closed-on-stale (ADR-MCPS-023 §A1). OCSP, when enabled, is always fail-closed
-  as of v0.12.0 (the fail-open relaxation was removed).
-- **Mode C (`attested_ingress`, explicit opt-in)** — a controlled ingress attestor
+  fail-closed-on-stale (ADR-MCPS-023 §A1). Online OCSP is refused in every build as
+  of v0.16: it is implemented only against the blocking serve loop, and the
+  production data plane is the per-core async fleet, which performs no responder
+  round trip. Client-certificate revocation is CRL-only.
+- **Mode C (`attested_ingress`) — NOT DEPLOYABLE as of v0.16.** Configuration
+  validation refuses `--transport-binding attested-ingress`; the mode is retained as
+  a future capability, not removed, and admitting it requires first stating what an
+  attestor may assert and where the node's own authority begins. The design below
+  stands as a record of that shape. A controlled ingress attestor
   signs a request-bound `mcp-re/lb-ingress-assertion/v2` assertion the node verifies
   over a pinned attestor→node channel. This is **attested delegation**, NOT
   end-to-end mTLS (the load balancer witnesses proof-of-possession and stays in the

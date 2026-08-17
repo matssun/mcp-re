@@ -381,22 +381,30 @@ pub fn redis_trust_epoch_source(
 /// read as a dead poller.
 const TRUST_EPOCH_MISSED_POLLS_TOLERATED: u64 = 3;
 
-/// Poll `source` on a cadence from a dedicated thread until `shutdown` flips.
+/// The body of the trust-epoch poller: poll `source` on a cadence until `stop` says to
+/// finish. Returns the work; it does NOT start a thread.
+///
+/// The caller spawns it through whatever owns its lifetime, so a process-lifetime poller
+/// cannot be started by a module that has no way to stop it (ADR-MCPRE-056 §9). Handing
+/// back a body rather than taking the owner as a parameter keeps this module free of the
+/// runtime's internal lifecycle types.
 ///
 /// The poller is what keeps the blocking store read off the request path (see
 /// [`TrustEpochSource::poll_once`]). An immediate first poll establishes the baseline
 /// before serving, so the first advance after startup is detected rather than adopted.
 ///
 /// SUPERVISED, because everything downstream believes what this thread last wrote: the
-/// source now requires a poll within a bound before it will call itself healthy, and a
-/// thread that unwinds says so on its way out instead of leaving the latch at `true`.
-/// The `JoinHandle` is still dropped — nothing waits on a process-lifetime poller —
-/// but its death is no longer silent.
-pub fn spawn_trust_epoch_poller<R: EpochReader + Send + Sync + 'static>(
+/// source requires a poll within a bound before it will call itself healthy, and a body
+/// that unwinds says so on its way out instead of leaving the latch at `true`.
+///
+/// The liveness bound is registered HERE, before the body is handed back, so a caller
+/// that takes the body and never runs it leaves the source failing closed rather than
+/// reporting a health it has no poller to earn.
+pub fn trust_epoch_poller_body<R: EpochReader + Send + Sync + 'static>(
     source: std::sync::Arc<TrustEpochSource<R>>,
     interval_secs: u64,
-    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
-) {
+    stop: impl Fn() -> bool + Send + 'static,
+) -> impl FnOnce() + Send + 'static {
     source.require_polling_within(Duration::from_secs(
         interval_secs
             .max(1)
@@ -406,15 +414,15 @@ pub fn spawn_trust_epoch_poller<R: EpochReader + Send + Sync + 'static>(
             .saturating_add(interval_secs.max(1)),
     ));
     let poller = std::sync::Arc::clone(&source);
-    std::thread::spawn(move || {
+    move || {
         let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
             poller.poll_once();
-            // Nap in small increments so a shutdown signal is observed within one
-            // increment rather than after a whole interval.
+            // Nap in small increments so a stop is observed within one increment rather
+            // than after a whole interval.
             let ticks = interval_secs.saturating_mul(20).max(1); // 20 * 50ms = 1s
             loop {
                 for _ in 0..ticks {
-                    if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                    if stop() {
                         return;
                     }
                     std::thread::sleep(Duration::from_millis(50));
@@ -425,7 +433,7 @@ pub fn spawn_trust_epoch_poller<R: EpochReader + Send + Sync + 'static>(
         if ran.is_err() {
             source.report_poller_death();
         }
-    });
+    }
 }
 
 /// An [`InvalidationChannel`] view of a shared [`TrustEpochSource`], so the poller
@@ -646,5 +654,73 @@ mod tests {
         src.poll_once();
         assert_eq!(src.drain_pending(), vec![InvalidationEvent::FlushAll]);
         assert!(src.is_healthy(), "a successful read restores health");
+    }
+
+    /// A reader that PARKS inside `read_epoch`, so a test can hold the poller in the
+    /// middle of its network round trip and drive the request path meanwhile.
+    struct StalledReader {
+        entered: std::sync::mpsc::SyncSender<()>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+    impl EpochReader for StalledReader {
+        fn read_epoch(&self) -> Result<i64, EpochReadError> {
+            // Announce that the "network call" has begun, then block in it.
+            let _ = self.entered.send(());
+            let _ = recover(self.release.lock()).recv();
+            Ok(1)
+        }
+    }
+
+    /// The request path does not wait on the epoch reader's network round trip.
+    ///
+    /// This is the executable form of the claim in `trust_plane`: "the whole per-core
+    /// fleet is not serialized on one Redis connection". `PushInvalidationTrustCache`
+    /// calls `drain_pending` before every lookup, so if that call could ever wait on a
+    /// Redis read, one stalled connection would serialize every request on the core —
+    /// the failure mode this design exists to avoid.
+    ///
+    /// Written because the implementation could be "simplified" into exactly that bug:
+    /// take the pending mutex, then read the network under it. The result still LOOKS
+    /// like background polling — same threads, same function names — and every existing
+    /// test still passes, because none of them holds a read open while touching the
+    /// request path. This one does.
+    ///
+    /// A violation would BLOCK rather than assert, so the drain runs on its own thread
+    /// and the test fails on a timeout instead of hanging the suite.
+    #[test]
+    fn the_request_path_does_not_wait_on_a_stalled_epoch_read() {
+        let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let src = std::sync::Arc::new(TrustEpochSource::new(StalledReader {
+            entered: entered_tx,
+            release: Mutex::new(release_rx),
+        }));
+
+        let poller = std::sync::Arc::clone(&src);
+        let polling = std::thread::spawn(move || poller.poll_once());
+
+        // The poller is now INSIDE the blocking read and cannot leave until released.
+        entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the poller reaches the read");
+
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let requester = std::sync::Arc::clone(&src);
+        std::thread::spawn(move || {
+            // Exactly what the resolver does before every lookup.
+            let events = requester.drain_pending();
+            let _ = done_tx.send(events.len());
+        });
+
+        let served = done_rx.recv_timeout(Duration::from_secs(5));
+        assert!(
+            served.is_ok(),
+            "drain_pending blocked while the epoch read was stalled: the request path is \
+             serialized on the reader's connection"
+        );
+
+        // Only now let the read finish, proving the drain above genuinely overlapped it.
+        let _ = release_tx.send(());
+        polling.join().expect("poller thread joins");
     }
 }

@@ -21,19 +21,25 @@ import type { JSONRPCMessage } from "@modelcontextprotocol/client";
 // real core answers everything else — with the override unset this is a pass-through,
 // and every other test in this file runs against the genuine binding.
 const boundVerdict = vi.hoisted(() => ({ override: null as boolean | null }));
+// A whole forced verdict, for the properties that are about what the transport DOES with
+// a verdict rather than about producing one. `boundVerdict` stays as the narrow knob the
+// binding tests already use.
+const coreVerdict = vi.hoisted(() => ({ override: null as Record<string, unknown> | null }));
 vi.mock("../native/binding.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../native/binding.js")>();
   return {
     ...actual,
-    verifyResponse: (...args: Parameters<typeof actual.verifyResponse>) =>
-      boundVerdict.override === null
+    verifyResponse: (...args: Parameters<typeof actual.verifyResponse>) => {
+      if (coreVerdict.override !== null) return coreVerdict.override;
+      return boundVerdict.override === null
         ? actual.verifyResponse(...args)
         : {
             outcome: "rejection",
             wireCode: "mcp-re.authorization_binding_missing",
             bound: boundVerdict.override,
             requestState: null,
-          },
+          };
+    },
   };
 });
 
@@ -905,5 +911,117 @@ describe("McpReHttpTransport rejection receipt binding", () => {
 
   it("reports a request-bound receipt as request-bound", async () => {
     expect((await rejectionError(true)).data).toEqual({ requestBound: true });
+  });
+});
+
+describe("McpReHttpTransport verified-reply shape", () => {
+  /** Drive one exchange with a forced verdict and a chosen reply body. */
+  async function deliver(
+    verdict: Record<string, unknown>,
+    body: string,
+  ): Promise<JSONRPCMessage> {
+    coreVerdict.override = verdict;
+    try {
+      const transport = new McpReHttpTransport(minimalConfig(), async () => ({
+        status: 200,
+        headers: [],
+        body: Buffer.from(body),
+      }));
+      await transport.start();
+      const delivered: JSONRPCMessage[] = [];
+      transport.onmessage = (m) => delivered.push(m);
+      await transport.send(REQUEST);
+      return delivered[0];
+    } finally {
+      coreVerdict.override = null;
+    }
+  }
+
+  const OK = {
+    outcome: "success",
+    wireCode: null,
+    bound: true,
+    requestState: null,
+    respEvidenceDigestAlg: "sha-256",
+    respEvidenceDigestValue: "x",
+  };
+
+  it("refuses a verified reply carrying a top-level method instead of dispatching it", async () => {
+    // `JSONRPCMessageSchema` is a union that accepts a request, so a body carrying both a
+    // legal `result` and a `method` validated as a JSONRPCRequest and was dispatched by
+    // `Client` as a SERVER-INITIATED request — driving sampling / elicitation / roots on
+    // peer-chosen params. The awaiting `callTool` never resolved either, because its id
+    // had been consumed as an inbound request id.
+    const delivered = await deliver(
+      OK,
+      '{"jsonrpc":"2.0","id":1,"result":{"ok":true},"method":"sampling/createMessage","params":{"x":1}}',
+    );
+    expect("method" in delivered, `a method-bearing body reached the client: ${JSON.stringify(delivered)}`).toBe(false);
+    expect((delivered as { error: { message: string } }).error.message).toBe(
+      "mcp-re.malformed_envelope",
+    );
+  });
+
+  it("refuses a verified reply that is not a JSON-RPC response at all", async () => {
+    for (const body of [
+      '{"jsonrpc":"2.0","id":1}',
+      '{"jsonrpc":"2.0","id":1,"result":{},"error":{"code":-1,"message":"x"}}',
+      '[{"jsonrpc":"2.0","id":1,"result":{}}]',
+      '"ok"',
+    ]) {
+      const delivered = await deliver(OK, body);
+      expect(
+        (delivered as { error?: { message: string } }).error?.message,
+        `${body} must not be delivered as a result`,
+      ).toBe("mcp-re.malformed_envelope");
+    }
+  });
+
+  it("still delivers an ordinary verified reply", async () => {
+    const delivered = await deliver(OK, '{"jsonrpc":"2.0","id":9,"result":{"ok":true}}');
+    expect((delivered as { result: unknown }).result).toEqual({ ok: true });
+  });
+
+  it("reports the execution and retry contract a post-dispatch rejection carried", async () => {
+    // ADR-MCPRE-058 §10 (SL-10). Nothing on the client side read these, so an application
+    // receiving a post-dispatch 503 saw a bare wire code and a retry-friendly status,
+    // retried, and the tool call ran a second time on a fresh nonce that passes replay
+    // admission. Byte-parity fixtures cannot see this; the Python twin pins the same keys.
+    const delivered = await deliver(
+      {
+        outcome: "rejection",
+        wireCode: "mcp-re.upstream_unavailable",
+        bound: true,
+        requestState: null,
+        executionStatus: "possibly_executed",
+        retrySafety: "unsafe_without_reconciliation",
+        continuationStatus: "consumed",
+        retentionStatus: null,
+      },
+      "{}",
+    );
+    const error = (delivered as { error: { message: string; data: unknown } }).error;
+    expect(error.message).toBe("mcp-re.upstream_unavailable");
+    expect(error.data, "a member the receipt did not carry must not be invented").toEqual({
+      requestBound: true,
+      executionStatus: "possibly_executed",
+      retrySafety: "unsafe_without_reconciliation",
+      continuationStatus: "consumed",
+    });
+  });
+
+  it("invents no disposition for a receipt that stated none", async () => {
+    const delivered = await deliver(
+      {
+        outcome: "rejection",
+        wireCode: "mcp-re.request_signature_invalid",
+        bound: false,
+        requestState: null,
+      },
+      "{}",
+    );
+    expect((delivered as { error: { data: unknown } }).error.data).toEqual({
+      requestBound: false,
+    });
   });
 });

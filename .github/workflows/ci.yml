@@ -163,6 +163,62 @@ jobs:
           python3 scripts/es256_containment_gate.py --selftest
           python3 scripts/es256_containment_gate.py
 
+      # Owned workers (ADR-MCPRE-056 §9): a long-lived thread must belong to a
+      # `WorkerSet`. Four detached startup threads shipped before this existed, and the
+      # fourth was found by accident after a survey that swept one file and concluded
+      # there were three — the invariant does not survive as a habit.
+      - name: Owned-worker gate
+        run: |
+          python3 scripts/owned_worker_gate.py --selftest
+          python3 scripts/owned_worker_gate.py
+
+      # Seam posture (ADR-MCPRE-056 §5.4): every optional capability states ON or OFF at
+      # startup. `assert_complete` is the runtime backstop but no hermetic config reaches
+      # the posture phase, so in the default lanes this gate is the only thing that
+      # catches a seam added without a declaration.
+      - name: Seam-posture gate
+        run: |
+          python3 scripts/seam_posture_gate.py --selftest
+          python3 scripts/seam_posture_gate.py
+
+      # A guide that teaches a flag the CLI no longer parses sends an operator to debug
+      # their own environment. Only command lines that LAUNCH the proxy are scanned, so
+      # prose may still name a removed flag in order to say it was removed.
+      - name: Proxy-flag documentation gate
+        run: |
+          python3 scripts/proxy_flag_doc_gate.py --selftest
+          python3 scripts/proxy_flag_doc_gate.py
+
+      # Conformance is executable evidence, not documentation. An advertised category
+      # whose corpus or harness has been deleted keeps claiming coverage that exists
+      # nowhere, and a corpus with no harness is never executed — neither direction is
+      # self-announcing, so both are asserted here.
+      - name: Conformance-claims gate
+        run: |
+          python3 scripts/conformance_claims_gate.py --selftest
+          python3 scripts/conformance_claims_gate.py
+
+      # Named release-gate lanes are a table of test-binary names, and consolidating
+      # the proxy suites broke 24 of them across four workflows and two example
+      # scripts. Only four went red — the cloud-KMS and several live-infra lanes are
+      # gated, so their breakage would have surfaced the next time someone ran a
+      # billed nightly. This asserts every `--test` names a real target and every
+      # `module::` filter names a real module, before either is invoked.
+      - name: Cargo test-target gate
+        run: |
+          python3 scripts/cargo_test_target_gate.py --selftest
+          python3 scripts/cargo_test_target_gate.py
+
+      # Lifecycle purity (ADR-MCPRE-056/057): `runtime_state.rs` and `exchange_state.rs`
+      # are values, not behaviour. A `use` of a production module would let "is this
+      # transition legal?" answer two ways on the same arguments, which is what SL-04
+      # (closed transition relation) and SL-09 (monotone exchange consequence) rest on.
+      # Wired here as well as in `local_gate.sh` so the merge path enforces it.
+      - name: Lifecycle-purity gate
+        run: |
+          python3 scripts/lifecycle_purity_gate.py --selftest
+          python3 scripts/lifecycle_purity_gate.py
+
       # The SCITT service-key fetcher refuses a plaintext redirect hop. `build_opener`
       # installs the permissive default redirect handler unless it is passed a
       # subclass, so a guard class that exists but is never consulted leaves the
@@ -199,7 +255,7 @@ jobs:
             echo
             echo '| Corpus | manifest SHA-256 | corpus digest |'
             echo '|---|---|---|'
-            for c in http-profile delegation-profile; do
+            for c in http-profile delegation-profile scitt; do
               m="mcp-re-conformance/tests/vectors/$c/manifest.json"
               manifest_sha="$(shasum -a 256 "$m" | cut -d' ' -f1)"
               corpus_dig="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['corpus_digest'])" "$m")"
@@ -369,22 +425,33 @@ jobs:
       # These targets also run inside the whole-suite step above; naming them makes
       # each a required release gate whose failure is unambiguous. Fast (cached build).
 
+      # These suites now share the `integration_async` binary, so each lane selects
+      # by module filter. `run_test_lane.sh` refuses a filter that matches nothing:
+      # a missing BINARY exits 101, but a missing FILTER prints `0 passed` and exits
+      # 0, which would make a release gate green having measured nothing.
+
       # §4 — cross-core / cross-replica replay race: exactly one Fresh, N-1 Replay,
       # zero Fresh when the store is Unavailable (fail-closed). (#314)
       - name: Release gate — replay race
         run: >-
-          cargo test -p mcp-re-proxy --features async_serve
-          --test async_replay_test
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features async_serve
+          --test integration_async -- async_replay_test::
 
       # §6 — bounded graceful drain: in-flight requests complete, zero abandoned,
       # a stuck request cannot delay exit past the grace bound. (MCPRE-115)
+      # Still its own binary: it runs under RUST_TEST_THREADS=1, which is a property
+      # of a binary rather than of a test.
       - name: Release gate — bounded drain
-        run: cargo test -p mcp-re-proxy --features async_serve --test async_drain_test
+        run: >-
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features async_serve
+          --test async_drain_test
 
       # §3 — inner plane: concurrent in-flight (no serial pipe) + pool-exhaustion
       # backpressure fails closed without queuing. (MCPRE-118)
       - name: Release gate — inner-plane concurrency + backpressure
-        run: cargo test -p mcp-re-proxy --features async_serve --test http_inner_test
+        run: >-
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features async_serve
+          --test integration_async -- http_inner_test::
 
       # §7 — SLO gate mechanism self-check (MCPRE-110/123). Proves the gate logic
       # (correctness floors bite; declared capacity/scaling targets enforce; null

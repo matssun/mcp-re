@@ -64,10 +64,15 @@ durabilityTier; refuse to render an unsafe fleet chart.
 {{- if not (gt (len .Values.inner.httpUrls) 0) -}}
 {{- fail "inner plane required (ADR-MCPRE-051 §3): set inner.httpUrls to one or more Streamable-HTTP backends. MCP-RE is HTTP-profile only — a stdio-only server is fronted by an EXTERNAL plain-MCP adapter (e.g. FastMCP) that exposes HTTP. The proxy launches no subprocess and fails closed with no --inner-http-url." -}}
 {{- end -}}
-{{- if .Values.fleet -}}
+{{/*
+deployment.yaml renders `--replay-redis-url` and a durability tier for every install, so
+an empty URL is an argument the proxy refuses at startup. There is no node-local fallback
+to land on — every replay state is shared — so this is required regardless of `fleet`.
+*/}}
 {{- if not .Values.replay.redisUrl -}}
-{{- fail "fleet=true requires replay.redisUrl (a shared replay store); a node-local cache cannot maintain cross-verifier replay state" -}}
+{{- fail "requires replay.redisUrl (a shared replay store): every replay state is shared, and the proxy refuses a Redis durability tier with no store to deliver it" -}}
 {{- end -}}
+{{- if .Values.fleet -}}
 {{- if not (or (hasPrefix "redis-wait-quorum:" .Values.replay.durabilityTier) (eq .Values.replay.durabilityTier "linearizable")) -}}
 {{- fail "fleet=true requires replay.durabilityTier of redis-wait-quorum:<q>:<ms> or linearizable (the strict-production minimum)" -}}
 {{- end -}}
@@ -113,12 +118,17 @@ turns a CrashLoop into a render error naming the annotation.
 {{- end -}}
 {{/*
 The replay tier and the trust-epoch counter carry admitted nonces and the epoch that
-drives credential minting. Under fleet=true, refuse a plaintext endpoint unless the
-operator has deliberately set replay.allowPlaintextRedis.
+drives credential minting. Refuse a plaintext endpoint unless the operator has
+deliberately set replay.allowPlaintextRedis.
+
+Independent of `fleet`: deployment.yaml renders `--replay-redis-url` and a durability
+tier for every install, so a single-replica install carries the same
+security state over the same hop. What is at stake here is who can write the keyspace,
+which does not depend on replica count.
 */}}
-{{- if and .Values.fleet (not .Values.replay.allowPlaintextRedis) -}}
+{{- if not .Values.replay.allowPlaintextRedis -}}
 {{- if hasPrefix "redis://" .Values.replay.redisUrl -}}
-{{- fail "replay.redisUrl is plaintext redis:// — this hop carries the admitted replay nonces, and an unauthenticated peer can DEL/FLUSHDB them to re-open the replay window fleet-wide. Use rediss:// with credentials (rediss://:<password>@host:6379), or set replay.allowPlaintextRedis=true to accept the risk deliberately." -}}
+{{- fail "replay.redisUrl is plaintext redis:// — this hop carries the admitted replay nonces, and an unauthenticated peer can DEL/FLUSHDB them to re-open the replay window for every replica reading it. Use rediss:// with credentials (rediss://:<password>@host:6379), or set replay.allowPlaintextRedis=true to accept the risk deliberately." -}}
 {{- end -}}
 {{- if hasPrefix "redis://" .Values.revocation.trustEpochRedisUrl -}}
 {{- fail "revocation.trustEpochRedisUrl is plaintext redis:// — an attacker who can write this key forces every replica to re-mint delegated credentials under an epoch verifiers reject (a fleet-wide response-signing outage). Use rediss:// with credentials, or set replay.allowPlaintextRedis=true to accept the risk deliberately." -}}
@@ -146,10 +156,10 @@ that did not override it, so refuse the placeholders outright.
 {{/*
 transportBinding: only "" (omit the flag, proxy default `exact`) or "exact" produce a
 pod that starts. `none` is rejected at argument parse; lb-assertion/attested-ingress
-are refused at boot on the RFC 9421 carrier. Fail at render rather than CrashLoop.
+are refused by configuration validation. Fail at render rather than CrashLoop.
 */}}
 {{- if not (or (eq .Values.transportBinding "") (eq .Values.transportBinding "exact")) -}}
-{{- fail (printf "transportBinding=%q cannot start on the RFC 9421 serving path. Use \"\" (omit the flag; the proxy defaults to exact) or \"exact\". `none` is rejected at argument parse; `lb-assertion` and `attested-ingress` parse but are refused at boot (owner-signed ingress rebinding pending)." .Values.transportBinding) -}}
+{{- fail (printf "transportBinding=%q cannot start on the RFC 9421 serving path. Use \"\" (omit the flag; the proxy defaults to exact) or \"exact\". `none` is rejected at argument parse; `lb-assertion` and `attested-ingress` are refused by configuration validation because the serving path does not consult an ingress assertion." .Values.transportBinding) -}}
 {{- end -}}
 {{/*
 Admission ceilings (MCPRE-114). Two render-time refusals, because both bad inputs

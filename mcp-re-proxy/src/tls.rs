@@ -82,12 +82,22 @@ pub struct ServerLimits {
     /// fail-closed with `503 Service Unavailable` BEFORE the handler runs, rather
     /// than queued without bound — so tail latency stays bounded under overload
     /// instead of degrading unboundedly. `None` disables the ceiling (unbounded
-    /// in-flight; the historical behavior). On the per-core fleet the effective
-    /// ceiling can also be derived from a fleet-global target
-    /// (`FleetConfig::max_in_flight_total`), divided evenly across cores so the
-    /// request path stays lock-free across cores. Bounds only the async
+    /// in-flight; the historical behavior). Bounds only the async
     /// (`async_serve`) path; the blocking loop bounds concurrency via
     /// `max_concurrent_connections`.
+    ///
+    /// # RESOLVED, not requested
+    ///
+    /// On the validated path this is not what an operator wrote. The admission limit is
+    /// stated once, in
+    /// [`DeploymentRequest::in_flight_limit`](crate::deployment_request::DeploymentRequest::in_flight_limit), which can express
+    /// per-core, fleet-wide, or nothing at all; the boundary resolves that to a basis and
+    /// the composition root writes the per-core answer HERE. Setting this field on a
+    /// `DeploymentRequest` therefore states nothing — it is overwritten.
+    ///
+    /// The fail-safe default remains, and is the same constant the basis resolves an
+    /// unstated limit to, so a `ServerLimits` built directly — by a test, or an embedder
+    /// driving `async_serve` with no `DeploymentRequest` — is bounded on exactly the same terms.
     pub max_in_flight_requests: Option<usize>,
     /// MCPRE-115 (ADR-MCPRE-051 §6): the BOUNDED GRACE WINDOW for graceful drain on
     /// the async serving path. On shutdown each per-core [`serve`] loop stops
@@ -109,13 +119,14 @@ pub struct ServerLimits {
     /// a change to the trusted client CAs — a CA withdrawn, a CA expired — reaches a
     /// keep-alive or HTTP/2 connection only when the peer re-handshakes.
     ///
-    /// Revocation and the certificate's own validity window no longer depend on it:
+    /// Revocation and the certificates' own validity windows no longer depend on it:
     /// both are re-checked on EVERY request whenever a per-request certificate control
     /// is configured, and to the same depth the handshake checks — the whole presented
     /// chain, not just the leaf (see
     /// [`client_revocation`](crate::client_revocation)). Chain BUILDING is what remains
-    /// bound by this age instead: whether a path to a trusted anchor still exists is
-    /// settled by the handshake verifier and nowhere else.
+    /// bound by this age instead: whether a path to a trusted anchor still exists —
+    /// signatures, name constraints, anchor membership — is settled by the handshake
+    /// verifier and nowhere else.
     ///
     /// Graceful: in-flight requests on the connection finish; only new requests are
     /// refused, and the peer reconnects transparently. `None` disables the bound,
@@ -146,7 +157,9 @@ impl Default for ServerLimits {
             // a throughput policy rather than a memory bound, and it would shed inside
             // the ADR-MCPRE-051 §7 envelope (concurrency 128), which is a load-shaping
             // decision no default should make silently.
-            max_in_flight_requests: Some(256),
+            max_in_flight_requests: Some(
+                crate::config_state::in_flight_limit::DEFAULT_PER_CORE_IN_FLIGHT,
+            ),
             // >= request_deadline (so every admitted request can finish) and, in
             // production, < k8s terminationGracePeriodSeconds.
             drain_grace: Duration::from_secs(30),
@@ -338,14 +351,37 @@ impl RustlsDirectProvider {
         crls: Vec<CertificateRevocationListDer<'static>>,
         allow_unknown_revocation_status: bool,
     ) -> Result<ServerConfig, TlsError> {
+        let resumption = new_resumption_state(&client_ca, allow_unknown_revocation_status);
+        Self::build_server_config_with_crls_resuming(
+            server_chain,
+            server_key,
+            client_ca,
+            crls,
+            allow_unknown_revocation_status,
+            &resumption,
+        )
+    }
+
+    /// As [`build_server_config_with_crls`](Self::build_server_config_with_crls), reusing
+    /// a resumption state that OUTLIVES this config.
+    ///
+    /// The reload path builds through here so the session cache survives the rebuild and
+    /// the epoch is republished from the anchors this build was given — the only way the
+    /// epoch is a live trust lever rather than a constant fixed at construction.
+    pub(crate) fn build_server_config_with_crls_resuming(
+        server_chain: Vec<CertificateDer<'static>>,
+        server_key: PrivateKeyDer<'static>,
+        client_ca: Vec<CertificateDer<'static>>,
+        crls: Vec<CertificateRevocationListDer<'static>>,
+        allow_unknown_revocation_status: bool,
+        resumption: &Arc<crate::tls_auth_epoch::EpochBoundSessionStore>,
+    ) -> Result<ServerConfig, TlsError> {
         // Computed BEFORE `client_ca` is moved into the verifier: the anchors are the
         // epoch's primary input (ADR-MCPRE-055).
-        let epoch = Arc::new(crate::tls_auth_epoch::SharedTlsAuthEpoch::new(
-            crate::tls_auth_epoch::TlsAuthEpoch::compute(
-                &client_ca,
-                allow_unknown_revocation_status,
-            ),
-        ));
+        let epoch = crate::tls_auth_epoch::TlsAuthEpoch::compute(
+            &client_ca,
+            allow_unknown_revocation_status,
+        );
         let provider = Arc::new(ring::default_provider());
         let verifier = build_client_verifier(
             client_ca,
@@ -386,8 +422,29 @@ impl RustlsDirectProvider {
             .with_single_cert(server_chain, server_key)
             .map_err(|e| TlsError::Config(e.to_string()));
 
-        server_config.map(|config| epoch_bound_resumption(config, epoch))
+        server_config.map(|config| epoch_bound_resumption(config, resumption, epoch))
     }
+}
+
+/// The resumption state one listener is built around: the epoch in force and the session
+/// cache tagged with it.
+///
+/// Created ONCE per listener and handed to every `ServerConfig` build for it. A state
+/// created per build pairs a fresh epoch with a fresh empty cache, which discards every
+/// resumable session on each rebuild and leaves the epoch unable to move.
+pub(crate) fn new_resumption_state(
+    client_ca: &[CertificateDer<'_>],
+    allow_unknown_revocation_status: bool,
+) -> Arc<crate::tls_auth_epoch::EpochBoundSessionStore> {
+    Arc::new(
+        crate::tls_auth_epoch::EpochBoundSessionStore::memory_backed(
+            crate::tls_auth_epoch::TlsAuthEpoch::compute(
+                client_ca,
+                allow_unknown_revocation_status,
+            ),
+            TLS_SESSION_CACHE_ENTRIES,
+        ),
+    )
 }
 
 /// Bind TLS session resumption to the trust epoch (ADR-MCPRE-055).
@@ -412,20 +469,34 @@ impl RustlsDirectProvider {
 ///
 /// A stale session is never an authorization failure — it is the absence of a shortcut.
 ///
-/// The store is per-`ServerConfig` and therefore shared by every per-core worker serving
-/// through it, which is what makes resumption effective under `SO_REUSEPORT`: a
-/// reconnect landing on a different worker still finds the session.
+/// The store is shared by every per-core worker serving through this config, which is
+/// what makes resumption effective under `SO_REUSEPORT`: a reconnect landing on a
+/// different worker still finds the session. It is also shared with every LATER build of
+/// the same listener's config, so a CRL reload keeps the cache instead of emptying it.
+///
+/// Each build republishes the epoch its own trust inputs digest to. Republishing an
+/// unchanged epoch is the common case and changes nothing; a change is announced, and
+/// from that moment every session stored under the old digest is evicted the next time
+/// it is looked up.
 ///
 /// Early data stays disabled (rustls' default): a 0-RTT payload would be replayable and
 /// is accepted before the handshake completes.
 fn epoch_bound_resumption(
     mut config: ServerConfig,
-    epoch: Arc<crate::tls_auth_epoch::SharedTlsAuthEpoch>,
+    resumption: &Arc<crate::tls_auth_epoch::EpochBoundSessionStore>,
+    epoch: crate::tls_auth_epoch::TlsAuthEpoch,
 ) -> ServerConfig {
-    config.session_storage = Arc::new(crate::tls_auth_epoch::EpochBoundSessionStore::new(
-        epoch,
-        rustls::server::ServerSessionMemoryCache::new(TLS_SESSION_CACHE_ENTRIES),
-    ));
+    if let Some(previous) = resumption.republish(epoch) {
+        eprintln!(
+            "mcp-re-proxy: TLS auth epoch advanced {} -> {} (trusted client CAs or the \
+             client-auth policy changed); every stored session stops being a shortcut and \
+             its peer takes a full handshake against current trust",
+            previous.short(),
+            epoch.short()
+        );
+    }
+    config.session_storage =
+        Arc::clone(resumption) as Arc<dyn rustls::server::StoresServerSessions>;
     config.max_early_data_size = 0;
     config
 }
@@ -496,14 +567,44 @@ pub enum CrlFreshness {
     NearExpiry { next_update_unix: i64 },
     /// `now >= nextUpdate` — expired; the verifier fails all new handshakes closed.
     Stale { next_update_unix: i64 },
+    /// The CRL carries no `nextUpdate` at all, so it never falls out of force.
+    ///
+    /// Neither rustls' expiration enforcement nor
+    /// [`client_revocation`](crate::client_revocation) has anything to compare against,
+    /// so such a CRL would be honoured — and its issuer answered `Good` for — for the
+    /// whole process lifetime, however long the reload has been failing. That is the
+    /// exact opposite of the self-bounding property the TLS plane's fail-closed argument
+    /// rests on, so it is a refusal rather than a freshness class the caller may ignore.
+    NoNextUpdate,
+}
+
+/// Refuse a client CRL that omits `nextUpdate`.
+///
+/// RFC 5280 §5.1.2.5 requires a conforming CRL issuer to include it, and every
+/// self-bounding claim this proxy makes about revocation is a claim about it: past
+/// `nextUpdate` the handshake verifier fails closed and the per-request index downgrades
+/// the issuer to `Unknown`, which is refused. A CRL without one reaches neither point,
+/// so it is refused where it is read — at startup and on every reload — rather than
+/// admitted into a posture that says it bounds itself.
+pub fn crl_next_update_required(crl_der: &[u8], index: usize) -> Result<(), TlsError> {
+    if crl_freshness(crl_der, 0, 0)? == CrlFreshness::NoNextUpdate {
+        return Err(TlsError::Verifier(format!(
+            "client CRL #{index} omits nextUpdate. It would never fall out of force, so a \
+             reload that stops working (unreadable mount, dead reload thread) would leave \
+             this replica admitting certificates revoked afterwards for the rest of its \
+             lifetime. RFC 5280 §5.1.2.5 requires conforming CRL issuers to include \
+             nextUpdate; publish a CRL that does."
+        )));
+    }
+    Ok(())
 }
 
 /// Classify a DER-encoded client CRL's `nextUpdate` against `now_unix`, warning
 /// `warn_window_secs` ahead of expiry. Pure and offline-testable.
 ///
-/// A CRL with no `nextUpdate` is treated as [`CrlFreshness::Fresh`] (RFC 5280
-/// permits its omission; rustls' expiration enforcement then has nothing to
-/// check). A CRL that cannot be parsed is a hard error — the verifier build would
+/// A CRL with no `nextUpdate` is classified [`CrlFreshness::NoNextUpdate`], which
+/// [`crl_next_update_required`] turns into a refusal: nothing in the stack can age such
+/// a CRL out. A CRL that cannot be parsed is a hard error — the verifier build would
 /// reject it too, so this fails closed rather than silently skipping the gate.
 pub fn crl_freshness(
     crl_der: &[u8],
@@ -516,7 +617,7 @@ pub fn crl_freshness(
         .map_err(|e| TlsError::Verifier(format!("malformed client CRL: {e}")))?;
     let next_update = match crl.tbs_cert_list.next_update {
         Some(t) => t.to_unix_duration().as_secs() as i64,
-        None => return Ok(CrlFreshness::Fresh),
+        None => return Ok(CrlFreshness::NoNextUpdate),
     };
     Ok(if now_unix >= next_update {
         CrlFreshness::Stale {
@@ -587,10 +688,29 @@ pub fn build_server_config_delegated_with_crls(
     crls: Vec<CertificateRevocationListDer<'static>>,
     allow_unknown_revocation_status: bool,
 ) -> Result<ServerConfig, TlsError> {
+    let resumption = new_resumption_state(&client_ca, allow_unknown_revocation_status);
+    build_server_config_delegated_with_crls_resuming(
+        cert_resolver,
+        client_ca,
+        crls,
+        allow_unknown_revocation_status,
+        &resumption,
+    )
+}
+
+/// As [`build_server_config_delegated_with_crls`], reusing a resumption state that
+/// outlives this config. See
+/// [`RustlsDirectProvider::build_server_config_with_crls_resuming`].
+pub(crate) fn build_server_config_delegated_with_crls_resuming(
+    cert_resolver: Arc<dyn rustls::server::ResolvesServerCert>,
+    client_ca: Vec<CertificateDer<'static>>,
+    crls: Vec<CertificateRevocationListDer<'static>>,
+    allow_unknown_revocation_status: bool,
+    resumption: &Arc<crate::tls_auth_epoch::EpochBoundSessionStore>,
+) -> Result<ServerConfig, TlsError> {
     // Computed BEFORE `client_ca` is moved into the verifier (ADR-MCPRE-055).
-    let epoch = Arc::new(crate::tls_auth_epoch::SharedTlsAuthEpoch::new(
-        crate::tls_auth_epoch::TlsAuthEpoch::compute(&client_ca, allow_unknown_revocation_status),
-    ));
+    let epoch =
+        crate::tls_auth_epoch::TlsAuthEpoch::compute(&client_ca, allow_unknown_revocation_status);
     let provider = Arc::new(ring::default_provider());
     let verifier = build_client_verifier(
         client_ca,
@@ -603,7 +723,7 @@ pub fn build_server_config_delegated_with_crls(
         .map_err(|e| TlsError::Config(e.to_string()))?
         .with_client_cert_verifier(verifier)
         .with_cert_resolver(cert_resolver);
-    Ok(epoch_bound_resumption(server_config, epoch))
+    Ok(epoch_bound_resumption(server_config, resumption, epoch))
 }
 
 /// Extract the 32 raw Ed25519 public-key bytes from a leaf certificate's
@@ -647,6 +767,36 @@ pub fn build_server_config_delegated_validated(
     crls: Vec<CertificateRevocationListDer<'static>>,
     allow_unknown_revocation_status: bool,
 ) -> Result<ServerConfig, TlsError> {
+    let resumption = new_resumption_state(&client_ca, allow_unknown_revocation_status);
+    let budget = Arc::new(crate::delegated_tls::TlsHandshakeSignBudget::default());
+    build_server_config_delegated_validated_resuming(
+        server_chain,
+        signer,
+        client_ca,
+        crls,
+        allow_unknown_revocation_status,
+        &resumption,
+        &budget,
+    )
+}
+
+/// As [`build_server_config_delegated_validated`], reusing a resumption state AND a
+/// handshake-signature budget that both outlive this config.
+///
+/// The budget is carried across rebuilds for the same reason the resumption cache is: it
+/// bounds how fast unauthenticated peers can drive a remote, billed, account-throttled
+/// signer, and a bucket refilled to full on every reload cadence bounds a window rather
+/// than a rate.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_server_config_delegated_validated_resuming(
+    server_chain: Vec<CertificateDer<'static>>,
+    signer: Arc<dyn crate::delegated_tls::RawEd25519TlsSigner>,
+    client_ca: Vec<CertificateDer<'static>>,
+    crls: Vec<CertificateRevocationListDer<'static>>,
+    allow_unknown_revocation_status: bool,
+    resumption: &Arc<crate::tls_auth_epoch::EpochBoundSessionStore>,
+    budget: &Arc<crate::delegated_tls::TlsHandshakeSignBudget>,
+) -> Result<ServerConfig, TlsError> {
     let leaf = server_chain.first().ok_or_else(|| {
         TlsError::DelegatedKeyMismatch(
             "delegated TLS server certificate chain is empty".to_string(),
@@ -681,12 +831,17 @@ pub fn build_server_config_delegated_validated(
         ));
     }
 
-    let resolver = crate::delegated_tls::DelegatedCertResolver::new(server_chain, signer);
-    build_server_config_delegated_with_crls(
+    let resolver = crate::delegated_tls::DelegatedCertResolver::with_budget(
+        server_chain,
+        signer,
+        Arc::clone(budget),
+    );
+    build_server_config_delegated_with_crls_resuming(
         resolver,
         client_ca,
         crls,
         allow_unknown_revocation_status,
+        resumption,
     )
 }
 
@@ -935,10 +1090,11 @@ pub(crate) fn wall_clock_unix() -> i64 {
 /// chain is an absent peer certificate.
 ///
 /// The leaf carries the lifetime, validity-window and revocation decision; every
-/// further certificate carries a revocation decision only. That split matches what the
-/// handshake verifier does — chain-deep revocation to the trust anchor, one validity
-/// window per certificate checked by the path builder — so a peer cannot be admitted on
-/// request 2 under an intermediate that was refused on request 1.
+/// further certificate carries a validity window and a revocation decision. That matches
+/// what the handshake verifier does — chain-deep revocation to the trust anchor, one
+/// validity window per certificate checked by the path builder — so a peer cannot be
+/// admitted on request 2 under an intermediate that was refused on request 1, and a
+/// session resumed after its issuing intermediate expired stops being served.
 ///
 /// Intermediates are refused only on an EXPLICIT `Revoked` verdict, never on `Unknown`.
 /// Whether the chain reaches a CRL-covered issuer is a path-building question the
@@ -991,7 +1147,10 @@ pub(crate) fn cert_lifetime_rejection_for_chain(
             });
             within_window && within_lifetime && not_revoked
         });
-    if leaf_admitted && chain_issuers_not_revoked(chain, options, now) {
+    if leaf_admitted
+        && chain_issuers_within_validity(chain, now)
+        && chain_issuers_not_revoked(chain, options, now)
+    {
         return None;
     }
     // Absent, unparseable, over-long or revoked cert → fail closed with the transport
@@ -1004,6 +1163,42 @@ pub(crate) fn cert_lifetime_rejection_for_chain(
         &McpReError::TransportBindingFailed,
         &id,
     ))
+}
+
+/// Is every certificate ABOVE the leaf still inside its own validity window?
+///
+/// Chain building runs during client authentication, which rustls performs on a FULL
+/// handshake only. A resumed session restores the stored peer chain verbatim and skips
+/// it, so without this a peer whose issuing INTERMEDIATE has since expired keeps being
+/// admitted on every reconnect that resumes — and the trust epoch cannot catch it,
+/// because the epoch digests the configured anchor set and an intermediate is not in it.
+///
+/// The handshake's path builder refuses an expired certificate on the path it builds, so
+/// refusing one here can only agree with what a full handshake would have decided.
+///
+/// A SELF-ISSUED certificate (issuer `Name` == subject `Name`) is exempt. A peer may
+/// send its root, path building matches that against the CONFIGURED anchor set rather
+/// than against its own validity window, and holding it to a window here would refuse
+/// chains a full handshake admits.
+///
+/// A certificate whose DER does not parse is refused — the same fail-closed direction
+/// the leaf takes, and the handshake already parsed every one of these.
+fn chain_issuers_within_validity(chain: &[&[u8]], now: i64) -> bool {
+    let Some(issuers) = chain.get(1..).filter(|rest| !rest.is_empty()) else {
+        return true;
+    };
+    issuers
+        .iter()
+        .all(|der| match X509Certificate::from_der(der) {
+            Err(_) => false,
+            Ok((_, cert)) => {
+                let self_issued =
+                    cert.tbs_certificate.issuer.as_raw() == cert.tbs_certificate.subject.as_raw();
+                self_issued
+                    || (now >= cert.validity().not_before.timestamp()
+                        && now < cert.validity().not_after.timestamp())
+            }
+        })
 }
 
 /// Is every certificate ABOVE the leaf still un-revoked as of the CRLs in force?
@@ -1570,6 +1765,47 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|window| window == needle)
+}
+
+/// Load the configured offline client-certificate revocation lists (#3839) into
+/// the DER form rustls' `WebPkiClientVerifier` consumes. Each path may hold one or
+/// more CRLs in PEM (`-----BEGIN X509 CRL-----`) or a single raw DER CRL. Fails
+/// closed: a missing or malformed CRL file is a hard startup error (`Err`) rather
+/// than a silently-skipped revocation check. An empty `paths` yields an empty vec
+/// (revocation checking disabled — the pre-#3839 behavior).
+///
+/// OFFLINE only: these bytes are read once at startup and never refreshed over the
+/// network. Online OCSP / CRL-distribution-point fetching is deliberately NOT done
+/// here and is deferred to a follow-up (it needs an HTTP client + a live
+/// responder, which would expand the firewalled supply chain).
+pub fn load_client_crls(
+    paths: &[String],
+) -> Result<Vec<rustls_pki_types::CertificateRevocationListDer<'static>>, String> {
+    use rustls_pki_types::pem::PemObject;
+    use rustls_pki_types::CertificateRevocationListDer;
+
+    let mut crls: Vec<CertificateRevocationListDer<'static>> = Vec::new();
+    for path in paths {
+        let bytes = std::fs::read(path).map_err(|e| format!("client CRL {path}: {e}"))?;
+        // Try PEM first (one file may carry several `X509 CRL` blocks). If the file
+        // contains no PEM CRL block, treat the whole file as a single DER CRL.
+        let pem: Vec<CertificateRevocationListDer<'static>> =
+            CertificateRevocationListDer::pem_slice_iter(&bytes)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| format!("client CRL {path}: malformed PEM: {e}"))?;
+        if pem.is_empty() {
+            // No PEM CRL block found → interpret the bytes as one DER CRL. Empty
+            // input cannot be a valid DER CRL, so reject it (fail closed) rather
+            // than load a no-op file.
+            if bytes.is_empty() {
+                return Err(format!("client CRL {path}: file is empty"));
+            }
+            crls.push(CertificateRevocationListDer::from(bytes));
+        } else {
+            crls.extend(pem);
+        }
+    }
+    Ok(crls)
 }
 
 #[cfg(test)]
@@ -2223,5 +2459,367 @@ mod fault_accept_any {
             // `verify_client_cert` above accepting any presented cert.
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod resumption_state_tests {
+    //! ADR-MCPRE-055: the TLS session cache and the trust epoch belong to the LISTENER,
+    //! not to one `ServerConfig`.
+    //!
+    //! Both properties below are invisible from outside a rebuild, which is why they are
+    //! asserted here over real `ServerConfig`s rather than over the store's synthetic
+    //! contract (`tls_auth_epoch`'s own tests do that): the defect they catch is a
+    //! resumption state constructed INSIDE the builder, which reads correctly in
+    //! isolation and empties the cache — and freezes the epoch — on every CRL reload.
+
+    use super::*;
+    use rcgen::CertificateParams;
+    use rcgen::KeyPair;
+
+    fn ca_der() -> CertificateDer<'static> {
+        let key = KeyPair::generate().expect("ca key");
+        let mut params = CertificateParams::new(Vec::new()).expect("ca params");
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign];
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "resumption-test-ca");
+        params.self_signed(&key).expect("ca").der().clone()
+    }
+
+    fn server_credential() -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>) {
+        let key = KeyPair::generate().expect("server key");
+        let params = CertificateParams::new(vec!["localhost".to_string()]).expect("params");
+        let cert = params.self_signed(&key).expect("server cert");
+        (
+            vec![cert.der().clone()],
+            PrivateKeyDer::Pkcs8(rustls_pki_types::PrivatePkcs8KeyDer::from(
+                key.serialize_der(),
+            )),
+        )
+    }
+
+    fn build(
+        client_ca: Vec<CertificateDer<'static>>,
+        resumption: &Arc<crate::tls_auth_epoch::EpochBoundSessionStore>,
+    ) -> ServerConfig {
+        let (chain, key) = server_credential();
+        RustlsDirectProvider::build_server_config_with_crls_resuming(
+            chain,
+            key,
+            client_ca,
+            Vec::new(),
+            false,
+            resumption,
+        )
+        .expect("server config")
+    }
+
+    /// A rebuild with unchanged trust keeps every resumable session.
+    ///
+    /// The broken implementation this catches: `epoch_bound_resumption` installing a
+    /// fresh `ServerSessionMemoryCache` per build, so `--client-crl-reload-secs` throws
+    /// the whole fleet's resumption state away on its cadence and every peer pays a full
+    /// handshake — the cost ADR-MCPRE-055 exists to avoid.
+    #[test]
+    fn a_crl_reload_does_not_empty_the_session_cache() {
+        let ca = ca_der();
+        let resumption = new_resumption_state(std::slice::from_ref(&ca), false);
+        let before = build(vec![ca.clone()], &resumption);
+        assert!(before
+            .session_storage
+            .put(b"ticket".to_vec(), b"session".to_vec()));
+        // Exactly what `TlsKeyMaterial::rebuild` does on the reload cadence: same
+        // anchors, same resumption state, a brand-new ServerConfig.
+        let after = build(vec![ca], &resumption);
+        assert_eq!(
+            after.session_storage.take(b"ticket"),
+            Some(b"session".to_vec()),
+            "a reload must not discard the sessions the fleet already established"
+        );
+    }
+
+    /// A rebuild whose trusted client CAs CHANGED advances the epoch, and the sessions
+    /// stored under the withdrawn trust stop being shortcuts.
+    ///
+    /// The broken implementation this catches: an epoch constructed inside the builder
+    /// and never republished, which leaves `SharedTlsAuthEpoch::store` with no production
+    /// caller at all — the epoch becomes a constant tag and TB-06's mismatch eviction can
+    /// never fire.
+    #[test]
+    fn a_rebuild_with_a_withdrawn_client_ca_advances_the_epoch() {
+        let original = ca_der();
+        let replacement = ca_der();
+        let resumption = new_resumption_state(std::slice::from_ref(&original), false);
+        let original_again = original.clone();
+        let before = build(vec![original], &resumption);
+        let epoch_before = *resumption.epoch();
+        assert!(before
+            .session_storage
+            .put(b"ticket".to_vec(), b"session".to_vec()));
+
+        let after = build(vec![replacement], &resumption);
+        assert_ne!(
+            epoch_before,
+            *resumption.epoch(),
+            "withdrawing the trusted client CA must move the epoch"
+        );
+        // `None` here only means something because the cache SURVIVES a rebuild: the
+        // companion test proves an unchanged rebuild still returns this ticket, so the
+        // absence below is the epoch mismatch and not an emptied cache.
+        assert_eq!(
+            after.session_storage.get(b"ticket"),
+            None,
+            "a session stored under withdrawn trust must stop resuming"
+        );
+        // And it was EVICTED, not merely refused: restoring the original trust must not
+        // resurrect it.
+        build(vec![original_again], &resumption);
+        assert_eq!(
+            after.session_storage.get(b"ticket"),
+            None,
+            "the stale entry was not evicted"
+        );
+    }
+}
+
+#[cfg(test)]
+mod chain_validity_tests {
+    //! ADR-MCPRE-055: a resumed TLS 1.3 handshake restores the stored peer chain and
+    //! skips chain building, so the per-request gate is the only place an INTERMEDIATE's
+    //! expiry is ever re-read. The trust epoch cannot cover it — the epoch digests the
+    //! configured anchor set, and an intermediate is not in it.
+
+    use super::*;
+    use rcgen::BasicConstraints;
+    use rcgen::CertificateParams;
+    use rcgen::DnType;
+    use rcgen::IsCa;
+    use rcgen::KeyPair;
+    use rcgen::KeyUsagePurpose;
+
+    struct Signer {
+        params: CertificateParams,
+        key: KeyPair,
+        der: CertificateDer<'static>,
+    }
+
+    impl Signer {
+        fn issuer(&self) -> rcgen::Issuer<'_, &KeyPair> {
+            rcgen::Issuer::from_params(&self.params, &self.key)
+        }
+    }
+
+    fn root(name: &str) -> Signer {
+        let key = KeyPair::generate().expect("root key");
+        let mut params = CertificateParams::new(Vec::new()).expect("root params");
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+        params.distinguished_name.push(DnType::CommonName, name);
+        let der = params.self_signed(&key).expect("root").der().clone();
+        Signer { params, key, der }
+    }
+
+    /// A CA signed by `issuer` with an explicit validity window, so its expiry is a
+    /// deterministic input rather than a wall-clock accident.
+    fn intermediate(issuer: &Signer, name: &str, not_after: (i32, u8, u8)) -> Signer {
+        let key = KeyPair::generate().expect("intermediate key");
+        let mut params = CertificateParams::new(Vec::new()).expect("intermediate params");
+        params.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
+        params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+        params.distinguished_name.push(DnType::CommonName, name);
+        params.not_before = rcgen::date_time_ymd(2020, 1, 1);
+        params.not_after = rcgen::date_time_ymd(not_after.0, not_after.1, not_after.2);
+        let der = params
+            .signed_by(&key, &issuer.issuer())
+            .expect("intermediate")
+            .der()
+            .clone();
+        Signer { params, key, der }
+    }
+
+    fn leaf(issuer: &Signer) -> CertificateDer<'static> {
+        let key = KeyPair::generate().expect("leaf key");
+        let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
+        params.distinguished_name.push(DnType::CommonName, "peer");
+        params.not_before = rcgen::date_time_ymd(2020, 1, 1);
+        params.not_after = rcgen::date_time_ymd(2999, 1, 1);
+        params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
+        params
+            .signed_by(&key, &issuer.issuer())
+            .expect("leaf")
+            .der()
+            .clone()
+    }
+
+    /// The gate runs whenever any per-request certificate control is configured; a
+    /// lifetime ceiling wide enough to admit the leaf isolates the chain decision.
+    fn options() -> ServerOptions {
+        ServerOptions {
+            max_client_cert_lifetime: Some(Duration::from_secs(365 * 24 * 3600 * 1000)),
+            ..Default::default()
+        }
+    }
+
+    const NOW: i64 = 1_800_000_000; // 2027-01-15
+
+    fn rejected(chain: &[&[u8]]) -> bool {
+        cert_lifetime_rejection_for_chain(chain, &options(), b"{\"id\":1}", NOW).is_some()
+    }
+
+    /// A leaf under a still-valid intermediate is served.
+    #[test]
+    fn a_chain_whose_intermediate_is_current_is_admitted() {
+        let root = root("chain-root");
+        let ica = intermediate(&root, "chain-ica", (2999, 1, 1));
+        let peer = leaf(&ica);
+        assert!(!rejected(&[peer.as_ref(), ica.der.as_ref()]));
+    }
+
+    /// A leaf under an EXPIRED intermediate is refused, even though the leaf itself is
+    /// current, un-revoked and within the lifetime ceiling.
+    ///
+    /// The broken implementation this catches: applying `within_window` to `chain[0]`
+    /// only. With resumption enabled the peer never re-runs chain building, so every
+    /// reconnect restores the same expired chain and keeps being admitted.
+    #[test]
+    fn a_chain_whose_intermediate_has_expired_is_refused() {
+        let root = root("chain-root");
+        let ica = intermediate(&root, "chain-ica", (2021, 1, 1));
+        let peer = leaf(&ica);
+        assert!(
+            rejected(&[peer.as_ref(), ica.der.as_ref()]),
+            "an expired issuing intermediate must stop the leaf being served"
+        );
+    }
+
+    /// A peer that redundantly sends its (self-issued) root is NOT refused on that
+    /// root's window. Path building matches a root against the configured anchor set
+    /// rather than against its own validity, so refusing it here would refuse chains a
+    /// full handshake admits.
+    #[test]
+    fn a_self_issued_root_in_the_presented_chain_is_not_held_to_a_window() {
+        let root = root("chain-root");
+        let ica = intermediate(&root, "chain-ica", (2999, 1, 1));
+        let peer = leaf(&ica);
+        assert!(!rejected(&[
+            peer.as_ref(),
+            ica.der.as_ref(),
+            root.der.as_ref()
+        ]));
+    }
+
+    /// An unparseable certificate above the leaf fails closed, matching the leaf.
+    #[test]
+    fn an_unparseable_intermediate_is_refused() {
+        let root = root("chain-root");
+        let ica = intermediate(&root, "chain-ica", (2999, 1, 1));
+        let peer = leaf(&ica);
+        assert!(rejected(&[peer.as_ref(), b"not der".as_ref()]));
+    }
+}
+
+#[cfg(test)]
+mod crl_next_update_tests {
+    //! The TLS plane performs no security transition on `Drop` and gives its CRL reload
+    //! loop no failure budget, both on the ground that a CRL bounds ITSELF. That argument
+    //! holds only while every loaded CRL states a `nextUpdate`, so a CRL without one is
+    //! refused where it is read rather than admitted into a posture that claims it
+    //! self-bounds.
+
+    use super::*;
+    use der::Decode;
+    use der::Encode;
+    use x509_cert::crl::CertificateList;
+
+    fn crl_with_next_update() -> Vec<u8> {
+        let key = rcgen::KeyPair::generate().expect("ca key");
+        let mut params = rcgen::CertificateParams::new(Vec::new()).expect("ca params");
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params.key_usages = vec![
+            rcgen::KeyUsagePurpose::KeyCertSign,
+            rcgen::KeyUsagePurpose::CrlSign,
+        ];
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "crl-gate-ca");
+        let _ca = params.self_signed(&key).expect("ca");
+        let crl_params = rcgen::CertificateRevocationListParams {
+            this_update: rcgen::date_time_ymd(2024, 1, 1),
+            next_update: rcgen::date_time_ymd(2999, 1, 1),
+            crl_number: rcgen::SerialNumber::from(1u64),
+            issuing_distribution_point: None,
+            revoked_certs: Vec::new(),
+            key_identifier_method: rcgen::KeyIdMethod::Sha256,
+        };
+        crl_params
+            .signed_by(&rcgen::Issuer::from_params(&params, &key))
+            .expect("crl")
+            .der()
+            .to_vec()
+    }
+
+    /// The same CRL with its `nextUpdate` removed. RFC 5280 permits the encoding, which
+    /// is exactly why the gate has to refuse it rather than assume no CA emits one.
+    fn crl_without_next_update() -> Vec<u8> {
+        let mut list = CertificateList::from_der(&crl_with_next_update()).expect("parse");
+        list.tbs_cert_list.next_update = None;
+        list.to_der().expect("re-encode")
+    }
+
+    #[test]
+    fn a_crl_that_states_its_next_update_is_accepted() {
+        let der = crl_with_next_update();
+        assert_eq!(
+            crl_freshness(&der, 0, 0).expect("parse"),
+            CrlFreshness::Fresh
+        );
+        assert!(crl_next_update_required(&der, 0).is_ok());
+    }
+
+    /// The broken implementation this catches: classifying a `nextUpdate`-less CRL as
+    /// `Fresh`. Nothing downstream can age it out — rustls' expiration enforcement has
+    /// no field to compare and `ClientRevocationIndex::verdict` answers `Good` for its
+    /// issuer at any `now` — so a permanently failing reload would leave the replica
+    /// admitting certificates revoked afterwards for the rest of its lifetime.
+    #[test]
+    fn a_crl_that_never_falls_out_of_force_is_refused() {
+        let der = crl_without_next_update();
+        assert_eq!(
+            crl_freshness(&der, 0, 0).expect("parse"),
+            CrlFreshness::NoNextUpdate
+        );
+        let err = crl_next_update_required(&der, 3).expect_err("must be refused");
+        let message = err.to_string();
+        assert!(message.contains("#3"), "names the offending CRL: {message}");
+        assert!(
+            message.contains("nextUpdate"),
+            "names what is missing: {message}"
+        );
+    }
+}
+
+/// Reading the configured CRL files, which is a TLS concern and was a CLI one.
+///
+/// It moved here with `TlsPlan`: the TLS plane is the only caller, and reaching for it
+/// through `cli` was the last thing keeping a configuration module named in a plane that
+/// no longer takes configuration.
+#[cfg(test)]
+mod client_crl_loading_tests {
+    #[test]
+    fn missing_client_crl_file_fails_closed() {
+        // A configured-but-unreadable CRL path is a hard error, never a silently
+        // skipped revocation check.
+        let err =
+            super::load_client_crls(&["/no/such/MCPS3839_MISSING.crl".to_string()]).unwrap_err();
+        assert!(err.contains("MCPS3839_MISSING"), "got: {err}");
+    }
+
+    #[test]
+    fn no_crl_paths_loads_empty_vec() {
+        // The no-CRL path: empty input → empty vec (revocation disabled), no error.
+        let crls = super::load_client_crls(&[]).expect("empty load");
+        assert!(crls.is_empty());
     }
 }

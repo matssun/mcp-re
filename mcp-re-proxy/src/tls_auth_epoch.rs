@@ -163,6 +163,12 @@ impl SharedTlsAuthEpoch {
 /// A stale session is NOT an authorization failure — it is simply the absence of a
 /// shortcut, and the peer completes a full handshake against current trust. Returning an
 /// error instead would turn an operator's CA rotation into an outage.
+///
+/// The store OUTLIVES any one `ServerConfig`. A rebuild — the `--client-crl-reload-secs`
+/// cadence is the one that happens in a running process — installs THIS store again and
+/// republishes the epoch computed from that rebuild's trust inputs, so the cache the
+/// fleet filled survives the reload and the epoch is a live value rather than a constant
+/// fixed at construction.
 #[derive(Debug)]
 pub struct EpochBoundSessionStore {
     epoch: Arc<SharedTlsAuthEpoch>,
@@ -175,6 +181,31 @@ impl EpochBoundSessionStore {
         inner: Arc<dyn StoresServerSessions + Send + Sync>,
     ) -> Self {
         Self { epoch, inner }
+    }
+
+    /// A store over a bounded in-memory session cache, seeded with `epoch`.
+    ///
+    /// One of these per listener, handed to every `ServerConfig` build for that
+    /// listener. Constructing one per build would pair a brand-new epoch with a
+    /// brand-new empty cache, which discards every resumable session on each rebuild
+    /// and leaves the epoch with no way to move.
+    pub fn memory_backed(epoch: TlsAuthEpoch, entries: usize) -> Self {
+        EpochBoundSessionStore::new(
+            Arc::new(SharedTlsAuthEpoch::new(epoch)),
+            rustls::server::ServerSessionMemoryCache::new(entries),
+        )
+    }
+
+    /// Publish the epoch a freshly built `ServerConfig` computed from its trust inputs.
+    /// Returns the previous epoch when it CHANGED, so the caller can tell the operator
+    /// that every stored session has just stopped being a shortcut.
+    pub fn republish(&self, epoch: TlsAuthEpoch) -> Option<TlsAuthEpoch> {
+        self.epoch.store(epoch)
+    }
+
+    /// The epoch in force, for diagnostics and for the tests that pin the transition.
+    pub fn epoch(&self) -> Arc<TlsAuthEpoch> {
+        self.epoch.load()
     }
 
     /// Split a stored value into its epoch tag and the session rustls stored.
@@ -305,6 +336,38 @@ mod tests {
         // Restoring the original trust must NOT resurrect it: the entry is gone.
         epoch.store(TlsAuthEpoch::compute(&[anchor(1), anchor(2)], false));
         assert_eq!(store.get(b"key"), None, "the stale entry was not evicted");
+    }
+
+    /// A store handed to a second `ServerConfig` build keeps what the first one cached,
+    /// and republishing the SAME trust leaves those sessions resumable.
+    ///
+    /// The broken implementation this catches: building the store inside each
+    /// `ServerConfig` builder, so every CRL reload swaps in an empty cache and the whole
+    /// peer fleet takes full handshakes on the reload cadence.
+    #[test]
+    fn a_rebuild_that_republishes_the_same_trust_keeps_the_cache() {
+        let store =
+            EpochBoundSessionStore::memory_backed(TlsAuthEpoch::compute(&[anchor(1)], false), 64);
+        assert!(store.put(b"key".to_vec(), b"session".to_vec()));
+        assert_eq!(
+            store.republish(TlsAuthEpoch::compute(&[anchor(1)], false)),
+            None,
+            "identical trust is not an epoch change"
+        );
+        assert_eq!(store.take(b"key"), Some(b"session".to_vec()));
+    }
+
+    /// A rebuild that republishes DIFFERENT trust reports the change and the sessions
+    /// stored under the old trust stop resuming.
+    #[test]
+    fn a_rebuild_with_withdrawn_trust_advances_the_epoch_and_stops_resumption() {
+        let first = TlsAuthEpoch::compute(&[anchor(1), anchor(2)], false);
+        let store = EpochBoundSessionStore::memory_backed(first, 64);
+        assert!(store.put(b"key".to_vec(), b"session".to_vec()));
+        let second = TlsAuthEpoch::compute(&[anchor(1)], false);
+        assert_eq!(store.republish(second), Some(first));
+        assert_eq!(*store.epoch(), second);
+        assert_eq!(store.take(b"key"), None);
     }
 
     #[test]

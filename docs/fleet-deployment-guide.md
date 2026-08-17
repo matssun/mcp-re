@@ -40,7 +40,7 @@ and cannot see a peer's nonces).
 ## Prerequisites
 
 1. A **shared Redis** reachable by every replica, used for two things:
-   - the shared replay store (`--replay-cache shared`, ADR-MCPS-020), and
+   - the shared replay store (`--replay-durability-tier` + `--replay-redis-url`, ADR-MCPS-020), and
    - the trust-epoch revocation source (`--trust-epoch-redis-url`, MCPS-84).
    One Redis serves both; there is no second dependency.
 

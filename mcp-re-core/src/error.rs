@@ -272,6 +272,41 @@ pub enum McpReError {
     /// `delegation_*` tokens above.
     #[error("mcp-re.delegated_signing_unavailable")]
     DelegatedSigningUnavailable,
+
+    // ----- Response-region codes (ADR-MCPRE-058 §10, rulings D1/D2/D4/D5) -----
+    /// The upstream (inner) server's reply is not a legal JSON-RPC 2.0 / MCP response to
+    /// the request it answers: unparseable, wrong `jsonrpc`, an `id` that does not
+    /// correlate, both or neither of `result` / `error`, or a malformed `error` member.
+    ///
+    /// MINTED rather than folded onto [`McpReError::MalformedEnvelope`], which names the
+    /// CALLER's evidence being structurally invalid. An operator reading that token goes
+    /// and looks at the client; this one says the backend answered badly, which is a
+    /// different system and a different fix.
+    ///
+    /// Always emitted from the response region, so it is always
+    /// `execution_status = possibly_executed`: the reply being illegal says nothing about
+    /// whether the action behind it ran.
+    #[error("mcp-re.upstream_response_invalid")]
+    UpstreamResponseInvalid,
+
+    /// The inner transport failed AFTER the request was transmitted — a timeout, a reset,
+    /// a truncated body. **Whether the action executed is unknown.**
+    ///
+    /// Distinct from [`McpReError::InnerPlaneUnavailable`], and the distinction is the
+    /// whole reason both exist: that one is knowable without transmitting anything and is
+    /// genuinely retry-safe; this one is the textbook indeterminate case. Collapsing them
+    /// — which is what a seam returning only bytes does — destroys information no later
+    /// reader can reconstruct. Carries `retry_safety = unsafe_without_reconciliation`.
+    #[error("mcp-re.inner_dispatch_indeterminate")]
+    InnerDispatchIndeterminate,
+
+    /// The inner plane could not begin a dispatch: local in-flight saturation, or every
+    /// backend ejected by the circuit breaker. **Nothing was transmitted**, so the call
+    /// definitely did not execute and an ordinary retry is correct.
+    ///
+    /// Decided BEFORE the execution threshold, which is what makes that claim true.
+    #[error("mcp-re.inner_plane_unavailable")]
+    InnerPlaneUnavailable,
 }
 
 impl McpReError {
@@ -334,6 +369,10 @@ impl McpReError {
             McpReError::DelegationKeyMismatch => "mcp-re.delegation_key_mismatch",
             McpReError::DelegationRevoked => "mcp-re.delegation_revoked",
             McpReError::DelegatedSigningUnavailable => "mcp-re.delegated_signing_unavailable",
+            // Response region (ADR-MCPRE-058 §10).
+            McpReError::UpstreamResponseInvalid => "mcp-re.upstream_response_invalid",
+            McpReError::InnerDispatchIndeterminate => "mcp-re.inner_dispatch_indeterminate",
+            McpReError::InnerPlaneUnavailable => "mcp-re.inner_plane_unavailable",
         }
     }
 }
@@ -376,6 +415,9 @@ pub const ALL_ERRORS: &[McpReError] = &[
     McpReError::AuthorizationBindingAmbiguousBytes,
     McpReError::ContinuationTypeUnsupported,
     McpReError::ContinuationMalformed,
+    McpReError::UpstreamResponseInvalid,
+    McpReError::InnerDispatchIndeterminate,
+    McpReError::InnerPlaneUnavailable,
     McpReError::MalformedEnvelope,
     McpReError::DigestMismatch,
     McpReError::ArtifactBindingFailed,

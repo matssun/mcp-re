@@ -33,6 +33,11 @@ use crate::ids::EVIDENCE_LABEL_REQUEST;
 use crate::ids::EVIDENCE_LABEL_REQUEST_STATE;
 use crate::ids::EVIDENCE_LABEL_RESPONSE;
 use crate::ids::MAX_ADMISSION_ASSERTION_LEN;
+#[cfg(feature = "verify")]
+use verus_builtin_macros::{verus_spec, verus_verify};
+#[cfg(feature = "verify")]
+#[allow(unused_imports)]
+use vstd::prelude::*;
 
 /// The resolved signing-actor identity. Built by the verifier from what the
 /// TrustResolver returned for the presented keyid — role and trusted key
@@ -56,6 +61,10 @@ impl ActorIdentity {
     /// component. Each field is escaped (`%`→`%25`, `:`→`%3A`) before the
     /// `role:trust_domain:subject:keyid` join, so distinct identities never
     /// collapse to the same key even when a subject contains colons.
+    // ADR-MCPRE-059 ASM-0021: opaque to the continuation theorem, with no `ensures`. The
+    // replay key's injectivity is its own property and its own future unit; nothing in the
+    // unbypassability theorem depends on what this string is.
+    #[cfg_attr(feature = "verify", verus_verify(external_body))]
     pub fn actor_id(&self) -> String {
         format!(
             "{}:{}:{}:{}",
@@ -174,6 +183,8 @@ impl From<Option<ResolvedActor>> for ResolverOutcome {
 impl ResolvedActor {
     /// The canonical `actor_id` of the resolved signer (delegates to
     /// [`ActorIdentity::actor_id`]).
+    // ADR-MCPRE-059 ASM-0021: delegates to the identity form; opaque for the same reason.
+    #[cfg_attr(feature = "verify", verus_verify(external_body))]
     pub fn actor_id(&self) -> String {
         self.identity.actor_id()
     }
@@ -307,6 +318,10 @@ impl ArtifactBinding {
     /// Structural validation, fail-closed. The digest must be a non-empty
     /// base64url token; the reference fields are all-present for
     /// `reference-digest` and all-absent for `opaque-digest`.
+    // ADR-MCPRE-059 ASM-0019: structural validation, opaque to the typed-verifier
+    // theorem. Its own contract — digest token shape and the reference-field all-or-none
+    // rule — is a separate property, and the theorem above holds whatever it returns.
+    #[cfg_attr(feature = "verify", verus_verify(external_body))]
     pub fn validate(&self) -> Result<(), HttpProfileError> {
         if self.digest_alg != EVIDENCE_DIGEST_ALG {
             return Err(HttpProfileError::MalformedEvidence("artifact digest_alg"));
@@ -374,6 +389,15 @@ impl RequestEvidenceDigest {
 
     /// Constant-shape check that this handle commits to `bytes` IN ROLE `label`.
     /// A handle that commits to the same bytes in a different role does not match.
+    // ADR-MCPRE-059 ASM-0023: the digest comparator, trusted at exactly the strength the
+    // role-separation contract needs — a true answer means this handle's value IS the
+    // labeled digest of these bytes under this label. The digest itself stays
+    // uninterpreted, so no cryptographic property is assumed here.
+    #[cfg_attr(feature = "verify", verus_verify(external_body))]
+    #[cfg_attr(feature = "verify", verus_spec(result =>
+        ensures
+            result ==> self.digest_value@ == crate::verus_std_specs::labeled_digest(label@, bytes@),
+    ))]
     pub fn matches_labeled(&self, label: &str, bytes: &[u8]) -> bool {
         self.digest_alg == EVIDENCE_DIGEST_ALG
             && self.digest_value == labeled_digest_value(label, bytes)
@@ -381,7 +405,9 @@ impl RequestEvidenceDigest {
 }
 
 /// The `mcp-mrt` continuation type token (kept MCP-specific).
-pub const CONTINUATION_TYPE_MCP_MRT: &str = "mcp-mrt";
+#[allow(clippy::redundant_static_lifetimes)]
+#[cfg_attr(feature = "verify", verus_verify)]
+pub const CONTINUATION_TYPE_MCP_MRT: &'static str = "mcp-mrt";
 
 impl HttpContinuation {
     /// Build the three-handle continuation (MCPRE-97) from the mandated inputs:
@@ -440,6 +466,29 @@ impl HttpContinuation {
     /// A wrong type is malformed; any handle that does not commit to its input
     /// is a continuation-binding failure (a splice across the continuation
     /// boundary, or a tampered `requestState`).
+    // ADR-MCPRE-059 WP3 — the continuation role-labeled BINDING DISCIPLINE contract, and
+    // the discharge of what used to be ASM-0022. An accepted continuation's three handles
+    // are the modeled digests of the three presented inputs, each under its OWN required
+    // role label.
+    //
+    // What that is not: separation. Ruling out a wrong-role handle that happens to collide
+    // needs `digest(label_a, x) != digest(label_b, y)` for distinct labels — a domain-
+    // separation property of the construction, held at `boundary.crypto_primitives` and
+    // deliberately absent from the model here.
+    #[cfg_attr(feature = "verify", verus_spec(out =>
+        ensures
+            out matches Ok(()) ==> {
+                &&& self.previous_request_evidence.digest_value@
+                        == crate::verus_std_specs::labeled_digest(
+                            crate::ids::EVIDENCE_LABEL_REQUEST@, previous_request_base@)
+                &&& self.input_required_response_evidence.digest_value@
+                        == crate::verus_std_specs::labeled_digest(
+                            crate::ids::EVIDENCE_LABEL_RESPONSE@, input_required_response_base@)
+                &&& self.request_state_digest.digest_value@
+                        == crate::verus_std_specs::labeled_digest(
+                            crate::ids::EVIDENCE_LABEL_REQUEST_STATE@, request_state@)
+            },
+    ))]
     pub fn verify(
         &self,
         previous_request_base: &[u8],

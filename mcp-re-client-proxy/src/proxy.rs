@@ -23,6 +23,7 @@ use mcp_re_client_core::response::verify_delegated_accepted_202_pinned;
 use mcp_re_client_core::verify_delegated_response;
 use mcp_re_client_core::verify_delegated_response_anchored;
 use mcp_re_client_core::DelegatedOutcome;
+use mcp_re_client_core::ExecutionContract;
 use mcp_re_client_core::HttpProfileError;
 use mcp_re_client_core::HttpResponse;
 use mcp_re_client_core::RequestSigningInputs;
@@ -110,9 +111,16 @@ pub enum ResponseKind {
     /// A verified delegated rejection receipt, converted to plain JSON-RPC error.
     /// `wire_code` is the server's frozen `mcp-re.*` reason; `bound` distinguishes a
     /// request-bound receipt from a preflight-unbound one.
+    ///
+    /// `execution` is the ADR-MCPRE-058 §10 contract the receipt carried. It is a
+    /// field of this variant rather than something the embedder re-derives from the
+    /// status, because the difference it names — a refusal that ran nothing versus one
+    /// whose side effect a retry would perform a second time — is not recoverable from
+    /// a status code, and 503 is the status clients retry.
     VerifiedRejection {
         wire_code: Option<String>,
         bound: bool,
+        execution: ExecutionContract,
     },
 }
 
@@ -320,9 +328,21 @@ impl ClientProxy {
             // A VERIFIED rejection receipt: the request was provably denied. Convert the
             // signed receipt to a plain JSON-RPC error for the local client and report
             // the classification (fail closed — never returned as a success result).
-            DelegatedOutcome::Rejection { bound, wire_code } => Ok(ProxyResponse {
-                plain_response: plain_error_from_rejection(&request_id),
-                kind: ResponseKind::VerifiedRejection { wire_code, bound },
+            DelegatedOutcome::Rejection {
+                bound,
+                wire_code,
+                execution,
+            } => Ok(ProxyResponse {
+                plain_response: plain_error_from_rejection(
+                    &request_id,
+                    wire_code.as_deref(),
+                    &execution,
+                ),
+                kind: ResponseKind::VerifiedRejection {
+                    wire_code,
+                    bound,
+                    execution,
+                },
             }),
         }
     }
@@ -382,18 +402,50 @@ impl ClientProxy {
 }
 
 /// Convert a VERIFIED delegated rejection receipt to a PLAIN JSON-RPC error for the
-/// local client (transparency: the client sees ordinary JSON-RPC, not an MCP-RE
-/// field — the `mcp-re.*` classification is surfaced to the embedding layer via
-/// [`ResponseKind::VerifiedRejection`], not to the client). The proxy has already
-/// verified the receipt's signature, so this is a provable denial, not a guess.
-fn plain_error_from_rejection(id: &Value) -> Value {
+/// local client. The proxy has already verified the receipt's signature, so this is a
+/// provable denial, not a guess.
+///
+/// Transparency is about the CARRIER, not about withholding what the server said: the
+/// local client still speaks ordinary JSON-RPC and never emits, parses or negotiates an
+/// RFC 9421 field. The server's frozen wire code and its ADR-MCPRE-058 §10 execution /
+/// retry contract ride in the ordinary `error.data` member, because the party that
+/// decides whether to retry is the local agent and nothing else it can see distinguishes
+/// a refusal that ran nothing from a post-dispatch failure whose side effect a retry
+/// performs twice. A fixed generic error told it neither, so it re-invoked.
+///
+/// Only members the receipt actually carried are emitted. An absent `execution_status`
+/// is a receipt that said nothing, and inventing `not_executed` for it would collapse
+/// "unknown whether it ran" into "it did not run" at the one place that matters.
+fn plain_error_from_rejection(
+    id: &Value,
+    wire_code: Option<&str>,
+    execution: &ExecutionContract,
+) -> Value {
+    let mut mcp_re_error = serde_json::Map::new();
+    if let Some(wire_code) = wire_code {
+        mcp_re_error.insert("wire_code".into(), json!(wire_code));
+    }
+    for (name, value) in [
+        ("execution_status", &execution.execution_status),
+        ("retry_safety", &execution.retry_safety),
+        ("continuation_status", &execution.continuation_status),
+        ("retention_status", &execution.retention_status),
+    ] {
+        if let Some(value) = value {
+            mcp_re_error.insert(name.into(), json!(value));
+        }
+    }
+    let mut error = json!({
+        "code": mcp_re_core::MCP_RE_JSON_RPC_ERROR_CODE,
+        "message": "request rejected by the MCP-RE server",
+    });
+    if !mcp_re_error.is_empty() {
+        error["data"] = json!({ "mcp_re_error": Value::Object(mcp_re_error) });
+    }
     json!({
         "jsonrpc": "2.0",
         "id": id,
-        "error": {
-            "code": mcp_re_core::MCP_RE_JSON_RPC_ERROR_CODE,
-            "message": "request rejected by the MCP-RE server",
-        },
+        "error": error,
     })
 }
 
@@ -417,12 +469,21 @@ fn plain_error_from_rejection(id: &Value) -> Value {
 /// members at once — has no reading under which "the call completed with result `null`"
 /// is true. Defaulting them to a null result is the same defect as flattening an error
 /// reply: a truthful-looking success the server never sent.
+///
+/// Bytes that are not JSON at all fail the same way, and for the same reason: the bytes
+/// that failed to parse are the RESPONSE to an exchange the remote server has already
+/// executed. Reporting that as a malformed REQUEST hands the caller a 4xx implying its
+/// own message was bad and nothing ran, and a caller that "fixes" its request and
+/// retries re-runs a side effect the server already performed.
 fn plain_response_from_verified(
     response_body: &[u8],
     request_id: &Value,
 ) -> Result<Value, ProxyError> {
-    let mut object: Value =
-        serde_json::from_slice(response_body).map_err(|_| ProxyError::MalformedRequest)?;
+    let mut object: Value = serde_json::from_slice(response_body).map_err(|_| {
+        ProxyError::FailedClosed(HttpProfileError::MalformedEvidence(
+            "verified reply is not JSON",
+        ))
+    })?;
     if let Some(result) = object.get_mut("result").and_then(Value::as_object_mut) {
         result.remove("_meta");
     }
@@ -432,6 +493,19 @@ fn plain_response_from_verified(
         ));
     };
     top.remove("_meta");
+    // A JSON-RPC response has no `method`. Its presence is what makes a permissive
+    // union parser pick the REQUEST arm, so a reply carrying both a legal `result` and a
+    // `method` becomes a server->client request the client's session dispatches —
+    // sampling, elicitation, roots — over a channel MCP-RE profiles no carrier for, and
+    // the call whose id was consumed never resolves. Refused rather than dropped, so all
+    // three clients say the same thing about the same bytes.
+    if top.contains_key("method") {
+        return Err(ProxyError::FailedClosed(
+            HttpProfileError::MalformedEvidence(
+                "verified reply carries a top-level method; a JSON-RPC response has none",
+            ),
+        ));
+    }
     match (top.get("result"), top.get("error")) {
         (Some(_), Some(_)) => Err(ProxyError::FailedClosed(
             HttpProfileError::MalformedEvidence(
@@ -572,6 +646,11 @@ mod tests {
             br#""ok""#.as_slice(),
             // Both members at once: no reading of this says the call completed.
             br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true},"error":{"code":-1}}"#.as_slice(),
+            // A legal `result` plus a top-level `method`. A permissive union parser —
+            // which is what both SDKs hand this to — reads it as a server->client
+            // REQUEST and dispatches sampling / elicitation / roots on the peer's
+            // params, while the call whose id it consumed never resolves.
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true},"method":"sampling/createMessage","params":{"x":1}}"#.as_slice(),
         ] {
             let outcome = plain_response_from_verified(body, &json!("req-1"));
             assert!(
@@ -590,6 +669,82 @@ mod tests {
         let plain = plain_response_from_verified(body, &json!(2)).expect("rebuild");
         assert_eq!(plain["id"], 2);
         assert_eq!(plain["result"], json!({}));
+    }
+
+    /// Bytes that are not JSON at all are a RESPONSE failure, not a caller error.
+    ///
+    /// Mapping them to `MalformedRequest` renders as HTTP 400 at the ambassador, whose
+    /// own comment justifies that status with "raised entirely locally, before anything
+    /// is signed or sent" — untrue here: the remote server has already executed the
+    /// exchange. A caller that "fixes" its request and retries a 400 re-runs the side
+    /// effect.
+    #[test]
+    fn an_unparseable_verified_reply_is_a_verification_failure_not_a_bad_request() {
+        let outcome = plain_response_from_verified(b"not json at all", &json!("req-1"));
+        assert!(
+            matches!(outcome, Err(ProxyError::FailedClosed(_))),
+            "an unreadable RESPONSE must not be reported as a malformed REQUEST, got {outcome:?}",
+        );
+        assert!(
+            !matches!(outcome, Err(ProxyError::MalformedRequest)),
+            "400 implies the request was never executed",
+        );
+    }
+
+    /// The ADR-MCPRE-058 §10 contract must reach the party that decides whether to
+    /// retry. A fixed generic error told the local agent nothing, so a post-dispatch
+    /// 503 read as an ordinary outage and the retry re-executed the tool call.
+    #[test]
+    fn a_verified_rejection_carries_its_execution_contract_to_the_local_client() {
+        let execution = ExecutionContract {
+            execution_status: Some("possibly_executed".into()),
+            retry_safety: Some("unsafe_without_reconciliation".into()),
+            continuation_status: Some("consumed".into()),
+            retention_status: None,
+        };
+        let plain = plain_error_from_rejection(
+            &json!("req-1"),
+            Some("mcp-re.upstream_unavailable"),
+            &execution,
+        );
+        let data = &plain["error"]["data"]["mcp_re_error"];
+        assert_eq!(data["wire_code"], "mcp-re.upstream_unavailable");
+        assert_eq!(data["execution_status"], "possibly_executed");
+        assert_eq!(data["retry_safety"], "unsafe_without_reconciliation");
+        assert_eq!(data["continuation_status"], "consumed");
+        assert!(
+            data.get("retention_status").is_none(),
+            "a member the receipt did not carry must not be invented"
+        );
+        // The plain reply is still ordinary JSON-RPC: the local client parses an error,
+        // not an MCP-RE carrier field.
+        assert_eq!(plain["jsonrpc"], "2.0");
+        assert_eq!(plain["id"], "req-1");
+        assert_eq!(
+            plain["error"]["code"],
+            mcp_re_core::MCP_RE_JSON_RPC_ERROR_CODE
+        );
+    }
+
+    /// A receipt that stated nothing must not grow a disposition on the way through.
+    /// Emitting `not_executed` for an absent `execution_status` would turn "unknown
+    /// whether it ran" into "it did not run" at the one place that decides.
+    #[test]
+    fn an_unstated_contract_produces_no_invented_disposition() {
+        let plain = plain_error_from_rejection(
+            &json!(1),
+            Some("mcp-re.request_signature_invalid"),
+            &ExecutionContract::default(),
+        );
+        let data = &plain["error"]["data"]["mcp_re_error"];
+        assert_eq!(data["wire_code"], "mcp-re.request_signature_invalid");
+        assert!(data.get("execution_status").is_none());
+        assert!(data.get("retry_safety").is_none());
+
+        // And a receipt with no wire code either emits no `data` at all rather than an
+        // empty object that reads as a statement.
+        let bare = plain_error_from_rejection(&json!(1), None, &ExecutionContract::default());
+        assert!(bare["error"].get("data").is_none());
     }
 
     /// MCP 2026-07-28 closes the `resultType` set; an unknown one is never resolved

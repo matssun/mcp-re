@@ -1,71 +1,36 @@
 //! Serve orchestration for the `mcp-re-proxy` binary, in the LIBRARY so it is
-//! testable in-process (the binary is a thin shim over [`run`]). Builds the key
-//! source, TLS config, replay tier, actor resolver and per-core async fleet from a
-//! parsed [`crate::cli::Config`], then serves until the caller flips `shutdown`.
-#![allow(clippy::too_many_lines)]
+//! testable in-process (the binary is a thin shim over [`run`]).
+//!
+//! The composition root. It establishes the planes that own the runtime's resources
+//! (ADR-MCPRE-056 §8), assembles the RFC 9421 serving PEP over them, hands the whole graph
+//! to [`crate::materialized_runtime::MaterializedRuntime`], and serves until the caller
+//! flips `shutdown`. It decides as little as possible: what it branches on is either a
+//! named rule in [`crate::startup_plan`] or a plane's own answer.
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 
-use crate::async_replay::AsyncReplayTier;
-use crate::async_replay::InMemoryAsyncAtomicReplayStore;
 use crate::async_serve::ServedHttpRequest;
 use crate::cli;
-use crate::cli::BindingKind;
-use crate::cli::KeySourceKind;
-use crate::cli::ReplayKind;
-use crate::client_revocation;
+use crate::clock::now_unix;
 use crate::config_snapshot;
-use crate::delegated_server_signer::TrustEpochAdvance;
+use crate::config_state::CustodyState;
+use crate::config_state::TlsCustodyState;
+use crate::deployment_request::BindingKind;
+use crate::deployment_request::KeySourceKind;
 use crate::http_inner::HttpInnerPool;
-use crate::http_profile_dispatch::ProxyDispatchConfig;
-use crate::tls;
+use crate::startup_posture::PostureLog;
+use crate::startup_posture::Seam;
 use crate::transport::ExactMatchBinding;
 use crate::transport::TransportBindingPolicy;
 use crate::HttpProfileProxy;
-use crate::IdentityStrategy;
-use crate::ReplayDurabilityTier;
-use crate::ReverseProxyMtlsProvider;
-use crate::RevocationTier;
 use crate::ServerOptions;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::SignerSlot;
-use std::collections::HashMap;
-
-/// How often the trust-epoch counter is polled, in seconds.
-///
-/// The Tier-3 guarantee is "flush within one poll interval of an advance", so this is
-/// the revocation latency the push tier actually delivers. Kept well inside the
-/// bounded-`T` fallback so the push tier is still the faster of the two.
-const TRUST_EPOCH_POLL_SECS: u64 = 5;
-
-fn now_unix() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
-/// A wall-clock reading below this Unix-seconds threshold at startup is treated as a
-/// host-clock fault (audit #94 F5). `now_unix()` clamps a pre-epoch SystemTime error
-/// to 0, and a host whose clock is unset typically reads at/near the epoch; either
-/// way every freshness check will fail closed. The threshold is 2000-01-01 UTC — far
-/// below any plausible real deployment time, so a legitimate clock never trips it,
-/// but a 0/epoch clock always does.
-const EPOCH_CLOCK_FAULT_THRESHOLD_SECS: i64 = 946_684_800;
-
-/// The production [`UnixClock`] the revocation-tier resolver wrapping uses to bound
-/// the propagation window `T` (ADR-MCPS-021). Delegates to the trust-cache's
-/// system clock so production and the unit-tested helper share one clock type.
-fn trust_clock() -> crate::trust_cache::UnixClock {
-    crate::trust_cache::system_clock()
-}
 
 /// Build the serving [`crate::ActorResolver`] — the trust seam the RFC 9421 PEP
 /// consults for every signature it verifies (slot discipline, MCPRE-100).
@@ -85,7 +50,7 @@ fn trust_clock() -> crate::trust_cache::UnixClock {
 /// yields no actor, which the verifier surfaces as `actor_binding_failed`; an
 /// operational failure is never softened into an allow.
 pub fn build_actor_resolver(
-    trust_store: Arc<crate::reloading_trust::ReloadingTrustStore>,
+    signers: crate::reloading_trust::SignerDirectory,
     request_trust: Arc<dyn mcp_re_core::TrustResolver + Send + Sync>,
     trust_domain: String,
     response_kid: String,
@@ -102,7 +67,7 @@ pub fn build_actor_resolver(
         }
         SignerSlot::Request => {
             // An unknown kid is a definitive negative from a healthy resolver.
-            let Some(signer) = trust_store.signer_for(kid) else {
+            let Some(signer) = signers.signer_for(kid) else {
                 return ResolverOutcome::NotTrusted;
             };
             // C079: `.ok()?` used to throw this error away, so a store OUTAGE and an
@@ -132,26 +97,70 @@ pub fn build_actor_resolver(
     })
 }
 
+/// Whether a startup clock reading costs more than a warning, and why.
+///
+/// A faulted clock is tolerable where it only feeds per-request freshness: every request
+/// then fails closed, which is safe. It is NOT tolerable where the same reading is the
+/// reference time for a BOOT-TIME refusal. `startup_now_unix` is what the TLS plane
+/// compares each client CRL's `nextUpdate` against, and nothing is ever `Stale` relative
+/// to a clock reading zero — so with CRLs configured the refusal that exists to keep an
+/// expired CRL out of the serving path cannot fire, while the revocation-posture transcript
+/// still advertises the CRL as enforced.
+///
+/// Pure, so the decision is assertable without a broken host clock: it takes the reading
+/// and how many CRLs the deployment configured, and returns the refusal.
+fn faulted_clock_refusal(startup_now_unix: i64, configured_crls: usize) -> Option<String> {
+    if configured_crls == 0 || !crate::startup_plan::host_clock_is_faulted(startup_now_unix) {
+        return None;
+    }
+    Some(format!(
+        "mcp-re-proxy refuses to start: the system clock reads at/near the Unix epoch \
+         ({startup_now_unix} < {}s), so the boot-time client-CRL freshness refusal cannot be \
+         performed — every CRL compares as fresh against a zero clock, and the \
+         {configured_crls} configured CRL(s) would be advertised as enforced while an \
+         arbitrarily expired one was loaded. Fix the host clock (NTP/RTC) before starting.",
+        crate::startup_plan::EPOCH_CLOCK_FAULT_THRESHOLD_SECS,
+    ))
+}
+
 /// Enforce the key-file-permission posture for a sensitive key file. The proxy
 /// always runs the maximal-security posture, so a group/world-accessible key file
 /// is a HARD error returned to the caller (startup refuses). Uses the pure
-/// [`cli::key_file_mode_is_insecure`] predicate so it stays consistent with (and
+/// [`cli::key_file_posture_violation`] predicate so it stays consistent with (and
 /// testable alongside) the parse-time checks.
+///
+/// A `stat` that fails for any reason other than "there is no such file" is itself a
+/// refusal. The posture of a file the proxy is about to READ is either established or it
+/// is not, and treating an unreadable `stat` as compliance is how a world-readable signing
+/// seed on a networked or overlay mount (EIO, ESTALE, EACCES on the directory) boots
+/// silently. `NotFound` is the one error that is not a fail-open: there is no file whose
+/// permissions could be wrong, the loader resolves the same path a moment later, and it
+/// reports the absence with the diagnostic that names what was missing.
 #[cfg(unix)]
 fn check_key_file_perms(path: &str, allow_group_read: bool) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt;
     use std::os::unix::fs::PermissionsExt;
-    if let Ok(meta) = std::fs::metadata(path) {
-        let mode = meta.permissions().mode();
-        if let Some(reason) =
-            cli::key_file_posture_violation(mode, meta.gid(), allow_group_read, &process_gids())
-        {
+    let meta = match std::fs::metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
             return Err(format!(
-                "mcp-re-proxy refuses unsafe configuration:\n  - key file {path} \
-                 is {reason} (mode {:o}); restrict to 0600",
-                mode & 0o777
-            ));
+                "mcp-re-proxy refuses unsafe configuration:\n  - key file {path} cannot be \
+                 stat'ed ({e}), so its permission posture cannot be established; it is read \
+                 by the proxy regardless, and starting would mean serving with a key file \
+                 that may be group- or world-readable"
+            ))
         }
+    };
+    let mode = meta.permissions().mode();
+    if let Some(reason) =
+        cli::key_file_posture_violation(mode, meta.gid(), allow_group_read, &process_gids())
+    {
+        return Err(format!(
+            "mcp-re-proxy refuses unsafe configuration:\n  - key file {path} \
+             is {reason} (mode {:o}); restrict to 0600",
+            mode & 0o777
+        ));
     }
     Ok(())
 }
@@ -190,23 +199,37 @@ fn process_gids() -> Vec<u32> {
 /// Gating the whole check on `key_source == File` therefore skipped the one private key
 /// that DOES land in the pod in precisely the modes advertised as "no key material ever
 /// lands in the pod": a Secret mounted with Kubernetes' default 0644 booted silently.
-fn key_files_read_from_disk(config: &cli::Config) -> Vec<&str> {
-    let mut paths = Vec::new();
-    if config.key_source == KeySourceKind::File && !config.signing_key_seed.is_empty() {
-        paths.push(config.signing_key_seed.as_str());
-    }
-    if !config.tls_key.is_empty() {
-        paths.push(config.tls_key.as_str());
-    }
-    // The PKCS#11 User PIN file is not a key, but it is the credential that unlocks the
-    // token holding the signing and (optionally) TLS keys — so a group/world-readable PIN
-    // file is as good as a readable key file, and belongs behind the same floor.
-    if let Some(pin_file) = config.pkcs11_pin_file.as_deref() {
-        if !pin_file.is_empty() {
-            paths.push(pin_file);
+fn key_files_read_from_disk<'a>(
+    custody: &'a CustodyState,
+    tls_custody: &'a TlsCustodyState,
+) -> Vec<&'a str> {
+    // Under `EnvSeed` NOTHING is on disk: every locator this deployment carries names an
+    // environment variable, including the TLS ones. The old field test compared
+    // `key_source == File` for the seed but not for `--tls-key`, so an env-var NAME was
+    // stat'ed as a path — harmless only because a missing file passes the check. Phrasing
+    // the projection over the state removes the case instead of adding a condition for it.
+    let CustodyState::EnvSeed { .. } = custody else {
+        let mut paths = Vec::new();
+        match custody {
+            // The signing seed, where the deployment keeps one on disk.
+            CustodyState::FileSeed { seed_path } => paths.push(seed_path.as_str()),
+            // The PKCS#11 User PIN file is not a key, but it is the credential that
+            // unlocks the token holding the signing and (optionally) TLS keys — so a
+            // group/world-readable PIN file is as good as a readable key file, and belongs
+            // behind the same floor.
+            CustodyState::Pkcs11 { pin_file, .. } => paths.push(pin_file.as_str()),
+            // The KMS states keep the signing key in KMS; neither holds a local secret.
+            CustodyState::AwsKms { .. } | CustodyState::GcpKms { .. } => {}
+            CustodyState::EnvSeed { .. } => unreachable!("the let-else above took this arm"),
         }
-    }
-    paths
+        // And the handshake key, only where custody EXPORTS one. Delegated custody keeps
+        // it on the device, and X2b has already refused a file copy beside it.
+        if let TlsCustodyState::Exported { key_path } = tls_custody {
+            paths.push(key_path.as_str());
+        }
+        return paths;
+    };
+    Vec::new()
 }
 
 /// No-op off unix: the mode bits this guard reads do not exist there. Kept in step with
@@ -221,39 +244,170 @@ fn check_key_file_perms(_path: &str, _allow_group_read: bool) -> Result<(), Stri
 /// `shutdown` is flipped (SIGTERM/SIGINT in the binary; a test flag in tests). The
 /// binary's `main` is a thin shim over this; keeping it in the library makes the
 /// whole deployed serving path in-process-testable.
+///
+/// The signature still takes a raw [`crate::deployment_request::DeploymentRequest`], and validation happens HERE
+/// rather than being the caller's job. `DeploymentRequest` has 76 public fields, so a caller that
+/// builds one in code — an embedder, a harness, a test — used to reach the serving path
+/// having run none of the parse-time safety guards. Validating at the boundary closes
+/// that without breaking any existing caller: every guard now runs whichever way the
+/// config was produced, and nothing past this point sees an unchecked `DeploymentRequest`.
 pub fn run(
-    config: crate::cli::Config,
+    config: crate::deployment_request::DeploymentRequest,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
+    // Whether the audit stream is this process's stderr has to be read BEFORE the config
+    // is consumed, and it decides only whether the drain is REPORTED — the drain itself is
+    // unconditional, because a sink installed by an embedder past this seam would still
+    // have left records in the same global queue.
+    let audits_to_stderr = config.audit_sink == crate::deployment_request::AuditSinkKind::Stderr;
+    // The drain is placed around the WHOLE of the run rather than after `serve` returns, so
+    // that every route out of this function passes through it: a clean drain, a serve that
+    // failed, and a startup refused at the boundary. A teardown obligation discharged on
+    // one of three exits is the shape the rest of this round keeps finding.
+    let outcome = crate::config_state::validation::ValidatedDeployment::try_from(config)
+        .and_then(|validated| run_validated(&validated, shutdown));
+    drain_audit_stream(audits_to_stderr);
+    outcome
+}
+
+/// How long shutdown waits for the audit writer to write out what it was already handed.
+///
+/// Bounded because the writer owns a file descriptor the proxy does not control: a log
+/// collector applying backpressure, a full volume or a stalled pipe reader must cost a
+/// bounded shutdown delay and a stated uncertainty, never a process that will not exit.
+const AUDIT_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Discharge the audit writer's teardown obligation, and SAY which of the two things
+/// happened.
+///
+/// [`crate::audit_sink::flush_stderr_audit`] exists because the writer thread is detached
+/// and cannot be joined: without this call a process that exits with records still queued
+/// loses them, and a shutdown under load loses precisely the decisions taken last.
+///
+/// The two outcomes are reported as different facts on purpose. "Drained" means every
+/// record handed to the writer reached stderr. A timeout does NOT mean records were lost —
+/// it means nobody can say either way, because the acknowledgement that would have settled
+/// it never came. Collapsing those two into one "shutdown complete" line would destroy
+/// exactly the distinction an audit stream exists to preserve, so the timeout line states
+/// the uncertainty as uncertainty rather than as either outcome.
+///
+/// A timeout is deliberately NOT turned into a non-zero result. The serving outcome is
+/// what the caller asked about, and reporting a clean shutdown as failed because a log
+/// collector was slow would make an observability fault look like a serving fault — the
+/// inversion the sink's own "audit must never fail a request" rule rejects on the hot path.
+fn drain_audit_stream(report: bool) {
+    let drained = crate::audit_sink::flush_stderr_audit(AUDIT_FLUSH_TIMEOUT);
+    if let Some(line) = audit_drain_line(drained, report) {
+        eprintln!("{line}");
+    }
+}
+
+/// What shutdown says about the audit drain, or `None` when this deployment does not write
+/// its audit stream to stderr and so has nothing to say about it.
+///
+/// Separated from the drain itself so the one property that matters here — that the two
+/// outcomes never read as the same fact — is assertable without stalling a log collector.
+fn audit_drain_line(drained: bool, report: bool) -> Option<String> {
+    if !report {
+        return None;
+    }
+    Some(if drained {
+        "mcp-re-proxy: audit stream drained at shutdown: every record handed to the audit \
+         writer reached stderr"
+            .to_string()
+    } else {
+        format!(
+            "mcp-re-proxy: WARNING: the audit stream did NOT acknowledge its drain within {}s. \
+             This is NOT a report that records were lost and NOT a clean shutdown of the audit \
+             stream: whether the decisions recorded last reached stderr is UNKNOWN. Their seq \
+             numbers are the gap to look for, and the writer's backing channel (a stalled log \
+             collector, a full volume) is what to check.",
+            AUDIT_FLUSH_TIMEOUT.as_secs()
+        )
+    })
+}
+
+/// The serving path proper. Reachable only with a [`crate::config_state::validation::ValidatedDeployment`], which
+/// is the whole point: there is no route into it that skips the guards.
+// A documented threshold exception (CLAUDE.md case B), stated in the terms that rule asks
+// for rather than as "it is complicated". 531 lines, of which 290 are code — the rest is
+// this argument.
+//
+// WHAT INVARIANT REQUIRES LOCALITY. Two, and both are enforced rather than asserted:
+//
+//   1. ORDER OF EFFECTS IS BEHAVIOUR. What this function reports as it starts is an
+//      ORDERED transcript, and `tests/startup_transcript/` captures it from the shipped
+//      binary and asserts on the sequence — a `Vec`, not a set, because a posture line
+//      that moved across the trust/replay boundary would be a real change. Statements
+//      moved into helpers keep their order only by the call site's discipline, and that
+//      discipline is invisible at the point a later edit would break it.
+//   2. FAILURE RECLAIMS IN A STATED ORDER. After `MaterializingRuntime::begin`, every `?`
+//      drops the builder, which reclaims what is installed in the order it owns. The ~38
+//      fallible expressions below are one region for that reason: their unwinding is a
+//      property of a single scope, not of whatever order locals happen to be declared in.
+//
+// WHY THE SUBORDINATE RESPONSIBILITIES ARE NOT SEPARABLE. They largely are, and have been:
+// every classification this function used to perform inline now lives in `startup_plan`
+// (pure) or `config_state` (layer A), and every resource with a teardown obligation lives
+// in the plane that owns it. What remains is the assembly itself — the part whose content
+// IS the order and the ownership. Regions that are neither leave: `identity_strategy` was
+// the most recent, a pure three-way selection that had become readable only by reading an
+// `if` inside a 300-line body.
+//
+// WHAT COMPENSATES FOR THE SIZE. The startup transcript harness above (order, from the
+// real binary), `app_startup_characterization_test` (refusals reachable at this altitude),
+// and the plans' own unit tests (every pure decision, tested without starting a proxy).
+//
+// The allowance is on this function alone rather than on the module, so anything else here
+// that grows past the threshold is still reported.
+#[allow(clippy::too_many_lines)]
+fn run_validated(
+    config: &crate::config_state::validation::ValidatedDeployment,
+    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<(), String> {
+    let values = config.config();
     // Clock-fault diagnosis (audit #94 F5). `now_unix()` deliberately maps a
     // pre-epoch SystemTime error to 0 (fail CLOSED — every request then fails its
     // freshness check rather than admitting a stale one), but a clock that reads
     // at/near the Unix epoch would otherwise surface only as an unexplained flood of
     // freshness denials. Emit a ONE-TIME loud startup warning so a broken/unset host
-    // clock is diagnosed at the source instead of masked. We do not refuse to start
-    // (the fail-closed posture is already safe), but the operator is told why every
-    // request will be denied.
-    // Read the clock ONCE so the comparison and the reported value are consistent
-    // (a second now_unix() call could read a different instant).
+    // clock is diagnosed at the source instead of masked. Where the reading only feeds
+    // per-request freshness the posture is already safe, so that case warns rather than
+    // refuses and the operator is told why every request will be denied.
+    //
+    // It is NOT safe where the same reading is the reference time for a BOOT-TIME refusal.
+    // `startup_now_unix` is handed to the TLS plane, which refuses to start on a client CRL
+    // whose `nextUpdate` has passed — a comparison against a clock reading zero declares
+    // every CRL fresh, so the one check that stops an arbitrarily expired CRL from reaching
+    // the serving path silently does not fire while the revocation-posture transcript still
+    // advertises the CRL as enforced. A fail-closed default cannot be inferred from a
+    // fail-closed neighbour: this one is refused.
+    //
+    // Read the clock ONCE so the comparison, the reported value and every plane handed
+    // `startup_now_unix` below agree on one instant. Whether that reading is a FAULT is
+    // the plan's rule; reading the clock and deciding what it costs is this function's.
     let startup_now_unix = now_unix();
-    if startup_now_unix < EPOCH_CLOCK_FAULT_THRESHOLD_SECS {
+    if let Some(refusal) = faulted_clock_refusal(startup_now_unix, values.client_crl_paths.len()) {
+        return Err(refusal);
+    }
+    if crate::startup_plan::host_clock_is_faulted(startup_now_unix) {
         eprintln!(
             "mcp-re-proxy: WARNING: the system clock reads at/near the Unix epoch ({} < {}s); this \
              almost certainly means the host clock is unset or broken. Freshness checks will \
              FAIL CLOSED (every request denied) until the clock is corrected — fix the host clock \
              (NTP/RTC) rather than treating the resulting denials as a load problem.",
             startup_now_unix,
-            EPOCH_CLOCK_FAULT_THRESHOLD_SECS,
+            crate::startup_plan::EPOCH_CLOCK_FAULT_THRESHOLD_SECS,
         );
     }
 
     // Security posture note. The hard guards (cn_legacy, memory/weak replay,
     // over-ceiling/disabled cert lifetime, reverse-proxy ingress, lb-assertion,
     // node-local replay under --fleet) are ALL rejected at parse time by
-    // `cli::unsafe_config_violations` — the proxy never reaches here with them. Only
+    // `config_state::validation::unsafe_config_violations` — the proxy never reaches here with them. Only
     // the env key source (a dev/CI-only build, `dev_env_key_source`) is worth a
     // runtime note, since that build deliberately permits it.
-    if config.key_source == KeySourceKind::Env {
+    if values.key_source == KeySourceKind::Env {
         eprintln!(
             "mcp-re-proxy: WARNING: --key-source env is a dev/CI-only build (dev_env_key_source); \
              env key material is visible to the process tree. Never use in production."
@@ -265,7 +419,7 @@ pub fn run(
     // identity. This is only safe if the listening socket is reachable ONLY by
     // the trusted upstream; anyone who can reach the port could otherwise spoof
     // any identity by setting the header. (Strict ingress enforcement is #3842.)
-    if let Some(header) = &config.reverse_proxy_identity_header {
+    if let Some(header) = &values.reverse_proxy_identity_header {
         eprintln!(
             "mcp-re-proxy: WARNING: reverse-proxy identity mode is ENABLED (reading the trusted \
              header '{header}', format {:?}, identity field {:?}). mTLS is assumed terminated \
@@ -274,17 +428,17 @@ pub fn run(
              (loopback / private network / its own mTLS link) and that the upstream STRIPS any \
              client-supplied copy of '{header}' before setting its own. If the socket is \
              reachable by untrusted clients, they can SPOOF any identity.",
-            config.reverse_proxy_header_format, config.identity_source, config.bind,
+            values.reverse_proxy_header_format, values.identity_source, values.bind,
         );
     }
     // A group/world-readable key file is a HARD error (refuse startup). The other
     // guards are parse-time and already enforced inside `cli::parse_args`; this one is
     // filesystem-dependent so it lives here.
-    for path in key_files_read_from_disk(&config) {
-        check_key_file_perms(path, config.allow_group_readable_key_files)?;
+    for path in key_files_read_from_disk(config.state().custody(), config.state().tls_custody()) {
+        check_key_file_perms(path, values.allow_group_readable_key_files)?;
     }
     // A disabled (`none`/`0`) or over-ceiling `--max-client-cert-lifetime` is
-    // rejected at parse time (`cli::unsafe_config_violations`), so by here it is
+    // rejected at parse time (`config_state::validation::unsafe_config_violations`), so by here it is
     // always a bounded lifetime within the ceiling — no runtime check needed.
 
     // Key material + trust.
@@ -296,146 +450,93 @@ pub fn run(
     // signs by delegation (`sign_response`), so a non-exporting HSM/KMS source would
     // never need to surrender its private key — there is deliberately no
     // `signing_key()` export call on the wiring path anymore.
-    let key_source = cli::build_key_source(&config).map_err(|e| e.to_string())?;
+    let key_source = cli::build_key_source(
+        config.state().custody(),
+        config.state().tls_custody(),
+        &values.tls_cert,
+        &values.client_ca,
+    )
+    .map_err(|e| e.to_string())?;
     let server_chain = key_source
         .tls_server_cert_chain()
         .map_err(|e| e.to_string())?;
     let client_ca = key_source.client_ca_roots().map_err(|e| e.to_string())?;
     // ADR-MCPS-028 §G / issue #58: TLS signing is DELEGATED xor EXPORTED. When the
     // source offers a delegated TLS signer the server private key never leaves the
-    // device — we never call `tls_server_key()`. The exported key is loaded ONLY on
-    // the non-delegated path. The CLI exclusivity guard (`cli::parse_args`) already
-    // rejected a config that asks for both.
-    let tls_delegated_signer = key_source.tls_delegated_signer();
-    let server_key = match &tls_delegated_signer {
-        Some(_) => None,
-        None => Some(key_source.tls_server_key().map_err(|e| e.to_string())?),
+    // device — `tls_server_key()` is never called. The exported key is read ONLY on the
+    // non-delegated path. The CLI exclusivity guard (`cli::parse_args`) already rejected
+    // a config that asks for both.
+    //
+    // The sum type is built HERE, where custody becomes known, so the exclusivity is a
+    // property of the value rather than an agreement between two `Option`s that later
+    // code has to re-derive.
+    let tls_material = match key_source.tls_delegated_signer() {
+        Some(signer) => crate::tls_plane::TlsKeyMaterial::Delegated(signer),
+        None => crate::tls_plane::TlsKeyMaterial::Exported(
+            key_source.tls_server_key().map_err(|e| e.to_string())?,
+        ),
     };
-    // ADR-MCPS-021 Axis 2: the base trust store the revocation tiers resolve against.
+    // ADR-MCPRE-056 §9: there is no shared worker set here any more. EVERY long-lived
+    // thread startup creates belongs to the plane that owns the resource it maintains, so
+    // the ~38 fallible expressions between here and `serve_fleet` each halt and reclaim
+    // whatever is already running on their way out — and each plane also gets to say what
+    // its own resource means once it stops. None of those expressions says so: that is
+    // the point of expressing the lifetime as ownership instead of as cleanup nobody was
+    // going to write at 38 return points.
+    // Trust (ADR-MCPRE-056 §8). The plane owns the store, the freshness flag and the
+    // workers that refresh them; what comes back is two narrow live handles.
     //
-    // It is a SNAPSHOT the reload task can swap, not a map deserialised once and
-    // frozen for the process lifetime. Every tier describes itself in terms of "the
-    // store" — Tier 2 consults it per verification, Tier 3 evicts and forces a
-    // re-resolve against it — and none of those descriptions was a true statement
-    // about the deployment while the store could not change: revoking a client
-    // signing key meant editing the file and restarting every replica, so the
-    // exposure window was unbounded while the startup line advertised near-zero.
-    // The response kid is the deployment's own issuer key id; it is excluded from the
-    // request-signer set so the root can never be presented as a client credential.
-    let response_kid = config
-        .delegated_issuer_kid
-        .clone()
-        .unwrap_or_else(|| config.server_key_id.clone());
-    let trust_store = Arc::new(load_trust_snapshot(&config.trust_path, &response_kid)?);
-
-    // ADR-MCPS-021 Axis 2: surface the DECLARED revocation tier and its honest
-    // guarantee at startup. The proxy emits the tier's OWN guarantee string — never
-    // a hardcoded stronger one — so it cannot surface a revocation window stronger
-    // than the configured tier proves (the tier-claim ceiling). Tier 1
-    // (bounded-cache) is the default when --revocation-tier is absent.
-    // The tier's window is a claim about how fast a REVOKED key stops resolving, and
-    // nothing resolves faster than `--trust` is re-read. The qualifier belongs on the
-    // tier line itself: as a separate line further down it was routinely read as being
-    // about something else, and the tier line was quoted on its own.
-    eprintln!(
-        "mcp-re-proxy: {} store-change-cadence={}",
-        config.revocation_tier.startup_audit_line("trust-store"),
-        store_change_cadence(config.trust_reload_secs)
+    // `response_kid` names the root issuer the delegated credential chains to
+    // (ADR-MCPRE-052). Derived once, in the plan, and handed to BOTH planes: trust must
+    // not enroll it as a request signer, and signing mints under it. Two derivations
+    // could disagree about which key that is.
+    let response_kid = crate::startup_plan::response_issuer_kid(config);
+    // The shared trust-epoch mechanism, interpreted ONCE and handed to both consumers
+    // (CF-09). Trust flushes its cache on an advance; delegated signing mints under the
+    // resulting label. Each used to read the configuration for itself.
+    let trust_epoch = crate::startup_plan::TrustEpochPlan::from_validated(config);
+    let trust_plan =
+        crate::startup_plan::TrustPlan::from_validated(config, response_kid.clone(), trust_epoch);
+    // Transport custody and the offline client-cert revocation posture, both already
+    // classified by layer A (ADR-MCPRE-056 §8).
+    let tls_plan = crate::startup_plan::TlsPlan::from_validated(config);
+    // Response-signing custody. The SECOND consumer of both shared decisions, and it
+    // receives them the same way the first did — from here, not from its sibling.
+    let signing_plan = crate::startup_plan::SigningPlan::from_validated(
+        config,
+        response_kid.clone(),
+        trust_plan.epoch.clone(),
     );
-    // ADR-MCPS-021 Axis 2: APPLY the declared tier to the resolver so the runtime
-    // behavior actually matches the surfaced guarantee (Tier 1 bounds cached active
-    // trust to T; Tier 2 consults the store live every request; Tier 3 evicts on a
-    // pushed event, else falls back to bounded T). Without this wrapping the tier
-    // line above would be a claim the resolver does not enforce.
-    // MCPS-84: connect the networked trust-epoch invalidation channel if one is
-    // configured (only under --revocation-tier push; enforced at parse time).
-    let push_channel = build_trust_epoch_channel(&config, Arc::clone(&shutdown))?;
-    if let RevocationTier::Push { .. } = config.revocation_tier {
-        if push_channel.is_none() {
-            // Honesty (Tier 3): with no networked source wired, the in-process
-            // reference channel is inert — Tier 3 runs at its bounded-`T` fallback
-            // (already reflected in the tier's `guarantee()` string above), NOT an
-            // active near-zero push channel. Configure --trust-epoch-redis-url to
-            // activate the networked source (MCPS-84).
-            eprintln!(
-                "mcp-re-proxy: NOTE: revocation-tier PUSH has no networked event source (no \
-                 --trust-epoch-redis-url), so it runs at its bounded-T fallback; set \
-                 --trust-epoch-redis-url to activate the trust-epoch push source."
-            );
-        }
-    }
-    let resolver = cli::build_revocation_resolver_with_channel(
-        &config.revocation_tier,
-        Box::new(crate::reloading_trust::SharedTrustStore(Arc::clone(
-            &trust_store,
-        ))),
-        trust_clock(),
-        push_channel,
-    );
-    // Re-read `--trust` on a cadence so a key removed from the file stops resolving on
-    // a RUNNING replica. Without it the tier wrappers above wrap an immutable map and
-    // the guarantee printed a few lines up is not one the data plane can keep.
-    // Whether the store behind the resolver is still changing. Only meaningful where a
-    // reload is running: with `--trust-reload-secs` absent the store is frozen by
-    // design and says so on the OFF line below, so there is no freshness to lose.
-    let trust_freshness = Arc::new(TrustStoreFreshness::default());
-    if let Some(interval_secs) = config.trust_reload_secs {
-        spawn_trust_reload_task(
-            Arc::clone(&trust_store),
-            config.trust_path.clone(),
-            response_kid.clone(),
-            interval_secs,
-            Arc::clone(&trust_freshness),
-            Arc::clone(&shutdown),
-        );
-        eprintln!(
-            "mcp-re-proxy: trust store reload ACTIVE every {interval_secs}s: a key removed              from {} stops resolving within one cadence, with no restart.",
-            config.trust_path
-        );
-    } else {
-        eprintln!(
-            "mcp-re-proxy: trust store reload OFF: --trust is read once at startup, so              revoking a request-signer key requires restarting every replica. The              revocation-tier guarantee above bounds CACHING, not the store itself. Set              --trust-reload-secs to bound it."
-        );
-    }
 
-    // ADR-MCPRE-051 §3: the inner MCP server is reached over the ASYNC HTTP inner
-    // plane — a stateless Streamable-HTTP backend fronted by the pooled hyper
-    // client wired below. The proxy launches NO subprocess and carries no sandbox:
-    // an unmodified local stdio MCP server is fronted by the out-of-TCB
-    // `mcp-re-stdio-bridge` adapter and reached over HTTP like any other backend.
-    if config.inner_http_urls.is_empty() {
-        return Err(
-            "the proxy serves over an async HTTP inner plane: pass --inner-http-url <url>. \
-             To protect a local stdio MCP server, run it behind the mcp-re-stdio-bridge adapter \
-             and point --inner-http-url at the bridge."
-                .to_string(),
-        );
-    }
-
-    // Build the RFC 9421 serving PEP (ADR-MCPRE-050 sole carrier). The trust file
-    // supplies the ActorResolver: each trusted key_id resolves to a structured
-    // ResolvedActor — client keys for the Request slot, the server key for the
-    // Response slot (slot discipline, MCPRE-100).
+    // ADR-MCPRE-057 §3 — the lifecycle becomes a value here.
     //
-    // The Request slot resolves its verification key through the ADR-MCPS-021
-    // revocation-tier resolver built above, so the tier whose guarantee is printed
-    // at startup is the tier the data plane actually runs: a `Revoked`/`NotFound`
-    // binding rejects the request, and an `Unavailable` fails closed rather than
-    // serving a key. The trust file supplies only the kid -> signer identity
-    // coordinate; the KEY comes from the resolver on every request.
-    let resolver: Arc<dyn mcp_re_core::TrustResolver + Send + Sync> = Arc::from(resolver);
-    // OUTSIDE the tier wrappers, so a bounded-cache hit cannot answer from a snapshot
-    // the reload has stopped being able to refresh. Only where a reload is running: a
-    // deployment without one has already been told its store cannot change at all.
-    let resolver: Arc<dyn mcp_re_core::TrustResolver + Send + Sync> =
-        if config.trust_reload_secs.is_some() {
-            Arc::new(StaleFailsClosed {
-                inner: resolver,
-                freshness: Arc::clone(&trust_freshness),
-            })
-        } else {
-            resolver
-        };
+    // `PlanBuilt` is applied at THIS line because everything above it is pure and the
+    // next statement is the first effect this process performs. That boundary is real but
+    // not yet tidy: some pure planning (`ReplayPlan::from_config`, the inner-plane
+    // ceiling) still runs below, INSIDE `Materializing`. The state machine tolerates it —
+    // planning during materialization is untidy, not illegal — and ADR-MCPRE-058 §17A
+    // step 5 is where the two stop interleaving. Instrumenting what is here, rather than
+    // reordering to make the model look clean, is deliberate: a state machine that
+    // required its own preconditions to be manufactured would be describing an
+    // architecture that does not exist.
+    let mut lifecycle = crate::runtime_state::RuntimeLifecycle::new();
+    // Holding a `ValidatedDeployment` IS the proof: there is no route to this function that
+    // skips the boundary.
+    lifecycle.apply(crate::runtime_state::RuntimeEvent::ValidationSucceeded)?;
+    lifecycle.apply(crate::runtime_state::RuntimeEvent::PlanBuilt)?;
+
+    // ADR-MCPRE-057 §9 — from here every teardown-bearing resource is owned the moment it
+    // is acquired. `begin` applies `MaterializationStarted`, so entering the state and
+    // entering the owner are one act; a failure at any `?` below drops the builder, which
+    // reclaims what was installed in the documented order instead of unwinding locals in
+    // reverse declaration order (F3).
+    let mut building = crate::materializing_runtime::MaterializingRuntime::begin(lifecycle)?;
+
+    building.install_trust(crate::trust_plane::TrustPlane::materialize(
+        &trust_plan,
+        Arc::clone(&shutdown),
+    )?);
+    let resolver = building.trust().resolver();
     // Response-slot signing custody (ADR-MCPRE-052, MCPRE-122): delegated-signing is
     // the ONLY response mode. The ROOT key is the credential ISSUER only; the resolver
     // resolves the ROOT public key (by its issuer kid) for the Response slot, and NO
@@ -446,350 +547,90 @@ pub fn run(
     let response_pub = key_source
         .response_public_key()
         .map_err(|e| e.to_string())?;
-    let server_identity = ActorIdentity {
-        role: "server".to_string(),
-        trust_domain: config.trust_domain.clone(),
-        subject: config.server_signer.clone(),
-        keyid: response_kid.clone(),
-    };
+    // Derived once by the `ServerIdentity` owner. Assembling one here from the primitives
+    // is what this consumer used to do, and what `SigningPlan` did independently.
+    let server_identity = config.state().server_identity().actor().clone();
     let resolve_actor = build_actor_resolver(
-        Arc::clone(&trust_store),
+        building.trust().signers(),
         Arc::clone(&resolver),
-        config.trust_domain.clone(),
+        values.trust_domain.clone(),
         response_kid.clone(),
         server_identity.clone(),
         response_pub,
     );
     let expected_audience = AudienceTuple {
-        audience_id: config.audience.clone(),
-        target_uri: config.target_uri.clone(),
-        route: config.route.clone(),
-    };
-    // The authoritative async replay tier (§4) + deployment durability posture,
-    // selected below; default is the single-replica in-memory tier.
-    // `mut` is load-bearing only under the durable-store features, whose match arms
-    // reassign these below; without those features the bindings are never rewritten.
-    #[cfg_attr(
-        not(any(feature = "cpstore_etcd", feature = "redis_replay")),
-        allow(unused_mut)
-    )]
-    let mut replay_async = AsyncReplayTier::new(
-        Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-        config.max_clock_skew,
-    );
-    #[cfg_attr(
-        not(any(feature = "cpstore_etcd", feature = "redis_replay")),
-        allow(unused_mut)
-    )]
-    let mut dispatch_cfg = ProxyDispatchConfig {
-        fleet_strict: false,
-        tier: None,
+        audience_id: values.audience.clone(),
+        target_uri: values.target_uri.clone(),
+        route: values.route.clone(),
     };
     let mut transport_binding: Option<Box<dyn TransportBindingPolicy + Send + Sync>> = None;
-    // ADR-MCPRE-051 §4: select the AUTHORITATIVE async replay tier. The atomic
+    // ADR-MCPRE-051 §4: the AUTHORITATIVE async replay tier. The atomic
     // insert-if-absent is AWAITED on the per-core request path without blocking a
-    // runtime worker. Memory (default) is single-replica; Shared selects a durable
-    // networked store — etcd (CP/linearizable) or redis (horizontally scaled) —
-    // both fail closed on any store error (an outage is never a fresh nonce).
-    // `--replay-cache file` is not offered on the async fleet: a single file-backed
-    // cache does not fit the per-core, share-nothing data plane (ADR-MCPRE-051 §1).
-    // The redis ConnectionManager's reconnect task lives on a process-lifetime
-    // control runtime (`control_rt`), distinct from the per-core serving
-    // runtimes; it is held alive for the whole serve.
+    // runtime worker. Shared selects a durable networked store — etcd (CP/linearizable)
+    // or redis (horizontally scaled) — both fail closed on any store error (an outage is
+    // never a fresh nonce).
+    //
+    // Which tier this deployment asked for is decided PURELY, from configuration alone;
+    // `replay_plane` only establishes it. Every refusal the plan can raise is a statement
+    // about the config; every refusal materialization raises is a statement about the
+    // build or the environment.
+    let replay_plan = crate::startup_plan::ReplayPlan::from_validated(config);
     // ONE process-lifetime control runtime for every networked control-plane client:
     // the redis replay ConnectionManager's reconnect task, the admission source and the
     // MRTR continuation store. Distinct from the per-core serving runtimes and held
-    // alive for the whole serve. Created on demand by [`control_runtime`], so a seam
-    // that needs it is never gated on some OTHER seam having created it first.
-    // `mut` only bites where a networked control-plane client exists to build it.
-    #[cfg_attr(not(feature = "redis_replay"), allow(unused_mut))]
-    let mut control_rt: Option<tokio::runtime::Runtime> = None;
-    match config.replay {
-        ReplayKind::Memory => {
-            // Proxy::new already installed the in-memory async tier (single-replica).
-        }
-        ReplayKind::File => {
-            return Err(
-                "--replay-cache file is not supported on the async serving path: a single \
-                 file-backed cache does not fit the per-core share-nothing data plane. Use \
-                 --replay-cache shared (redis/etcd) for durable cross-replica replay, or \
-                 --replay-cache memory for single-replica development."
-                    .to_string(),
-            );
-        }
-        ReplayKind::Shared => {
-            let tier_kind = config
-                .replay_durability_tier
-                .as_ref()
-                .ok_or("--replay-cache shared requires --replay-durability-tier")?;
-            if matches!(tier_kind, ReplayDurabilityTier::Linearizable) {
-                let endpoint = config.cpstore_etcd_endpoint.clone().ok_or(
-                    "--replay-durability-tier linearizable requires --cpstore-etcd-endpoint",
-                )?;
-                #[cfg(feature = "cpstore_etcd")]
-                {
-                    eprintln!(
-                        "mcp-re-proxy: replay tier = shared (CP/linearizable; async etcd backend)"
-                    );
-                    eprintln!("mcp-re-proxy: {}", tier_kind.startup_audit_line("etcd"));
-                    let store = Arc::new(
-                        crate::async_etcd_store::EtcdAsyncAtomicReplayStore::connect(&endpoint),
-                    );
-                    replay_async =
-                        crate::async_replay::AsyncReplayTier::new(store, config.max_clock_skew);
-                    dispatch_cfg = ProxyDispatchConfig {
-                        fleet_strict: true,
-                        tier: config.replay_durability_tier.clone(),
-                    };
-                }
-                #[cfg(not(feature = "cpstore_etcd"))]
-                {
-                    let _ = endpoint;
-                    return Err("--replay-durability-tier linearizable requires a build with the `cpstore_etcd` feature".to_string());
-                }
-            } else {
-                let url = config
-                    .replay_redis_url
-                    .clone()
-                    .ok_or("--replay-cache shared requires --replay-redis-url")?;
-                #[cfg(feature = "redis_replay")]
-                {
-                    eprintln!(
-                        "mcp-re-proxy: replay tier = shared (horizontally-scaled; async Redis backend)"
-                    );
-                    eprintln!("mcp-re-proxy: {}", tier_kind.startup_audit_line("redis"));
-                    // The ConnectionManager's reconnect task runs on this dedicated
-                    // process-lifetime runtime, distinct from the per-core serving
-                    // runtimes; held alive by `control_rt` for the whole serve.
-                    let rt = tokio::runtime::Builder::new_multi_thread()
-                        .worker_threads(1)
-                        .enable_all()
-                        .build()
-                        .map_err(|e| format!("build replay control runtime: {e}"))?;
-                    // The client-side response timeout is sized for the DECLARED WAIT
-                    // timeout before connecting: the library defaults to 500ms per
-                    // command, and `WAIT` is an ordinary command — so a declared
-                    // `redis-wait-quorum:2:2000` could never wait 2000ms, and any
-                    // replica ack slower than 500ms failed the request closed while the
-                    // startup line advertised the fuller window.
-                    let wait_timeout_ms = tier_kind.wait_quorum_params().map(|(_, ms)| ms);
-                    let mut store = rt
-                        .block_on(
-                            crate::RedisAsyncAtomicReplayStore::connect_with_wait_timeout(
-                                &url,
-                                crate::redis_store::system_clock(),
-                                wait_timeout_ms,
-                            ),
-                        )
-                        .map_err(|e| format!("connect redis async replay store: {e:?}"))?;
-                    // Apply the DECLARED durability tier to the store that actually
-                    // serves. `startup_audit_line` above promises "WAIT timeout or
-                    // insufficient acks fail closed" for REDIS_WAIT_QUORUM; without
-                    // this the store would run plain SET NX PX and the promise would
-                    // be audited but unenforced.
-                    if let Some((quorum, timeout_ms)) = tier_kind.wait_quorum_params() {
-                        store = store.with_wait_quorum(quorum, timeout_ms);
-                    }
-                    let store = Arc::new(store);
-                    replay_async =
-                        crate::async_replay::AsyncReplayTier::new(store, config.max_clock_skew);
-                    dispatch_cfg = ProxyDispatchConfig {
-                        fleet_strict: true,
-                        tier: config.replay_durability_tier.clone(),
-                    };
-                    control_rt = Some(rt);
-                }
-                #[cfg(not(feature = "redis_replay"))]
-                {
-                    let _ = url;
-                    return Err("--replay-cache shared (redis) requires a build with the `redis_replay` feature".to_string());
-                }
-            }
-        }
-    }
-    // #78 (ADR-MCPS-020), OBJECT-LEVEL defense in depth beneath the CLI-flag gate:
-    // the CLI's unsafe_config_violations rejects the `--replay-cache memory`
-    // SELECTION, but the proxy's replay cache is a `Box<dyn ReplayCache>` that can
-    // also be INJECTED (`with_replay_cache`). Assert the cache the proxy actually
-    // holds self-declares a durable posture, so a volatile single-process reference
-    // cache can never reach a production verify path even if it arrived by injection
-    // rather than the default selection. mcp-re-core's `durability_class()` defaults
-    // (fail closed) to the single-process reference, so an undeclared cache is
-    // rejected here too.
-    if replay_async.durability_class() == mcp_re_core::ReplayDurabilityClass::SingleProcessReference
-    {
-        return Err(
-            "the configured replay cache self-declares the volatile single-process reference \
-             posture (admitted nonces are lost on restart and invisible to peer verifiers); \
-             a durable replay store is required — use --replay-cache file or --replay-cache \
-             shared, or inject a cache that declares ReplayDurabilityClass::Durable"
-                .into(),
-        );
-    }
-    // Authorization policy enforcement is DEFERRED on the RFC 9421 serving path — the
-    // authorization evaluator is not yet built on this carrier. A configured policy
-    // fails closed rather than silently not enforce.
-    if config.authz == cli::AuthzKind::Reference {
-        return Err(
-            "authorization policy enforcement is not yet wired on the RFC 9421 serving path \
-             (the authorization evaluator is not yet built on this carrier); it must be rebuilt on \
-             the HTTP-profile request evidence before an authz profile can be enabled"
-                .to_string(),
-        );
-    }
+    // alive for the whole serve.
+    //
+    // Whether it exists is decided by the PLANS, aggregated across every capability that
+    // can need one — not by whichever seam reaches for it first. Deriving it from replay
+    // once made admission unimplementable on the CP/linearizable tier.
+    let control_rt = crate::control_runtime::ControlRuntime::start(
+        crate::startup_plan::control_runtime_requirement(config, &replay_plan),
+    )?;
+    // The redis store's reconnect machinery binds to the runtime it is CREATED in, so the
+    // substrate must outlive every USE of the tier — discharged by draining the fleet
+    // before anything is reclaimed, not by drop order. See `replay_plane`.
+    let crate::replay_plane::MaterializedReplay {
+        tier: replay_async,
+        dispatch: dispatch_cfg,
+    } = crate::replay_plane::materialize(&replay_plan, values.max_clock_skew, control_rt.as_ref())?;
     // Mode-A transport binding: bind the verified request actor to the mTLS peer.
-    if config.binding == BindingKind::Exact {
+    if values.binding == BindingKind::Exact {
         transport_binding = Some(Box::new(ExactMatchBinding::new()));
     }
-    // Tier-3 LB assertion (Mode B) and Mode-C attested ingress bind the request hash
-    // under the OWNER-SIGNED security boundary; re-binding them to the RFC 9421
-    // request-evidence digest is pending owner authorization — fail closed rather than
-    // silently drop the channel binding.
-    if matches!(
-        config.binding,
-        BindingKind::LbAssertion | BindingKind::AttestedIngress
-    ) {
-        return Err(
-            "Tier-3 LB / Mode-C attested-ingress transport binding is not yet supported on the \
-             RFC 9421 serving path (owner-signed security-boundary rebinding pending); use \
-             --binding exact (end-to-end mTLS) for the RFC 9421 carrier"
-                .to_string(),
-        );
-    }
 
-    // Offline client-cert CRLs (#3839). Loaded once at startup; a missing or
-    // malformed CRL file fails closed here. OFFLINE revocation only — there is no
-    // online OCSP / distribution-point fetching (deferred to a follow-up).
-    let client_crls = cli::load_client_crls(&config.client_crl_paths)?;
-    if !client_crls.is_empty() {
-        eprintln!(
-            "mcp-re-proxy: offline client-cert revocation enabled — {} CRL file(s), unknown status \
-             DENIED (fail closed) (OFFLINE only; no online OCSP/CRL-DP fetching)",
-            config.client_crl_paths.len(),
-        );
-        // ADR-MCPS-023 §A1 (MCPS-58): the verifier enforces CRL nextUpdate, so a
-        // stale CRL fails every new handshake closed. Surface that at BOOT — refuse
-        // to start on a stale CRL — and warn while a CRL is near expiry so a
-        // refreshed CRL can be installed before the cutover ("restart before
-        // nextUpdate"; the in-process hot-reloader is a v0.10 follow-up). A malformed
-        // CRL is a hard startup error (fail closed).
-        const CRL_NEAR_EXPIRY_WARN_SECS: i64 = 6 * 3600;
-        for (i, crl) in client_crls.iter().enumerate() {
-            match tls::crl_freshness(crl.as_ref(), startup_now_unix, CRL_NEAR_EXPIRY_WARN_SECS)
-                .map_err(|e| e.to_string())?
-            {
-                tls::CrlFreshness::Fresh => {}
-                tls::CrlFreshness::NearExpiry { next_update_unix } => eprintln!(
-                    "mcp-re-proxy: WARNING: client CRL #{i} is near expiry (nextUpdate={next_update_unix}); \
-                     install a refreshed CRL and restart before then, or new handshakes will fail closed."
-                ),
-                tls::CrlFreshness::Stale { next_update_unix } => {
-                    let msg = format!(
-                        "client CRL #{i} is STALE (nextUpdate={next_update_unix} <= now={startup_now_unix}): \
-                         with CRL expiration enforced, every new client handshake fails closed. Install a \
-                         CRL published within its nextUpdate window."
-                    );
-                    return Err(format!(
-                        "mcp-re-proxy refuses to start with a stale client CRL: {msg}"
-                    ));
-                }
-            }
-        }
-    }
+    // Materialized HERE, not where `tls_material` is built, so the CRL load and its
+    // stale-CRL refusal keep the position they had before the extraction: after the trust
+    // posture, before the revocation posture. A deployment with both a stale CRL and an
+    // unreadable trust file must still see the same diagnostic first.
+    // Transport custody (ADR-MCPRE-056 §8). The plane owns the serving TLS config, the
+    // per-request revocation index and the CRL reload worker; `tls_material` is MOVED in
+    // so no second copy of the key material can drift from the one a reload rebuilds.
+    building.install_tls(crate::tls_plane::TlsPlane::materialize(
+        &tls_plan,
+        tls_material,
+        server_chain,
+        client_ca,
+        startup_now_unix,
+        Arc::clone(&shutdown),
+    )?);
+    let is_delegated_tls = building.tls().is_delegated();
+    let client_revocation = building.tls().revocation();
+    let config_snapshot = building.tls().snapshot();
 
-    // ADR-MCPS-023 §A1 (MCPS-58): operator-visible revocation POSTURE DIAGNOSTIC.
-    // This is a posture diagnostic, NOT a structured per-request audit guarantee —
-    // the structured evidence vocabulary (including `delegated_attestor_crl`, which
-    // does not exist yet) lands with Mode C attested ingress (MCPS-62). These lines
-    // deliberately use the canonical ADR field names so that future audit surface
-    // can reuse them verbatim. OCSP posture is per-request (no-AIA is a per-cert
-    // fact, not a config-load one) and likewise belongs to the MCPS-62 surface, not
-    // this startup line.
-    {
-        let exposure_window = match config.max_client_cert_lifetime {
-            Some(d) => format!("{}s", d.as_secs()),
-            None => "unbounded".to_string(),
-        };
-        // The exposure window above is only true because these two bounds hold: the
-        // certificate is re-checked against the clock on EVERY request (not just at
-        // the handshake), and a connection is closed at a bounded age so the peer must
-        // re-handshake through the current CRL. Stated alongside the window it makes
-        // honest.
-        eprintln!(
-            "mcp-re.revocation.posture connection_max_age={} per_request_cert_validity=enforced \
-             per_request_crl_check={} tls_session_resumption=epoch-bound",
-            match config.limits.max_connection_age {
-                Some(d) => format!("{}s", d.as_secs()),
-                None => "unbounded".to_string(),
-            },
-            // The claim the CRL lines below rest on. rustls consults the CRLs during
-            // client authentication, which runs on a full handshake only, so without
-            // this a revoked peer serves every later request on the connection it
-            // already holds and the reload cadence below describes new connections
-            // alone.
-            if client_crls.is_empty() {
-                "not_configured"
-            } else {
-                "enforced"
-            }
-        );
-        if client_crls.is_empty() {
-            let max_lifetime = match config.max_client_cert_lifetime {
-                Some(d) => format!("{}s", d.as_secs()),
-                None => "none".to_string(),
-            };
-            eprintln!(
-                "mcp-re.revocation.posture revocation_mode=short_lived_cert dynamic_revocation=false \
-                 exposure_window={exposure_window} max_client_cert_lifetime={max_lifetime}"
-            );
-        } else {
-            for (i, crl) in client_crls.iter().enumerate() {
-                let posture = tls::crl_posture(crl.as_ref()).map_err(|e| e.to_string())?;
-                let next_update = posture
-                    .next_update_unix
-                    .map(|n| n.to_string())
-                    .unwrap_or_else(|| "none".to_string());
-                eprintln!(
-                    "mcp-re.revocation.posture revocation_mode=static_crl_snapshot \
-                     dynamic_revocation=false stale_crl_policy=fail_closed crl_index={i} \
-                     crl_digest={} crl_this_update={} crl_next_update={} \
-                     exposure_window={exposure_window}",
-                    posture.crl_digest, posture.this_update_unix, next_update
-                );
-            }
-        }
+    // ADR-MCPS-023 §A1 (MCPS-58): the operator-visible revocation posture. Rendered by
+    // the plane that parsed the CRLs, so what an operator is told is assertable in a test
+    // rather than only readable in a transcript.
+    for line in crate::tls_plane::revocation_posture_lines(&tls_plan, building.tls().crls()) {
+        eprintln!("{line}");
     }
 
     // MCPS-85 (ADR-MCPS-049 clause 3): under --fleet, state the PER-TIER
     // cross-replica revocation-lag bounds explicitly, derived from real config
     // (the two tiers have different cadences). Zero-window revocation is never
     // claimed on either.
-    if config.fleet {
-        let trust_bound = fleet_trust_bound(
-            &config.revocation_tier,
-            config.trust_epoch_redis_url.is_some(),
-            config.trust_reload_secs,
-        );
-        let crl_bound = if client_crls.is_empty() {
-            let window = config
-                .max_client_cert_lifetime
-                .map(|d| format!("{}s", d.as_secs()))
-                .unwrap_or_else(|| "unbounded".to_string());
-            format!("short-lived-cert only (exposure_window {window}); no client CRL")
-        } else {
-            match config.client_crl_reload_secs {
-                // The reload cadence IS the bound, on open and new connections alike:
-                // a republished index is consulted by the next request on a connection
-                // the peer is already holding.
-                Some(secs) => format!(
-                    "bounded {secs}s (the --client-crl-reload-secs cadence), enforced per request \
-                     on established connections as well as at the handshake"
-                ),
-                None => "the CRL nextUpdate / a restart (no --client-crl-reload-secs) — a fleet's \
-                         CRL-rollout window"
-                    .to_string(),
-            }
-        };
+    if values.fleet {
+        let trust_bound = crate::trust_plane::fleet_trust_bound(&trust_plan);
+        let crl_bound = crate::tls_plane::fleet_crl_bound(&tls_plan);
         eprintln!(
             "mcp-re-proxy: FLEET cross-replica revocation-lag bounds (ADR-MCPS-049 clause 3): \
              trust-key-status={trust_bound}; client-cert-crl={crl_bound}; zero-window revocation \
@@ -797,26 +638,9 @@ pub fn run(
         );
     }
 
-    // TLS server. ADR-MCPS-028 §G / issue #58: on the delegated path rustls drives
-    // the handshake signature through the device/KMS signer (TLS private key never
-    // exported); the validated builder fails closed at construction if the leaf cert
-    // is not Ed25519 or its key does not match the signer. Otherwise the exported-key
-    // path is used verbatim.
-    // ADR-MCPRE-051 §6 (MCPRE-116): capture the rebuild inputs BEFORE the match
-    // consumes them, so the opt-in CRL hot-reload task can rebuild the verifier from a
-    // refreshed `--client-crl` without a restart.
-    //
-    // BOTH custody paths are reloadable. The delegated path used to warn and keep a
-    // static snapshot, which put the weakest revocation posture on the deployments
-    // with the STRONGEST key custody: a client certificate revoked after startup kept
-    // authenticating for the whole process lifetime, silently, on exactly the
-    // configurations that took the most care with keys. The signer is an `Arc` and the
-    // certificate material is immutable, so a rebuild needs nothing the exported path
-    // does not also need.
     // The delegated-TLS custody paths sign the handshake through a KMS or a PKCS#11
     // token, synchronously, inside rustls' `Signer::sign` — so the serving runtime
     // shape has to account for a blocking signer (see `async_fleet`).
-    let is_delegated_tls = tls_delegated_signer.is_some();
     if is_delegated_tls {
         eprintln!(
             "mcp-re-proxy: TLS custody = DELEGATED: the handshake signature is a blocking \
@@ -825,164 +649,40 @@ pub fn run(
              stalled signer then costs one worker instead of a whole core."
         );
     }
-    let reload_chain = server_chain.clone();
-    let reload_client_ca = client_ca.clone();
-    let reload_material = match &tls_delegated_signer {
-        Some(signer) => TlsKeyMaterial::Delegated(Arc::clone(signer)),
-        None => TlsKeyMaterial::Exported(
-            server_key
-                .as_ref()
-                .map(|k| k.clone_key())
-                .ok_or_else(|| "internal error: no TLS key on the exported path".to_string())?,
-        ),
-    };
-    let reload_crl_paths = config.client_crl_paths.clone();
-    // The CRL verifier ALWAYS fails closed on an unknown revocation status — there
-    // is no relax knob. `false` = deny-unknown, threaded to every verifier builder.
-    let reload_allow_unknown = false;
+    // Which field the connection seam reads the client's identity from. Decided purely,
+    // from configuration alone, in `startup_plan` — the three modes are mutually
+    // exclusive and `parse_args` already refused the combinations.
+    let identity_strategy = crate::startup_plan::identity_strategy(config);
 
-    // The PER-REQUEST revocation index, built from the same CRL bytes the handshake
-    // verifier is about to be given. Installed only when CRLs are configured: with
-    // none, rustls performs no revocation checking, and installing an index would put
-    // a check on the request path that the handshake does not perform.
-    //
-    // Without this, revocation reaches only NEW connections. rustls runs client
-    // authentication on a full handshake alone, so a peer added to a reloaded CRL keeps
-    // serving every request on the connection it already holds.
-    let client_revocation = if client_crls.is_empty() {
-        None
-    } else {
-        let index = client_revocation::ClientRevocationIndex::from_crl_ders(
-            &client_crls
-                .iter()
-                .map(|crl| crl.as_ref().to_vec())
-                .collect::<Vec<_>>(),
-            reload_allow_unknown,
-        )
-        .map_err(|e| e.to_string())?;
-        Some(Arc::new(client_revocation::SharedClientRevocation::new(
-            index,
-        )))
-    };
+    // ADR-MCPRE-056 §5.4: from here on, every optional capability states its posture in
+    // BOTH directions through `posture`. `assert_complete` below refuses to start — in
+    // every build profile — if any seam is left silent.
+    let mut posture = PostureLog::new();
 
-    let server_config = match tls_delegated_signer {
-        Some(signer) => tls::build_server_config_delegated_validated(
-            server_chain,
-            signer,
-            client_ca,
-            client_crls,
-            false,
-        )
-        .map_err(|e| e.to_string())?,
-        None => {
-            let server_key = server_key.ok_or_else(|| {
-                "internal error: exported TLS key missing on the non-delegated path".to_string()
-            })?;
-            tls::RustlsDirectProvider::build_server_config_with_crls(
-                server_chain,
-                server_key,
-                client_ca,
-                client_crls,
-                false,
-            )
-            .map_err(|e| e.to_string())?
-        }
-    };
-    // ADR-MCPRE-051 §6 (MCPRE-116): the serve loop reads the current config from a
-    // versioned, atomically-swappable snapshot instead of a fixed `Arc`. With no
-    // `--client-crl-reload-secs` the snapshot is never swapped, so behavior is
-    // byte-identical to the static posture.
-    let config_snapshot = Arc::new(config_snapshot::ServerConfigSnapshot::new(Arc::new(
-        server_config,
-    )));
-    if let Some(reload_secs) = config.client_crl_reload_secs {
-        if reload_crl_paths.is_empty() {
-            eprintln!(
-                "mcp-re-proxy: --client-crl-reload-secs set but no --client-crl configured; \
-                 no CRL reload scheduled"
-            );
-        } else {
-            let custody = reload_material.label();
-            spawn_crl_reload_task(CrlReloadTask {
-                snapshot: Arc::clone(&config_snapshot),
-                server_chain: reload_chain,
-                material: reload_material,
-                client_ca: reload_client_ca,
-                crl_paths: reload_crl_paths,
-                allow_unknown_status: reload_allow_unknown,
-                interval_secs: reload_secs,
-                shutdown: Arc::clone(&shutdown),
-                revocation: client_revocation.clone(),
-            });
-            eprintln!(
-                "mcp-re-proxy: in-process CRL hot-reload enabled (every {reload_secs}s, \
-                 {custody} TLS custody; refreshed --client-crl honored without restart; \
-                 failed reload keeps last-good)"
-            );
-        }
-    }
-    // Select the identity strategy (MCPS-3840): direct mTLS (default) extracts the
-    // identity from the verified peer certificate; reverse-proxy mode reads it from
-    // the trusted forwarded header and ignores the local client cert. These are
-    // mutually exclusive on a connection (enforced at parse time, honoured here).
-    // ADR-MCPS-023 Tier 3 (issue #71): under `--transport-binding lb-assertion` the
-    // identity is NOT resolved at the connection seam — it is carried by the signed,
-    // request-bound assertion header and verified post-verification inside the proxy.
-    // The serve loop therefore selects the LbAssertion strategy so it extracts the
-    // assertion header (failing closed on a duplicate) instead of reading a local
-    // client cert or a forwarded identity header. The three strategies are mutually
-    // exclusive; the CLI forbids combining lb-assertion with a reverse-proxy header.
-    let identity_strategy = if config.binding == BindingKind::LbAssertion
-        || config.binding == BindingKind::AttestedIngress
-    {
-        // Both the v1 LB-assertion (Mode B) and the v2 attested-ingress (Mode C)
-        // paths carry identity in the signed assertion header — verified post-
-        // verification inside the proxy — not at the connection seam. The serve loop
-        // extracts the same `mcp-ingress-assertion` header (failing closed on a
-        // duplicate) for both.
-        IdentityStrategy::LbAssertion
-    } else {
-        match &config.reverse_proxy_identity_header {
-            None => IdentityStrategy::DirectTls,
-            Some(header) => IdentityStrategy::ReverseProxyHeader(ReverseProxyMtlsProvider::new(
-                header.clone(),
-                config.reverse_proxy_header_format,
-                config.identity_source,
-            )),
-        }
-    };
-    // #4030 ONLINE OCSP client-cert revocation. Built only under the
-    // `online_ocsp` feature; `parse_args` already fails closed for
-    // `--client-ocsp require` in a build without the feature.
-    #[cfg(feature = "online_ocsp")]
-    let ocsp_checker = cli::build_ocsp_checker(&config);
-    #[cfg(feature = "online_ocsp")]
-    if let Some(checker) = &ocsp_checker {
-        eprintln!(
-            "mcp-re-proxy: ONLINE OCSP client-cert revocation enabled (SHA-256 CertIDs; \
-             responder URL {}; on indeterminate result: {}). The OCSP responder must answer \
-             SHA-256 CertIDs.",
-            config
-                .ocsp_responder_url
-                .as_deref()
-                .map(|u| format!("override {u}"))
-                .unwrap_or_else(|| "from each leaf's AIA".to_string()),
-            if checker.soft_fail() {
-                "ALLOW (soft-fail)"
-            } else {
-                "REJECT (hard-fail)"
-            },
-        );
-    }
+    // #4030 ONLINE OCSP client-cert revocation. Attached to `ServerOptions` below rather
+    // than to the PEP, because revocation is decided during the TLS handshake.
+    let (ocsp_checker, ocsp_state) = crate::serving_capabilities::online_ocsp().into_parts();
+    posture.declare(Seam::OnlineOcspClientRevocation, ocsp_state);
+    // A build without the backend still DECLARES the seam above — that is the point of
+    // `Seam::ALL` not varying by `cfg` — but there is no checker type in it to carry, so
+    // the artifact is uninhabited and goes nowhere.
+    #[cfg(not(feature = "online_ocsp"))]
+    let _ = ocsp_checker;
+    // The admission limit the boundary resolved. The request states it once, at whichever
+    // altitude the operator chose; `ServerLimits` carries the per-core answer, and a
+    // fleet-wide basis leaves it for the fleet to divide once the core count is resolved.
+    let in_flight_limit = config.state().in_flight_limit();
+    let mut limits = values.limits.clone();
+    limits.max_in_flight_requests = in_flight_limit.per_core();
     let serve_options = ServerOptions {
-        identity_policy: config.identity_source,
+        identity_policy: values.identity_source,
         identity_strategy,
-        limits: config.limits.clone(),
-        max_client_cert_lifetime: config.max_client_cert_lifetime,
+        limits,
+        max_client_cert_lifetime: values.max_client_cert_lifetime,
         client_revocation: client_revocation.clone(),
         #[cfg(feature = "online_ocsp")]
         ocsp_checker,
-        target_uri: config.target_uri.clone(),
+        target_uri: values.target_uri.clone(),
         // The delegated-TLS custody paths sign the handshake through a KMS or a
         // PKCS#11 token, synchronously, inside rustls' `Signer::sign`.
         tls_signing_may_block: is_delegated_tls,
@@ -991,110 +691,72 @@ pub fn run(
     // ADR-MCPRE-051 §3: the async inner plane — a per-core pooled hyper client to
     // the stateless Streamable-HTTP inner backends. Forwarding is AWAITED, never
     // blocking a per-core runtime worker.
-    let inner_timeout = config
+    let inner_timeout = values
         .limits
         .read_timeout
         .unwrap_or_else(|| Duration::from_secs(30));
-    let pool = HttpInnerPool::from_url_strs(config.inner_http_urls.clone(), inner_timeout)?;
+    let pool = HttpInnerPool::from_url_strs(values.inner_http_urls.clone(), inner_timeout)?;
+    // Named where the pool that forwards to them is BUILT. Reporting them from the fleet
+    // instead would mean carrying the URLs through serving purely to print them, and the
+    // fleet does not forward — it accepts.
+    eprintln!(
+        "mcp-re-proxy: HTTP inner backends {:?}",
+        values.inner_http_urls
+    );
     // The pool is PROCESS-WIDE (one instance behind the `Arc` every core shares), so
     // its in-flight bound must not sit below the fleet's aggregate admission ceiling.
     // If it did, requests that passed every security gate would be answered with a
     // signed `inner server unavailable` at a capacity cliff no configured flag names —
     // and the shedding decision would move from the admission gate, where it is
     // deliberate, to the inner pool, where it is an accident of core count.
-    let cores = crate::async_fleet::resolve_core_count(config.cores);
-    let aggregate_ceiling = config
-        .limits
-        .max_in_flight_requests
-        .map(|per_core| per_core.saturating_mul(cores))
-        .or(config.max_in_flight_total);
-    let pool = match aggregate_ceiling {
-        Some(ceiling) if ceiling > crate::http_inner::DEFAULT_MAX_IN_FLIGHT => {
+    // The RULE is pure and lives in the plan; the core count is the environment reading it
+    // needs, and the wiring is this function's business.
+    let cores = crate::async_fleet::resolve_core_count(values.cores);
+    let ceiling = crate::startup_plan::inner_plane_ceiling(
+        in_flight_limit.per_core(),
+        in_flight_limit.fleet_total(),
+        cores,
+    );
+    let pool = match crate::startup_plan::inner_plane_raise(
+        ceiling,
+        crate::http_inner::DEFAULT_MAX_IN_FLIGHT,
+    ) {
+        Some(raised) => {
             eprintln!(
-                "mcp-re-proxy: inner-plane in-flight bound raised to {ceiling} to stay at or \
+                "mcp-re-proxy: inner-plane in-flight bound raised to {raised} to stay at or \
                  above the fleet admission ceiling ({cores} cores); the admission gate sheds, \
                  not the inner pool."
             );
-            pool.with_max_in_flight(ceiling)
+            pool.with_max_in_flight(raised)
         }
-        _ => pool,
+        None => pool,
     };
 
-    // ADR-MCPRE-050 + §5: assemble the RFC 9421 serving PEP with the async inner
-    // plane, the authoritative replay tier, and the optional Mode-A channel binding.
-    // Response-signature validity window: 300s. Delegated-signing is the only mode
-    // (ADR-MCPRE-052): build the delegated signer + cold-path rotor from the ROOT key
-    // source and fail closed at startup if the root cannot issue the first delegated
-    // key. The KMS/HSM/file root is the credential ISSUER, invoked at issuance/rotation
-    // only — never on the request path. `key_source` is moved in here; it was only
-    // borrowed above (TLS materials, root public key).
-    let mut proxy = {
-        let crate::delegated_wiring::DelegatedSigningWiring {
-            signer,
-            mut rotor,
-            overlap,
-        } = crate::delegated_wiring::build_delegated_signing(&config, key_source)?;
-        // Resolve the shared trust epoch BEFORE the first key is minted, so the very
-        // first credential carries the globally comparable `<base>#<counter>` label
-        // rather than the bare base. Minting under the bare label is what let a
-        // restarted replica appear unrevoked to verifiers pinned past an `INCR`.
-        let epoch_watch = build_delegated_epoch_watch(&config, rotor.trust_epoch().to_string());
-        if let Some(watch) = epoch_watch.as_ref() {
-            // FAIL CLOSED FOR MINTING: a configured kill switch whose state cannot be
-            // read means we cannot produce an epoch verifiers can compare, so we must
-            // not issue at all. Refusing to start is the honest outcome — the previous
-            // behaviour was to start anyway with the switch wired to nothing.
-            let label = watch.current_label().ok_or_else(|| {
-                "delegated-signing: --trust-epoch-redis-url is configured but the shared trust \
-                 epoch could NOT be read at startup, so no credential can carry a comparable \
-                 epoch. Refusing to start rather than minting keys the operator's kill switch \
-                 cannot revoke (fail closed, ADR-MCPRE-052 §7)."
-                    .to_string()
-            })?;
-            eprintln!(
-                "mcp-re-proxy: delegated trust-epoch watch ACTIVE; minting under {label:?}. An \
-                 operator INCR moves every replica to the next label, so verifiers pinned to the \
-                 prior accepted-epoch set reject fleet-wide — and a restarted replica resolves \
-                 the SAME label as its peers."
-            );
-            rotor.set_trust_epoch_before_first_issue(label);
-        }
-        // Initial issuance MUST succeed before serving: the proxy never serves without
-        // an active delegated key (fail closed, ADR-MCPRE-052 §6).
-        rotor.rotate(startup_now_unix).map_err(|e| {
-            format!(
-                "delegated-signing: initial delegated key issuance FAILED at startup ({e:?}); \
-                 the root issuer must be available before serving (fail closed, ADR-MCPRE-052 §6)"
-            )
-        })?;
-        eprintln!(
-            "mcp-re-proxy: response signing = DELEGATED (ADR-MCPRE-052): the root issuer is off \
-             the request path; delegated key TTL {}s / overlap {overlap}s; issuer kid \
-             {response_kid:?}. Initial delegated key issued.",
-            config.delegated_ttl_secs,
-        );
-        // Cold-path rotation thread: rotate within the overlap window before each
-        // key's exp so the KMS/root stays off the per-core serving runtimes. It also
-        // watches the shared trust-epoch counter and re-issues under a new epoch on an
-        // advance, so an operator `INCR` revokes the outstanding delegated keys across
-        // the fleet (ADR-MCPRE-052 §7).
-        spawn_delegated_rotation_task(
-            rotor,
-            Arc::clone(&signer),
-            overlap,
-            epoch_watch,
-            Arc::clone(&shutdown),
-        );
-        HttpProfileProxy::new_delegated(
-            resolve_actor,
-            expected_audience,
-            replay_async,
-            dispatch_cfg,
-            Box::new(pool),
-            300,
-            signer,
-        )
-    };
+    // Response-signing custody (ADR-MCPRE-056 §8; ADR-MCPRE-052). The plane owns the
+    // root issuer, the delegated snapshot and the worker that maintains it; what comes
+    // back is the signer alone. `key_source` is MOVED in here — it was only borrowed
+    // above, for TLS material and the response public key.
+    //
+    // The plane must outlive the proxy that signs with it, and it does: both are locals
+    // of this function, and `serve_fleet` returns before either is dropped.
+    building.install_signing(crate::signing_plane::SigningPlane::materialize(
+        &signing_plan,
+        key_source,
+        startup_now_unix,
+        Arc::clone(&shutdown),
+    )?);
+    // ADR-MCPRE-050 + §5: assemble the RFC 9421 serving PEP with the async inner plane,
+    // the authoritative replay tier, and the optional Mode-A channel binding.
+    // Response-signature validity window: 300s.
+    let mut proxy = HttpProfileProxy::new_delegated(
+        resolve_actor,
+        expected_audience,
+        replay_async,
+        dispatch_cfg,
+        Box::new(pool),
+        300,
+        building.signing().signer(),
+    );
     // §5.1/§13.1: attach the verifier-local acceptance policy so the operator's
     // `--max-clock-skew` governs the FRESHNESS GATE, not only replay retention.
     // `VerifierPolicy::new` is the validating constructor: a skew outside
@@ -1103,221 +765,163 @@ pub fn run(
     // acceptance window and the replay `retain_until`, so an admitted nonce is
     // retained for exactly as long as its signature can still be accepted.
     let mut verifier_policy =
-        mcp_re_http_profile::VerifierPolicy::new(&["ed25519"], config.max_clock_skew).map_err(
+        mcp_re_http_profile::VerifierPolicy::new(&["ed25519"], values.max_clock_skew).map_err(
             |_| {
                 format!(
                     "--max-clock-skew {} is out of bounds: the RFC 9421 freshness gate accepts \
                      0..={} seconds (§5.1 bounded skew)",
-                    config.max_clock_skew,
+                    values.max_clock_skew,
                     mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
                 )
             },
         )?;
-    // §4.1: the MCP transport/version contract is enforced only when the operator
-    // declares the protocol versions this deployment serves. Absent the flag there
-    // is no contract, so required-header presence and `Mcp-Name`/`params.name`
-    // agreement are not asserted — declared explicitly rather than defaulted.
-    if !config.mcp_protocol_versions.is_empty() {
-        let versions: Vec<&str> = config
-            .mcp_protocol_versions
-            .iter()
-            .map(String::as_str)
-            .collect();
-        eprintln!(
-            "mcp-re-proxy: MCP transport contract ENFORCED for protocol version(s) {:?} \
-             (required transport headers covered; Mcp-Name must equal params.name)",
-            config.mcp_protocol_versions
-        );
-        verifier_policy = verifier_policy.with_mcp_transport(
-            mcp_re_http_profile::McpTransportPolicy::mcp_2026_07_28(&versions),
-        );
+    let (mcp_transport, transport_state) = crate::serving_capabilities::mcp_transport_contract(
+        config.state().mcp_transport_contract(),
+    )
+    .into_parts();
+    if let Some(policy) = mcp_transport {
+        verifier_policy = verifier_policy.with_mcp_transport(policy);
     }
+    posture.declare(Seam::McpTransportContract, transport_state);
     eprintln!(
         "mcp-re-proxy: freshness gate = created-{skew}s .. expires+{skew}s (RFC 9421 §5.1)",
-        skew = config.max_clock_skew
+        skew = values.max_clock_skew
     );
     proxy = proxy.with_verifier_policy(verifier_policy);
     if let Some(binding) = transport_binding {
         proxy = proxy.with_transport_binding(binding);
     }
 
-    // ADR-MCPS-035: install the per-request security record. Stated at startup in
-    // both directions — a deployment without a sink has NO per-request attribution,
-    // and finding that out after an incident is too late.
-    match config.audit_sink {
-        cli::AuditSinkKind::Stderr => {
-            proxy = proxy.with_audit_sink(Arc::new(crate::audit_sink::StderrAuditSink));
-            eprintln!(
-                "mcp-re-proxy: security audit record = STDERR (ADR-MCPS-035): one line per \
-                 accepted / rejected / signed decision, carrying the verifier-resolved actor \
-                 and the frozen mcp-re.* wire code."
-            );
-        }
-        cli::AuditSinkKind::None => {
-            proxy = proxy.with_audit_sink(Arc::new(crate::audit_sink::NoAuditSink));
-            eprintln!(
-                "mcp-re-proxy: security audit record = NONE: no per-request accepted/rejected \
-                 record is emitted, so this deployment has no attribution surface for a later \
-                 incident. Pass --audit-sink stderr to enable it."
-            );
-        }
-    }
+    // ADR-MCPS-035: the per-request security record. Both arms install a sink — the OFF
+    // state is a real `NoAuditSink` — so this one is a pair rather than an `Established`.
+    let (audit_sink, audit_state) =
+        crate::serving_capabilities::security_audit_record(config.state().audit());
+    proxy = proxy.with_audit_sink(audit_sink);
+    posture.declare(Seam::SecurityAuditRecord, audit_state);
 
-    // ADR-MCPRE-054: evidence retention. Stated at startup in both directions because
-    // it changes what this deployment STORES about every call, and because a reader of
-    // the posture line should never have to infer a data-retention decision.
-    match &config.retained_evidence_dir {
-        Some(dir) => {
-            let retention = crate::transparency::EvidenceRetention::open(dir).map_err(|e| {
-                // Fail at startup, not at the first served call: a deployment that
-                // cannot open the store would otherwise refuse every request with
-                // `evidence_retention_unavailable` while appearing to have started.
-                format!("--retained-evidence-dir {dir}: {e}")
-            })?;
-            proxy = proxy.with_evidence_retention(Arc::new(retention));
-            eprintln!(
-                "mcp-re-proxy: evidence retention = ON at {dir} (ADR-MCPRE-054): the full \
-                 request and response messages of every ACCEPTED call are retained (rejected \
-                 requests are not), and a store failure refuses the exchange with \
-                 mcp-re.evidence_retention_unavailable. The store has NO expiry or quota — \
-                 a full volume is therefore a total outage. Put it on a dedicated volume \
-                 with a retention policy and free-space alerting."
-            );
-        }
-        None => eprintln!(
-            "mcp-re-proxy: evidence retention = OFF: nothing is retained, so no SCITT \
-             statement can later be issued about a call served here. Pass \
-             --retained-evidence-dir <path> to enable it."
-        ),
+    // ADR-MCPRE-054: evidence retention. Opening the store is effectful and refuses
+    // startup, which is why this is the one capability here that can return an error.
+    let (retention, retention_state) =
+        crate::serving_capabilities::evidence_retention(config.state().retention())?.into_parts();
+    if let Some(retention) = retention {
+        proxy = proxy.with_evidence_retention(Arc::new(retention));
     }
+    posture.declare(Seam::EvidenceRetention, retention_state);
 
-    // #415 rev 2 §10: the verified-context carrier. Caller-seeded context is stripped
-    // regardless; this decides only whether the PEP writes its OWN context in its
-    // place, and `trusted` is an operator assertion about the inner channel that
-    // nothing here can verify.
-    if config.verified_context == cli::VerifiedContextKind::Trusted {
-        proxy = proxy
-            .with_verified_context_carrier(mcp_re_http_profile::VerifiedContextPolicy::Trusted);
-        eprintln!(
-            "mcp-re-proxy: verified-context carrier = TRUSTED (#415 §10): the PEP writes its \
-             resolved actor into the forwarded body. The carrier is UNSIGNED — this asserts \
-             that nothing but this proxy can reach the inner server, and nothing here can \
-             check that."
-        );
+    let (verified_context, verified_context_state) =
+        crate::serving_capabilities::verified_context_carrier(config.state().verified_context())
+            .into_parts();
+    if let Some(policy) = verified_context {
+        proxy = proxy.with_verified_context_carrier(policy);
     }
+    posture.declare(Seam::VerifiedContextCarrier, verified_context_state);
 
-    // ADR-MCPS-047: wire the MRTR continuation correlation store on the SAME shared
-    // Redis the fleet uses for replay coherence, so a multi-round-trip continuation
-    // opened on one replica is honoured on any other. Connected on the replay control
-    // runtime (held alive for the whole serve). Present only when a shared redis URL
-    // AND that runtime exist; single-store / in-memory replay deployments run without
-    // cross-replica MRTR (an answer leg then fails closed on the continuation binding).
-    #[cfg(feature = "redis_replay")]
-    if let Some(url) = config.replay_redis_url.as_ref() {
-        let rt = control_runtime(&mut control_rt)?;
-        let store = rt
-            .block_on(crate::redis_continuation_store::RedisContinuationStore::connect(url))
-            .map_err(|e| format!("connect redis continuation store: {e}"))?;
-        eprintln!(
-            "mcp-re-proxy: MRTR continuation store = shared (async Redis backend, TTL {}s)",
-            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS
-        );
+    // ADR-MCPS-047: the shared MRTR continuation correlation store, and MCPRE-493 §7:
+    // the admission-currency gate. Both connect over the SAME shared control runtime the
+    // fleet uses, and both are established in `serving_capabilities`, which is also where
+    // the rule they DIFFER on is written down: absence is announced for the continuation
+    // store and refuses startup for admission, because one is opportunistic and the other
+    // was explicitly requested.
+    let (continuation_store, continuation_state) =
+        crate::serving_capabilities::mrtr_continuation_store(
+            &crate::startup_plan::ContinuationControlPlan::from_validated(config),
+            control_rt.as_ref(),
+        )?
+        .into_parts();
+    if let Some(store) = continuation_store {
         proxy = proxy.with_continuation_store(
-            Arc::new(store),
+            store,
             crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
         );
-    } else {
-        eprintln!("mcp-re-proxy: {}", CONTINUATION_STORE_OFF);
     }
-    #[cfg(not(feature = "redis_replay"))]
-    eprintln!("mcp-re-proxy: {}", CONTINUATION_STORE_OFF);
+    posture.declare(Seam::MrtrContinuationStore, continuation_state);
 
-    // MCPRE-493: wire the §7 admission-currency gate. Without a source the assertion
-    // and its binding are verified evidence that decides nothing — a call carrying a
-    // fresh, correctly-bound assertion is served even after its workload has been
-    // revoked, because currency is a comparison against state only the deployment can
-    // supply. The CLI has already refused any combination that would leave the gate
-    // enabled but toothless.
-    #[cfg(feature = "redis_replay")]
-    if config.admission != crate::cli::AdmissionKind::Off {
-        let Some(url) = config.admission_redis_url.as_ref() else {
-            return Err("--admission requires --admission-redis-url".to_string());
-        };
-        // The admission record is an INDEPENDENT endpoint; it has nothing to do with
-        // which replay tier the deployment chose. Coupling it to the replay control
-        // runtime made admission unimplementable on the CP/linearizable tier — the
-        // operator supplied `--admission-redis-url`, was told the flag was missing, and
-        // the natural resolution was to turn a security control off.
-        let rt = control_runtime(&mut control_rt)?;
-        let source = rt
-            .block_on(crate::redis_admission_source::RedisAdmissionSource::connect(url))
-            .map_err(|e| format!("connect redis admission source: {e}"))?;
-        let kid = config
-            .admission_authority_kid
-            .clone()
-            .ok_or("--admission-authority-kid is required")?;
-        let key = mcp_re_core::VerificationKey::from_b64url(
-            config
-                .admission_authority_pubkey_b64url
-                .as_deref()
-                .ok_or("--admission-authority-pubkey is required")?,
-        )
-        .map_err(|e| format!("--admission-authority-pubkey is not a valid Ed25519 key: {e:?}"))?;
-        let enforcement = match config.admission {
-            crate::cli::AdmissionKind::Required => {
-                crate::http_profile_serve::AdmissionEnforcement::Required
-            }
-            _ => crate::http_profile_serve::AdmissionEnforcement::Optional,
-        };
-        eprintln!(
-            "mcp-re-proxy: admission currency = {} (authority {kid}, shared record over redis, \
-             degraded {})",
-            match enforcement {
-                crate::http_profile_serve::AdmissionEnforcement::Required => "REQUIRED",
-                crate::http_profile_serve::AdmissionEnforcement::Optional => "optional",
-            },
-            if config.admission_allow_degraded {
-                format!("allowed within P={}s", config.admission_degraded_bound_secs)
-            } else {
-                "OFF (an unreachable authority fails closed)".to_string()
-            },
-        );
+    let (admission, admission_state) = crate::serving_capabilities::admission_currency(
+        config.state().admission(),
+        values.max_clock_skew,
+        control_rt.as_ref(),
+    )?
+    .into_parts();
+    if let Some(gate) = admission {
         proxy = proxy.with_admission(
-            Arc::new(source),
-            mcp_re_http_profile::AdmissionPolicy {
-                max_assertion_age: 300,
-                max_clock_skew: config.max_clock_skew,
-                degraded_propagation_bound: config.admission_degraded_bound_secs,
-                allow_degraded_mode: config.admission_allow_degraded,
-            },
-            enforcement,
-            Arc::new(move |presented: &str| (presented == kid).then(|| key.clone())),
+            gate.source,
+            gate.policy,
+            gate.enforcement,
+            gate.resolve_authority,
         );
     }
-    #[cfg(not(feature = "redis_replay"))]
-    if config.admission != crate::cli::AdmissionKind::Off {
-        // Fail closed rather than serve with admission silently disabled: an operator
-        // who asked for it must not get a proxy that quietly does not do it.
-        return Err(
-            "--admission requires a build with the `redis_replay` feature (the \
-                    shared authoritative admission record)"
-                .to_string(),
-        );
-    }
+    posture.declare(Seam::AdmissionCurrency, admission_state);
 
-    // ADR-MCPRE-051 §1: serve on the per-core async fleet (SO_REUSEPORT + tokio),
-    // the production data plane. Blocks until SIGTERM/SIGINT drains the fleet.
-    // `control_rt` (if any) is handed in so the redis ConnectionManager's reconnect
-    // task, the admission source and the continuation store stay alive for the whole
-    // serve.
-    serve_fleet(
-        proxy,
+    // Every optional capability has now stated its posture. Serving with an incomplete
+    // one is refused in EVERY build profile (ADR-MCPRE-056 §5.4): the transcript is this
+    // deployment's statement of which security controls are running, and an operator must
+    // not read a list that silently omits an entry.
+    posture.assert_complete()?;
+
+    // ADR-MCPRE-051 §1: serve on the per-core async fleet (SO_REUSEPORT + tokio), the
+    // production data plane. Blocks until SIGTERM/SIGINT drains the fleet.
+    //
+    // ADR-MCPRE-056 §10: every resource with a teardown obligation goes to one owner —
+    // the three planes, the proxy, and the control runtime the proxy's networked clients
+    // are bound to. The order they come apart in is stated and enforced there, rather
+    // than being whatever order these locals happen to be declared in.
+    // The last two teardown-bearing resources join the owner, and `finish` assembles.
+    //
+    // `MaterializationSucceeded` is applied INSIDE `finish`, after every required
+    // resource has been taken — so a `Materialized` lifecycle cannot exist over an
+    // incomplete graph. That is the equivalence ADR-MCPRE-057 §9 asks for: the lifecycle
+    // state and the ownership state are the same fact, not two facts kept in step by
+    // convention.
+    // Composed BEFORE the runtime exists. `--bind` resolution can fail, and a failure
+    // after `finish` would drop a materialized runtime instead of tearing it down in the
+    // order it owns — the one thing that type is for.
+    let fleet_cfg = fleet_config(values, in_flight_limit)?;
+
+    building.install_proxy(proxy);
+    building.install_control(control_rt);
+    let (runtime, lifecycle) = building.finish()?;
+
+    runtime.serve(
         Arc::clone(&config_snapshot),
-        serve_options,
-        &config,
-        control_rt,
+        Arc::new(serve_options),
+        fleet_cfg,
         shutdown,
+        lifecycle,
     )
+}
+
+/// The serving topology this deployment asked for, with `--bind` resolved.
+///
+/// The fleet's whole input. Composed here rather than inside serving because resolving a
+/// bind locator is a name lookup — an environment reading — and because it is the last
+/// place that legitimately holds the deployment request: what serving needs is a topology,
+/// and handing it the request instead would give it every other field as well.
+///
+/// The admission limit arrives as the RESOLVED basis rather than as request fields: the
+/// fleet needs the fleet-wide half of it, and which half exists is the boundary's answer.
+fn fleet_config(
+    values: &crate::deployment_request::DeploymentRequest,
+    in_flight_limit: crate::config_state::InFlightLimitBasis,
+) -> Result<crate::async_fleet::FleetConfig, String> {
+    use std::net::ToSocketAddrs;
+
+    let addr = values
+        .bind
+        .to_socket_addrs()
+        .map_err(|e| format!("resolve --bind {}: {e}", values.bind))?
+        .next()
+        .ok_or_else(|| format!("--bind {} resolved to no address", values.bind))?;
+
+    Ok(crate::async_fleet::FleetConfig {
+        addr,
+        cores: values.cores, // 0 = auto (one worker per core); --cores pins it
+        workers_per_shard: values.workers_per_shard,
+        listen_backlog: crate::async_fleet::DEFAULT_LISTEN_BACKLOG,
+        // MCPRE-114: a fleet-wide basis, divided evenly per core by
+        // `async_fleet::apply_global_admission`. `None` when the limit is stated per core,
+        // which `ServerLimits` already carries.
+        max_in_flight_total: in_flight_limit.fleet_total(),
+    })
 }
 
 /// ADR-MCPRE-051 §1/§3 — serve on the per-core async fleet forwarding over the
@@ -1330,44 +934,30 @@ pub fn run(
 /// SIGTERM/SIGINT drains the fleet within the bounded grace window.
 ///
 /// The authoritative replay tier and async HTTP inner have already been wired into
-/// `proxy` by the caller (`run`) from the `--replay-cache` / `--inner-http-url`
-/// selection. `_control_rt` (when any networked control-plane client was wired) holds
-/// the redis `ConnectionManager`'s reconnect runtime alive for the whole serve.
-fn serve_fleet(
-    proxy: HttpProfileProxy,
+/// `proxy` by the caller.
+///
+/// # This function owns no teardown obligation
+///
+/// It borrows the proxy through an `Arc` and returns once `fleet.shutdown_and_join()` has
+/// returned, which is the DRAIN: no request can be in flight afterwards. Everything that
+/// must then happen in a particular order — each plane's post-owner transition, and
+/// reclaiming the control runtime the proxy's networked clients are bound to — belongs to
+/// [`crate::materialized_runtime::MaterializedRuntime`], which calls this and then tears
+/// down. Keeping the drain here and the ordering there is deliberate: this function's
+/// contract is "no request is running when I return", and that is all a caller should
+/// have to know to sequence anything after it.
+pub(crate) fn serve_fleet(
+    proxy: Arc<HttpProfileProxy>,
     config_snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
-    serve_options: crate::ServerOptions,
-    config: &cli::Config,
-    _control_rt: Option<tokio::runtime::Runtime>,
+    serve_options: Arc<crate::ServerOptions>,
+    fleet_cfg: crate::async_fleet::FleetConfig,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
-    use std::net::ToSocketAddrs;
-
-    // Resolve `--bind` to a concrete SocketAddr for the SO_REUSEPORT listeners.
-    let addr = config
-        .bind
-        .to_socket_addrs()
-        .map_err(|e| format!("resolve --bind {}: {e}", config.bind))?
-        .next()
-        .ok_or_else(|| format!("--bind {} resolved to no address", config.bind))?;
-
-    let proxy = Arc::new(proxy);
-
-    let fleet_cfg = crate::async_fleet::FleetConfig {
-        addr,
-        cores: config.cores, // 0 = auto (one worker per core); --cores pins it
-        workers_per_shard: config.workers_per_shard,
-        listen_backlog: crate::async_fleet::DEFAULT_LISTEN_BACKLOG,
-        // MCPRE-114: the operator's fleet-global ceiling, divided evenly per core by
-        // `async_fleet::apply_global_admission`. `None` = no global target.
-        max_in_flight_total: config.max_in_flight_total,
-    };
     // MCPRE-116: hand the fleet the SNAPSHOT, not a one-shot `load()`. The accept
     // loop re-reads it per connection, so the CRL hot-reload task's atomic swap is
     // observed by the next handshake instead of being written to a config nothing
     // reads again.
     let server_config = Arc::clone(&config_snapshot);
-    let serve_options = Arc::new(serve_options);
     // The caller owns the shutdown flag (the binary wires it to SIGTERM/SIGINT; a
     // test flips it directly). We hand a clone to the fleet and poll the same flag.
 
@@ -1394,10 +984,9 @@ fn serve_fleet(
     )
     .map_err(|e| format!("start async fleet: {e}"))?;
     eprintln!(
-        "mcp-re-proxy: async fleet serving on {} ({} per-core workers; HTTP inner backends {:?})",
+        "mcp-re-proxy: async fleet serving on {} ({} per-core workers)",
         fleet.local_addr(),
         fleet.worker_count(),
-        config.inner_http_urls,
     );
 
     // Block until the caller flips `shutdown`, then drain the fleet (bounded).
@@ -1410,979 +999,10 @@ fn serve_fleet(
     Ok(())
 }
 
-/// ADR-MCPRE-051 §6 (MCPRE-116): the in-process CRL hot-reload task. Every
-/// `interval_secs` it re-reads the `--client-crl` files and rebuilds the direct-TLS
-/// verifier from the SAME immutable server key material, atomically swapping the
-/// result into `snapshot`. A read/parse/build failure keeps the last-good config
-/// (which still fails closed once its CRL passes `nextUpdate`), so a bad reload
-/// never widens what is accepted. The task observes `SHUTDOWN` between naps so it
-/// exits promptly on a rolling deploy. Spawned only when `--client-crl-reload-secs`
-/// is set with a non-empty `--client-crl` on the direct-TLS path.
-/// The TLS server key the verifier is rebuilt around, under either custody.
-///
-/// A CRL reload re-reads only the CRLs; this is carried verbatim across the rebuild.
-/// Both variants exist so the reload does not depend on which custody the deployment
-/// chose — a revocation control that works only on the weaker custody is the wrong way
-/// round.
-enum TlsKeyMaterial {
-    /// The exported private key read from disk.
-    Exported(rustls_pki_types::PrivateKeyDer<'static>),
-    /// A non-exporting device/KMS signer (PKCS#11, AWS KMS, Cloud KMS).
-    Delegated(Arc<dyn crate::delegated_tls::RawEd25519TlsSigner>),
-}
-
-impl TlsKeyMaterial {
-    /// The custody word for the operator-facing startup line.
-    fn label(&self) -> &'static str {
-        match self {
-            TlsKeyMaterial::Exported(_) => "exported-key",
-            TlsKeyMaterial::Delegated(_) => "delegated",
-        }
-    }
-
-    /// Rebuild the serving config around `crls`, under whichever custody applies.
-    fn rebuild(
-        &self,
-        server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
-        client_ca: Vec<rustls_pki_types::CertificateDer<'static>>,
-        crls: Vec<rustls_pki_types::CertificateRevocationListDer<'static>>,
-        allow_unknown_status: bool,
-    ) -> Result<rustls::ServerConfig, String> {
-        match self {
-            TlsKeyMaterial::Exported(key) => {
-                tls::RustlsDirectProvider::build_server_config_with_crls(
-                    server_chain,
-                    key.clone_key(),
-                    client_ca,
-                    crls,
-                    allow_unknown_status,
-                )
-                .map_err(|e| e.to_string())
-            }
-            TlsKeyMaterial::Delegated(signer) => tls::build_server_config_delegated_validated(
-                server_chain,
-                Arc::clone(signer),
-                client_ca,
-                crls,
-                allow_unknown_status,
-            )
-            .map_err(|e| e.to_string()),
-        }
-    }
-}
-
-struct CrlReloadTask {
-    snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
-    /// The immutable server key material the verifier is rebuilt from; a reload
-    /// re-reads only the CRLs, never these.
-    server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
-    material: TlsKeyMaterial,
-    client_ca: Vec<rustls_pki_types::CertificateDer<'static>>,
-    crl_paths: Vec<String>,
-    allow_unknown_status: bool,
-    interval_secs: u64,
-    shutdown: Arc<std::sync::atomic::AtomicBool>,
-    /// The per-request revocation index, republished from the same re-read bytes as
-    /// the rebuilt verifier. Rebuilding only the verifier would leave the reload
-    /// reaching new connections alone — which is the gap the per-request check exists
-    /// to close.
-    revocation: Option<Arc<client_revocation::SharedClientRevocation>>,
-}
-
-/// Read `--trust` and build the snapshot the revocation tiers resolve against.
-///
-/// Two things come out of one read so they can never disagree: the
-/// [`InMemoryTrustResolver`](mcp_re_core::InMemoryTrustResolver) that answers
-/// `resolve`, and the `kid -> signer` map the actor seam uses as the identity
-/// coordinate. `response_kid` is excluded from the request-signer map: the
-/// deployment's own issuer key must never be presentable as a client credential.
-fn load_trust_snapshot(
-    trust_path: &str,
-    response_kid: &str,
-) -> Result<crate::reloading_trust::ReloadingTrustStore, String> {
-    let (resolver, signers) = read_trust_file(trust_path, response_kid)?;
-    Ok(crate::reloading_trust::ReloadingTrustStore::new(
-        resolver, signers,
-    ))
-}
-
-/// The file read shared by startup and every reload.
-fn read_trust_file(
-    trust_path: &str,
-    response_kid: &str,
-) -> Result<(mcp_re_core::InMemoryTrustResolver, HashMap<String, String>), String> {
-    let bytes = std::fs::read(trust_path).map_err(|e| format!("{trust_path}: {e}"))?;
-    let resolver = cli::load_trust(&bytes)?;
-    // Slot-scoped: only entries this file enrols for the REQUEST slot become client
-    // request signers. A key carried here for another purpose is not one.
-    let signers = cli::load_trust_request_signers(&bytes, response_kid)?;
-    Ok((resolver, signers))
-}
-
-/// The `--fleet` per-tier cross-replica revocation-lag bound, derived from real config.
-///
-/// This is the one operator-facing line whose stated purpose is to bound revocation lag
-/// HONESTLY, so each clause has to name a mechanism that exists. Two floors sit under
-/// every tier's number:
-///
-///   * the trust epoch is read by a BACKGROUND POLLER on a
-///     [`TRUST_EPOCH_POLL_SECS`] cadence, never on the request path, so a push-tier
-///     flush lands within one poll interval of an advance — not "on the next request
-///     after an epoch advance", which is a mechanism the data plane no longer has;
-///   * a key removed from `--trust` cannot stop resolving faster than the file is
-///     re-read, whatever the tier does with its cache.
-fn fleet_trust_bound(
-    tier: &RevocationTier,
-    epoch_source_configured: bool,
-    trust_reload_secs: Option<u64>,
-) -> String {
-    let reload_floor = match trust_reload_secs {
-        Some(secs) => format!("--trust re-read every {secs}s"),
-        None => "--trust read once at startup (no --trust-reload-secs), so the store itself \
-                 changes only on a restart"
-            .to_string(),
-    };
-    match (tier, epoch_source_configured) {
-        (RevocationTier::Push { t_secs }, true) => format!(
-            "cache flush within one {TRUST_EPOCH_POLL_SECS}s trust-epoch poll interval of an \
-             advance while the source is healthy, bounded {t_secs}s on a source read-outage \
-             (fail-closed), over {reload_floor}"
-        ),
-        (RevocationTier::Push { t_secs }, false) => format!(
-            "bounded {t_secs}s (no --trust-epoch-redis-url; the push channel is inert), over \
-             {reload_floor}"
-        ),
-        (RevocationTier::BoundedCache { t_secs }, _) => {
-            format!("bounded {t_secs}s, over {reload_floor}")
-        }
-        (RevocationTier::Live, _) => {
-            format!("per-request live re-resolution (no positive cache), over {reload_floor}")
-        }
-    }
-}
-
-/// The posture line for a deployment with no cross-replica MRTR continuation store.
-///
-/// Every other optional seam prints its OFF posture; this one printed nothing, so an
-/// operator on the CP/linearizable replay tier — the tier the claim matrix presents as
-/// strongest — silently lost every human-approval / multi-round-trip flow. The failure
-/// is closed but reads on the wire as a client or attack signal, which is exactly what
-/// the startup posture exists to prevent.
-const CONTINUATION_STORE_OFF: &str = "MRTR continuation store = OFF (no --replay-redis-url): \
-     multi-round-trip flows are SINGLE-REPLICA only. A client that receives an \
-     `input_required` reply from one replica and answers on another is refused \
-     (mcp-re.continuation_binding_failed). Set --replay-redis-url for the shared store.";
-
-/// The process-lifetime control runtime, built on first use.
-///
-/// Every networked control-plane client shares it — the redis replay reconnect task,
-/// the admission source, the MRTR continuation store. Building it lazily is what keeps
-/// them independent: an admission source is its OWN endpoint and must not be gated on
-/// the replay tier having happened to create a runtime.
-#[cfg_attr(not(feature = "redis_replay"), allow(dead_code))]
-fn control_runtime(
-    slot: &mut Option<tokio::runtime::Runtime>,
-) -> Result<&tokio::runtime::Runtime, String> {
-    if slot.is_none() {
-        *slot = Some(
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(1)
-                .enable_all()
-                .build()
-                .map_err(|e| format!("build control runtime: {e}"))?,
-        );
-    }
-    Ok(slot.as_ref().expect("just created"))
-}
-
-/// The qualifier carried on the revocation-tier startup line: how fast the trust STORE
-/// itself can change.
-///
-/// Every tier's window is a claim about how quickly a key removed from `--trust` stops
-/// resolving, and nothing resolves faster than the file is re-read. The default tier
-/// (`bounded-cache`) is accepted without a cadence — unlike `live`/`push`, whose claims
-/// are refused outright without one — so its "enforced fleet-wide within T" line is the
-/// one an operator gets by omission. The correction therefore rides on the SAME line as
-/// the claim: as a separate line further down it was read as being about something else,
-/// and the tier line was quoted on its own.
-fn store_change_cadence(trust_reload_secs: Option<u64>) -> String {
-    match trust_reload_secs {
-        Some(secs) => format!("{secs}s (--trust re-read on that cadence)"),
-        None => "NONE: --trust is read once at startup, so the window above bounds CACHING \
-                 only — the store itself changes only when every replica restarts"
-            .to_string(),
-    }
-}
-
-/// How many consecutive failed `--trust` re-reads are absorbed before the resolver
-/// fails closed.
-///
-/// Keeping the last-good store across a blip is deliberate: a truncated file caught
-/// mid-write must not empty the trust map. But "keep last-good" with no bound restores
-/// exactly the unbounded revocation window the reload exists to close — the replica
-/// keeps honouring a key the operator removed, indefinitely, while its startup line
-/// promises a one-cadence window. Five consecutive failures is far longer than a
-/// ConfigMap remount or an editor's save and short enough that an incident-time
-/// revocation is not silently ignored.
-const TRUST_RELOAD_FAILURE_BUDGET: u32 = 5;
-
-/// Whether the trust store is still fresh enough to answer.
-///
-/// Set by [`spawn_trust_reload_task`] when the file has been unreadable for
-/// [`TRUST_RELOAD_FAILURE_BUDGET`] consecutive cadences, or when the reload thread has
-/// died. Read by the resolver wrapper below on every verification, which is what makes
-/// it a real fail-closed rather than a log line.
-#[derive(Debug, Default)]
-struct TrustStoreFreshness {
-    stale: std::sync::atomic::AtomicBool,
-}
-
-impl TrustStoreFreshness {
-    fn mark_stale(&self) {
-        self.stale.store(true, Ordering::SeqCst);
-    }
-
-    fn mark_fresh(&self) {
-        self.stale.store(false, Ordering::SeqCst);
-    }
-
-    fn is_stale(&self) -> bool {
-        self.stale.load(Ordering::Relaxed)
-    }
-}
-
-/// The request-trust resolver, refusing to answer at all once the store behind it has
-/// stopped changing.
-///
-/// `Unavailable` and not `NotFound`: a frozen store still HOLDS the revoked key, so
-/// answering from it is the one outcome that must not happen, and reporting the outage
-/// as an unknown keyid would send the operator hunting a client bug. The verifier maps
-/// this to `mcp-re.trust_resolver_unavailable`, which is what a stale store actually is.
-struct StaleFailsClosed {
-    inner: Arc<dyn mcp_re_core::TrustResolver + Send + Sync>,
-    freshness: Arc<TrustStoreFreshness>,
-}
-
-impl mcp_re_core::TrustResolver for StaleFailsClosed {
-    fn resolve(
-        &self,
-        signer: &str,
-        key_id: &str,
-    ) -> Result<mcp_re_core::VerificationKey, mcp_re_core::TrustResolverError> {
-        if self.freshness.is_stale() {
-            return Err(mcp_re_core::TrustResolverError::Unavailable {
-                details: "the trust store has not been re-read successfully for several \
-                          cadences; a key revoked in --trust would still resolve from the \
-                          frozen snapshot, so verification fails closed until a reload \
-                          succeeds"
-                    .to_string(),
-            });
-        }
-        self.inner.resolve(signer, key_id)
-    }
-}
-
-/// Re-read `--trust` on a cadence and swap the snapshot atomically.
-///
-/// The same shape as [`spawn_crl_reload_task`], and for the same reason: a
-/// revocation mechanism that needs a restart is not one an operator can use during an
-/// incident. A FAILED read keeps the last-good store — a truncated file caught
-/// mid-write must not empty the trust map, because an empty map rejects every request
-/// and would turn an editor's save into a fleet-wide outage.
-///
-/// That tolerance is BOUNDED. Unlike a CRL, an `InMemoryTrustResolver` carries no
-/// expiry, so nothing makes a frozen snapshot stop being honoured on its own; after
-/// [`TRUST_RELOAD_FAILURE_BUDGET`] consecutive failures the resolver fails closed
-/// instead. SUPERVISED for the same reason as the rotation owner: nothing joins this
-/// thread, so a panic (a poisoned lock, a closed stderr) would otherwise end reloading
-/// for the process lifetime while every surface still read healthy.
-fn spawn_trust_reload_task(
-    store: Arc<crate::reloading_trust::ReloadingTrustStore>,
-    trust_path: String,
-    response_kid: String,
-    interval_secs: u64,
-    freshness: Arc<TrustStoreFreshness>,
-    shutdown: Arc<std::sync::atomic::AtomicBool>,
-) {
-    std::thread::spawn(move || {
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            trust_reload_loop(
-                &store,
-                &trust_path,
-                &response_kid,
-                interval_secs,
-                &freshness,
-                &shutdown,
-            );
-        }));
-        if outcome.is_err() {
-            freshness.mark_stale();
-            eprintln!(
-                "mcp-re-proxy: FATAL: the trust store reload thread PANICKED. --trust is no \
-                 longer being re-read, so a key revoked in it would keep resolving from the \
-                 frozen snapshot; request verification now fails closed \
-                 (trust_resolver_unavailable) rather than serving a store that cannot change. \
-                 This replica cannot recover on its own — restart it."
-            );
-        }
-    });
-}
-
-/// The reload loop proper. Split out so the supervisor above can catch a panic from
-/// anywhere inside it.
-fn trust_reload_loop(
-    store: &crate::reloading_trust::ReloadingTrustStore,
-    trust_path: &str,
-    response_kid: &str,
-    interval_secs: u64,
-    freshness: &TrustStoreFreshness,
-    shutdown: &std::sync::atomic::AtomicBool,
-) {
-    // Nap in small increments so a shutdown signal is observed within one
-    // increment rather than after a whole reload interval.
-    let ticks = interval_secs.saturating_mul(20); // 20 * 50ms = 1s
-    let mut consecutive_failures: u32 = 0;
-    loop {
-        for _ in 0..ticks {
-            if shutdown.load(Ordering::SeqCst) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        match read_trust_file(trust_path, response_kid) {
-            Ok((resolver, signers)) => {
-                let enrolled = signers.len();
-                let recovered = consecutive_failures > 0;
-                consecutive_failures = 0;
-                store.store(resolver, signers);
-                freshness.mark_fresh();
-                if recovered {
-                    eprintln!(
-                        "mcp-re-proxy: trust store reload RECOVERED; {enrolled} request-signer \
-                         key(s) live, verification is serving again"
-                    );
-                } else {
-                    eprintln!(
-                        "mcp-re-proxy: trust store reloaded; {enrolled} request-signer key(s) live"
-                    );
-                }
-            }
-            Err(reason) => {
-                consecutive_failures = consecutive_failures.saturating_add(1);
-                if consecutive_failures >= TRUST_RELOAD_FAILURE_BUDGET {
-                    freshness.mark_stale();
-                    eprintln!(
-                        "mcp-re-proxy: trust store reload FAILED {consecutive_failures}x in a row \
-                         ({reason}); the snapshot is now too old to carry the declared revocation \
-                         window, so request verification FAILS CLOSED \
-                         (trust_resolver_unavailable) until a reload succeeds. Fix the --trust \
-                         mount at {trust_path}."
-                    );
-                } else {
-                    eprintln!(
-                        "mcp-re-proxy: WARNING: trust store reload FAILED \
-                         ({consecutive_failures}/{TRUST_RELOAD_FAILURE_BUDGET}), keeping last-good \
-                         store: {reason}. At {TRUST_RELOAD_FAILURE_BUDGET} consecutive failures \
-                         verification fails closed."
-                    );
-                }
-            }
-        }
-    }
-}
-
-/// SUPERVISED like the trust reload and the rotation owner: nothing joins this thread,
-/// and a panic in it would silently stop CRL reloading for the process lifetime.
-///
-/// Unlike the trust store, a stale CRL index bounds ITSELF — a CRL past its `nextUpdate`
-/// covers nothing, so its issuer's certificates become `Unknown` and are refused. A
-/// failed reload therefore never widens what is accepted, and the escalation here is a
-/// loud operator signal rather than a second fail-closed transition.
-fn spawn_crl_reload_task(task: CrlReloadTask) {
-    std::thread::spawn(move || {
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            crl_reload_loop(task);
-        }));
-        if outcome.is_err() {
-            eprintln!(
-                "mcp-re-proxy: FATAL: the client-CRL reload thread PANICKED. --client-crl is no \
-                 longer being re-read, so a newly revoked client certificate reaches this replica \
-                 only when its CRL passes nextUpdate (after which that issuer's certificates are \
-                 refused outright). This replica cannot recover on its own — restart it."
-            );
-        }
-    });
-}
-
-/// The CRL reload loop proper. Split out so the supervisor above can catch a panic.
-fn crl_reload_loop(task: CrlReloadTask) {
-    let CrlReloadTask {
-        snapshot,
-        server_chain,
-        material,
-        client_ca,
-        crl_paths,
-        allow_unknown_status,
-        interval_secs,
-        shutdown,
-        revocation,
-    } = task;
-    {
-        // Nap in small increments so a shutdown signal is observed within one
-        // increment rather than after a whole reload interval.
-        let ticks = interval_secs.saturating_mul(20); // 20 * 50ms = 1s
-        let mut consecutive_failures: u32 = 0;
-        loop {
-            for _ in 0..ticks {
-                if shutdown.load(Ordering::SeqCst) {
-                    return;
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            let outcome = config_snapshot::reload_once(&snapshot, || {
-                let crls = cli::load_client_crls(&crl_paths)?;
-                // Build the per-request index from the SAME bytes, BEFORE the verifier
-                // is rebuilt, so a malformed CRL keeps last-good on both rather than
-                // swapping one and failing the other.
-                let index = client_revocation::ClientRevocationIndex::from_crl_ders(
-                    &crls
-                        .iter()
-                        .map(|crl| crl.as_ref().to_vec())
-                        .collect::<Vec<_>>(),
-                    allow_unknown_status,
-                )
-                .map_err(|e| e.to_string())?;
-                let rebuilt = material.rebuild(
-                    server_chain.clone(),
-                    client_ca.clone(),
-                    crls,
-                    allow_unknown_status,
-                )?;
-                if let Some(revocation) = revocation.as_ref() {
-                    revocation.store(index);
-                }
-                Ok(Arc::new(rebuilt))
-            });
-            match outcome {
-                config_snapshot::ReloadOutcome::Swapped => {
-                    let recovered = consecutive_failures > 0;
-                    consecutive_failures = 0;
-                    if recovered {
-                        eprintln!(
-                            "mcp-re-proxy: client CRL reload RECOVERED; new verifier and \
-                             per-request index are live"
-                        );
-                    } else {
-                        eprintln!("mcp-re-proxy: client CRL reloaded; new verifier is live");
-                    }
-                }
-                config_snapshot::ReloadOutcome::KeptLastGood { reason } => {
-                    consecutive_failures = consecutive_failures.saturating_add(1);
-                    eprintln!(
-                        "mcp-re-proxy: WARNING: client CRL reload FAILED {consecutive_failures}x \
-                         in a row, keeping last-good config: {reason}. Newly revoked certificates \
-                         are NOT reaching this replica; when the last-good CRL passes its \
-                         nextUpdate its issuer's certificates are refused outright."
-                    );
-                }
-            }
-        }
-    }
-}
-
-/// ADR-MCPRE-052 §4/§6 + ADR-MCPRE-051 §5 (MCPRE-122): the cold-path delegated-key
-/// rotation thread. A single owner drives the rotor OFF the per-core serving runtimes,
-/// so the root issuer's blocking KMS/HSM calls never touch the request path. It wakes
-/// within the rotation-overlap window before the current key's `exp`, mints a
-/// successor, and republishes the hot-path snapshot; the fleet keeps signing off the
-/// current key until then (no gap). If issuance fails while the current key is still
-/// valid, serving continues until that key expires and THEN fails closed
-/// (ADR-MCPRE-052 §6) — never a stale-key extension or a direct-root fallback. The
-/// thread observes `shutdown` between naps so it exits promptly on a rolling deploy.
-fn spawn_delegated_rotation_task(
-    mut rotor: crate::delegated_wiring::ProdDelegatedRotor,
-    signer: Arc<crate::delegated_server_signer::DelegatedServerSigner>,
-    overlap: i64,
-    epoch_watch: Option<DelegatedEpochWatch>,
-    shutdown: Arc<std::sync::atomic::AtomicBool>,
-) {
-    std::thread::spawn(move || {
-        // SUPERVISION (C040). This thread is the ONLY thing that mints delegated keys, and
-        // its `JoinHandle` is dropped, so nothing joins it. Left bare, a panic on any
-        // reachable `.expect()` (the CSPRNG draw, the two custody invariants) would end all
-        // rotation for the process lifetime while every health surface still read steady
-        // state: `DelegatedRotationMetrics.consecutive_failures` is only written BY this
-        // thread, so a dead thread leaves it at 0 and the replica appears healthy right up
-        // until the current key's `exp`, then 503s with no attributable cause.
-        //
-        // So the loop runs inside `catch_unwind` and a panic is converted into the
-        // strongest honest signal available: RETIRE the snapshot, which makes the hot path
-        // fail closed IMMEDIATELY (`delegated_signing_unavailable`) rather than at `exp`,
-        // and record a failure so the metric stops reading healthy. The thread does not
-        // resume — after a panic the rotor's state is not known good, and continuing to
-        // mint from it would be worse than refusing.
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            rotation_loop(
-                &mut rotor,
-                &signer,
-                overlap,
-                epoch_watch.as_ref(),
-                &shutdown,
-            )
-        }));
-        if outcome.is_err() {
-            signer.retire();
-            signer.metrics().record_failure();
-            eprintln!(
-                "mcp-re-proxy: FATAL: the delegated rotation thread PANICKED. Delegated key \
-                 rotation has stopped for the lifetime of this process and the current \
-                 snapshot has been retired, so response signing now fails closed \
-                 (delegated_signing_unavailable) immediately rather than at the key's exp. \
-                 This replica cannot recover on its own — restart it."
-            );
-        }
-    });
-}
-
-/// The rotation loop proper. Split out of [`spawn_delegated_rotation_task`] so the
-/// supervisor above can catch a panic from anywhere inside it.
-fn rotation_loop(
-    rotor: &mut crate::delegated_wiring::ProdDelegatedRotor,
-    signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
-    overlap: i64,
-    epoch_watch: Option<&DelegatedEpochWatch>,
-    shutdown: &Arc<std::sync::atomic::AtomicBool>,
-) {
-    use crate::delegated_server_signer::rotation_backoff;
-    {
-        // Failures since the last success drive the backoff schedule; 0 in steady state.
-        let mut consecutive_failures: u32 = 0;
-        // The epoch this node is currently minting under (starts at the configured
-        // baseline label from the startup issuance). An advance of the shared counter
-        // moves it; verifiers pinned to the old label then reject across replicas.
-        let mut last_label = rotor.trust_epoch().to_string();
-        loop {
-            if shutdown.load(Ordering::SeqCst) {
-                return;
-            }
-            // In steady state, sleep until the overlap window opens (`exp - overlap`) so
-            // a successor is minted while the predecessor is still valid. While retrying
-            // after a failure we skip this wait and go straight to the backoff-then-retry
-            // below. With no current key (startup edge / post-retirement) rotate at once.
-            // The wait ALSO breaks early when the shared trust epoch advances, so
-            // cross-replica revocation is bounded by the ~500ms epoch poll, not a full TTL.
-            if consecutive_failures == 0 {
-                let wake_at = match signer.current(now_unix()) {
-                    Some(a) => (a.exp - overlap).max(now_unix()),
-                    None => now_unix(),
-                };
-                let mut ticks = 0u32;
-                while now_unix() < wake_at {
-                    if shutdown.load(Ordering::SeqCst) {
-                        return;
-                    }
-                    // Poll the shared trust epoch ~every 500ms (10 * 50ms).
-                    if ticks.is_multiple_of(10) {
-                        if let Some(watch) = epoch_watch.as_ref() {
-                            if matches!(watch.current_label(), Some(l) if l != last_label) {
-                                break;
-                            }
-                        }
-                    }
-                    ticks += 1;
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-            }
-            if shutdown.load(Ordering::SeqCst) {
-                return;
-            }
-            // Trust-epoch advance takes priority over the scheduled rotation: swap to
-            // the new epoch NOW so verifiers pinned to the prior accepted-epoch set
-            // reject on the next request (cross-replica, since every replica reads the
-            // same counter). ADR-MCPRE-052 §7.
-            if let Some(watch) = epoch_watch.as_ref() {
-                let resolved = watch.current_label();
-                if resolved.is_none() {
-                    // FAIL CLOSED FOR MINTING: the shared epoch is unreadable (outage)
-                    // or went backwards (refused, never rebased). Either way we cannot
-                    // produce a comparable epoch, so we must not issue. The current key
-                    // keeps serving until its `exp`, after which the hot path fails
-                    // closed on its own — no stale-epoch minting, no rebase. Back off
-                    // and retry; the reader reconnects on the next read.
-                    consecutive_failures = signer.metrics().record_failure();
-                    let ttl = signer.seconds_to_expiry(now_unix());
-                    let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter());
-                    eprintln!(
-                        "mcp-re-proxy: WARNING: shared trust epoch unreadable or regressed; \
-                         NOT minting (a credential without a comparable epoch is unrevokable). \
-                         Current key serves until exp then fails closed. \
-                         consecutive_failures {}, time-to-expiry {}s. Retrying in {}ms.",
-                        consecutive_failures,
-                        ttl.unwrap_or(0),
-                        backoff.as_millis(),
-                    );
-                    if interruptible_sleep(backoff, shutdown) {
-                        return;
-                    }
-                    continue;
-                }
-                if let Some(label) = resolved {
-                    if label != last_label {
-                        match rotor.advance_trust_epoch(label.clone(), now_unix()) {
-                            Ok(TrustEpochAdvance::Advanced) => {
-                                consecutive_failures = 0;
-                                last_label = label;
-                                signer.metrics().record_success(now_unix());
-                                eprintln!(
-                                    "mcp-re-proxy: trust epoch advanced -> {last_label}: delegated \
-                                     keys re-issued under the new epoch. This replica no longer \
-                                     mints under the prior epoch. Credentials already issued under \
-                                     it stay VERIFIABLE until verifiers are pointed at the new \
-                                     epoch — update the verifiers' accepted epochs to complete the \
-                                     revocation (delegation_trust_epoch_stale)."
-                                );
-                                continue;
-                            }
-                            // The root declined and the PRIOR-epoch key is still valid.
-                            // `last_label` is deliberately left where it was, so the
-                            // next pass re-enters this arm and retries; advancing it
-                            // here would report a revocation that never happened and
-                            // never look at it again.
-                            Ok(TrustEpochAdvance::Declined) => {
-                                consecutive_failures = signer.metrics().record_failure();
-                                let ttl = signer.seconds_to_expiry(now_unix());
-                                let backoff =
-                                    rotation_backoff(consecutive_failures, ttl, rotation_jitter());
-                                eprintln!(
-                                    "mcp-re-proxy: WARNING: trust epoch advance to {label} NOT \
-                                     APPLIED (root issuer declined); this replica is STILL MINTING \
-                                     under the prior epoch on its current key, until that key's \
-                                     exp ({}s) and then FAILS CLOSED. The break-glass revocation \
-                                     is not yet in force here. consecutive_failures {}. Retrying \
-                                     in {}ms.",
-                                    ttl.unwrap_or(0),
-                                    consecutive_failures,
-                                    backoff.as_millis(),
-                                );
-                                if interruptible_sleep(backoff, shutdown) {
-                                    return;
-                                }
-                                continue;
-                            }
-                            Err(_) => {
-                                consecutive_failures = signer.metrics().record_failure();
-                                let ttl = signer.seconds_to_expiry(now_unix());
-                                let backoff =
-                                    rotation_backoff(consecutive_failures, ttl, rotation_jitter());
-                                eprintln!(
-                                    "mcp-re-proxy: WARNING: re-issue on trust-epoch advance FAILED \
-                                     (root issuer unavailable); consecutive_failures {}. Retrying in {}ms.",
-                                    consecutive_failures,
-                                    backoff.as_millis(),
-                                );
-                                if interruptible_sleep(backoff, shutdown) {
-                                    return;
-                                }
-                                continue;
-                            }
-                        }
-                    }
-                }
-            }
-            // The delegated kid BEFORE the attempt, so silent no-progress is detectable.
-            // `ensure_active` returns Ok when successor issuance FAILED but the current
-            // key is still valid (custody.rs: the `!current_valid` guard is skipped and
-            // the fallthrough `Some(a) if now < a.exp => Ok(())` wins). That is the
-            // PRIMARY failure mode — a root outage during the overlap window, exactly
-            // what the overlap exists to absorb — and taking it as success would reset
-            // `consecutive_failures`, collapse `wake_at` to now (we are already past
-            // `exp - overlap`), and re-enter this arm immediately: a tight retry loop
-            // against the root KMS/HSM, minting a fresh keypair every pass, for the
-            // whole overlap window. The backoff below must cover it.
-            let before_kid = signer.current(now_unix()).map(|a| a.delegated_kid.clone());
-            match rotor.rotate(now_unix()) {
-                Ok(()) if !rotation_made_progress(signer, &before_kid, overlap) => {
-                    consecutive_failures = signer.metrics().record_failure();
-                    let ttl = signer.seconds_to_expiry(now_unix());
-                    let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter());
-                    eprintln!(
-                        "mcp-re-proxy: WARNING: delegated successor issuance FAILED (root issuer \
-                         unavailable) but the current key is still valid; consecutive_failures {}, \
-                         time-to-expiry {}s. Serving continues on the current key until its exp, \
-                         then FAILS CLOSED (ADR-MCPRE-052 §6). Retrying in {}ms.",
-                        consecutive_failures,
-                        ttl.unwrap_or(0),
-                        backoff.as_millis(),
-                    );
-                    if interruptible_sleep(backoff, shutdown) {
-                        return;
-                    }
-                }
-                Ok(()) => {
-                    consecutive_failures = 0;
-                    signer.metrics().record_success(now_unix());
-                    if let Some(ev) = rotor.audit().last() {
-                        let ttl = signer.seconds_to_expiry(now_unix()).unwrap_or(0);
-                        eprintln!(
-                            "mcp-re-proxy: delegated key {} (kid {}, exp {}); time-to-expiry {}s; \
-                             rotations_ok {}",
-                            ev.event_type,
-                            ev.delegated_kid,
-                            ev.exp,
-                            ttl,
-                            signer.metrics().rotations_ok(),
-                        );
-                    }
-                }
-                Err(_) => {
-                    consecutive_failures = signer.metrics().record_failure();
-                    let ttl = signer.seconds_to_expiry(now_unix());
-                    // Bounded jittered exponential backoff, capped by the current key's
-                    // remaining validity (retry inside the overlap window) and a 30s
-                    // ceiling once expired. OS CSPRNG jitter decorrelates a fleet.
-                    let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter());
-                    eprintln!(
-                        "mcp-re-proxy: WARNING: delegated key issuance FAILED (root issuer \
-                         unavailable); consecutive_failures {}, time-to-expiry {}s. Serving \
-                         continues only until the current delegated key expires, then FAILS CLOSED \
-                         (ADR-MCPRE-052 §6) — no stale-key extension, no direct-root fallback. \
-                         Retrying in {}ms.",
-                        consecutive_failures,
-                        ttl.unwrap_or(0),
-                        backoff.as_millis(),
-                    );
-                    // Interruptible backoff so a persistent root outage does not hot-spin;
-                    // the hot path keeps signing off the current key until its exp.
-                    if interruptible_sleep(backoff, shutdown) {
-                        return;
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Did the rotation attempt actually mint a successor?
-///
-/// `DelegatedSigningCustody::ensure_active` reports `Ok(())` in two very different
-/// situations: a successor was issued, or issuance failed while the current key is
-/// still valid (so the fleet keeps signing and the caller is expected to retry).
-/// Only the first is progress. Without this distinction the retry loop treats a root
-/// outage during the overlap window as steady state and spins on the root issuer.
-///
-/// Progress means the published delegated kid changed. When nothing is published at
-/// all there is nothing to keep serving on, and the `Err` arm already handles that;
-/// when the attempt was not yet due (we are outside the overlap window) an unchanged
-/// kid is expected and not a failure.
-fn rotation_made_progress(
-    signer: &crate::delegated_server_signer::DelegatedServerSigner,
-    before_kid: &Option<String>,
-    overlap: i64,
-) -> bool {
-    let now = now_unix();
-    let Some(active) = signer.current(now) else {
-        // Nothing published: not progress, but also nothing to back off protecting.
-        return false;
-    };
-    if active.delegated_kid != *before_kid.as_deref().unwrap_or("") {
-        return true;
-    }
-    // Same kid. Only a rotation that was DUE and did not happen is a failure.
-    now < active.exp - overlap
-}
-
-/// Sleep `dur` in small increments, returning `true` as soon as `shutdown` is observed
-/// (so a rolling deploy is not delayed by a long backoff nap). `false` if the full
-/// duration elapsed.
-fn interruptible_sleep(dur: Duration, shutdown: &std::sync::atomic::AtomicBool) -> bool {
-    let step = Duration::from_millis(50);
-    let mut slept = Duration::ZERO;
-    while slept < dur {
-        if shutdown.load(Ordering::SeqCst) {
-            return true;
-        }
-        std::thread::sleep(step);
-        slept += step;
-    }
-    false
-}
-
-/// A fresh random u64 from the OS CSPRNG for backoff jitter. On the (astronomically
-/// unlikely) CSPRNG failure, fall back to 0 (no jitter) rather than panicking the
-/// rotation thread — the backoff still bounds the retry rate, only its dither is lost.
-fn rotation_jitter() -> u64 {
-    let mut b = [0u8; 8];
-    match getrandom::fill(&mut b) {
-        Ok(()) => u64::from_le_bytes(b),
-        Err(_) => 0,
-    }
-}
-
-/// MCPS-84 (ADR-MCPS-049 W2): build the networked trust-epoch invalidation channel
-/// for the ADR-021 Push tier when `--trust-epoch-redis-url` is configured. Under
-/// the `redis_replay` feature this connects the Redis trust-epoch source; without
-/// it, a configured URL fails closed (a networked backend was requested but not
-/// compiled in). Returns `None` when no URL is set (Push runs inert / bounded-`T`).
-#[cfg(feature = "redis_replay")]
-fn build_trust_epoch_channel(
-    config: &cli::Config,
-    shutdown: Arc<std::sync::atomic::AtomicBool>,
-) -> Result<Option<Box<dyn crate::InvalidationChannel + Send + Sync>>, String> {
-    match &config.trust_epoch_redis_url {
-        Some(url) => {
-            let key = config
-                .trust_epoch_key
-                .as_deref()
-                .unwrap_or(crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY);
-            let source = std::sync::Arc::new(
-                crate::trust_epoch::redis_trust_epoch_source(url, key)
-                    .map_err(|e| format!("trust-epoch source: {e}"))?,
-            );
-            // The epoch read is a blocking network round trip behind ONE connection
-            // mutex, and the resolver that would trigger it runs before signature
-            // verification on every request. Polled from a dedicated thread instead,
-            // so the request path costs a mutex acquisition and the whole per-core
-            // fleet is not serialized on one Redis connection.
-            crate::trust_epoch::spawn_trust_epoch_poller(
-                std::sync::Arc::clone(&source),
-                TRUST_EPOCH_POLL_SECS,
-                shutdown,
-            );
-            eprintln!(
-                "mcp-re-proxy: revocation-tier PUSH: networked trust-epoch source ACTIVE (redis, \
-                 epoch key {key:?}, polled every {TRUST_EPOCH_POLL_SECS}s off the request path); \
-                 the trust cache flushes within one poll interval of an epoch advance and \
-                 reverts to the bounded-T guarantee on a read outage."
-            );
-            Ok(Some(Box::new(crate::trust_epoch::SharedEpochChannel(
-                source,
-            ))))
-        }
-        None => Ok(None),
-    }
-}
-
-#[cfg(not(feature = "redis_replay"))]
-fn build_trust_epoch_channel(
-    config: &cli::Config,
-    _shutdown: Arc<std::sync::atomic::AtomicBool>,
-) -> Result<Option<Box<dyn crate::InvalidationChannel + Send + Sync>>, String> {
-    if config.trust_epoch_redis_url.is_some() {
-        return Err(
-            "--trust-epoch-redis-url requires a build with the `redis_replay` feature".to_string(),
-        );
-    }
-    Ok(None)
-}
-
-/// The shared trust-epoch counter, watched by the delegated-rotation owner so an
-/// operator's `INCR <trust-epoch-key>` invalidates the outstanding epoch of delegated
-/// response keys across the fleet (ADR-MCPRE-052 §7). The RESPONSE-side counterpart to
-/// [`build_trust_epoch_channel`], which flushes the REQUEST-trust cache on the same
-/// advance. Read-only; a read error leaves the epoch unchanged (never advance on a
-/// transient blip).
-///
-/// What an advance does and does not do: it stops this fleet MINTING under the prior
-/// epoch. It does not reach credentials already issued under it — no verifier reads the
-/// counter, so `accepted_epochs` is static verifier configuration and a leaked
-/// credential stays verifiable until the verifiers are pointed at the new epoch
-/// (docs/spec/delegated-required-validation-matrix.md §C.1, "Operational consequence").
-/// The counter is therefore also a fleet availability dependency: anyone who can write
-/// the shared key can advance it and make every replica mint a label the currently
-/// configured verifiers reject.
-///
-/// The emitted label is ALWAYS `<base>#<counter>` — never the bare base label. That is
-/// what makes an operator `INCR` survive a replica restart: the label is derived purely
-/// from shared state, so every replica at counter `N` mints `<base>#N` regardless of
-/// when it started. The previous design compared the counter against a baseline read at
-/// *this process's* startup and emitted the bare base label while they matched, so a
-/// replica restarting after an `INCR` adopted the advanced value as its own baseline,
-/// never observed an advance, and kept minting an epoch verifiers still accepted — the
-/// kill switch was process-relative rather than durable.
-///
-/// `high_water` makes the emitted epoch monotone WITHIN a process: a read that goes
-/// backwards (store reset, failover to a stale replica, a reconnect landing on the
-/// wrong instance) is refused rather than rebased, so reconnection can never re-mint
-/// under an epoch a verifier has already stopped accepting. Across a restart the shared
-/// counter is the only authority, by construction — a store that loses its counter is a
-/// trust-store failure, not something a replica can detect locally.
-struct DelegatedEpochWatch {
-    reader: Box<dyn crate::trust_epoch::EpochReader>,
-    base_label: String,
-    high_water: std::sync::Mutex<Option<i64>>,
-}
-
-impl DelegatedEpochWatch {
-    /// The label to mint under, or `None` when the shared epoch cannot be established.
-    ///
-    /// `None` is FAIL CLOSED FOR MINTING: the caller must not issue a credential,
-    /// because it cannot produce an epoch verifiers can compare. It does not retire the
-    /// current key — the fleet keeps signing off it until its `exp` and the hot path
-    /// then fails closed on its own (ADR-MCPRE-052 §6). Crucially it is also not treated
-    /// as "no change": a blip must never be read as an advance, nor as permission to
-    /// mint under a stale label.
-    fn current_label(&self) -> Option<String> {
-        let counter = self.reader.read_epoch().ok()?;
-        let mut hw = self.high_water.lock().ok()?;
-        if matches!(*hw, Some(prev) if counter < prev) {
-            // Regression. Refuse rather than rebase: minting under the lower epoch
-            // would resurrect credentials the fleet's verifiers already reject.
-            return None;
-        }
-        *hw = Some(counter);
-        Some(format!("{}#{}", self.base_label, counter))
-    }
-}
-
-/// Build the delegated-signing trust-epoch watcher from `--trust-epoch-redis-url`.
-/// `None` when no source is configured — the epoch is then whatever
-/// `--delegated-trust-epoch` fixed it to, with no cross-replica revocation signal (the
-/// honest bounded behaviour for a single-node deployment).
-///
-/// When a URL IS configured the watcher is always returned: the reader connects lazily
-/// and re-establishes after any failure, so a store that is briefly unreachable at boot
-/// no longer leaves this replica permanently without the operator's kill switch. The
-/// caller resolves the initial label and fails closed if it cannot.
-#[cfg(feature = "redis_replay")]
-fn build_delegated_epoch_watch(
-    config: &cli::Config,
-    base_label: String,
-) -> Option<DelegatedEpochWatch> {
-    let url = config.trust_epoch_redis_url.as_ref()?;
-    let key = config
-        .trust_epoch_key
-        .as_deref()
-        .unwrap_or(crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY);
-    match crate::trust_epoch::RedisEpochReader::connect_lazy(url, key) {
-        Ok(reader) => Some(DelegatedEpochWatch {
-            reader: Box::new(reader),
-            base_label,
-            high_water: std::sync::Mutex::new(None),
-        }),
-        Err(e) => {
-            // Only a malformed URL reaches here (`Client::open` parses, it does not
-            // connect), so this is a configuration error, not an outage.
-            eprintln!(
-                "mcp-re-proxy: --trust-epoch-redis-url is not a usable Redis URL ({}); \
-                 delegated trust-epoch revocation cannot be wired.",
-                e.0
-            );
-            None
-        }
-    }
-}
-
-#[cfg(not(feature = "redis_replay"))]
-fn build_delegated_epoch_watch(
-    _config: &cli::Config,
-    _base_label: String,
-) -> Option<DelegatedEpochWatch> {
-    None
-}
-
 #[cfg(all(test, unix))]
-mod key_file_perm_tests {
+mod tests {
     use super::check_key_file_perms;
+    use super::faulted_clock_refusal;
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
@@ -2411,15 +1031,15 @@ mod key_file_perm_tests {
         }
     }
 
-    /// A parsed `Config` for `source`, built through the REAL parser so the test cannot
+    /// A parsed `DeploymentRequest` for `source`, built through the REAL parser so the test cannot
     /// drift from what the CLI actually produces. An empty `tls_key` is how the parser
     /// represents delegated TLS, so it is passed through rather than defaulted.
     fn config_with(
-        source: crate::cli::KeySourceKind,
+        source: crate::deployment_request::KeySourceKind,
         seed: &str,
         tls_key: &str,
-    ) -> crate::cli::Config {
-        use crate::cli::KeySourceKind;
+    ) -> crate::deployment_request::DeploymentRequest {
+        use crate::deployment_request::KeySourceKind;
         let (name, mut extra): (&str, Vec<&str>) = match source {
             KeySourceKind::File => ("file", vec![]),
             KeySourceKind::Env => ("env", vec![]), // unreachable outside dev_env_key_source
@@ -2474,10 +1094,10 @@ mod key_file_perm_tests {
             "https://mcp.example.com/mcp",
             "--delegated-trust-epoch",
             "epoch-min",
-            "--replay-cache",
-            "file",
-            "--replay-path",
-            "/replay",
+            "--replay-redis-url",
+            "redis://127.0.0.1:6379",
+            "--replay-durability-tier",
+            "redis-wait-quorum:1:100",
             "--key-source",
             name,
             "--trust-domain",
@@ -2502,24 +1122,47 @@ mod key_file_perm_tests {
             .unwrap_or_else(|e| panic!("{source:?} config must parse: {e}"))
     }
 
+    /// The two custody states the disk projection is a function of.
+    ///
+    /// Classified rather than hand-built, so these tests measure what the validation
+    /// boundary actually recognises for the fixture above.
+    fn custody_states(
+        config: &crate::deployment_request::DeploymentRequest,
+    ) -> (
+        crate::config_state::CustodyState,
+        crate::config_state::TlsCustodyState,
+    ) {
+        let (custody, violations) = crate::config_state::custody::classify_and_validate(config);
+        assert!(violations.is_empty(), "fixture refused: {violations:?}");
+        let (tls_custody, violations) =
+            crate::config_state::tls_custody::classify_and_validate(config);
+        assert!(violations.is_empty(), "fixture refused: {violations:?}");
+        (
+            custody.expect("the fixture names a custody state"),
+            tls_custody.expect("the fixture names a TLS custody state"),
+        )
+    }
+
     /// C048: the PKCS#11 PIN file unlocks the token holding the signing keys, so it must
     /// be among the files the startup permission check covers — otherwise the credential
     /// protecting the keys sits behind a weaker floor than the keys themselves.
     #[test]
     fn the_pkcs11_pin_file_is_permission_checked() {
         use crate::app::key_files_read_from_disk;
-        use crate::cli::KeySourceKind;
+        use crate::deployment_request::KeySourceKind;
 
         let config = config_with(KeySourceKind::Pkcs11, "", "/tls.key");
-        let files = key_files_read_from_disk(&config);
+        let (custody, tls_custody) = custody_states(&config);
+        let files = key_files_read_from_disk(&custody, &tls_custody);
         assert!(
             files.contains(&"/etc/mcp-re/pin"),
             "the PIN file must be checked; got {files:?}"
         );
         // And it is NOT claimed for a source that reads no PIN.
-        let file_custody = config_with(KeySourceKind::File, "/seed", "/tls.key");
+        let file_config = config_with(KeySourceKind::File, "/seed", "/tls.key");
+        let (custody, tls_custody) = custody_states(&file_config);
         assert!(
-            !key_files_read_from_disk(&file_custody)
+            !key_files_read_from_disk(&custody, &tls_custody)
                 .iter()
                 .any(|p| p.contains("pin")),
             "file custody reads no PIN file"
@@ -2578,7 +1221,7 @@ mod key_file_perm_tests {
     #[test]
     fn the_tls_key_is_checked_under_every_custody_mode() {
         use crate::app::key_files_read_from_disk;
-        use crate::cli::KeySourceKind;
+        use crate::deployment_request::KeySourceKind;
 
         // `Env` is omitted: it is rejected by the parser outside a
         // `dev_env_key_source` build, so it cannot be constructed here.
@@ -2589,7 +1232,8 @@ mod key_file_perm_tests {
             KeySourceKind::GcpKms,
         ] {
             let config = config_with(source, "/seed", "/tls.key");
-            let checked = key_files_read_from_disk(&config);
+            let (custody, tls_custody) = custody_states(&config);
+            let checked = key_files_read_from_disk(&custody, &tls_custody);
             assert!(
                 checked.contains(&"/tls.key"),
                 "{source:?}: the TLS key lands on disk and must be permission-checked"
@@ -2608,11 +1252,12 @@ mod key_file_perm_tests {
     #[test]
     fn a_delegated_tls_key_contributes_no_file_to_check() {
         use crate::app::key_files_read_from_disk;
-        use crate::cli::KeySourceKind;
+        use crate::deployment_request::KeySourceKind;
 
         let config = config_with(KeySourceKind::GcpKms, "", "");
+        let (custody, tls_custody) = custody_states(&config);
         assert!(
-            key_files_read_from_disk(&config).is_empty(),
+            key_files_read_from_disk(&custody, &tls_custody).is_empty(),
             "delegated TLS + KMS custody reads no private key from disk"
         );
     }
@@ -2626,449 +1271,265 @@ mod key_file_perm_tests {
         check_key_file_perms("/nonexistent/path/tls.key", false)
             .expect("a missing file is reported by the loader, not by this guard");
     }
-}
 
-#[cfg(test)]
-mod rotation_progress_tests {
-    use super::rotation_made_progress;
-    use crate::delegated_server_signer::DelegatedServerSigner;
-    use mcp_re_core::SigningKey;
-    use mcp_re_http_profile::ActiveDelegatedKey;
-    use mcp_re_http_profile::ActorIdentity;
-    use std::sync::Arc;
-
-    const OVERLAP: i64 = 60;
-
-    fn key(kid: &str, exp: i64) -> ActiveDelegatedKey {
-        ActiveDelegatedKey {
-            key: Arc::new(SigningKey::from_seed_bytes(&[7u8; 32])),
-            delegated_kid: kid.to_string(),
-            server_signer: ActorIdentity {
-                role: "server".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:server".into(),
-                keyid: kid.to_string(),
-            },
-            credential: "cred".into(),
-            nbf: 0,
-            exp,
-        }
-    }
-
-    /// The defect this guards: `ensure_active` reports `Ok(())` both when a successor
-    /// was minted AND when issuance failed while the current key is still valid. Taking
-    /// the second as success reset `consecutive_failures`, collapsed the steady-state
-    /// wake time to now (we are already past `exp - overlap`), and re-entered the
-    /// rotate arm immediately — a tight loop against the root KMS/HSM, minting a fresh
-    /// keypair each pass, for the entire overlap window.
-    #[test]
-    fn unchanged_kid_inside_the_overlap_window_is_not_progress() {
-        let signer = DelegatedServerSigner::new();
-        let now = crate::app::now_unix();
-        // Published key is inside its overlap window: a rotation is DUE.
-        signer.publish(key("K1", now + OVERLAP - 1));
-        let before = Some("K1".to_string());
-        assert!(
-            !rotation_made_progress(&signer, &before, OVERLAP),
-            "a due rotation that did not change the kid means issuance failed"
-        );
-    }
-
-    #[test]
-    fn a_new_kid_is_progress() {
-        let signer = DelegatedServerSigner::new();
-        let now = crate::app::now_unix();
-        signer.publish(key("K2", now + 300));
-        let before = Some("K1".to_string());
-        assert!(rotation_made_progress(&signer, &before, OVERLAP));
-    }
-
-    /// Outside the overlap window an unchanged kid is expected, not a failure — the
-    /// backoff must not engage in steady state.
-    #[test]
-    fn unchanged_kid_outside_the_overlap_window_is_not_a_failure() {
-        let signer = DelegatedServerSigner::new();
-        let now = crate::app::now_unix();
-        signer.publish(key("K1", now + 10 * OVERLAP));
-        let before = Some("K1".to_string());
-        assert!(rotation_made_progress(&signer, &before, OVERLAP));
-    }
-
-    /// Nothing published: the `Err` arm owns that case; report no progress.
-    #[test]
-    fn nothing_published_is_not_progress() {
-        let signer = DelegatedServerSigner::new();
-        assert!(!rotation_made_progress(&signer, &None, OVERLAP));
-    }
-}
-
-#[cfg(test)]
-mod trust_epoch_watch_tests {
-    use super::DelegatedEpochWatch;
-    use crate::trust_epoch::EpochReadError;
-    use crate::trust_epoch::EpochReader;
-    use std::sync::atomic::AtomicI64;
-    use std::sync::atomic::AtomicUsize;
-    use std::sync::atomic::Ordering;
-    use std::sync::Arc;
-    use std::sync::Mutex;
-
-    const BASE: &str = "epoch-min";
-
-    /// A shared counter standing in for the Redis key, plus a switch that makes reads
-    /// fail so an outage can be simulated deterministically.
-    struct SharedCounter {
-        value: AtomicI64,
-        down: Mutex<bool>,
-        reads: AtomicUsize,
-    }
-
-    impl SharedCounter {
-        fn new(v: i64) -> Arc<Self> {
-            Arc::new(SharedCounter {
-                value: AtomicI64::new(v),
-                down: Mutex::new(false),
-                reads: AtomicUsize::new(0),
-            })
-        }
-        fn incr(&self) {
-            self.value.fetch_add(1, Ordering::SeqCst);
-        }
-        fn set(&self, v: i64) {
-            self.value.store(v, Ordering::SeqCst);
-        }
-        fn set_down(&self, down: bool) {
-            *self.down.lock().expect("down lock") = down;
-        }
-        fn reads(&self) -> usize {
-            self.reads.load(Ordering::SeqCst)
-        }
-    }
-
-    struct CounterReader(Arc<SharedCounter>);
-
-    impl EpochReader for CounterReader {
-        fn read_epoch(&self) -> Result<i64, EpochReadError> {
-            self.0.reads.fetch_add(1, Ordering::SeqCst);
-            if *self.0.down.lock().expect("down lock") {
-                return Err(EpochReadError("epoch store unreachable".into()));
-            }
-            Ok(self.0.value.load(Ordering::SeqCst))
-        }
-    }
-
-    /// Start a replica's watch over the shared counter. Constructing a NEW watch over
-    /// the SAME counter is exactly what a restart looks like: no carried-over state.
-    fn replica(counter: &Arc<SharedCounter>) -> DelegatedEpochWatch {
-        DelegatedEpochWatch {
-            reader: Box::new(CounterReader(Arc::clone(counter))),
-            base_label: BASE.to_string(),
-            high_water: Mutex::new(None),
-        }
-    }
-
-    /// The label is derived purely from shared state, so it is globally comparable.
-    #[test]
-    fn label_is_always_base_hash_counter_never_the_bare_base() {
-        let counter = SharedCounter::new(0);
-        let w = replica(&counter);
-        assert_eq!(w.current_label().as_deref(), Some("epoch-min#0"));
-        counter.incr();
-        assert_eq!(w.current_label().as_deref(), Some("epoch-min#1"));
-    }
-
-    /// Every replica at the same counter mints the same label, whenever it started.
-    #[test]
-    fn all_replicas_agree_regardless_of_start_time() {
-        let counter = SharedCounter::new(4);
-        let a = replica(&counter);
-        assert_eq!(a.current_label().as_deref(), Some("epoch-min#4"));
-        // B joins the fleet later.
-        let b = replica(&counter);
-        assert_eq!(b.current_label(), a.current_label());
-    }
-
-    /// THE INVARIANT (C007). An operator INCR must stay effective across a restart: the
-    /// restarted replica must NOT reinterpret the current counter as a fresh local
-    /// baseline and resume minting a label verifiers treat as unrevoked.
-    #[test]
-    fn an_increment_survives_a_replica_restart() {
-        let counter = SharedCounter::new(7);
-        let long_lived = replica(&counter);
-        let before = long_lived.current_label().expect("readable");
-        assert_eq!(before, "epoch-min#7");
-
-        // Operator revokes the fleet.
-        counter.incr();
-        let after_incr = long_lived.current_label().expect("readable");
-        assert_eq!(after_incr, "epoch-min#8");
-        assert_ne!(after_incr, before, "the INCR must change the minted label");
-
-        // A replica restarts: brand-new watch, no memory of the pre-INCR value.
-        let restarted = replica(&counter);
-        let after_restart = restarted.current_label().expect("readable");
-
-        assert_eq!(
-            after_restart, after_incr,
-            "a restarted replica must resolve the SAME post-INCR label as its peers"
-        );
-        assert_ne!(
-            after_restart, before,
-            "a restart must NOT resurrect the pre-INCR epoch — that is the revocation \
-             being defeated by a restart"
-        );
-    }
-
-    /// An outage is fail-closed FOR MINTING: no label, so the caller must not issue.
-    /// It is not silently treated as "unchanged", which would keep minting blind.
-    #[test]
-    fn an_outage_yields_no_label_so_minting_stops() {
-        let counter = SharedCounter::new(3);
-        let w = replica(&counter);
-        assert!(w.current_label().is_some());
-        counter.set_down(true);
-        assert!(
-            w.current_label().is_none(),
-            "an unreadable epoch must fail closed for minting"
-        );
-    }
-
-    /// Reconnect after an outage resumes at the CURRENT shared value — including an
-    /// INCR that happened while this replica could not read.
-    #[test]
-    fn reconnect_after_an_outage_resumes_and_sees_missed_increments() {
-        let counter = SharedCounter::new(1);
-        let w = replica(&counter);
-        assert_eq!(w.current_label().as_deref(), Some("epoch-min#1"));
-
-        counter.set_down(true);
-        assert!(w.current_label().is_none());
-        // The operator revokes DURING the outage.
-        counter.incr();
-        counter.incr();
-        assert!(w.current_label().is_none(), "still down");
-
-        counter.set_down(false);
-        assert_eq!(
-            w.current_label().as_deref(),
-            Some("epoch-min#3"),
-            "a reconnect must observe increments missed during the outage"
-        );
-        assert!(
-            counter.reads() >= 4,
-            "each attempt re-reads; no cached verdict"
-        );
-    }
-
-    /// Reconnection must not reset, rebase or otherwise weaken an already-issued
-    /// revocation: a counter that goes BACKWARDS (store reset, failover to a stale
-    /// replica, reconnect to the wrong instance) is refused, never adopted.
-    #[test]
-    fn a_regressed_counter_is_refused_not_rebased() {
-        let counter = SharedCounter::new(9);
-        let w = replica(&counter);
-        assert_eq!(w.current_label().as_deref(), Some("epoch-min#9"));
-
-        counter.set(2); // store rolled back
-        assert!(
-            w.current_label().is_none(),
-            "minting under a lower epoch would resurrect credentials verifiers reject"
-        );
-        // Still refused on retry — it is not a transient blip that clears itself.
-        assert!(w.current_label().is_none());
-
-        // Recovery to at-or-above the high-water mark resumes minting.
-        counter.set(9);
-        assert_eq!(w.current_label().as_deref(), Some("epoch-min#9"));
-        counter.set(11);
-        assert_eq!(w.current_label().as_deref(), Some("epoch-min#11"));
-    }
-
-    /// Issuance continues normally across the whole sequence the operator cares about:
-    /// steady state -> INCR -> outage -> reconnect -> restart.
-    #[test]
-    fn full_sequence_increment_outage_restart_reconnect_continued_issuance() {
-        let counter = SharedCounter::new(0);
-        let mut minted: Vec<String> = Vec::new();
-        let w = replica(&counter);
-
-        minted.push(w.current_label().expect("steady state"));
-        counter.incr();
-        minted.push(w.current_label().expect("after incr"));
-
-        counter.set_down(true);
-        assert!(w.current_label().is_none(), "no minting during the outage");
-        counter.set_down(false);
-        minted.push(w.current_label().expect("after reconnect"));
-
-        // Restart: fresh watch, same shared counter.
-        let w2 = replica(&counter);
-        minted.push(w2.current_label().expect("after restart"));
-        counter.incr();
-        minted.push(
-            w2.current_label()
-                .expect("issuance continues after restart"),
-        );
-
-        assert_eq!(
-            minted,
-            vec![
-                "epoch-min#0".to_string(),
-                "epoch-min#1".to_string(),
-                "epoch-min#1".to_string(),
-                "epoch-min#1".to_string(),
-                "epoch-min#2".to_string(),
-            ],
-            "labels track the shared counter only — never a per-process baseline"
-        );
-    }
-}
-
-#[cfg(test)]
-mod store_cadence_tests {
-    use super::fleet_trust_bound;
-    use super::store_change_cadence;
-    use super::TrustStoreFreshness;
-    use crate::revocation_tier::RevocationTier;
-    use std::sync::Arc;
-
-    /// R7-C126: the `--fleet` push-tier line must not claim a mechanism that was
-    /// removed. The epoch is read by a 5s background poller, never on the request path,
-    /// so "flush on the next request after an epoch advance" was a guarantee the data
-    /// plane could not keep — an operator sizing a revocation SLO from it got a number
-    /// short by up to the poll interval.
-    #[test]
-    fn the_push_tier_bound_states_the_poll_interval_not_the_next_request() {
-        let line = fleet_trust_bound(&RevocationTier::Push { t_secs: 90 }, true, Some(30));
-        assert!(
-            !line.contains("next request"),
-            "the per-request flush no longer exists: {line}"
-        );
-        assert!(
-            line.contains(&format!(
-                "{}s trust-epoch poll interval",
-                super::TRUST_EPOCH_POLL_SECS
-            )),
-            "the honest bound is one poll interval: {line}"
-        );
-        assert!(
-            line.contains("90s"),
-            "the outage fallback is still named: {line}"
-        );
-    }
-
-    /// A push tier with no networked source is inert, and says so rather than quoting
-    /// the healthy-source number.
-    #[test]
-    fn a_push_tier_without_a_source_reports_the_fallback_only() {
-        let line = fleet_trust_bound(&RevocationTier::Push { t_secs: 90 }, false, Some(30));
-        assert!(line.contains("inert"), "got: {line}");
-        assert!(
-            !line.contains("poll interval"),
-            "no source means no poll to bound anything: {line}"
-        );
-    }
-
-    /// Every tier's number sits over the same floor: nothing resolves faster than the
-    /// store is re-read.
-    #[test]
-    fn every_tier_names_the_reload_floor_under_its_number() {
-        for tier in [
-            RevocationTier::Live,
-            RevocationTier::BoundedCache { t_secs: 60 },
-            RevocationTier::Push { t_secs: 60 },
-        ] {
-            let with_reload = fleet_trust_bound(&tier, true, Some(15));
-            assert!(
-                with_reload.contains("--trust re-read every 15s"),
-                "tier {tier:?}: {with_reload}"
-            );
-            let frozen = fleet_trust_bound(&tier, true, None);
-            assert!(
-                frozen.contains("only on a restart"),
-                "tier {tier:?}: a frozen store must be named on the same line: {frozen}"
-            );
-        }
-    }
-
-    /// R7-C129: `bounded-cache` is the tier a deployment gets by omission, and it is
-    /// accepted with no `--trust-reload-secs` while still printing "revocation enforced
-    /// fleet-wide within T". Without a reload the base store is frozen for the process
-    /// lifetime, so the qualifier has to be ON that line — not a separate one further
-    /// down that an operator quoting the tier line never reads.
-    #[test]
-    fn a_tier_with_no_reload_cadence_says_the_store_cannot_change() {
-        let line = store_change_cadence(None);
-        assert!(line.contains("NONE"), "got: {line}");
-        assert!(
-            line.contains("CACHING"),
-            "the line must say what the tier's window actually bounds: {line}"
-        );
-        assert!(
-            line.contains("restart"),
-            "and what changing the store actually costs: {line}"
-        );
-    }
-
-    /// With a cadence the same line names it, so the tier window and the store window
-    /// are read together.
-    #[test]
-    fn a_configured_cadence_is_named_on_the_tier_line() {
-        let line = store_change_cadence(Some(30));
-        assert!(line.starts_with("30s"), "got: {line}");
-        assert!(line.contains("--trust"), "got: {line}");
-    }
-
-    /// R7-C072/C104: keep-last-good must be BOUNDED. A trust file that becomes
-    /// permanently unreadable otherwise restores the unbounded revocation window the
-    /// reload exists to close, silently — an `InMemoryTrustResolver` carries no expiry,
-    /// so nothing makes a frozen snapshot stop being honoured on its own.
+    /// C077: a `stat` that fails for a reason OTHER than absence must refuse.
     ///
-    /// The bound has to be a state the RESOLVER reads, not a warning on stderr: a log
-    /// line changes nothing about which keys keep verifying.
+    /// The file exists and is about to be read; only its posture is unknowable. Treating
+    /// that as compliance is a fail-open — on a networked or overlay Secret mount an EIO
+    /// or ESTALE would start the proxy over a world-readable signing seed with no
+    /// diagnostic at all.
+    ///
+    /// The broken implementation this catches: `if let Ok(meta) = metadata(path)` with no
+    /// error arm, which is what this guard did.
     #[test]
-    fn a_frozen_store_stops_answering_instead_of_serving_the_revoked_key() {
-        use mcp_re_core::TrustResolver;
+    fn a_key_file_whose_posture_cannot_be_established_is_refused() {
+        let dir = std::env::temp_dir().join(format!("mcp_re_perm_dir_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create dir");
+        let key = dir.join("tls.key");
+        std::fs::write(&key, b"key-material").expect("write");
+        // No search permission on the directory: the file is still there and still
+        // openable by anything holding a descriptor, but `stat` on the path fails EACCES.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).expect("chmod");
 
-        struct AlwaysResolves;
-        impl TrustResolver for AlwaysResolves {
-            fn resolve(
-                &self,
-                _signer: &str,
-                _key_id: &str,
-            ) -> Result<mcp_re_core::VerificationKey, mcp_re_core::TrustResolverError> {
-                Ok(mcp_re_core::SigningKey::from_seed_bytes(&[9u8; 32]).public_key())
+        let result = check_key_file_perms(&key.to_string_lossy(), false);
+
+        // Restore before asserting so a failure does not leave an unremovable directory.
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let err = result.expect_err("an unestablishable key-file posture must refuse startup");
+        assert!(
+            err.contains("cannot be stat'ed"),
+            "the refusal must say the posture could not be established, got: {err}"
+        );
+    }
+
+    /// R8-C123 (G10's finding, this group's call site): a record handed to the audit
+    /// writer immediately before teardown must still reach stderr.
+    ///
+    /// The writer thread is DETACHED, so nothing joins it: at process exit whatever it
+    /// had not yet written is gone, and a shutdown under load loses precisely the
+    /// decisions taken last. That is the did-it-get-recorded-or-not collapse — the
+    /// records are neither present nor reported missing, because the drop counter only
+    /// counts what the QUEUE refused, not what the process exited on top of.
+    /// `flush_stderr_audit` exists to close it and, until this call site, had no
+    /// production caller at all.
+    ///
+    /// # Why a child process
+    ///
+    /// The property is "observable AFTER teardown", and teardown means the process is
+    /// gone. Asserting it in-process would only assert that a background thread got
+    /// around to the write — which it would, given any pause, with or without the flush.
+    /// So the scenario runs in a child that enqueues a batch and then `exit`s the instant
+    /// `app::run` returns: no destructors, no grace, the detached writer killed where it
+    /// stands. With the drain in place every record is on stderr before `run` returns;
+    /// without it the tail of the batch dies with the child, which is what the parent
+    /// checks by looking for the LAST sequence number rather than any of them.
+    #[test]
+    fn a_record_enqueued_immediately_before_teardown_still_reaches_stderr() {
+        use crate::audit_sink::AuditSink;
+        use mcp_re_core::audit::AuditEvent;
+
+        const BATCH: u64 = 2000;
+        const CHILD_MARKER: &str = "MCP_RE_AUDIT_FLUSH_TEARDOWN_CHILD";
+        const TEST_NAME: &str = "app::tests::\
+                                 a_record_enqueued_immediately_before_teardown_still_reaches_stderr";
+
+        if std::env::var_os(CHILD_MARKER).is_some() {
+            // A config the validation boundary refuses, so `run` returns without opening a
+            // socket. The route out does not matter — the drain is on all of them.
+            let mut config = config_with(
+                crate::deployment_request::KeySourceKind::File,
+                "/seed",
+                "/tls.key",
+            );
+            config.target_uri = String::new();
+
+            // Attributed records, so the unattributed ceiling cannot drop any of them and
+            // an absent seq means "lost at exit" rather than "refused by the queue".
+            for i in 0..BATCH {
+                crate::audit_sink::StderrAuditSink.record(&crate::audit_sink::AuditRecord {
+                    event: AuditEvent::request_accepted(),
+                    actor_id: Some("teardown-actor".to_string()),
+                    status: 200,
+                    at_unix: i as i64,
+                });
             }
+            let _ = super::run(
+                config,
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            );
+            // No unwinding, no flush of anything else: whatever the writer has not written
+            // by now is lost, which is the condition under test.
+            std::process::exit(0);
         }
 
-        let freshness = Arc::new(TrustStoreFreshness::default());
-        let resolver = super::StaleFailsClosed {
-            inner: Arc::new(AlwaysResolves),
-            freshness: Arc::clone(&freshness),
-        };
-
+        let child = std::process::Command::new(
+            std::env::current_exe().expect("the test binary re-invokes itself"),
+        )
+        .args(["--exact", TEST_NAME, "--nocapture"])
+        .env(CHILD_MARKER, "1")
+        .output()
+        .expect("the child scenario runs");
+        let stderr = String::from_utf8_lossy(&child.stderr);
+        // `--exact` with a name nothing matches selects ZERO tests and exits 0, so the
+        // scenario would silently not run and the drain assertion below would fail with a
+        // message about flushing. `TEST_NAME` is a literal that no compiler check keeps in
+        // step with this module's path, so confirm the child actually ran the scenario.
+        // The child `exit`s before libtest prints its summary — that is the point of the
+        // scenario — so the evidence it ran is the line libtest prints on the way IN.
+        let ran = String::from_utf8_lossy(&child.stdout);
         assert!(
-            resolver.resolve("signer-a", "kid-a").is_ok(),
-            "a fresh store answers normally"
+            ran.contains("running 1 test"),
+            "the child ran no test: {TEST_NAME:?} matches nothing in this binary. Fix the \
+             name before reading anything into the drain assertion.\n{ran}"
         );
 
-        // The reload has failed its budget: the snapshot behind this resolver can no
-        // longer be trusted to reflect a revocation.
-        freshness.mark_stale();
+        let last = format!("audit seq={} ", BATCH - 1);
         assert!(
-            matches!(
-                resolver.resolve("signer-a", "kid-a"),
-                Err(mcp_re_core::TrustResolverError::Unavailable { .. })
-            ),
-            "a frozen store still HOLDS the revoked key, so answering from it is the \
-             one outcome that must not happen — and it must be reported as an outage, \
-             not as an unknown keyid"
+            stderr.contains(&last),
+            "the record enqueued last before teardown never reached stderr: no {last:?} in \
+             the child's output. The audit writer is detached, so an unflushed queue dies \
+             with the process and the decisions taken last are neither recorded nor \
+             reported missing."
         );
-
-        freshness.mark_fresh();
+        // The first record is the control: it proves the child really did emit the batch,
+        // so a missing tail above is a lost drain rather than a scenario that never ran.
         assert!(
-            resolver.resolve("signer-a", "kid-a").is_ok(),
-            "a recovered reload serves again"
+            stderr.contains("audit seq=0 "),
+            "the child emitted no audit records at all, so the assertion above proved \
+             nothing: {stderr}"
+        );
+        assert!(
+            stderr.contains("audit stream drained at shutdown"),
+            "shutdown must STATE which of the two audit outcomes happened, and this run \
+             drained: {stderr}"
+        );
+    }
+
+    /// R8-C123, second half: a drain that TIMED OUT must never read as a drain that
+    /// completed.
+    ///
+    /// The bounded wait exists so a stalled log collector cannot hold the process open,
+    /// which means the timeout is a reachable outcome in production and not an error path.
+    /// What it must not become is a quiet one: "the queue was drained" and "nobody can say
+    /// whether the queue was drained" are different facts about the audit stream, and an
+    /// operator reading the shutdown transcript has to be able to tell which they got.
+    ///
+    /// The broken implementation this catches: reporting both as one shutdown-complete
+    /// line, or reporting only the success and leaving the timeout silent.
+    #[test]
+    fn a_timed_out_audit_drain_never_reads_as_a_completed_one() {
+        let drained = super::audit_drain_line(true, true).expect("stderr audit states its drain");
+        let timed_out =
+            super::audit_drain_line(false, true).expect("a timeout is stated, not swallowed");
+
+        assert_ne!(drained, timed_out);
+        assert!(
+            !drained.contains("WARNING") && drained.contains("drained"),
+            "a completed drain must read as one: {drained}"
+        );
+        assert!(
+            timed_out.contains("WARNING") && timed_out.contains("UNKNOWN"),
+            "a timeout must state the uncertainty AS uncertainty — not as loss, and not as \
+             a clean shutdown: {timed_out}"
+        );
+        assert!(
+            !timed_out.contains("drained at shutdown"),
+            "the timeout line must not carry the completed line's claim: {timed_out}"
+        );
+        // A deployment whose audit goes nowhere says nothing about a stream it does not
+        // write; without this control the two assertions above would also hold for a
+        // function that always spoke.
+        assert!(super::audit_drain_line(true, false).is_none());
+        assert!(super::audit_drain_line(false, false).is_none());
+    }
+
+    /// C117: a faulted host clock is only a warning while it costs nothing but
+    /// per-request fail-closed denials. With client CRLs configured it costs the
+    /// boot-time stale-CRL refusal — nothing is `Stale` against a zero clock — so the
+    /// deployment would load an arbitrarily expired CRL and still print that revocation
+    /// is enforced. That case refuses.
+    ///
+    /// The broken implementation this catches: warning unconditionally, and handing the
+    /// same faulted reading to `TlsPlane::materialize` as the CRL freshness reference.
+    #[test]
+    fn a_faulted_clock_refuses_only_when_it_disables_the_crl_refusal() {
+        use crate::startup_plan::EPOCH_CLOCK_FAULT_THRESHOLD_SECS;
+
+        let refusal = faulted_clock_refusal(0, 1).expect("a faulted clock plus CRLs must refuse");
+        assert!(
+            refusal.contains("CRL") && refusal.contains("clock"),
+            "the refusal must name both halves of why it fired: {refusal}"
+        );
+        assert!(
+            faulted_clock_refusal(EPOCH_CLOCK_FAULT_THRESHOLD_SECS - 1, 2).is_some(),
+            "anything below the fault threshold disables the same refusal"
+        );
+        // The two negative controls. Without them a guard that refused unconditionally
+        // would satisfy the assertions above.
+        assert!(
+            faulted_clock_refusal(0, 0).is_none(),
+            "with no CRL configured there is no boot-time refusal to disable; the \
+             per-request posture is already fail-closed and warns"
+        );
+        assert!(
+            faulted_clock_refusal(EPOCH_CLOCK_FAULT_THRESHOLD_SECS, 3).is_none(),
+            "a sane clock must not be refused however many CRLs are configured"
+        );
+    }
+
+    /// The fleet's input is the serving TOPOLOGY. Each field is carried across unchanged —
+    /// no normalization happens here, because `0` means "auto" to `resolve_topology` and a
+    /// value substituted at this point would hide which of the two decided.
+    #[test]
+    fn the_fleet_config_carries_the_topology_and_resolves_the_bind() {
+        let config = config_with(
+            crate::deployment_request::KeySourceKind::File,
+            "/seed",
+            "/key",
+        );
+        let basis = crate::config_state::in_flight_limit::classify(&config);
+        let fleet =
+            super::fleet_config(&config, basis).expect("the fixture binds a literal address");
+
+        assert_eq!(fleet.addr, "127.0.0.1:8443".parse().expect("literal"));
+        assert_eq!(fleet.cores, config.cores);
+        assert_eq!(fleet.workers_per_shard, config.workers_per_shard);
+        assert_eq!(
+            fleet.max_in_flight_total,
+            basis.fleet_total(),
+            "the fleet is handed the fleet-wide half of the basis, and only that"
+        );
+        assert_eq!(
+            fleet.listen_backlog,
+            crate::async_fleet::DEFAULT_LISTEN_BACKLOG
+        );
+    }
+
+    /// A bind that resolves to nothing is refused BEFORE the runtime is assembled, so the
+    /// failure cannot drop a materialized runtime instead of tearing it down in order.
+    ///
+    /// The refusal names the flag: a bare address-parse error tells an operator nothing
+    /// about which of several address-shaped settings was rejected.
+    #[test]
+    fn an_unresolvable_bind_is_refused_and_names_the_flag() {
+        let mut config = config_with(
+            crate::deployment_request::KeySourceKind::File,
+            "/seed",
+            "/key",
+        );
+        config.bind = "missing-a-port".to_string();
+
+        let refusal = super::fleet_config(
+            &config,
+            crate::config_state::in_flight_limit::classify(&config),
+        )
+        .expect_err("no port, no socket address");
+        assert!(
+            refusal.contains("--bind") && refusal.contains("missing-a-port"),
+            "the refusal must name the flag and the value: {refusal}"
         );
     }
 }

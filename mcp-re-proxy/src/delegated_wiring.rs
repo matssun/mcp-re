@@ -2,7 +2,8 @@
 //! Production wiring of ADR-MCPRE-052 delegated response signing into the serving
 //! binary (MCPRE-122 phase 2).
 //!
-//! [`build_delegated_signing`] turns a parsed [`Config`] plus a ROOT issuer into the
+//! [`build_delegated_signing`] turns a [`SigningPlan`](crate::startup_plan::SigningPlan)
+//! plus a ROOT issuer into the
 //! two halves the serving path runs across the hot/cold boundary (ADR-MCPRE-051 §5):
 //!
 //! - the shared [`DelegatedServerSigner`] the per-core fleet signs off (hot path);
@@ -22,15 +23,12 @@ use std::sync::Arc;
 use mcp_re_core::b64url_decode;
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::issue_delegation_credential_with_signer;
-use mcp_re_http_profile::CustodyConfig;
 use mcp_re_http_profile::DelegatedSigningCustody;
 use mcp_re_http_profile::DelegationClaims;
 use mcp_re_http_profile::DelegationHeader;
 use mcp_re_http_profile::HttpProfileError;
-use mcp_re_http_profile::PROFILE_TAG;
 use zeroize::Zeroizing;
 
-use crate::cli::Config;
 use crate::delegated_server_signer::DelegatedRotor;
 use crate::delegated_server_signer::DelegatedServerSigner;
 use crate::key_source::ResponseSigner;
@@ -64,60 +62,26 @@ pub struct DelegatedSigningWiring {
     pub overlap: i64,
 }
 
-/// Build the delegated-signing wiring from `config` and a `root_signer` (the ROOT
-/// issuer). Fails closed on an invalid custody policy. Does NOT issue the first key
-/// or start any thread — the caller drives the initial [`DelegatedRotor::rotate`]
-/// (so a startup issuance failure refuses to serve) and spawns the rotation thread.
+/// Build the delegated-signing wiring from a [`SigningPlan`](crate::startup_plan::SigningPlan)
+/// and a `root_signer` (the ROOT issuer). Does NOT issue the first key or start any thread
+/// — the caller drives the initial [`DelegatedRotor::rotate`] (so a startup issuance
+/// failure refuses to serve) and spawns the rotation thread.
+///
+/// **Infallible, and that is the change.** It used to take a `DeploymentRequest` and re-decide two
+/// things: that a trust epoch is present, and that `0 < overlap < ttl`. Both are layer-A
+/// questions, both are boundary clauses now, and answering them here meant a deterministic
+/// configuration invalidity was refused after the trust and TLS planes had already
+/// established resources. The wiring is handed a policy and builds it.
 ///
 /// `root_signer` signs ONLY the delegation credential's compact-JWS signing input at
 /// issuance/rotation (never per response); a transient root failure yields `None`,
 /// which the custody state machine treats as a fail-closed issuance.
 pub fn build_delegated_signing(
-    config: &Config,
+    plan: &crate::startup_plan::SigningPlan,
     root_signer: impl ResponseSigner + Send + 'static,
-) -> Result<DelegatedSigningWiring, String> {
-    // The trust epoch is the ADR-MCPRE-052 §7 hard gate; it is required at parse time
-    // in delegated-required mode, re-checked here so this builder is safe standalone.
-    let trust_epoch = config.delegated_trust_epoch.clone().ok_or(
-        "delegated-required response signing requires a trust epoch (--delegated-trust-epoch)",
-    )?;
-    // `0 < overlap < ttl` so the rotor mints a successor before the predecessor
-    // expires (no signing gap). Enforced at parse time, re-checked here.
-    if config.delegated_ttl_secs <= 0
-        || config.delegated_overlap_secs <= 0
-        || config.delegated_overlap_secs >= config.delegated_ttl_secs
-    {
-        return Err(format!(
-            "delegated custody policy invalid: require 0 < overlap ({}) < ttl ({})",
-            config.delegated_overlap_secs, config.delegated_ttl_secs
-        ));
-    }
-    // Defaults: the issuer kid the credential chains to is the server key id; the
-    // audience-scope hash is the verifier audience. Both are overridable so a
-    // deployment can separate the root-key identity / audience-scope from the
-    // response audience if its verifiers expect distinct values.
-    let issuer_kid = config
-        .delegated_issuer_kid
-        .clone()
-        .unwrap_or_else(|| config.server_key_id.clone());
-    let audience_hash = config
-        .delegated_audience_hash
-        .clone()
-        .unwrap_or_else(|| config.audience.clone());
-
-    let cfg = CustodyConfig {
-        issuer_kid,
-        iss: config.server_signer.clone(),
-        profile: PROFILE_TAG.to_string(),
-        aud: config.audience.clone(),
-        audience_hash,
-        trust_epoch,
-        server_role: "server".to_string(),
-        server_trust_domain: config.trust_domain.clone(),
-        server_subject: config.server_signer.clone(),
-        ttl: config.delegated_ttl_secs,
-        overlap: config.delegated_overlap_secs,
-    };
+) -> DelegatedSigningWiring {
+    let cfg = plan.custody.clone();
+    let overlap = cfg.overlap;
 
     // ROOT ISSUER: sign the credential's compact-JWS signing input with the root
     // ResponseSigner (KMS/HSM/file), decoding its base64url raw Ed25519 signature to
@@ -150,11 +114,11 @@ pub fn build_delegated_signing(
     let signer = Arc::new(DelegatedServerSigner::new());
     let custody = DelegatedSigningCustody::new(cfg, issue, factory);
     let rotor = DelegatedRotor::new(custody, Arc::clone(&signer));
-    Ok(DelegatedSigningWiring {
+    DelegatedSigningWiring {
         signer,
         rotor,
-        overlap: config.delegated_overlap_secs,
-    })
+        overlap,
+    }
 }
 
 #[cfg(test)]
@@ -166,10 +130,21 @@ mod tests {
     const ROOT_SEED: [u8; 32] = [33u8; 32];
     const NOW: i64 = 1_700_000_100;
 
-    /// Minimal delegated-required config via the real parser (so this exercises the
-    /// production flag path too). Paths are placeholders — `build_delegated_signing`
-    /// reads config FIELDS, not files.
-    fn delegated_config() -> Config {
+    /// A minimal delegated plan, projected from a real parsed-and-validated config so
+    /// this still exercises the production flag path and the boundary. Paths are
+    /// placeholders — nothing here opens a file.
+    fn delegated_plan() -> crate::startup_plan::SigningPlan {
+        let config = delegated_config();
+        let validated = crate::config_state::validation::ValidatedDeployment::try_from(config)
+            .expect("the fixture must validate");
+        crate::startup_plan::SigningPlan::from_validated(
+            &validated,
+            crate::startup_plan::response_issuer_kid(&validated),
+            crate::startup_plan::TrustEpochPlan::from_validated(&validated),
+        )
+    }
+
+    fn delegated_config() -> crate::deployment_request::DeploymentRequest {
         let args: Vec<String> = [
             "--bind",
             "127.0.0.1:8443",
@@ -195,10 +170,10 @@ mod tests {
             "https://mcp.example.com/mcp?route=a",
             // A durable replay selection so parse-time unsafe-config checks pass; the
             // path is not opened at parse (this builder reads config fields only).
-            "--replay-cache",
-            "file",
-            "--replay-path",
-            "/tmp/mcp-re-delegated-wiring-test-replay",
+            "--replay-redis-url",
+            "redis://127.0.0.1:6379",
+            "--replay-durability-tier",
+            "redis-wait-quorum:1:100",
             "--delegated-trust-epoch",
             "epoch-1",
             "--trust-domain",
@@ -223,9 +198,8 @@ mod tests {
 
     #[test]
     fn builds_and_first_rotate_publishes_a_snapshot() {
-        let config = delegated_config();
         let root = SigningKey::from_seed_bytes(&ROOT_SEED);
-        let mut wiring = build_delegated_signing(&config, root).expect("build wiring");
+        let mut wiring = build_delegated_signing(&delegated_plan(), root);
         assert_eq!(wiring.overlap, 60);
         // No key until the first rotate (fail-closed until issuance).
         assert!(wiring.signer.current(NOW).is_none());
@@ -245,9 +219,8 @@ mod tests {
 
     #[test]
     fn ttl_bounds_the_published_snapshot() {
-        let config = delegated_config();
         let root = SigningKey::from_seed_bytes(&ROOT_SEED);
-        let mut wiring = build_delegated_signing(&config, root).expect("build wiring");
+        let mut wiring = build_delegated_signing(&delegated_plan(), root);
         wiring.rotor.rotate(NOW).expect("issue");
         // Valid within [nbf, exp); fails closed at exp (ttl = 300 default).
         assert!(wiring.signer.current(NOW + 299).is_some());
@@ -256,8 +229,7 @@ mod tests {
 
     #[test]
     fn failing_root_fails_closed_at_first_issuance() {
-        let config = delegated_config();
-        let mut wiring = build_delegated_signing(&config, FailingRoot).expect("build wiring");
+        let mut wiring = build_delegated_signing(&delegated_plan(), FailingRoot);
         // The root cannot issue and there is no prior key: rotate fails closed and
         // publishes nothing — the serving path would then refuse to start.
         assert!(wiring.rotor.rotate(NOW).is_err());

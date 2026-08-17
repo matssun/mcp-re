@@ -1,5 +1,9 @@
 # Rust
 /target/
+# Nested cargo build dirs (verification reproducers, sdk crates). The anchored
+# rule above only covers the workspace root, so a reproducer's target/ was
+# stageable — 173 build artefacts nearly went into a commit.
+target/
 **/*.rs.bk
 
 # Bazel (build artifacts; symlinks point into ~/Library/Caches/bazel/)
@@ -29,3 +33,6 @@ __pycache__/
 
 # Claude Code
 /.claude
+
+# ADR-MCPRE-059 attestation store — derived evidence, never source (§"Evidence attestation").
+/.verification/

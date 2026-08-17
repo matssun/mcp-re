@@ -52,6 +52,14 @@ run() { # run <label> <command...>
   if ! "$@"; then
     printf '\n[stage %d] FAILED: %s\n' "$STAGE" "$label" >&2
     printf 'Fix it, then resume with: scripts/local_gate.sh --from %d\n' "$STAGE" >&2
+    # Symmetric with the PASS banner, and on stdout as well as stderr. A reader who
+    # pipes this script (`| tail`, `| grep`) gets the PIPE's exit status, not the
+    # gate's — a failed gate then looks like a pass. So the verdict is also a line in
+    # the output itself: exactly one `LOCAL GATE:` line is printed per run, and its
+    # absence means the run did not finish. Check the line, never the piped status.
+    printf '\n=====================================================================\n'
+    printf 'LOCAL GATE: FAIL (stage %d — %s)\n' "$STAGE" "$label"
+    printf '=====================================================================\n'
     exit 1
   fi
 }
@@ -88,9 +96,40 @@ stage_static() {
     && python3 scripts/slo_invocation_gate.py --selftest \
     && python3 scripts/slo_invocation_gate.py \
     && python3 scripts/bazel_srcs_gate.py --selftest \
+    && python3 scripts/startup_backedges.py --selftest \
+    && python3 scripts/module_map.py --selftest \
     && python3 scripts/bazel_srcs_gate.py \
     && python3 scripts/es256_containment_gate.py --selftest \
     && python3 scripts/es256_containment_gate.py \
+    && python3 scripts/owned_worker_gate.py --selftest \
+    && python3 scripts/owned_worker_gate.py \
+    && python3 scripts/seam_posture_gate.py --selftest \
+    && python3 scripts/seam_posture_gate.py \
+    && python3 scripts/proxy_flag_doc_gate.py --selftest \
+    && python3 scripts/proxy_flag_doc_gate.py \
+    && python3 scripts/conformance_claims_gate.py --selftest \
+    && python3 scripts/conformance_claims_gate.py \
+    && python3 scripts/cargo_test_target_gate.py --selftest \
+    && python3 scripts/cargo_test_target_gate.py \
+    && python3 scripts/lifecycle_purity_gate.py --selftest \
+    && python3 scripts/lifecycle_purity_gate.py \
+    && python3 tools/verification/test_verdict_algebra.py \
+    && python3 tools/verification/test_invalidation.py \
+    && python3 tools/verification/test_attest.py \
+    && python3 tools/verification/test_verus_lane.py \
+    && python3 tools/verification/test_measured_inputs.py \
+    && python3 tools/verification/test_escape_hatches.py \
+    `# Ahead of the verdict, so a host that cannot run the verifier says so in those` \
+    `# words. Same script the CI lanes start with: the environment it checks is the` \
+    `# one both places depend on, and it names the fix instead of surfacing as a TOML` \
+    `# import error or a missing rustup deep inside Verus.` \
+    && ./scripts/verification_runner_preflight.sh \
+    `# --gate, not --manifests: the manifests-only form validates the registry's shape` \
+    `# and stops, so it never reads the code. Three uninterpreted spec functions sat` \
+    `# unregistered in the TCB while this lane reported PASS, because the half that` \
+    `# scans for escape hatches and runs Verus only ever ran in a CI job whose runner` \
+    `# is scoped to another repository. ~26s warm, which buys the whole verdict.` \
+    && python3 tools/verification/verify --gate \
     && python3 tools/scitt_fetch_service_key.py --selftest \
     && python3 scripts/slo_gate.py --selftest \
     && fmt_check \

@@ -10,7 +10,7 @@ replicaCount: 3
 image:
   repository: mcp-re-proxy
   # Pin to a digest in production; a tag is shown here for readability.
-  tag: "0.15.0"
+  tag: "0.16.0"
   pullPolicy: IfNotPresent
 
 # The port the proxy binds (mTLS/MCP-RE over TLS). The Service and the tcpSocket
@@ -59,7 +59,9 @@ replay:
   redisUrl: "rediss://mcp-re-redis:6379"
   durabilityTier: "redis-wait-quorum:2:2000"
   # Escape hatch for a plaintext `redis://` endpoint. The render-time guard refuses
-  # a plaintext URL under fleet=true unless this is explicitly true, so running
+  # a plaintext URL on the replay, trust-epoch and admission-currency hops — at any
+  # replica count, because the chart always renders a shared replay store and the
+  # keyspace is equally writable either way — unless this is explicitly true, so running
   # unencrypted is a decision someone wrote down rather than a default. Only
   # defensible where the hop is confined by other means (a fenced validation
   # namespace, a service mesh terminating TLS transparently).
@@ -161,9 +163,14 @@ verifiedContextCarrier: disabled
 # tightens nothing already allowed). Set one of these to size the boundary against
 # your own inner plane rather than take that default.
 #
-#   maxInFlight       per-core ceiling, applied verbatim (wins if both are set)
+#   maxInFlight       per-core ceiling, applied verbatim
 #   maxInFlightTotal  fleet-wide target that the async fleet divides evenly across
 #                     cores; each core then enforces only its own share (lock-free)
+#
+# Set ONE. They are alternative ways to state the same limit at different altitudes,
+# so setting both is refused — at render here, and by the proxy itself. Which
+# aggregate a total implies is not known until the core count is resolved, so there is
+# no "they agree" case either.
 #
 # Size maxInFlightTotal against the inner plane's own concurrency, not the pod's
 # memory: the point is to shed at the boundary rather than queue in front of a
@@ -234,9 +241,10 @@ retainedEvidence:
 #
 # `exact` binds each signed request to the verified client-cert identity. There is
 # no "none": the proxy rejects it at argument parse. "lb-assertion" and
-# "attested-ingress" parse but are refused at boot on the RFC 9421 serving path
-# (rebinding an owner-signed ingress assertion to the request-evidence digest is
-# pending owner authorization), so setting either CrashLoops the pods. The
+# "attested-ingress" are likewise refused by configuration validation, each naming
+# its own mode, so setting either CrashLoops the pods. Neither is deployable in
+# v0.16: the RFC 9421 serving path does not consult an ingress assertion, so the
+# identity a request is bound to would not be the one the assertion carries. The
 # render-time guard rejects all three rather than letting the chart produce them.
 transportBinding: ""
 
@@ -383,9 +391,18 @@ serviceAccount:
 #                  a seed there would put a deployment's most sensitive file in the
 #                  pod for nothing.
 #
-# Every key file this Secret does provide is mounted 0400: the proxy refuses to start
-# on a group/world-readable key file, and that refusal now covers tls.key under EVERY
-# custody mode (it used to be skipped for anything but fileSeed).
+# Every key file this Secret provides is mounted 0440, owned by `podSecurityContext.
+# fsGroup` (65532 by default) — NOT 0400. That is the non-root Secret mount model: the
+# process reads the file through its group membership. The chart therefore also renders
+# --allow-group-readable-key-files whenever fsGroup is set, and the proxy accepts group
+# READ only when the file's group is one it is actually in. Group WRITE and every world
+# bit stay refused, under every custody mode including tls.key.
+#
+# Custody consequence to audit: anything sharing gid 65532 in this pod — a sidecar, an
+# ephemeral debug container — can read signing-seed and tls.key. Keep that gid to this
+# workload. Clearing podSecurityContext.fsGroup drops the opt-in flag and restores the
+# owner-only requirement, which then needs the Secret's defaultMode set to 0400 to
+# match, and a uid that owns the files.
 tls:
   secretName: "mcp-re-proxy-material"
   mountPath: "/etc/mcp-re"

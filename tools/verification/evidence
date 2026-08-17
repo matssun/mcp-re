@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""The evidence pipeline — ADR-MCPRE-059 §2, §5, §6.
+
+One command over phases that stay separate programs:
+
+    1. VERIFY    run the required lanes and aggregate their verdicts   (`verify`)
+                     PASS / FAIL / INCOMPLETE
+                     only PASS continues
+    2. ATTEST    issue freshness records for the exact fingerprints    (`attest`)
+                 actually measured, refusing everything else
+    3. GRAPH     recompute freshness from attestations and dependencies (`evidence-graph`)
+    4. FRONTIER  derive the minimum candidate review closure            (`review-frontier`)
+
+Separate programs on purpose, and the separation is the security property rather than a
+tidiness preference: phase 1 DECIDES whether evidence exists, phase 2 RECORDS what phase 1
+decided, and a single program doing both can stamp freshness onto source it never measured.
+That is the one bug this whole subsystem is built to make unreachable, so the pipeline runs
+it as a sequence of consumers, each refusing what the previous one did not establish.
+
+Not part of `scripts/local_gate.sh`, and not to be folded into it. The local gate answers
+"does this working tree satisfy its build and test gates"; this answers "given successful
+evidence over these exact inputs, may a freshness record be issued". Those are different
+questions, and only the second may write to the attestation store.
+
+Phase 4 remains advisory during Phase 5 shadow review: the frontier proposes a minimum
+review closure, the existing full security review remains authoritative.
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+
+
+def run(script: str, *argv: str) -> int:
+    print(f"\n$ tools/verification/{script} {' '.join(argv)}".rstrip())
+    return subprocess.run(
+        [sys.executable, str(HERE / script), *argv], check=False
+    ).returncode
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--gate",
+        action="store_true",
+        help="authoritative: a failing verification lane fails the pipeline",
+    )
+    args = parser.parse_args()
+    # Line-buffered, because each phase's child process writes to the same stdout: block
+    # buffering would print this command's phase headers after the output they label.
+    sys.stdout.reconfigure(line_buffering=True)
+
+    print("=" * 70)
+    print("phase 1/4  VERIFY")
+    print("=" * 70)
+    verify_argv = ["--gate"] if args.gate else []
+    if run("verify", *verify_argv) != 0:
+        print(
+            "\nSTOPPED after phase 1: verification did not pass, so there is nothing to "
+            "attest. No attestation was written, and the existing store is left as it is "
+            "for the graph to judge."
+        )
+        return 1
+
+    print("\n" + "=" * 70)
+    print("phase 2/4  ATTEST")
+    print("=" * 70)
+    if run("attest") != 0:
+        print(
+            "\nSTOPPED after phase 2: the issuer refused at least one attestation. A "
+            "refusal is the correct outcome when evidence does not match the current "
+            "inputs; it is not a lane failure to work around."
+        )
+        return 1
+
+    print("\n" + "=" * 70)
+    print("phase 3/4  FRESHNESS GRAPH")
+    print("=" * 70)
+    if run("evidence-graph") != 0:
+        return 1
+
+    print("\n" + "=" * 70)
+    print("phase 4/4  REVIEW FRONTIER (advisory during Phase 5 shadow review)")
+    print("=" * 70)
+    return run("review-frontier")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

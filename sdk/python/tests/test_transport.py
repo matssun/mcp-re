@@ -22,7 +22,7 @@ import pytest
 pytest.importorskip("mcp", reason="the transport adapter needs the upstream MCP SDK")
 
 from mcp.shared.message import SessionMessage  # noqa: E402
-from mcp.types import JSONRPCNotification, JSONRPCRequest  # noqa: E402
+from mcp.types import JSONRPCError, JSONRPCNotification, JSONRPCRequest  # noqa: E402
 
 from mcp_re_sdk import (  # noqa: E402
     AuthorizationBindingPolicy,
@@ -829,6 +829,12 @@ async def test_an_unbound_rejection_receipt_is_reported_as_not_request_bound(mon
         wire_code = "mcp-re.authorization_binding_missing"
         bound = False
         request_state = None
+        # A preflight refusal that never reached dispatch states no disposition. The
+        # transport must emit no member for it rather than inventing one.
+        execution_status = None
+        retry_safety = None
+        continuation_status = None
+        retention_status = None
 
     monkeypatch.setattr(t._core, "verify_response", lambda *a, **k: _Unbound())
 
@@ -842,6 +848,140 @@ async def test_an_unbound_rejection_receipt_is_reported_as_not_request_bound(mon
         "the frozen token is what the peer said and must not be rewritten"
     )
     assert error.data == {"requestBound": False}
+
+
+@pytest.mark.anyio
+async def test_a_post_dispatch_rejection_reports_its_execution_and_retry_contract(monkeypatch):
+    """ADR-MCPRE-058 §10 (SL-10): the disposition must reach the application.
+
+    The server derives `execution_status` / `retry_safety` from its exchange machine and
+    signs them into every rejection at or after dispatch, precisely so a client can tell
+    a retry-safe failure from one whose side effect a retry performs twice. Nothing on
+    the client side read them: the application saw a bare wire code and a retry-friendly
+    status, retried, and the tool call ran again with a fresh nonce that passes replay
+    admission. Byte-parity fixtures cannot see this — it is behaviour.
+    """
+    import mcp_re_sdk.transport as t
+
+    class _PostDispatch:
+        outcome = "rejection"
+        wire_code = "mcp-re.upstream_unavailable"
+        bound = True
+        request_state = None
+        execution_status = "possibly_executed"
+        retry_safety = "unsafe_without_reconciliation"
+        continuation_status = "consumed"
+        retention_status = None
+
+    monkeypatch.setattr(t._core, "verify_response", lambda *a, **k: _PostDispatch())
+
+    async def rejecting(method, target_uri, headers, body):
+        return HttpReply(status=503, headers=[], body=b"{}")
+
+    out = await _send(_config(), rejecting, _request())
+
+    error = out[0].message.error
+    assert error.message == "mcp-re.upstream_unavailable"
+    assert error.data == {
+        "requestBound": True,
+        "executionStatus": "possibly_executed",
+        "retrySafety": "unsafe_without_reconciliation",
+        "continuationStatus": "consumed",
+    }, "a member the receipt did not carry must not be invented"
+
+
+# --- a verified reply that is not a JSON-RPC response ------------------------------
+
+
+@pytest.mark.anyio
+async def test_a_verified_reply_carrying_a_method_is_refused_not_dispatched(monkeypatch):
+    """A signed reply must never become a server->client REQUEST.
+
+    `jsonrpc_message_adapter` is a union that accepts a JSONRPCRequest, and the pydantic
+    models ignore extras, so a body carrying BOTH a legal `result` and a top-level
+    `method` parsed as a request and was injected into `ClientSession` as a
+    server-initiated one — running the application's sampling / elicitation / roots
+    handlers on attacker-chosen params. The `call_tool` that was actually made then hung
+    forever, because its id had been consumed as an inbound request id.
+
+    The Rust ambassador refuses the same body (`plain_response_from_verified`); this is
+    the SDK side of that property, and the TypeScript twin pins it too.
+    """
+    import mcp_re_sdk.transport as t
+
+    class _Ok:
+        outcome = "success"
+        wire_code = None
+        bound = True
+        request_state = None
+        execution_status = None
+        retry_safety = None
+        continuation_status = None
+        retention_status = None
+
+    monkeypatch.setattr(t._core, "verify_response", lambda *a, **k: _Ok())
+
+    hostile = (
+        b'{"jsonrpc":"2.0","id":1,"result":{"ok":true},'
+        b'"method":"sampling/createMessage","params":{"x":1}}'
+    )
+
+    async def spliced(method, target_uri, headers, body):
+        return HttpReply(status=200, headers=[], body=hostile)
+
+    out = await _send(_config(), spliced, _request())
+
+    delivered = out[0].message
+    assert isinstance(delivered, JSONRPCError), (
+        f"a method-bearing body must not reach the session as {type(delivered).__name__}"
+    )
+    assert delivered.error.message == "mcp-re.malformed_envelope"
+
+    # And an ordinary reply still round-trips, so the guard refuses a shape rather than
+    # the success path.
+    async def ordinary(method, target_uri, headers, body):
+        return HttpReply(
+            status=200, headers=[], body=b'{"jsonrpc":"2.0","id":9,"result":{"ok":true}}'
+        )
+
+    out = await _send(_config(), ordinary, _request())
+    assert out[0].message.result == {"ok": True}
+
+
+@pytest.mark.anyio
+async def test_a_verified_reply_with_neither_result_nor_error_is_refused(monkeypatch):
+    """A signed envelope carrying no answer is not an answer.
+
+    Handing it to the union adapter produced whichever arm happened to match, and an
+    empty `{"jsonrpc":"2.0","id":1}` has no reading under which the call completed.
+    """
+    import mcp_re_sdk.transport as t
+
+    class _Ok:
+        outcome = "success"
+        wire_code = None
+        bound = True
+        request_state = None
+        execution_status = None
+        retry_safety = None
+        continuation_status = None
+        retention_status = None
+
+    monkeypatch.setattr(t._core, "verify_response", lambda *a, **k: _Ok())
+
+    for body in (
+        b'{"jsonrpc":"2.0","id":1}',
+        b'{"jsonrpc":"2.0","id":1,"result":{},"error":{"code":-1,"message":"x"}}',
+        b'[{"jsonrpc":"2.0","id":1,"result":{}}]',
+        b'"ok"',
+    ):
+        async def poster(method, target_uri, headers, body=body):
+            return HttpReply(status=200, headers=[], body=body)
+
+        out = await _send(_config(), poster, _request())
+        delivered = out[0].message
+        assert isinstance(delivered, JSONRPCError), f"{body!r} must not be delivered"
+        assert delivered.error.message == "mcp-re.malformed_envelope"
 
 
 # --- the undeliverable-message sink ----------------------------------------------
@@ -971,3 +1111,55 @@ async def test_authorization_bindings_reach_the_core_which_digests_the_real_byte
     assert "pdp-decision" in evidence
     assert "pdp-decision-document" not in evidence
     assert base64.urlsafe_b64encode(material).decode().rstrip("=") not in evidence
+
+
+# --- SD-03: a caller that must know its notification was accepted ------------------
+
+
+@pytest.mark.anyio
+async def test_send_notification_verified_raises_when_the_202_does_not_verify():
+    """SD-03: neither SDK may treat a notification as delivered until its 202 verifies.
+
+    The TypeScript twin gives its caller that guarantee directly — `send()` awaits the
+    whole obligation and throws `NotificationNotAcknowledged`. `ClientSession.
+    send_notification()` cannot: it hands the message to an anyio memory stream and
+    returns, so the pump on the other side has no caller left to raise to, and reaching
+    back through it would mean raising inside the task group that runs every concurrent
+    exchange — the remotely-triggerable session kill round 5 removed.
+
+    So the awaited surface is a separate call, and this pins that it fails closed rather
+    than reporting a delivery nothing acknowledged.
+    """
+    from mcp_re_sdk.transport import send_notification_verified
+
+    async def unsigned(method, target_uri, headers, body):
+        # A 202 with no signature: transmitted, but nothing acknowledged it.
+        return HttpReply(status=202, headers=[], body=b"")
+
+    with pytest.raises(NotificationNotAcknowledged) as raised:
+        await send_notification_verified(_config(), unsigned, "notifications/cancelled")
+    assert raised.value.method == "notifications/cancelled"
+    assert raised.value.wire_code, "the frozen reason travels with the refusal"
+
+
+@pytest.mark.anyio
+async def test_send_notification_verified_posts_the_signed_notification():
+    """It is the same obligation the pump runs, not a second code path: the message is
+    signed and POSTed, and only the acknowledgement decides the outcome."""
+    from mcp_re_sdk.transport import send_notification_verified
+
+    calls = []
+
+    async def unsigned(method, target_uri, headers, body):
+        calls.append((method, target_uri, bytes(body)))
+        return HttpReply(status=202, headers=[], body=b"")
+
+    with contextlib.suppress(NotificationNotAcknowledged):
+        await send_notification_verified(_config(), unsigned, "notifications/initialized")
+
+    assert len(calls) == 1, "the notification must actually be transmitted"
+    method, target_uri, body = calls[0]
+    assert method == "POST"
+    assert target_uri == TARGET
+    assert json.loads(body)["method"] == "notifications/initialized"
+    assert "id" not in json.loads(body), "a notification has no id"

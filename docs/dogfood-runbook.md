@@ -4,7 +4,8 @@
 > This runbook was written for the pre-ADR-051 architecture in which the **proxy
 > launched and env-minimized an inner stdio subprocess** (`--inner-command`,
 > `--inner-env*`, `--inner-rlimit-*`, `--inherit-env`). Those flags **no longer
-> exist**, and MCP-RE no longer owns any stdio serving/inner/bridge at all: the
+> exist**, nor do `--replay-cache` / `--replay-path` (deleted 2026-08-15: every replay
+> state is shared, so the durability tier is the only selector), and MCP-RE no longer owns any stdio serving/inner/bridge at all: the
 > PEP's inner plane is stateless Streamable-HTTP (`--inner-http-url`). To protect a
 > stdio-only MCP server today, front it with an **external** plain-MCP adapter
 > (e.g. FastMCP's stdio↔HTTP proxy) that exposes HTTP, and point the proxy's
@@ -125,9 +126,14 @@ Mint the same shapes `full_stack_test` mints in-process, but on disk. You need:
 | **Trust file** (JSON array) | Request-signer + authorization-issuer public keys | `--trust` |
 
 The trust file is a JSON array of `{ "signer", "key_id", "public_key" }`
-(public key Base64URL-no-pad), exactly as `cli::load_trust` parses it. It carries
-**both** the request-signer key and (for `--authz reference`) the
-authorization-issuer key.
+(public key Base64URL-no-pad). It carries **both** the request-signer key and (for
+`--authz reference`) the authorization-issuer key.
+
+`trust_document` is the authoritative boundary for what those bytes mean — duplicate
+rejection, slot discipline, and the exclusion of the deployment's own response key from
+the request signers. The `--trust` flag is one consumer of that boundary, not its owner:
+a reload and a programmatic caller reach the same rules without passing through a
+command line.
 
 ```json
 [

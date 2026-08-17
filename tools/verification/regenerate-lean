@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Regenerate `verification/lean/generated/` from Rust — ADR-MCPRE-059 §8.
+
+    Rust source → Charon → LLBC → Aeneas → generated Lean model
+
+Generated output is machine-owned. It is never hand-edited, and a hand-edit that makes a
+proof pass is a forged artifact rather than weak evidence (Operational Rule 6). This
+script is the only writer of that directory; `check-generated` is the reader that proves
+nothing else wrote to it.
+
+Refuses while the pipeline is unpinned. Extraction by an unpinned Charon or Aeneas
+produces a model whose relationship to the Rust is unknown, and a theorem proved against
+an unknown model constrains nothing.
+
+The pipeline runs inside the pinned Linux container (ADR-MCPRE-059 §19); Charon does not
+build on macOS. The container digest is therefore one of the required pins, because the
+pair (tool commit, image digest) is what identifies the extraction, not the commit alone.
+
+When this is implemented, it MUST check the exit status of each tool directly. A shell
+pipeline reports its last stage, so a failed extraction can exit 0 — and a regeneration
+that silently did nothing leaves the previous model in place, which `check-generated`
+would then read as fresh.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _manifest import ManifestError, load_toolchains, unresolved_pins  # noqa: E402
+
+REQUIRED = {"charon", "aeneas", "lean", "aeneas_lean_backend", "extraction_container"}
+
+
+def main() -> int:
+    try:
+        toolchains = load_toolchains()
+    except ManifestError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    missing = sorted(REQUIRED & set(unresolved_pins(toolchains)))
+    if missing:
+        print(
+            "FAIL: cannot regenerate — the extraction pipeline is unpinned "
+            f"({', '.join(missing)}).\n"
+            "Pin Charon, Aeneas, Lean, and the Aeneas Lean backend in\n"
+            "verification/policy/toolchains.lock.toml first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(
+        "FAIL: the pipeline is pinned but regeneration is not implemented yet.\n"
+        "Implement the Charon → LLBC → Aeneas → Lean invocation here.",
+        file=sys.stderr,
+    )
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
