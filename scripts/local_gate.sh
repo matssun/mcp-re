@@ -115,6 +115,8 @@ stage_static() {
     && python3 scripts/cargo_test_target_gate.py \
     && python3 scripts/lifecycle_purity_gate.py --selftest \
     && python3 scripts/lifecycle_purity_gate.py \
+    && python3 scripts/registry_approval_gate.py --selftest \
+    && python3 scripts/registry_approval_gate.py \
     && python3 tools/verification/test_verdict_algebra.py \
     && python3 tools/verification/test_invalidation.py \
     && python3 tools/verification/test_attest.py \
@@ -123,6 +125,10 @@ stage_static() {
     && python3 tools/verification/test_measured_inputs.py \
     && python3 tools/verification/test_escape_hatches.py \
     && python3 tools/verification/test_theorems.py \
+    && python3 tools/verification/test_theorem_review.py \
+    `# A display, not a gate: run so a broken import or a renamed component surfaces here` \
+    `# rather than the first time someone reaches for the review state.` \
+    && python3 tools/verification/review >/dev/null \
     `# Ahead of the verdict, so a host that cannot run the verifier says so in those` \
     `# words. Same script the CI lanes start with: the environment it checks is the` \
     `# one both places depend on, and it names the fix instead of surfacing as a TOML` \

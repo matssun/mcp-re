@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Theorem assurance: fingerprints, review state, and the conjunction — §14.1, §14.7.
+
+Shows, per declared theorem, the four axes that must hold together before a claim may be
+called established:
+
+    structural support     a unit supports it (T1, `_theorems`)
+    unit evidence          every supporting unit derives FRESH (`_graph`)
+    dependencies           every premise is itself established
+    specification review   the owner's review covers the CURRENT theorem fingerprint
+
+This command DERIVES and DISPLAYS. It never writes a review, and it must never grow a flag
+that does: an approval is a human act recorded as a commit under `verification/reviews/`,
+and a tool that could mint one on request would be the single-command self-approval §14.7
+exists to prevent. `--fingerprint` prints the digest a reviewer must name in that record,
+which is the only assistance a tool should offer here.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _fingerprint import fingerprint_theorem, fingerprint_unit  # noqa: E402
+from _graph import evaluate, load_attestations  # noqa: E402
+from _manifest import (  # noqa: E402
+    REPO_ROOT,
+    ManifestError,
+    load_assumptions,
+    load_toolchains,
+    load_verification,
+)
+from _review import load_reviews, review_root, theorem_assurance  # noqa: E402
+from _theorems import load_theorems  # noqa: E402
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--json", action="store_true", help="machine-readable output")
+    parser.add_argument(
+        "--fingerprint",
+        metavar="THM-NNNN",
+        help="print one theorem's current fingerprint and components, for a review record",
+    )
+    parser.add_argument(
+        "--attestations",
+        type=Path,
+        default=REPO_ROOT / ".verification" / "attestations",
+    )
+    args = parser.parse_args()
+
+    try:
+        doc = load_verification()
+        assumptions = load_assumptions()
+        toolchains = load_toolchains()
+        theorems = load_theorems({unit["id"] for unit in doc.get("unit", [])})
+    except ManifestError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    entries = theorems.get("theorem", [])
+    fingerprints = {row["id"]: fingerprint_theorem(row, theorems) for row in entries}
+
+    if args.fingerprint:
+        if args.fingerprint not in fingerprints:
+            print(f"FAIL: no theorem {args.fingerprint!r} declared", file=sys.stderr)
+            return 1
+        print(json.dumps(fingerprints[args.fingerprint], indent=2, sort_keys=True))
+        return 0
+
+    units = doc.get("unit", [])
+    current = {
+        unit["id"]: fingerprint_unit(unit, doc, toolchains, assumptions) for unit in units
+    }
+    derived = evaluate(
+        units, doc.get("edge", []), current, load_attestations(args.attestations)
+    )
+    assurance = theorem_assurance(
+        theorems,
+        fingerprints,
+        load_reviews(review_root(REPO_ROOT)),
+        derived["states"],
+    )
+
+    if args.json:
+        print(json.dumps(assurance, indent=2, sort_keys=True, default=list))
+        return 0
+
+    if not entries:
+        # Said in full rather than printed as an empty table: "no theorems are declared" and
+        # "every theorem holds" are different facts, and only one of them is good news.
+        print("no theorems declared in verification/policy/theorems.toml")
+        print("(nothing is established, because nothing is claimed)")
+        return 0
+
+    print(f"theorem assurance @ policy {doc['policy_revision']}")
+    for row in entries:
+        state = assurance[row["id"]]
+        spec_state, spec_reason = state["specification_review"]
+        mark = "ESTABLISHED" if state["established"] else "not established"
+        print(f"\n  {row['id']}  {row['title']}")
+        print(f"    {mark}{'  (deprecated)' if state['deprecated'] else ''}")
+        print(f"    specification review   {spec_state}: {spec_reason}")
+        for unit_id, unit_state in sorted(state["unit_states"].items()):
+            print(f"    unit://{unit_id:<28} {unit_state}")
+        if not state["supporting_units"]:
+            print("    no supporting unit — a stated claim awaiting evidence")
+        deps = row.get("depends_on", [])
+        if deps:
+            print(f"    depends on             {', '.join(deps)}")
+    established = sum(1 for state in assurance.values() if state["established"])
+    print(f"\n  {established} of {len(entries)} theorem(s) established")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
