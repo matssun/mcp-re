@@ -33,7 +33,17 @@ before any verification toolchain exists — which is exactly the state they are
 
 `_manifest.py` is the shared loader. Its validation is strict: an unknown key is a
 failure, not an ignored field, because a mistyped security declaration must not read as an
-absent one.
+absent one. `_theorems.py` loads `verification/policy/theorems.toml` — the `THM-NNNN`
+security claims — under the same rule, and `verify --manifests` validates it with the
+others.
+
+A theorem holds the human claim and two edges: `supported_by = ["unit://…"]` and
+`depends_on = ["THM-…"]`. Everything below the claim keeps its existing owner, so a key
+restating a `[[unit]]` fact is refused by name, and a support edge that resolves to no unit
+fails closed rather than deriving an empty — and therefore vacuously satisfied — closure.
+Establishment is derived: a theorem is established only if a unit supports it and every
+theorem it depends on is established, which is why an unsupported claim may be declared but
+never reads as one.
 
 ## Three verdicts, never conflated
 
@@ -81,3 +91,8 @@ introduced, observed to fail, and reverted:
 | a `tested_symbol` renamed in the source | the battery's `--exact` selection matches nothing, and zero-selected is a lane FAIL |
 | a `tested_symbol` with no target prefix | malformed-symbol failure, never a default target |
 | `test://` evidence with no `tested_symbols` | manifest validation failure — an unrunnable claim is not evidence |
+| `supported_by` naming no declared unit | fail-closed refusal, never an empty closure |
+| a cycle in a theorem's `depends_on` | cycle failure naming the ring |
+| a theorem key restating a `[[unit]]` fact | duplicate-authority failure naming the owning file |
+| a stored `review = "approved"` in the registry | refused — an approval is evidence about a fingerprint |
+| a theorem no unit supports | declared, and reported as not established |
