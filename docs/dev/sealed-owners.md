@@ -100,9 +100,33 @@ let you build a `CustodyState`.
 Never work around a compile failure with `#[non_exhaustive]`, a runtime re-check, or a doc
 note. The failure is the boundary detector; those consume the signal.
 
+## Property 1 needs no separate witness here
+
+*Illegal state cannot be publicly constructed* is the first completion property, and the
+obvious way to evidence it is a compile-fail test. **For these owners that would prove the
+wrong thing.**
+
+A `trybuild` case, and equally a ```compile_fail doctest, compiles a standalone file as a
+SEPARATE crate. It can only witness the crate boundary — that a downstream crate cannot
+construct the value. The consumers that mattered here are all *inside* `mcp-re-proxy`, and
+the crate boundary already held against them before any of this work: that is exactly what
+`ReplayState`'s "outside this crate" doc comment claimed, while the seal held against none
+of its actual callers.
+
+The in-crate seal is instead enforced **continuously, by every build**. With the
+representation private to the owner's module, the violating expression cannot be written
+anywhere in the crate and still compile — there is no file that could hold the negative
+case, because such a file would not build. `cargo check -p mcp-re-proxy --all-targets`
+passing IS the witness, and it is a stronger one than a single pinned case: it re-proves
+the property over the whole crate on every run rather than over one example.
+
+What a compile-fail lane would still be worth: pinning the *crate*-boundary claims for
+types re-exported to SDK or integration consumers. That is a narrower property than the one
+this campaign was about, and it is not a prerequisite for any owner above.
+
 ## Open
 
-Property 1 of a sealed owner — *illegal state cannot be publicly constructed* — is
-enforced by the compiler but has no compile-fail witness. A `trybuild` lane is the
-campaign's remaining infrastructure: each sealed owner should ship a test proving the
-illegal construction does not compile.
+Nothing structural. The remaining owners (`ChannelBindingState`, `DelegatedSigningFacts`,
+`ServerIdentityFacts`, `AuditState`, `VerifiedContextState`) carry no representation a
+consumer reads: measured at 0 external destructuring sites each, and the fieldless ones
+have no illegal inhabitant to exclude.
