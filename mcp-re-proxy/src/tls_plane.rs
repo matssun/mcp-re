@@ -980,7 +980,9 @@ mod custody_agreement_tests {
     #[test]
     fn agreeing_custody_passes_the_check_and_fails_on_something_else() {
         let err = TlsPlane::materialize(
-            &plan(crate::config_state::test_support::tls_custody_exported("/key")),
+            &plan(crate::config_state::test_support::tls_custody_exported(
+                "/key",
+            )),
             exported_material(),
             Vec::new(),
             Vec::new(),

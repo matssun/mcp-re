@@ -24,8 +24,8 @@ use crate::deployment_request::{
 
 #[cfg(feature = "aws_kms_keysource")]
 use crate::config_state::AwsCredentialMode;
-use crate::config_state::{CustodyMaterial, CustodyState};
 use crate::config_state::TlsCustodyState;
+use crate::config_state::{CustodyMaterial, CustodyState};
 // MCPS-076 (audit gap G-3): EnvKeySource is dev/CI-only — compiled only under the
 // non-default `dev_env_key_source` feature.
 #[cfg(feature = "dev_env_key_source")]
@@ -1008,10 +1008,6 @@ pub fn build_attested_ingress_binding(
     Ok(Some(binding))
 }
 
-
-
-
-
 /// Build the configured [`KeySource`] from the classified custody states.
 ///
 /// MCPS-076 (audit gap G-3): [`CustodyMaterial::EnvSeed`] is honored ONLY in a build with
@@ -1044,7 +1040,7 @@ pub fn build_key_source(
         })),
         #[cfg(feature = "dev_env_key_source")]
         CustodyMaterial::EnvSeed { env_var } => Ok(Box::new(EnvKeySource {
-            signing_key_seed_var: env_var.clone(),
+            signing_key_seed_var: env_var.to_string(),
             tls_cert_var: tls_cert.to_string(),
             tls_key_var: tls_key.to_string(),
             client_ca_var: client_ca.to_string(),
@@ -1102,9 +1098,9 @@ pub fn build_key_source(
             credentials,
         } => {
             let kms_config = crate::aws_kms_keysource::AwsKmsConfig {
-                region: region.clone(),
-                key_id: key_id.clone(),
-                endpoint: endpoint.clone(),
+                region: region.to_string(),
+                key_id: key_id.to_string(),
+                endpoint: endpoint.map(str::to_string),
             };
             // IRSA or the static env pair — never both, never a fallback between
             // them. A deployment that asked for web identity and cannot mint through
@@ -1131,9 +1127,9 @@ pub fn build_key_source(
             match tls_custody.delegated_aws_key_id() {
                 Some(tls_key_id) => {
                     let tls_kms_config = crate::aws_kms_keysource::AwsKmsConfig {
-                        region: region.clone(),
+                        region: region.to_string(),
                         key_id: tls_key_id.to_string(),
-                        endpoint: endpoint.clone(),
+                        endpoint: endpoint.map(str::to_string),
                     };
                     // The TLS key takes the SAME custody path as the object-signing
                     // key: a deployment cannot end up with one KMS principal reached
@@ -1181,11 +1177,11 @@ pub fn build_key_source(
             use_metadata,
         } => {
             let kms_config = crate::gcp_kms_keysource::GcpKmsConfig {
-                key_version_name: key_version.clone(),
-                endpoint: endpoint.clone(),
+                key_version_name: key_version.to_string(),
+                endpoint: endpoint.map(str::to_string),
             };
             let backend =
-                crate::gcp_kms_keysource::GcpKmsEd25519Backend::new(&kms_config, *use_metadata)?;
+                crate::gcp_kms_keysource::GcpKmsEd25519Backend::new(&kms_config, use_metadata)?;
             let tls = FileKeySource::tls_only(tls_cert, tls_key, client_ca);
             // #61: the GCP counterpart of #60 — a SECOND, DISTINCT key version custodies
             // the TLS server key, and the proxy never reads `--tls-key` from disk.
@@ -1193,11 +1189,11 @@ pub fn build_key_source(
                 Some(tls_key_version) => {
                     let tls_kms_config = crate::gcp_kms_keysource::GcpKmsConfig {
                         key_version_name: tls_key_version.to_string(),
-                        endpoint: endpoint.clone(),
+                        endpoint: endpoint.map(str::to_string),
                     };
                     let tls_backend = crate::gcp_kms_keysource::GcpKmsEd25519Backend::new(
                         &tls_kms_config,
-                        *use_metadata,
+                        use_metadata,
                     )?;
                     Ok(Box::new(
                         crate::kms_keysource::KmsKeySource::new_with_delegated_tls(

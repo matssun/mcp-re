@@ -269,38 +269,44 @@ fn classify(config: &DeploymentRequest) -> Option<CustodyState> {
     let seed = |value: &str| (!value.is_empty()).then(|| value.to_string());
     Some(CustodyState {
         kind: match config.key_source {
-        KeySourceKind::File => CustodyKind::FileSeed {
-            seed_path: seed(&config.signing_key_seed)?,
-        },
-        KeySourceKind::Env => CustodyKind::EnvSeed {
-            env_var: seed(&config.signing_key_seed)?,
-        },
-        KeySourceKind::Pkcs11 => CustodyKind::Pkcs11 {
-            module: config.pkcs11_module.clone()?,
-            pin_file: config.pkcs11_pin_file.clone()?,
-            token_label: config.pkcs11_token_label.clone()?,
-            key_label: config.pkcs11_key_label.clone()?,
-        },
-        KeySourceKind::AwsKms => CustodyKind::AwsKms {
-            region: config.aws_kms_region.clone()?,
-            key_id: config.aws_kms_key_id.clone()?,
-            endpoint: guarded_endpoint("--aws-kms-endpoint", config.aws_kms_endpoint.as_deref()),
-            credentials: if config.aws_kms_use_web_identity {
-                AwsCredentialMode::WebIdentity {
-                    sts_endpoint: guarded_endpoint(
-                        "--aws-sts-endpoint",
-                        config.aws_sts_endpoint.as_deref(),
-                    ),
-                }
-            } else {
-                AwsCredentialMode::StaticEnv
+            KeySourceKind::File => CustodyKind::FileSeed {
+                seed_path: seed(&config.signing_key_seed)?,
             },
-        },
-        KeySourceKind::GcpKms => CustodyKind::GcpKms {
-            key_version: config.gcp_kms_key_version.clone()?,
-            endpoint: guarded_endpoint("--gcp-kms-endpoint", config.gcp_kms_endpoint.as_deref()),
-            use_metadata: config.gcp_kms_use_metadata,
-        },
+            KeySourceKind::Env => CustodyKind::EnvSeed {
+                env_var: seed(&config.signing_key_seed)?,
+            },
+            KeySourceKind::Pkcs11 => CustodyKind::Pkcs11 {
+                module: config.pkcs11_module.clone()?,
+                pin_file: config.pkcs11_pin_file.clone()?,
+                token_label: config.pkcs11_token_label.clone()?,
+                key_label: config.pkcs11_key_label.clone()?,
+            },
+            KeySourceKind::AwsKms => CustodyKind::AwsKms {
+                region: config.aws_kms_region.clone()?,
+                key_id: config.aws_kms_key_id.clone()?,
+                endpoint: guarded_endpoint(
+                    "--aws-kms-endpoint",
+                    config.aws_kms_endpoint.as_deref(),
+                ),
+                credentials: if config.aws_kms_use_web_identity {
+                    AwsCredentialMode::WebIdentity {
+                        sts_endpoint: guarded_endpoint(
+                            "--aws-sts-endpoint",
+                            config.aws_sts_endpoint.as_deref(),
+                        ),
+                    }
+                } else {
+                    AwsCredentialMode::StaticEnv
+                },
+            },
+            KeySourceKind::GcpKms => CustodyKind::GcpKms {
+                key_version: config.gcp_kms_key_version.clone()?,
+                endpoint: guarded_endpoint(
+                    "--gcp-kms-endpoint",
+                    config.gcp_kms_endpoint.as_deref(),
+                ),
+                use_metadata: config.gcp_kms_use_metadata,
+            },
         },
     })
 }
@@ -521,8 +527,16 @@ mod tests {
                 "Pkcs11",
                 pkcs11,
             ),
-            (|s| matches!(s.material(), CustodyMaterial::AwsKms { .. }), "AwsKms", aws),
-            (|s| matches!(s.material(), CustodyMaterial::GcpKms { .. }), "GcpKms", gcp),
+            (
+                |s| matches!(s.material(), CustodyMaterial::AwsKms { .. }),
+                "AwsKms",
+                aws,
+            ),
+            (
+                |s| matches!(s.material(), CustodyMaterial::GcpKms { .. }),
+                "GcpKms",
+                gcp,
+            ),
         ];
         for (is_expected, name, mutate) in cases {
             let (state, violations) = run(mutate);
@@ -795,7 +809,8 @@ mod tests {
             violations.iter().any(|v| v.contains("--aws-sts-endpoint")),
             "{violations:?}"
         );
-        let state = state.expect("the AWS state is classified even when its STS endpoint is refused");
+        let state =
+            state.expect("the AWS state is classified even when its STS endpoint is refused");
         let CustodyMaterial::AwsKms { credentials, .. } = state.material() else {
             panic!("the state names AwsKms material");
         };
@@ -833,10 +848,7 @@ mod tests {
         let CustodyMaterial::AwsKms { endpoint, .. } = state.material() else {
             panic!("the state names AwsKms material");
         };
-        assert_eq!(
-            endpoint,
-            Some("https://kms.eu-north-1.amazonaws.com")
-        );
+        assert_eq!(endpoint, Some("https://kms.eu-north-1.amazonaws.com"));
 
         let (state, violations) = run(|c| {
             gcp(c);
@@ -847,10 +859,7 @@ mod tests {
         let CustodyMaterial::GcpKms { endpoint, .. } = state.material() else {
             panic!("the state names GcpKms material");
         };
-        assert_eq!(
-            endpoint,
-            Some("https://cloudkms.googleapis.com")
-        );
+        assert_eq!(endpoint, Some("https://cloudkms.googleapis.com"));
     }
 
     #[test]

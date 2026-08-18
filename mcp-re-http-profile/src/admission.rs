@@ -867,7 +867,12 @@ mod tests {
     fn an_assertion_carrying_another_credentials_type_or_algorithm_is_rejected() {
         let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
         assert_eq!(
-            verify_jws(&issue_with_header("mcp-re-delegation+jws", ADMISSION_ALG, &c)).unwrap_err(),
+            verify_jws(&issue_with_header(
+                "mcp-re-delegation+jws",
+                ADMISSION_ALG,
+                &c
+            ))
+            .unwrap_err(),
             HttpProfileError::AdmissionAssertionInvalid,
         );
         assert_eq!(

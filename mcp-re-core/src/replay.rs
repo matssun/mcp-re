@@ -615,7 +615,10 @@ mod tests {
             McpReError::ReplayCacheUnavailable
         );
         let second = copy.check_and_insert(SIGNER, AUD, "another-nonce", EXPIRES);
-        assert!(second.is_err(), "the copy must refuse every nonce, got {second:?}");
+        assert!(
+            second.is_err(),
+            "the copy must refuse every nonce, got {second:?}"
+        );
     }
 
     #[test]
