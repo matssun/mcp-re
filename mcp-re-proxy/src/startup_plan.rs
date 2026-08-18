@@ -15,9 +15,8 @@
 //! the confusion.
 
 use crate::config_state::validation::ValidatedDeployment;
-use crate::deployment_request::BindingKind;
+use crate::config_state::ChannelBindingState;
 use crate::tls::IdentityStrategy;
-use crate::transport::ReverseProxyMtlsProvider;
 
 /// The replay plan and the store view materialization reads it through.
 ///
@@ -114,36 +113,25 @@ pub fn response_issuer_kid(config: &ValidatedDeployment) -> String {
 
 /// Where the connection seam reads the client's identity from.
 ///
-/// Three mutually-exclusive modes, and the exclusivity is the whole content of the
-/// decision: an assertion-carried identity is verified INSIDE the proxy after signature
-/// verification, a forwarded header is read at the seam and the local client certificate
-/// is ignored, and direct mTLS reads the verified peer certificate. `parse_args` already
-/// refuses the combinations, so this chooses rather than validates.
+/// Derived from the channel-binding OWNER, not from the request. `ChannelBindingState` is
+/// what layer A decided the deployment's identity binding is, and both of its states read
+/// the verified peer certificate — they differ in which SAN, which is the identity policy's
+/// business and not this seam's.
 ///
-/// Pure, and derived from configuration alone, which is why it is here rather than in the
-/// composition root: nothing about which field the identity comes from depends on what
-/// this process has managed to establish. Selecting it beside the wiring made a
-/// three-way exclusivity readable only by reading an `if`/`else` inside a 300-line
-/// assembly, and testable only by starting a proxy.
-pub fn identity_strategy(config: &ValidatedDeployment) -> IdentityStrategy {
-    let values = config.config();
-    // Mode B (lb-assertion) and Mode C (attested-ingress) both carry identity in the
-    // signed `mcp-ingress-assertion` header, verified post-verification inside the proxy
-    // rather than at the connection seam. The serve loop extracts the same header for
-    // both, failing closed on a duplicate.
-    if matches!(
-        values.binding,
-        BindingKind::LbAssertion | BindingKind::AttestedIngress
-    ) {
-        return IdentityStrategy::LbAssertion;
-    }
-    match &values.reverse_proxy_identity_header {
-        None => IdentityStrategy::DirectTls,
-        Some(header) => IdentityStrategy::ReverseProxyHeader(ReverseProxyMtlsProvider::new(
-            header.clone(),
-            values.reverse_proxy_header_format,
-            values.identity_source,
-        )),
+/// The match is exhaustive over the owner's states on purpose. The other two
+/// `IdentityStrategy` arms serve capabilities the boundary refuses and
+/// `docs/AGENT_INSTRUCTIONS.md` item 9 retains deliberately (Mode B / Mode C); they stay
+/// compiled and tested. What is gone is composition BRANCHING on raw request fields to
+/// reach them: no `ValidatedDeployment` could ever satisfy those branches, because a
+/// binding that is not `Exact` produces no `ChannelBindingState` and therefore no validated
+/// deployment at all. If a refused mode is ever admitted, it becomes a state here and this
+/// match stops compiling — which is where the arm should be wired, rather than in an `if`
+/// that silently never fires.
+pub fn identity_strategy(binding: ChannelBindingState) -> IdentityStrategy {
+    match binding {
+        ChannelBindingState::ExactUriSan | ChannelBindingState::ExactDnsSan => {
+            IdentityStrategy::DirectTls
+        }
     }
 }
 
@@ -505,7 +493,7 @@ mod tests {
         argv.extend_from_slice(extra);
         let config = parse(&argv).expect("args parse");
         let validated = ValidatedDeployment::try_from(config).expect("config validates");
-        identity_strategy(&validated)
+        identity_strategy(validated.state().channel_binding())
     }
 
     /// A deployable configuration reads identity from the verified peer certificate.

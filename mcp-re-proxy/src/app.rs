@@ -674,7 +674,8 @@ fn run_validated(
     // Which field the connection seam reads the client's identity from. Decided purely,
     // from configuration alone, in `startup_plan` — the three modes are mutually
     // exclusive and `parse_args` already refused the combinations.
-    let identity_strategy = crate::startup_plan::identity_strategy(config);
+    let identity_strategy =
+        crate::startup_plan::identity_strategy(config.state().channel_binding());
 
     // ADR-MCPRE-056 §5.4: from here on, every optional capability states its posture in
     // BOTH directions through `posture`. `assert_complete` below refuses to start — in
