@@ -16,74 +16,17 @@
 
 use crate::config_state::validation::ValidatedDeployment;
 use crate::config_state::ContinuationControlState;
-use crate::config_state::ReplayState;
 use crate::deployment_request::BindingKind;
-use crate::replay_tier::ReplayDurabilityTier;
 use crate::tls::IdentityStrategy;
 use crate::transport::ReverseProxyMtlsProvider;
 
-/// The authoritative replay tier this deployment asked for.
+/// The replay plan and the store view materialization reads it through.
 ///
-/// Carries the configuration each backend needs, already resolved and checked for
-/// presence, so materialization has no config lookups left to fail on — only the build and
-/// the environment.
-///
-/// **Two variants, because there are two live states.** There was a `Memory` variant with
-/// a full materialization arm that nothing could reach: the boundary refuses
-/// `--replay-cache memory` in every build, so no configuration produced it. And there was
-/// never a `File` arm at all, which is what made `--replay-cache file` admissible at the
-/// boundary and unstartable one stage later (CF-01).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReplayPlan {
-    /// CP / linearizable, over the etcd v3 gateway.
-    Etcd {
-        endpoint: String,
-        tier: ReplayDurabilityTier,
-    },
-    /// Horizontally scaled, over Redis.
-    Redis {
-        url: String,
-        tier: ReplayDurabilityTier,
-    },
-}
+/// Both are owned by the replay machine: the plan is that machine's projection of its own
+/// validated state, so it is re-exported here rather than rebuilt from the state's fields.
+/// Planning composes the facts the owners state; it does not restate their semantics.
+pub use crate::config_state::replay::{PlannedStore, ReplayPlan};
 
-impl ReplayPlan {
-    /// Project the plan from the classified replay state and the validated locators.
-    ///
-    /// **Infallible.** It used to re-decide legality — which kind is offered, whether the
-    /// selected mode has the value it requires — and those decisions are layer A's, made
-    /// once, before this. What survives here is the projection: the state says which
-    /// backend and carries the endpoint that made it legal, and the tier follows from the
-    /// state rather than being fetched back out of the request.
-    ///
-    /// Refusals that depend on which backends were COMPILED IN stay with materialization.
-    /// They are facts about the build, not about the request.
-    pub fn from_validated(config: &ValidatedDeployment) -> ReplayPlan {
-        let state = config.state().replay();
-        // The tier is DERIVED from the state, not read beside it. Each arm therefore gets
-        // the only tier its backend can serve, so no construction path pairs the etcd
-        // store with a Redis quorum tier.
-        let tier = state.durability_tier();
-        match state {
-            ReplayState::SharedLinearizable { endpoint } => ReplayPlan::Etcd {
-                endpoint: endpoint.clone(),
-                tier,
-            },
-            ReplayState::SharedRedis { url, .. } => ReplayPlan::Redis {
-                url: url.clone(),
-                tier,
-            },
-        }
-    }
-
-    /// Whether establishing THIS tier needs the shared control runtime.
-    ///
-    /// Only the Redis tier: the etcd store drives its own requests and the in-memory
-    /// tier does no I/O. One contributor to the aggregate — never the decision itself.
-    pub fn needs_control_runtime(&self) -> bool {
-        cfg!(feature = "redis_replay") && matches!(self, ReplayPlan::Redis { .. })
-    }
-}
 /// The in-flight bound the inner plane must not sit below, or `None` to leave its default.
 ///
 /// PURE: `cores` is passed in rather than resolved here, because resolving it reads
@@ -703,7 +646,7 @@ mod tests {
     fn plan_for(extra: &[&str]) -> ReplayPlan {
         let config = parse(extra).expect("args parse");
         let validated = ValidatedDeployment::try_from(config).expect("config validates");
-        ReplayPlan::from_validated(&validated)
+        validated.state().replay().materialization_plan()
     }
 
     /// Why a configuration is not a replay deployment at all.
@@ -767,12 +710,16 @@ mod tests {
 
     #[test]
     fn linearizable_plans_etcd_at_the_declared_endpoint() {
+        let plan = plan_for(SHARED_LINEARIZABLE);
         assert_eq!(
-            plan_for(SHARED_LINEARIZABLE),
-            ReplayPlan::Etcd {
-                endpoint: "http://127.0.0.1:2379".to_string(),
-                tier: ReplayDurabilityTier::Linearizable,
+            plan.store(),
+            PlannedStore::Etcd {
+                endpoint: "http://127.0.0.1:2379"
             }
+        );
+        assert_eq!(
+            plan.tier(),
+            &crate::replay_tier::ReplayDurabilityTier::Linearizable
         );
     }
 
@@ -782,10 +729,11 @@ mod tests {
     /// the redis library's 500ms per-command default.
     #[test]
     fn a_redis_tier_carries_its_url_and_its_wait_parameters() {
-        match plan_for(SHARED_REDIS) {
-            ReplayPlan::Redis { url, tier } => {
+        let plan = plan_for(SHARED_REDIS);
+        match plan.store() {
+            PlannedStore::Redis { url } => {
                 assert_eq!(url, "redis://127.0.0.1:6379");
-                assert_eq!(tier.wait_quorum_params(), Some((2, 2000)));
+                assert_eq!(plan.tier().wait_quorum_params(), Some((2, 2000)));
             }
             other => panic!("expected a redis plan, got {other:?}"),
         }
@@ -822,7 +770,7 @@ mod tests {
             "--replay-redis-url",
             "redis://203.0.113.1:6379",
         ]);
-        assert!(matches!(plan, ReplayPlan::Redis { .. }));
+        assert!(matches!(plan.store(), PlannedStore::Redis { .. }));
     }
 
     /// The explicit issuer kid wins; without one the server key id names the issuer.
@@ -891,7 +839,7 @@ mod tests {
             REDIS
         );
         assert!(
-            !ReplayPlan::from_validated(&validated).needs_control_runtime(),
+            !validated.state().replay().materialization_plan().needs_control_runtime(),
             "the tier is etcd, so replay itself declares nothing"
         );
 
@@ -932,8 +880,8 @@ mod tests {
                 endpoint: "redis://127.0.0.1:6380".to_string(),
             }
         );
-        match ReplayPlan::from_validated(&validated) {
-            ReplayPlan::Redis { url, .. } => assert_eq!(url, "redis://127.0.0.1:6379"),
+        match validated.state().replay().materialization_plan().store() {
+            PlannedStore::Redis { url } => assert_eq!(url, "redis://127.0.0.1:6379"),
             other => panic!("expected a redis replay plan, got {other:?}"),
         }
     }
@@ -1372,7 +1320,7 @@ mod tests {
         let on = ValidatedDeployment::try_from(on).expect("validates");
         assert_eq!(admission_needs_control_runtime(&on), REDIS);
         assert!(
-            !ReplayPlan::from_validated(&on).needs_control_runtime(),
+            !on.state().replay().materialization_plan().needs_control_runtime(),
             "admission must not need the replay tier to have asked first"
         );
     }
@@ -1385,7 +1333,7 @@ mod tests {
         // Admission alone, on a tier that declares nothing.
         let admission_only = with_admission(parse(SHARED_LINEARIZABLE).expect("parse"));
         let admission_only = ValidatedDeployment::try_from(admission_only).expect("validates");
-        let plan = ReplayPlan::from_validated(&admission_only);
+        let plan = admission_only.state().replay().materialization_plan();
         assert_eq!(
             control_runtime_requirement(&admission_only, &plan).is_required(),
             REDIS,
@@ -1395,7 +1343,7 @@ mod tests {
         // Nothing networked at all.
         let none = ValidatedDeployment::try_from(parse(SHARED_LINEARIZABLE).expect("parse"))
             .expect("validates");
-        let plan = ReplayPlan::from_validated(&none);
+        let plan = none.state().replay().materialization_plan();
         assert_eq!(
             control_runtime_requirement(&none, &plan),
             Req::NotRequired,

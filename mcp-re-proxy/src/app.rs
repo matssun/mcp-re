@@ -613,7 +613,7 @@ fn run_validated(
     // `replay_plane` only establishes it. Every refusal the plan can raise is a statement
     // about the config; every refusal materialization raises is a statement about the
     // build or the environment.
-    let replay_plan = crate::startup_plan::ReplayPlan::from_validated(config);
+    let replay_plan = config.state().replay().materialization_plan();
     // ONE process-lifetime control runtime for every networked control-plane client:
     // the redis replay ConnectionManager's reconnect task, the admission source and the
     // MRTR continuation store. Distinct from the per-core serving runtimes and held

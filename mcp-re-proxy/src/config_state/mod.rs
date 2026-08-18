@@ -261,6 +261,39 @@ pub(crate) mod test_support {
     use crate::cli;
     use crate::deployment_request::DeploymentRequest;
 
+    /// The same configuration with the linearizable replay state requested.
+    ///
+    /// Built by mutating the accepted request and re-classifying, because the replay state
+    /// is only obtainable from its own validator — which is what makes possessing one mean
+    /// its locators were checked.
+    pub(crate) fn legal_linearizable_config() -> DeploymentRequest {
+        let mut config = legal_config();
+        config.replay_redis_url = None;
+        config.replay_durability_tier = Some(crate::replay_tier::ReplayDurabilityTier::Linearizable);
+        config.cpstore_etcd_endpoint = Some("http://127.0.0.1:2379".to_string());
+        config
+    }
+
+    /// The replay plan a linearizable deployment produces.
+    ///
+    /// Projected from a classified state rather than built as a literal, so a test holds
+    /// only plans a configuration could actually reach. The literals these replaced could
+    /// name a store paired with any tier at all, including tiers `classify` refuses.
+    pub(crate) fn linearizable_replay_plan() -> super::replay::ReplayPlan {
+        super::replay::classify_and_validate(&legal_linearizable_config())
+            .0
+            .expect("the linearizable fixture names a CP store endpoint")
+            .materialization_plan()
+    }
+
+    /// The replay plan a quorum-Redis deployment produces.
+    pub(crate) fn redis_replay_plan() -> super::replay::ReplayPlan {
+        super::replay::classify_and_validate(&legal_config())
+            .0
+            .expect("the accepted fixture names a redis replay store")
+            .materialization_plan()
+    }
+
     /// A configuration the parser accepts, for a machine's tests to mutate.
     ///
     /// From `parse_args` rather than a struct literal so that a test which expects a
@@ -354,9 +387,9 @@ mod tests {
             )
             .0
             .expect("the legal fixture names a trust epoch"),
-            replay: ReplayState::SharedLinearizable {
-                endpoint: "http://127.0.0.1:2379".to_string(),
-            },
+            replay: replay::classify_and_validate(&test_support::legal_linearizable_config())
+                .0
+                .expect("the linearizable fixture names a CP store endpoint"),
             retention: RetentionState::On {
                 directory: "/var/lib/mcp-re/evidence".to_string(),
             },
@@ -378,10 +411,10 @@ mod tests {
         assert!(state.tls_custody().is_delegated());
         // CF-12's negative control, at the level of the value itself: a linearizable
         // replay store and a shared continuation store are independently expressible.
-        assert!(matches!(
-            state.replay(),
-            ReplayState::SharedLinearizable { .. }
-        ));
+        assert_eq!(
+            state.replay().durability_tier(),
+            crate::replay_tier::ReplayDurabilityTier::Linearizable
+        );
         assert!(state.continuation_control().is_shared());
         // Every machine the atlas names is represented exactly once, including the ones
         // that cannot be misconfigured: the value states the whole posture, not the part

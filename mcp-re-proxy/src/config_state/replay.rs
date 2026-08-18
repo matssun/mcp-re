@@ -37,24 +37,32 @@ use crate::replay_tier::ReplayDurabilityTier;
 
 /// Which replay state a configuration requests. Only live states are representable.
 ///
-/// Each state carries the locator its Required column names, so planning has nothing left
-/// to look up. The DURABILITY TIER is deliberately not a field: the variant already names
-/// it — `classify` sends `Linearizable` to `SharedLinearizable` and only
-/// `RedisWaitQuorum` can reach `SharedRedis`, because those are exactly the two tiers
-/// `meets_strict_production_minimum` accepts. Storing it beside the variant would be two
-/// authorities over one fact, and would make `Etcd` paired with a Redis quorum tier
-/// representable again. It is [derived](Self::durability_tier) instead, from the variant
-/// plus the quorum parameters, which are NOT derivable and so are carried.
+/// The representation is private to this module. [`classify_and_validate`] is the only
+/// producer anywhere, so possessing a `ReplayState` IS the statement that a validator saw
+/// these locators and these quorum parameters — not a claim that whoever built it
+/// remembered to check them. The durability tier is deliberately absent as a field: the
+/// variant already names it, and storing it beside the variant would be two authorities
+/// over one fact. It is [derived](Self::durability_tier) from the variant plus the quorum
+/// parameters, which are not derivable and so are carried.
 ///
-/// The VARIANT SET is closed — those two states are all there are — but each variant is
-/// `#[non_exhaustive]`, because the field values inside one are what the Required/Forbidden/
-/// Guards columns rule on. Outside this crate the only way to obtain a value is
-/// [`classify_and_validate`], so a caller cannot hand itself a `SharedRedis` whose quorum
-/// parameters no validator ever saw.
+/// Consumers read this state through [`required_feature`](Self::required_feature),
+/// [`durability_tier`](Self::durability_tier) and
+/// [`materialization_plan`](Self::materialization_plan). None of them exposes a field, so
+/// no consumer can pair a locator with a tier the owner did not pair.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReplayState {
+pub struct ReplayState {
+    kind: ReplayKind,
+}
+
+/// The two live states, as the owner's own representation.
+///
+/// Private to this module. A `pub` variant with `pub` fields would be constructible by
+/// every other module in this crate, which is where all of this state's consumers live —
+/// so `#[non_exhaustive]`, which only binds other crates, would state a seal that does not
+/// hold against a single actual caller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ReplayKind {
     /// A shared Redis store at a quorum-acknowledged durability tier.
-    #[non_exhaustive]
     SharedRedis {
         /// Where admitted nonces live.
         url: String,
@@ -64,7 +72,6 @@ pub enum ReplayState {
         timeout_ms: u64,
     },
     /// A shared linearizable CP store (etcd).
-    #[non_exhaustive]
     SharedLinearizable {
         /// The CP store's endpoint.
         endpoint: String,
@@ -77,26 +84,122 @@ impl ReplayState {
     /// Stated here so the requirement is read off the classified state rather than
     /// re-derived from fields at each materialization site.
     pub fn required_feature(&self) -> &'static str {
-        match self {
-            Self::SharedRedis { .. } => "redis_replay",
-            Self::SharedLinearizable { .. } => "cpstore_etcd",
+        match self.kind {
+            ReplayKind::SharedRedis { .. } => "redis_replay",
+            ReplayKind::SharedLinearizable { .. } => "cpstore_etcd",
         }
     }
 
-    /// The tier this state IS, reconstructed rather than stored.
+    /// The tier this state IS, derived rather than stored.
     ///
-    /// A projection out of the classification. The variant decides which tier, and the
-    /// carried quorum parameters supply what the variant alone cannot say.
+    /// The variant decides which tier, and the carried quorum parameters supply what the
+    /// variant alone cannot say.
     pub fn durability_tier(&self) -> ReplayDurabilityTier {
-        match self {
-            Self::SharedRedis {
+        match &self.kind {
+            ReplayKind::SharedRedis {
                 quorum, timeout_ms, ..
             } => ReplayDurabilityTier::RedisWaitQuorum {
                 quorum: *quorum,
                 timeout_ms: *timeout_ms,
             },
-            Self::SharedLinearizable { .. } => ReplayDurabilityTier::Linearizable,
+            ReplayKind::SharedLinearizable { .. } => ReplayDurabilityTier::Linearizable,
         }
+    }
+
+    /// What materialization must establish, as this owner states it.
+    ///
+    /// The projection replaces a match on the representation performed one altitude up.
+    /// Deciding which backend a state names, and which tier that backend serves, is this
+    /// machine's semantics; a caller that re-derived them from the locators would be a
+    /// second authority over the same question, and could pair an etcd endpoint with a
+    /// Redis quorum tier — a value claiming a durability guarantee its store does not
+    /// implement. Here the pairing is made once, by the party that owns it.
+    pub fn materialization_plan(&self) -> ReplayPlan {
+        let tier = self.durability_tier();
+        match &self.kind {
+            ReplayKind::SharedLinearizable { endpoint } => ReplayPlan {
+                backend: PlannedBackend::Etcd {
+                    endpoint: endpoint.clone(),
+                },
+                tier,
+            },
+            ReplayKind::SharedRedis { url, .. } => ReplayPlan {
+                backend: PlannedBackend::Redis { url: url.clone() },
+                tier,
+            },
+        }
+    }
+}
+
+/// The authoritative replay tier this deployment asked for, with the locator that made it
+/// legal already resolved.
+///
+/// Produced only by [`ReplayState::materialization_plan`]. The backend and the tier are
+/// private and are set together, which is the invariant this value owns: **a plan names a
+/// store and the durability tier that store can actually serve.** While the two were
+/// public fields, `ReplayPlan::Redis { url, tier: Linearizable }` was an ordinary
+/// expression, and the startup audit line would have advertised a guarantee no store
+/// implemented.
+///
+/// **Two backends, because there are two live states.** There was a `Memory` variant with
+/// a full materialization arm that nothing could reach, and never a `File` arm at all,
+/// which is what made `--replay-cache file` admissible at the boundary and unstartable one
+/// stage later (CF-01).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayPlan {
+    backend: PlannedBackend,
+    tier: ReplayDurabilityTier,
+}
+
+/// The planned store, private so the pairing with a tier cannot be re-made elsewhere.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PlannedBackend {
+    /// CP / linearizable, over the etcd v3 gateway.
+    Etcd { endpoint: String },
+    /// Horizontally scaled, over Redis.
+    Redis { url: String },
+}
+
+/// What materialization must connect to, as a borrowed view of a plan.
+///
+/// Matchable, because choosing a backend client is materialization's own job, and
+/// borrowed, because it is a way to READ a plan and not a way to build one. A consumer
+/// holding this cannot construct a [`ReplayPlan`], so the tier it also reads stays the one
+/// the owner paired with this store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlannedStore<'a> {
+    /// CP / linearizable, over the etcd v3 gateway.
+    Etcd {
+        /// The CP store's endpoint.
+        endpoint: &'a str,
+    },
+    /// Horizontally scaled, over Redis.
+    Redis {
+        /// Where admitted nonces live.
+        url: &'a str,
+    },
+}
+
+impl ReplayPlan {
+    /// The store to establish.
+    pub fn store(&self) -> PlannedStore<'_> {
+        match &self.backend {
+            PlannedBackend::Etcd { endpoint } => PlannedStore::Etcd { endpoint },
+            PlannedBackend::Redis { url } => PlannedStore::Redis { url },
+        }
+    }
+
+    /// The durability tier this plan's store must serve.
+    pub fn tier(&self) -> &ReplayDurabilityTier {
+        &self.tier
+    }
+
+    /// Whether establishing THIS tier needs the shared control runtime.
+    ///
+    /// Only the Redis tier: the etcd store drives its own requests. One contributor to the
+    /// aggregate — never the decision itself.
+    pub fn needs_control_runtime(&self) -> bool {
+        cfg!(feature = "redis_replay") && matches!(self.backend, PlannedBackend::Redis { .. })
     }
 }
 
@@ -271,13 +374,17 @@ pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<ReplayState>
 /// `None` never travels alone: `locator_violations` has already named the missing value.
 fn build(requested: RequestedState, config: &DeploymentRequest) -> Option<ReplayState> {
     Some(match requested {
-        RequestedState::SharedRedis { quorum, timeout_ms } => ReplayState::SharedRedis {
-            url: config.replay_redis_url.clone()?,
-            quorum,
-            timeout_ms,
+        RequestedState::SharedRedis { quorum, timeout_ms } => ReplayState {
+            kind: ReplayKind::SharedRedis {
+                url: config.replay_redis_url.clone()?,
+                quorum,
+                timeout_ms,
+            },
         },
-        RequestedState::SharedLinearizable => ReplayState::SharedLinearizable {
-            endpoint: config.cpstore_etcd_endpoint.clone()?,
+        RequestedState::SharedLinearizable => ReplayState {
+            kind: ReplayKind::SharedLinearizable {
+                endpoint: config.cpstore_etcd_endpoint.clone()?,
+            },
         },
     })
 }
@@ -310,6 +417,64 @@ mod tests {
         let mut config = legal_config();
         mutate(&mut config);
         classify_and_validate(&config)
+    }
+
+    /// The invariant [`ReplayPlan`] owns: a plan names a store and the tier that store can
+    /// actually serve, for every state a configuration can reach.
+    ///
+    /// Quantified over the states, not over the construction sites. It can be stated this
+    /// way because [`ReplayState::materialization_plan`] is the only producer of a
+    /// `ReplayPlan` anywhere and its backend and tier are private — so there is no second
+    /// path that could pair an etcd endpoint with a Redis quorum tier. While the plan's
+    /// fields were public, `ReplayPlan::Redis { url, tier: Linearizable }` was an ordinary
+    /// expression in any module of this crate, and the startup audit line would have
+    /// advertised a durability guarantee the store did not implement.
+    ///
+    /// MUTATION: make `PlannedBackend`/`tier` public and pair them by hand at any caller.
+    #[test]
+    fn a_plan_pairs_each_store_with_the_only_tier_that_store_serves() {
+        for mutate in [redis as fn(&mut DeploymentRequest), linearizable] {
+            let (state, _) = run(mutate);
+            let state = state.expect("a legal form classifies");
+            let plan = state.materialization_plan();
+            match plan.store() {
+                PlannedStore::Etcd { .. } => {
+                    assert_eq!(plan.tier(), &ReplayDurabilityTier::Linearizable)
+                }
+                PlannedStore::Redis { .. } => assert!(
+                    plan.tier().wait_quorum_params().is_some(),
+                    "a redis store carried a tier with no WAIT parameters: {:?}",
+                    plan.tier()
+                ),
+            }
+            // The plan's tier is the state's tier, not a second opinion about it.
+            assert_eq!(plan.tier(), &state.durability_tier());
+        }
+    }
+
+    /// The plan's store is the locator the state was validated with — planning resolves
+    /// nothing further and looks nothing up.
+    ///
+    /// MUTATION: return a literal endpoint from `materialization_plan`.
+    #[test]
+    fn the_planned_store_is_the_validated_locator() {
+        let (redis_state, _) = run(redis);
+        let redis_plan = redis_state.expect("legal").materialization_plan();
+        assert_eq!(
+            redis_plan.store(),
+            PlannedStore::Redis {
+                url: "redis://127.0.0.1:6379"
+            }
+        );
+
+        let (etcd_state, _) = run(linearizable);
+        let etcd_plan = etcd_state.expect("legal").materialization_plan();
+        assert_eq!(
+            etcd_plan.store(),
+            PlannedStore::Etcd {
+                endpoint: "http://127.0.0.1:2379"
+            }
+        );
     }
 
     /// G7. `Some("")` satisfied the presence check of the state it was supposed to inhabit.
@@ -359,16 +524,20 @@ mod tests {
     fn every_legal_state_form_is_classified_and_accepted() {
         let cases: Vec<Form> = vec![
             (
-                ReplayState::SharedRedis {
-                    url: "redis://127.0.0.1:6379".to_string(),
-                    quorum: 1,
-                    timeout_ms: 100,
+                ReplayState {
+                    kind: ReplayKind::SharedRedis {
+                        url: "redis://127.0.0.1:6379".to_string(),
+                        quorum: 1,
+                        timeout_ms: 100,
+                    },
                 },
                 redis,
             ),
             (
-                ReplayState::SharedLinearizable {
-                    endpoint: "http://127.0.0.1:2379".to_string(),
+                ReplayState {
+                    kind: ReplayKind::SharedLinearizable {
+                        endpoint: "http://127.0.0.1:2379".to_string(),
+                    },
                 },
                 linearizable,
             ),

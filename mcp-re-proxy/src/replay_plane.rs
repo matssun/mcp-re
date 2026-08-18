@@ -45,7 +45,7 @@ use std::sync::Arc;
 use crate::async_replay::AsyncReplayTier;
 use crate::control_runtime::ControlRuntime;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
-use crate::startup_plan::ReplayPlan;
+use crate::startup_plan::{PlannedStore, ReplayPlan};
 
 /// The established replay tier and the dispatch posture it implies.
 ///
@@ -95,8 +95,12 @@ pub fn materialize(
     max_clock_skew: i64,
     control: Option<&ControlRuntime>,
 ) -> Result<MaterializedReplay, String> {
-    let (tier, dispatch): (AsyncReplayTier, ProxyDispatchConfig) = match plan {
-        ReplayPlan::Etcd { endpoint, tier } => {
+    // The tier is READ from the plan, never chosen beside it: the replay owner paired this
+    // store with the only tier it can serve, and materialization has no standing to re-pair
+    // them.
+    let tier = plan.tier();
+    let (established, dispatch): (AsyncReplayTier, ProxyDispatchConfig) = match plan.store() {
+        PlannedStore::Etcd { endpoint } => {
             #[cfg(feature = "cpstore_etcd")]
             {
                 eprintln!(
@@ -122,7 +126,7 @@ pub fn materialize(
                 return Err("--replay-durability-tier linearizable requires a build with the `cpstore_etcd` feature".to_string());
             }
         }
-        ReplayPlan::Redis { url, tier } => {
+        PlannedStore::Redis { url } => {
             #[cfg(feature = "redis_replay")]
             {
                 eprintln!(
@@ -169,7 +173,7 @@ pub fn materialize(
             }
         }
     };
-    MaterializedReplay::new(tier, dispatch)
+    MaterializedReplay::new(established, dispatch)
 }
 
 /// #78 (ADR-MCPS-020): refuse to hand over a tier that self-declares the volatile
@@ -286,10 +290,7 @@ mod tests {
     #[test]
     fn a_backend_the_build_lacks_is_refused_and_named() {
         let etcd = materialize(
-            &ReplayPlan::Etcd {
-                endpoint: "http://203.0.113.1:2379".to_string(),
-                tier: ReplayDurabilityTier::Linearizable,
-            },
+            &crate::config_state::test_support::linearizable_replay_plan(),
             60,
             None,
         );
@@ -311,10 +312,7 @@ mod tests {
         // without the backend; with it, the connect would be attempted first.
         if !cfg!(feature = "redis_replay") {
             let err = materialize(
-                &ReplayPlan::Redis {
-                    url: "redis://203.0.113.1:6379".to_string(),
-                    tier: ReplayDurabilityTier::SingleStoreFailClosed,
-                },
+                &crate::config_state::test_support::redis_replay_plan(),
                 60,
                 None,
             )
@@ -341,17 +339,8 @@ mod tests {
     /// describe a state layer A refuses to represent, which is the defect CF-01 removed.
     #[test]
     fn a_build_with_no_replay_backend_can_reach_no_replay_state() {
-        let etcd = ReplayPlan::Etcd {
-            endpoint: "http://203.0.113.1:2379".to_string(),
-            tier: ReplayDurabilityTier::Linearizable,
-        };
-        let redis = ReplayPlan::Redis {
-            url: "redis://203.0.113.1:6379".to_string(),
-            tier: ReplayDurabilityTier::RedisWaitQuorum {
-                quorum: 2,
-                timeout_ms: 2000,
-            },
-        };
+        let etcd = crate::config_state::test_support::linearizable_replay_plan();
+        let redis = crate::config_state::test_support::redis_replay_plan();
 
         if cfg!(feature = "cpstore_etcd") {
             // Only the etcd arm can be probed without a control runtime once its backend
