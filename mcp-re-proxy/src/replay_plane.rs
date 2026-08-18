@@ -45,7 +45,7 @@ use std::sync::Arc;
 use crate::async_replay::AsyncReplayTier;
 use crate::control_runtime::ControlRuntime;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
-use crate::startup_plan::ReplayPlan;
+use crate::startup_plan::{PlannedStore, ReplayPlan};
 
 /// The established replay tier and the dispatch posture it implies.
 ///
@@ -57,6 +57,19 @@ pub struct MaterializedReplay {
     /// reports. Set together with the tier so a deployment cannot advertise a durability
     /// claim the store it actually holds does not implement.
     pub dispatch: ProxyDispatchConfig,
+}
+
+impl MaterializedReplay {
+    /// The handover value, or the refusal.
+    ///
+    /// #78 (ADR-MCPS-020): the durability guard runs HERE, so producing the value and
+    /// checking it are one step. A construction site cannot obtain a `MaterializedReplay`
+    /// without the check having passed, which is stronger than a check the producer
+    /// remembers to run after building one.
+    fn new(tier: AsyncReplayTier, dispatch: ProxyDispatchConfig) -> Result<Self, String> {
+        assert_durable(&tier)?;
+        Ok(MaterializedReplay { tier, dispatch })
+    }
 }
 
 /// Establish the planned tier.
@@ -82,8 +95,12 @@ pub fn materialize(
     max_clock_skew: i64,
     control: Option<&ControlRuntime>,
 ) -> Result<MaterializedReplay, String> {
-    let materialized: MaterializedReplay = match plan {
-        ReplayPlan::Etcd { endpoint, tier } => {
+    // The tier is READ from the plan, never chosen beside it: the replay owner paired this
+    // store with the only tier it can serve, and materialization has no standing to re-pair
+    // them.
+    let tier = plan.tier();
+    let (established, dispatch): (AsyncReplayTier, ProxyDispatchConfig) = match plan.store() {
+        PlannedStore::Etcd { endpoint } => {
             #[cfg(feature = "cpstore_etcd")]
             {
                 eprintln!(
@@ -95,13 +112,13 @@ pub fn materialize(
                 let store = Arc::new(
                     crate::async_etcd_store::EtcdAsyncAtomicReplayStore::connect(endpoint),
                 );
-                MaterializedReplay {
-                    tier: AsyncReplayTier::new(store, max_clock_skew),
-                    dispatch: ProxyDispatchConfig {
+                (
+                    AsyncReplayTier::new(store, max_clock_skew),
+                    ProxyDispatchConfig {
                         fleet_strict: true,
                         tier: Some(tier.clone()),
                     },
-                }
+                )
             }
             #[cfg(not(feature = "cpstore_etcd"))]
             {
@@ -109,7 +126,7 @@ pub fn materialize(
                 return Err("--replay-durability-tier linearizable requires a build with the `cpstore_etcd` feature".to_string());
             }
         }
-        ReplayPlan::Redis { url, tier } => {
+        PlannedStore::Redis { url } => {
             #[cfg(feature = "redis_replay")]
             {
                 eprintln!(
@@ -141,13 +158,13 @@ pub fn materialize(
                 if let Some((quorum, timeout_ms)) = tier.wait_quorum_params() {
                     store = store.with_wait_quorum(quorum, timeout_ms);
                 }
-                MaterializedReplay {
-                    tier: AsyncReplayTier::new(Arc::new(store), max_clock_skew),
-                    dispatch: ProxyDispatchConfig {
+                (
+                    AsyncReplayTier::new(Arc::new(store), max_clock_skew),
+                    ProxyDispatchConfig {
                         fleet_strict: true,
                         tier: Some(tier.clone()),
                     },
-                }
+                )
             }
             #[cfg(not(feature = "redis_replay"))]
             {
@@ -156,14 +173,14 @@ pub fn materialize(
             }
         }
     };
-    assert_durable(&materialized.tier)?;
-    Ok(materialized)
+    MaterializedReplay::new(established, dispatch)
 }
 
 /// #78 (ADR-MCPS-020): refuse to hand over a tier that self-declares the volatile
 /// single-process reference posture.
 ///
-/// The producer checks its own output, so no caller can forget to. `--replay-cache
+/// It runs inside [`MaterializedReplay::new`], the only place in this module that builds
+/// the handover value, so the check is part of producing it. `--replay-cache
 /// memory` never reaches here — validation refuses it outright (pinned by
 /// `startup_plan`'s `the_memory_tier_is_refused_by_validation_before_planning_sees_it`) —
 /// which makes this defense in depth rather than the memory tier's terminal refusal: it
@@ -205,16 +222,75 @@ mod tests {
         assert!(err.contains("single-process reference"), "{err}");
     }
 
+    /// A store that declares the cross-process posture, so the accepting half of the
+    /// guard is exercised by something other than a feature-gated backend.
+    struct DurableStore;
+
+    impl crate::async_replay::AsyncAtomicReplayStore for DurableStore {
+        fn atomic_insert_if_absent<'a>(
+            &'a self,
+            _insert: crate::async_replay::ReplayInsert<'a>,
+        ) -> crate::async_replay::ReplayDecisionFuture<'a> {
+            Box::pin(async move { Ok(mcp_re_core::ReplayDecision::Fresh) })
+        }
+
+        fn durability_class(&self) -> mcp_re_core::ReplayDurabilityClass {
+            mcp_re_core::ReplayDurabilityClass::Durable
+        }
+    }
+
+    fn linearizable_dispatch() -> ProxyDispatchConfig {
+        ProxyDispatchConfig {
+            fleet_strict: true,
+            tier: Some(ReplayDurabilityTier::Linearizable),
+        }
+    }
+
+    /// The handover value cannot be BUILT around a volatile tier, whatever durability the
+    /// dispatch posture beside it advertises.
+    ///
+    /// This is the guard's INVOCATION, not its predicate: `MaterializedReplay::new` is the
+    /// only producer of the value in this module, so a volatile store cannot be paired
+    /// with a `fleet_strict`, linearizable-claiming posture and handed to the serving path.
+    #[test]
+    fn the_handover_value_cannot_be_built_around_a_volatile_tier() {
+        let volatile = AsyncReplayTier::new(
+            std::sync::Arc::new(crate::async_replay::InMemoryAsyncAtomicReplayStore::new()),
+            60,
+        );
+        let err = match MaterializedReplay::new(volatile, linearizable_dispatch()) {
+            Ok(_) => panic!("a volatile tier must not produce a handover value"),
+            Err(e) => e,
+        };
+        assert!(err.contains("single-process reference"), "{err}");
+    }
+
+    /// The guard admits what it is supposed to admit: a durable store yields the value
+    /// with the posture it was given, so the refusal above is about durability and not a
+    /// constructor that refuses everything.
+    #[test]
+    fn a_durable_tier_produces_the_handover_value_with_its_posture() {
+        let durable = AsyncReplayTier::new(std::sync::Arc::new(DurableStore), 60);
+        let materialized = MaterializedReplay::new(durable, linearizable_dispatch())
+            .unwrap_or_else(|e| panic!("a durable tier must be handed over: {e}"));
+        assert!(materialized.dispatch.fleet_strict);
+        assert_eq!(
+            materialized.dispatch.tier,
+            Some(ReplayDurabilityTier::Linearizable)
+        );
+        assert_eq!(
+            materialized.tier.durability_class(),
+            mcp_re_core::ReplayDurabilityClass::Durable
+        );
+    }
+
     /// A backend the build does not contain is refused by NAME. This is the refusal class
     /// that deliberately stayed with materialization: it is a fact about the build, not
     /// about the request, so planning must not raise it.
     #[test]
     fn a_backend_the_build_lacks_is_refused_and_named() {
         let etcd = materialize(
-            &ReplayPlan::Etcd {
-                endpoint: "http://203.0.113.1:2379".to_string(),
-                tier: ReplayDurabilityTier::Linearizable,
-            },
+            &crate::config_state::test_support::linearizable_replay_plan(),
             60,
             None,
         );
@@ -236,10 +312,7 @@ mod tests {
         // without the backend; with it, the connect would be attempted first.
         if !cfg!(feature = "redis_replay") {
             let err = materialize(
-                &ReplayPlan::Redis {
-                    url: "redis://203.0.113.1:6379".to_string(),
-                    tier: ReplayDurabilityTier::SingleStoreFailClosed,
-                },
+                &crate::config_state::test_support::redis_replay_plan(),
                 60,
                 None,
             )
@@ -266,17 +339,8 @@ mod tests {
     /// describe a state layer A refuses to represent, which is the defect CF-01 removed.
     #[test]
     fn a_build_with_no_replay_backend_can_reach_no_replay_state() {
-        let etcd = ReplayPlan::Etcd {
-            endpoint: "http://203.0.113.1:2379".to_string(),
-            tier: ReplayDurabilityTier::Linearizable,
-        };
-        let redis = ReplayPlan::Redis {
-            url: "redis://203.0.113.1:6379".to_string(),
-            tier: ReplayDurabilityTier::RedisWaitQuorum {
-                quorum: 2,
-                timeout_ms: 2000,
-            },
-        };
+        let etcd = crate::config_state::test_support::linearizable_replay_plan();
+        let redis = crate::config_state::test_support::redis_replay_plan();
 
         if cfg!(feature = "cpstore_etcd") {
             // Only the etcd arm can be probed without a control runtime once its backend

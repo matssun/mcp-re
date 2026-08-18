@@ -268,6 +268,83 @@ mod tests {
     const ISSUER: &[u8] = b"\x30\x0a\x31\x08\x30\x06\x06\x03\x55\x04\x03";
     const OTHER_ISSUER: &[u8] = b"\x30\x0a\x31\x08\x30\x06\x06\x03\x55\x04\x04";
 
+    /// A CA held as its `CertificateParams` rather than its signed certificate: rcgen
+    /// derives the issuer DN and key-identifier method from the params, and both a leaf
+    /// and a CRL must be signed under the SAME derivation for the issuer DER to match.
+    struct TestCa {
+        key: rcgen::KeyPair,
+        params: rcgen::CertificateParams,
+    }
+
+    fn test_ca(common_name: &str) -> TestCa {
+        let key = rcgen::KeyPair::generate().expect("ca key");
+        let mut params = rcgen::CertificateParams::new(Vec::new()).expect("ca params");
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params.key_usages = vec![
+            rcgen::KeyUsagePurpose::KeyCertSign,
+            rcgen::KeyUsagePurpose::CrlSign,
+        ];
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, common_name);
+        TestCa { key, params }
+    }
+
+    impl TestCa {
+        fn issuer(&self) -> rcgen::Issuer<'_, &rcgen::KeyPair> {
+            rcgen::Issuer::from_params(&self.params, &self.key)
+        }
+
+        /// A leaf with an explicit serial, so a CRL can name exactly this certificate.
+        fn leaf(&self, serial: u64) -> Vec<u8> {
+            let key = rcgen::KeyPair::generate().expect("leaf key");
+            let mut params = rcgen::CertificateParams::new(Vec::new()).expect("leaf params");
+            params.serial_number = Some(rcgen::SerialNumber::from(serial));
+            params
+                .signed_by(&key, &self.issuer())
+                .expect("leaf signed")
+                .der()
+                .to_vec()
+        }
+
+        /// A real signed CRL naming `revoked`, in force until 1 January `next_update_year`.
+        fn crl(&self, revoked: &[u64], next_update_year: i32) -> Vec<u8> {
+            let params = rcgen::CertificateRevocationListParams {
+                this_update: rcgen::date_time_ymd(2020, 1, 1),
+                next_update: rcgen::date_time_ymd(next_update_year, 1, 1),
+                crl_number: rcgen::SerialNumber::from(1u64),
+                issuing_distribution_point: None,
+                revoked_certs: revoked
+                    .iter()
+                    .map(|serial| rcgen::RevokedCertParams {
+                        serial_number: rcgen::SerialNumber::from(*serial),
+                        revocation_time: rcgen::date_time_ymd(2021, 1, 1),
+                        reason_code: Some(rcgen::RevocationReason::KeyCompromise),
+                        invalidity_date: None,
+                    })
+                    .collect(),
+                key_identifier_method: rcgen::KeyIdMethod::Sha256,
+            };
+            params
+                .signed_by(&self.issuer())
+                .expect("crl signed")
+                .der()
+                .to_vec()
+        }
+    }
+
+    /// The `(issuer, serial)` coordinate exactly as the serving path derives it from a
+    /// peer leaf (`tls::leaf_facts`), so the lookup key under test is the production one
+    /// rather than one the test chose to match.
+    fn leaf_coordinate(leaf_der: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        let (_, cert) =
+            x509_parser::certificate::X509Certificate::from_der(leaf_der).expect("leaf parses");
+        (
+            cert.tbs_certificate.issuer.as_raw().to_vec(),
+            cert.tbs_certificate.raw_serial().to_vec(),
+        )
+    }
+
     fn index(
         revoked: &[&[u8]],
         next_update: Option<i64>,
@@ -411,7 +488,7 @@ mod tests {
     }
 
     #[test]
-    fn the_snapshot_swaps_atomically_and_survives_a_poisoned_lock() {
+    fn the_snapshot_swaps_atomically() {
         let shared = SharedClientRevocation::new(index(&[], Some(9_000), false));
         assert!(shared.load().admits(ISSUER, b"\x01\x02\x03", 1_000));
         shared.store(index(&[b"\x01\x02\x03"], Some(9_000), false));
@@ -419,5 +496,124 @@ mod tests {
             !shared.load().admits(ISSUER, b"\x01\x02\x03", 1_000),
             "a reloaded CRL must reach a request being served on an already-open connection"
         );
+    }
+
+    /// The recovery arms run in exactly the situation nobody rehearses: a reload worker
+    /// that panicked mid-swap. A `load` that answered with a default index instead of the
+    /// last-good one would silently disable revocation process-wide.
+    #[test]
+    fn a_poisoned_lock_still_yields_the_last_good_index_and_still_accepts_a_swap() {
+        let shared = Arc::new(SharedClientRevocation::new(index(
+            &[b"\x01\x02\x03"],
+            Some(9_000),
+            false,
+        )));
+
+        let poisoner = Arc::clone(&shared);
+        let outcome = std::thread::spawn(move || {
+            let _guard = poisoner.current.write().expect("write lock");
+            panic!("reload worker panicked mid-swap");
+        })
+        .join();
+        assert!(outcome.is_err(), "the worker must have panicked");
+        assert!(shared.current.is_poisoned(), "the lock must be poisoned");
+
+        assert!(
+            !shared.load().admits(ISSUER, b"\x01\x02\x03", 1_000),
+            "a poisoned lock must still yield the last-good index, which still carries \
+             every revocation it knew"
+        );
+        assert_eq!(
+            shared.load().verdict(ISSUER, b"\x09", 1_000),
+            RevocationVerdict::Good,
+            "and it must be the last-good index, not an empty or default one"
+        );
+
+        shared.store(index(&[], Some(9_000), false));
+        assert!(
+            shared.load().admits(ISSUER, b"\x01\x02\x03", 1_000),
+            "a later reload must still be able to publish through a poisoned lock"
+        );
+    }
+
+    /// The whole design rests on the raw issuer `Name` DER x509-parser yields from a CRL
+    /// being byte-identical to the one the serving path reads off a leaf that CA issued.
+    /// If the two spellings differed, every lookup would miss and every issuer would be
+    /// `Unknown` — a total outage under deny-unknown, a total bypass under allow.
+    #[test]
+    fn a_crl_revokes_a_leaf_of_the_same_ca_and_says_nothing_about_another_ca() {
+        let ca = test_ca("mcp-re-client-revocation-ca");
+        let stranger = test_ca("mcp-re-client-revocation-stranger-ca");
+        let idx = ClientRevocationIndex::from_crl_ders(&[ca.crl(&[0x4242], 2035)], false)
+            .expect("index builds");
+
+        let (issuer, serial) = leaf_coordinate(&ca.leaf(0x4242));
+        assert_eq!(
+            idx.verdict(&issuer, &serial, 1_600_000_000),
+            RevocationVerdict::Revoked,
+            "the CRL's issuer key must match the issuer DER read off the leaf"
+        );
+
+        let (issuer, serial) = leaf_coordinate(&ca.leaf(0x1337));
+        assert_eq!(
+            idx.verdict(&issuer, &serial, 1_600_000_000),
+            RevocationVerdict::Good,
+            "the issuer is covered and this serial is not listed"
+        );
+
+        let (issuer, serial) = leaf_coordinate(&stranger.leaf(0x4242));
+        assert_eq!(
+            idx.verdict(&issuer, &serial, 1_600_000_000),
+            RevocationVerdict::Unknown,
+            "the same serial under an uncovered issuer is not revoked by this CRL"
+        );
+    }
+
+    /// A list that has fallen out of force must not be held in force by a fresher
+    /// sibling, or a revocation published only on the stale one would silently stop
+    /// being enforced.
+    #[test]
+    fn two_crls_for_one_issuer_union_their_serials_and_keep_the_earliest_next_update() {
+        let ca = test_ca("mcp-re-client-revocation-merge-ca");
+        let idx = ClientRevocationIndex::from_crl_ders(
+            &[ca.crl(&[0x4242], 2030), ca.crl(&[0x1337], 2035)],
+            false,
+        )
+        .expect("index builds");
+
+        for revoked in [0x4242_u64, 0x1337] {
+            let (issuer, serial) = leaf_coordinate(&ca.leaf(revoked));
+            assert_eq!(
+                idx.verdict(&issuer, &serial, 1_600_000_000),
+                RevocationVerdict::Revoked,
+                "a serial named by either list is revoked"
+            );
+        }
+
+        let (issuer, serial) = leaf_coordinate(&ca.leaf(0x9999));
+        assert_eq!(
+            idx.verdict(&issuer, &serial, 1_800_000_000),
+            RevocationVerdict::Good,
+            "in force while both lists are"
+        );
+        assert_eq!(
+            idx.verdict(&issuer, &serial, 2_000_000_000),
+            RevocationVerdict::Unknown,
+            "past the EARLIER nextUpdate the merged entry is out of force"
+        );
+    }
+
+    /// The same bytes are handed to rustls, which refuses them. Skipping a malformed CRL
+    /// here would leave the request path enforcing a smaller revoked set than the
+    /// handshake.
+    #[test]
+    fn a_malformed_crl_is_refused_rather_than_skipped() {
+        let ca = test_ca("mcp-re-client-revocation-malformed-ca");
+        let err = ClientRevocationIndex::from_crl_ders(
+            &[ca.crl(&[0x4242], 2035), b"not der".to_vec()],
+            false,
+        )
+        .expect_err("a malformed CRL is a hard error");
+        assert!(matches!(err, TlsError::Verifier(_)));
     }
 }

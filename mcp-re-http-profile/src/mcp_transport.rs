@@ -316,6 +316,30 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_protocol_version_header_is_rejected() {
+        // Mcp-Method present and agreeing, so the method arm passes and control
+        // reaches the version-header requirement.
+        let r = req(
+            vec![("Mcp-Method", "initialize")],
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
+        );
+        assert_eq!(
+            strict().enforce(&r).unwrap_err(),
+            HttpProfileError::McpTransportHeaderMissing("mcp-protocol-version"),
+        );
+
+        // Carrying SOME transport headers is not legacy: the same request is
+        // refused by a deployment that permits legacy omission.
+        assert_eq!(
+            strict()
+                .with_legacy_header_omission(true)
+                .enforce(&r)
+                .unwrap_err(),
+            HttpProfileError::McpTransportHeaderMissing("mcp-protocol-version"),
+        );
+    }
+
+    #[test]
     fn an_unsupported_version_is_rejected() {
         let r = req(
             vec![
@@ -402,6 +426,39 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"file:///wanted"}}"#,
         );
         strict().enforce(&ok).expect("agreeing uri");
+    }
+
+    #[test]
+    fn resources_read_without_mcp_name_is_rejected() {
+        let r = req(
+            vec![
+                ("Mcp-Method", "resources/read"),
+                ("MCP-Protocol-Version", "2026-07-28"),
+            ],
+            r#"{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"file:///wanted"}}"#,
+        );
+        assert_eq!(
+            strict().enforce(&r).unwrap_err(),
+            HttpProfileError::McpTransportHeaderMissing("mcp-name"),
+        );
+    }
+
+    #[test]
+    fn a_params_meta_version_divergence_is_rejected() {
+        // No top-level `_meta`: the body states its protocol version only under
+        // `params._meta`, and it contradicts the covered header.
+        let r = req(
+            vec![
+                ("Mcp-Method", "tools/call"),
+                ("Mcp-Name", "read"),
+                ("MCP-Protocol-Version", "2026-07-28"),
+            ],
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read","_meta":{"io.modelcontextprotocol/protocolVersion":"2025-06-18"}}}"#,
+        );
+        assert_eq!(
+            strict().enforce(&r).unwrap_err(),
+            HttpProfileError::McpTransportDivergence("mcp-protocol-version"),
+        );
     }
 
     #[test]

@@ -83,17 +83,27 @@ pub fn strictest_applicable_t(default_t_secs: i64, class_windows: &[i64]) -> i64
 /// controllable clock so the window arithmetic is deterministic.
 pub type UnixClock = Box<dyn Fn() -> i64 + Send + Sync>;
 
-/// The production [`UnixClock`]: reads the system clock, clamping a pre-epoch
-/// reading (impossible on a sane host) to 0 rather than panicking.
+/// The production [`UnixClock`]: reads the system clock. A pre-epoch reading has no
+/// representable Unix instant, so it yields [`i64::MAX`] rather than panicking —
+/// the fail-closed direction for an expiry comparison. Every cached window then
+/// reads as closed, every lookup re-resolves live against the inner store, and
+/// [`BoundedTrustCache`] declines to cache an expiry it cannot represent. The
+/// opposite clamp would place every entry written under a real clock permanently
+/// inside its window.
 pub fn system_clock() -> UnixClock {
     use std::time::SystemTime;
     use std::time::UNIX_EPOCH;
-    Box::new(|| {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0)
-    })
+    Box::new(|| unix_seconds(SystemTime::now().duration_since(UNIX_EPOCH).ok()))
+}
+
+/// Map an elapsed-since-epoch reading to Unix seconds. `None` (the reading predates
+/// the epoch) and a count too large for `i64` both yield [`i64::MAX`]: an unusable
+/// reading must close every cached window, not open one.
+fn unix_seconds(since_epoch: Option<std::time::Duration>) -> i64 {
+    match since_epoch {
+        Some(d) => i64::try_from(d.as_secs()).unwrap_or(i64::MAX),
+        None => i64::MAX,
+    }
 }
 
 /// A cached resolution outcome. The full positive result (the key) is cached so a
@@ -125,9 +135,15 @@ impl CachedOutcome {
 
 /// One cache entry: a classified outcome plus the absolute Unix instant at which
 /// it expires (`resolved_at + ttl`).
+///
+/// An invalidated entry has lost its authority to answer but keeps `expires_at` as
+/// the DEADLINE its binding already carried. The entry that replaces it inherits
+/// that instant as a ceiling, which is what makes invalidation tighten-only: a
+/// binding's cached life can never be extended by invalidating it.
 struct CacheEntry {
     outcome: CachedOutcome,
     expires_at: i64,
+    invalidated: bool,
 }
 
 /// A [`TrustResolver`] that wraps an inner resolver with ADR-MCPS-021 Tier-1
@@ -202,7 +218,8 @@ impl BoundedTrustCache {
         self
     }
 
-    /// Number of cached entries, expired ones included (test/inspection aid).
+    /// Number of cached entries, expired and invalidated ones included
+    /// (test/inspection aid).
     pub fn len(&self) -> usize {
         self.cache.lock().map(|c| c.len()).unwrap_or(0)
     }
@@ -231,7 +248,8 @@ impl BoundedTrustCache {
     }
 
     /// Look up a still-live cache entry. Returns the reconstructed result on a hit
-    /// within the window, or `None` if absent/expired. A poisoned cache mutex is an
+    /// within the window, or `None` if the entry is absent, invalidated, or past its
+    /// window — all three take the live re-resolution path. A poisoned cache mutex is an
     /// operational failure (fail closed): surfaced as `Some(Err(Unavailable))`.
     fn cached(&self, key: &str, now: i64) -> Option<Result<VerificationKey, TrustResolverError>> {
         let cache = match self.cache.lock() {
@@ -243,6 +261,9 @@ impl BoundedTrustCache {
             }
         };
         let entry = cache.get(key)?;
+        if entry.invalidated {
+            return None;
+        }
         if now < entry.expires_at {
             Some(entry.outcome.to_result())
         } else {
@@ -252,32 +273,54 @@ impl BoundedTrustCache {
 
     /// Store `outcome` for `key` with `ttl` seconds from `now`. A poisoned mutex
     /// drops the write (the request still gets its answer; only caching is lost).
+    ///
+    /// A write that replaces an INVALIDATED entry inherits that entry's expiry as a
+    /// ceiling, so re-resolving a flushed or evicted binding can only shorten its
+    /// cached life, never push the deadline out. An expiry that is not representable
+    /// (`now + ttl` overflows) or that has already passed is not stored at all: the
+    /// binding resolves live next time.
     fn store(&self, key: String, outcome: CachedOutcome, now: i64, ttl: i64) {
-        if let Ok(mut cache) = self.cache.lock() {
-            // Opportunistic sweep. Correctness never depended on eviction — an expired
-            // entry is ignored on read — but memory did, and nothing called `prune`.
-            if let Ok(mut writes) = self.writes_since_prune.lock() {
-                *writes = writes.saturating_add(1);
-                if *writes >= PRUNE_EVERY_N_WRITES {
-                    *writes = 0;
-                    cache.retain(|_, e| e.expires_at > now);
-                }
+        let Ok(mut cache) = self.cache.lock() else {
+            return;
+        };
+        // Opportunistic sweep. Correctness never depended on eviction — an expired
+        // entry is ignored on read — but memory did, and nothing called `prune`.
+        if let Ok(mut writes) = self.writes_since_prune.lock() {
+            *writes = writes.saturating_add(1);
+            if *writes >= PRUNE_EVERY_N_WRITES {
+                *writes = 0;
+                cache.retain(|_, e| e.expires_at > now);
             }
-            // Past the ceiling, stop caching rather than grow. Skipping the write costs
-            // a live resolution next time, which can only tighten trust — so unlike a
-            // replay store, refusing to remember here is not a reason to refuse the
-            // request.
-            if cache.len() >= self.max_entries && !cache.contains_key(&key) {
-                return;
-            }
-            cache.insert(
-                key,
-                CacheEntry {
-                    outcome,
-                    expires_at: now.saturating_add(ttl),
-                },
-            );
         }
+        let ceiling = cache
+            .get(&key)
+            .filter(|e| e.invalidated)
+            .map(|e| e.expires_at);
+        let Some(mut expires_at) = now.checked_add(ttl) else {
+            return;
+        };
+        if let Some(deadline) = ceiling {
+            expires_at = expires_at.min(deadline);
+        }
+        if expires_at <= now {
+            cache.remove(&key);
+            return;
+        }
+        // Past the ceiling, stop caching rather than grow. Skipping the write costs
+        // a live resolution next time, which can only tighten trust — so unlike a
+        // replay store, refusing to remember here is not a reason to refuse the
+        // request.
+        if cache.len() >= self.max_entries && !cache.contains_key(&key) {
+            return;
+        }
+        cache.insert(
+            key,
+            CacheEntry {
+                outcome,
+                expires_at,
+                invalidated: false,
+            },
+        );
     }
 
     /// Evict every entry whose window has closed (`expires_at <= now`). Opportunistic
@@ -289,40 +332,69 @@ impl BoundedTrustCache {
         }
     }
 
-    /// Immediately drop any cached entry for `(signer, key_id)`, regardless of its
-    /// remaining window. Returns `true` if an entry was present and removed.
+    /// Immediately strip the cached entry for `(signer, key_id)` of its authority to
+    /// answer, regardless of its remaining window. Returns `true` if a serving entry
+    /// was present.
     ///
     /// This is the hook the ADR-MCPS-021 **Tier 3** push-invalidation cache uses to
     /// honor a pushed revocation event BEFORE `T` elapses: the next `resolve`
     /// re-consults the inner store (picking up the revocation) instead of serving a
-    /// stale-but-within-`T` active entry. A poisoned cache mutex is treated as
-    /// "nothing to evict" (the entry, if any, is unreachable anyway and the next
-    /// read fails closed via [`cached`](BoundedTrustCache::cached)).
+    /// stale-but-within-`T` active entry. The entry's original expiry is kept as the
+    /// ceiling for whatever replaces it, so an eviction cannot buy the binding a
+    /// fresh window; an entry whose window has already closed is dropped outright.
+    /// A poisoned cache mutex is treated as "nothing to evict" (the entry, if any, is
+    /// unreachable anyway and the next read fails closed via
+    /// [`cached`](BoundedTrustCache::cached)).
     pub fn evict(&self, signer: &str, key_id: &str) -> bool {
         let key = Self::compose_key(signer, key_id);
-        match self.cache.lock() {
-            Ok(mut cache) => cache.remove(&key).is_some(),
-            Err(_) => false,
+        let now = (self.clock)();
+        let Ok(mut cache) = self.cache.lock() else {
+            return false;
+        };
+        let state = cache.get(&key).map(|e| (e.invalidated, e.expires_at));
+        let Some((invalidated, expires_at)) = state else {
+            return false;
+        };
+        if expires_at <= now {
+            cache.remove(&key);
+            return false;
         }
+        if invalidated {
+            return false;
+        }
+        if let Some(entry) = cache.get_mut(&key) {
+            entry.invalidated = true;
+        }
+        true
     }
 
-    /// Evict ALL cached positive entries (MCPS-84, ADR-MCPS-021 Tier-3 COARSE
+    /// Invalidate ALL cached bindings (MCPS-84, ADR-MCPS-021 Tier-3 COARSE
     /// invalidation). A monotonic trust-epoch advance signals "something in the
     /// trust store changed" without naming the key, so the honest response is to
-    /// drop every cached binding and force each subsequent lookup to re-resolve
-    /// live against the inner store. A flush can therefore only TIGHTEN trust
-    /// (a revoked key is re-checked and denied), never widen it. Returns the number
-    /// of entries removed. A poisoned lock clears nothing and returns 0 — the
+    /// strip every cached binding of its authority and force each subsequent lookup
+    /// to re-resolve live against the inner store.
+    ///
+    /// Each invalidated binding keeps the expiry it already had as the ceiling for
+    /// the entry that replaces it, which is what makes a flush TIGHTEN trust rather
+    /// than widen it: the deadline by which a binding must be re-checked against the
+    /// inner store is never pushed out by flushing. Bindings whose windows have
+    /// already closed are dropped. Returns the number of serving entries
+    /// invalidated. A poisoned lock invalidates nothing and returns 0 — the
     /// bounded-`T` fallback still caps the exposure window.
     pub fn clear(&self) -> usize {
-        match self.cache.lock() {
-            Ok(mut cache) => {
-                let n = cache.len();
-                cache.clear();
-                n
+        let now = (self.clock)();
+        let Ok(mut cache) = self.cache.lock() else {
+            return 0;
+        };
+        cache.retain(|_, e| e.expires_at > now);
+        let mut invalidated = 0;
+        for entry in cache.values_mut() {
+            if !entry.invalidated {
+                entry.invalidated = true;
+                invalidated += 1;
             }
-            Err(_) => 0,
         }
+        invalidated
     }
 }
 
@@ -771,6 +843,93 @@ mod tests {
             "the evicted pair re-resolves (its entry was actually removed)"
         );
         assert_eq!(inner.calls(), 3);
+    }
+
+    #[test]
+    fn a_flush_cannot_lengthen_a_cached_bindings_deadline() {
+        // A coarse flush is only allowed to TIGHTEN trust. If the forced re-resolution
+        // restarted the window, an operator hitting the trust-epoch kill switch would
+        // push this replica's exposure to a revoked key PAST where it would have been
+        // had they done nothing at all.
+        let inner = Arc::new(ScriptedResolver::new(Ok(key_from(&SEED_A))));
+        let (clock, now) = controllable_clock(1000);
+        let cache = cache_over(inner.clone(), clock);
+
+        // Cached at 1000, so the binding's deadline is 1000 + T.
+        cache.resolve("did:host", "key-1").expect("active cached");
+        // The flush lands mid-window while the binding is still active, so the forced
+        // live resolution re-caches it.
+        now.store(1010, Ordering::SeqCst);
+        assert_eq!(cache.clear(), 1, "one serving entry was invalidated");
+        cache
+            .resolve("did:host", "key-1")
+            .expect("re-resolved live");
+        assert_eq!(inner.calls(), 2, "the flush forced a live resolution");
+
+        // The store now revokes. At the ORIGINAL deadline the binding must be
+        // re-checked and denied.
+        inner.set(Err(TrustResolverError::Revoked));
+        now.store(1000 + T, Ordering::SeqCst);
+        assert_eq!(
+            cache.resolve("did:host", "key-1").unwrap_err(),
+            TrustResolverError::Revoked,
+            "a flush may shorten a binding's cached life, never lengthen it"
+        );
+    }
+
+    #[test]
+    fn an_eviction_cannot_lengthen_the_evicted_bindings_deadline() {
+        // Same tighten-only obligation for the targeted Tier-3 hook: evicting a
+        // binding that the inner store still reports active must not buy it a fresh T.
+        let inner = Arc::new(ScriptedResolver::new(Ok(key_from(&SEED_A))));
+        let (clock, now) = controllable_clock(1000);
+        let cache = cache_over(inner.clone(), clock);
+
+        cache.resolve("did:host", "key-1").expect("active cached");
+        now.store(1010, Ordering::SeqCst);
+        assert!(
+            cache.evict("did:host", "key-1"),
+            "a serving entry was present"
+        );
+        cache
+            .resolve("did:host", "key-1")
+            .expect("re-resolved live");
+        assert_eq!(inner.calls(), 2);
+
+        inner.set(Err(TrustResolverError::Revoked));
+        now.store(1000 + T, Ordering::SeqCst);
+        assert_eq!(
+            cache.resolve("did:host", "key-1").unwrap_err(),
+            TrustResolverError::Revoked,
+            "an eviction may shorten a binding's cached life, never lengthen it"
+        );
+    }
+
+    #[test]
+    fn a_pre_epoch_clock_reading_closes_every_window_instead_of_freezing_it() {
+        // A host clock before 1970 yields no representable Unix instant. Reading that
+        // as instant 0 would place every entry written under a real clock inside its
+        // window forever, so the cache would serve active trust indefinitely and never
+        // re-consult the inner store.
+        let unusable = super::unix_seconds(None);
+        let inner = Arc::new(ScriptedResolver::new(Ok(key_from(&SEED_A))));
+        let (clock, _now) = controllable_clock(unusable);
+        let cache = cache_over(inner.clone(), clock);
+
+        for _ in 0..3 {
+            cache
+                .resolve("did:host", "key-1")
+                .expect("the request still gets its answer");
+        }
+        assert_eq!(
+            inner.calls(),
+            3,
+            "under an unusable clock every lookup must resolve live"
+        );
+        assert!(
+            cache.is_empty(),
+            "and an expiry that cannot be represented is not cached"
+        );
     }
 
     #[test]

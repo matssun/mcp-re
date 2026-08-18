@@ -70,15 +70,15 @@ pub mod transport;
 pub mod trust_revocation;
 pub mod validation;
 
-pub use admission::{AdmissionAvailability, AdmissionState};
+pub use admission::{AdmissionAvailability, AdmissionPosture, AdmissionState, EnforcedAdmission};
 pub use continuation_control::ContinuationControlState;
-pub use custody::{AwsCredentialMode, CustodyState};
+pub use custody::{AwsCredentialMode, CustodyMaterial, CustodyState};
 pub use delegated_signing::DelegatedSigningFacts;
 pub use evidence::{AuditState, RetentionState, VerifiedContextState};
 pub use in_flight_limit::{InFlightLimitBasis, InFlightLimitRequest};
 pub use mcp_transport_contract::McpTransportContractState;
 pub use replay::ReplayState;
-pub use tls_custody::{DelegatedTlsKey, TlsCustodyState};
+pub use tls_custody::TlsCustodyState;
 pub use transport::{ChannelBindingState, CrlRevocationState};
 pub use trust_revocation::TrustRevocationState;
 
@@ -261,6 +261,148 @@ pub(crate) mod test_support {
     use crate::cli;
     use crate::deployment_request::DeploymentRequest;
 
+    /// The same configuration with the linearizable replay state requested.
+    ///
+    /// Built by mutating the accepted request and re-classifying, because the replay state
+    /// is only obtainable from its own validator — which is what makes possessing one mean
+    /// its locators were checked.
+    pub(crate) fn legal_linearizable_config() -> DeploymentRequest {
+        let mut config = legal_config();
+        config.replay_redis_url = None;
+        config.replay_durability_tier =
+            Some(crate::replay_tier::ReplayDurabilityTier::Linearizable);
+        config.cpstore_etcd_endpoint = Some("http://127.0.0.1:2379".to_string());
+        config
+    }
+
+    /// The replay plan a linearizable deployment produces.
+    ///
+    /// Projected from a classified state rather than built as a literal, so a test holds
+    /// only plans a configuration could actually reach. The literals these replaced could
+    /// name a store paired with any tier at all, including tiers `classify` refuses.
+    pub(crate) fn linearizable_replay_plan() -> super::replay::ReplayPlan {
+        super::replay::classify_and_validate(&legal_linearizable_config())
+            .0
+            .expect("the linearizable fixture names a CP store endpoint")
+            .materialization_plan()
+    }
+
+    /// The replay plan a quorum-Redis deployment produces.
+    pub(crate) fn redis_replay_plan() -> super::replay::ReplayPlan {
+        super::replay::classify_and_validate(&legal_config())
+            .0
+            .expect("the accepted fixture names a redis replay store")
+            .materialization_plan()
+    }
+
+    /// The same configuration with a shared continuation store requested.
+    pub(crate) fn shared_continuation_config() -> DeploymentRequest {
+        let mut config = legal_config();
+        config.continuation_control_redis_url = Some("redis://127.0.0.1:6379".to_string());
+        config
+    }
+
+    /// The same configuration with admission enforced under a named authority.
+    pub(crate) fn enforcing_admission_config() -> DeploymentRequest {
+        use crate::deployment_request::AdmissionKind;
+        let mut config = legal_config();
+        config.admission = AdmissionKind::Required;
+        config.admission_authority_kid = Some("authority-1".to_string());
+        config.admission_authority_pubkey_b64url = Some(
+            mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32])
+                .public_key()
+                .to_b64url(),
+        );
+        config.admission_redis_url = Some("redis://127.0.0.1:6379".to_string());
+        config
+    }
+
+    /// The same configuration declaring a served MCP protocol version.
+    pub(crate) fn versioned_transport_config() -> DeploymentRequest {
+        let mut config = legal_config();
+        config.mcp_protocol_versions = vec!["2026-07-28".to_string()];
+        config
+    }
+
+    /// The retention state a deployment configured with this directory reaches.
+    pub(crate) fn retention_at(directory: String) -> super::RetentionState {
+        let mut config = legal_config();
+        config.retained_evidence_dir = Some(directory);
+        super::evidence::classify(&config).1
+    }
+
+    /// The trust-revocation state a deployment with these settings reaches.
+    ///
+    /// Built through the classifier, so a test names a posture a configuration could
+    /// actually request rather than assembling one from parts.
+    pub(crate) fn revocation_posture(
+        tier: crate::revocation_tier::RevocationTier,
+        reload_secs: Option<u64>,
+        epoch: Option<(&str, &str)>,
+    ) -> super::TrustRevocationState {
+        let mut config = legal_config();
+        config.revocation_tier = tier;
+        config.trust_reload_secs = reload_secs;
+        config.trust_epoch_redis_url = epoch.map(|(url, _)| url.to_string());
+        config.trust_epoch_key = epoch.map(|(_, key)| key.to_string());
+        super::trust_revocation::classify_and_validate(&config)
+            .0
+            .expect("the requested revocation posture is legal")
+    }
+
+    /// The CRL state a deployment with these files and cadence reaches.
+    pub(crate) fn crl_posture(
+        paths: &[&str],
+        cadence_secs: Option<u64>,
+    ) -> super::CrlRevocationState {
+        let mut config = legal_config();
+        config.client_crl_paths = paths.iter().map(|p| p.to_string()).collect();
+        config.client_crl_reload_secs = cadence_secs;
+        super::transport::classify_and_validate_crl(&config).0
+    }
+
+    /// The client-revocation plan such a deployment projects.
+    pub(crate) fn crl_plan(
+        paths: &[&str],
+        cadence_secs: Option<u64>,
+    ) -> super::transport::ClientRevocationPlan {
+        crl_posture(paths, cadence_secs).client_revocation_plan()
+    }
+
+    /// The TLS-custody state a deployment delegating the handshake key to a PKCS#11 token
+    /// reaches.
+    pub(crate) fn tls_custody_delegated_pkcs11(key_label: &str) -> super::TlsCustodyState {
+        let mut config = legal_config();
+        config.tls_key = String::new();
+        config.pkcs11_tls_key_label = Some(key_label.to_string());
+        super::tls_custody::classify_and_validate(&config)
+            .0
+            .expect("a delegated PKCS#11 TLS key names a state")
+    }
+
+    /// The TLS-custody state a deployment reading the handshake key from a file reaches.
+    pub(crate) fn tls_custody_exported(key_path: &str) -> super::TlsCustodyState {
+        let mut config = legal_config();
+        config.tls_key = key_path.to_string();
+        super::tls_custody::classify_and_validate(&config)
+            .0
+            .expect("an exported TLS key names a state")
+    }
+
+    /// The custody state a deployment holding the signing key on a PKCS#11 token reaches.
+    pub(crate) fn custody_pkcs11() -> super::CustodyState {
+        let mut config = legal_config();
+        config.key_source = crate::deployment_request::KeySourceKind::Pkcs11;
+        config.signing_key_seed = String::new();
+        config.pkcs11_module = Some("/lib/softhsm.so".to_string());
+        config.pkcs11_pin_file = Some("/pin".to_string());
+        config.pkcs11_token_label = Some("token".to_string());
+        config.pkcs11_key_label = Some("signing".to_string());
+        super::custody::classify_and_validate(&config)
+            .0
+            .expect("a complete PKCS#11 custody configuration names a state")
+    }
+
     /// A configuration the parser accepts, for a machine's tests to mutate.
     ///
     /// From `parse_args` rather than a struct literal so that a test which expects a
@@ -312,12 +454,10 @@ mod tests {
     #[test]
     fn the_state_carries_what_the_planes_would_otherwise_re_derive() {
         let state = DeploymentConfigState::new(RecognisedStates {
-            admission: AdmissionState::Required {
-                authority_kid: "authority-1".to_string(),
-                authority: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32]).public_key(),
-                redis_url: "redis://127.0.0.1:6379".to_string(),
-                availability: AdmissionAvailability::FailClosed,
-            },
+            admission:
+                admission::classify_and_validate(&test_support::enforcing_admission_config())
+                    .0
+                    .expect("the enforcing fixture names an admission authority"),
             audit: AuditState::Stderr,
             channel_binding: ChannelBindingState::ExactUriSan,
             server_identity: crate::config_state::server_identity::classify_and_validate(
@@ -333,44 +473,30 @@ mod tests {
             in_flight_limit: InFlightLimitBasis::PerCore {
                 requests: std::num::NonZeroUsize::new(256).expect("non-zero"),
             },
-            continuation_control: ContinuationControlState::Redis {
-                endpoint: "redis://127.0.0.1:6379".to_string(),
-            },
-            crl_revocation: CrlRevocationState::Reloading {
-                paths: vec!["/crl.pem".to_string()],
-                cadence_secs: 300,
-            },
-            custody: CustodyState::Pkcs11 {
-                module: "/lib/softhsm.so".to_string(),
-                pin_file: "/pin".to_string(),
-                token_label: "token".to_string(),
-                key_label: "signing".to_string(),
-            },
-            mcp_transport_contract: McpTransportContractState::Enforced {
-                versions: vec!["2026-07-28".to_string()],
-            },
+            continuation_control: continuation_control::classify_and_validate(
+                &test_support::shared_continuation_config(),
+            )
+            .0,
+            crl_revocation: test_support::crl_posture(&["/crl.pem"], Some(300)),
+            custody: test_support::custody_pkcs11(),
+            mcp_transport_contract: mcp_transport_contract::classify(
+                &test_support::versioned_transport_config(),
+            ),
             delegated_signing: delegated_signing::classify_and_validate(
                 &test_support::legal_config(),
             )
             .0
             .expect("the legal fixture names a trust epoch"),
-            replay: ReplayState::SharedLinearizable {
-                endpoint: "http://127.0.0.1:2379".to_string(),
-            },
-            retention: RetentionState::On {
-                directory: "/var/lib/mcp-re/evidence".to_string(),
-            },
-            tls_custody: TlsCustodyState::Delegated {
-                selector: DelegatedTlsKey::Pkcs11 {
-                    key_label: "tls".to_string(),
-                },
-            },
-            trust_revocation: TrustRevocationState::PushNetworked {
-                t_secs: 30,
-                reload_secs: crate::config_state::TrustRevocationState::cadence(5),
-                epoch_url: "redis://127.0.0.1:6379".to_string(),
-                epoch_key: "mcp-re:trust:epoch".to_string(),
-            },
+            replay: replay::classify_and_validate(&test_support::legal_linearizable_config())
+                .0
+                .expect("the linearizable fixture names a CP store endpoint"),
+            retention: test_support::retention_at("/var/lib/mcp-re/evidence".to_string()),
+            tls_custody: test_support::tls_custody_delegated_pkcs11("tls"),
+            trust_revocation: test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::Push { t_secs: 30 },
+                Some(5),
+                Some(("redis://127.0.0.1:6379", "mcp-re:trust:epoch")),
+            ),
             verified_context: VerifiedContextState::Trusted,
         });
         assert!(state.trust_revocation().has_networked_epoch());
@@ -378,10 +504,10 @@ mod tests {
         assert!(state.tls_custody().is_delegated());
         // CF-12's negative control, at the level of the value itself: a linearizable
         // replay store and a shared continuation store are independently expressible.
-        assert!(matches!(
-            state.replay(),
-            ReplayState::SharedLinearizable { .. }
-        ));
+        assert_eq!(
+            state.replay().durability_tier(),
+            crate::replay_tier::ReplayDurabilityTier::Linearizable
+        );
         assert!(state.continuation_control().is_shared());
         // Every machine the atlas names is represented exactly once, including the ones
         // that cannot be misconfigured: the value states the whole posture, not the part
@@ -389,11 +515,8 @@ mod tests {
         assert!(state.admission().is_enforced());
         assert_eq!(state.audit(), AuditState::Stderr);
         assert_eq!(state.channel_binding(), ChannelBindingState::ExactUriSan);
-        assert!(matches!(
-            state.crl_revocation(),
-            CrlRevocationState::Reloading { .. }
-        ));
-        assert!(matches!(state.retention(), RetentionState::On { .. }));
+        assert_eq!(state.crl_revocation().reload_cadence_secs(), Some(300));
+        assert!(state.retention().is_on());
         assert!(state.verified_context().asserts_inner_channel_isolation());
     }
 }

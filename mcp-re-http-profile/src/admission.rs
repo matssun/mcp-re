@@ -354,7 +354,15 @@ pub fn verify_admission_assertion(
     {
         return Err(HttpProfileError::AdmissionAssertionExpired);
     }
-    if now.saturating_sub(claims.iat) > policy.max_assertion_age.saturating_add(skew) {
+    // An `iat` ahead of the verifier is refused outright. `iat` is an independent claim
+    // from `[nbf, exp]`, and BOTH age computations that bound how stale a snapshot may be
+    // — the N cap here and the §5.2 degraded P window in `check_admission` — are
+    // `now - iat` under saturation, so a future issuance floors both at zero and passes
+    // them for the assertion's whole TTL. The skew term is the same tolerance the window
+    // above gets, no wider.
+    if now.saturating_sub(claims.iat) > policy.max_assertion_age.saturating_add(skew)
+        || claims.iat > now.saturating_add(skew)
+    {
         return Err(HttpProfileError::AdmissionAssertionExpired);
     }
     Ok(claims)
@@ -386,16 +394,21 @@ fn s_seg_to_b64url(s_seg: &str) -> Result<String, HttpProfileError> {
 ///     AND the assertion is within the P bound, in which case serve on the
 ///     assertion's own status and mark the verdict degraded.
 #[allow(clippy::too_many_arguments)]
-// ADR-MCPRE-059 §7 currency theorem. Three clauses, each one a rule the prose above
-// states and no test can establish for all inputs:
+// ADR-MCPRE-059 §7 currency theorem. Each clause is a rule the prose above states and
+// that no test can establish for all inputs:
 //
 //   * a LIVE verdict implies the call's bound generation equals the authoritative one and
 //     that state says admitted — the anti-rollback rule, stated as an implication so a
 //     future path that returns Ok without comparing generations cannot exist;
 //   * a DEGRADED verdict implies the authoritative state was unreachable AND the
 //     deployment opted in — so no default deployment can reach a degraded admission;
-//   * every verdict carries the binding's own generation and `Admitted`, so the value the
-//     caller acts on cannot describe a different call than the one that was checked;
+//   * every verdict carries the binding's own workload id and generation and `Admitted`,
+//     so the value the caller acts on cannot describe a different call than the one that
+//     was checked. The id is a conjunct and not merely a fact about the body because
+//     `VerifiedAdmission::admission_id` is the only workload identity a consumer can
+//     authorize on: a contract silent about it would stay green through a refactor that
+//     returned some other id, or that dropped the id comparison and kept the generation
+//     one;
 //   * the admitted actor IS the presenter, so an assertion describing some admitted
 //     workload cannot authorize a different caller merely because that workload is
 //     admissible. Stated over the verdict rather than left to the body, because the
@@ -407,6 +420,7 @@ fn s_seg_to_b64url(s_seg: &str) -> Result<String, HttpProfileError> {
         out matches Ok(v) ==> {
             &&& v.status == AdmissionStatus::Admitted
             &&& v.generation == binding.generation
+            &&& v.admission_id@ == binding.admission_id@
             &&& v.admitted_actor@ == presenter_actor_id@
             &&& !v.degraded ==> (authoritative matches Some(state)
                     && binding.generation == state.generation
@@ -446,9 +460,10 @@ pub fn check_admission(
 
     // The call's binding must describe THIS assertion: same workload, same
     // generation, and committing to the same admitted state.
-    if binding.admission_id != claims.mcp_re_admission_id
-        || binding.generation != claims.mcp_re_admission_generation
-    {
+    if binding.admission_id != claims.mcp_re_admission_id {
+        return Err(HttpProfileError::AdmissionBindingMismatch);
+    }
+    if binding.generation != claims.mcp_re_admission_generation {
         return Err(HttpProfileError::AdmissionBindingMismatch);
     }
     if !binding.matches_state(&claims.mcp_re_admitted_state_digest) {
@@ -548,6 +563,36 @@ mod tests {
 
     fn resolver() -> impl Fn(&str) -> Option<VerificationKey> {
         |kid: &str| (kid == ISSUER_KID).then(|| root().public_key())
+    }
+
+    /// A compact JWS with a chosen header, signed by the genuine authority root. Lets a
+    /// test vary the header alone, which `issue_admission_assertion` never will.
+    fn issue_with_header(typ: &str, alg: &str, c: &AdmissionClaims) -> String {
+        let header = AdmissionHeader {
+            typ: typ.to_owned(),
+            alg: alg.to_owned(),
+            kid: c.issuer_kid.clone(),
+        };
+        let h = b64url_encode(&serde_json::to_vec(&header).expect("header"));
+        let p = b64url_encode(&serde_json::to_vec(c).expect("claims"));
+        let signing_input = format!("{h}.{p}");
+        let sig = b64url_decode(&root().sign(signing_input.as_bytes())).expect("sign");
+        format!("{h}.{p}.{}", b64url_encode(&sig))
+    }
+
+    fn verify_jws(jws: &str) -> Result<AdmissionClaims, HttpProfileError> {
+        verify_admission_assertion(
+            jws,
+            crate::ids::PROFILE_TAG,
+            &["mcp.example.com"],
+            &AdmissionPolicy::default(),
+            NOW,
+            resolver(),
+        )
+    }
+
+    fn verify(c: &AdmissionClaims) -> Result<AdmissionClaims, HttpProfileError> {
+        verify_jws(&issue(c))
     }
 
     fn policy(degraded: bool, p: i64) -> AdmissionPolicy {
@@ -791,5 +836,162 @@ mod tests {
             check(&outside, None, &pol).unwrap_err(),
             HttpProfileError::AdmissionStateUnavailable,
         );
+    }
+
+    /// The authenticity check itself. Everything else about this assertion is genuine —
+    /// trusted issuer, right profile, right audience, in window — and only the signature
+    /// bytes are somebody else's. Without a case that reaches `verify_ed25519_with`, the
+    /// call could be replaced by `Ok(())` and the whole assertion becomes an unauthenticated
+    /// claim block that anyone can mint.
+    #[test]
+    fn an_assertion_the_authority_did_not_sign_is_rejected() {
+        let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
+        let genuine = issue(&c);
+        let (h, p, s) = split_compact(&genuine).expect("compact jws");
+        let mut sig = b64url_decode(s).expect("signature bytes");
+        sig[0] ^= 0x01;
+        let forged = format!("{h}.{p}.{}", b64url_encode(&sig));
+        assert_eq!(
+            verify_jws(&forged).unwrap_err(),
+            HttpProfileError::AdmissionAssertionInvalid,
+        );
+        // The control: the same claims, signed by the authority, verify. Without it the
+        // case above would also be satisfied by an assertion refused for any other reason.
+        verify_jws(&genuine).expect("the genuine assertion verifies");
+    }
+
+    /// `typ` and `alg` are what stop a delegation credential — or an assertion signed
+    /// under some other algorithm the authority root also holds — from being presented
+    /// here. Both are checked before anything else is trusted.
+    #[test]
+    fn an_assertion_carrying_another_credentials_type_or_algorithm_is_rejected() {
+        let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
+        assert_eq!(
+            verify_jws(&issue_with_header(
+                "mcp-re-delegation+jws",
+                ADMISSION_ALG,
+                &c
+            ))
+            .unwrap_err(),
+            HttpProfileError::AdmissionAssertionInvalid,
+        );
+        assert_eq!(
+            verify_jws(&issue_with_header(ADMISSION_TYP, "RS256", &c)).unwrap_err(),
+            HttpProfileError::AdmissionAssertionInvalid,
+        );
+        verify_jws(&issue_with_header(ADMISSION_TYP, ADMISSION_ALG, &c))
+            .expect("the profile's own typ/alg verify");
+    }
+
+    /// The profile tag scopes an assertion to one evidence profile, and `aud` scopes it to
+    /// the enforcement points that may process it. Neither is derivable from the signature:
+    /// a genuine authority serving two deployments signs both.
+    #[test]
+    fn an_assertion_for_another_profile_or_audience_is_rejected() {
+        let mut wrong_profile = claims(5, AdmissionStatus::Admitted, NOW - 10);
+        wrong_profile.mcp_re_profile = "mcp-re/other-profile".into();
+        assert_eq!(
+            verify(&wrong_profile).unwrap_err(),
+            HttpProfileError::AdmissionAssertionInvalid,
+        );
+
+        let mut wrong_audience = claims(5, AdmissionStatus::Admitted, NOW - 10);
+        wrong_audience.aud = Audience::One("other-pep.example.com".into());
+        assert_eq!(
+            verify(&wrong_audience).unwrap_err(),
+            HttpProfileError::AdmissionAssertionInvalid,
+        );
+    }
+
+    /// The `[nbf, exp]` window in all three of its refusing forms: not yet valid, expired,
+    /// and degenerate. A degenerate window (`exp <= nbf`) is refused rather than treated as
+    /// an empty one, because an issuer that emits it has said nothing about validity at all.
+    #[test]
+    fn an_assertion_outside_its_validity_window_is_rejected() {
+        let mut not_yet = claims(5, AdmissionStatus::Admitted, NOW - 10);
+        not_yet.nbf = NOW + 100;
+        not_yet.exp = NOW + 400;
+        assert_eq!(
+            verify(&not_yet).unwrap_err(),
+            HttpProfileError::AdmissionAssertionExpired,
+        );
+
+        let mut expired = claims(5, AdmissionStatus::Admitted, NOW - 10);
+        expired.nbf = NOW - 400;
+        expired.exp = NOW - 100;
+        assert_eq!(
+            verify(&expired).unwrap_err(),
+            HttpProfileError::AdmissionAssertionExpired,
+        );
+
+        let mut degenerate = claims(5, AdmissionStatus::Admitted, NOW - 10);
+        degenerate.nbf = NOW;
+        degenerate.exp = NOW;
+        assert_eq!(
+            verify(&degenerate).unwrap_err(),
+            HttpProfileError::AdmissionAssertionExpired,
+        );
+    }
+
+    /// N (§5.2) is the verifier's own cap on how stale a snapshot it will act on, and it is
+    /// independent of the TTL: this assertion is well inside its `[nbf, exp]` window and is
+    /// still refused for age.
+    #[test]
+    fn an_assertion_older_than_the_verifiers_own_budget_is_rejected() {
+        let mut old = claims(5, AdmissionStatus::Admitted, NOW - 400);
+        old.nbf = NOW - 400;
+        old.exp = NOW + 300;
+        assert_eq!(
+            AdmissionPolicy::default().max_assertion_age,
+            300,
+            "the arithmetic here assumes N"
+        );
+        assert_eq!(
+            verify(&old).unwrap_err(),
+            HttpProfileError::AdmissionAssertionExpired,
+        );
+
+        // Inside N, same TTL: accepted. The refusal above is about age, not the window.
+        let mut fresh = old.clone();
+        fresh.iat = NOW - 100;
+        verify(&fresh).expect("an assertion inside N is accepted");
+    }
+
+    /// A future-dated `iat` is the one input that defeats BOTH age bounds at once. Both are
+    /// `now - iat` under saturation, so an issuance dated ahead of the verifier floors the
+    /// N cap and the degraded P window at zero and passes them for the assertion's whole
+    /// TTL — turning the bounded degraded window §5.2 argues from into the TTL itself.
+    #[test]
+    fn an_assertion_dated_ahead_of_the_verifier_is_rejected() {
+        let mut ahead = claims(5, AdmissionStatus::Admitted, NOW - 10);
+        ahead.iat = NOW + 3600;
+        ahead.nbf = NOW - 10;
+        ahead.exp = NOW + 7200;
+        assert_eq!(
+            verify(&ahead).unwrap_err(),
+            HttpProfileError::AdmissionAssertionExpired,
+        );
+        // And the consequence that matters: it does not buy an unbounded degraded window.
+        assert_eq!(
+            check(&ahead, None, &policy(true, 60)).unwrap_err(),
+            HttpProfileError::AdmissionAssertionExpired,
+        );
+    }
+
+    /// The verdict names the workload the binding named. `admission_id` is the only
+    /// workload identity on `VerifiedAdmission`, so a consumer authorizing on it is
+    /// authorizing on the id this call was checked against.
+    #[test]
+    fn the_verdict_names_the_workload_the_binding_committed_to() {
+        let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
+        let auth = AuthoritativeAdmission {
+            generation: 5,
+            status: AdmissionStatus::Admitted,
+        };
+        let binding = AdmissionBinding::opaque_from(&c);
+        let live = check(&c, Some(&auth), &AdmissionPolicy::default()).expect("current");
+        assert_eq!(live.admission_id, binding.admission_id);
+        let degraded = check(&c, None, &policy(true, 60)).expect("within P");
+        assert_eq!(degraded.admission_id, binding.admission_id);
     }
 }

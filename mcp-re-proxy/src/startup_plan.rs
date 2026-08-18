@@ -15,75 +15,17 @@
 //! the confusion.
 
 use crate::config_state::validation::ValidatedDeployment;
-use crate::config_state::ContinuationControlState;
-use crate::config_state::ReplayState;
 use crate::deployment_request::BindingKind;
-use crate::replay_tier::ReplayDurabilityTier;
 use crate::tls::IdentityStrategy;
 use crate::transport::ReverseProxyMtlsProvider;
 
-/// The authoritative replay tier this deployment asked for.
+/// The replay plan and the store view materialization reads it through.
 ///
-/// Carries the configuration each backend needs, already resolved and checked for
-/// presence, so materialization has no config lookups left to fail on — only the build and
-/// the environment.
-///
-/// **Two variants, because there are two live states.** There was a `Memory` variant with
-/// a full materialization arm that nothing could reach: the boundary refuses
-/// `--replay-cache memory` in every build, so no configuration produced it. And there was
-/// never a `File` arm at all, which is what made `--replay-cache file` admissible at the
-/// boundary and unstartable one stage later (CF-01).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReplayPlan {
-    /// CP / linearizable, over the etcd v3 gateway.
-    Etcd {
-        endpoint: String,
-        tier: ReplayDurabilityTier,
-    },
-    /// Horizontally scaled, over Redis.
-    Redis {
-        url: String,
-        tier: ReplayDurabilityTier,
-    },
-}
+/// Both are owned by the replay machine: the plan is that machine's projection of its own
+/// validated state, so it is re-exported here rather than rebuilt from the state's fields.
+/// Planning composes the facts the owners state; it does not restate their semantics.
+pub use crate::config_state::replay::{PlannedStore, ReplayPlan};
 
-impl ReplayPlan {
-    /// Project the plan from the classified replay state and the validated locators.
-    ///
-    /// **Infallible.** It used to re-decide legality — which kind is offered, whether the
-    /// selected mode has the value it requires — and those decisions are layer A's, made
-    /// once, before this. What survives here is the projection: the state says which
-    /// backend and carries the endpoint that made it legal, and the tier follows from the
-    /// state rather than being fetched back out of the request.
-    ///
-    /// Refusals that depend on which backends were COMPILED IN stay with materialization.
-    /// They are facts about the build, not about the request.
-    pub fn from_validated(config: &ValidatedDeployment) -> ReplayPlan {
-        let state = config.state().replay();
-        // The tier is DERIVED from the state, not read beside it. Each arm therefore gets
-        // the only tier its backend can serve, so no construction path pairs the etcd
-        // store with a Redis quorum tier.
-        let tier = state.durability_tier();
-        match state {
-            ReplayState::SharedLinearizable { endpoint } => ReplayPlan::Etcd {
-                endpoint: endpoint.clone(),
-                tier,
-            },
-            ReplayState::SharedRedis { url, .. } => ReplayPlan::Redis {
-                url: url.clone(),
-                tier,
-            },
-        }
-    }
-
-    /// Whether establishing THIS tier needs the shared control runtime.
-    ///
-    /// Only the Redis tier: the etcd store drives its own requests and the in-memory
-    /// tier does no I/O. One contributor to the aggregate — never the decision itself.
-    pub fn needs_control_runtime(&self) -> bool {
-        cfg!(feature = "redis_replay") && matches!(self, ReplayPlan::Redis { .. })
-    }
-}
 /// The in-flight bound the inner plane must not sit below, or `None` to leave its default.
 ///
 /// PURE: `cores` is passed in rather than resolved here, because resolving it reads
@@ -238,16 +180,12 @@ impl TrustEpochPlan {
     /// Infallible: `PushNetworked` is the state that HAS a source, so layer A has already
     /// established both that this deployment may carry one and that it does.
     pub fn from_validated(config: &ValidatedDeployment) -> TrustEpochPlan {
-        match config.state().trust_revocation() {
-            crate::config_state::TrustRevocationState::PushNetworked {
-                epoch_url,
-                epoch_key,
-                ..
-            } => TrustEpochPlan::Redis {
-                url: epoch_url.clone(),
-                key: epoch_key.clone(),
+        match config.state().trust_revocation().epoch_source() {
+            Some(source) => TrustEpochPlan::Redis {
+                url: source.url().to_string(),
+                key: source.key().to_string(),
             },
-            _ => TrustEpochPlan::NoNetworkChannel,
+            None => TrustEpochPlan::NoNetworkChannel,
         }
     }
 
@@ -351,18 +289,13 @@ impl TrustPlan {
 /// consults the validated request, because only there is the cadence optional and both
 /// postures legal.
 fn trust_reload_plan(state: &crate::config_state::TrustRevocationState) -> TrustReloadPlan {
-    use crate::config_state::TrustRevocationState as S;
-    match state {
-        S::Live { reload_secs }
-        | S::PushInert { reload_secs, .. }
-        | S::PushNetworked { reload_secs, .. } => TrustReloadPlan::Every { secs: *reload_secs },
-        // Total, and reading no raw value: layer A normalized the optional cadence, so
-        // there is no `Some(0)` left to filter here — and therefore no way for a refused
-        // request to be re-read as a different legal posture.
-        S::BoundedCache { reload_secs, .. } => match reload_secs {
-            Some(secs) => TrustReloadPlan::Every { secs: *secs },
-            None => TrustReloadPlan::ReadOnceAtStartup,
-        },
+    // Which states require a cadence is the revocation machine's rule, so the cadence is
+    // read from it rather than matched out of its variants here. Total, and reading no raw
+    // value: layer A normalized the optional cadence, so there is no `Some(0)` left to
+    // filter, and therefore no way for a refused request to be re-read as a legal posture.
+    match state.reload_cadence() {
+        Some(secs) => TrustReloadPlan::Every { secs },
+        None => TrustReloadPlan::ReadOnceAtStartup,
     }
 }
 
@@ -431,73 +364,11 @@ impl SigningPlan {
     }
 }
 
-/// What offline client-certificate revocation must establish.
+/// What the TLS plane establishes for client revocation.
 ///
-/// The posture is a VARIANT, not a pair of primitives a consumer re-reads. Layer A already
-/// classified `None`/`Static`/`Reloading` (§C.6), and a plan carrying `Vec<String>` beside
-/// `Option<u64>` would invite the plane to rediscover that classification from
-/// `paths.is_empty()` and `cadence.is_some()` — obeying the letter of "planning consumes
-/// the classification" while reconstructing it one field at a time.
-///
-/// Each variant carries exactly what ITS posture needs. `None` cannot hold paths and
-/// `Static` cannot hold a cadence, so the combinations layer A refuses are not merely
-/// unreachable but unrepresentable.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ClientRevocationPlan {
-    /// No CRLs. Revocation rests on the client-certificate lifetime ceiling alone, which
-    /// is a posture rather than an absence — see [`crate::tls_plane::fleet_crl_bound`].
-    None,
-    /// CRLs read once at startup. A revocation published afterwards reaches this replica
-    /// when the CRL passes its own `nextUpdate`, or on a restart.
-    Static {
-        /// The files to read.
-        paths: Vec<String>,
-    },
-    /// CRLs re-read on a cadence, so a revocation published after startup takes effect
-    /// within it — on established connections as well as at the handshake.
-    Reloading {
-        /// The files to read.
-        paths: Vec<String>,
-        /// Seconds between re-reads. Layer A holds it above zero.
-        cadence_secs: u64,
-    },
-}
-
-impl ClientRevocationPlan {
-    /// Project the plan from the classified state and the validated locators.
-    ///
-    /// Infallible: `Static` and `Reloading` are the states that HAVE paths, and
-    /// `Reloading` is the state that has a cadence, so layer A has already established
-    /// that each value the variant requires is present.
-    pub fn from_validated(config: &ValidatedDeployment) -> ClientRevocationPlan {
-        use crate::config_state::CrlRevocationState as S;
-        match config.state().crl_revocation() {
-            S::None => ClientRevocationPlan::None,
-            S::Static { paths } => ClientRevocationPlan::Static {
-                paths: paths.clone(),
-            },
-            S::Reloading {
-                paths,
-                cadence_secs,
-            } => ClientRevocationPlan::Reloading {
-                paths: paths.clone(),
-                cadence_secs: *cadence_secs,
-            },
-        }
-    }
-
-    /// The files to read, empty where the posture reads none.
-    ///
-    /// For materialization, which loads the same bytes under both CRL-bearing postures —
-    /// not for deciding which posture this is. That is what the variant is for.
-    pub fn paths(&self) -> &[String] {
-        match self {
-            ClientRevocationPlan::None => &[],
-            ClientRevocationPlan::Static { paths }
-            | ClientRevocationPlan::Reloading { paths, .. } => paths,
-        }
-    }
-}
+/// Owned by the CRL machine and re-exported here: the plan is that machine's projection of
+/// its own validated state, not a value planning rebuilds from the state's paths.
+pub use crate::config_state::transport::ClientRevocationPlan;
 
 /// What the TLS plane must establish (ADR-MCPRE-056 §8).
 ///
@@ -527,7 +398,7 @@ impl TlsPlan {
         let values = config.config();
         TlsPlan {
             custody: config.state().tls_custody().clone(),
-            client_revocation: ClientRevocationPlan::from_validated(config),
+            client_revocation: config.state().crl_revocation().client_revocation_plan(),
             max_client_cert_lifetime: values.max_client_cert_lifetime,
             max_connection_age: values.limits.max_connection_age,
         }
@@ -536,42 +407,12 @@ impl TlsPlan {
 
 /// What the MRTR continuation store must establish (ADR-MCPS-047, CF-12).
 ///
-/// `Disabled` is a posture, not an absence: cross-replica continuation is opportunistic,
-/// so a deployment without it is a deployment whose multi-round-trip flows are
-/// single-replica and whose cross-replica answers fail closed at the binding.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ContinuationControlPlan {
-    /// No shared store; flows resolve on the replica that opened them.
-    Disabled,
-    /// A shared Redis store at this endpoint.
-    Redis {
-        /// The continuation store's OWN endpoint. It is not the replay store's, even when
-        /// an operator points both at the same Redis.
-        endpoint: String,
-    },
-}
-
-impl ContinuationControlPlan {
-    /// Project the plan from the classified state and the validated locator.
-    ///
-    /// Infallible: layer A already decided that this state is legal and that the locator
-    /// is present where the state requires one, so there is no second refusal to make.
-    pub fn from_validated(config: &ValidatedDeployment) -> ContinuationControlPlan {
-        match config.state().continuation_control() {
-            ContinuationControlState::Disabled => ContinuationControlPlan::Disabled,
-            ContinuationControlState::Redis { endpoint } => ContinuationControlPlan::Redis {
-                endpoint: endpoint.clone(),
-            },
-        }
-    }
-
-    /// Whether establishing this plan needs the shared control runtime.
-    ///
-    /// One contributor to the aggregate — never the decision itself.
-    pub fn needs_control_runtime(&self) -> bool {
-        cfg!(feature = "redis_replay") && matches!(self, ContinuationControlPlan::Redis { .. })
-    }
-}
+/// Owned by the continuation-control machine and re-exported here: the plan is that
+/// machine's projection of its own validated state, not a value planning rebuilds from
+/// the state's locator. `Disabled` is a posture, not an absence — a deployment without a
+/// shared store is one whose multi-round-trip flows are single-replica and whose
+/// cross-replica answers fail closed at the binding.
+pub use crate::config_state::continuation_control::ContinuationControlPlan;
 
 /// Whether the §7 admission-currency gate will be wired (MCPRE-493).
 ///
@@ -597,7 +438,11 @@ pub fn control_runtime_requirement(
 ) -> crate::control_runtime::ControlRuntimeRequirement {
     crate::control_runtime::ControlRuntimeRequirement::any([
         replay.needs_control_runtime(),
-        ContinuationControlPlan::from_validated(config).needs_control_runtime(),
+        config
+            .state()
+            .continuation_control()
+            .continuation_plan()
+            .needs_control_runtime(),
         admission_needs_control_runtime(config),
     ])
 }
@@ -703,7 +548,7 @@ mod tests {
     fn plan_for(extra: &[&str]) -> ReplayPlan {
         let config = parse(extra).expect("args parse");
         let validated = ValidatedDeployment::try_from(config).expect("config validates");
-        ReplayPlan::from_validated(&validated)
+        validated.state().replay().materialization_plan()
     }
 
     /// Why a configuration is not a replay deployment at all.
@@ -767,12 +612,16 @@ mod tests {
 
     #[test]
     fn linearizable_plans_etcd_at_the_declared_endpoint() {
+        let plan = plan_for(SHARED_LINEARIZABLE);
         assert_eq!(
-            plan_for(SHARED_LINEARIZABLE),
-            ReplayPlan::Etcd {
-                endpoint: "http://127.0.0.1:2379".to_string(),
-                tier: ReplayDurabilityTier::Linearizable,
+            plan.store(),
+            PlannedStore::Etcd {
+                endpoint: "http://127.0.0.1:2379"
             }
+        );
+        assert_eq!(
+            plan.tier(),
+            &crate::replay_tier::ReplayDurabilityTier::Linearizable
         );
     }
 
@@ -782,10 +631,11 @@ mod tests {
     /// the redis library's 500ms per-command default.
     #[test]
     fn a_redis_tier_carries_its_url_and_its_wait_parameters() {
-        match plan_for(SHARED_REDIS) {
-            ReplayPlan::Redis { url, tier } => {
+        let plan = plan_for(SHARED_REDIS);
+        match plan.store() {
+            PlannedStore::Redis { url } => {
                 assert_eq!(url, "redis://127.0.0.1:6379");
-                assert_eq!(tier.wait_quorum_params(), Some((2, 2000)));
+                assert_eq!(plan.tier().wait_quorum_params(), Some((2, 2000)));
             }
             other => panic!("expected a redis plan, got {other:?}"),
         }
@@ -822,7 +672,7 @@ mod tests {
             "--replay-redis-url",
             "redis://203.0.113.1:6379",
         ]);
-        assert!(matches!(plan, ReplayPlan::Redis { .. }));
+        assert!(matches!(plan.store(), PlannedStore::Redis { .. }));
     }
 
     /// The explicit issuer kid wins; without one the server key id names the issuer.
@@ -887,11 +737,19 @@ mod tests {
         .expect("args parse");
         let validated = ValidatedDeployment::try_from(both).expect("independent facts, both legal");
         assert_eq!(
-            ContinuationControlPlan::from_validated(&validated).needs_control_runtime(),
+            validated
+                .state()
+                .continuation_control()
+                .continuation_plan()
+                .needs_control_runtime(),
             REDIS
         );
         assert!(
-            !ReplayPlan::from_validated(&validated).needs_control_runtime(),
+            !validated
+                .state()
+                .replay()
+                .materialization_plan()
+                .needs_control_runtime(),
             "the tier is etcd, so replay itself declares nothing"
         );
 
@@ -899,10 +757,53 @@ mod tests {
         let no_continuation = parse(SHARED_LINEARIZABLE).expect("args parse");
         let validated = ValidatedDeployment::try_from(no_continuation).expect("validates");
         assert_eq!(
-            ContinuationControlPlan::from_validated(&validated),
-            ContinuationControlPlan::Disabled
+            validated
+                .state()
+                .continuation_control()
+                .continuation_plan()
+                .shared_store(),
+            None
         );
-        assert!(!ContinuationControlPlan::from_validated(&validated).needs_control_runtime());
+        assert!(!validated
+            .state()
+            .continuation_control()
+            .continuation_plan()
+            .needs_control_runtime());
+    }
+
+    /// The projected endpoint is the continuation store's own locator, character for
+    /// character (CF-12).
+    ///
+    /// `needs_control_runtime` only reports the variant, so it stays true for an endpoint
+    /// that is empty or that names the replay store. Two Redis instances configured at
+    /// once separate the two: continuations planned against the replay store would be
+    /// written where no answer leg reads them, and every cross-replica approval would fail
+    /// closed.
+    #[test]
+    fn the_continuation_plan_carries_its_own_endpoint_verbatim() {
+        let config = parse(&[
+            "--replay-durability-tier",
+            "redis-wait-quorum:2:2000",
+            "--replay-redis-url",
+            "redis://127.0.0.1:6379",
+            "--continuation-control-redis-url",
+            "redis://127.0.0.1:6380",
+        ])
+        .expect("args parse");
+        let validated = ValidatedDeployment::try_from(config).expect("config validates");
+
+        assert_eq!(
+            validated
+                .state()
+                .continuation_control()
+                .continuation_plan()
+                .shared_store(),
+            Some("redis://127.0.0.1:6380")
+        );
+        match validated.state().replay().materialization_plan().store() {
+            PlannedStore::Redis { url } => assert_eq!(url, "redis://127.0.0.1:6379"),
+            other => panic!("expected a redis replay plan, got {other:?}"),
+        }
     }
 
     /// The clean break: the old overloaded configuration is refused at layer A, not
@@ -957,21 +858,22 @@ mod tests {
     /// its OWN carried cadence rather than some default.
     #[test]
     fn a_reload_bearing_state_cannot_be_projected_to_read_once() {
-        use crate::config_state::TrustRevocationState as S;
         let carried = [
-            S::Live {
-                reload_secs: crate::config_state::TrustRevocationState::cadence(7),
-            },
-            S::PushInert {
-                t_secs: 30,
-                reload_secs: crate::config_state::TrustRevocationState::cadence(7),
-            },
-            S::PushNetworked {
-                t_secs: 30,
-                reload_secs: crate::config_state::TrustRevocationState::cadence(7),
-                epoch_url: "redis://127.0.0.1:6379".to_string(),
-                epoch_key: "k".to_string(),
-            },
+            crate::config_state::test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::Live,
+                Some(7),
+                None,
+            ),
+            crate::config_state::test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::Push { t_secs: 30 },
+                Some(7),
+                None,
+            ),
+            crate::config_state::test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::Push { t_secs: 30 },
+                Some(7),
+                Some(("redis://127.0.0.1:6379", "k")),
+            ),
         ];
         for state in carried {
             assert_eq!(
@@ -991,22 +893,23 @@ mod tests {
     /// — an optional parameter moved into a state that does not require it.
     #[test]
     fn bounded_cache_keeps_both_refresh_postures() {
-        use crate::config_state::TrustRevocationState as S;
         assert_eq!(
-            trust_reload_plan(&S::BoundedCache {
-                t_secs: 60,
-                reload_secs: None,
-            }),
+            trust_reload_plan(&crate::config_state::test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::BoundedCache { t_secs: 60 },
+                None,
+                None
+            )),
             TrustReloadPlan::ReadOnceAtStartup,
             "an omitted cadence under bounded-cache reads the store once"
         );
         assert_eq!(
-            trust_reload_plan(&S::BoundedCache {
-                t_secs: 60,
-                reload_secs: Some(S::cadence(60)),
-            }),
+            trust_reload_plan(&crate::config_state::test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::BoundedCache { t_secs: 60 },
+                Some(60),
+                None
+            )),
             TrustReloadPlan::Every {
-                secs: S::cadence(60)
+                secs: crate::config_state::TrustRevocationState::cadence(60)
             },
             "a supplied cadence under bounded-cache still re-reads"
         );
@@ -1093,12 +996,14 @@ mod tests {
         );
         assert_eq!(
             plan.revocation,
-            crate::config_state::TrustRevocationState::PushNetworked {
-                t_secs: 30,
-                reload_secs: crate::config_state::TrustRevocationState::cadence(15),
-                epoch_url: "redis://127.0.0.1:6379".to_string(),
-                epoch_key: crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY.to_string(),
-            },
+            crate::config_state::test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::Push { t_secs: 30 },
+                Some(15),
+                Some((
+                    "redis://127.0.0.1:6379",
+                    crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY
+                ))
+            ),
             "the plan must hold what layer A classified, not re-read --revocation-tier"
         );
         assert_eq!(
@@ -1242,33 +1147,40 @@ mod tests {
     /// Each CRL posture is projected as the VARIANT that carries its own parameters.
     ///
     /// The combinations layer A refuses are not merely unreachable here, they are
-    /// unrepresentable: `None` has nowhere to put paths and `Static` has nowhere to put a
-    /// cadence. That is what stops the plane rediscovering the posture from a `Vec` and an
-    /// `Option` it was handed side by side.
+    /// unrepresentable: the posture IS the pair, so a consumer cannot hold a cadence
+    /// without files or report a cadence the deployment did not set. That is what stops the
+    /// plane rediscovering the posture from a `Vec` and an `Option` handed to it side by
+    /// side.
     #[test]
     fn each_crl_posture_is_projected_as_its_own_variant() {
-        assert_eq!(
-            ClientRevocationPlan::from_validated(&validated(&[])),
-            ClientRevocationPlan::None
-        );
-        assert_eq!(
-            ClientRevocationPlan::from_validated(&validated(&["--client-crl", "/crl.pem"])),
-            ClientRevocationPlan::Static {
-                paths: vec!["/crl.pem".to_string()],
-            }
-        );
-        assert_eq!(
-            ClientRevocationPlan::from_validated(&validated(&[
-                "--client-crl",
-                "/crl.pem",
-                "--client-crl-reload-secs",
-                "300",
-            ])),
-            ClientRevocationPlan::Reloading {
-                paths: vec!["/crl.pem".to_string()],
-                cadence_secs: 300,
-            }
-        );
+        let none = validated(&[])
+            .state()
+            .crl_revocation()
+            .client_revocation_plan();
+        assert!(!none.is_enforced());
+        assert!(none.paths().is_empty());
+        assert_eq!(none.reload_cadence_secs(), None);
+
+        let static_plan = validated(&["--client-crl", "/crl.pem"])
+            .state()
+            .crl_revocation()
+            .client_revocation_plan();
+        assert!(static_plan.is_enforced());
+        assert_eq!(static_plan.paths(), ["/crl.pem".to_string()]);
+        assert_eq!(static_plan.reload_cadence_secs(), None);
+
+        let reloading = validated(&[
+            "--client-crl",
+            "/crl.pem",
+            "--client-crl-reload-secs",
+            "300",
+        ])
+        .state()
+        .crl_revocation()
+        .client_revocation_plan();
+        assert!(reloading.is_enforced());
+        assert_eq!(reloading.paths(), ["/crl.pem".to_string()]);
+        assert_eq!(reloading.reload_cadence_secs(), Some(300));
     }
 
     /// Materialization loads the same bytes under both CRL-bearing postures, so the paths
@@ -1277,15 +1189,12 @@ mod tests {
     /// deployment has no revocation configured.
     #[test]
     fn the_paths_accessor_answers_which_files_not_which_posture() {
-        assert!(ClientRevocationPlan::None.paths().is_empty());
+        assert!(crate::config_state::test_support::crl_plan(&[], None)
+            .paths()
+            .is_empty());
         for plan in [
-            ClientRevocationPlan::Static {
-                paths: vec!["/a.pem".to_string()],
-            },
-            ClientRevocationPlan::Reloading {
-                paths: vec!["/a.pem".to_string()],
-                cadence_secs: 60,
-            },
+            crate::config_state::test_support::crl_plan(&["/a.pem"], None),
+            crate::config_state::test_support::crl_plan(&["/a.pem"], Some(60)),
         ] {
             assert_eq!(plan.paths(), ["/a.pem".to_string()]);
         }
@@ -1300,16 +1209,14 @@ mod tests {
         let plan = TlsPlan::from_validated(&config);
         assert_eq!(
             plan.custody,
-            crate::config_state::TlsCustodyState::Exported {
-                key_path: "/nonexistent/key".to_string(),
-            },
+            crate::config_state::test_support::tls_custody_exported("/nonexistent/key"),
             "the fixture's TLS key is an exported file, and the plan carries its path"
         );
         assert_eq!(
             plan.max_client_cert_lifetime,
             Some(std::time::Duration::from_secs(3600))
         );
-        assert_eq!(plan.client_revocation, ClientRevocationPlan::None);
+        assert!(!plan.client_revocation.is_enforced());
     }
 
     /// A COMPLETE admission configuration. Setting only `admission` used to be enough
@@ -1339,7 +1246,10 @@ mod tests {
         let on = ValidatedDeployment::try_from(on).expect("validates");
         assert_eq!(admission_needs_control_runtime(&on), REDIS);
         assert!(
-            !ReplayPlan::from_validated(&on).needs_control_runtime(),
+            !on.state()
+                .replay()
+                .materialization_plan()
+                .needs_control_runtime(),
             "admission must not need the replay tier to have asked first"
         );
     }
@@ -1352,7 +1262,7 @@ mod tests {
         // Admission alone, on a tier that declares nothing.
         let admission_only = with_admission(parse(SHARED_LINEARIZABLE).expect("parse"));
         let admission_only = ValidatedDeployment::try_from(admission_only).expect("validates");
-        let plan = ReplayPlan::from_validated(&admission_only);
+        let plan = admission_only.state().replay().materialization_plan();
         assert_eq!(
             control_runtime_requirement(&admission_only, &plan).is_required(),
             REDIS,
@@ -1362,7 +1272,7 @@ mod tests {
         // Nothing networked at all.
         let none = ValidatedDeployment::try_from(parse(SHARED_LINEARIZABLE).expect("parse"))
             .expect("validates");
-        let plan = ReplayPlan::from_validated(&none);
+        let plan = none.state().replay().materialization_plan();
         assert_eq!(
             control_runtime_requirement(&none, &plan),
             Req::NotRequired,

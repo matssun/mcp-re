@@ -73,35 +73,97 @@ pub enum AdmissionAvailability {
 
 /// Which admission state a configuration requests.
 ///
-/// The two enforcing states carry the authority and the record locator they cannot be
-/// inhabited without. Nothing downstream re-reads them from the request, and nothing
-/// downstream decodes the key a second time — see [`crate::cli::AdmissionAuthority`].
+/// The representation is private to this module. [`classify_and_validate`] is the only
+/// producer, so possessing an enforcing state IS the statement that its authority was
+/// validated and its key decoded — see [`crate::cli::AdmissionAuthority`]. Nothing
+/// downstream re-reads the witnesses from the request, and nothing decodes the key a
+/// second time.
+///
+/// Consumers read an enforcing deployment through [`enforced`](Self::enforced), which
+/// hands back the posture and the authority **as one value**. While the variants were
+/// public, a consumer destructuring them could take the enforcement level from one arm and
+/// the authority from another — a `Required` gate verifying assertions under whatever key
+/// was to hand.
 #[derive(Debug, Clone)]
-pub enum AdmissionState {
+pub struct AdmissionState {
+    kind: AdmissionKindState,
+}
+
+/// The three states, as the owner's own representation.
+///
+/// Private to this module: this state's consumers live in this crate, so `pub` variants
+/// would be constructible by all of them.
+#[derive(Debug, Clone)]
+enum AdmissionKindState {
     /// Not enforced. Admission evidence, if present, decides nothing.
     Off,
     /// Enforced when present — for a rollout that has not reached every client.
     Optional {
-        /// The key id an assertion must present for its issuer to be recognised.
         authority_kid: String,
-        /// The decoded key that verifies it.
         authority: VerificationKey,
-        /// The shared authoritative record currency is compared against.
         redis_url: String,
-        /// What this deployment does when that record cannot be reached.
         availability: AdmissionAvailability,
     },
     /// Enforced always: a call with no admission evidence is refused.
     Required {
-        /// The key id an assertion must present for its issuer to be recognised.
         authority_kid: String,
-        /// The decoded key that verifies it.
         authority: VerificationKey,
-        /// The shared authoritative record currency is compared against.
         redis_url: String,
-        /// What this deployment does when that record cannot be reached.
         availability: AdmissionAvailability,
     },
+}
+
+/// How strictly a gate is applied, for a deployment that applies one.
+///
+/// Separate from the state because `Off` is not a posture the gate can be built at: a
+/// consumer that has one of these is already past the question of whether to build a gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdmissionPosture {
+    /// Evidence is checked when presented; its absence is not a refusal.
+    Optional,
+    /// A call with no admission evidence is refused.
+    Required,
+}
+
+/// An enforcing deployment's gate inputs, as one indivisible value.
+///
+/// Borrowed from the state, so it is a way to READ an admission posture and not a way to
+/// assemble one. The posture and the authority it applies are handed over together because
+/// they were validated together; nothing holding this can re-pair them.
+#[derive(Debug, Clone, Copy)]
+pub struct EnforcedAdmission<'a> {
+    posture: AdmissionPosture,
+    authority_kid: &'a str,
+    authority: &'a VerificationKey,
+    redis_url: &'a str,
+    availability: AdmissionAvailability,
+}
+
+impl<'a> EnforcedAdmission<'a> {
+    /// How strictly the gate is applied.
+    pub fn posture(&self) -> AdmissionPosture {
+        self.posture
+    }
+
+    /// The key id an assertion must present for its issuer to be recognised.
+    pub fn authority_kid(&self) -> &'a str {
+        self.authority_kid
+    }
+
+    /// The decoded key that verifies it.
+    pub fn authority(&self) -> &'a VerificationKey {
+        self.authority
+    }
+
+    /// The shared authoritative record currency is compared against.
+    pub fn redis_url(&self) -> &'a str {
+        self.redis_url
+    }
+
+    /// What this deployment does when that record cannot be reached.
+    pub fn availability(&self) -> AdmissionAvailability {
+        self.availability
+    }
 }
 
 /// Two admission states are the same state when they name the same issuer.
@@ -117,16 +179,16 @@ pub enum AdmissionState {
 /// resolver and the verifying key themselves.
 impl PartialEq for AdmissionState {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Off, Self::Off) => true,
+        match (&self.kind, &other.kind) {
+            (AdmissionKindState::Off, AdmissionKindState::Off) => true,
             (
-                Self::Optional {
+                AdmissionKindState::Optional {
                     authority_kid: a_kid,
                     authority: a_key,
                     redis_url: a_url,
                     availability: a_av,
                 },
-                Self::Optional {
+                AdmissionKindState::Optional {
                     authority_kid: b_kid,
                     authority: b_key,
                     redis_url: b_url,
@@ -134,13 +196,13 @@ impl PartialEq for AdmissionState {
                 },
             )
             | (
-                Self::Required {
+                AdmissionKindState::Required {
                     authority_kid: a_kid,
                     authority: a_key,
                     redis_url: a_url,
                     availability: a_av,
                 },
-                Self::Required {
+                AdmissionKindState::Required {
                     authority_kid: b_kid,
                     authority: b_key,
                     redis_url: b_url,
@@ -162,7 +224,50 @@ impl Eq for AdmissionState {}
 impl AdmissionState {
     /// Whether a gate is applied at all.
     pub fn is_enforced(&self) -> bool {
-        !matches!(self, Self::Off)
+        !matches!(self.kind, AdmissionKindState::Off)
+    }
+
+    /// The gate inputs of an enforcing deployment, or `None` when no gate is applied.
+    ///
+    /// The projection replaces a match on the representation performed where the gate is
+    /// established. Which posture a deployment enforces, and under which authority, is
+    /// this machine's semantics; both are handed over in one value so no consumer can pair
+    /// a posture with an authority the validator did not pair it with.
+    pub fn enforced(&self) -> Option<EnforcedAdmission<'_>> {
+        let (posture, authority_kid, authority, redis_url, availability) = match &self.kind {
+            AdmissionKindState::Off => return None,
+            AdmissionKindState::Optional {
+                authority_kid,
+                authority,
+                redis_url,
+                availability,
+            } => (
+                AdmissionPosture::Optional,
+                authority_kid,
+                authority,
+                redis_url,
+                availability,
+            ),
+            AdmissionKindState::Required {
+                authority_kid,
+                authority,
+                redis_url,
+                availability,
+            } => (
+                AdmissionPosture::Required,
+                authority_kid,
+                authority,
+                redis_url,
+                availability,
+            ),
+        };
+        Some(EnforcedAdmission {
+            posture,
+            authority_kid,
+            authority,
+            redis_url,
+            availability: *availability,
+        })
     }
 }
 
@@ -191,23 +296,39 @@ pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<AdmissionSta
         availability,
     }) = authority
     else {
-        return (Some(AdmissionState::Off), Vec::new());
+        return (
+            Some(AdmissionState {
+                kind: AdmissionKindState::Off,
+            }),
+            Vec::new(),
+        );
     };
     let state = match config.admission {
         // `validated_admission_authority` yields an authority only for the enforcing
         // kinds, so this arm is unreachable rather than a second reading of the selector.
-        AdmissionKind::Off => return (Some(AdmissionState::Off), Vec::new()),
-        AdmissionKind::Optional => AdmissionState::Optional {
-            authority_kid: kid,
-            authority: key,
-            redis_url,
-            availability,
+        AdmissionKind::Off => {
+            return (
+                Some(AdmissionState {
+                    kind: AdmissionKindState::Off,
+                }),
+                Vec::new(),
+            )
+        }
+        AdmissionKind::Optional => AdmissionState {
+            kind: AdmissionKindState::Optional {
+                authority_kid: kid,
+                authority: key,
+                redis_url,
+                availability,
+            },
         },
-        AdmissionKind::Required => AdmissionState::Required {
-            authority_kid: kid,
-            authority: key,
-            redis_url,
-            availability,
+        AdmissionKind::Required => AdmissionState {
+            kind: AdmissionKindState::Required {
+                authority_kid: kid,
+                authority: key,
+                redis_url,
+                availability,
+            },
         },
     };
     (Some(state), Vec::new())
@@ -418,17 +539,23 @@ mod tests {
     #[test]
     fn every_legal_state_form_is_classified_and_accepted() {
         let (state, violations) = run(|c| c.admission = AdmissionKind::Off);
-        assert_eq!(state, Some(AdmissionState::Off));
         assert!(violations.is_empty(), "{violations:?}");
-        assert!(!state.expect("recognised").is_enforced());
+        let state = state.expect("recognised");
+        assert!(!state.is_enforced());
+        assert!(state.enforced().is_none());
 
         for kind in [AdmissionKind::Optional, AdmissionKind::Required] {
             let (state, violations) = run(|c| enforcing(c, kind));
             assert!(violations.is_empty(), "{kind:?} refused: {violations:?}");
             let state = state.expect("recognised");
-            assert_eq!(matches!(state, AdmissionState::Required { .. }), {
-                kind == AdmissionKind::Required
-            });
+            assert_eq!(
+                state.enforced().map(|gate| gate.posture()),
+                Some(if kind == AdmissionKind::Required {
+                    AdmissionPosture::Required
+                } else {
+                    AdmissionPosture::Optional
+                })
+            );
             assert!(state.is_enforced());
         }
     }
@@ -439,19 +566,15 @@ mod tests {
     #[test]
     fn an_enforcing_state_carries_the_authority_that_made_it_inhabitable() {
         let (state, _) = run(|c| enforcing(c, AdmissionKind::Required));
-        let Some(AdmissionState::Required {
-            authority_kid,
-            authority,
-            redis_url,
-            availability,
-        }) = state
-        else {
-            panic!("a complete admission configuration selects the enforcing state");
-        };
-        assert_eq!(authority_kid, "authority-1");
-        assert_eq!(redis_url, "redis://127.0.0.1:6379");
-        assert_eq!(authority.to_b64url(), valid_pubkey());
-        assert_eq!(availability, AdmissionAvailability::FailClosed);
+        let state = state.expect("a complete admission configuration names a state");
+        let gate = state
+            .enforced()
+            .expect("a complete admission configuration selects the enforcing state");
+        assert_eq!(gate.posture(), AdmissionPosture::Required);
+        assert_eq!(gate.authority_kid(), "authority-1");
+        assert_eq!(gate.redis_url(), "redis://127.0.0.1:6379");
+        assert_eq!(gate.authority().to_b64url(), valid_pubkey());
+        assert_eq!(gate.availability(), AdmissionAvailability::FailClosed);
     }
 
     /// The two flags are CLASSIFIED, not carried. Layer A owns the distinction between
@@ -464,11 +587,12 @@ mod tests {
             c.admission_allow_degraded = true;
             c.admission_degraded_bound_secs = 90;
         });
-        let Some(AdmissionState::Required { availability, .. }) = state else {
-            panic!("a complete admission configuration selects the enforcing state");
-        };
+        let state = state.expect("a complete admission configuration names a state");
+        let gate = state
+            .enforced()
+            .expect("a complete admission configuration selects the enforcing state");
         assert_eq!(
-            availability,
+            gate.availability(),
             AdmissionAvailability::BoundedDegraded {
                 bound_secs: NonZeroU64::new(90).expect("90 is not zero"),
             }
@@ -479,10 +603,10 @@ mod tests {
     /// an empty string standing in for one.
     #[test]
     fn the_off_state_carries_nothing_because_it_verifies_nothing() {
-        assert_eq!(
-            run(|c| c.admission = AdmissionKind::Off).0,
-            Some(AdmissionState::Off)
-        );
+        let state = run(|c| c.admission = AdmissionKind::Off)
+            .0
+            .expect("off is a state");
+        assert!(state.enforced().is_none());
     }
 
     /// A refused configuration yields NO state. An enforcing state that could be built
@@ -656,11 +780,7 @@ mod tests {
             };
             assert!(violations.is_empty(), "{at}: refused — {violations:?}");
             let classified = match state {
-                Some(AdmissionState::Off) => None,
-                Some(
-                    AdmissionState::Optional { availability, .. }
-                    | AdmissionState::Required { availability, .. },
-                ) => Some(availability),
+                Some(state) => state.enforced().map(|gate| gate.availability()),
                 None => panic!("{at}: accepted but named no state"),
             };
             assert_eq!(classified, posture, "{at}: classified to the wrong posture");

@@ -22,6 +22,60 @@
 2. **Cognitive Complexity**: Avoid nested `match` or `if let` statements deeper than 2 levels. Use early returns (`?` operator or `let-else` statements).
 3. **Security Code**: Parsing, authentication, and execution MUST be isolated into distinct types/functions. Do not combine I/O operations with cryptographic or authorization logic in the same function.
 
+### Ownership: the constructed value owns the invariant
+
+> **R-SEAL.** A security check is not structurally owned merely because every known
+> construction site performs it. If the invariant belongs to a value, the value's public
+> construction and projection boundary must make violating the invariant impossible or
+> explicitly fallible.
+
+> **R-COMPOSE.** A composition root may combine owner-provided facts; it must not recreate
+> an owner's security semantics by destructuring its representation.
+
+The invariant belongs to the value, not to the code that builds it. Possession is the
+proof: holding a value must mean its invariant holds, with no trailing clause about what
+callers remembered. *Validation exists* in most of the cases this rule catches — the defect
+is that correctness depends on remembering where and how to construct the value.
+
+The difference is a quantifier. "This constructor checks X" quantifies over one site and is
+silent about the next one added. "Every inhabitant satisfies X" quantifies over the type,
+and only the second is a theorem.
+
+**The operational test:** *can the check be deleted and still leave an invalid value
+unconstructible?* If yes, the value owns it. If deleting a check elsewhere can bring an
+invalid inhabitant into existence, the check was being remembered, not owned.
+
+An owner is **sealed** when four things hold:
+
+1. Illegal local state cannot be publicly constructed.
+2. Required validation happens before construction of the owned state, or construction
+   itself performs it.
+3. Downstream cannot mutate or reconstruct the invariant by destructuring the private
+   representation.
+4. Downstream obtains only named semantic projections or capabilities.
+
+**`#[non_exhaustive]` and `pub(crate)` do not seal anything here.** Both bind only other
+crates, and in this workspace an owner's consumers — `app.rs`, `startup_plan.rs`,
+`cli.rs`, `http_profile_serve.rs` — live in the owner's own crate. The lever that works
+inside one crate is **module privacy**: the representation is private to the owner's
+module, which exposes projections. A type documenting a seal that holds only "outside this
+crate" is documenting a seal that holds against none of its actual callers.
+
+**A compile failure caused by making a security field private is a boundary detector, not
+an obstacle.** It is the compiler reporting that the supposed owner does not own its
+representation. Let the failures guide the work; never work around one with
+`#[non_exhaustive]`, a runtime re-check, or a doc note — those consume the signal. For each
+failure ask **what does the consumer actually need to know?** The answer is normally much
+narrower than the destructured representation: `replay_state.materialization_plan()`, not
+`ReplayState::Shared { url, quorum, timeout_ms, .. }`.
+
+Do not answer "the root can see every owner's internals" with one wide struct carrying
+everything the root needs. That relocates flat authority instead of removing it. The root
+composes narrow per-owner projections.
+
+Which owners are sealed, what each projects, and the procedure for the next one:
+[`docs/dev/sealed-owners.md`](docs/dev/sealed-owners.md).
+
 ### Thresholds are review triggers, not laws
 
 The 60-line function and 200-line file limits are **not** unconditional architectural

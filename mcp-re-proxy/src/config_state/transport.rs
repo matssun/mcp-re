@@ -45,29 +45,84 @@ pub enum ChannelBindingState {
     ExactDnsSan,
 }
 
-/// Offline client-certificate revocation.
+/// Which client-CRL posture a configuration requests.
 ///
-/// Each state carries what inhabiting it requires. No `Option` is involved and no build
-/// step is needed, because here presence IS the classification: a non-empty CRL set is
-/// what makes the state `Static` rather than `None`, and a cadence beside it is what makes
-/// it `Reloading`. A state cannot exist without the value that selected it.
+/// The representation is private to this module and [`classify_and_validate`] is the only
+/// producer. A CRL-bearing state carries the files that put it in that state, and the
+/// reloading state carries the cadence that distinguishes it from the static one.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CrlRevocationState {
-    /// No CRLs — revocation rests entirely on the client-certificate lifetime ceiling.
-    None,
-    /// CRLs loaded once at startup.
-    Static {
-        /// The CRL files. Non-empty: an empty set is what `None` means.
-        paths: Vec<String>,
-    },
-    /// CRLs re-read on a cadence, so a revocation published after startup takes effect.
-    Reloading {
-        /// The CRL files. Non-empty, as for `Static`.
-        paths: Vec<String>,
-        /// How often they are re-read. Its presence is what distinguishes this from
-        /// `Static`, so the state that has one carries it.
-        cadence_secs: u64,
-    },
+pub struct CrlRevocationState {
+    /// The CRL files. Empty is exactly what "no CRLs" means, so the posture and the set
+    /// cannot disagree.
+    paths: Vec<String>,
+    /// Seconds between re-reads, where the operator asked for them. Layer A holds it above
+    /// zero and refuses it beside an empty set (CF-04).
+    cadence_secs: Option<u64>,
+}
+
+impl CrlRevocationState {
+    /// The files to read, empty where the posture reads none.
+    ///
+    /// For materialization, which loads the same bytes under both CRL-bearing postures.
+    pub fn paths(&self) -> &[String] {
+        &self.paths
+    }
+
+    /// Seconds between re-reads, or `None` when the CRLs are read once at startup.
+    pub fn reload_cadence_secs(&self) -> Option<u64> {
+        self.cadence_secs
+    }
+
+    /// Whether any CRL is consulted at all.
+    ///
+    /// Revocation rests on the client-certificate lifetime ceiling alone when it is not —
+    /// a posture rather than an absence, see [`crate::tls_plane::fleet_crl_bound`].
+    pub fn is_enforced(&self) -> bool {
+        !self.paths.is_empty()
+    }
+
+    /// What the TLS plane must establish for client revocation, as this owner states it.
+    ///
+    /// The projection replaces a match on the representation performed in planning.
+    pub fn client_revocation_plan(&self) -> ClientRevocationPlan {
+        ClientRevocationPlan {
+            paths: self.paths.clone(),
+            cadence_secs: self.cadence_secs,
+        }
+    }
+}
+
+/// What the TLS plane establishes for client revocation.
+///
+/// Produced only by [`CrlRevocationState::client_revocation_plan`]. The files and the
+/// cadence are private and set together, so no consumer can plan a re-read cadence over a
+/// set of files the deployment did not configure — the combination CF-04 refuses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientRevocationPlan {
+    paths: Vec<String>,
+    cadence_secs: Option<u64>,
+}
+
+impl ClientRevocationPlan {
+    /// The files to read, empty where the posture reads none.
+    pub fn paths(&self) -> &[String] {
+        &self.paths
+    }
+
+    /// Seconds between re-reads, or `None` when the CRLs are read once at startup.
+    ///
+    /// `Some` is the reloading posture: a revocation published after startup takes effect
+    /// within the cadence, on established connections as well as at the handshake. `None`
+    /// with files is the static posture, bounded by the CRL's own `nextUpdate` or a
+    /// restart. `None` with no files is no CRL at all.
+    pub fn reload_cadence_secs(&self) -> Option<u64> {
+        self.cadence_secs
+    }
+
+    /// Whether any CRL is consulted at all.
+    pub fn is_enforced(&self) -> bool {
+        !self.paths.is_empty()
+    }
 }
 
 /// Recognise the channel-binding state, or say why the request names none.
@@ -76,11 +131,43 @@ pub enum CrlRevocationState {
 /// deployment can be in, and `identity_source` has a deprecated one. They are input forms,
 /// not states, so they produce no member of the model.
 fn classify_binding(config: &DeploymentRequest) -> Result<ChannelBindingState, Vec<String>> {
+    let mut refusals = binding_kind_refusals(config.binding);
+    let identity = match config.identity_source {
+        IdentityPolicy::UriSan => Some(ChannelBindingState::ExactUriSan),
+        IdentityPolicy::DnsSan => Some(ChannelBindingState::ExactDnsSan),
+        IdentityPolicy::CnLegacy => {
+            refusals.push(
+                "--transport-identity-source cn_legacy is a deprecated, insecure identity \
+                 binding; use uri_san or dns_san"
+                    .to_string(),
+            );
+            None
+        }
+    };
+    // `Exact` is named positively: the state is the PAIR, so a kind that is not the one
+    // deployable kind cannot reach a state named `Exact*` however the refusal list came out.
+    match (config.binding, identity, refusals.is_empty()) {
+        (BindingKind::Exact, Some(state), true) => Ok(state),
+        _ => Err(refusals),
+    }
+}
+
+/// Every refusal the `binding` selector states about itself.
+///
+/// Exhaustive over [`BindingKind`], because the classifier's answer for a kind is what
+/// decides whether the deployment is in a channel-binding state at all: `Exact` is the one
+/// kind the serving path installs a transport binding for, so a kind reaching a state
+/// without an arm here would name an exact-match posture the deployment is not in. A kind
+/// added to the enum has no answer until one is written here.
+fn binding_kind_refusals(binding: BindingKind) -> Vec<String> {
     let mut refusals = Vec::new();
-    if let Some(refusal) = undeployable_transport_binding_refusal(config.binding) {
+    if let Some(refusal) = undeployable_transport_binding_refusal(binding) {
         refusals.push(refusal);
     }
-    match config.binding {
+    match binding {
+        BindingKind::Exact => {}
+        // Refused by the one decision about whether a mode can be deployed, above.
+        BindingKind::AttestedIngress => {}
         BindingKind::None => refusals.push(
             "--transport-binding none ignores the mTLS channel identity, decoupling the \
              verified request signer from the authenticated channel; production must bind \
@@ -95,24 +182,8 @@ fn classify_binding(config: &DeploymentRequest) -> Result<ChannelBindingState, V
              with locally-terminated client mTLS)"
                 .to_string(),
         ),
-        _ => {}
     }
-    let identity = match config.identity_source {
-        IdentityPolicy::UriSan => Some(ChannelBindingState::ExactUriSan),
-        IdentityPolicy::DnsSan => Some(ChannelBindingState::ExactDnsSan),
-        IdentityPolicy::CnLegacy => {
-            refusals.push(
-                "--transport-identity-source cn_legacy is a deprecated, insecure identity \
-                 binding; use uri_san or dns_san"
-                    .to_string(),
-            );
-            None
-        }
-    };
-    match (identity, refusals.is_empty()) {
-        (Some(state), true) => Ok(state),
-        _ => Err(refusals),
-    }
+    refusals
 }
 
 /// Classify the channel-binding state and check its columns.
@@ -131,16 +202,14 @@ pub fn classify_and_validate_binding(
 /// Recognise the CRL-revocation state. Total: the two fields name one.
 fn classify_crl(config: &DeploymentRequest) -> CrlRevocationState {
     if config.client_crl_paths.is_empty() {
-        CrlRevocationState::None
-    } else if let Some(cadence_secs) = config.client_crl_reload_secs {
-        CrlRevocationState::Reloading {
-            paths: config.client_crl_paths.clone(),
-            cadence_secs,
-        }
-    } else {
-        CrlRevocationState::Static {
-            paths: config.client_crl_paths.clone(),
-        }
+        return CrlRevocationState {
+            paths: Vec::new(),
+            cadence_secs: None,
+        };
+    }
+    CrlRevocationState {
+        paths: config.client_crl_paths.clone(),
+        cadence_secs: config.client_crl_reload_secs,
     }
 }
 
@@ -172,7 +241,7 @@ pub fn classify_and_validate_crl(config: &DeploymentRequest) -> (CrlRevocationSt
     }
     // Forbidden on `None`: a cadence names how often to re-read a set that is empty, so its
     // presence states a control the deployment does not have.
-    if state == CrlRevocationState::None && config.client_crl_reload_secs.is_some() {
+    if !state.is_enforced() && config.client_crl_reload_secs.is_some() {
         violations.push(
             "--client-crl-reload-secs has no effect without --client-crl: there is no \
              revocation list to re-read, so no revocation is enforced on either cadence"
@@ -434,7 +503,7 @@ mod tests {
     }
 
     /// A state this machine must recognise, and how to request it.
-    type Form = (CrlRevocationState, fn(&mut DeploymentRequest));
+    type Form = ((Vec<String>, Option<u64>), fn(&mut DeploymentRequest));
 
     fn crl(mutate: impl FnOnce(&mut DeploymentRequest)) -> (CrlRevocationState, Vec<String>) {
         let mut config = legal_config();
@@ -457,23 +526,83 @@ mod tests {
         }
     }
 
-    /// One machine, two selectors: neither alone names the state.
-    #[test]
-    fn the_state_is_the_pair_not_either_selector() {
-        assert_ne!(
-            binding(|c| c.identity_source = IdentityPolicy::UriSan).0,
-            binding(|c| c.identity_source = IdentityPolicy::DnsSan).0,
-            "the same binding kind, two states"
-        );
+    /// Every `BindingKind`. The match is the exhaustiveness witness: a kind added to the
+    /// enum stops this list compiling, so no test below can enumerate a stale variant set.
+    fn every_binding_kind() -> Vec<BindingKind> {
+        let kinds = vec![
+            BindingKind::None,
+            BindingKind::Exact,
+            BindingKind::LbAssertion,
+            BindingKind::AttestedIngress,
+        ];
+        for kind in &kinds {
+            match kind {
+                BindingKind::None
+                | BindingKind::Exact
+                | BindingKind::LbAssertion
+                | BindingKind::AttestedIngress => {}
+            }
+        }
+        kinds
     }
 
+    /// One machine, two selectors: `identity_source` names which state, `binding` decides
+    /// whether there is one.
     #[test]
-    fn no_undeployable_binding_becomes_a_state() {
-        for kind in [BindingKind::None, BindingKind::LbAssertion] {
-            let (state, violations) = binding(|c| c.binding = kind);
-            assert!(state.is_none(), "{kind:?} became a validated state");
-            assert!(!violations.is_empty(), "{kind:?} was accepted");
+    fn identity_source_names_the_state_and_binding_decides_whether_there_is_one() {
+        let uri = binding(|c| c.identity_source = IdentityPolicy::UriSan).0;
+        let dns = binding(|c| c.identity_source = IdentityPolicy::DnsSan).0;
+        assert_eq!(uri, Some(ChannelBindingState::ExactUriSan));
+        assert_eq!(dns, Some(ChannelBindingState::ExactDnsSan));
+        assert_ne!(uri, dns, "the same binding kind, two states");
+        for kind in every_binding_kind()
+            .into_iter()
+            .filter(|kind| *kind != BindingKind::Exact)
+        {
+            let (state, _) = binding(|c| {
+                c.binding = kind;
+                c.identity_source = IdentityPolicy::UriSan;
+            });
+            assert_eq!(
+                state, None,
+                "{kind:?} named a state under the identity source that names one under exact"
+            );
         }
+    }
+
+    /// The `Exact` half of the state names, positively: only the kind the serving path
+    /// installs a transport binding for reaches a state, and every other kind is refused
+    /// with a diagnostic rather than passed over.
+    #[test]
+    fn only_exact_binding_becomes_a_state_and_every_other_kind_is_refused_aloud() {
+        for kind in every_binding_kind() {
+            let (state, violations) = binding(|c| c.binding = kind);
+            if kind == BindingKind::Exact {
+                assert_eq!(state, Some(ChannelBindingState::ExactUriSan));
+                assert!(violations.is_empty(), "exact refused: {violations:?}");
+            } else {
+                assert!(state.is_none(), "{kind:?} became a validated state");
+                assert!(
+                    !violations.is_empty(),
+                    "{kind:?} named no state and said nothing about why"
+                );
+            }
+        }
+    }
+
+    /// Attested ingress is refused by name. It is the one mode whose refusal is a decision
+    /// about what an attestor may assert versus authorize, so losing it silently would put
+    /// a deployment in a mode nothing else in the file rejects.
+    #[test]
+    fn attested_ingress_is_refused_by_name_rather_than_passed_over() {
+        let (state, violations) = binding(|c| c.binding = BindingKind::AttestedIngress);
+        assert!(state.is_none(), "attested ingress became a validated state");
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("attested-ingress is not a supported deployment mode")),
+            "{violations:?}"
+        );
     }
 
     #[test]
@@ -489,32 +618,29 @@ mod tests {
     #[test]
     fn every_legal_crl_state_form_is_classified_and_accepted() {
         let cases: Vec<Form> = vec![
-            (CrlRevocationState::None, |_| {}),
+            ((Vec::new(), None), |_| {}),
             (
-                CrlRevocationState::Static {
-                    paths: vec!["/crl.pem".to_string()],
-                },
+                (vec!["/crl.pem".to_string()], None),
                 |c: &mut DeploymentRequest| {
                     c.client_crl_paths = vec!["/crl.pem".to_string()];
                 },
             ),
             (
-                CrlRevocationState::Reloading {
-                    paths: vec!["/crl.pem".to_string()],
-                    cadence_secs: 300,
-                },
+                (vec!["/crl.pem".to_string()], Some(300)),
                 |c: &mut DeploymentRequest| {
                     c.client_crl_paths = vec!["/crl.pem".to_string()];
                     c.client_crl_reload_secs = Some(300);
                 },
             ),
         ];
-        for (expected, mutate) in cases {
+        for ((paths, cadence), mutate) in cases {
             let (state, violations) = crl(mutate);
-            assert_eq!(state, expected);
+            assert_eq!(state.paths(), paths.as_slice());
+            assert_eq!(state.reload_cadence_secs(), cadence);
+            assert_eq!(state.is_enforced(), !paths.is_empty());
             assert!(
                 violations.is_empty(),
-                "{expected:?} refused: {violations:?}"
+                "{paths:?}/{cadence:?} refused: {violations:?}"
             );
         }
     }
@@ -533,9 +659,8 @@ mod tests {
             vec!["/crl.pem".to_string(), String::new()],
         ] {
             let (state, violations) = crl(|c| c.client_crl_paths = paths.clone());
-            assert_ne!(
-                state,
-                CrlRevocationState::None,
+            assert!(
+                state.is_enforced(),
                 "{paths:?} classified as no CRL control at all, which would hide the defect"
             );
             assert!(
@@ -560,7 +685,7 @@ mod tests {
     #[test]
     fn a_cadence_with_no_list_to_re_read_is_refused() {
         let (state, violations) = crl(|c| c.client_crl_reload_secs = Some(300));
-        assert_eq!(state, CrlRevocationState::None);
+        assert!(!state.is_enforced());
         assert!(
             violations
                 .iter()

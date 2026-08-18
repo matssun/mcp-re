@@ -26,11 +26,22 @@ use crate::deployment_request::DeploymentRequest;
 
 /// Which continuation-control state a configuration requests.
 ///
-/// `Redis` carries its locator. As with the CRL machine, presence IS the classification
-/// here — the locator's presence is what makes the state `Redis` — so the state cannot
-/// exist without the value that selected it and no fallible build step is needed.
+/// The representation is private to this module. [`classify_and_validate`] is the only
+/// producer, so possessing this state IS the statement that the locator it carries was
+/// checked for shape. As with the CRL machine, presence IS the classification — the
+/// locator's presence is what makes the state shared — so the state cannot exist without
+/// the value that selected it and no fallible build step is needed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ContinuationControlState {
+pub struct ContinuationControlState {
+    kind: ContinuationKind,
+}
+
+/// The two states, as the owner's own representation.
+///
+/// Private to this module: every consumer of this state lives in this crate, so a `pub`
+/// variant would be constructible by all of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ContinuationKind {
     /// No shared store. Multi-round-trip flows are single-replica; a cross-replica answer
     /// is refused at the binding.
     Disabled,
@@ -44,17 +55,61 @@ pub enum ContinuationControlState {
 impl ContinuationControlState {
     /// Whether a shared continuation store is requested.
     pub fn is_shared(&self) -> bool {
-        matches!(self, Self::Redis { .. })
+        matches!(self.kind, ContinuationKind::Redis { .. })
+    }
+
+    /// What establishing continuation control requires, as this owner states it.
+    ///
+    /// The projection replaces a match on the representation performed in planning.
+    /// Whether a deployment resolves flows across replicas, and which store it does that
+    /// with, is this machine's semantics; a planner that re-read the locator would be a
+    /// second authority over the same question.
+    pub fn continuation_plan(&self) -> ContinuationControlPlan {
+        match &self.kind {
+            ContinuationKind::Disabled => ContinuationControlPlan { store: None },
+            ContinuationKind::Redis { endpoint } => ContinuationControlPlan {
+                store: Some(endpoint.clone()),
+            },
+        }
+    }
+}
+
+/// Whether multi-round-trip flows resolve across replicas, and at which store.
+///
+/// Produced only by [`ContinuationControlState::continuation_plan`]. The endpoint is
+/// private, so no consumer can name a continuation store the configuration did not.
+///
+/// The endpoint is the continuation store's OWN. It is not the replay store's, even when
+/// an operator points both at the same Redis (CF-12).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContinuationControlPlan {
+    store: Option<String>,
+}
+
+impl ContinuationControlPlan {
+    /// The shared store to establish, or `None` when flows resolve on the replica that
+    /// opened them.
+    pub fn shared_store(&self) -> Option<&str> {
+        self.store.as_deref()
+    }
+
+    /// Whether establishing this plan needs the shared control runtime.
+    ///
+    /// One contributor to the aggregate — never the decision itself.
+    pub fn needs_control_runtime(&self) -> bool {
+        cfg!(feature = "redis_replay") && self.store.is_some()
     }
 }
 
 /// Recognise the requested state. Total: presence of the locator IS the request.
 fn classify(config: &DeploymentRequest) -> ContinuationControlState {
-    match &config.continuation_control_redis_url {
-        Some(endpoint) => ContinuationControlState::Redis {
-            endpoint: endpoint.clone(),
+    ContinuationControlState {
+        kind: match &config.continuation_control_redis_url {
+            Some(endpoint) => ContinuationKind::Redis {
+                endpoint: endpoint.clone(),
+            },
+            None => ContinuationKind::Disabled,
         },
-        None => ContinuationControlState::Disabled,
     }
 }
 
@@ -93,17 +148,16 @@ mod tests {
     #[test]
     fn every_legal_state_form_is_classified_and_accepted() {
         let (state, violations) = run(|_| {});
-        assert_eq!(state, ContinuationControlState::Disabled);
+        assert!(!state.is_shared());
+        assert_eq!(state.continuation_plan().shared_store(), None);
         assert!(violations.is_empty(), "{violations:?}");
 
         let (state, violations) = run(|c| {
             c.continuation_control_redis_url = Some("redis://127.0.0.1:6379".to_string());
         });
         assert_eq!(
-            state,
-            ContinuationControlState::Redis {
-                endpoint: "redis://127.0.0.1:6379".to_string()
-            }
+            state.continuation_plan().shared_store(),
+            Some("redis://127.0.0.1:6379")
         );
         assert!(violations.is_empty(), "{violations:?}");
         assert!(state.is_shared());
@@ -114,7 +168,8 @@ mod tests {
     #[test]
     fn disabled_is_a_state_and_not_a_missing_value() {
         let (state, violations) = run(|c| c.continuation_control_redis_url = None);
-        assert_eq!(state, ContinuationControlState::Disabled);
+        assert!(!state.is_shared());
+        assert_eq!(state.continuation_plan().shared_store(), None);
         assert!(
             violations.is_empty(),
             "absence must not be reported as a defect: {violations:?}"
@@ -145,17 +200,19 @@ mod tests {
                 c.replay_durability_tier = Some(crate::ReplayDurabilityTier::Linearizable);
                 shared(c);
             })
-            .0,
-            ContinuationControlState::Redis {
-                endpoint: "redis://127.0.0.1:6379".to_string()
-            }
+            .0
+            .continuation_plan()
+            .shared_store(),
+            Some("redis://127.0.0.1:6379")
         );
         assert_eq!(
             run(|c| {
                 c.replay_redis_url = Some("redis://127.0.0.1:6379".to_string());
             })
-            .0,
-            ContinuationControlState::Disabled,
+            .0
+            .continuation_plan()
+            .shared_store(),
+            None,
             "the replay store's URL must no longer switch this machine on"
         );
     }

@@ -182,6 +182,16 @@ scope = """
 Says nothing about the degraded path, and nothing about the assertion's authenticity or
 freshness (ASM-0012). Currency is generation equality against the state the enforcement
 point holds; the theorem does not establish that that state is itself current.
+
+It also does not establish that the state handed in is the state FOR THIS WORKLOAD.
+`AuthoritativeAdmission` carries a generation and a status and no workload identity, so
+the proof quantifies over whatever record the caller supplied. Generations are small
+integers and collide across workloads by construction. The security consequence above
+therefore rests on a caller obligation this claim does not discharge: the enforcement
+point must look the record up under the very `binding.admission_id` that was checked. The
+serving path satisfies it today at `http_profile_serve.rs:600`, which passes
+`&binding.admission_id` to `AsyncAdmissionSource::current`; nothing in the type forbids a
+future caller from deriving that id from a header, a session field, or a cache instead.
 """
 owner = "http_profile.admission_currency"
 review_requirement = "Owner security-specification review"

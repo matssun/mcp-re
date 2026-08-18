@@ -187,11 +187,45 @@ mod tests {
         }
     }
 
-    /// Whitespace is emptiness here: a coordinate of spaces distinguishes nothing.
+    /// Whitespace is emptiness here: a coordinate of spaces distinguishes nothing, and the
+    /// refusal names the flag rather than leaving the absence unexplained.
     #[test]
-    fn a_whitespace_coordinate_is_empty() {
+    fn a_whitespace_coordinate_is_empty_and_names_itself() {
+        for (flag, mutate) in [
+            (
+                "--trust-domain",
+                Box::new(|c: &mut DeploymentRequest| c.trust_domain = "   ".to_string())
+                    as Box<dyn FnOnce(&mut DeploymentRequest)>,
+            ),
+            (
+                "--server-signer",
+                Box::new(|c: &mut DeploymentRequest| c.server_signer = "\t \n".to_string()),
+            ),
+        ] {
+            let mut config = legal_config();
+            mutate(&mut config);
+            let (identity, violations) = facts(&config);
+            assert!(identity.is_none(), "{flag}: an identity was built anyway");
+            assert!(
+                violations.iter().any(|v| v.contains(flag)),
+                "{flag}: not named in {violations:?}"
+            );
+        }
+    }
+
+    /// One pass, not one offender: the coordinates are reported independently.
+    ///
+    /// A request missing both gets both messages. An implementation that stopped at the
+    /// first empty coordinate would hide the second until the operator fixed the first.
+    #[test]
+    fn a_request_missing_both_coordinates_reports_both_in_one_pass() {
         let mut config = legal_config();
-        config.trust_domain = "   ".to_string();
-        assert!(facts(&config).0.is_none());
+        config.trust_domain = String::new();
+        config.server_signer = "   ".to_string();
+        let (identity, violations) = facts(&config);
+        assert!(identity.is_none());
+        assert_eq!(violations.len(), 2, "{violations:?}");
+        assert!(violations[0].contains("--trust-domain"), "{violations:?}");
+        assert!(violations[1].contains("--server-signer"), "{violations:?}");
     }
 }

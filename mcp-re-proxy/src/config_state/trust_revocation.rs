@@ -46,8 +46,17 @@ use std::num::NonZeroU64;
 /// between re-reads, so a zero one re-reads `--trust` and rebuilds the signer directory
 /// continuously. The rule and the type are the same fact — the type may encode the
 /// invariant because the legality model states it, not instead of it.
+/// The representation is private to this module. [`classify_and_validate`] is the only
+/// producer, so possessing this state IS the statement that its witnesses were checked
+/// against the tier that requires them.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TrustRevocationState {
+pub struct TrustRevocationState {
+    kind: RevocationKind,
+}
+
+/// The four states, as the owner's own representation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RevocationKind {
     /// Tier 1 — cached active trust state lives at most `t_secs`.
     BoundedCache {
         /// The declared trust-propagation window.
@@ -86,6 +95,30 @@ pub enum TrustRevocationState {
         /// cannot tell whether an operator named it.
         epoch_key: String,
     },
+}
+
+/// Where the trust epoch counter lives, as a borrowed view of the state that carries one.
+///
+/// The locator and the key are handed over TOGETHER because they were validated together
+/// and are meaningless apart: a counter read from the right store under the wrong key
+/// reports an epoch that never advances, which is a revocation channel that silently
+/// stops revoking. Borrowed, so it reads a state without being able to assemble one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EpochSource<'a> {
+    url: &'a str,
+    key: &'a str,
+}
+
+impl<'a> EpochSource<'a> {
+    /// Where the epoch counter lives.
+    pub fn url(&self) -> &'a str {
+        self.url
+    }
+
+    /// Which key holds the counter, already resolved against the default.
+    pub fn key(&self) -> &'a str {
+        self.key
+    }
 }
 
 /// Which state the request most nearly names, before its witnesses are known to be present.
@@ -128,7 +161,26 @@ impl TrustRevocationState {
     /// The one question both `TrustPlan` and `SigningPlan` ask, answered from the
     /// classification rather than by re-reading the URL on each plane (CF-09).
     pub fn has_networked_epoch(&self) -> bool {
-        matches!(self, Self::PushNetworked { .. })
+        matches!(self.kind, RevocationKind::PushNetworked { .. })
+    }
+
+    /// Where the epoch counter lives, or `None` when this state has no networked source.
+    ///
+    /// The projection replaces a match on the representation performed in planning. Both
+    /// halves of the locator come back as one value, so no consumer can pair this
+    /// deployment's store with another deployment's key.
+    pub fn epoch_source(&self) -> Option<EpochSource<'_>> {
+        match &self.kind {
+            RevocationKind::PushNetworked {
+                epoch_url,
+                epoch_key,
+                ..
+            } => Some(EpochSource {
+                url: epoch_url,
+                key: epoch_key,
+            }),
+            _ => None,
+        }
     }
 
     /// The declared tier, as the resolver builder's own type.
@@ -139,10 +191,13 @@ impl TrustRevocationState {
     /// re-read the flag instead would be free to disagree with the state that was
     /// classified (CF-10).
     pub fn tier(&self) -> RevocationTier {
-        match self {
-            Self::BoundedCache { t_secs, .. } => RevocationTier::BoundedCache { t_secs: *t_secs },
-            Self::Live { .. } => RevocationTier::Live,
-            Self::PushInert { t_secs, .. } | Self::PushNetworked { t_secs, .. } => {
+        match &self.kind {
+            RevocationKind::BoundedCache { t_secs, .. } => {
+                RevocationTier::BoundedCache { t_secs: *t_secs }
+            }
+            RevocationKind::Live { .. } => RevocationTier::Live,
+            RevocationKind::PushInert { t_secs, .. }
+            | RevocationKind::PushNetworked { t_secs, .. } => {
                 RevocationTier::Push { t_secs: *t_secs }
             }
         }
@@ -154,17 +209,34 @@ impl TrustRevocationState {
     /// thing to SAY at startup — so it is named here rather than inferred at the surface
     /// from a channel that came back absent.
     pub fn push_channel_is_inert(&self) -> bool {
-        matches!(self, Self::PushInert { .. })
+        matches!(self.kind, RevocationKind::PushInert { .. })
+    }
+
+    /// How often `--trust` is re-read, or `None` when the state's claim holds without a
+    /// re-read.
+    ///
+    /// The projection replaces a match over three reload-bearing variants performed in
+    /// planning. Which states require a cadence, and which one may legally omit it, is this
+    /// machine's rule — a planner re-deciding it could project a reload-bearing state to
+    /// read-once and contradict a tier whose whole claim is that the store is re-read.
+    /// Layer A normalized the optional cadence, so there is no `Some(0)` left to filter.
+    pub fn reload_cadence(&self) -> Option<NonZeroU64> {
+        match &self.kind {
+            RevocationKind::Live { reload_secs }
+            | RevocationKind::PushInert { reload_secs, .. }
+            | RevocationKind::PushNetworked { reload_secs, .. } => Some(*reload_secs),
+            RevocationKind::BoundedCache { reload_secs, .. } => *reload_secs,
+        }
     }
 
     /// The window the state claims, in seconds — `None` for `Live`, whose claim is
     /// near-zero rather than a bound.
     pub fn declared_window_secs(&self) -> Option<i64> {
-        match self {
-            Self::Live { .. } => None,
-            Self::BoundedCache { t_secs, .. }
-            | Self::PushInert { t_secs, .. }
-            | Self::PushNetworked { t_secs, .. } => Some(*t_secs),
+        match &self.kind {
+            RevocationKind::Live { .. } => None,
+            RevocationKind::BoundedCache { t_secs, .. }
+            | RevocationKind::PushInert { t_secs, .. }
+            | RevocationKind::PushNetworked { t_secs, .. } => Some(*t_secs),
         }
     }
 }
@@ -197,28 +269,30 @@ fn build(requested: RequestedState, config: &DeploymentRequest) -> Option<TrustR
         None => None,
         Some(secs) => Some(NonZeroU64::new(secs)?),
     };
-    Some(match requested {
-        RequestedState::BoundedCache { t_secs } => TrustRevocationState::BoundedCache {
-            t_secs,
-            reload_secs: cadence,
-        },
-        RequestedState::Live => TrustRevocationState::Live {
-            reload_secs: cadence?,
-        },
-        RequestedState::PushInert { t_secs } => TrustRevocationState::PushInert {
-            t_secs,
-            reload_secs: cadence?,
-        },
-        RequestedState::PushNetworked { t_secs } => TrustRevocationState::PushNetworked {
-            t_secs,
-            reload_secs: cadence?,
-            epoch_url: config.trust_epoch_redis_url.clone()?,
-            // The default belongs to this machine, so it is applied here and nothing
-            // downstream can tell an omitted key from a named one.
-            epoch_key: config
-                .trust_epoch_key
-                .clone()
-                .unwrap_or_else(|| crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY.to_string()),
+    Some(TrustRevocationState {
+        kind: match requested {
+            RequestedState::BoundedCache { t_secs } => RevocationKind::BoundedCache {
+                t_secs,
+                reload_secs: cadence,
+            },
+            RequestedState::Live => RevocationKind::Live {
+                reload_secs: cadence?,
+            },
+            RequestedState::PushInert { t_secs } => RevocationKind::PushInert {
+                t_secs,
+                reload_secs: cadence?,
+            },
+            RequestedState::PushNetworked { t_secs } => RevocationKind::PushNetworked {
+                t_secs,
+                reload_secs: cadence?,
+                epoch_url: config.trust_epoch_redis_url.clone()?,
+                // The default belongs to this machine, so it is applied here and nothing
+                // downstream can tell an omitted key from a named one.
+                epoch_key: config
+                    .trust_epoch_key
+                    .clone()
+                    .unwrap_or_else(|| crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY.to_string()),
+            },
         },
     })
 }
@@ -359,6 +433,12 @@ pub const MAX_NEAR_ZERO_TRUST_RELOAD_SECS: u64 = 60;
 
 #[cfg(test)]
 mod tests {
+    /// Build a state from the owner's own representation. In-module only: outside this
+    /// module a state is obtainable solely from `classify_and_validate`.
+    fn state(kind: RevocationKind) -> TrustRevocationState {
+        TrustRevocationState { kind }
+    }
+
     use super::*;
     use crate::config_state::test_support::legal_config;
 
@@ -423,9 +503,9 @@ mod tests {
                 c.revocation_tier = RevocationTier::Live;
                 c.trust_reload_secs = Some(1);
             }),
-            TrustRevocationState::Live {
+            state(RevocationKind::Live {
                 reload_secs: TrustRevocationState::cadence(1)
-            }
+            })
         );
     }
 
@@ -452,51 +532,51 @@ mod tests {
     fn every_legal_state_form_is_classified_and_accepted() {
         let cases: Vec<LegalForm> = vec![
             (
-                TrustRevocationState::BoundedCache {
+                state(RevocationKind::BoundedCache {
                     t_secs: 60,
                     reload_secs: None,
-                },
+                }),
                 Box::new(|c: &mut DeploymentRequest| {
                     c.revocation_tier = RevocationTier::BoundedCache { t_secs: 60 };
                     c.trust_reload_secs = None;
                 }),
             ),
             (
-                TrustRevocationState::BoundedCache {
+                state(RevocationKind::BoundedCache {
                     t_secs: 60,
                     reload_secs: Some(TrustRevocationState::cadence(60)),
-                },
+                }),
                 Box::new(|c: &mut DeploymentRequest| {
                     c.revocation_tier = RevocationTier::BoundedCache { t_secs: 60 };
                     c.trust_reload_secs = Some(60);
                 }),
             ),
             (
-                TrustRevocationState::Live {
+                state(RevocationKind::Live {
                     reload_secs: crate::config_state::TrustRevocationState::cadence(5),
-                },
+                }),
                 Box::new(|c: &mut DeploymentRequest| {
                     c.revocation_tier = RevocationTier::Live;
                     c.trust_reload_secs = Some(5);
                 }),
             ),
             (
-                TrustRevocationState::PushInert {
+                state(RevocationKind::PushInert {
                     t_secs: 30,
                     reload_secs: crate::config_state::TrustRevocationState::cadence(30),
-                },
+                }),
                 Box::new(|c: &mut DeploymentRequest| {
                     c.revocation_tier = RevocationTier::Push { t_secs: 30 };
                     c.trust_reload_secs = Some(30);
                 }),
             ),
             (
-                TrustRevocationState::PushNetworked {
+                state(RevocationKind::PushNetworked {
                     t_secs: 30,
                     reload_secs: crate::config_state::TrustRevocationState::cadence(30),
                     epoch_url: "redis://127.0.0.1:6379".to_string(),
                     epoch_key: "mcp-re:trust:epoch".to_string(),
-                },
+                }),
                 Box::new(|c: &mut DeploymentRequest| {
                     c.revocation_tier = RevocationTier::Push { t_secs: 30 };
                     c.trust_reload_secs = Some(30);
@@ -546,48 +626,48 @@ mod tests {
     fn the_state_projects_back_to_the_tier_the_resolver_is_built_from() {
         for (state, expected) in [
             (
-                TrustRevocationState::BoundedCache {
+                state(RevocationKind::BoundedCache {
                     t_secs: 60,
                     reload_secs: None,
-                },
+                }),
                 RevocationTier::BoundedCache { t_secs: 60 },
             ),
             (
-                TrustRevocationState::Live {
+                state(RevocationKind::Live {
                     reload_secs: crate::config_state::TrustRevocationState::cadence(5),
-                },
+                }),
                 RevocationTier::Live,
             ),
             (
-                TrustRevocationState::PushInert {
+                state(RevocationKind::PushInert {
                     t_secs: 30,
                     reload_secs: crate::config_state::TrustRevocationState::cadence(5),
-                },
+                }),
                 RevocationTier::Push { t_secs: 30 },
             ),
             (
-                TrustRevocationState::PushNetworked {
+                state(RevocationKind::PushNetworked {
                     t_secs: 30,
                     reload_secs: crate::config_state::TrustRevocationState::cadence(5),
                     epoch_url: "redis://127.0.0.1:6379".to_string(),
                     epoch_key: "mcp-re:trust:epoch".to_string(),
-                },
+                }),
                 RevocationTier::Push { t_secs: 30 },
             ),
         ] {
             assert_eq!(state.tier(), expected, "{state:?}");
         }
-        assert!(TrustRevocationState::PushInert {
+        assert!(state(RevocationKind::PushInert {
             t_secs: 30,
             reload_secs: crate::config_state::TrustRevocationState::cadence(5)
-        }
+        })
         .push_channel_is_inert());
-        assert!(!TrustRevocationState::PushNetworked {
+        assert!(!state(RevocationKind::PushNetworked {
             t_secs: 30,
             reload_secs: crate::config_state::TrustRevocationState::cadence(5),
             epoch_url: "redis://127.0.0.1:6379".to_string(),
             epoch_key: "mcp-re:trust:epoch".to_string()
-        }
+        })
         .push_channel_is_inert());
     }
 
