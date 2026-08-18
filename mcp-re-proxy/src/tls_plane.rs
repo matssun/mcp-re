@@ -378,11 +378,7 @@ impl TlsPlane {
         // set states a control the deployment does not have). The same shape as
         // `ReplayPlan::Memory` — a branch that survived because nothing had ever asked
         // whether a configuration could reach it.
-        if let crate::startup_plan::ClientRevocationPlan::Reloading {
-            paths: _,
-            cadence_secs,
-        } = &plan.client_revocation
-        {
+        if let Some(cadence_secs) = plan.client_revocation.reload_cadence_secs() {
             let custody = material.label();
             spawn_crl_reload_task(
                 &mut workers,
@@ -391,7 +387,7 @@ impl TlsPlane {
                     server_chain: reload_chain,
                     material,
                     crl_paths: reload_crl_paths,
-                    interval_secs: *cadence_secs,
+                    interval_secs: cadence_secs,
                     revocation: revocation.clone(),
                     rebuild_state: Arc::clone(&rebuild_state),
                 },
@@ -705,24 +701,21 @@ pub(crate) fn revocation_posture_lines(
 /// falling through to another's sentence is exactly how an operator gets a number that
 /// nothing enforces.
 pub fn fleet_crl_bound(plan: &crate::startup_plan::TlsPlan) -> String {
-    use crate::startup_plan::ClientRevocationPlan;
-    match &plan.client_revocation {
-        ClientRevocationPlan::None => {
-            let window = plan
-                .max_client_cert_lifetime
-                .map(|d| format!("{}s", d.as_secs()))
-                .unwrap_or_else(|| "unbounded".to_string());
-            format!("short-lived-cert only (exposure_window {window}); no client CRL")
-        }
-        ClientRevocationPlan::Reloading { cadence_secs, .. } => format!(
+    if !plan.client_revocation.is_enforced() {
+        let window = plan
+            .max_client_cert_lifetime
+            .map(|d| format!("{}s", d.as_secs()))
+            .unwrap_or_else(|| "unbounded".to_string());
+        return format!("short-lived-cert only (exposure_window {window}); no client CRL");
+    }
+    match plan.client_revocation.reload_cadence_secs() {
+        Some(cadence_secs) => format!(
             "bounded {cadence_secs}s (the --client-crl-reload-secs cadence), enforced per \
              request on established connections as well as at the handshake"
         ),
-        ClientRevocationPlan::Static { .. } => {
-            "the CRL nextUpdate / a restart (no --client-crl-reload-secs) — a fleet's \
+        None => "the CRL nextUpdate / a restart (no --client-crl-reload-secs) — a fleet's \
              CRL-rollout window"
-                .to_string()
-        }
+            .to_string(),
     }
 }
 
@@ -817,7 +810,7 @@ mod handle_lifetime_tests {
 mod revocation_posture_tests {
     use super::revocation_posture_lines;
     use super::ClientCrlEvidence;
-    use crate::startup_plan::{ClientRevocationPlan, TlsPlan};
+    use crate::startup_plan::TlsPlan;
     use crate::tls::CrlPosture;
 
     /// A plan with no CRLs and the given client-cert lifetime.
@@ -830,7 +823,7 @@ mod revocation_posture_tests {
             custody: crate::config_state::TlsCustodyState::Exported {
                 key_path: "/key".to_string(),
             },
-            client_revocation: ClientRevocationPlan::None,
+            client_revocation: crate::config_state::test_support::crl_plan(&[], None),
             max_client_cert_lifetime,
             max_connection_age: Some(std::time::Duration::from_secs(300)),
         }
@@ -934,7 +927,7 @@ mod revocation_posture_tests {
 #[cfg(test)]
 mod custody_agreement_tests {
     use super::*;
-    use crate::startup_plan::{ClientRevocationPlan, TlsPlan};
+    use crate::startup_plan::TlsPlan;
 
     fn exported_material() -> TlsKeyMaterial {
         use rustls::pki_types::PrivateKeyDer;
@@ -948,7 +941,7 @@ mod custody_agreement_tests {
     fn plan(custody: crate::config_state::TlsCustodyState) -> TlsPlan {
         TlsPlan {
             custody,
-            client_revocation: ClientRevocationPlan::None,
+            client_revocation: crate::config_state::test_support::crl_plan(&[], None),
             max_client_cert_lifetime: None,
             max_connection_age: None,
         }
@@ -1113,13 +1106,13 @@ mod trust_epoch_binding_tests {
 #[cfg(test)]
 mod fleet_crl_bound_tests {
     use super::fleet_crl_bound;
-    use crate::startup_plan::{ClientRevocationPlan, TlsPlan};
+    use crate::startup_plan::TlsPlan;
 
     /// A plan in the posture under test. The postures are enumerated as VARIANTS, so a
     /// combination layer A refuses — a cadence with no CRLs — cannot be written here at
     /// all. The old `(has_crls, lifetime, cadence)` triple could name it, and did.
     fn plan(
-        client_revocation: ClientRevocationPlan,
+        client_revocation: crate::startup_plan::ClientRevocationPlan,
         max_client_cert_lifetime: Option<std::time::Duration>,
     ) -> TlsPlan {
         TlsPlan {
@@ -1132,16 +1125,12 @@ mod fleet_crl_bound_tests {
         }
     }
 
-    fn crl_paths() -> Vec<String> {
-        vec!["/crl.pem".to_string()]
-    }
-
     /// With no CRL the ONLY bound is the certificate lifetime, and the line has to say so
     /// rather than imply a revocation mechanism exists.
     #[test]
     fn without_a_crl_the_bound_is_the_certificate_lifetime() {
         let bound = fleet_crl_bound(&plan(
-            ClientRevocationPlan::None,
+            crate::config_state::test_support::crl_plan(&[], None),
             Some(std::time::Duration::from_secs(3600)),
         ));
         assert!(bound.contains("exposure_window 3600s"), "got: {bound}");
@@ -1153,7 +1142,10 @@ mod fleet_crl_bound_tests {
     /// appears in a transcript, it names the thing that should have been impossible.
     #[test]
     fn a_disabled_lifetime_renders_as_unbounded_not_as_a_number() {
-        let bound = fleet_crl_bound(&plan(ClientRevocationPlan::None, None));
+        let bound = fleet_crl_bound(&plan(
+            crate::config_state::test_support::crl_plan(&[], None),
+            None,
+        ));
         assert!(bound.contains("exposure_window unbounded"), "got: {bound}");
     }
 
@@ -1164,10 +1156,7 @@ mod fleet_crl_bound_tests {
     #[test]
     fn a_reload_cadence_bounds_established_connections_not_only_handshakes() {
         let bound = fleet_crl_bound(&plan(
-            ClientRevocationPlan::Reloading {
-                paths: crl_paths(),
-                cadence_secs: 300,
-            },
+            crate::config_state::test_support::crl_plan(&["/crl.pem"], Some(300)),
             None,
         ));
         assert!(bound.contains("bounded 300s"), "got: {bound}");
@@ -1182,7 +1171,7 @@ mod fleet_crl_bound_tests {
     #[test]
     fn without_a_cadence_the_bound_is_the_crls_own_expiry() {
         let bound = fleet_crl_bound(&plan(
-            ClientRevocationPlan::Static { paths: crl_paths() },
+            crate::config_state::test_support::crl_plan(&["/crl.pem"], None),
             Some(std::time::Duration::from_secs(60)),
         ));
         assert!(bound.contains("nextUpdate"), "got: {bound}");

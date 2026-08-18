@@ -45,29 +45,84 @@ pub enum ChannelBindingState {
     ExactDnsSan,
 }
 
-/// Offline client-certificate revocation.
+/// Which client-CRL posture a configuration requests.
 ///
-/// Each state carries what inhabiting it requires. No `Option` is involved and no build
-/// step is needed, because here presence IS the classification: a non-empty CRL set is
-/// what makes the state `Static` rather than `None`, and a cadence beside it is what makes
-/// it `Reloading`. A state cannot exist without the value that selected it.
+/// The representation is private to this module and [`classify_and_validate`] is the only
+/// producer. A CRL-bearing state carries the files that put it in that state, and the
+/// reloading state carries the cadence that distinguishes it from the static one.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CrlRevocationState {
-    /// No CRLs — revocation rests entirely on the client-certificate lifetime ceiling.
-    None,
-    /// CRLs loaded once at startup.
-    Static {
-        /// The CRL files. Non-empty: an empty set is what `None` means.
-        paths: Vec<String>,
-    },
-    /// CRLs re-read on a cadence, so a revocation published after startup takes effect.
-    Reloading {
-        /// The CRL files. Non-empty, as for `Static`.
-        paths: Vec<String>,
-        /// How often they are re-read. Its presence is what distinguishes this from
-        /// `Static`, so the state that has one carries it.
-        cadence_secs: u64,
-    },
+pub struct CrlRevocationState {
+    /// The CRL files. Empty is exactly what "no CRLs" means, so the posture and the set
+    /// cannot disagree.
+    paths: Vec<String>,
+    /// Seconds between re-reads, where the operator asked for them. Layer A holds it above
+    /// zero and refuses it beside an empty set (CF-04).
+    cadence_secs: Option<u64>,
+}
+
+impl CrlRevocationState {
+    /// The files to read, empty where the posture reads none.
+    ///
+    /// For materialization, which loads the same bytes under both CRL-bearing postures.
+    pub fn paths(&self) -> &[String] {
+        &self.paths
+    }
+
+    /// Seconds between re-reads, or `None` when the CRLs are read once at startup.
+    pub fn reload_cadence_secs(&self) -> Option<u64> {
+        self.cadence_secs
+    }
+
+    /// Whether any CRL is consulted at all.
+    ///
+    /// Revocation rests on the client-certificate lifetime ceiling alone when it is not —
+    /// a posture rather than an absence, see [`crate::tls_plane::fleet_crl_bound`].
+    pub fn is_enforced(&self) -> bool {
+        !self.paths.is_empty()
+    }
+
+    /// What the TLS plane must establish for client revocation, as this owner states it.
+    ///
+    /// The projection replaces a match on the representation performed in planning.
+    pub fn client_revocation_plan(&self) -> ClientRevocationPlan {
+        ClientRevocationPlan {
+            paths: self.paths.clone(),
+            cadence_secs: self.cadence_secs,
+        }
+    }
+}
+
+/// What the TLS plane establishes for client revocation.
+///
+/// Produced only by [`CrlRevocationState::client_revocation_plan`]. The files and the
+/// cadence are private and set together, so no consumer can plan a re-read cadence over a
+/// set of files the deployment did not configure — the combination CF-04 refuses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientRevocationPlan {
+    paths: Vec<String>,
+    cadence_secs: Option<u64>,
+}
+
+impl ClientRevocationPlan {
+    /// The files to read, empty where the posture reads none.
+    pub fn paths(&self) -> &[String] {
+        &self.paths
+    }
+
+    /// Seconds between re-reads, or `None` when the CRLs are read once at startup.
+    ///
+    /// `Some` is the reloading posture: a revocation published after startup takes effect
+    /// within the cadence, on established connections as well as at the handshake. `None`
+    /// with files is the static posture, bounded by the CRL's own `nextUpdate` or a
+    /// restart. `None` with no files is no CRL at all.
+    pub fn reload_cadence_secs(&self) -> Option<u64> {
+        self.cadence_secs
+    }
+
+    /// Whether any CRL is consulted at all.
+    pub fn is_enforced(&self) -> bool {
+        !self.paths.is_empty()
+    }
 }
 
 /// Recognise the channel-binding state, or say why the request names none.
@@ -147,16 +202,14 @@ pub fn classify_and_validate_binding(
 /// Recognise the CRL-revocation state. Total: the two fields name one.
 fn classify_crl(config: &DeploymentRequest) -> CrlRevocationState {
     if config.client_crl_paths.is_empty() {
-        CrlRevocationState::None
-    } else if let Some(cadence_secs) = config.client_crl_reload_secs {
-        CrlRevocationState::Reloading {
-            paths: config.client_crl_paths.clone(),
-            cadence_secs,
-        }
-    } else {
-        CrlRevocationState::Static {
-            paths: config.client_crl_paths.clone(),
-        }
+        return CrlRevocationState {
+            paths: Vec::new(),
+            cadence_secs: None,
+        };
+    }
+    CrlRevocationState {
+        paths: config.client_crl_paths.clone(),
+        cadence_secs: config.client_crl_reload_secs,
     }
 }
 
@@ -188,7 +241,7 @@ pub fn classify_and_validate_crl(config: &DeploymentRequest) -> (CrlRevocationSt
     }
     // Forbidden on `None`: a cadence names how often to re-read a set that is empty, so its
     // presence states a control the deployment does not have.
-    if state == CrlRevocationState::None && config.client_crl_reload_secs.is_some() {
+    if !state.is_enforced() && config.client_crl_reload_secs.is_some() {
         violations.push(
             "--client-crl-reload-secs has no effect without --client-crl: there is no \
              revocation list to re-read, so no revocation is enforced on either cadence"
@@ -450,7 +503,7 @@ mod tests {
     }
 
     /// A state this machine must recognise, and how to request it.
-    type Form = (CrlRevocationState, fn(&mut DeploymentRequest));
+    type Form = ((Vec<String>, Option<u64>), fn(&mut DeploymentRequest));
 
     fn crl(mutate: impl FnOnce(&mut DeploymentRequest)) -> (CrlRevocationState, Vec<String>) {
         let mut config = legal_config();
@@ -565,32 +618,29 @@ mod tests {
     #[test]
     fn every_legal_crl_state_form_is_classified_and_accepted() {
         let cases: Vec<Form> = vec![
-            (CrlRevocationState::None, |_| {}),
+            ((Vec::new(), None), |_| {}),
             (
-                CrlRevocationState::Static {
-                    paths: vec!["/crl.pem".to_string()],
-                },
+                (vec!["/crl.pem".to_string()], None),
                 |c: &mut DeploymentRequest| {
                     c.client_crl_paths = vec!["/crl.pem".to_string()];
                 },
             ),
             (
-                CrlRevocationState::Reloading {
-                    paths: vec!["/crl.pem".to_string()],
-                    cadence_secs: 300,
-                },
+                (vec!["/crl.pem".to_string()], Some(300)),
                 |c: &mut DeploymentRequest| {
                     c.client_crl_paths = vec!["/crl.pem".to_string()];
                     c.client_crl_reload_secs = Some(300);
                 },
             ),
         ];
-        for (expected, mutate) in cases {
+        for ((paths, cadence), mutate) in cases {
             let (state, violations) = crl(mutate);
-            assert_eq!(state, expected);
+            assert_eq!(state.paths(), paths.as_slice());
+            assert_eq!(state.reload_cadence_secs(), cadence);
+            assert_eq!(state.is_enforced(), !paths.is_empty());
             assert!(
                 violations.is_empty(),
-                "{expected:?} refused: {violations:?}"
+                "{paths:?}/{cadence:?} refused: {violations:?}"
             );
         }
     }
@@ -609,9 +659,8 @@ mod tests {
             vec!["/crl.pem".to_string(), String::new()],
         ] {
             let (state, violations) = crl(|c| c.client_crl_paths = paths.clone());
-            assert_ne!(
-                state,
-                CrlRevocationState::None,
+            assert!(
+                state.is_enforced(),
                 "{paths:?} classified as no CRL control at all, which would hide the defect"
             );
             assert!(
@@ -636,7 +685,7 @@ mod tests {
     #[test]
     fn a_cadence_with_no_list_to_re_read_is_refused() {
         let (state, violations) = crl(|c| c.client_crl_reload_secs = Some(300));
-        assert_eq!(state, CrlRevocationState::None);
+        assert!(!state.is_enforced());
         assert!(
             violations
                 .iter()

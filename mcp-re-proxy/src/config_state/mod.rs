@@ -350,6 +350,25 @@ pub(crate) mod test_support {
             .expect("the requested revocation posture is legal")
     }
 
+    /// The CRL state a deployment with these files and cadence reaches.
+    pub(crate) fn crl_posture(
+        paths: &[&str],
+        cadence_secs: Option<u64>,
+    ) -> super::CrlRevocationState {
+        let mut config = legal_config();
+        config.client_crl_paths = paths.iter().map(|p| p.to_string()).collect();
+        config.client_crl_reload_secs = cadence_secs;
+        super::transport::classify_and_validate_crl(&config).0
+    }
+
+    /// The client-revocation plan such a deployment projects.
+    pub(crate) fn crl_plan(
+        paths: &[&str],
+        cadence_secs: Option<u64>,
+    ) -> super::transport::ClientRevocationPlan {
+        crl_posture(paths, cadence_secs).client_revocation_plan()
+    }
+
     /// A configuration the parser accepts, for a machine's tests to mutate.
     ///
     /// From `parse_args` rather than a struct literal so that a test which expects a
@@ -424,10 +443,7 @@ mod tests {
                 &test_support::shared_continuation_config(),
             )
             .0,
-            crl_revocation: CrlRevocationState::Reloading {
-                paths: vec!["/crl.pem".to_string()],
-                cadence_secs: 300,
-            },
+            crl_revocation: test_support::crl_posture(&["/crl.pem"], Some(300)),
             custody: CustodyState::Pkcs11 {
                 module: "/lib/softhsm.so".to_string(),
                 pin_file: "/pin".to_string(),
@@ -474,10 +490,7 @@ mod tests {
         assert!(state.admission().is_enforced());
         assert_eq!(state.audit(), AuditState::Stderr);
         assert_eq!(state.channel_binding(), ChannelBindingState::ExactUriSan);
-        assert!(matches!(
-            state.crl_revocation(),
-            CrlRevocationState::Reloading { .. }
-        ));
+        assert_eq!(state.crl_revocation().reload_cadence_secs(), Some(300));
         assert!(state.retention().is_on());
         assert!(state.verified_context().asserts_inner_channel_isolation());
     }
