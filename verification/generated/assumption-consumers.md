@@ -26,10 +26,10 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0008 | `VerifierPolicy::max_signature_validity` returns this policy's configured window bound. | http_profile.freshness_window | THM-0001 |
 | ASM-0009 | `VerifierPolicy::accepted_algorithm` resolves a wire token to an accepted algorithm, or None. | http_profile.freshness_window | THM-0001 |
 | ASM-0010 | `Option::<T>::as_deref` is total; nothing is claimed about its result. | http_profile.freshness_window | THM-0001 |
-| ASM-0011 | `AdmissionBinding::matches_state` decides whether this binding commits to a given admitted-state digest. | http_profile.admission_currency | THM-0003, THM-0004, THM-0005 |
-| ASM-0012 | `verify_admission_assertion` is opaque to the currency theorem, and contributes NO postcondition to it. | http_profile.admission_currency | THM-0003, THM-0004, THM-0005 |
-| ASM-0013 | `mcp_re_core::VerificationKey` is an opaque datatype; no theorem reads it. | http_profile.admission_currency | THM-0003, THM-0004, THM-0005 |
-| ASM-0014 | `#[derive(PartialEq)]` on the fieldless enum `AdmissionStatus` is structural equality. | http_profile.admission_currency | THM-0003, THM-0004, THM-0005 |
+| ASM-0011 | `AdmissionBinding::matches_state` decides whether this binding commits to a given admitted-state digest. | http_profile.admission_currency | THM-0003, THM-0004, THM-0005, THM-0006 |
+| ASM-0012 | `verify_admission_assertion` is opaque to the currency theorem, and contributes NO postcondition to it. | http_profile.admission_currency | THM-0003, THM-0004, THM-0005, THM-0006 |
+| ASM-0013 | `mcp_re_core::VerificationKey` is an opaque datatype; no theorem reads it. | http_profile.admission_currency | THM-0003, THM-0004, THM-0005, THM-0006 |
+| ASM-0014 | `#[derive(PartialEq)]` on the fieldless enum `AdmissionStatus` is structural equality. | http_profile.admission_currency | THM-0003, THM-0004, THM-0005, THM-0006 |
 | ASM-0015 | RESERVED — withdrawn before use. | _no unit_ | _no theorem_ |
 | ASM-0018 | `sha256_b64url` and `compare` are opaque digest primitives; nothing is claimed about the digest. | http_profile.artifact_typing | THM-0007, THM-0008 |
 | ASM-0019 | `ArtifactBinding::validate` is opaque; the typing theorem holds whatever it returns. | http_profile.artifact_typing | THM-0007, THM-0008 |
@@ -37,8 +37,8 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0021 | `ActorIdentity::actor_id` / `ResolvedActor::actor_id` are opaque; NO ensures. | http_profile.continuation_unbypassability | THM-0009 |
 | ASM-0022 | WITHDRAWN — discharged by unit://http_profile.continuation_binding. | _no unit_ | _no theorem_ |
 | ASM-0023 | `RequestEvidenceDigest::matches_labeled` returning true means this handle's value IS the labeled digest of those bytes under that label. | http_profile.continuation_binding | THM-0010 |
-| ASM-0024 | `labeled_digest(label, bytes)` is a function of its arguments and nothing more. | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | THM-0001, THM-0003, THM-0004, THM-0005, THM-0007, THM-0008, THM-0009, THM-0010 |
-| ASM-0025 | `skew_of(policy)` is the deployment's configured clock skew, as a function of the policy object. | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | THM-0001, THM-0003, THM-0004, THM-0005, THM-0007, THM-0008, THM-0009, THM-0010 |
-| ASM-0026 | `validity_of(policy)` is the widest accepted `expires - created`, as a function of the policy object. | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | THM-0001, THM-0003, THM-0004, THM-0005, THM-0007, THM-0008, THM-0009, THM-0010 |
+| ASM-0024 | `labeled_digest(label, bytes)` is a function of its arguments and nothing more. | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | THM-0001, THM-0003, THM-0004, THM-0005, THM-0006, THM-0007, THM-0008, THM-0009, THM-0010 |
+| ASM-0025 | `skew_of(policy)` is the deployment's configured clock skew, as a function of the policy object. | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | THM-0001, THM-0003, THM-0004, THM-0005, THM-0006, THM-0007, THM-0008, THM-0009, THM-0010 |
+| ASM-0026 | `validity_of(policy)` is the widest accepted `expires - created`, as a function of the policy object. | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | THM-0001, THM-0003, THM-0004, THM-0005, THM-0006, THM-0007, THM-0008, THM-0009, THM-0010 |
 
 10 assumption(s) are reached by more than one theorem.

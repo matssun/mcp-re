@@ -84,11 +84,14 @@ schema_version = 1
 #     which is conformance; the property that would matter is selector injectivity, and a
 #     known-answer test does not reach it. Recording that is the honest outcome, and the
 #     absent row is visible in the owner view.
-#   * Presenter binding — that an admitted assertion names THIS caller — has no row yet.
-#     It is enforced on every path in `admission.rs`, absent from the `ensures`, unexercised
-#     by all nine of its unit's tests, and covered only by an `async_serve`-gated test in
-#     another crate that no unit declares. `supported_by` would fail closed, correctly, so
-#     the evidence must be declared before the claim can exist.
+#   * Presenter binding (THM-0006) was NOT claimable when this file was first populated.
+#     The check was enforced on every path in `admission.rs`, absent from the `ensures`, and
+#     unexercised by all nine of its unit's tests — every one passed the same actor as both
+#     the assertion's actor and the presenter, so deleting the check left them all green.
+#     It is now proved: the verdict carries the admitted actor and the postcondition states
+#     the comparison. Measured, not assumed — with the check removed the prover reports
+#     14 verified / 1 error while the unit tests reported 9 passed / 0 failed, which is the
+#     difference the claim exists to record.
 #
 # Every `scope` states what the claim does NOT establish. Four of those sentences existed
 # only as Rust or TOML comments before this file: read by no tooling, attached to no review,
@@ -200,6 +203,31 @@ scope = """
 Establishes the opt-in, not the bound. That a degraded verdict is confined to the
 propagation window P is enforced in the body and is not a conjunct of this contract.
 Says nothing about assertion authenticity or freshness (ASM-0012).
+"""
+owner = "http_profile.admission_currency"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://http_profile.admission_currency"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0006"
+title = "Presenter binding"
+statement = """
+A successful admission implies the admitted actor named by the assertion is the presenter
+of this call — the actor the verifier resolved from the request signature.
+"""
+security_consequence = """
+An assertion describing some admitted workload cannot authorize a different presenter
+merely because the workload itself is admissible. Without it the assertion is a bearer
+token: anyone whose key the enforcement point resolves could copy an admitted peer's
+assertion into their own evidence block, derive the matching binding, and pass the gate.
+"""
+scope = """
+Establishes that the actor named in the assertion equals the presenter argument. It does
+not establish that the presenter argument is itself correctly resolved from the request
+signature, which is the caller's obligation. Does not establish authenticity, issuer trust,
+audience validity, assertion freshness, or validity of the assertion's [nbf, exp] window;
+verify_admission_assertion is outside this proof cone under ASM-0012.
 """
 owner = "http_profile.admission_currency"
 review_requirement = "Owner security-specification review"

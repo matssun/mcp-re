@@ -203,7 +203,7 @@ pilot = "verus-pilot"
 [[unit]]
 id = "http_profile.admission_currency"
 class = "V1"
-description = "#415 §7 admission currency: an Ok verdict is Admitted at the bound generation; a live verdict implies generation equality with the authoritative state; a degraded verdict implies explicit deployment opt-in."
+description = "#415 §7 admission currency: an Ok verdict is Admitted at the bound generation; the admitted actor is the presenter of the call; a live verdict implies generation equality with the authoritative state; a degraded verdict implies explicit deployment opt-in."
 paths = [
   "mcp-re-http-profile/src/admission.rs",
   "mcp-re-http-profile/src/verus_std_specs.rs",
@@ -218,6 +218,7 @@ assumptions = ["ASM-0011", "ASM-0012", "ASM-0013", "ASM-0014"]
 # battery the §7 theorem is stated over all inputs of.
 tested_symbols = [
   "lib#admission::tests::a_current_admitted_workload_passes",
+  "lib#admission::tests::an_assertion_issued_to_another_actor_does_not_admit_this_caller",
   "lib#admission::tests::a_stale_generation_is_rejected_even_though_the_assertion_is_valid",
   "lib#admission::tests::a_workload_revoked_after_issuance_is_refused",
   "lib#admission::tests::a_suspended_assertion_never_permits_a_call",

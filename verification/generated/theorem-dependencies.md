@@ -52,12 +52,19 @@ graph BT
 
 ```mermaid
 graph BT
+    THM_0006["THM-0006<br/>Presenter binding"]
+```
+
+## Component 7
+
+```mermaid
+graph BT
     THM_0007["THM-0007<br/>A typed artifact verifier admits only its own type"]
     THM_0008["THM-0008<br/>No untyped artifact binding leaves the verifier as verified"]
     THM_0007 --> THM_0008
 ```
 
-## Component 7
+## Component 8
 
 ```mermaid
 graph BT
@@ -66,7 +73,7 @@ graph BT
     THM_0010 --> THM_0009
 ```
 
-## Component 8
+## Component 9
 
 ```mermaid
 graph BT
