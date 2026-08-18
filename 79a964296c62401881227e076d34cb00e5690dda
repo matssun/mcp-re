@@ -1,0 +1,2 @@
+Workspace suite after the whole campaign: cargo test --workspace exit 0,
+84 test binaries, 0 failures.
