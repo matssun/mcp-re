@@ -291,7 +291,7 @@ pub(crate) fn mrtr_continuation_store(
     plan: &crate::startup_plan::ContinuationControlPlan,
     control: Option<&crate::control_runtime::ControlRuntime>,
 ) -> Result<Established<Arc<dyn crate::continuation_store::AsyncContinuationStore>>, String> {
-    let crate::startup_plan::ContinuationControlPlan::Redis { endpoint: url } = plan else {
+    let Some(url) = plan.shared_store() else {
         return Ok(Established::off(CONTINUATION_STORE_OFF));
     };
     let handle = control

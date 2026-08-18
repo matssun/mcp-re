@@ -294,6 +294,13 @@ pub(crate) mod test_support {
             .materialization_plan()
     }
 
+    /// The same configuration with a shared continuation store requested.
+    pub(crate) fn shared_continuation_config() -> DeploymentRequest {
+        let mut config = legal_config();
+        config.continuation_control_redis_url = Some("redis://127.0.0.1:6379".to_string());
+        config
+    }
+
     /// A configuration the parser accepts, for a machine's tests to mutate.
     ///
     /// From `parse_args` rather than a struct literal so that a test which expects a
@@ -366,9 +373,10 @@ mod tests {
             in_flight_limit: InFlightLimitBasis::PerCore {
                 requests: std::num::NonZeroUsize::new(256).expect("non-zero"),
             },
-            continuation_control: ContinuationControlState::Redis {
-                endpoint: "redis://127.0.0.1:6379".to_string(),
-            },
+            continuation_control: continuation_control::classify_and_validate(
+                &test_support::shared_continuation_config(),
+            )
+            .0,
             crl_revocation: CrlRevocationState::Reloading {
                 paths: vec!["/crl.pem".to_string()],
                 cadence_secs: 300,

@@ -857,7 +857,7 @@ fn run_validated(
     // was explicitly requested.
     let (continuation_store, continuation_state) =
         crate::serving_capabilities::mrtr_continuation_store(
-            &crate::startup_plan::ContinuationControlPlan::from_validated(config),
+            &config.state().continuation_control().continuation_plan(),
             control_rt.as_ref(),
         )?
         .into_parts();

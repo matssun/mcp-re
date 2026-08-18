@@ -15,7 +15,6 @@
 //! the confusion.
 
 use crate::config_state::validation::ValidatedDeployment;
-use crate::config_state::ContinuationControlState;
 use crate::deployment_request::BindingKind;
 use crate::tls::IdentityStrategy;
 use crate::transport::ReverseProxyMtlsProvider;
@@ -479,42 +478,12 @@ impl TlsPlan {
 
 /// What the MRTR continuation store must establish (ADR-MCPS-047, CF-12).
 ///
-/// `Disabled` is a posture, not an absence: cross-replica continuation is opportunistic,
-/// so a deployment without it is a deployment whose multi-round-trip flows are
-/// single-replica and whose cross-replica answers fail closed at the binding.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ContinuationControlPlan {
-    /// No shared store; flows resolve on the replica that opened them.
-    Disabled,
-    /// A shared Redis store at this endpoint.
-    Redis {
-        /// The continuation store's OWN endpoint. It is not the replay store's, even when
-        /// an operator points both at the same Redis.
-        endpoint: String,
-    },
-}
-
-impl ContinuationControlPlan {
-    /// Project the plan from the classified state and the validated locator.
-    ///
-    /// Infallible: layer A already decided that this state is legal and that the locator
-    /// is present where the state requires one, so there is no second refusal to make.
-    pub fn from_validated(config: &ValidatedDeployment) -> ContinuationControlPlan {
-        match config.state().continuation_control() {
-            ContinuationControlState::Disabled => ContinuationControlPlan::Disabled,
-            ContinuationControlState::Redis { endpoint } => ContinuationControlPlan::Redis {
-                endpoint: endpoint.clone(),
-            },
-        }
-    }
-
-    /// Whether establishing this plan needs the shared control runtime.
-    ///
-    /// One contributor to the aggregate — never the decision itself.
-    pub fn needs_control_runtime(&self) -> bool {
-        cfg!(feature = "redis_replay") && matches!(self, ContinuationControlPlan::Redis { .. })
-    }
-}
+/// Owned by the continuation-control machine and re-exported here: the plan is that
+/// machine's projection of its own validated state, not a value planning rebuilds from
+/// the state's locator. `Disabled` is a posture, not an absence — a deployment without a
+/// shared store is one whose multi-round-trip flows are single-replica and whose
+/// cross-replica answers fail closed at the binding.
+pub use crate::config_state::continuation_control::ContinuationControlPlan;
 
 /// Whether the §7 admission-currency gate will be wired (MCPRE-493).
 ///
@@ -540,7 +509,7 @@ pub fn control_runtime_requirement(
 ) -> crate::control_runtime::ControlRuntimeRequirement {
     crate::control_runtime::ControlRuntimeRequirement::any([
         replay.needs_control_runtime(),
-        ContinuationControlPlan::from_validated(config).needs_control_runtime(),
+        config.state().continuation_control().continuation_plan().needs_control_runtime(),
         admission_needs_control_runtime(config),
     ])
 }
@@ -835,7 +804,7 @@ mod tests {
         .expect("args parse");
         let validated = ValidatedDeployment::try_from(both).expect("independent facts, both legal");
         assert_eq!(
-            ContinuationControlPlan::from_validated(&validated).needs_control_runtime(),
+            validated.state().continuation_control().continuation_plan().needs_control_runtime(),
             REDIS
         );
         assert!(
@@ -847,10 +816,14 @@ mod tests {
         let no_continuation = parse(SHARED_LINEARIZABLE).expect("args parse");
         let validated = ValidatedDeployment::try_from(no_continuation).expect("validates");
         assert_eq!(
-            ContinuationControlPlan::from_validated(&validated),
-            ContinuationControlPlan::Disabled
+            validated
+                .state()
+                .continuation_control()
+                .continuation_plan()
+                .shared_store(),
+            None
         );
-        assert!(!ContinuationControlPlan::from_validated(&validated).needs_control_runtime());
+        assert!(!validated.state().continuation_control().continuation_plan().needs_control_runtime());
     }
 
     /// The projected endpoint is the continuation store's own locator, character for
@@ -875,10 +848,12 @@ mod tests {
         let validated = ValidatedDeployment::try_from(config).expect("config validates");
 
         assert_eq!(
-            ContinuationControlPlan::from_validated(&validated),
-            ContinuationControlPlan::Redis {
-                endpoint: "redis://127.0.0.1:6380".to_string(),
-            }
+            validated
+                .state()
+                .continuation_control()
+                .continuation_plan()
+                .shared_store(),
+            Some("redis://127.0.0.1:6380")
         );
         match validated.state().replay().materialization_plan().store() {
             PlannedStore::Redis { url } => assert_eq!(url, "redis://127.0.0.1:6379"),
