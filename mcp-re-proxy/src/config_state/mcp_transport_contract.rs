@@ -35,19 +35,15 @@
 use crate::deployment_request::DeploymentRequest;
 
 /// Which MCP transport-contract state a configuration requests.
+/// The representation is private to this module and [`classify`] is the only producer.
+/// Emptiness is what selects the unconstrained posture, so the enforcing state carries the
+/// set that made it so and nothing downstream re-asks whether there is one.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum McpTransportContractState {
-    /// No contract is asserted. The transport headers are not required and `Mcp-Name` is
-    /// not checked against the body, so a signed request may name one tool in its header
-    /// and invoke another in its body.
-    Unconstrained,
-    /// The contract is enforced for an accepted set of protocol versions.
-    Enforced {
-        /// The versions this deployment serves. Non-empty by construction: emptiness is
-        /// what selects `Unconstrained`, so the state that is enforced carries the set
-        /// that made it so, and nothing downstream re-asks whether there is one.
-        versions: Vec<String>,
-    },
+pub struct McpTransportContractState {
+    /// The versions this deployment serves. Empty means no contract is asserted: the
+    /// transport headers are not required and `Mcp-Name` is not checked against the body,
+    /// so a signed request may name one tool in its header and invoke another in its body.
+    versions: Vec<String>,
 }
 
 impl McpTransportContractState {
@@ -56,17 +52,22 @@ impl McpTransportContractState {
     /// Named here so a consumer reads the posture rather than re-testing the collection it
     /// happens to be carrying.
     pub fn is_enforced(&self) -> bool {
-        matches!(self, Self::Enforced { .. })
+        !self.versions.is_empty()
+    }
+
+    /// The versions the contract is enforced for, or `None` when no contract is asserted.
+    ///
+    /// One answer rather than two: a consumer cannot report the contract enforced while
+    /// holding an empty set, because the posture IS the set's non-emptiness.
+    pub fn enforced_versions(&self) -> Option<&[String]> {
+        (!self.versions.is_empty()).then_some(&self.versions)
     }
 }
 
 /// Recognise the requested state. Total: every `DeploymentRequest` names one, and neither state has
 /// a column to check.
 pub fn classify(config: &DeploymentRequest) -> McpTransportContractState {
-    if config.mcp_protocol_versions.is_empty() {
-        return McpTransportContractState::Unconstrained;
-    }
-    McpTransportContractState::Enforced {
+    McpTransportContractState {
         versions: config.mcp_protocol_versions.clone(),
     }
 }
@@ -85,14 +86,13 @@ mod tests {
     #[test]
     fn every_legal_state_form_is_classified() {
         assert_eq!(
-            state_of(|c| c.mcp_protocol_versions.clear()),
-            McpTransportContractState::Unconstrained
+            state_of(|c| c.mcp_protocol_versions.clear()).enforced_versions(),
+            None
         );
         assert_eq!(
-            state_of(|c| c.mcp_protocol_versions = vec!["2026-07-28".to_string()]),
-            McpTransportContractState::Enforced {
-                versions: vec!["2026-07-28".to_string()]
-            }
+            state_of(|c| c.mcp_protocol_versions = vec!["2026-07-28".to_string()])
+                .enforced_versions(),
+            Some(["2026-07-28".to_string()].as_slice())
         );
     }
 
@@ -107,12 +107,13 @@ mod tests {
     /// left to re-test. Asserted with versions the fixture does not name.
     #[test]
     fn the_enforced_state_carries_the_set_that_selected_it() {
-        let McpTransportContractState::Enforced { versions } = state_of(|c| {
+        let state = state_of(|c| {
             c.mcp_protocol_versions = vec!["2026-07-28".to_string(), "2025-11-05".to_string()];
-        }) else {
-            panic!("a declared version selects the enforced state");
-        };
-        assert_eq!(versions, vec!["2026-07-28", "2025-11-05"]);
+        });
+        let versions = state
+            .enforced_versions()
+            .expect("a declared version selects the enforced state");
+        assert_eq!(versions, ["2026-07-28", "2025-11-05"]);
         assert!(!versions.is_empty(), "non-empty by construction");
     }
 
@@ -124,10 +125,9 @@ mod tests {
     #[test]
     fn an_unusual_accepted_set_is_classified_rather_than_refused() {
         assert_eq!(
-            state_of(|c| c.mcp_protocol_versions = vec!["not-a-version".to_string()]),
-            McpTransportContractState::Enforced {
-                versions: vec!["not-a-version".to_string()]
-            }
+            state_of(|c| c.mcp_protocol_versions = vec!["not-a-version".to_string()])
+                .enforced_versions(),
+            Some(["not-a-version".to_string()].as_slice())
         );
     }
 }

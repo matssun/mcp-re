@@ -31,17 +31,34 @@ pub enum AuditState {
 /// a verdict whose evidence was thrown away: establishing retention would have to ask
 /// `retained_evidence_dir.is_some()` a second time, from a representation still able to
 /// say `None`, having already been told the answer.
+/// The representation is private to this module and [`classify`] is the only producer, so
+/// a consumer cannot name a retention directory this deployment did not configure.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RetentionState {
-    /// Nothing is retained; the request path is unchanged.
-    Off,
-    /// Exchanges are retained to a directory — a data-retention decision, so it is named
-    /// rather than derived from another flag.
-    On {
-        /// Where retained exchanges are written. Its presence is what selects this state,
-        /// so the state that has one carries it.
-        directory: String,
-    },
+pub struct RetentionState {
+    /// Where retained exchanges are written, or `None` when nothing is retained. Its
+    /// presence is what selects the retaining state, so the state that retains carries it.
+    directory: Option<String>,
+}
+
+impl RetentionState {
+    /// Where retained exchanges are written, or `None` when the request path is unchanged.
+    ///
+    /// The projection a consumer reads instead of the representation: retention is ON
+    /// exactly when there is a directory, so the posture and the path are one answer and
+    /// cannot be reported inconsistently.
+    pub fn directory(&self) -> Option<&str> {
+        self.directory.as_deref()
+    }
+
+    /// Whether exchanges are retained at all.
+    pub fn is_on(&self) -> bool {
+        self.directory.is_some()
+    }
+
+    /// The non-retaining state, for a consumer that must name the posture it is testing.
+    pub fn off() -> Self {
+        RetentionState { directory: None }
+    }
 }
 
 /// What the PEP asserts to the inner server about the caller.
@@ -70,10 +87,10 @@ pub fn classify(config: &DeploymentRequest) -> (AuditState, RetentionState, Veri
         AuditSinkKind::Stderr => AuditState::Stderr,
     };
     let retention = match &config.retained_evidence_dir {
-        Some(directory) => RetentionState::On {
-            directory: directory.clone(),
+        Some(directory) => RetentionState {
+            directory: Some(directory.clone()),
         },
-        None => RetentionState::Off,
+        None => RetentionState::off(),
     };
     let verified_context = match config.verified_context {
         VerifiedContextKind::Disabled => VerifiedContextState::Disabled,
@@ -105,7 +122,7 @@ mod tests {
             }),
             (
                 AuditState::None,
-                RetentionState::Off,
+                RetentionState::off(),
                 VerifiedContextState::Disabled
             )
         );
@@ -117,8 +134,8 @@ mod tests {
             }),
             (
                 AuditState::Stderr,
-                RetentionState::On {
-                    directory: "/evidence".to_string()
+                RetentionState {
+                    directory: Some("/evidence".to_string())
                 },
                 VerifiedContextState::Trusted
             )
@@ -131,13 +148,13 @@ mod tests {
     fn retention_is_selected_by_its_own_locator() {
         assert_eq!(
             states(|c| c.retained_evidence_dir = None).1,
-            RetentionState::Off
+            RetentionState::off()
         );
         assert_eq!(
-            states(|c| c.retained_evidence_dir = Some("/evidence".to_string())).1,
-            RetentionState::On {
-                directory: "/evidence".to_string()
-            }
+            states(|c| c.retained_evidence_dir = Some("/evidence".to_string()))
+                .1
+                .directory(),
+            Some("/evidence")
         );
     }
 
@@ -145,11 +162,10 @@ mod tests {
     /// second question to ask. Asserted with a path the default fixture does not name.
     #[test]
     fn the_on_state_carries_the_directory_that_selected_it() {
-        let RetentionState::On { directory } =
-            states(|c| c.retained_evidence_dir = Some("/srv/evidence-7".to_string())).1
-        else {
-            panic!("a named directory selects the On state");
-        };
+        let state = states(|c| c.retained_evidence_dir = Some("/srv/evidence-7".to_string())).1;
+        let directory = state
+            .directory()
+            .expect("a named directory selects the retaining state");
         assert_eq!(directory, "/srv/evidence-7");
     }
 

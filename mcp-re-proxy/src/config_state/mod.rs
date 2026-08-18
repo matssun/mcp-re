@@ -316,6 +316,20 @@ pub(crate) mod test_support {
         config
     }
 
+    /// The same configuration declaring a served MCP protocol version.
+    pub(crate) fn versioned_transport_config() -> DeploymentRequest {
+        let mut config = legal_config();
+        config.mcp_protocol_versions = vec!["2026-07-28".to_string()];
+        config
+    }
+
+    /// The retention state a deployment configured with this directory reaches.
+    pub(crate) fn retention_at(directory: String) -> super::RetentionState {
+        let mut config = legal_config();
+        config.retained_evidence_dir = Some(directory);
+        super::evidence::classify(&config).1
+    }
+
     /// A configuration the parser accepts, for a machine's tests to mutate.
     ///
     /// From `parse_args` rather than a struct literal so that a test which expects a
@@ -399,9 +413,9 @@ mod tests {
                 token_label: "token".to_string(),
                 key_label: "signing".to_string(),
             },
-            mcp_transport_contract: McpTransportContractState::Enforced {
-                versions: vec!["2026-07-28".to_string()],
-            },
+            mcp_transport_contract: mcp_transport_contract::classify(
+                &test_support::versioned_transport_config(),
+            ),
             delegated_signing: delegated_signing::classify_and_validate(
                 &test_support::legal_config(),
             )
@@ -410,9 +424,7 @@ mod tests {
             replay: replay::classify_and_validate(&test_support::legal_linearizable_config())
                 .0
                 .expect("the linearizable fixture names a CP store endpoint"),
-            retention: RetentionState::On {
-                directory: "/var/lib/mcp-re/evidence".to_string(),
-            },
+            retention: test_support::retention_at("/var/lib/mcp-re/evidence".to_string()),
             tls_custody: TlsCustodyState::Delegated {
                 selector: DelegatedTlsKey::Pkcs11 {
                     key_label: "tls".to_string(),
@@ -446,7 +458,7 @@ mod tests {
             state.crl_revocation(),
             CrlRevocationState::Reloading { .. }
         ));
-        assert!(matches!(state.retention(), RetentionState::On { .. }));
+        assert!(state.retention().is_on());
         assert!(state.verified_context().asserts_inner_channel_isolation());
     }
 }

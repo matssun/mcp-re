@@ -137,7 +137,7 @@ pub(crate) fn online_ocsp() -> Established<std::convert::Infallible> {
 pub(crate) fn mcp_transport_contract(
     state: &crate::config_state::McpTransportContractState,
 ) -> Established<mcp_re_http_profile::McpTransportPolicy> {
-    let crate::config_state::McpTransportContractState::Enforced { versions } = state else {
+    let Some(versions) = state.enforced_versions() else {
         return Established::off(
             "MCP transport contract = OFF (no --mcp-protocol-version): the required \
              transport headers are not asserted and Mcp-Name is not checked against \
@@ -199,7 +199,7 @@ pub(crate) fn security_audit_record(
 pub(crate) fn evidence_retention(
     state: &crate::config_state::RetentionState,
 ) -> Result<Established<crate::transparency::EvidenceRetention>, String> {
-    let crate::config_state::RetentionState::On { directory: dir } = state else {
+    let Some(dir) = state.directory() else {
         return Ok(Established::off(
             "evidence retention = OFF: nothing is retained, so no SCITT \
              statement can later be issued about a call served here. Pass \
@@ -585,15 +585,14 @@ mod tests {
     #[test]
     fn evidence_retention_attaches_a_store_only_for_a_named_directory() {
         let dir = TempDir::new("attaches");
-        let (artifact, posture) = evidence_retention(&crate::config_state::RetentionState::On {
-            directory: dir.path(),
-        })
+        let (artifact, posture) =
+            evidence_retention(&crate::config_state::test_support::retention_at(dir.path()))
         .expect("a writable directory opens")
         .into_parts();
         assert!(artifact.is_some());
         assert!(matches!(posture, SeamState::On { .. }));
 
-        let (artifact, posture) = evidence_retention(&crate::config_state::RetentionState::Off)
+        let (artifact, posture) = evidence_retention(&crate::config_state::RetentionState::off())
             .expect("the off state opens nothing")
             .into_parts();
         assert!(artifact.is_none());
@@ -606,9 +605,9 @@ mod tests {
     fn an_unopenable_retention_directory_refuses_startup_naming_the_flag() {
         let dir = TempDir::new("unopenable");
         std::fs::write(&dir.0, b"not a directory").expect("write the blocking file");
-        let Err(error) = evidence_retention(&crate::config_state::RetentionState::On {
-            directory: dir.path(),
-        }) else {
+        let Err(error) = evidence_retention(
+            &crate::config_state::test_support::retention_at(dir.path()),
+        ) else {
             panic!("a path occupied by a file cannot be opened");
         };
         assert!(
