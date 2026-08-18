@@ -16,11 +16,11 @@ not an omission to hide.
 
 | unit | class | owns theorems | assumptions |
 |---|---|---|---|
-| core.time_rfc3339 | V1 | _none_ | 4 |
-| http_profile.admission_currency | V1 | _none_ | 4 |
-| http_profile.artifact_typing | V1 | _none_ | 3 |
-| http_profile.continuation_binding | V1 | _none_ | 1 |
-| http_profile.continuation_unbypassability | V1 | _none_ | 1 |
-| http_profile.freshness_window | V1 | _none_ | 6 |
+| core.time_rfc3339 | V1 | THM-0002 | 4 |
+| http_profile.admission_currency | V1 | THM-0003, THM-0004, THM-0005 | 4 |
+| http_profile.artifact_typing | V1 | THM-0007, THM-0008 | 3 |
+| http_profile.continuation_binding | V1 | THM-0010 | 1 |
+| http_profile.continuation_unbypassability | V1 | THM-0009 | 1 |
+| http_profile.freshness_window | V1 | THM-0001 | 6 |
 | http_profile.keyid | V0 | _none_ | 0 |
-| proxy.runtime_lifecycle | V0 | _none_ | 0 |
+| proxy.runtime_lifecycle | V0 | THM-0012 | 0 |

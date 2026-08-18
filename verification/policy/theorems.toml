@@ -71,10 +71,259 @@ schema_version = 1
 #   * Removing an entry outright is the one thing the loader cannot catch — it frees the
 #     ID for reuse and severs the history. Deprecate; do not delete.
 #
-# The registry is intentionally EMPTY.
+# The registry, populated by Phase T4.
 #
-# ADR-MCPRE-059's THM-0001 is an illustration in the ADR text, not a starter row. Mapping
-# the existing V1 units to real security claims is Phase T4, and it is expected to record
-# "this unit yields no claim worth stating separately" wherever that is the honest answer.
-# A theorem invented to populate the file would be exactly the unsupported claim this
-# layer exists to make visible.
+# Ten claims over eight review units. The mapping is one-to-one in neither direction, and
+# that is the T4 result rather than an untidy outcome:
+#
+#   * `http_profile.admission_currency` yields THREE claims. One prover run, one `ensures`
+#     with four conjuncts, three different attacker stories — and they are separated so a
+#     future rollback claim can rest on THM-0004 alone, and so changing degraded behaviour
+#     cannot invalidate a consumer that only needs generation equality.
+#   * `http_profile.keyid` yields NONE. Its evidence is one RFC 8037 known-answer test,
+#     which is conformance; the property that would matter is selector injectivity, and a
+#     known-answer test does not reach it. Recording that is the honest outcome, and the
+#     absent row is visible in the owner view.
+#   * Presenter binding — that an admitted assertion names THIS caller — has no row yet.
+#     It is enforced on every path in `admission.rs`, absent from the `ensures`, unexercised
+#     by all nine of its unit's tests, and covered only by an `async_serve`-gated test in
+#     another crate that no unit declares. `supported_by` would fail closed, correctly, so
+#     the evidence must be declared before the claim can exist.
+#
+# Every `scope` states what the claim does NOT establish. Four of those sentences existed
+# only as Rust or TOML comments before this file: read by no tooling, attached to no review,
+# invalidated by nothing.
+#
+
+[[theorem]]
+id = "THM-0001"
+title = "Admitted request parameters imply a current freshness window"
+statement = """
+Every signature-parameter set the verifier admits satisfies created - skew <= now,
+now < expires + skew, created < expires, and a lifetime within the policy maximum, for
+the skew the verifier policy yields.
+"""
+security_consequence = """
+A request cannot be admitted on freshness evidence that has expired, that is dated ahead
+of the verifier, or that declares a lifetime longer than the policy permits.
+"""
+scope = """
+Establishes freshness admission only. It does not establish signature validity, issuer
+authority, admission currency, or replay uniqueness. The window is stated relative to
+skew_of(policy), an opaque accessor: the theorem holds for whatever skew the deployment
+configures and does not establish that the configured skew is bounded or sane.
+"""
+owner = "http_profile.freshness_window"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://http_profile.freshness_window"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0002"
+title = "RFC 3339 parsing is total and range-bounded"
+statement = """
+parse_rfc3339_utc terminates without panicking on arbitrary input, and every timestamp it
+accepts denotes an instant within the representable civil range
+[-62167219200, 253402387199].
+"""
+security_consequence = """
+A timestamp in an evidence artifact can neither crash the verifier nor denote an instant
+the rest of the system cannot represent.
+"""
+scope = """
+The two halves are established differently and a reviewer must not look for one conjunct.
+The range half is the postcondition. Totality is discharged by the absence of a
+precondition together with the prover's panic-freedom obligation, not by an ensures
+clause. The theorem says nothing about which grammar variants are accepted beyond that
+what is accepted is in range.
+"""
+owner = "core.time_rfc3339"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://core.time_rfc3339"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0003"
+title = "Admission verdict integrity"
+statement = """
+Every admission verdict returned as Ok has status Admitted and carries the generation of
+the binding that was checked.
+"""
+security_consequence = """
+A policy enforcement point cannot act on a verdict that describes a different call than
+the one it checked.
+"""
+scope = """
+Does not establish authenticity, issuer trust, audience validity, assertion freshness, or
+validity of the assertion's [nbf, exp] window; verify_admission_assertion is outside this
+proof cone under ASM-0012. Does not establish that the admitted actor is the presenter of
+the call (see the presenter-binding claim, which this contract does not state).
+"""
+owner = "http_profile.admission_currency"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://http_profile.admission_currency"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0004"
+title = "Admission anti-rollback"
+statement = """
+A non-degraded Ok verdict implies the authoritative admission state was reachable, its
+generation equals the binding's generation, and its status is Admitted.
+"""
+security_consequence = """
+A workload whose admission has been superseded or revoked cannot buy a call with an
+assertion that has not yet expired.
+"""
+scope = """
+Says nothing about the degraded path, and nothing about the assertion's authenticity or
+freshness (ASM-0012). Currency is generation equality against the state the enforcement
+point holds; the theorem does not establish that that state is itself current.
+"""
+owner = "http_profile.admission_currency"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://http_profile.admission_currency"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0005"
+title = "Degraded admission requires deployment opt-in"
+statement = """
+A degraded Ok verdict implies the authoritative admission state was unreachable and the
+deployment policy explicitly allows degraded mode.
+"""
+security_consequence = """
+No default deployment can reach a degraded admission; serving on a last-known snapshot is
+always a choice someone made.
+"""
+scope = """
+Establishes the opt-in, not the bound. That a degraded verdict is confined to the
+propagation window P is enforced in the body and is not a conjunct of this contract.
+Says nothing about assertion authenticity or freshness (ASM-0012).
+"""
+owner = "http_profile.admission_currency"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://http_profile.admission_currency"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0007"
+title = "A typed artifact verifier admits only its own type"
+statement = """
+Each typed OAuth verifier returns Ok only for a binding whose artifact_type is the one
+that verifier is for and whose binding_type is the opaque-digest form.
+"""
+security_consequence = """
+A binding of one artifact type cannot be verified by the verifier for another, so a
+credential form cannot be laundered through the wrong check.
+"""
+scope = """
+Does not establish that the digest matches the presented credential: the comparison's
+meaning is a statement about SHA-256 and is outside this proof cone under ASM-0018.
+"Verified" here means correctly typed and in opaque-digest form.
+"""
+owner = "http_profile.artifact_typing"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://http_profile.artifact_typing"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0008"
+title = "No untyped artifact binding leaves the verifier as verified"
+statement = """
+A binding reported verified is in the opaque-digest form and is one of the three OAuth
+artifact types. The four registry types with no typed verifier can never be reported
+verified.
+"""
+security_consequence = """
+A caller cannot silently treat an artifact type nothing can verify as though it had been
+verified.
+"""
+scope = """
+Structural over the type dispatch, and inherits THM-0007's exclusion: it does not
+establish that any digest matched its credential (ASM-0018).
+"""
+owner = "http_profile.artifact_typing"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://http_profile.artifact_typing"]
+depends_on = ["THM-0007"]
+
+[[theorem]]
+id = "THM-0009"
+title = "A presented continuation cannot bypass verification"
+statement = """
+If dispatch preparation returns Ok for a request whose evidence block carries a
+continuation, the returned continuation-verified flag is true: the pair (continuation
+present, not verified) is not a state any successful preparation can produce.
+"""
+security_consequence = """
+A continuation cannot be carried through dispatch on the strength of being present in the
+request.
+"""
+scope = """
+Establishes that the check ran, not what it guarantees; what a verified continuation binds
+is THM-0010, which this claim consumes. continuation_verified is an informational WITNESS
+propagated in DispatchOutcome, not a control value: downstream consumption is not required
+for enforcement, because the unsafe combination is unreachable on a successful preparation
+path. The authority is the successful return under this postcondition, not the boolean,
+which merely exposes part of that fact. A reader who greps for consumers, finds none, and
+concludes the check is unwired has read it backwards.
+"""
+owner = "http_profile.continuation_unbypassability"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://http_profile.continuation_unbypassability"]
+depends_on = ["THM-0010"]
+
+[[theorem]]
+id = "THM-0010"
+title = "Continuation handles match their presented inputs in role"
+statement = """
+An accepted continuation's three handles are the labeled digests of the three presented
+inputs, each under its own role label.
+"""
+security_consequence = """
+A response-role evidence handle cannot be presented in the request role, so the three
+positions of a continuation cannot be permuted.
+"""
+scope = """
+Assumes only that the labeled digest IS A FUNCTION of (label, bytes) — ASM-0023. It does
+NOT establish collision-resistant separation between roles; that obligation stays at
+boundary.crypto_primitives and is not discharged here.
+"""
+owner = "http_profile.continuation_binding"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://http_profile.continuation_binding"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0012"
+title = "The lifecycle record cannot claim a shutdown that did not happen"
+statement = """
+Every state has a unique predecessor under the transition relation and apply is the only
+mutator, leaving the state unchanged on an illegal event. So a recorded terminal Stopped
+implies every event of the path Configured -> Validated -> Planned -> Materializing ->
+Materialized -> Serving -> Draining -> Transitioning -> Reclaiming -> Stopped was applied,
+in order.
+"""
+security_consequence = """
+A runtime that never bound a listener cannot be recorded as a clean drained shutdown, so
+the two terminal states remain distinguishable in an audit record.
+"""
+scope = """
+Establishes what the RECORD can say. It does not establish that any request was refused.
+RuntimeState::admits_requests is a DESCRIPTIVE value, not a control: no production path
+consumes it, and the recorded state is never Serving while a request is in flight, because
+the serving events are applied only after serve_fleet returns Ok — so a consumer reading it
+during serving would read Materialized and refuse everything. What actually confines
+requests to the serving interval is resource ownership: the listener exists only inside the
+serve_fleet call. That the events are applied only on a proven Ok is the materialized-runtime
+owner's obligation, not this unit's. FailedToStart is currently
+unreachable from Materialized, so a serve that never bound is recorded as Materialized —
+the record is silent about the failure rather than wrong about it. Evidence is test://
+only: the uniqueness-of-path argument is a match a reviewer reads, not a proof a prover
+checked.
+"""
+owner = "proxy.runtime_lifecycle"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.runtime_lifecycle"]
+depends_on = []
