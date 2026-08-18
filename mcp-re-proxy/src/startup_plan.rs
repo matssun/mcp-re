@@ -341,6 +341,7 @@ impl SigningPlan {
     ) -> SigningPlan {
         let values = config.config();
         let facts = config.state().delegated_signing();
+        let rotation = facts.rotation_window();
         let identity = config.state().server_identity().actor();
         SigningPlan {
             custody: mcp_re_http_profile::CustodyConfig {
@@ -356,8 +357,10 @@ impl SigningPlan {
                 server_role: identity.role.clone(),
                 server_trust_domain: identity.trust_domain.clone(),
                 server_subject: identity.subject.clone(),
-                ttl: values.delegated_ttl_secs,
-                overlap: values.delegated_overlap_secs,
+                // The pair as the owner validated it. Reading two independent integers
+                // here is what let a validated TTL be paired with an arbitrary overlap.
+                ttl: rotation.ttl_secs(),
+                overlap: rotation.overlap_secs(),
             },
             epoch,
         }
