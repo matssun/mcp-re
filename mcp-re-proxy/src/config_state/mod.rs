@@ -70,7 +70,7 @@ pub mod transport;
 pub mod trust_revocation;
 pub mod validation;
 
-pub use admission::{AdmissionAvailability, AdmissionState};
+pub use admission::{AdmissionAvailability, AdmissionPosture, AdmissionState, EnforcedAdmission};
 pub use continuation_control::ContinuationControlState;
 pub use custody::{AwsCredentialMode, CustodyState};
 pub use delegated_signing::DelegatedSigningFacts;
@@ -301,6 +301,21 @@ pub(crate) mod test_support {
         config
     }
 
+    /// The same configuration with admission enforced under a named authority.
+    pub(crate) fn enforcing_admission_config() -> DeploymentRequest {
+        use crate::deployment_request::AdmissionKind;
+        let mut config = legal_config();
+        config.admission = AdmissionKind::Required;
+        config.admission_authority_kid = Some("authority-1".to_string());
+        config.admission_authority_pubkey_b64url = Some(
+            mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32])
+                .public_key()
+                .to_b64url(),
+        );
+        config.admission_redis_url = Some("redis://127.0.0.1:6379".to_string());
+        config
+    }
+
     /// A configuration the parser accepts, for a machine's tests to mutate.
     ///
     /// From `parse_args` rather than a struct literal so that a test which expects a
@@ -352,12 +367,9 @@ mod tests {
     #[test]
     fn the_state_carries_what_the_planes_would_otherwise_re_derive() {
         let state = DeploymentConfigState::new(RecognisedStates {
-            admission: AdmissionState::Required {
-                authority_kid: "authority-1".to_string(),
-                authority: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32]).public_key(),
-                redis_url: "redis://127.0.0.1:6379".to_string(),
-                availability: AdmissionAvailability::FailClosed,
-            },
+            admission: admission::classify_and_validate(&test_support::enforcing_admission_config())
+                .0
+                .expect("the enforcing fixture names an admission authority"),
             audit: AuditState::Stderr,
             channel_binding: ChannelBindingState::ExactUriSan,
             server_identity: crate::config_state::server_identity::classify_and_validate(

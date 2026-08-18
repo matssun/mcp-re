@@ -364,36 +364,22 @@ pub(crate) fn admission_currency(
     max_clock_skew: i64,
     control: Option<&crate::control_runtime::ControlRuntime>,
 ) -> Result<Established<AdmissionGate>, String> {
-    use crate::config_state::{AdmissionAvailability, AdmissionState};
+    use crate::config_state::{AdmissionAvailability, AdmissionPosture};
     // The state names the posture AND carries what that posture cannot exist without, so
     // there is nothing here to reconstruct and no arm for a witness that went missing.
-    let (enforcement, kid, key, url, availability) = match state {
-        AdmissionState::Off => return Ok(Established::off(ADMISSION_OFF)),
-        AdmissionState::Optional {
-            authority_kid,
-            authority,
-            redis_url,
-            availability,
-        } => (
-            crate::http_profile_serve::AdmissionEnforcement::Optional,
-            authority_kid.clone(),
-            authority.clone(),
-            redis_url,
-            availability,
-        ),
-        AdmissionState::Required {
-            authority_kid,
-            authority,
-            redis_url,
-            availability,
-        } => (
-            crate::http_profile_serve::AdmissionEnforcement::Required,
-            authority_kid.clone(),
-            authority.clone(),
-            redis_url,
-            availability,
-        ),
+    let Some(gate) = state.enforced() else {
+        return Ok(Established::off(ADMISSION_OFF));
     };
+    let enforcement = match gate.posture() {
+        AdmissionPosture::Optional => crate::http_profile_serve::AdmissionEnforcement::Optional,
+        AdmissionPosture::Required => crate::http_profile_serve::AdmissionEnforcement::Required,
+    };
+    let (kid, key, url, availability) = (
+        gate.authority_kid().to_string(),
+        gate.authority().clone(),
+        gate.redis_url(),
+        gate.availability(),
+    );
     // The two `AdmissionPolicy` flags are a PROJECTION of one posture rather than two
     // settings this seam could combine wrongly. `unwrap_or` is a saturation that cannot
     // fire: the bound was narrowed from a positive `i64` at layer A.
