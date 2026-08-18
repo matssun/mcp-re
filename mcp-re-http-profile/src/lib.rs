@@ -191,6 +191,7 @@ pub use policy::DEFAULT_ALGORITHMS;
 pub use rejection::build_delegated_rejection;
 pub use rejection::build_delegated_rejection_preflight;
 pub use rejection::build_signed_rejection;
+pub use rejection::retry_semantics;
 pub use rejection::verify_signed_rejection;
 pub use rejection::ExecutionDisposition;
 pub use rejection::RejectionReason;
