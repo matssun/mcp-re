@@ -65,7 +65,11 @@ pub struct DelegatedSigningFacts {
 }
 
 impl DelegatedSigningFacts {
-    /// The epoch label every delegated credential is minted under (`<base>#<counter>`).
+    /// The base label delegated credentials are minted under.
+    ///
+    /// It is the whole label wherever no shared counter is configured. Where one is, the
+    /// signing plane extends it to `<base>#<counter>` before the first key is minted; that
+    /// extension is what an operator `INCR` moves, and it is not this owner's to promise.
     pub fn trust_epoch(&self) -> &str {
         &self.trust_epoch
     }
@@ -104,10 +108,13 @@ pub fn classify_and_validate(
     if epoch.is_none() {
         violations.push(
             "delegated-required response signing requires a trust epoch \
-             (--delegated-trust-epoch): without it every credential is minted under a bare \
-             label instead of <base>#<counter>, so a restarted replica appears unrevoked to \
-             verifiers pinned past an operator INCR and the cross-fleet kill switch stops \
-             working"
+             (--delegated-trust-epoch): it is the base label every delegated credential is \
+             minted under and it has no default, so without it no credential names the \
+             deployment whose keys a verifier is deciding about. The base alone is NOT the \
+             cross-fleet kill switch: the comparable <base>#<counter> label, and with it the \
+             operator INCR that moves every replica to the next label, exist only where a \
+             shared counter is configured (--trust-epoch-redis-url). With the base alone the \
+             label never advances and a credential's exp is the only thing that ends it"
                 .to_string(),
         );
     }
@@ -134,7 +141,7 @@ pub fn classify_and_validate(
     // without this owner reading `server_key_id` and `audience` a second time to guess which
     // happened (CF-10). A present-but-empty fact is not a witness: every one of these is
     // minted verbatim into every delegation credential, where an empty issuer names no
-    // issuer and an empty epoch is the bare label the epoch exists to replace.
+    // issuer and an empty epoch names no deployment.
     let empty_facts = empty_fact_violations(&facts);
     if !empty_facts.is_empty() {
         violations.extend(empty_facts);
@@ -152,9 +159,10 @@ fn empty_fact_violations(facts: &DelegatedSigningFacts) -> Vec<String> {
     [
         (
             facts.trust_epoch.as_str(),
-            "--delegated-trust-epoch is empty: the epoch is minted into every delegation \
-             credential as <base>#<counter>, and an empty base makes the cross-fleet kill \
-             switch unable to name the deployment it is revoking",
+            "--delegated-trust-epoch is empty: the base label is minted into every delegation \
+             credential — verbatim where no shared counter is configured, and as the base of \
+             <base>#<counter> where one is — so an empty base names no deployment in either \
+             posture",
         ),
         (
             facts.issuer_kid.as_str(),
@@ -263,6 +271,34 @@ mod tests {
                 .any(|v| v.contains("--delegated-trust-epoch")),
             "{violations:?}"
         );
+    }
+
+    /// A refusal may not promise an effect the flag it asks for does not produce.
+    ///
+    /// `--delegated-trust-epoch` supplies a base label and nothing else. The counter that
+    /// makes the label globally comparable, and the operator `INCR` that moves every replica
+    /// to the next one, come from a shared source this owner neither requires nor can
+    /// observe — so a deployment naming the epoch and no source mints the bare base, which is
+    /// a supported posture and not the one this refusal is describing. Any sentence here that
+    /// reaches for `<base>#<counter>` must therefore carry the condition that produces it.
+    #[test]
+    fn the_epoch_refusal_conditions_the_counter_on_the_source_that_produces_it() {
+        let (_, violations) = run(|c| c.delegated_trust_epoch = None);
+        let refusal = violations
+            .iter()
+            .find(|v| v.contains("--delegated-trust-epoch"))
+            .expect("an absent epoch is refused");
+        assert!(
+            refusal.contains("--trust-epoch-redis-url"),
+            "the refusal must name where the counter comes from: {refusal}"
+        );
+        for sentence in refusal.split('.') {
+            assert!(
+                !sentence.contains("<base>#<counter>")
+                    || sentence.contains("--trust-epoch-redis-url"),
+                "this sentence promises a counter the flag alone does not deliver: {sentence}"
+            );
+        }
     }
 
     /// G8. Each fact is refused when it is present but empty, by whichever route made it so.

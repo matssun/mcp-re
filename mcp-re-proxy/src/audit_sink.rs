@@ -248,13 +248,32 @@ fn admission_ceiling(attributed: bool) -> usize {
     }
 }
 
+/// Claim one slot below `ceiling`, reporting whether the claim succeeded.
+///
+/// The test and the claim are ONE atomic step. Every core of the fleet offers into these
+/// same statics concurrently, and the rate of unattributed offers is set by an
+/// unauthenticated peer; a separate test-then-increment would let any number of those
+/// offers observe the same sub-ceiling depth and all proceed, so the ceiling would bound
+/// nothing but a single-threaded run.
+fn reserve_slot(queued: &std::sync::atomic::AtomicUsize, ceiling: usize) -> bool {
+    queued
+        .fetch_update(
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+            |current| (current < ceiling).then_some(current + 1),
+        )
+        .is_ok()
+}
+
 /// Hand one line to a writer, counting it as dropped rather than waiting for room.
 ///
 /// Never blocks and never fails the caller: this is called on the request path, and a
 /// full queue means the audit stream has a gap — not that the request must stall or be
 /// refused. `ceiling` is how much of the queue this line's attribution class may take;
 /// past it the line is dropped even though the channel would still accept it, which is
-/// what keeps an unauthenticated flood from choosing whose record is lost.
+/// what keeps an unauthenticated flood from choosing whose record is lost. The slot is
+/// reserved before the send and released if the send fails, so the reservation counts
+/// exactly what is on the queue.
 fn offer(
     queue: &std::sync::mpsc::SyncSender<AuditMessage>,
     dropped: &std::sync::atomic::AtomicU64,
@@ -262,14 +281,13 @@ fn offer(
     line: String,
     ceiling: usize,
 ) {
-    if queued.load(std::sync::atomic::Ordering::Relaxed) >= ceiling {
+    if !reserve_slot(queued, ceiling) {
         dropped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return;
     }
     if queue.try_send(AuditMessage::Line(line)).is_err() {
+        queued.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         dropped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    } else {
-        queued.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -401,6 +419,56 @@ mod tests {
             "a flood of unauthenticated records dropped an attributed decision"
         );
         drop(held);
+    }
+
+    /// Concurrent offers may not carry the depth past the ceiling.
+    ///
+    /// Every core of the fleet offers into one set of statics, and an unauthenticated peer
+    /// sets the rate of the unattributed ones. If admission tested the depth and then
+    /// increased it as two steps, all the offers racing at the mark would observe the same
+    /// sub-ceiling value and all proceed, so the headroom the ceiling reserves for an
+    /// attributed decision would shrink by however many callers an attacker can run at
+    /// once.
+    #[test]
+    fn concurrent_offers_at_the_ceiling_admit_only_the_remaining_slots() {
+        const CONTENDERS: usize = 16;
+        let ceiling = 8;
+
+        for _ in 0..300 {
+            // Nothing drains, and the channel is wide enough to accept every contender —
+            // so the ceiling is the only thing that can bound the depth.
+            let (queue, held) = std::sync::mpsc::sync_channel::<AuditMessage>(1024);
+            let dropped = std::sync::atomic::AtomicU64::new(0);
+            let queued = std::sync::atomic::AtomicUsize::new(ceiling - 1);
+            let start = std::sync::Barrier::new(CONTENDERS);
+
+            std::thread::scope(|scope| {
+                for _ in 0..CONTENDERS {
+                    scope.spawn(|| {
+                        start.wait();
+                        offer(
+                            &queue,
+                            &dropped,
+                            &queued,
+                            "unattributed".to_owned(),
+                            ceiling,
+                        );
+                    });
+                }
+            });
+
+            assert_eq!(
+                queued.load(std::sync::atomic::Ordering::SeqCst),
+                ceiling,
+                "one free slot admitted more than one concurrent offer"
+            );
+            assert_eq!(
+                dropped.load(std::sync::atomic::Ordering::SeqCst),
+                (CONTENDERS - 1) as u64,
+                "every offer that found no slot must be counted as dropped"
+            );
+            drop(held);
+        }
     }
 
     /// R8-C123: the drop count is reported without a later record to carry it.

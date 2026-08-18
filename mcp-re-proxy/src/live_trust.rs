@@ -4,9 +4,22 @@
 //! trust state for up to the propagation window `T`, **Tier 2 caches nothing
 //! positive**: every verification consults the inner store-backed
 //! [`TrustResolver`] afresh, so a key revoked in the store is rejected on the very
-//! next request with NO `T` wait. The propagation window is near-zero — at the
-//! cost of a store round-trip per request and a **hard dependency on store
-//! availability**: a [`TrustResolverError::Unavailable`] always fails closed (it
+//! next request with NO `T` wait.
+//!
+//! # The window this tier removes, and the window it does not
+//!
+//! `T` is the only term Tier 2 removes, and it removes it **against the store**,
+//! not against the operator's trust file. What remains is however long the
+//! injected inner resolver itself takes to learn of the revocation: Tier 2 neither
+//! adds to that term nor shortens it. Behind
+//! [`ReloadingTrustStore`](crate::reloading_trust::ReloadingTrustStore) the
+//! remaining term is the reload cadence, and it grows while consecutive reloads
+//! fail. A deployment-level statement of the form "the Live window is the reload
+//! cadence" is therefore a claim about the store's refresh composed with this
+//! tier's zero — never a property established by this file alone.
+//!
+//! Removing `T` costs a store round-trip per request and a **hard dependency on
+//! store availability**: a [`TrustResolverError::Unavailable`] always fails closed (it
 //! is never softened to a serve-through, because there is no cache to serve from
 //! and Tier 2's whole point is that the live answer is authoritative).
 //!
@@ -35,9 +48,11 @@ use mcp_re_policy::RevocationStatus;
 /// revocation source as a second authority. Any operational failure on either
 /// path (`Unavailable` / `RevocationUnavailable`) fails closed.
 ///
-/// The near-zero window holds because nothing active is ever cached: a store-side
-/// revocation is visible on the next request. The cost is a per-request round-trip
-/// and that an outage is an immediate hard failure (no bounded serve-through).
+/// Nothing active is ever cached, so a store-side revocation is visible on the next
+/// request and this wrapper contributes no window of its own; what a deployment
+/// observes is the inner resolver's own refresh latency. The cost is a per-request
+/// round-trip and that an outage is an immediate hard failure (no bounded
+/// serve-through).
 pub struct LiveTrustResolver {
     inner: Box<dyn TrustResolver + Send + Sync>,
     /// Optional second revocation authority (ADR-MCPS-013 grant deny-list),
@@ -121,11 +136,15 @@ impl TrustResolver for LiveTrustResolver {
 mod tests {
     use super::LiveTrustResolver;
 
+    use crate::reloading_trust::ReloadingTrustStore;
+
+    use std::collections::HashMap;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
     use std::sync::Mutex;
 
+    use mcp_re_core::InMemoryTrustResolver;
     use mcp_re_core::SigningKey;
     use mcp_re_core::TrustResolver;
     use mcp_re_core::TrustResolverError;
@@ -316,6 +335,65 @@ mod tests {
                 Err(TrustResolverError::Unavailable { .. })
             ),
             "a revocation-source outage fails closed, never an allow"
+        );
+    }
+
+    /// A real swappable store behind the tier, so the two halves of a deployment
+    /// window can be observed separately rather than assumed to compose.
+    struct StoreHandle(Arc<ReloadingTrustStore>);
+    impl TrustResolver for StoreHandle {
+        fn resolve(
+            &self,
+            signer: &str,
+            key_id: &str,
+        ) -> Result<VerificationKey, TrustResolverError> {
+            self.0.resolve(signer, key_id)
+        }
+    }
+
+    #[test]
+    fn the_live_window_is_the_store_swap_because_the_tier_adds_none_of_its_own() {
+        let mut enrolled = InMemoryTrustResolver::new();
+        enrolled.insert("did:host", "key-1", key_from(&SEED_A));
+        let store = Arc::new(ReloadingTrustStore::new(enrolled, HashMap::new()));
+        let live = LiveTrustResolver::new(Box::new(StoreHandle(Arc::clone(&store))));
+
+        // Half one, stated honestly: until the store swaps, the tier keeps honouring
+        // the key however many requests arrive. The window is NOT zero.
+        for _ in 0..3 {
+            live.resolve("did:host", "key-1")
+                .expect("the tier answers from the store snapshot in force");
+        }
+
+        // Half two: the swap is the whole window — the FIRST request after it sees
+        // the new map, with no cached-active term on top.
+        let mut revoked = InMemoryTrustResolver::new();
+        revoked.revoke("did:host", "key-1");
+        store.store(revoked, HashMap::new());
+
+        assert_eq!(
+            live.resolve("did:host", "key-1").unwrap_err(),
+            TrustResolverError::Revoked,
+            "the first resolve after the store swap observes it"
+        );
+    }
+
+    #[test]
+    fn a_stale_store_snapshot_is_served_verbatim_by_the_tier() {
+        // The tier cannot shorten the store's own refresh latency: a key revoked at
+        // the source but not yet swapped into the snapshot still resolves. The
+        // deployment window is the store's, not this file's.
+        let mut enrolled = InMemoryTrustResolver::new();
+        enrolled.insert("did:host", "key-1", key_from(&SEED_A));
+        let store = Arc::new(ReloadingTrustStore::new(enrolled, HashMap::new()));
+        let live = LiveTrustResolver::new(Box::new(StoreHandle(store)));
+
+        live.resolve("did:host", "key-1")
+            .expect("an un-swapped snapshot keeps resolving the key");
+        assert_eq!(
+            live.resolve("did:host", "key-2").unwrap_err(),
+            TrustResolverError::NotFound,
+            "the tier answers strictly from the snapshot it is given"
         );
     }
 }

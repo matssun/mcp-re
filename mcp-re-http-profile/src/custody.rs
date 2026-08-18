@@ -132,6 +132,16 @@ pub struct ActiveDelegatedKey {
     pub exp: i64,
 }
 
+/// How many issuance attempts one rotation-overlap window may spend on a root that
+/// is declining. The overlap window is the budget the rotation contract already
+/// allocates to getting a successor minted, so the retry interval is derived from it
+/// rather than configured separately.
+const ISSUANCE_ATTEMPTS_PER_OVERLAP: i64 = 10;
+
+/// Floor on the retry interval, for a configuration whose overlap window is smaller
+/// than the attempt budget (and for a non-positive overlap).
+const MIN_ISSUANCE_RETRY_SECS: i64 = 1;
+
 /// The delegated-signing custody state machine.
 ///
 /// `Issue` is the root issuer (KMS/HSM in production): given a header+claims it
@@ -145,6 +155,9 @@ pub struct DelegatedSigningCustody<Issue, Factory> {
     audit: Vec<KeyLifecycleEvent>,
     root_invocations: u64,
     counter: u64,
+    /// The earliest `now` at which a scheduled issuance may touch the root again.
+    /// `None` while nothing has failed.
+    next_attempt_at: Option<i64>,
 }
 
 impl<Issue, Factory> DelegatedSigningCustody<Issue, Factory>
@@ -163,6 +176,7 @@ where
             audit: Vec::new(),
             root_invocations: 0,
             counter: 0,
+            next_attempt_at: None,
         }
     }
 
@@ -257,12 +271,35 @@ where
 
     /// Issue unconditionally, whatever the overlap window says — the epoch-advance
     /// path. Shares [`ensure_active`]'s issuance body so the two cannot drift.
+    ///
+    /// A commanded issuance also clears the failed-attempt gate: the gate exists to
+    /// keep the SCHEDULED path from turning a root outage into per-request root
+    /// traffic, and an operator advancing the trust epoch is asking for exactly one
+    /// attempt, now.
     fn issue_now(&mut self, now: i64) -> Result<(), CustodyError> {
+        self.next_attempt_at = None;
         self.issue_if(true, now)
     }
 
+    /// Minimum seconds between two issuance attempts after one has failed.
+    fn retry_interval(&self) -> i64 {
+        (self.cfg.overlap / ISSUANCE_ATTEMPTS_PER_OVERLAP).max(MIN_ISSUANCE_RETRY_SECS)
+    }
+
+    /// Whether a failed root may be approached again at `now`.
+    ///
+    /// Inside the rotation-overlap window `ensure_active` wants a successor on EVERY
+    /// call, so an ungated retry makes each inbound request one root invocation —
+    /// precisely while the root is already degraded, and precisely the hot-path root
+    /// traffic the delegated-signing design exists to forbid. The window still gets
+    /// [`ISSUANCE_ATTEMPTS_PER_OVERLAP`] attempts, so a transient blip is still
+    /// recovered from well before the predecessor expires.
+    fn attempt_allowed(&self, now: i64) -> bool {
+        self.next_attempt_at.is_none_or(|at| now >= at)
+    }
+
     fn issue_if(&mut self, needs: bool, now: i64) -> Result<(), CustodyError> {
-        if needs {
+        if needs && self.attempt_allowed(now) {
             let is_rotation = self.active.as_ref().map(|a| now < a.exp).unwrap_or(false);
 
             let key = (self.factory)();
@@ -271,6 +308,7 @@ where
             self.root_invocations += 1;
             match (self.issue)(&header, &claims) {
                 Some(credential) => {
+                    self.next_attempt_at = None;
                     self.audit.push(KeyLifecycleEvent {
                         event_type: if is_rotation {
                             event_type::DELEGATED_KEY_ROTATED
@@ -294,8 +332,11 @@ where
                     });
                 }
                 None => {
-                    // Issuance failed. If the current key is still valid we keep
-                    // signing with it and retry the successor later (no gap yet).
+                    // Issuance failed. Hold off the next attempt so a root outage
+                    // cannot be amplified into one root call per inbound request.
+                    self.next_attempt_at = Some(now + self.retry_interval());
+                    // If the current key is still valid we keep signing with it and
+                    // retry the successor later (no gap yet).
                     let current_valid = self.active.as_ref().map(|a| now < a.exp).unwrap_or(false);
                     if !current_valid {
                         // The current key (if any) has expired: retire it and stop.
@@ -441,6 +482,10 @@ where
 mod tests {
     use super::*;
     use crate::delegation::issue_delegation_credential;
+    use crate::delegation::verify_delegation_credential;
+    use crate::delegation::DelegationVerifyParams;
+    use crate::delegation::VerifiedDelegation;
+    use mcp_re_core::VerificationKey;
 
     const ROOT_KID: &str = "root-kid";
     const T: i64 = 300;
@@ -733,5 +778,161 @@ mod tests {
             emitted, exp,
             "the window must stop at the credential's exp, not at now + ttl ({input})"
         );
+    }
+
+    /// A root issuer that succeeds `successes` times and declines forever after —
+    /// a KMS/HSM that goes away mid-life.
+    fn issuer_failing_after(
+        successes: u32,
+    ) -> impl FnMut(&DelegationHeader, &DelegationClaims) -> Option<String> {
+        let root = SigningKey::from_seed_bytes(&[33u8; 32]);
+        let mut calls = 0u32;
+        move |h: &DelegationHeader, c: &DelegationClaims| {
+            calls += 1;
+            (calls <= successes).then(|| issue_delegation_credential(&root, h, c))
+        }
+    }
+
+    /// A failing root is approached on a bounded interval, not once per inbound
+    /// request. Inside the overlap window `ensure_active` wants a successor on every
+    /// call, so an ungated retry converts a root blip into a per-request root storm.
+    #[test]
+    fn a_failing_root_is_retried_on_a_bounded_interval_not_once_per_request() {
+        let mut c = DelegatedSigningCustody::new(cfg(), issuer_failing_after(1), factory());
+        c.ensure_active(1_000).expect("first issue ok");
+        assert_eq!(c.root_invocations(), 1);
+
+        // The overlap window opens at exp − O = 1_240. Serve 200 requests across the
+        // next five seconds; the retry interval is O / 10 = 6s, so exactly ONE of them
+        // may reach the root.
+        for i in 0..200 {
+            c.ensure_active(1_240 + i % 5)
+                .expect("the predecessor is still valid");
+        }
+        assert_eq!(
+            c.root_invocations(),
+            2,
+            "a declining root must be retried on an interval, not once per request"
+        );
+
+        // The gate delays the retry; it does not wedge issuance.
+        c.ensure_active(1_246).expect("predecessor still valid");
+        assert_eq!(c.root_invocations(), 3, "the next interval retries");
+    }
+
+    /// A re-issuance the root declines leaves the predecessor exactly as it was: same
+    /// key id, no fabricated lifecycle event. The caller distinguishes an applied
+    /// epoch advance from a declined one by that key id, so an unchanged id must mean
+    /// nothing was minted.
+    #[test]
+    fn a_declined_reissue_leaves_the_predecessor_untouched() {
+        let mut c = DelegatedSigningCustody::new(cfg(), issuer_failing_after(1), factory());
+        c.ensure_active(1_000).expect("first issue ok");
+        let before = c.active_kid().expect("a key is active").to_string();
+
+        c.set_trust_epoch("epoch-1#2".into());
+        c.reissue(1_010).expect("the predecessor keeps serving");
+
+        assert_eq!(
+            c.active_kid().expect("still active"),
+            before,
+            "no successor was minted, so the published key id must not move"
+        );
+        assert_eq!(
+            c.audit().len(),
+            1,
+            "a declined re-issuance records no lifecycle event"
+        );
+    }
+
+    /// Verify a minted credential exactly as a production verifier does, under the
+    /// scope this test config declares.
+    fn verify_minted(
+        credential: &str,
+        delegated_kid: &str,
+        accepted_epochs: &[&str],
+        now: i64,
+        root_public: &VerificationKey,
+    ) -> Result<VerifiedDelegation, HttpProfileError> {
+        let policy = cfg();
+        let expected_signer = ActorIdentity {
+            role: policy.server_role.clone(),
+            trust_domain: policy.server_trust_domain.clone(),
+            subject: policy.server_subject.clone(),
+            keyid: delegated_kid.to_owned(),
+        }
+        .actor_id();
+        let audiences = [policy.aud.as_str()];
+        verify_delegation_credential(
+            credential,
+            &DelegationVerifyParams {
+                now,
+                max_clock_skew: 0,
+                verifier_audiences: &audiences,
+                expected_profile: &policy.profile,
+                expected_audience_hash: &policy.audience_hash,
+                expected_server_signer: &expected_signer,
+                accepted_epochs,
+            },
+            |kid| (kid == ROOT_KID).then(|| root_public.clone()),
+            |_| false,
+        )
+    }
+
+    /// The configured scope and trust epoch are MINTED INTO the credential bytes, not
+    /// merely held in config: a verifier reads them back off the wire, and an advanced
+    /// epoch makes a verifier pinned to the prior epoch reject — which is what makes
+    /// the epoch the fleet-wide revocation lever.
+    #[test]
+    fn the_minted_credential_carries_the_configured_scope_and_trust_epoch() {
+        let root = SigningKey::from_seed_bytes(&[33u8; 32]);
+        let root_public = root.public_key();
+        let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
+            Some(issue_delegation_credential(&root, h, c))
+        };
+        let mut c = DelegatedSigningCustody::new(cfg(), issue, factory());
+
+        c.ensure_active(1_000).expect("issue");
+        let first = c.active_snapshot().expect("a key is active");
+        let verified = verify_minted(
+            &first.credential,
+            &first.delegated_kid,
+            &["epoch-1"],
+            1_000,
+            &root_public,
+        )
+        .expect("the credential verifies under the configured scope");
+        assert_eq!(verified.trust_epoch, "epoch-1");
+        assert_eq!(verified.issuer_kid, ROOT_KID);
+        assert_eq!(verified.delegated_kid, first.delegated_kid);
+        assert_eq!(
+            verified.delegated_key.to_b64url(),
+            first.key.public_key().to_b64url(),
+            "cnf.jwk names the delegated key the snapshot signs with"
+        );
+
+        c.set_trust_epoch("epoch-1#2".into());
+        c.reissue(1_010).expect("reissue under the new epoch");
+        let second = c.active_snapshot().expect("a successor is active");
+        assert_eq!(
+            verify_minted(
+                &second.credential,
+                &second.delegated_kid,
+                &["epoch-1"],
+                1_010,
+                &root_public,
+            )
+            .expect_err("a verifier pinned to the prior epoch must reject"),
+            HttpProfileError::DelegationTrustEpochStale
+        );
+        let advanced = verify_minted(
+            &second.credential,
+            &second.delegated_kid,
+            &["epoch-1#2"],
+            1_010,
+            &root_public,
+        )
+        .expect("the successor verifies under the advanced epoch");
+        assert_eq!(advanced.trust_epoch, "epoch-1#2");
     }
 }

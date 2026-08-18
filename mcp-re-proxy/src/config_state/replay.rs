@@ -6,7 +6,7 @@
 //!
 //! | State | Required | Forbidden | Guards | Build |
 //! |---|---|---|---|---|
-//! | `SharedRedis` | `replay_redis_url`, a Redis quorum tier | `cpstore_etcd_endpoint` | tier meets the strict minimum | `redis_replay` |
+//! | `SharedRedis` | `replay_redis_url`, a Redis quorum tier | `cpstore_etcd_endpoint` | tier meets the strict minimum, `quorum >= 1`, `timeout_ms > 0` | `redis_replay` |
 //! | `SharedLinearizable` | `cpstore_etcd_endpoint`, the linearizable tier | `replay_redis_url` | — | `cpstore_etcd` |
 //!
 //! **The durability tier is the only selector.** There is no backend-KIND input beside it.
@@ -45,9 +45,16 @@ use crate::replay_tier::ReplayDurabilityTier;
 /// authorities over one fact, and would make `Etcd` paired with a Redis quorum tier
 /// representable again. It is [derived](Self::durability_tier) instead, from the variant
 /// plus the quorum parameters, which are NOT derivable and so are carried.
+///
+/// The VARIANT SET is closed — those two states are all there are — but each variant is
+/// `#[non_exhaustive]`, because the field values inside one are what the Required/Forbidden/
+/// Guards columns rule on. Outside this crate the only way to obtain a value is
+/// [`classify_and_validate`], so a caller cannot hand itself a `SharedRedis` whose quorum
+/// parameters no validator ever saw.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReplayState {
     /// A shared Redis store at a quorum-acknowledged durability tier.
+    #[non_exhaustive]
     SharedRedis {
         /// Where admitted nonces live.
         url: String,
@@ -57,6 +64,7 @@ pub enum ReplayState {
         timeout_ms: u64,
     },
     /// A shared linearizable CP store (etcd).
+    #[non_exhaustive]
     SharedLinearizable {
         /// The CP store's endpoint.
         endpoint: String,
@@ -103,6 +111,36 @@ enum RequestedState {
     SharedLinearizable,
 }
 
+/// The parameters a `REDIS_WAIT_QUORUM` claim rests on, checked before the tier is allowed
+/// to name a state.
+///
+/// `WAIT 0` requires no replica acknowledgement and `WAIT <q> 0` returns before any replica
+/// can give one, so either degenerate value leaves the store on the plain `SET NX PX` path —
+/// the `REDIS_ASYNC` posture — while the state, the plan, and the startup audit line all say
+/// `REDIS_WAIT_QUORUM` with a fail-closed guarantee. The guard belongs beside the other
+/// column checks rather than only in [`ReplayDurabilityTier::parse`], which a request built
+/// in process never passes through, and which `meets_strict_production_minimum` cannot stand
+/// in for because it reads the variant and not its parameters.
+fn wait_quorum_guards(quorum: u32, timeout_ms: u64) -> Result<(), String> {
+    if quorum == 0 {
+        return Err(
+            "--replay-durability-tier redis-wait-quorum requires a quorum of at least 1: \
+             WAIT 0 asks no replica to acknowledge the nonce, which is the REDIS_ASYNC \
+             replay window carrying the REDIS_WAIT_QUORUM claim"
+                .to_string(),
+        );
+    }
+    if timeout_ms == 0 {
+        return Err(
+            "--replay-durability-tier redis-wait-quorum requires a timeout_ms of at least 1: \
+             WAIT with a zero timeout returns before any replica can acknowledge the nonce, \
+             which is the REDIS_ASYNC replay window carrying the REDIS_WAIT_QUORUM claim"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 /// Recognise which shared state the declared tier names, or why it names none.
 ///
 /// The tier is the ONLY selector. There is no separate backend-kind input to reject first:
@@ -125,6 +163,7 @@ fn classify(config: &DeploymentRequest) -> Result<RequestedState, String> {
     match tier {
         ReplayDurabilityTier::Linearizable => Ok(RequestedState::SharedLinearizable),
         ReplayDurabilityTier::RedisWaitQuorum { quorum, timeout_ms } => {
+            wait_quorum_guards(*quorum, *timeout_ms)?;
             Ok(RequestedState::SharedRedis {
                 quorum: *quorum,
                 timeout_ms: *timeout_ms,
@@ -422,6 +461,55 @@ mod tests {
                 .iter()
                 .any(|v| v.contains("strict-production minimum")),
             "{violations:?}"
+        );
+    }
+
+    /// The `quorum >= 1` / `timeout_ms > 0` guards are properties of the STATE, not of the
+    /// wire form. Mutated on the REQUEST for the same reason the locator cases are: the
+    /// parser's own bounds cannot run for an embedder, and a tier whose `WAIT` asks for
+    /// nothing serves the REDIS_ASYNC posture under the REDIS_WAIT_QUORUM claim.
+    #[test]
+    fn a_wait_quorum_tier_that_waits_for_no_acknowledgement_names_no_state() {
+        for (quorum, timeout_ms) in [(0u32, 100u64), (1, 0), (0, 0)] {
+            let (state, violations) = run(move |c| {
+                redis(c);
+                c.replay_durability_tier =
+                    Some(ReplayDurabilityTier::RedisWaitQuorum { quorum, timeout_ms });
+            });
+            assert!(
+                state.is_none(),
+                "redis-wait-quorum:{quorum}:{timeout_ms} became a validated state"
+            );
+            assert!(
+                violations
+                    .iter()
+                    .any(|v| v.contains("--replay-durability-tier")),
+                "redis-wait-quorum:{quorum}:{timeout_ms}: {violations:?}"
+            );
+        }
+    }
+
+    /// The positive half: the smallest parameters that still ask a replica to acknowledge
+    /// are accepted and reach the tier intact, so the guard cannot be satisfied by refusing
+    /// every quorum tier.
+    #[test]
+    fn the_smallest_acknowledging_wait_quorum_parameters_are_accepted() {
+        let (state, violations) = run(|c| {
+            redis(c);
+            c.replay_durability_tier = Some(ReplayDurabilityTier::RedisWaitQuorum {
+                quorum: 1,
+                timeout_ms: 1,
+            });
+        });
+        assert!(violations.is_empty(), "{violations:?}");
+        assert_eq!(
+            state
+                .expect("quorum 1 / timeout 1 is legal")
+                .durability_tier(),
+            ReplayDurabilityTier::RedisWaitQuorum {
+                quorum: 1,
+                timeout_ms: 1,
+            }
         );
     }
 

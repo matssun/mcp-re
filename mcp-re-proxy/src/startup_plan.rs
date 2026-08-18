@@ -905,6 +905,39 @@ mod tests {
         assert!(!ContinuationControlPlan::from_validated(&validated).needs_control_runtime());
     }
 
+    /// The projected endpoint is the continuation store's own locator, character for
+    /// character (CF-12).
+    ///
+    /// `needs_control_runtime` only reports the variant, so it stays true for an endpoint
+    /// that is empty or that names the replay store. Two Redis instances configured at
+    /// once separate the two: continuations planned against the replay store would be
+    /// written where no answer leg reads them, and every cross-replica approval would fail
+    /// closed.
+    #[test]
+    fn the_continuation_plan_carries_its_own_endpoint_verbatim() {
+        let config = parse(&[
+            "--replay-durability-tier",
+            "redis-wait-quorum:2:2000",
+            "--replay-redis-url",
+            "redis://127.0.0.1:6379",
+            "--continuation-control-redis-url",
+            "redis://127.0.0.1:6380",
+        ])
+        .expect("args parse");
+        let validated = ValidatedDeployment::try_from(config).expect("config validates");
+
+        assert_eq!(
+            ContinuationControlPlan::from_validated(&validated),
+            ContinuationControlPlan::Redis {
+                endpoint: "redis://127.0.0.1:6380".to_string(),
+            }
+        );
+        match ReplayPlan::from_validated(&validated) {
+            ReplayPlan::Redis { url, .. } => assert_eq!(url, "redis://127.0.0.1:6379"),
+            other => panic!("expected a redis replay plan, got {other:?}"),
+        }
+    }
+
     /// The clean break: the old overloaded configuration is refused at layer A, not
     /// silently reinterpreted as continuation configuration.
     #[test]

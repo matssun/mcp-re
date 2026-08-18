@@ -116,13 +116,15 @@ use crate::retained_evidence::FsRetainedEvidenceStore;
 /// different shape, and the chain it reconstructed would be about something else.
 pub const RETAINED_HOP_SCHEMA: &str = "mcp-re-retained-hop/v1";
 
-/// A retention failure. Both variants refuse the exchange.
+/// A retention failure. Every variant refuses the exchange.
 #[derive(Debug)]
 pub enum RetentionError {
     /// The store could not write or read.
     Store(std::io::Error),
     /// A record came back that this reader cannot use.
     Malformed(&'static str),
+    /// The reservation offered has already had its completion taken.
+    AlreadyCompleted,
 }
 
 impl std::fmt::Display for RetentionError {
@@ -130,6 +132,9 @@ impl std::fmt::Display for RetentionError {
         match self {
             RetentionError::Store(e) => write!(f, "retained-evidence store: {e}"),
             RetentionError::Malformed(what) => write!(f, "retained evidence: {what}"),
+            RetentionError::AlreadyCompleted => {
+                write!(f, "retained evidence: reservation is already completed")
+            }
         }
     }
 }
@@ -472,12 +477,27 @@ pub struct RetentionReservation {
     /// for the whole span from `reserve` to `complete`, which is what guarantees the
     /// completion job always has somewhere to go.
     _permit: tokio::sync::OwnedSemaphorePermit,
+    /// The one completion this reservation is worth, taken by the first
+    /// [`EvidenceRetention::complete`] that asks for it.
+    completion: std::sync::atomic::AtomicBool,
 }
 
 impl RetentionReservation {
     /// The request digest this reservation is keyed by.
     pub fn digest(&self) -> &EvidenceDigest {
         &self.digest
+    }
+
+    /// Take this reservation's single completion, reporting whether it was still there.
+    ///
+    /// The permit is what makes the queue bound hold — `K` reservations bound the queue
+    /// at `K` completion jobs — and a permit is held by a handle, not by a call. A
+    /// completion that could be taken from the same handle twice would put two jobs
+    /// behind one permit, so the count that bounds the queue would stop counting jobs.
+    /// The swap is what makes the second taker lose even when both race.
+    fn take_completion(&self) -> bool {
+        self.completion
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
     }
 }
 
@@ -599,6 +619,7 @@ impl EvidenceRetention {
         Ok(RetentionReservation {
             digest,
             _permit: permit,
+            completion: std::sync::atomic::AtomicBool::new(true),
         })
     }
 
@@ -610,12 +631,23 @@ impl EvidenceRetention {
     /// hop write is likewise not an error for the caller: it costs an auditor one
     /// reconciliation, whereas failing the exchange there would refuse a call whose
     /// evidence is on disk.
+    ///
+    /// A reservation is worth exactly one completion, and a second attempt is refused
+    /// with [`RetentionError::AlreadyCompleted`] before any job is queued. One crossing
+    /// of the execution threshold produces one hop: a reservation that could be completed
+    /// repeatedly would let one execution write N hop objects, so an auditor counting
+    /// hops would count calls that never happened — and it would put N jobs behind the
+    /// one permit that bounds the write queue, which is what makes a completion refusable
+    /// for capacity after the backend has already run.
     pub async fn complete(
         &self,
         reservation: &RetentionReservation,
         request: &HttpRequest,
         response: &HttpResponse,
     ) -> Result<EvidenceDigest, RetentionError> {
+        if !reservation.take_completion() {
+            return Err(RetentionError::AlreadyCompleted);
+        }
         let bytes = serde_json::to_vec(&RetainedHopRecord::of(request, response))
             .map_err(|_| RetentionError::Malformed("retained hop does not serialize"))?;
         let digest = EvidenceDigest::of(&bytes);
@@ -1323,5 +1355,54 @@ mod tests {
 
         assert!(dir.0.join(digest.as_str()).exists(), "the hop is retained");
         assert!(!marker.exists(), "its marker is consumed");
+    }
+
+    /// One crossing of the execution threshold is worth one hop.
+    ///
+    /// A reservation holds one permit, and the queue bound is the reservation count times
+    /// one job. A handle that could be completed again would put a second job behind that
+    /// permit — so at the ceiling a completion could find the channel full, which is the
+    /// post-execution drop the whole permit scheme exists to make impossible — and it
+    /// would land a second hop object for a backend call that ran once, which an auditor
+    /// counting hops reads as two calls.
+    #[tokio::test]
+    async fn a_reservation_is_worth_exactly_one_completion() {
+        let dir = TempDir::new("one-completion");
+        let retention = EvidenceRetention::open(&dir.0).expect("open");
+        let (request, response) = exchange();
+
+        let reservation = retention.reserve(&request).await.expect("reserve");
+        let first = retention
+            .complete(&reservation, &request, &response)
+            .await
+            .expect("the reserved completion is always available");
+
+        let mut second_response = response.clone();
+        second_response.body = b"{\"jsonrpc\":\"2.0\",\"result\":\"again\"}".to_vec();
+        let second = retention
+            .complete(&reservation, &request, &second_response)
+            .await;
+
+        assert!(
+            matches!(second, Err(RetentionError::AlreadyCompleted)),
+            "a completed reservation was completed again"
+        );
+        assert!(dir.0.join(first.as_str()).exists(), "the one hop is stored");
+        let hops: Vec<String> = std::fs::read_dir(&dir.0)
+            .expect("list")
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .filter(|name| !name.ends_with(".pending"))
+            .collect();
+        assert_eq!(
+            hops,
+            vec![first.as_str().to_owned()],
+            "one execution wrote more than one hop object"
+        );
     }
 }

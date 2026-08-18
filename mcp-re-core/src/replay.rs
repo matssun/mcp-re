@@ -15,6 +15,11 @@
 //! (fail closed, distinct from a replay verdict — parallels
 //! `trust_resolver_unavailable`). A cache failure NEVER falls back to "allow".
 //!
+//! Every failure the reference cache owns is such an error VALUE, not a panic: a
+//! poisoned lock and the entry ceiling both produce
+//! [`ReplayCacheError::Unavailable`], so a single panic elsewhere cannot convert a
+//! per-request refusal into a worker-terminating panic on every later request.
+//!
 //! ## Retention & distribution
 //!
 //! An entry must be retained until `expires_at + max_clock_skew`: once a
@@ -256,11 +261,24 @@ impl Clone for InMemoryReplayCache {
     /// Deep, independent copy of the seen-set (the reference cache is not a
     /// shared handle — cloning yields a private map, unlike the `Arc`-shared
     /// [`InMemoryAtomicReplayStore`]).
+    ///
+    /// `Clone` has no error channel, and a poisoned lock makes the seen-set
+    /// unreadable. Copying an empty map would be the one unsafe answer — it
+    /// readmits every nonce the source had recorded — so a clone of a poisoned
+    /// cache is built with a zero entry ceiling instead: it admits nothing and
+    /// answers every `check_and_insert` with [`ReplayCacheError::Unavailable`].
     fn clone(&self) -> Self {
+        let Ok(seen) = self.seen.lock() else {
+            return InMemoryReplayCache {
+                max_clock_skew_secs: self.max_clock_skew_secs,
+                max_entries: 0,
+                seen: Mutex::new(BTreeMap::new()),
+            };
+        };
         InMemoryReplayCache {
             max_clock_skew_secs: self.max_clock_skew_secs,
             max_entries: self.max_entries,
-            seen: Mutex::new(self.seen.lock().expect("replay mutex poisoned").clone()),
+            seen: Mutex::new(seen.clone()),
         }
     }
 }
@@ -293,9 +311,10 @@ impl InMemoryReplayCache {
         self
     }
 
-    /// Number of retained entries (test/inspection aid).
+    /// Number of retained entries (test/inspection aid). A poisoned lock counts
+    /// as 0 — this is an inspection aid, never an admission decision.
     pub fn len(&self) -> usize {
-        self.seen.lock().expect("replay mutex poisoned").len()
+        self.seen.lock().map(|seen| seen.len()).unwrap_or(0)
     }
 
     /// Whether the cache retains no entries.
@@ -310,11 +329,14 @@ impl InMemoryReplayCache {
     /// readmitting its nonce is safe. Pruning is explicit and side-effect free
     /// beyond the eviction itself, keeping the cache deterministic. Takes
     /// `&self` via the interior [`Mutex`].
+    ///
+    /// A poisoned lock evicts nothing: eviction is the only operation here that
+    /// can readmit a nonce, so an unreadable seen-set retains its entries rather
+    /// than being cleared on a lock this call cannot trust.
     pub fn prune(&self, now_unix: i64) {
-        self.seen
-            .lock()
-            .expect("replay mutex poisoned")
-            .retain(|_, &mut retain_until| retain_until >= now_unix);
+        if let Ok(mut seen) = self.seen.lock() {
+            seen.retain(|_, &mut retain_until| retain_until >= now_unix);
+        }
     }
 }
 
@@ -330,7 +352,16 @@ impl ReplayCache for InMemoryReplayCache {
         // The check-and-insert is atomic: the lock spans both the presence
         // check and the insert, so two concurrent callers racing the same
         // triple cannot both observe it absent (exactly one `Fresh`).
-        let mut seen = self.seen.lock().expect("replay mutex poisoned");
+        // A poisoned lock is an operational failure like any other: an error
+        // value, never a panic and never an admit. Panicking would terminate the
+        // serving task and leave every later caller panicking on the same lock
+        // instead of receiving the frozen unavailable verdict.
+        let mut seen = self
+            .seen
+            .lock()
+            .map_err(|e| ReplayCacheError::Unavailable {
+                details: format!("in-memory replay cache mutex poisoned: {e}"),
+            })?;
         if seen.contains_key(&key) {
             return Ok(ReplayDecision::Replay);
         }
@@ -377,9 +408,10 @@ mod tests {
     const EXPIRES: i64 = 1_779_998_700; // an arbitrary fixed epoch
     const SKEW: i64 = 30;
 
-    /// A test-only cache whose every call is an operational failure. Exercises
-    /// the [`McpReError::ReplayCacheUnavailable`] mapping (the in-memory
-    /// reference cache has no failure path).
+    /// A test-only cache whose every call is an operational failure, and which
+    /// implements only `check_and_insert` — so it exercises both the
+    /// [`McpReError::ReplayCacheUnavailable`] mapping and the trait's
+    /// default-only durability path.
     struct AlwaysUnavailableReplayCache;
 
     impl ReplayCache for AlwaysUnavailableReplayCache {
@@ -511,13 +543,79 @@ mod tests {
     }
 
     #[test]
-    fn in_memory_cache_never_errors() {
+    fn distinct_inserts_below_the_ceiling_do_not_error() {
         let cache = InMemoryReplayCache::new(SKEW);
-        // Any number of distinct inserts succeed without an operational failure.
         for i in 0..5 {
             let nonce = format!("nonce-{i:022}");
             assert!(cache.check_and_insert(SIGNER, AUD, &nonce, EXPIRES).is_ok());
         }
+    }
+
+    /// Poison `cache.seen` by panicking while its guard is held.
+    fn poison(cache: &InMemoryReplayCache) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _held = cache.seen.lock().expect("not yet poisoned");
+            panic!("poisoning the replay cache on purpose");
+        }));
+        assert!(cache.seen.lock().is_err(), "the lock must now be poisoned");
+    }
+
+    #[test]
+    fn a_poisoned_lock_refuses_as_unavailable_rather_than_panicking() {
+        // Poison is sticky: a cache that panics on a poisoned lock panics for every
+        // later caller too, terminating serving tasks instead of returning the frozen
+        // `mcp-re.replay_cache_unavailable` verdict this tier owes its pipeline.
+        let cache = InMemoryReplayCache::new(SKEW);
+        assert_eq!(
+            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            Ok(ReplayDecision::Fresh)
+        );
+        poison(&cache);
+
+        for attempt in 0..2 {
+            let nonce = format!("nonce-{attempt}");
+            let refused = cache.check_and_insert(SIGNER, AUD, &nonce, EXPIRES);
+            assert!(
+                matches!(refused, Err(ReplayCacheError::Unavailable { .. })),
+                "attempt {attempt} must refuse as Unavailable, got {refused:?}"
+            );
+            assert_eq!(
+                refused.unwrap_err().to_mcp_re_error(),
+                McpReError::ReplayCacheUnavailable
+            );
+        }
+        // An already-recorded triple is refused too — never admitted off an
+        // unreadable seen-set.
+        assert!(cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES).is_err());
+        // The inspection aids stay total.
+        cache.prune(EXPIRES + SKEW + 1);
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn a_clone_of_a_poisoned_cache_admits_nothing() {
+        let cache = InMemoryReplayCache::new(SKEW);
+        assert_eq!(
+            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            Ok(ReplayDecision::Fresh)
+        );
+        poison(&cache);
+
+        // `Clone` cannot report the failure, and cannot read the seen-set either — so
+        // the copy must refuse admissions rather than start out empty and readmit
+        // every nonce the source had recorded.
+        let copy = cache.clone();
+        let refused = copy.check_and_insert(SIGNER, AUD, NONCE, EXPIRES);
+        assert!(
+            matches!(refused, Err(ReplayCacheError::Unavailable { .. })),
+            "the copy must refuse, got {refused:?}"
+        );
+        assert_eq!(
+            refused.unwrap_err().to_mcp_re_error(),
+            McpReError::ReplayCacheUnavailable
+        );
+        let second = copy.check_and_insert(SIGNER, AUD, "another-nonce", EXPIRES);
+        assert!(second.is_err(), "the copy must refuse every nonce, got {second:?}");
     }
 
     #[test]

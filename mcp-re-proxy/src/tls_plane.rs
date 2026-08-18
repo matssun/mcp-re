@@ -75,8 +75,8 @@ impl ClientCrlEvidence {
 /// The serving state that must SURVIVE a `ServerConfig` rebuild, created once per plane
 /// and handed to every build.
 ///
-/// Both members bound something that is a RATE or an accumulation, so re-creating either
-/// on the reload cadence resets what it bounds:
+/// `resumption` and `sign_budget` each bound something that is a RATE or an accumulation,
+/// so re-creating either on the reload cadence resets what it bounds:
 ///
 /// - `resumption` holds the TLS session cache and the trust epoch in force. A per-build
 ///   cache is emptied on every reload — a fleet-wide full-handshake storm on the cadence
@@ -85,9 +85,40 @@ impl ClientCrlEvidence {
 /// - `sign_budget` bounds how fast unauthenticated peers can drive a remote, billed,
 ///   account-throttled TLS handshake signer. A per-build bucket is refilled to full on
 ///   every reload, so it bounds a window rather than a rate.
+///
+/// `client_ca` and `allow_unknown_status` are the CLIENT-AUTHENTICATION INPUTS, and they
+/// live here because they are exactly the inputs
+/// [`TlsAuthEpoch`](crate::tls_auth_epoch::TlsAuthEpoch) digests. One owner, read by the
+/// startup build and by every reload rebuild alike: a build cannot be handed an anchor
+/// set that disagrees with the epoch the store publishes, and there is no second copy
+/// captured beside the reload worker for a later change to leave behind.
 struct TlsRebuildState {
+    /// The trusted client-CA set every build of this plane's config is bound to.
+    client_ca: Vec<rustls_pki_types::CertificateDer<'static>>,
+    /// Unknown revocation status is refused unconditionally; `false` is deny-unknown and
+    /// there is no operator knob. It is a client-auth policy input, so it is digested
+    /// into the epoch together with the anchors above.
+    allow_unknown_status: bool,
     resumption: Arc<crate::tls_auth_epoch::EpochBoundSessionStore>,
     sign_budget: Arc<crate::delegated_tls::TlsHandshakeSignBudget>,
+}
+
+impl TlsRebuildState {
+    /// Seed the plane's serving state from the client-authentication inputs it will be
+    /// built around. The epoch the session store starts under is computed from THESE
+    /// anchors and THIS policy, so the store and the builds agree by construction.
+    fn new(
+        client_ca: Vec<rustls_pki_types::CertificateDer<'static>>,
+        allow_unknown_status: bool,
+    ) -> Self {
+        let resumption = tls::new_resumption_state(&client_ca, allow_unknown_status);
+        TlsRebuildState {
+            client_ca,
+            allow_unknown_status,
+            resumption,
+            sign_budget: Arc::new(crate::delegated_tls::TlsHandshakeSignBudget::default()),
+        }
+    }
 }
 
 /// Transport custody: the serving TLS configuration and what keeps it current.
@@ -291,15 +322,14 @@ impl TlsPlane {
         }
         let crls = ClientCrlEvidence { postures };
 
-        // Cloned because the initial build below consumes the originals; the reload
-        // re-reads only the CRLs, never these.
+        // Cloned because the initial build below consumes the original; the reload
+        // re-reads only the CRLs, never this.
         let reload_chain = server_chain.clone();
-        let reload_client_ca = client_ca.clone();
         let reload_crl_paths = crl_paths.to_vec();
         // The CRL verifier ALWAYS fails closed on an unknown revocation status — there
-        // is no relax knob. `false` = deny-unknown, threaded to every verifier builder,
-        // and the module note's self-bounding argument depends on it staying that way.
-        let reload_allow_unknown = false;
+        // is no relax knob. `false` = deny-unknown, and the module note's self-bounding
+        // argument depends on it staying that way.
+        let allow_unknown_status = false;
 
         // The PER-REQUEST revocation index, built from the same CRL bytes the handshake
         // verifier is about to be given. Without this, revocation reaches only NEW
@@ -314,7 +344,7 @@ impl TlsPlane {
                     .iter()
                     .map(|crl| crl.as_ref().to_vec())
                     .collect::<Vec<_>>(),
-                reload_allow_unknown,
+                allow_unknown_status,
             )
             .map_err(|e| e.to_string())?;
             Some(Arc::new(client_revocation::SharedClientRevocation::new(
@@ -322,18 +352,14 @@ impl TlsPlane {
             )))
         };
 
-        // Created once, before the first build, and handed to every later one: the
-        // session cache and the trust epoch survive a reload, and so does the delegated
-        // handshake-signature bucket.
-        let rebuild_state = Arc::new(TlsRebuildState {
-            resumption: tls::new_resumption_state(&client_ca, reload_allow_unknown),
-            sign_budget: Arc::new(crate::delegated_tls::TlsHandshakeSignBudget::default()),
-        });
+        // Created once, before the first build, and handed to every later one: the trust
+        // anchors, the client-auth policy, the session cache and the trust epoch survive
+        // a reload, and so does the delegated handshake-signature bucket.
+        let rebuild_state = Arc::new(TlsRebuildState::new(client_ca, allow_unknown_status));
 
         // The same construction a CRL reload performs, so the serving config a reload
         // installs cannot diverge from the one startup installed.
-        let server_config =
-            material.rebuild(server_chain, client_ca, client_crls, false, &rebuild_state)?;
+        let server_config = material.rebuild(server_chain, client_crls, &rebuild_state)?;
         // ADR-MCPRE-051 §6 (MCPRE-116): the serve loop reads the current config from a
         // versioned, atomically-swappable snapshot instead of a fixed `Arc`. With no
         // `--client-crl-reload-secs` the snapshot is never swapped, so behavior is
@@ -364,9 +390,7 @@ impl TlsPlane {
                     snapshot: Arc::clone(&snapshot),
                     server_chain: reload_chain,
                     material,
-                    client_ca: reload_client_ca,
                     crl_paths: reload_crl_paths,
-                    allow_unknown_status: reload_allow_unknown,
                     interval_secs: *cadence_secs,
                     revocation: revocation.clone(),
                     rebuild_state: Arc::clone(&rebuild_state),
@@ -428,12 +452,15 @@ impl TlsKeyMaterial {
     }
 
     /// Rebuild the serving config around `crls`, under whichever custody applies.
+    ///
+    /// The client-authentication inputs come from `state` rather than from parameters:
+    /// they are what the trust epoch digests, and a build that could be handed anchors
+    /// the epoch owner does not hold would publish an epoch describing a different
+    /// verifier than the one it installed.
     fn rebuild(
         &self,
         server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
-        client_ca: Vec<rustls_pki_types::CertificateDer<'static>>,
         crls: Vec<rustls_pki_types::CertificateRevocationListDer<'static>>,
-        allow_unknown_status: bool,
         state: &TlsRebuildState,
     ) -> Result<rustls::ServerConfig, String> {
         match self {
@@ -441,9 +468,9 @@ impl TlsKeyMaterial {
                 tls::RustlsDirectProvider::build_server_config_with_crls_resuming(
                     server_chain,
                     key.clone_key(),
-                    client_ca,
+                    state.client_ca.clone(),
                     crls,
-                    allow_unknown_status,
+                    state.allow_unknown_status,
                     &state.resumption,
                 )
                 .map_err(|e| e.to_string())
@@ -452,9 +479,9 @@ impl TlsKeyMaterial {
                 tls::build_server_config_delegated_validated_resuming(
                     server_chain,
                     Arc::clone(signer),
-                    client_ca,
+                    state.client_ca.clone(),
                     crls,
-                    allow_unknown_status,
+                    state.allow_unknown_status,
                     &state.resumption,
                     &state.sign_budget,
                 )
@@ -470,18 +497,17 @@ struct CrlReloadTask {
     /// re-reads only the CRLs, never these.
     server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
     material: TlsKeyMaterial,
-    client_ca: Vec<rustls_pki_types::CertificateDer<'static>>,
     crl_paths: Vec<String>,
-    allow_unknown_status: bool,
     interval_secs: u64,
     /// The per-request revocation index, republished from the same re-read bytes as
     /// the rebuilt verifier. Rebuilding only the verifier would leave the reload
     /// reaching new connections alone — which is the gap the per-request check exists
     /// to close.
     revocation: Option<Arc<client_revocation::SharedClientRevocation>>,
-    /// The session cache, trust epoch and handshake-signature budget the rebuilt config
-    /// is wired to — the same ones startup built, so a reload neither empties the cache
-    /// nor refills the bucket.
+    /// The client-authentication inputs, session cache, trust epoch and
+    /// handshake-signature budget the rebuilt config is wired to — the same ones startup
+    /// built, so a reload rebuilds against the anchor set in force and neither empties
+    /// the cache nor refills the bucket.
     rebuild_state: Arc<TlsRebuildState>,
 }
 /// SUPERVISED like the trust reload and the rotation owner: nothing joins this thread,
@@ -514,9 +540,7 @@ fn crl_reload_loop(task: CrlReloadTask, halt: &crate::managed_worker::Halt) {
         snapshot,
         server_chain,
         material,
-        client_ca,
         crl_paths,
-        allow_unknown_status,
         interval_secs,
         revocation,
         rebuild_state,
@@ -545,16 +569,10 @@ fn crl_reload_loop(task: CrlReloadTask, halt: &crate::managed_worker::Halt) {
                         .iter()
                         .map(|crl| crl.as_ref().to_vec())
                         .collect::<Vec<_>>(),
-                    allow_unknown_status,
+                    rebuild_state.allow_unknown_status,
                 )
                 .map_err(|e| e.to_string())?;
-                let rebuilt = material.rebuild(
-                    server_chain.clone(),
-                    client_ca.clone(),
-                    crls,
-                    allow_unknown_status,
-                    &rebuild_state,
-                )?;
+                let rebuilt = material.rebuild(server_chain.clone(), crls, &rebuild_state)?;
                 if let Some(revocation) = revocation.as_ref() {
                     revocation.store(index);
                 }
@@ -989,6 +1007,105 @@ mod custody_agreement_tests {
         assert!(
             !err.contains("custody mismatch"),
             "agreeing custody must pass the check: {err}"
+        );
+    }
+}
+
+/// ADR-MCPRE-055: the trust epoch and the verifier a build installs are derived from ONE
+/// anchor set.
+///
+/// The defect these catch is a build that can be handed client-authentication inputs the
+/// epoch owner does not hold: the store would then publish a digest of anchors other than
+/// the ones the verifier trusts, and the epoch-mismatch eviction would be gated on a value
+/// that describes a different verifier.
+#[cfg(test)]
+mod trust_epoch_binding_tests {
+    use super::*;
+    use crate::tls_auth_epoch::TlsAuthEpoch;
+    use rustls_pki_types::CertificateDer;
+
+    fn ca_der() -> CertificateDer<'static> {
+        let key = rcgen::KeyPair::generate().expect("ca key");
+        let mut params = rcgen::CertificateParams::new(Vec::new()).expect("ca params");
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign];
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "tls-plane-epoch-test-ca");
+        params.self_signed(&key).expect("ca").der().clone()
+    }
+
+    /// A server credential whose chain and key belong together, under exported custody.
+    fn exported_credential() -> (Vec<CertificateDer<'static>>, TlsKeyMaterial) {
+        use rustls::pki_types::PrivateKeyDer;
+        use rustls::pki_types::PrivatePkcs8KeyDer;
+        let key = rcgen::KeyPair::generate().expect("server key");
+        let params = rcgen::CertificateParams::new(vec!["localhost".to_string()]).expect("params");
+        let cert = params.self_signed(&key).expect("server cert");
+        (
+            vec![cert.der().clone()],
+            TlsKeyMaterial::Exported(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
+                key.serialize_der(),
+            ))),
+        )
+    }
+
+    /// The session store starts under the digest of the anchors and the policy the plane
+    /// was given, not under a digest of anything else.
+    #[test]
+    fn the_store_starts_under_the_epoch_of_the_planes_own_client_auth_inputs() {
+        let anchors = vec![ca_der(), ca_der()];
+        let state = TlsRebuildState::new(anchors.clone(), false);
+        assert!(
+            !state.allow_unknown_status,
+            "unknown revocation status is refused unconditionally"
+        );
+        assert_eq!(
+            *state.resumption.epoch(),
+            TlsAuthEpoch::compute(&anchors, false),
+            "the epoch in force must digest the anchor set the plane holds"
+        );
+        assert_ne!(
+            *state.resumption.epoch(),
+            TlsAuthEpoch::compute(&[], false),
+            "an epoch over no anchors would describe a verifier this plane never built"
+        );
+    }
+
+    /// A rebuild — the CRL cadence is the one that happens in a running process —
+    /// republishes the epoch of the plane's OWN anchor set, so the digest keeps describing
+    /// the verifier that was installed with it.
+    #[test]
+    fn a_rebuild_republishes_the_epoch_of_the_anchor_set_the_plane_owns() {
+        let anchors = vec![ca_der()];
+        let (chain, material) = exported_credential();
+        let state = TlsRebuildState::new(anchors.clone(), false);
+
+        let first = material
+            .rebuild(chain.clone(), Vec::new(), &state)
+            .expect("initial build");
+        assert!(first
+            .session_storage
+            .put(b"ticket".to_vec(), b"session".to_vec()));
+        let after_first = *state.resumption.epoch();
+
+        material
+            .rebuild(chain, Vec::new(), &state)
+            .expect("rebuild");
+        assert_eq!(
+            *state.resumption.epoch(),
+            TlsAuthEpoch::compute(&anchors, false),
+            "a rebuild must digest the anchors the plane holds"
+        );
+        assert_eq!(
+            after_first,
+            *state.resumption.epoch(),
+            "re-reading CRLs is not a change of trusted client CAs"
+        );
+        assert_eq!(
+            first.session_storage.take(b"ticket"),
+            Some(b"session".to_vec()),
+            "an unchanged epoch leaves established sessions resumable"
         );
     }
 }

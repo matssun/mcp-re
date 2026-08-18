@@ -983,6 +983,276 @@ mod epoch_watch_wiring_tests {
     }
 }
 
+/// The startup refusals and the rotation loop itself, driven through the real entry
+/// points rather than through their pure predicates.
+///
+/// `rotation_made_progress` and `rotation_backoff` are separately tested above and in
+/// `delegated_server_signer`; what those tests cannot show is that the loop COMPOSES
+/// them — that a fail-soft `Ok(())` from a root outage is routed to the backoff arm and
+/// not to the success arm. The tests here run the production loop on a thread and halt
+/// it, and drive `materialize` end to end so its two startup refusals are executed.
+#[cfg(test)]
+mod rotation_owner_tests {
+    use super::*;
+    use crate::delegated_wiring::build_delegated_signing;
+    use crate::delegated_wiring::ProdDelegatedRotor;
+    use crate::key_source::KeyError;
+    use crate::key_source::ResponseSigner;
+    use crate::startup_plan::SigningPlan;
+    use crate::startup_plan::TrustEpochPlan;
+    use crate::trust_epoch::EpochReadError;
+    use crate::trust_epoch::EpochReader;
+    use mcp_re_core::SigningKey;
+    use mcp_re_core::VerificationKey;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::Ordering;
+
+    const ROOT_SEED: [u8; 32] = [33u8; 32];
+
+    /// TTL and overlap one second apart, so the overlap window opens one second after
+    /// issuance: the loop reaches a DUE rotation within a test's lifetime while the
+    /// predecessor stays valid for the whole run, which is precisely the state the
+    /// non-progress guard has to discriminate.
+    const TTL: i64 = 10;
+    const OVERLAP: i64 = 9;
+
+    /// How long each loop test lets the production loop run before halting it: the
+    /// one-second wait to the overlap window plus room for several backoff retries.
+    const RUN_WINDOW: Duration = Duration::from_millis(2500);
+
+    /// A root issuer that can be taken offline and that counts what it was asked to
+    /// sign, so "the plane refused BEFORE minting" is checkable.
+    struct SwitchableRoot {
+        key: SigningKey,
+        offline: Arc<AtomicBool>,
+        calls: Arc<AtomicU64>,
+    }
+
+    impl ResponseSigner for SwitchableRoot {
+        fn sign_response(&self, preimage: &[u8]) -> Result<String, KeyError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.offline.load(Ordering::SeqCst) {
+                return Err(KeyError::NotFound("root issuer offline".into()));
+            }
+            self.key.sign_response(preimage)
+        }
+        fn response_public_key(&self) -> Result<VerificationKey, KeyError> {
+            self.key.response_public_key()
+        }
+    }
+
+    fn root(offline: &Arc<AtomicBool>, calls: &Arc<AtomicU64>) -> SwitchableRoot {
+        SwitchableRoot {
+            key: SigningKey::from_seed_bytes(&ROOT_SEED),
+            offline: Arc::clone(offline),
+            calls: Arc::clone(calls),
+        }
+    }
+
+    /// A shared epoch that is never readable — an outage, or a counter that regressed.
+    struct UnreadableEpoch;
+
+    impl EpochReader for UnreadableEpoch {
+        fn read_epoch(&self) -> Result<i64, EpochReadError> {
+            Err(EpochReadError("epoch store unreachable".into()))
+        }
+    }
+
+    fn plan(epoch: TrustEpochPlan) -> SigningPlan {
+        SigningPlan {
+            custody: mcp_re_http_profile::CustodyConfig {
+                issuer_kid: "root-kid".to_string(),
+                iss: "did:example:server".to_string(),
+                profile: mcp_re_http_profile::PROFILE_TAG.to_string(),
+                aud: "verifier-1".to_string(),
+                audience_hash: "aud-hash".to_string(),
+                trust_epoch: "epoch-1".to_string(),
+                server_role: "server".to_string(),
+                server_trust_domain: "example.com".to_string(),
+                server_subject: "did:example:server".to_string(),
+                ttl: TTL,
+                overlap: OVERLAP,
+            },
+            epoch,
+        }
+    }
+
+    /// Run the REAL rotation loop for `RUN_WINDOW`, then raise the deployment halt and
+    /// hand the rotor back so the root-invocation count survives the thread.
+    fn drive_loop(
+        mut rotor: ProdDelegatedRotor,
+        signer: Arc<DelegatedServerSigner>,
+        watch: Option<DelegatedEpochWatch>,
+    ) -> ProdDelegatedRotor {
+        let deployment = Arc::new(AtomicBool::new(false));
+        let workers = WorkerSet::new(Arc::clone(&deployment));
+        let halt = workers.halt();
+        let running = std::thread::spawn(move || {
+            rotation_loop(&mut rotor, &signer, OVERLAP, watch.as_ref(), &halt);
+            rotor
+        });
+        std::thread::sleep(RUN_WINDOW);
+        deployment.store(true, Ordering::SeqCst);
+        running.join().expect("the rotation loop must not panic")
+    }
+
+    /// A root outage during the overlap window must not become a mint loop.
+    ///
+    /// `ensure_active` reports `Ok(())` both when a successor was minted and when
+    /// issuance failed while the current key is still valid. Taking the second reading
+    /// as success resets the failure count and collapses the next wake to now, so the
+    /// loop re-enters at once and keeps approaching the root for the whole window.
+    #[test]
+    fn a_root_outage_inside_the_overlap_window_backs_off_instead_of_re_entering() {
+        let offline = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicU64::new(0));
+        let mut wiring = build_delegated_signing(
+            &plan(TrustEpochPlan::NoNetworkChannel),
+            root(&offline, &calls),
+        );
+        wiring
+            .rotor
+            .rotate(now_unix())
+            .expect("the first delegated key issues");
+        // The root goes away with the predecessor still valid, so every later attempt
+        // is the fail-soft `Ok(())` under the unchanged kid.
+        offline.store(true, Ordering::SeqCst);
+        let signer = Arc::clone(&wiring.signer);
+        drive_loop(wiring.rotor, Arc::clone(&signer), None);
+
+        let metrics = signer.metrics();
+        assert!(
+            metrics.consecutive_failures() >= 1,
+            "a DUE rotation that published no successor must count as a failure, or \
+             nothing drives the backoff"
+        );
+        assert!(
+            metrics.rotations_ok() <= 1,
+            "no successor was ever minted, yet {} rotations were recorded as successful: \
+             the loop read a root outage as steady state and spun on the root issuer",
+            metrics.rotations_ok()
+        );
+    }
+
+    /// An unreadable shared epoch stops the loop MINTING, rather than falling through to
+    /// a rotation under a label no verifier can compare.
+    #[test]
+    fn an_unreadable_shared_epoch_stops_the_loop_minting() {
+        let offline = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicU64::new(0));
+        let mut wiring = build_delegated_signing(
+            &plan(TrustEpochPlan::NoNetworkChannel),
+            root(&offline, &calls),
+        );
+        wiring
+            .rotor
+            .rotate(now_unix())
+            .expect("the first delegated key issues");
+        assert_eq!(wiring.rotor.root_invocations(), 1);
+        let signer = Arc::clone(&wiring.signer);
+        // The root is HEALTHY throughout: the only thing that may stop a mint here is
+        // the epoch refusal.
+        let watch = DelegatedEpochWatch {
+            reader: Box::new(UnreadableEpoch),
+            base_label: "epoch-1".to_string(),
+            high_water: std::sync::Mutex::new(None),
+        };
+        let rotor = drive_loop(wiring.rotor, Arc::clone(&signer), Some(watch));
+
+        assert_eq!(
+            rotor.root_invocations(),
+            1,
+            "the shared epoch was unreadable for the whole run, so nothing may be minted \
+             — a credential carrying no comparable epoch is one the operator's INCR \
+             cannot revoke"
+        );
+        assert!(
+            signer.metrics().consecutive_failures() >= 1,
+            "the refusal to mint must be recorded as a failure and backed off"
+        );
+    }
+
+    /// Startup is fail-closed on issuance: no active delegated key, no serving.
+    #[test]
+    fn materialize_refuses_when_the_root_cannot_issue_the_first_key() {
+        let offline = Arc::new(AtomicBool::new(true));
+        let calls = Arc::new(AtomicU64::new(0));
+        let err = SigningPlane::materialize(
+            &plan(TrustEpochPlan::NoNetworkChannel),
+            root(&offline, &calls),
+            now_unix(),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .err()
+        .expect("a proxy must not begin serving without an active delegated key");
+        assert!(
+            err.contains("initial delegated key issuance FAILED"),
+            "the refusal must name what failed: {err}"
+        );
+        assert!(
+            calls.load(Ordering::SeqCst) >= 1,
+            "the root was never asked, so this refused for some other reason"
+        );
+    }
+
+    /// The positive control for the two refusals above: a healthy root yields a plane
+    /// that is actually serving-capable and owns exactly the rotation worker.
+    #[test]
+    fn materialize_publishes_a_usable_key_and_owns_one_rotation_worker() {
+        let offline = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicU64::new(0));
+        let plane = SigningPlane::materialize(
+            &plan(TrustEpochPlan::NoNetworkChannel),
+            root(&offline, &calls),
+            now_unix(),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .expect("a healthy root must establish signing custody");
+        assert_eq!(plane.worker_count(), 1);
+        assert!(
+            plane.signer().current(now_unix()).is_some(),
+            "materialize must leave the hot path with a usable delegated key"
+        );
+    }
+
+    /// A CONFIGURED kill switch whose counter cannot be read at startup is a refusal,
+    /// not a start with the switch wired to nothing.
+    #[cfg(feature = "redis_replay")]
+    #[test]
+    fn materialize_refuses_when_the_configured_shared_epoch_cannot_be_read() {
+        // An ephemeral port, bound to learn it and released again: the URL parses, so a
+        // reader is built, and every read then fails to connect — a configured source
+        // that cannot be read, without a hardcoded port.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("an ephemeral port");
+        let port = listener.local_addr().expect("the bound address").port();
+        drop(listener);
+        let offline = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicU64::new(0));
+        let err = SigningPlane::materialize(
+            &plan(TrustEpochPlan::Redis {
+                url: format!("redis://127.0.0.1:{port}"),
+                key: crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY.to_string(),
+            }),
+            root(&offline, &calls),
+            now_unix(),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .err()
+        .expect("a kill switch that cannot be read must refuse the plane");
+        assert!(
+            err.contains("could NOT be read"),
+            "the refusal must name the unreadable epoch: {err}"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "the refusal must precede minting: a key issued here carries an epoch the \
+             operator's INCR cannot revoke"
+        );
+    }
+}
+
 #[cfg(test)]
 mod handle_lifetime_tests {
     use super::*;

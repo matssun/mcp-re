@@ -49,9 +49,9 @@ pub enum AwsCredentialMode {
     /// so no long-lived IAM key material exists in the pod. Chosen by an explicit
     /// operator flag, never by discovery.
     WebIdentity {
-        /// Overrides the regional STS default. Held here because it parameterizes THIS
-        /// mode: it is refused beside `StaticEnv`, where it would name an endpoint
-        /// nothing contacts.
+        /// Overrides the regional STS default, already held to the endpoint-authority
+        /// guard. Held here because it parameterizes THIS mode: it is refused beside
+        /// `StaticEnv`, where it would name an endpoint nothing contacts.
         sts_endpoint: Option<String>,
     },
 }
@@ -120,6 +120,16 @@ impl CustodyState {
     }
 }
 
+/// The endpoint override a state is allowed to carry.
+///
+/// `None` both when no override was named and when the named one failed the
+/// endpoint-authority guard, so no built state ever holds an authority
+/// [`kms_endpoint_refusals`] refused. A refused override is still reported there; dropping
+/// it here only keeps the state's own field honest about what it contains.
+fn guarded_endpoint(flag: &str, value: Option<&str>) -> Option<String> {
+    validated_kms_endpoint(flag, value?).ok()
+}
+
 /// Build the requested state from the material its column requires.
 ///
 /// `None` when a required value is absent — which is exactly when `required_violations`
@@ -142,10 +152,13 @@ fn classify(config: &DeploymentRequest) -> Option<CustodyState> {
         KeySourceKind::AwsKms => CustodyState::AwsKms {
             region: config.aws_kms_region.clone()?,
             key_id: config.aws_kms_key_id.clone()?,
-            endpoint: config.aws_kms_endpoint.clone(),
+            endpoint: guarded_endpoint("--aws-kms-endpoint", config.aws_kms_endpoint.as_deref()),
             credentials: if config.aws_kms_use_web_identity {
                 AwsCredentialMode::WebIdentity {
-                    sts_endpoint: config.aws_sts_endpoint.clone(),
+                    sts_endpoint: guarded_endpoint(
+                        "--aws-sts-endpoint",
+                        config.aws_sts_endpoint.as_deref(),
+                    ),
                 }
             } else {
                 AwsCredentialMode::StaticEnv
@@ -153,7 +166,7 @@ fn classify(config: &DeploymentRequest) -> Option<CustodyState> {
         },
         KeySourceKind::GcpKms => CustodyState::GcpKms {
             key_version: config.gcp_kms_key_version.clone()?,
-            endpoint: config.gcp_kms_endpoint.clone(),
+            endpoint: guarded_endpoint("--gcp-kms-endpoint", config.gcp_kms_endpoint.as_deref()),
             use_metadata: config.gcp_kms_use_metadata,
         },
     })
@@ -614,6 +627,91 @@ mod tests {
             c.signing_key_seed = "/seed".to_string();
         });
         assert!(violations.is_empty(), "{violations:?}");
+    }
+
+    /// The endpoint fields state a guarantee about the TYPE: an override that failed the
+    /// endpoint-authority guard is refused AND absent from the state, so a holder that
+    /// keeps the state and drops the violations still cannot reach the named host. The
+    /// state itself is still classified — the cross-machine relations need a custody
+    /// classification even for a configuration that will be refused.
+    #[test]
+    fn an_endpoint_the_authority_guard_refused_is_not_carried_by_the_built_state() {
+        let hostile = "http://evil.example.com";
+
+        let (state, violations) = run(|c| {
+            aws(c);
+            c.aws_kms_endpoint = Some(hostile.to_string());
+        });
+        assert!(
+            violations.iter().any(|v| v.contains("--aws-kms-endpoint")),
+            "{violations:?}"
+        );
+        let Some(CustodyState::AwsKms { endpoint, .. }) = state else {
+            panic!("the AWS state is classified even when its endpoint is refused");
+        };
+        assert_eq!(endpoint, None, "a refused KMS authority was carried");
+
+        let (state, violations) = run(|c| {
+            aws(c);
+            c.aws_kms_use_web_identity = true;
+            c.aws_sts_endpoint = Some(hostile.to_string());
+        });
+        assert!(
+            violations.iter().any(|v| v.contains("--aws-sts-endpoint")),
+            "{violations:?}"
+        );
+        let Some(CustodyState::AwsKms { credentials, .. }) = state else {
+            panic!("the AWS state is classified even when its STS endpoint is refused");
+        };
+        assert_eq!(
+            credentials,
+            AwsCredentialMode::WebIdentity { sts_endpoint: None },
+            "a refused STS authority was carried"
+        );
+
+        let (state, violations) = run(|c| {
+            gcp(c);
+            c.gcp_kms_endpoint = Some(hostile.to_string());
+        });
+        assert!(
+            violations.iter().any(|v| v.contains("--gcp-kms-endpoint")),
+            "{violations:?}"
+        );
+        let Some(CustodyState::GcpKms { endpoint, .. }) = state else {
+            panic!("the GCP state is classified even when its endpoint is refused");
+        };
+        assert_eq!(endpoint, None, "a refused KMS authority was carried");
+    }
+
+    /// The other direction of the same field: an override that PASSES the guard reaches
+    /// the state, so the guarantee is "validated", not "discarded".
+    #[test]
+    fn an_admissible_endpoint_override_reaches_the_state_it_parameterizes() {
+        let (state, violations) = run(|c| {
+            aws(c);
+            c.aws_kms_endpoint = Some("https://kms.eu-north-1.amazonaws.com".to_string());
+        });
+        assert!(violations.is_empty(), "{violations:?}");
+        let Some(CustodyState::AwsKms { endpoint, .. }) = state else {
+            panic!("a complete AWS custody configuration selects the AWS state");
+        };
+        assert_eq!(
+            endpoint,
+            Some("https://kms.eu-north-1.amazonaws.com".to_string())
+        );
+
+        let (state, violations) = run(|c| {
+            gcp(c);
+            c.gcp_kms_endpoint = Some("https://cloudkms.googleapis.com".to_string());
+        });
+        assert!(violations.is_empty(), "{violations:?}");
+        let Some(CustodyState::GcpKms { endpoint, .. }) = state else {
+            panic!("a complete GCP custody configuration selects the GCP state");
+        };
+        assert_eq!(
+            endpoint,
+            Some("https://cloudkms.googleapis.com".to_string())
+        );
     }
 
     #[test]

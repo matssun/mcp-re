@@ -1770,14 +1770,18 @@ mod tests {
         // Pure policy: Revoked always rejects, Unknown rejects under hard-fail.
         assert!(!decide_allow(CertRevocationStatus::Revoked, false));
         assert!(!decide_allow(CertRevocationStatus::Unknown, false));
-        // And a fully-formed Revoked/Unknown response still cannot ADMIT (it is
-        // denied at the signature gate today, never mapped to Good).
-        for status in [
-            CertStatus::revoked(x509_ocsp::RevokedInfo {
-                revocation_time: gtime(2023, 6, 1),
-                revocation_reason: None,
-            }),
-            CertStatus::unknown(),
+        // An UNSIGNED Revoked/Unknown response is refused at the signature gate,
+        // before any status is mapped. Assert that exact outcome: a bare
+        // "did not admit" would also be satisfied by an unrelated failure.
+        for (label, status) in [
+            (
+                "revoked",
+                CertStatus::revoked(x509_ocsp::RevokedInfo {
+                    revocation_time: gtime(2023, 6, 1),
+                    revocation_reason: None,
+                }),
+            ),
+            ("unknown", CertStatus::unknown()),
         ] {
             let (issuer, _leaf, response, requested_id) = build_fixture(ResponseFixture {
                 status,
@@ -1790,8 +1794,9 @@ mod tests {
             let mapped =
                 verify_and_map_response(&response, &issuer, &requested_id, b"n", at(2024, 1, 1));
             assert!(
-                !matches!(mapped, Ok(CertRevocationStatus::Good)),
-                "Revoked/Unknown must never map to an admitting Good"
+                matches!(mapped, Err(OcspError::SignatureNotVerified(_))),
+                "an unsigned {label} response must be refused at the signature gate, \
+                 got {mapped:?}"
             );
         }
     }
@@ -2040,6 +2045,15 @@ mod tests {
         assert_eq!(
             map_cert_status(&CertStatus::good()),
             CertRevocationStatus::Good
+        );
+        assert_eq!(
+            map_cert_status(&CertStatus::revoked(x509_ocsp::RevokedInfo {
+                revocation_time: gtime(2023, 6, 1),
+                revocation_reason: None,
+            })),
+            CertRevocationStatus::Revoked,
+            "a responder's revoked CHOICE must map to Revoked, the only value \
+             decide_allow refuses unconditionally"
         );
         assert_eq!(
             map_cert_status(&CertStatus::unknown()),
@@ -2546,6 +2560,7 @@ mod tests {
         use super::super::OcspError;
         use super::at;
         use super::build_cert_id;
+        use super::decide_allow;
         use super::gtime;
         use super::mint_leaf_with_aia;
         use der::asn1::BitString;
@@ -2646,6 +2661,43 @@ mod tests {
                 status,
                 CertRevocationStatus::Good,
                 "a verified Good admits the connection"
+            );
+        }
+
+        /// The end-to-end negative control for the `revoked` CHOICE: a response
+        /// that clears every trust gate (real signature, matching responder id,
+        /// bound CertID, fresh) and carries `revoked` must map to `Revoked` and
+        /// be refused by the policy under both fail modes.
+        #[test]
+        fn signed_revoked_is_mapped_revoked_and_refused() {
+            let signer = SigningKey::from_bytes(&[7u8; 32]);
+            let issuer = mint_issuer_with_key(&signer);
+            let leaf = mint_leaf_with_aia("http://ocsp.example.test/r");
+            let revoked = CertStatus::revoked(x509_ocsp::RevokedInfo {
+                revocation_time: gtime(2023, 6, 1),
+                revocation_reason: None,
+            });
+            let (response, requested) = signed_response(&signer, &issuer, &leaf, revoked, false);
+            let status = verify_and_map_response(
+                &response,
+                &issuer,
+                &requested,
+                b"req-nonce",
+                at(2024, 1, 1),
+            )
+            .expect("a correctly-signed, fresh, bound response must verify");
+            assert_eq!(
+                status,
+                CertRevocationStatus::Revoked,
+                "a verified revoked wire status must reach the policy as Revoked"
+            );
+            assert!(
+                !decide_allow(status, false),
+                "revoked denies under hard-fail"
+            );
+            assert!(
+                !decide_allow(status, true),
+                "revoked denies under soft-fail"
             );
         }
 

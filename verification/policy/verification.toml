@@ -214,8 +214,9 @@ evidence = [
   "verus://http_profile/admission/check_admission_currency",
 ]
 assumptions = ["ASM-0011", "ASM-0012", "ASM-0013", "ASM-0014"]
-# Currency and the degraded window: the nine cases `admission.rs` enumerates, which is the
-# battery the §7 theorem is stated over all inputs of.
+# Two batteries over one owner. Currency and the degraded window are the cases the §7
+# theorem is stated over all inputs of; assertion validity is the ASM-0012 surface the
+# theorems explicitly disclaim, carried here as test evidence rather than as a proof.
 tested_symbols = [
   "lib#admission::tests::a_current_admitted_workload_passes",
   "lib#admission::tests::an_assertion_issued_to_another_actor_does_not_admit_this_caller",
@@ -227,6 +228,13 @@ tested_symbols = [
   "lib#admission::tests::unreachable_state_fails_closed_by_default",
   "lib#admission::tests::degraded_mode_serves_within_p_but_not_beyond",
   "lib#admission::tests::a_zero_p_still_leaves_a_degraded_window_the_width_of_the_clock_skew",
+  "lib#admission::tests::an_assertion_the_authority_did_not_sign_is_rejected",
+  "lib#admission::tests::an_assertion_carrying_another_credentials_type_or_algorithm_is_rejected",
+  "lib#admission::tests::an_assertion_for_another_profile_or_audience_is_rejected",
+  "lib#admission::tests::an_assertion_outside_its_validity_window_is_rejected",
+  "lib#admission::tests::an_assertion_older_than_the_verifiers_own_budget_is_rejected",
+  "lib#admission::tests::an_assertion_dated_ahead_of_the_verifier_is_rejected",
+  "lib#admission::tests::the_verdict_names_the_workload_the_binding_committed_to",
 ]
 proved_symbols = ["mcp_re_http_profile::admission::check_admission"]
 features = ["verify"]

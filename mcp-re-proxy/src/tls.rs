@@ -481,6 +481,14 @@ pub(crate) fn new_resumption_state(
 ///
 /// Early data stays disabled (rustls' default): a 0-RTT payload would be replayable and
 /// is accepted before the handshake completes.
+///
+/// STATELESS tickets are disabled here too, and that is part of the gate rather than a
+/// tuning choice. rustls offers two independent resumption mechanisms: the session store
+/// installed below, and [`ProducesTickets`](rustls::server::ProducesTickets) encrypted
+/// tickets. When a ticketer is enabled the server resumes straight out of the
+/// client-supplied ticket and the session store is never consulted — so the epoch tag,
+/// the mismatch eviction, and every claim made above would be bypassed silently. The
+/// store is the ONLY resumption path only while [`NoStatelessTickets`] is the ticketer.
 fn epoch_bound_resumption(
     mut config: ServerConfig,
     resumption: &Arc<crate::tls_auth_epoch::EpochBoundSessionStore>,
@@ -497,8 +505,37 @@ fn epoch_bound_resumption(
     }
     config.session_storage =
         Arc::clone(resumption) as Arc<dyn rustls::server::StoresServerSessions>;
+    config.ticketer = Arc::new(NoStatelessTickets);
     config.max_early_data_size = 0;
     config
+}
+
+/// The ticketer that issues no stateless session tickets, so every resumption decision
+/// goes through the epoch-tagged session store.
+///
+/// `enabled()` is false, which is what rustls reads: a server whose ticketer is disabled
+/// stores the session server-side and resumes only from that store. The remaining methods
+/// refuse as well, so a caller that consults them directly cannot mint or accept a ticket
+/// either.
+#[derive(Debug)]
+struct NoStatelessTickets;
+
+impl rustls::server::ProducesTickets for NoStatelessTickets {
+    fn enabled(&self) -> bool {
+        false
+    }
+
+    fn lifetime(&self) -> u32 {
+        0
+    }
+
+    fn encrypt(&self, _plain: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+
+    fn decrypt(&self, _cipher: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 /// How many resumable sessions one `ServerConfig` retains.
@@ -2476,6 +2513,7 @@ mod resumption_state_tests {
     use super::*;
     use rcgen::CertificateParams;
     use rcgen::KeyPair;
+    use rustls::server::ProducesTickets;
 
     fn ca_der() -> CertificateDer<'static> {
         let key = KeyPair::generate().expect("ca key");
@@ -2581,6 +2619,37 @@ mod resumption_state_tests {
             None,
             "the stale entry was not evicted"
         );
+    }
+
+    /// A built config resumes ONLY through the epoch-tagged session store.
+    ///
+    /// rustls has a second, independent resumption mechanism: an enabled ticketer makes
+    /// the server resume straight out of the client's encrypted ticket and never consult
+    /// `session_storage` at all (`attempt_tls13_ticket_decryption`), which bypasses the
+    /// epoch tag, the mismatch eviction, and both properties asserted above — while the
+    /// startup line still reports epoch-bound resumption.
+    #[test]
+    fn a_built_config_issues_no_stateless_session_tickets() {
+        let ca = ca_der();
+        let resumption = new_resumption_state(std::slice::from_ref(&ca), false);
+        let config = build(vec![ca], &resumption);
+        assert!(
+            !config.ticketer.enabled(),
+            "an enabled ticketer resumes without consulting the epoch-tagged store"
+        );
+        assert_eq!(config.ticketer.encrypt(b"session"), None);
+        assert_eq!(config.ticketer.decrypt(b"ticket"), None);
+    }
+
+    /// The installed ticketer refuses through every method, not only the flag rustls
+    /// reads, so a caller driving it directly cannot mint or accept a ticket either.
+    #[test]
+    fn the_installed_ticketer_refuses_through_every_method() {
+        let ticketer = NoStatelessTickets;
+        assert!(!ticketer.enabled());
+        assert_eq!(ticketer.lifetime(), 0);
+        assert_eq!(ticketer.encrypt(b"session"), None);
+        assert_eq!(ticketer.decrypt(b"ticket"), None);
     }
 }
 
@@ -2717,6 +2786,266 @@ mod chain_validity_tests {
         let ica = intermediate(&root, "chain-ica", (2999, 1, 1));
         let peer = leaf(&ica);
         assert!(rejected(&[peer.as_ref(), b"not der".as_ref()]));
+    }
+}
+
+#[cfg(test)]
+mod per_request_revocation_tests {
+    //! The per-request CRL consultation in [`cert_lifetime_rejection_for_chain`] is the
+    //! ONLY way a revocation reaches a peer that already holds a connection: rustls runs
+    //! client authentication on a full handshake only, and the trust epoch deliberately
+    //! digests the anchor set and the client-auth policy — not the CRLs — so a revocation
+    //! published after the handshake moves nothing the epoch can see.
+    //!
+    //! The certificates here are real and signed, and the CRLs are real and signed, so
+    //! the (issuer `Name` DER, serial) coordinate the index is keyed by is the one the
+    //! serving path actually extracts rather than a synthetic pair.
+
+    use super::*;
+    use crate::client_revocation::ClientRevocationIndex;
+    use crate::client_revocation::SharedClientRevocation;
+    use rcgen::BasicConstraints;
+    use rcgen::CertificateParams;
+    use rcgen::CertificateRevocationListParams;
+    use rcgen::DnType;
+    use rcgen::IsCa;
+    use rcgen::KeyPair;
+    use rcgen::KeyUsagePurpose;
+    use rcgen::RevocationReason;
+    use rcgen::RevokedCertParams;
+    use rcgen::SerialNumber;
+
+    /// 2027-01-15 — inside every window minted below, and before the CRLs' `nextUpdate`.
+    const NOW: i64 = 1_800_000_000;
+    const LEAF_SERIAL: u64 = 0x2a;
+    const ICA_SERIAL: u64 = 0x2b;
+
+    struct Ca {
+        params: CertificateParams,
+        key: KeyPair,
+        der: CertificateDer<'static>,
+    }
+
+    impl Ca {
+        fn issuer(&self) -> rcgen::Issuer<'_, &KeyPair> {
+            rcgen::Issuer::from_params(&self.params, &self.key)
+        }
+    }
+
+    fn ca_params(name: &str, constraints: BasicConstraints) -> CertificateParams {
+        let mut params = CertificateParams::new(Vec::new()).expect("ca params");
+        params.is_ca = IsCa::Ca(constraints);
+        params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+        params.distinguished_name.push(DnType::CommonName, name);
+        params.not_before = rcgen::date_time_ymd(2020, 1, 1);
+        params.not_after = rcgen::date_time_ymd(2035, 1, 1);
+        params
+    }
+
+    fn root(name: &str) -> Ca {
+        let key = KeyPair::generate().expect("root key");
+        let params = ca_params(name, BasicConstraints::Unconstrained);
+        let der = params.self_signed(&key).expect("root").der().clone();
+        Ca { params, key, der }
+    }
+
+    /// A CA signed by `issuer` carrying an explicit serial, so `issuer`'s CRL can name
+    /// exactly this intermediate.
+    fn intermediate(issuer: &Ca, name: &str, serial: u64) -> Ca {
+        let key = KeyPair::generate().expect("intermediate key");
+        let mut params = ca_params(name, BasicConstraints::Constrained(0));
+        params.serial_number = Some(SerialNumber::from(serial));
+        let der = params
+            .signed_by(&key, &issuer.issuer())
+            .expect("intermediate")
+            .der()
+            .clone();
+        Ca { params, key, der }
+    }
+
+    /// A client leaf with an explicit serial, so a CRL can revoke exactly this
+    /// certificate.
+    fn leaf(issuer: &Ca, serial: u64) -> CertificateDer<'static> {
+        let key = KeyPair::generate().expect("leaf key");
+        let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
+        params.distinguished_name.push(DnType::CommonName, "peer");
+        params.serial_number = Some(SerialNumber::from(serial));
+        params.not_before = rcgen::date_time_ymd(2020, 1, 1);
+        params.not_after = rcgen::date_time_ymd(2035, 1, 1);
+        params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
+        params
+            .signed_by(&key, &issuer.issuer())
+            .expect("leaf")
+            .der()
+            .clone()
+    }
+
+    /// A signed CRL from `ca` revoking each serial in `revoked`. An empty list is the
+    /// "issuer covered, nothing revoked" state a deployment runs in most of the time.
+    fn crl(ca: &Ca, revoked: &[u64], next_update: (i32, u8, u8)) -> Vec<u8> {
+        let params = CertificateRevocationListParams {
+            this_update: rcgen::date_time_ymd(2020, 1, 1),
+            next_update: rcgen::date_time_ymd(next_update.0, next_update.1, next_update.2),
+            crl_number: SerialNumber::from(1u64),
+            issuing_distribution_point: None,
+            revoked_certs: revoked
+                .iter()
+                .map(|serial| RevokedCertParams {
+                    serial_number: SerialNumber::from(*serial),
+                    revocation_time: rcgen::date_time_ymd(2021, 1, 1),
+                    reason_code: Some(RevocationReason::KeyCompromise),
+                    invalidity_date: None,
+                })
+                .collect(),
+            key_identifier_method: rcgen::KeyIdMethod::Sha256,
+        };
+        params.signed_by(&ca.issuer()).expect("crl").der().to_vec()
+    }
+
+    fn shared(crls: &[Vec<u8>]) -> Arc<SharedClientRevocation> {
+        Arc::new(SharedClientRevocation::new(
+            ClientRevocationIndex::from_crl_ders(crls, false).expect("index builds"),
+        ))
+    }
+
+    /// No lifetime ceiling: revocation ALONE must arm the per-request gate, and nothing
+    /// else here can account for a refusal.
+    fn options(revocation: &Arc<SharedClientRevocation>) -> ServerOptions {
+        ServerOptions {
+            client_revocation: Some(Arc::clone(revocation)),
+            ..Default::default()
+        }
+    }
+
+    fn rejected(chain: &[&[u8]], options: &ServerOptions) -> bool {
+        cert_lifetime_rejection_for_chain(chain, options, b"{\"id\":1}", NOW).is_some()
+    }
+
+    /// A leaf whose issuer is covered by a CRL that does not list it keeps being served.
+    ///
+    /// This is the control every refusal below is read against, and it is also what
+    /// catches the (issuer, serial) coordinate being passed in the wrong order: the
+    /// swapped call finds no CRL for the "issuer" it was handed, answers `Unknown`, and
+    /// refuses this request under the deny-unknown policy.
+    #[test]
+    fn a_leaf_a_current_crl_does_not_list_is_served() {
+        let ca = root("revocation-ca");
+        let peer = leaf(&ca, LEAF_SERIAL);
+        let revocation = shared(&[crl(&ca, &[], (2035, 1, 1))]);
+        assert!(!rejected(&[peer.as_ref()], &options(&revocation)));
+    }
+
+    /// A leaf listed on a CRL in force is refused on every request, with no lifetime
+    /// ceiling configured at all.
+    ///
+    /// The broken implementation this catches: dropping the `not_revoked` conjunct, or
+    /// arming the gate on `max_client_cert_lifetime` alone — either leaves a revoked peer
+    /// serving on the connection it already holds for as long as it holds it.
+    #[test]
+    fn a_leaf_on_a_current_crl_is_refused() {
+        let ca = root("revocation-ca");
+        let peer = leaf(&ca, LEAF_SERIAL);
+        let revocation = shared(&[crl(&ca, &[LEAF_SERIAL], (2035, 1, 1))]);
+        assert!(
+            rejected(&[peer.as_ref()], &options(&revocation)),
+            "a revoked leaf must stop being served"
+        );
+    }
+
+    /// A CRL reload reaches a request on a connection whose handshake is long past.
+    ///
+    /// The broken implementation this catches: reading the index once per connection (or
+    /// hoisting `load()` out of the per-request decision), which is exactly the
+    /// handshake-only posture this check exists to replace.
+    #[test]
+    fn a_reloaded_crl_refuses_a_leaf_that_was_served_a_moment_earlier() {
+        let ca = root("revocation-ca");
+        let peer = leaf(&ca, LEAF_SERIAL);
+        let revocation = shared(&[crl(&ca, &[], (2035, 1, 1))]);
+        let options = options(&revocation);
+        assert!(!rejected(&[peer.as_ref()], &options));
+
+        revocation.store(
+            ClientRevocationIndex::from_crl_ders(&[crl(&ca, &[LEAF_SERIAL], (2035, 1, 1))], false)
+                .expect("index builds"),
+        );
+        assert!(
+            rejected(&[peer.as_ref()], &options),
+            "the reloaded CRL must reach the connection already being served"
+        );
+    }
+
+    /// A leaf whose issuer no configured CRL covers is `Unknown`, and deny-unknown is the
+    /// handshake's posture, so it is refused.
+    #[test]
+    fn a_leaf_whose_issuer_no_crl_covers_is_refused() {
+        let ca = root("revocation-ca");
+        let other = root("unrelated-ca");
+        let peer = leaf(&ca, LEAF_SERIAL);
+        let revocation = shared(&[crl(&other, &[], (2035, 1, 1))]);
+        assert!(rejected(&[peer.as_ref()], &options(&revocation)));
+    }
+
+    /// A CRL past its `nextUpdate` can no longer answer `Good`, so its issuer's
+    /// certificates become `Unknown` and are refused — the same direction as rustls'
+    /// `enforce_revocation_expiration`.
+    #[test]
+    fn a_leaf_under_a_crl_that_has_fallen_out_of_force_is_refused() {
+        let ca = root("revocation-ca");
+        let peer = leaf(&ca, LEAF_SERIAL);
+        let revocation = shared(&[crl(&ca, &[], (2021, 1, 1))]);
+        assert!(rejected(&[peer.as_ref()], &options(&revocation)));
+    }
+
+    /// A chain whose intermediate is covered and unlisted is served — the control for
+    /// the refusal below.
+    #[test]
+    fn a_chain_whose_intermediate_is_on_no_crl_is_served() {
+        let ca = root("revocation-root");
+        let ica = intermediate(&ca, "revocation-ica", ICA_SERIAL);
+        let peer = leaf(&ica, LEAF_SERIAL);
+        let revocation = shared(&[crl(&ca, &[], (2035, 1, 1)), crl(&ica, &[], (2035, 1, 1))]);
+        assert!(!rejected(
+            &[peer.as_ref(), ica.der.as_ref()],
+            &options(&revocation)
+        ));
+    }
+
+    /// Revoking the ISSUING INTERMEDIATE stops the leaf being served, even though the
+    /// leaf's own serial is on no CRL.
+    ///
+    /// The broken implementation this catches: asking the index about `chain[0]` only.
+    /// The handshake verifier checks revocation to the trust anchor, so a per-request
+    /// check that stopped at the leaf would keep honouring a revoked intermediate on
+    /// every connection the peer already holds.
+    #[test]
+    fn a_chain_under_a_revoked_intermediate_is_refused() {
+        let ca = root("revocation-root");
+        let ica = intermediate(&ca, "revocation-ica", ICA_SERIAL);
+        let peer = leaf(&ica, LEAF_SERIAL);
+        let revocation = shared(&[
+            crl(&ca, &[ICA_SERIAL], (2035, 1, 1)),
+            crl(&ica, &[], (2035, 1, 1)),
+        ]);
+        assert!(
+            rejected(&[peer.as_ref(), ica.der.as_ref()], &options(&revocation)),
+            "a revoked issuing intermediate must stop the leaf being served"
+        );
+    }
+
+    /// An intermediate is refused only on an EXPLICIT `Revoked` verdict. Whether the
+    /// presented chain reaches a CRL-covered issuer is a path-building question the
+    /// handshake settled, so an `Unknown` intermediate must not be re-decided here.
+    #[test]
+    fn an_intermediate_no_crl_covers_does_not_refuse_the_chain() {
+        let ca = root("revocation-root");
+        let ica = intermediate(&ca, "revocation-ica", ICA_SERIAL);
+        let peer = leaf(&ica, LEAF_SERIAL);
+        let revocation = shared(&[crl(&ica, &[], (2035, 1, 1))]);
+        assert!(!rejected(
+            &[peer.as_ref(), ica.der.as_ref()],
+            &options(&revocation)
+        ));
     }
 }
 

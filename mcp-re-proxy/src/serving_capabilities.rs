@@ -482,6 +482,32 @@ const ADMISSION_NO_BACKEND: &str =
 mod tests {
     use super::*;
 
+    /// A directory under the system temp root, removed when the test ends.
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "mcp-re-serving-capabilities-{name}-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&path);
+            let _ = std::fs::remove_file(&path);
+            TempDir(path)
+        }
+
+        fn path(&self) -> String {
+            self.0.display().to_string()
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
     /// The invariant this module's type exists for: a posture cannot say ON over
     /// nothing, and cannot say OFF over something.
     ///
@@ -532,5 +558,76 @@ mod tests {
                 "{name} does not say the capability is off: {line}"
             );
         }
+    }
+
+    /// The unsigned identity assertion is attached only where the operator asserted the
+    /// inner channel is isolated.
+    ///
+    /// The classifier is checked where it lives; what is checked here is the step that
+    /// reaches an effect — which artifact each classified state attaches. A predicate
+    /// read the wrong way round turns the carrier ON for every deployment that asked for
+    /// `--verified-context disabled`, and the inner server authorizes on what it carries.
+    #[test]
+    fn the_verified_context_carrier_is_attached_only_for_a_trusted_inner_channel() {
+        let (artifact, posture) =
+            verified_context_carrier(crate::config_state::VerifiedContextState::Trusted)
+                .into_parts();
+        assert_eq!(
+            artifact,
+            Some(mcp_re_http_profile::VerifiedContextPolicy::Trusted)
+        );
+        assert!(matches!(posture, SeamState::On { .. }));
+
+        let (artifact, posture) =
+            verified_context_carrier(crate::config_state::VerifiedContextState::Disabled)
+                .into_parts();
+        assert_eq!(artifact, None);
+        assert!(matches!(posture, SeamState::Off { .. }));
+    }
+
+    /// The attribution posture is the one the classified state selected.
+    #[test]
+    fn the_security_audit_posture_follows_the_classified_audit_state() {
+        let (_sink, posture) = security_audit_record(crate::config_state::AuditState::Stderr);
+        assert!(matches!(posture, SeamState::On { .. }));
+
+        let (_sink, posture) = security_audit_record(crate::config_state::AuditState::None);
+        assert!(matches!(posture, SeamState::Off { .. }));
+    }
+
+    /// A retention store is opened exactly when the classified state named a directory.
+    #[test]
+    fn evidence_retention_attaches_a_store_only_for_a_named_directory() {
+        let dir = TempDir::new("attaches");
+        let (artifact, posture) = evidence_retention(&crate::config_state::RetentionState::On {
+            directory: dir.path(),
+        })
+        .expect("a writable directory opens")
+        .into_parts();
+        assert!(artifact.is_some());
+        assert!(matches!(posture, SeamState::On { .. }));
+
+        let (artifact, posture) = evidence_retention(&crate::config_state::RetentionState::Off)
+            .expect("the off state opens nothing")
+            .into_parts();
+        assert!(artifact.is_none());
+        assert!(matches!(posture, SeamState::Off { .. }));
+    }
+
+    /// A directory that cannot be opened refuses startup, and the refusal names the flag
+    /// that supplied the path.
+    #[test]
+    fn an_unopenable_retention_directory_refuses_startup_naming_the_flag() {
+        let dir = TempDir::new("unopenable");
+        std::fs::write(&dir.0, b"not a directory").expect("write the blocking file");
+        let Err(error) = evidence_retention(&crate::config_state::RetentionState::On {
+            directory: dir.path(),
+        }) else {
+            panic!("a path occupied by a file cannot be opened");
+        };
+        assert!(
+            error.starts_with("--retained-evidence-dir "),
+            "the refusal does not name the flag: {error}"
+        );
     }
 }

@@ -76,11 +76,43 @@ pub enum CrlRevocationState {
 /// deployment can be in, and `identity_source` has a deprecated one. They are input forms,
 /// not states, so they produce no member of the model.
 fn classify_binding(config: &DeploymentRequest) -> Result<ChannelBindingState, Vec<String>> {
+    let mut refusals = binding_kind_refusals(config.binding);
+    let identity = match config.identity_source {
+        IdentityPolicy::UriSan => Some(ChannelBindingState::ExactUriSan),
+        IdentityPolicy::DnsSan => Some(ChannelBindingState::ExactDnsSan),
+        IdentityPolicy::CnLegacy => {
+            refusals.push(
+                "--transport-identity-source cn_legacy is a deprecated, insecure identity \
+                 binding; use uri_san or dns_san"
+                    .to_string(),
+            );
+            None
+        }
+    };
+    // `Exact` is named positively: the state is the PAIR, so a kind that is not the one
+    // deployable kind cannot reach a state named `Exact*` however the refusal list came out.
+    match (config.binding, identity, refusals.is_empty()) {
+        (BindingKind::Exact, Some(state), true) => Ok(state),
+        _ => Err(refusals),
+    }
+}
+
+/// Every refusal the `binding` selector states about itself.
+///
+/// Exhaustive over [`BindingKind`], because the classifier's answer for a kind is what
+/// decides whether the deployment is in a channel-binding state at all: `Exact` is the one
+/// kind the serving path installs a transport binding for, so a kind reaching a state
+/// without an arm here would name an exact-match posture the deployment is not in. A kind
+/// added to the enum has no answer until one is written here.
+fn binding_kind_refusals(binding: BindingKind) -> Vec<String> {
     let mut refusals = Vec::new();
-    if let Some(refusal) = undeployable_transport_binding_refusal(config.binding) {
+    if let Some(refusal) = undeployable_transport_binding_refusal(binding) {
         refusals.push(refusal);
     }
-    match config.binding {
+    match binding {
+        BindingKind::Exact => {}
+        // Refused by the one decision about whether a mode can be deployed, above.
+        BindingKind::AttestedIngress => {}
         BindingKind::None => refusals.push(
             "--transport-binding none ignores the mTLS channel identity, decoupling the \
              verified request signer from the authenticated channel; production must bind \
@@ -95,24 +127,8 @@ fn classify_binding(config: &DeploymentRequest) -> Result<ChannelBindingState, V
              with locally-terminated client mTLS)"
                 .to_string(),
         ),
-        _ => {}
     }
-    let identity = match config.identity_source {
-        IdentityPolicy::UriSan => Some(ChannelBindingState::ExactUriSan),
-        IdentityPolicy::DnsSan => Some(ChannelBindingState::ExactDnsSan),
-        IdentityPolicy::CnLegacy => {
-            refusals.push(
-                "--transport-identity-source cn_legacy is a deprecated, insecure identity \
-                 binding; use uri_san or dns_san"
-                    .to_string(),
-            );
-            None
-        }
-    };
-    match (identity, refusals.is_empty()) {
-        (Some(state), true) => Ok(state),
-        _ => Err(refusals),
-    }
+    refusals
 }
 
 /// Classify the channel-binding state and check its columns.
@@ -457,23 +473,83 @@ mod tests {
         }
     }
 
-    /// One machine, two selectors: neither alone names the state.
-    #[test]
-    fn the_state_is_the_pair_not_either_selector() {
-        assert_ne!(
-            binding(|c| c.identity_source = IdentityPolicy::UriSan).0,
-            binding(|c| c.identity_source = IdentityPolicy::DnsSan).0,
-            "the same binding kind, two states"
-        );
+    /// Every `BindingKind`. The match is the exhaustiveness witness: a kind added to the
+    /// enum stops this list compiling, so no test below can enumerate a stale variant set.
+    fn every_binding_kind() -> Vec<BindingKind> {
+        let kinds = vec![
+            BindingKind::None,
+            BindingKind::Exact,
+            BindingKind::LbAssertion,
+            BindingKind::AttestedIngress,
+        ];
+        for kind in &kinds {
+            match kind {
+                BindingKind::None
+                | BindingKind::Exact
+                | BindingKind::LbAssertion
+                | BindingKind::AttestedIngress => {}
+            }
+        }
+        kinds
     }
 
+    /// One machine, two selectors: `identity_source` names which state, `binding` decides
+    /// whether there is one.
     #[test]
-    fn no_undeployable_binding_becomes_a_state() {
-        for kind in [BindingKind::None, BindingKind::LbAssertion] {
-            let (state, violations) = binding(|c| c.binding = kind);
-            assert!(state.is_none(), "{kind:?} became a validated state");
-            assert!(!violations.is_empty(), "{kind:?} was accepted");
+    fn identity_source_names_the_state_and_binding_decides_whether_there_is_one() {
+        let uri = binding(|c| c.identity_source = IdentityPolicy::UriSan).0;
+        let dns = binding(|c| c.identity_source = IdentityPolicy::DnsSan).0;
+        assert_eq!(uri, Some(ChannelBindingState::ExactUriSan));
+        assert_eq!(dns, Some(ChannelBindingState::ExactDnsSan));
+        assert_ne!(uri, dns, "the same binding kind, two states");
+        for kind in every_binding_kind()
+            .into_iter()
+            .filter(|kind| *kind != BindingKind::Exact)
+        {
+            let (state, _) = binding(|c| {
+                c.binding = kind;
+                c.identity_source = IdentityPolicy::UriSan;
+            });
+            assert_eq!(
+                state, None,
+                "{kind:?} named a state under the identity source that names one under exact"
+            );
         }
+    }
+
+    /// The `Exact` half of the state names, positively: only the kind the serving path
+    /// installs a transport binding for reaches a state, and every other kind is refused
+    /// with a diagnostic rather than passed over.
+    #[test]
+    fn only_exact_binding_becomes_a_state_and_every_other_kind_is_refused_aloud() {
+        for kind in every_binding_kind() {
+            let (state, violations) = binding(|c| c.binding = kind);
+            if kind == BindingKind::Exact {
+                assert_eq!(state, Some(ChannelBindingState::ExactUriSan));
+                assert!(violations.is_empty(), "exact refused: {violations:?}");
+            } else {
+                assert!(state.is_none(), "{kind:?} became a validated state");
+                assert!(
+                    !violations.is_empty(),
+                    "{kind:?} named no state and said nothing about why"
+                );
+            }
+        }
+    }
+
+    /// Attested ingress is refused by name. It is the one mode whose refusal is a decision
+    /// about what an attestor may assert versus authorize, so losing it silently would put
+    /// a deployment in a mode nothing else in the file rejects.
+    #[test]
+    fn attested_ingress_is_refused_by_name_rather_than_passed_over() {
+        let (state, violations) = binding(|c| c.binding = BindingKind::AttestedIngress);
+        assert!(state.is_none(), "attested ingress became a validated state");
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("attested-ingress is not a supported deployment mode")),
+            "{violations:?}"
+        );
     }
 
     #[test]

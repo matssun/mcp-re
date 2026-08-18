@@ -54,11 +54,19 @@ pub enum InvalidationEvent {
         /// The key id whose binding is revoked.
         key_id: String,
     },
-    /// Evict ALL cached positive trust (MCPS-84). A COARSE, fleet-wide
+    /// Invalidate ALL cached positive trust (MCPS-84). A COARSE, fleet-wide
     /// invalidation: a networked source (e.g. a monotonic trust-epoch key, see
-    /// `redis_trust_epoch.rs`) knows the trust store changed but not which key, so
-    /// it flushes the whole positive cache and every entry re-resolves live. Can
-    /// only tighten trust, never widen it.
+    /// `redis_trust_epoch.rs`) signals that the trust configuration advanced but not
+    /// which key, so every cached binding loses its authority to answer and
+    /// re-resolves live. Each binding keeps the deadline it already carried, so a
+    /// flush can only tighten trust, never widen it.
+    ///
+    /// Its reach is the CACHE, not the store. It bounds how stale a cached answer is
+    /// relative to the resolver this tier wraps; that resolver is a snapshot of
+    /// `--trust` re-read on its own cadence `R`. A key removed from the file
+    /// therefore stops resolving no sooner than that re-read lands, whatever the
+    /// epoch does — the delivered window is `R + T`, and advancing the epoch alone
+    /// revokes nothing.
     FlushAll,
 }
 
@@ -120,8 +128,8 @@ impl InMemoryInvalidationChannel {
         }
     }
 
-    /// Push a coarse flush-all invalidation (evict every cached binding on the next
-    /// drain). The networked-source analogue of a trust-epoch advance.
+    /// Push a coarse flush-all invalidation (invalidate every cached binding on the
+    /// next drain). The networked-source analogue of a trust-epoch advance.
     pub fn push_flush_all(&self) {
         if let Ok(mut q) = self.pending.lock() {
             q.push_back(InvalidationEvent::FlushAll);
@@ -200,8 +208,10 @@ impl PushInvalidationTrustCache {
                         evicted += 1;
                     }
                 }
-                // Coarse fleet-wide invalidation: drop the whole positive cache so
-                // every subsequent lookup re-resolves live (tighten-only).
+                // Coarse fleet-wide invalidation: strip every cached binding of its
+                // authority to answer so each subsequent lookup re-resolves against
+                // the store as it stands, under the deadline the binding already
+                // carried (tighten-only).
                 InvalidationEvent::FlushAll => {
                     evicted += self.cache.clear();
                 }
@@ -475,5 +485,73 @@ mod tests {
             .resolve("did:host", "key-1")
             .expect("key-1 still a cache hit");
         assert_eq!(inner.calls(), 1, "an unrelated push does not evict key-1");
+    }
+
+    #[test]
+    fn a_flush_never_extends_a_cached_bindings_deadline() {
+        // A flush lands while the store still answers with the binding — the state
+        // the deployment is in between an epoch advance and the `--trust` re-read.
+        // The re-resolved entry inherits the deadline the flushed one carried, so
+        // the binding must still be re-checked at its ORIGINAL expiry rather than at
+        // a fresh T counted from the flush.
+        let inner = Arc::new(ScriptedResolver::new(Ok(key_from(&SEED_A))));
+        let (clock, now) = controllable_clock(1000);
+        let channel = InMemoryInvalidationChannel::new();
+        let cache = push_cache_over(inner.clone(), clock, channel.clone());
+
+        cache.resolve("did:host", "key-1").expect("active cached");
+        assert_eq!(inner.calls(), 1);
+
+        // Late within T, the epoch advances and the flush lands; the store is
+        // unchanged, so the same active key is re-cached.
+        now.store(1000 + T - 10, Ordering::SeqCst);
+        channel.push_flush_all();
+        cache.resolve("did:host", "key-1").expect("still active");
+        assert_eq!(inner.calls(), 2, "the flush forced a live re-resolve");
+
+        // The file edit reaches the store, and the ORIGINAL deadline is what governs.
+        inner.set(Err(TrustResolverError::Revoked));
+        now.store(1000 + T - 1, Ordering::SeqCst);
+        cache
+            .resolve("did:host", "key-1")
+            .expect("inside the original window this is a cache hit");
+        assert_eq!(inner.calls(), 2);
+        now.store(1000 + T, Ordering::SeqCst);
+        assert_eq!(
+            cache.resolve("did:host", "key-1").unwrap_err(),
+            TrustResolverError::Revoked,
+            "the flush bought the binding a fresh T past its original deadline"
+        );
+        assert_eq!(inner.calls(), 3);
+    }
+
+    #[test]
+    fn a_flush_re_resolves_against_the_store_as_it_stands_and_revokes_nothing_itself() {
+        // The reach of a flush is the CACHE, not the store: with the store unchanged
+        // (the `--trust` re-read has not landed yet) the flushed binding re-resolves
+        // to exactly the same active key. Advancing the epoch is not itself a
+        // revocation of anything in the trust file.
+        let inner = Arc::new(ScriptedResolver::new(Ok(key_from(&SEED_A))));
+        let (clock, now) = controllable_clock(1000);
+        let channel = InMemoryInvalidationChannel::new();
+        let cache = push_cache_over(inner.clone(), clock, channel.clone());
+
+        let before = cache.resolve("did:host", "key-1").expect("active cached");
+        channel.push_flush_all();
+        now.store(1000 + 1, Ordering::SeqCst);
+
+        let after = cache
+            .resolve("did:host", "key-1")
+            .expect("the unchanged store still answers with the same binding");
+        assert_eq!(
+            inner.calls(),
+            2,
+            "the flush forced a live re-resolve against the store"
+        );
+        assert_eq!(
+            before.to_bytes(),
+            after.to_bytes(),
+            "a flush over an unchanged store cannot revoke a binding by itself"
+        );
     }
 }
