@@ -63,7 +63,17 @@ pub enum AwsCredentialMode {
 /// boundary. The widest variant needs four values: the twenty flags are twenty because they
 /// are flat, not because any one custody path is wide.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CustodyState {
+pub struct CustodyState {
+    kind: CustodyKind,
+}
+
+/// The five states, as the owner's own representation.
+///
+/// Private to this module: every consumer lives in this crate, so `pub` variants would let
+/// any of them assemble a custody state whose material no validator saw — a PKCS#11 token
+/// with an arbitrary PIN file, or a KMS key in a region the deployment never named.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CustodyKind {
     /// A seed file on disk.
     FileSeed {
         /// Path to the 32-byte seed.
@@ -107,15 +117,136 @@ pub enum CustodyState {
     },
 }
 
+/// What custody a key source must be built from, as a borrowed view of the state.
+///
+/// Matchable, because selecting a backend is materialization's own job, and borrowed,
+/// because it is a way to READ a custody state and not a way to assemble one. A consumer
+/// holding this cannot construct a [`CustodyState`], so the material it reads is the
+/// material the validator accepted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CustodyMaterial<'a> {
+    /// A seed file on disk.
+    FileSeed {
+        /// Path to the 32-byte seed.
+        seed_path: &'a str,
+    },
+    /// A seed in an environment variable — dev/CI only.
+    EnvSeed {
+        /// Name of the variable holding the seed, NOT a path.
+        env_var: &'a str,
+    },
+    /// A PKCS#11 token; the key is exercised via `C_Sign` and never leaves the device.
+    Pkcs11 {
+        /// Path to the PKCS#11 provider library.
+        module: &'a str,
+        /// Path to the file holding the User PIN.
+        pin_file: &'a str,
+        /// The token holding the key.
+        token_label: &'a str,
+        /// The signing key object on it.
+        key_label: &'a str,
+    },
+    /// AWS KMS; the key is exercised via `Sign` and never leaves KMS.
+    AwsKms {
+        /// The region the key lives in.
+        region: &'a str,
+        /// Key id, ARN or alias.
+        key_id: &'a str,
+        /// A non-default KMS endpoint, already held to the endpoint-authority guard.
+        endpoint: Option<&'a str>,
+        /// How this deployment authenticates to KMS.
+        credentials: &'a AwsCredentialMode,
+    },
+    /// GCP Cloud KMS; the key is exercised via `asymmetricSign`.
+    GcpKms {
+        /// Fully-qualified `projects/.../cryptoKeyVersions/N`.
+        key_version: &'a str,
+        /// A non-default KMS endpoint, already held to the endpoint-authority guard.
+        endpoint: Option<&'a str>,
+        /// Take credentials from the metadata server rather than the environment.
+        use_metadata: bool,
+    },
+}
+
 impl CustodyState {
+    /// The material a key source must be built from.
+    ///
+    /// The projection replaces a match on the representation performed where the key
+    /// source is built. Which backend a state names, and which values that backend needs,
+    /// is this machine's semantics.
+    pub fn material(&self) -> CustodyMaterial<'_> {
+        match &self.kind {
+            CustodyKind::FileSeed { seed_path } => CustodyMaterial::FileSeed { seed_path },
+            CustodyKind::EnvSeed { env_var } => CustodyMaterial::EnvSeed { env_var },
+            CustodyKind::Pkcs11 {
+                module,
+                pin_file,
+                token_label,
+                key_label,
+            } => CustodyMaterial::Pkcs11 {
+                module,
+                pin_file,
+                token_label,
+                key_label,
+            },
+            CustodyKind::AwsKms {
+                region,
+                key_id,
+                endpoint,
+                credentials,
+            } => CustodyMaterial::AwsKms {
+                region,
+                key_id,
+                endpoint: endpoint.as_deref(),
+                credentials,
+            },
+            CustodyKind::GcpKms {
+                key_version,
+                endpoint,
+                use_metadata,
+            } => CustodyMaterial::GcpKms {
+                key_version,
+                endpoint: endpoint.as_deref(),
+                use_metadata: *use_metadata,
+            },
+        }
+    }
+
+    /// Whether this state's locators name filesystem paths at all.
+    ///
+    /// False only under the environment-seed state, where every locator this deployment
+    /// carries names an environment variable — the TLS ones included, which is why the
+    /// answer is custody's and not the TLS machine's. A consumer that stat'ed an env-var
+    /// NAME as a path got a check that passed for the wrong reason.
+    pub fn locators_are_filesystem_paths(&self) -> bool {
+        !matches!(self.kind, CustodyKind::EnvSeed { .. })
+    }
+
+    /// Every secret this state keeps on local disk.
+    ///
+    /// The question a permissions floor is enforced against, answered by the machine that
+    /// knows which of its states put a secret on disk. The PKCS#11 User PIN file is here
+    /// because it is the credential that unlocks the token holding the signing and TLS
+    /// keys: a group- or world-readable PIN file is as good as a readable key file. The
+    /// KMS states keep the signing key in KMS and hold no local secret.
+    pub fn disk_secret_paths(&self) -> Vec<&str> {
+        match &self.kind {
+            CustodyKind::FileSeed { seed_path } => vec![seed_path.as_str()],
+            CustodyKind::Pkcs11 { pin_file, .. } => vec![pin_file.as_str()],
+            CustodyKind::EnvSeed { .. }
+            | CustodyKind::AwsKms { .. }
+            | CustodyKind::GcpKms { .. } => Vec::new(),
+        }
+    }
+
     /// Whether the key material is held by a device or KMS rather than by this process.
     ///
     /// The property the three device states share and the two seed states do not, and the
     /// one downstream stages actually ask about.
     pub fn is_non_exporting_device(&self) -> bool {
         matches!(
-            self,
-            Self::Pkcs11 { .. } | Self::AwsKms { .. } | Self::GcpKms { .. }
+            self.kind,
+            CustodyKind::Pkcs11 { .. } | CustodyKind::AwsKms { .. } | CustodyKind::GcpKms { .. }
         )
     }
 }
@@ -136,20 +267,21 @@ fn guarded_endpoint(flag: &str, value: Option<&str>) -> Option<String> {
 /// below pushes a refusal, so a caller never sees one without the other.
 fn classify(config: &DeploymentRequest) -> Option<CustodyState> {
     let seed = |value: &str| (!value.is_empty()).then(|| value.to_string());
-    Some(match config.key_source {
-        KeySourceKind::File => CustodyState::FileSeed {
+    Some(CustodyState {
+        kind: match config.key_source {
+        KeySourceKind::File => CustodyKind::FileSeed {
             seed_path: seed(&config.signing_key_seed)?,
         },
-        KeySourceKind::Env => CustodyState::EnvSeed {
+        KeySourceKind::Env => CustodyKind::EnvSeed {
             env_var: seed(&config.signing_key_seed)?,
         },
-        KeySourceKind::Pkcs11 => CustodyState::Pkcs11 {
+        KeySourceKind::Pkcs11 => CustodyKind::Pkcs11 {
             module: config.pkcs11_module.clone()?,
             pin_file: config.pkcs11_pin_file.clone()?,
             token_label: config.pkcs11_token_label.clone()?,
             key_label: config.pkcs11_key_label.clone()?,
         },
-        KeySourceKind::AwsKms => CustodyState::AwsKms {
+        KeySourceKind::AwsKms => CustodyKind::AwsKms {
             region: config.aws_kms_region.clone()?,
             key_id: config.aws_kms_key_id.clone()?,
             endpoint: guarded_endpoint("--aws-kms-endpoint", config.aws_kms_endpoint.as_deref()),
@@ -164,10 +296,11 @@ fn classify(config: &DeploymentRequest) -> Option<CustodyState> {
                 AwsCredentialMode::StaticEnv
             },
         },
-        KeySourceKind::GcpKms => CustodyState::GcpKms {
+        KeySourceKind::GcpKms => CustodyKind::GcpKms {
             key_version: config.gcp_kms_key_version.clone()?,
             endpoint: guarded_endpoint("--gcp-kms-endpoint", config.gcp_kms_endpoint.as_deref()),
             use_metadata: config.gcp_kms_use_metadata,
+        },
         },
     })
 }
@@ -374,22 +507,22 @@ mod tests {
     fn every_legal_state_form_is_classified_and_accepted() {
         let cases: Vec<Form> = vec![
             (
-                |s| matches!(s, CustodyState::FileSeed { .. }),
+                |s| matches!(s.material(), CustodyMaterial::FileSeed { .. }),
                 "FileSeed",
                 |c: &mut DeploymentRequest| c.key_source = KeySourceKind::File,
             ),
             (
-                |s| matches!(s, CustodyState::EnvSeed { .. }),
+                |s| matches!(s.material(), CustodyMaterial::EnvSeed { .. }),
                 "EnvSeed",
                 |c: &mut DeploymentRequest| c.key_source = KeySourceKind::Env,
             ),
             (
-                |s| matches!(s, CustodyState::Pkcs11 { .. }),
+                |s| matches!(s.material(), CustodyMaterial::Pkcs11 { .. }),
                 "Pkcs11",
                 pkcs11,
             ),
-            (|s| matches!(s, CustodyState::AwsKms { .. }), "AwsKms", aws),
-            (|s| matches!(s, CustodyState::GcpKms { .. }), "GcpKms", gcp),
+            (|s| matches!(s.material(), CustodyMaterial::AwsKms { .. }), "AwsKms", aws),
+            (|s| matches!(s.material(), CustodyMaterial::GcpKms { .. }), "GcpKms", gcp),
         ];
         for (is_expected, name, mutate) in cases {
             let (state, violations) = run(mutate);
@@ -505,10 +638,8 @@ mod tests {
         })
         .0;
         assert_eq!(
-            seed,
-            Some(CustodyState::FileSeed {
-                seed_path: "/seed".to_string()
-            })
+            seed.as_ref().map(CustodyState::material),
+            Some(CustodyMaterial::FileSeed { seed_path: "/seed" })
         );
 
         assert_eq!(
@@ -516,37 +647,38 @@ mod tests {
                 c.key_source = KeySourceKind::Env;
                 c.signing_key_seed = "MCP_RE_SEED".to_string();
             })
-            .0,
-            Some(CustodyState::EnvSeed {
-                env_var: "MCP_RE_SEED".to_string()
+            .0
+            .as_ref()
+            .map(CustodyState::material),
+            Some(CustodyMaterial::EnvSeed {
+                env_var: "MCP_RE_SEED"
             })
         );
 
         assert_eq!(
-            run(pkcs11).0,
-            Some(CustodyState::Pkcs11 {
-                module: "/lib/softhsm.so".to_string(),
-                pin_file: "/pin".to_string(),
-                token_label: "token".to_string(),
-                key_label: "signing".to_string(),
+            run(pkcs11).0.as_ref().map(CustodyState::material),
+            Some(CustodyMaterial::Pkcs11 {
+                module: "/lib/softhsm.so",
+                pin_file: "/pin",
+                token_label: "token",
+                key_label: "signing",
             })
         );
 
         assert_eq!(
-            run(aws).0,
-            Some(CustodyState::AwsKms {
-                region: "eu-north-1".to_string(),
-                key_id: "alias/signing".to_string(),
+            run(aws).0.as_ref().map(CustodyState::material),
+            Some(CustodyMaterial::AwsKms {
+                region: "eu-north-1",
+                key_id: "alias/signing",
                 endpoint: None,
-                credentials: AwsCredentialMode::StaticEnv,
+                credentials: &AwsCredentialMode::StaticEnv,
             })
         );
 
         assert_eq!(
-            run(gcp).0,
-            Some(CustodyState::GcpKms {
-                key_version: "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1"
-                    .to_string(),
+            run(gcp).0.as_ref().map(CustodyState::material),
+            Some(CustodyMaterial::GcpKms {
+                key_version: "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
                 endpoint: None,
                 use_metadata: false,
             })
@@ -587,34 +719,36 @@ mod tests {
     /// the absence of web identity, and it cannot carry an STS endpoint at all.
     #[test]
     fn the_aws_credential_mode_is_a_posture_and_not_a_flag_beside_an_endpoint() {
-        let Some(CustodyState::AwsKms { credentials, .. }) = run(|c| {
+        let state = run(|c| {
             aws(c);
             c.aws_kms_use_web_identity = true;
             c.aws_sts_endpoint = Some("https://sts.eu-north-1.amazonaws.com".to_string());
         })
         .0
-        else {
-            panic!("a complete AWS custody configuration selects the AWS state");
+        .expect("a complete AWS custody configuration selects the AWS state");
+        let CustodyMaterial::AwsKms { credentials, .. } = state.material() else {
+            panic!("the AWS state names AWS material");
         };
         assert_eq!(
             credentials,
-            AwsCredentialMode::WebIdentity {
+            &AwsCredentialMode::WebIdentity {
                 sts_endpoint: Some("https://sts.eu-north-1.amazonaws.com".to_string()),
             }
         );
 
         // IRSA without an override is still IRSA, and still not `StaticEnv`.
-        let Some(CustodyState::AwsKms { credentials, .. }) = run(|c| {
+        let state = run(|c| {
             aws(c);
             c.aws_kms_use_web_identity = true;
         })
         .0
-        else {
-            panic!("a complete AWS custody configuration selects the AWS state");
+        .expect("a complete AWS custody configuration selects the AWS state");
+        let CustodyMaterial::AwsKms { credentials, .. } = state.material() else {
+            panic!("the AWS state names AWS material");
         };
         assert_eq!(
             credentials,
-            AwsCredentialMode::WebIdentity { sts_endpoint: None }
+            &AwsCredentialMode::WebIdentity { sts_endpoint: None }
         );
     }
 
@@ -646,8 +780,9 @@ mod tests {
             violations.iter().any(|v| v.contains("--aws-kms-endpoint")),
             "{violations:?}"
         );
-        let Some(CustodyState::AwsKms { endpoint, .. }) = state else {
-            panic!("the AWS state is classified even when its endpoint is refused");
+        let state = state.expect("the AWS state is classified even when its endpoint is refused");
+        let CustodyMaterial::AwsKms { endpoint, .. } = state.material() else {
+            panic!("the state names AwsKms material");
         };
         assert_eq!(endpoint, None, "a refused KMS authority was carried");
 
@@ -660,12 +795,13 @@ mod tests {
             violations.iter().any(|v| v.contains("--aws-sts-endpoint")),
             "{violations:?}"
         );
-        let Some(CustodyState::AwsKms { credentials, .. }) = state else {
-            panic!("the AWS state is classified even when its STS endpoint is refused");
+        let state = state.expect("the AWS state is classified even when its STS endpoint is refused");
+        let CustodyMaterial::AwsKms { credentials, .. } = state.material() else {
+            panic!("the state names AwsKms material");
         };
         assert_eq!(
             credentials,
-            AwsCredentialMode::WebIdentity { sts_endpoint: None },
+            &AwsCredentialMode::WebIdentity { sts_endpoint: None },
             "a refused STS authority was carried"
         );
 
@@ -677,8 +813,9 @@ mod tests {
             violations.iter().any(|v| v.contains("--gcp-kms-endpoint")),
             "{violations:?}"
         );
-        let Some(CustodyState::GcpKms { endpoint, .. }) = state else {
-            panic!("the GCP state is classified even when its endpoint is refused");
+        let state = state.expect("the GCP state is classified even when its endpoint is refused");
+        let CustodyMaterial::GcpKms { endpoint, .. } = state.material() else {
+            panic!("the state names GcpKms material");
         };
         assert_eq!(endpoint, None, "a refused KMS authority was carried");
     }
@@ -692,12 +829,13 @@ mod tests {
             c.aws_kms_endpoint = Some("https://kms.eu-north-1.amazonaws.com".to_string());
         });
         assert!(violations.is_empty(), "{violations:?}");
-        let Some(CustodyState::AwsKms { endpoint, .. }) = state else {
-            panic!("a complete AWS custody configuration selects the AWS state");
+        let state = state.expect("a complete AWS custody configuration selects the AWS state");
+        let CustodyMaterial::AwsKms { endpoint, .. } = state.material() else {
+            panic!("the state names AwsKms material");
         };
         assert_eq!(
             endpoint,
-            Some("https://kms.eu-north-1.amazonaws.com".to_string())
+            Some("https://kms.eu-north-1.amazonaws.com")
         );
 
         let (state, violations) = run(|c| {
@@ -705,12 +843,13 @@ mod tests {
             c.gcp_kms_endpoint = Some("https://cloudkms.googleapis.com".to_string());
         });
         assert!(violations.is_empty(), "{violations:?}");
-        let Some(CustodyState::GcpKms { endpoint, .. }) = state else {
-            panic!("a complete GCP custody configuration selects the GCP state");
+        let state = state.expect("a complete GCP custody configuration selects the GCP state");
+        let CustodyMaterial::GcpKms { endpoint, .. } = state.material() else {
+            panic!("the state names GcpKms material");
         };
         assert_eq!(
             endpoint,
-            Some("https://cloudkms.googleapis.com".to_string())
+            Some("https://cloudkms.googleapis.com")
         );
     }
 

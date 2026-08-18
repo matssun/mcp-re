@@ -73,6 +73,9 @@ Do not answer "the root can see every owner's internals" with one wide struct ca
 everything the root needs. That relocates flat authority instead of removing it. The root
 composes narrow per-owner projections.
 
+Which owners are sealed, what each projects, and the procedure for the next one:
+[`docs/dev/sealed-owners.md`](docs/dev/sealed-owners.md).
+
 ### Thresholds are review triggers, not laws
 
 The 60-line function and 200-line file limits are **not** unconditional architectural

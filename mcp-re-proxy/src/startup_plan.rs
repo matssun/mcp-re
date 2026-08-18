@@ -1209,9 +1209,7 @@ mod tests {
         let plan = TlsPlan::from_validated(&config);
         assert_eq!(
             plan.custody,
-            crate::config_state::TlsCustodyState::Exported {
-                key_path: "/nonexistent/key".to_string(),
-            },
+            crate::config_state::test_support::tls_custody_exported("/nonexistent/key"),
             "the fixture's TLS key is an exported file, and the plan carries its path"
         );
         assert_eq!(

@@ -209,28 +209,19 @@ fn key_files_read_from_disk<'a>(
     // `key_source == File` for the seed but not for `--tls-key`, so an env-var NAME was
     // stat'ed as a path — harmless only because a missing file passes the check. Phrasing
     // the projection over the state removes the case instead of adding a condition for it.
-    let CustodyState::EnvSeed { .. } = custody else {
-        let mut paths = Vec::new();
-        match custody {
-            // The signing seed, where the deployment keeps one on disk.
-            CustodyState::FileSeed { seed_path } => paths.push(seed_path.as_str()),
-            // The PKCS#11 User PIN file is not a key, but it is the credential that
-            // unlocks the token holding the signing and (optionally) TLS keys — so a
-            // group/world-readable PIN file is as good as a readable key file, and belongs
-            // behind the same floor.
-            CustodyState::Pkcs11 { pin_file, .. } => paths.push(pin_file.as_str()),
-            // The KMS states keep the signing key in KMS; neither holds a local secret.
-            CustodyState::AwsKms { .. } | CustodyState::GcpKms { .. } => {}
-            CustodyState::EnvSeed { .. } => unreachable!("the let-else above took this arm"),
-        }
-        // And the handshake key, only where custody EXPORTS one. Delegated custody keeps
-        // it on the device, and X2b has already refused a file copy beside it.
-        if let TlsCustodyState::Exported { key_path } = tls_custody {
-            paths.push(key_path.as_str());
-        }
-        return paths;
-    };
-    Vec::new()
+    // Under `EnvSeed` NOTHING is on disk: every locator this deployment carries names an
+    // environment variable, including the TLS ones — which is why custody answers that and
+    // the TLS machine does not. The old field test compared `key_source == File` for the
+    // seed but not for `--tls-key`, so an env-var NAME was stat'ed as a path, harmless only
+    // because a missing file passes the check.
+    if !custody.locators_are_filesystem_paths() {
+        return Vec::new();
+    }
+    let mut paths = custody.disk_secret_paths();
+    // And the handshake key, only where custody EXPORTS one. Delegated custody keeps it on
+    // the device, and X2b has already refused a file copy beside it.
+    paths.extend(tls_custody.exported_key_path());
+    paths
 }
 
 /// No-op off unix: the mode bits this guard reads do not exist there. Kept in step with

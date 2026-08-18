@@ -24,13 +24,7 @@ use crate::deployment_request::{
 
 #[cfg(feature = "aws_kms_keysource")]
 use crate::config_state::AwsCredentialMode;
-use crate::config_state::CustodyState;
-#[cfg(any(
-    feature = "pkcs11_keysource",
-    feature = "aws_kms_keysource",
-    feature = "gcp_kms_keysource"
-))]
-use crate::config_state::DelegatedTlsKey;
+use crate::config_state::{CustodyMaterial, CustodyState};
 use crate::config_state::TlsCustodyState;
 // MCPS-076 (audit gap G-3): EnvKeySource is dev/CI-only — compiled only under the
 // non-default `dev_env_key_source` feature.
@@ -1014,59 +1008,13 @@ pub fn build_attested_ingress_binding(
     Ok(Some(binding))
 }
 
-/// Which key object a delegated PKCS#11 handshake uses, if this deployment delegates to
-/// PKCS#11 at all.
-///
-/// Written as a match rather than assumed from the custody source. X2a guarantees the
-/// selector agrees with `Custody`, but a projection that RELIED on that guarantee would be
-/// recovering a proof instead of reading a state — and the match costs one arm.
-#[cfg(feature = "pkcs11_keysource")]
-fn delegated_pkcs11_label(tls_custody: &TlsCustodyState) -> Option<&str> {
-    match tls_custody {
-        TlsCustodyState::Delegated {
-            selector: DelegatedTlsKey::Pkcs11 { key_label },
-        } => Some(key_label),
-        _ => None,
-    }
-}
 
-/// The same, for a distinct AWS KMS TLS key.
-#[cfg(feature = "aws_kms_keysource")]
-fn delegated_aws_key_id(tls_custody: &TlsCustodyState) -> Option<&str> {
-    match tls_custody {
-        TlsCustodyState::Delegated {
-            selector: DelegatedTlsKey::AwsKms { key_id },
-        } => Some(key_id),
-        _ => None,
-    }
-}
 
-/// The same, for a distinct GCP Cloud KMS TLS key version.
-#[cfg(feature = "gcp_kms_keysource")]
-fn delegated_gcp_key_version(tls_custody: &TlsCustodyState) -> Option<&str> {
-    match tls_custody {
-        TlsCustodyState::Delegated {
-            selector: DelegatedTlsKey::GcpKms { key_version },
-        } => Some(key_version),
-        _ => None,
-    }
-}
 
-/// The exported handshake-key locator, or empty under delegated custody.
-///
-/// Empty is not a missing value here: `Delegated` does not carry one, because carrying it
-/// would make the combination X2b forbids representable, and the delegated path never
-/// consults `tls_server_key`.
-fn exported_tls_key(tls_custody: &TlsCustodyState) -> &str {
-    match tls_custody {
-        TlsCustodyState::Exported { key_path } => key_path,
-        TlsCustodyState::Delegated { .. } => "",
-    }
-}
 
 /// Build the configured [`KeySource`] from the classified custody states.
 ///
-/// MCPS-076 (audit gap G-3): [`CustodyState::EnvSeed`] is honored ONLY in a build with
+/// MCPS-076 (audit gap G-3): [`CustodyMaterial::EnvSeed`] is honored ONLY in a build with
 /// the non-default `dev_env_key_source` feature. A default (production) build does
 /// not compile [`EnvKeySource`] at all and FAILS CLOSED here with a clear error —
 /// `--key-source env` still parses and still classifies (so the message is precise), but
@@ -1077,32 +1025,32 @@ fn exported_tls_key(tls_custody: &TlsCustodyState) -> &str {
 ///
 /// `tls_cert` and `client_ca` belong to no custody machine — all five states consume them,
 /// and shared use is not semantic ownership. They are STRINGS WHOSE INTERPRETATION THE
-/// CUSTODY STATE DECIDES: filesystem paths under every state but [`CustodyState::EnvSeed`],
+/// CUSTODY STATE DECIDES: filesystem paths under every state but [`CustodyMaterial::EnvSeed`],
 /// where they name environment variables. The same is true of the exported TLS key locator
-/// carried by [`TlsCustodyState::Exported`].
+/// carried by the exported TLS-custody state.
 pub fn build_key_source(
     custody: &CustodyState,
     tls_custody: &TlsCustodyState,
     tls_cert: &str,
     client_ca: &str,
 ) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
-    let tls_key = exported_tls_key(tls_custody);
-    match custody {
-        CustodyState::FileSeed { seed_path } => Ok(Box::new(FileKeySource {
-            signing_key_seed_path: seed_path.clone(),
+    let tls_key = tls_custody.exported_key_path().unwrap_or("");
+    match custody.material() {
+        CustodyMaterial::FileSeed { seed_path } => Ok(Box::new(FileKeySource {
+            signing_key_seed_path: seed_path.to_string(),
             tls_cert_path: tls_cert.to_string(),
             tls_key_path: tls_key.to_string(),
             client_ca_path: client_ca.to_string(),
         })),
         #[cfg(feature = "dev_env_key_source")]
-        CustodyState::EnvSeed { env_var } => Ok(Box::new(EnvKeySource {
+        CustodyMaterial::EnvSeed { env_var } => Ok(Box::new(EnvKeySource {
             signing_key_seed_var: env_var.clone(),
             tls_cert_var: tls_cert.to_string(),
             tls_key_var: tls_key.to_string(),
             client_ca_var: client_ca.to_string(),
         })),
         #[cfg(not(feature = "dev_env_key_source"))]
-        CustodyState::EnvSeed { .. } => Err(KeyError::NotFound(
+        CustodyMaterial::EnvSeed { .. } => Err(KeyError::NotFound(
             "env key source is development-only; rebuild with \
              --features dev_env_key_source (production must use --key-source file)"
                 .to_string(),
@@ -1110,7 +1058,7 @@ pub fn build_key_source(
         // #4034 PKCS#11 token-backed source. The state carries all four values, so there
         // is nothing to unwrap and no arm for material that went missing.
         #[cfg(feature = "pkcs11_keysource")]
-        CustodyState::Pkcs11 {
+        CustodyMaterial::Pkcs11 {
             module,
             pin_file,
             token_label,
@@ -1132,14 +1080,14 @@ pub fn build_key_source(
                 tls_cert,
                 tls_key,
                 client_ca,
-                delegated_pkcs11_label(tls_custody),
+                tls_custody.delegated_pkcs11_label(),
             )?))
         }
         // Default build: the PKCS#11 backend is not compiled, so `--key-source
         // pkcs11` FAILS CLOSED here (mirrors the env-keysource gate). The flag
         // still PARSES so the message is precise; no token-backed key is built.
         #[cfg(not(feature = "pkcs11_keysource"))]
-        CustodyState::Pkcs11 { .. } => Err(KeyError::NotFound(
+        CustodyMaterial::Pkcs11 { .. } => Err(KeyError::NotFound(
             "pkcs11 key source requires the pkcs11_keysource feature (build with \
              --features pkcs11_keysource); not available in this build"
                 .to_string(),
@@ -1147,7 +1095,7 @@ pub fn build_key_source(
         // ADR-MCPS-028 §B: AWS KMS object-signing key, TLS material from files. The
         // response-signing key never leaves KMS.
         #[cfg(feature = "aws_kms_keysource")]
-        CustodyState::AwsKms {
+        CustodyMaterial::AwsKms {
             region,
             key_id,
             endpoint,
@@ -1180,7 +1128,7 @@ pub fn build_key_source(
             // delegated TLS handshake signature; the proxy then never reads `--tls-key`
             // from disk (the exclusivity guard already forbade it). `None` keeps the
             // file-backed TLS path.
-            match delegated_aws_key_id(tls_custody) {
+            match tls_custody.delegated_aws_key_id() {
                 Some(tls_key_id) => {
                     let tls_kms_config = crate::aws_kms_keysource::AwsKmsConfig {
                         region: region.clone(),
@@ -1220,14 +1168,14 @@ pub fn build_key_source(
         // Default build: the AWS KMS backend is not compiled, so `--key-source
         // aws-kms` FAILS CLOSED here (mirrors the pkcs11 gate). The flag still PARSES.
         #[cfg(not(feature = "aws_kms_keysource"))]
-        CustodyState::AwsKms { .. } => Err(KeyError::NotFound(
+        CustodyMaterial::AwsKms { .. } => Err(KeyError::NotFound(
             "aws-kms key source requires the aws_kms_keysource feature (build with \
              --features aws_kms_keysource); not available in this build"
                 .to_string(),
         )),
         // ADR-MCPS-028 §C: GCP Cloud KMS object-signing key, TLS material from files.
         #[cfg(feature = "gcp_kms_keysource")]
-        CustodyState::GcpKms {
+        CustodyMaterial::GcpKms {
             key_version,
             endpoint,
             use_metadata,
@@ -1241,7 +1189,7 @@ pub fn build_key_source(
             let tls = FileKeySource::tls_only(tls_cert, tls_key, client_ca);
             // #61: the GCP counterpart of #60 — a SECOND, DISTINCT key version custodies
             // the TLS server key, and the proxy never reads `--tls-key` from disk.
-            match delegated_gcp_key_version(tls_custody) {
+            match tls_custody.delegated_gcp_key_version() {
                 Some(tls_key_version) => {
                     let tls_kms_config = crate::gcp_kms_keysource::GcpKmsConfig {
                         key_version_name: tls_key_version.to_string(),
@@ -1266,7 +1214,7 @@ pub fn build_key_source(
             }
         }
         #[cfg(not(feature = "gcp_kms_keysource"))]
-        CustodyState::GcpKms { .. } => Err(KeyError::NotFound(
+        CustodyMaterial::GcpKms { .. } => Err(KeyError::NotFound(
             "gcp-kms key source requires the gcp_kms_keysource feature (build with \
              --features gcp_kms_keysource); not available in this build"
                 .to_string(),

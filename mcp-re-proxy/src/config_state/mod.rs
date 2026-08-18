@@ -72,13 +72,13 @@ pub mod validation;
 
 pub use admission::{AdmissionAvailability, AdmissionPosture, AdmissionState, EnforcedAdmission};
 pub use continuation_control::ContinuationControlState;
-pub use custody::{AwsCredentialMode, CustodyState};
+pub use custody::{AwsCredentialMode, CustodyMaterial, CustodyState};
 pub use delegated_signing::DelegatedSigningFacts;
 pub use evidence::{AuditState, RetentionState, VerifiedContextState};
 pub use in_flight_limit::{InFlightLimitBasis, InFlightLimitRequest};
 pub use mcp_transport_contract::McpTransportContractState;
 pub use replay::ReplayState;
-pub use tls_custody::{DelegatedTlsKey, TlsCustodyState};
+pub use tls_custody::TlsCustodyState;
 pub use transport::{ChannelBindingState, CrlRevocationState};
 pub use trust_revocation::TrustRevocationState;
 
@@ -369,6 +369,40 @@ pub(crate) mod test_support {
         crl_posture(paths, cadence_secs).client_revocation_plan()
     }
 
+    /// The TLS-custody state a deployment delegating the handshake key to a PKCS#11 token
+    /// reaches.
+    pub(crate) fn tls_custody_delegated_pkcs11(key_label: &str) -> super::TlsCustodyState {
+        let mut config = legal_config();
+        config.tls_key = String::new();
+        config.pkcs11_tls_key_label = Some(key_label.to_string());
+        super::tls_custody::classify_and_validate(&config)
+            .0
+            .expect("a delegated PKCS#11 TLS key names a state")
+    }
+
+    /// The TLS-custody state a deployment reading the handshake key from a file reaches.
+    pub(crate) fn tls_custody_exported(key_path: &str) -> super::TlsCustodyState {
+        let mut config = legal_config();
+        config.tls_key = key_path.to_string();
+        super::tls_custody::classify_and_validate(&config)
+            .0
+            .expect("an exported TLS key names a state")
+    }
+
+    /// The custody state a deployment holding the signing key on a PKCS#11 token reaches.
+    pub(crate) fn custody_pkcs11() -> super::CustodyState {
+        let mut config = legal_config();
+        config.key_source = crate::deployment_request::KeySourceKind::Pkcs11;
+        config.signing_key_seed = String::new();
+        config.pkcs11_module = Some("/lib/softhsm.so".to_string());
+        config.pkcs11_pin_file = Some("/pin".to_string());
+        config.pkcs11_token_label = Some("token".to_string());
+        config.pkcs11_key_label = Some("signing".to_string());
+        super::custody::classify_and_validate(&config)
+            .0
+            .expect("a complete PKCS#11 custody configuration names a state")
+    }
+
     /// A configuration the parser accepts, for a machine's tests to mutate.
     ///
     /// From `parse_args` rather than a struct literal so that a test which expects a
@@ -444,12 +478,7 @@ mod tests {
             )
             .0,
             crl_revocation: test_support::crl_posture(&["/crl.pem"], Some(300)),
-            custody: CustodyState::Pkcs11 {
-                module: "/lib/softhsm.so".to_string(),
-                pin_file: "/pin".to_string(),
-                token_label: "token".to_string(),
-                key_label: "signing".to_string(),
-            },
+            custody: test_support::custody_pkcs11(),
             mcp_transport_contract: mcp_transport_contract::classify(
                 &test_support::versioned_transport_config(),
             ),
@@ -462,11 +491,7 @@ mod tests {
                 .0
                 .expect("the linearizable fixture names a CP store endpoint"),
             retention: test_support::retention_at("/var/lib/mcp-re/evidence".to_string()),
-            tls_custody: TlsCustodyState::Delegated {
-                selector: DelegatedTlsKey::Pkcs11 {
-                    key_label: "tls".to_string(),
-                },
-            },
+            tls_custody: test_support::tls_custody_delegated_pkcs11("tls"),
             trust_revocation: test_support::revocation_posture(
                 crate::revocation_tier::RevocationTier::Push { t_secs: 30 },
                 Some(5),

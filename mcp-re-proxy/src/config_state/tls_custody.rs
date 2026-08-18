@@ -26,7 +26,7 @@ use crate::deployment_request::DeploymentRequest;
 /// classification never made. X2a decides whether the chosen one is legal beside the
 /// configured `Custody` source; this only records which one it was.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DelegatedTlsKey {
+pub(crate) enum DelegatedTlsKey {
     /// A second key object on the PKCS#11 token.
     Pkcs11 {
         /// The TLS key object's label.
@@ -45,8 +45,21 @@ pub enum DelegatedTlsKey {
 }
 
 /// Which TLS-custody state a configuration requests, and what it is inhabited by.
+///
+/// The representation is private to this module and [`classify`] is the only producer, so
+/// a consumer cannot name a handshake key this deployment did not configure. Each locator
+/// a consumer may legitimately want is a named projection below, and none can produce one
+/// for a state that does not carry it — which keeps the combination X2b forbids, a
+/// delegated key with a file copy beside it, unrepresentable downstream as well as at the
+/// boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TlsCustodyState {
+pub struct TlsCustodyState {
+    kind: TlsCustodyKind,
+}
+
+/// The two states, as the owner's own representation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TlsCustodyKind {
     /// The handshake key is read from a file.
     Exported {
         /// Path to the PEM private key. Its presence IS this state's requirement.
@@ -62,7 +75,51 @@ pub enum TlsCustodyState {
 impl TlsCustodyState {
     /// Whether the handshake key is held by a non-exporting device.
     pub fn is_delegated(&self) -> bool {
-        matches!(self, Self::Delegated { .. })
+        matches!(self.kind, TlsCustodyKind::Delegated { .. })
+    }
+
+    /// The exported handshake-key locator, or `None` under delegated custody.
+    ///
+    /// `None` is not a missing value: the delegated state does not carry one, because
+    /// carrying it would make the combination X2b forbids representable, and the delegated
+    /// path never reads a key file.
+    pub fn exported_key_path(&self) -> Option<&str> {
+        match &self.kind {
+            TlsCustodyKind::Exported { key_path } => Some(key_path),
+            TlsCustodyKind::Delegated { .. } => None,
+        }
+    }
+
+    /// The PKCS#11 label of the delegated TLS key, where the handshake key is a second
+    /// object on the token.
+    pub fn delegated_pkcs11_label(&self) -> Option<&str> {
+        match &self.kind {
+            TlsCustodyKind::Delegated {
+                selector: DelegatedTlsKey::Pkcs11 { key_label },
+            } => Some(key_label),
+            _ => None,
+        }
+    }
+
+    /// The AWS KMS key id of the delegated TLS key, where it is a second, distinct key.
+    pub fn delegated_aws_key_id(&self) -> Option<&str> {
+        match &self.kind {
+            TlsCustodyKind::Delegated {
+                selector: DelegatedTlsKey::AwsKms { key_id },
+            } => Some(key_id),
+            _ => None,
+        }
+    }
+
+    /// The GCP Cloud KMS key version of the delegated TLS key, where it is a second,
+    /// distinct version.
+    pub fn delegated_gcp_key_version(&self) -> Option<&str> {
+        match &self.kind {
+            TlsCustodyKind::Delegated {
+                selector: DelegatedTlsKey::GcpKms { key_version },
+            } => Some(key_version),
+            _ => None,
+        }
     }
 }
 
@@ -79,7 +136,11 @@ impl TlsCustodyState {
 /// observed: a configuration naming two of them has at least one that does not match its
 /// `Custody` source, so X2a refuses it and the state is discarded with the refusal.
 fn classify(config: &DeploymentRequest) -> Option<TlsCustodyState> {
-    let delegated = |selector| Some(TlsCustodyState::Delegated { selector });
+    let delegated = |selector| {
+        Some(TlsCustodyState {
+            kind: TlsCustodyKind::Delegated { selector },
+        })
+    };
     if let Some(key_label) = config.pkcs11_tls_key_label.clone() {
         return delegated(DelegatedTlsKey::Pkcs11 { key_label });
     }
@@ -92,8 +153,10 @@ fn classify(config: &DeploymentRequest) -> Option<TlsCustodyState> {
     if config.tls_key.is_empty() {
         return None;
     }
-    Some(TlsCustodyState::Exported {
-        key_path: config.tls_key.clone(),
+    Some(TlsCustodyState {
+        kind: TlsCustodyKind::Exported {
+            key_path: config.tls_key.clone(),
+        },
     })
 }
 
@@ -137,10 +200,8 @@ mod tests {
     fn a_file_key_is_the_exported_state_and_carries_the_key_it_exports() {
         let (state, violations) = run(|c| c.tls_key = "/key".to_string());
         assert_eq!(
-            state,
-            Some(TlsCustodyState::Exported {
-                key_path: "/key".to_string()
-            })
+            state.as_ref().and_then(TlsCustodyState::exported_key_path),
+            Some("/key")
         );
         assert!(violations.is_empty(), "{violations:?}");
     }
@@ -183,14 +244,25 @@ mod tests {
                 c.tls_key = String::new();
                 mutate(c);
             });
+            let state = state.expect("recognised");
+            let named = match &expected {
+                DelegatedTlsKey::Pkcs11 { key_label } => {
+                    (state.delegated_pkcs11_label(), key_label.as_str())
+                }
+                DelegatedTlsKey::AwsKms { key_id } => {
+                    (state.delegated_aws_key_id(), key_id.as_str())
+                }
+                DelegatedTlsKey::GcpKms { key_version } => {
+                    (state.delegated_gcp_key_version(), key_version.as_str())
+                }
+            };
+            assert_eq!(named.0, Some(named.1), "one machine, three selectors");
+            assert!(state.is_delegated());
             assert_eq!(
-                state,
-                Some(TlsCustodyState::Delegated {
-                    selector: expected.clone()
-                }),
-                "one machine, three selectors"
+                state.exported_key_path(),
+                None,
+                "a delegated state carries no file to export"
             );
-            assert!(state.expect("recognised").is_delegated());
         }
     }
 
