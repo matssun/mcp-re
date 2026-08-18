@@ -28,6 +28,7 @@ derives, and it is not shown here because this view cannot see the attestations.
 | THM-0009 | A presented continuation cannot bypass verification | http_profile.continuation_unbypassability | unit://http_profile.continuation_unbypassability | live |
 | THM-0010 | Continuation handles match their presented inputs in role | http_profile.continuation_binding | unit://http_profile.continuation_binding | live |
 | THM-0012 | The lifecycle record cannot claim a shutdown that did not happen | proxy.runtime_lifecycle | unit://proxy.runtime_lifecycle | live |
+| THM-0013 | No validated deployment enables online OCSP client-certificate revocation | proxy.online_ocsp_reachability | unit://proxy.online_ocsp_reachability | live |
 
 ## Claims in full
 
@@ -142,5 +143,15 @@ derives, and it is not shown here because this view cannot see the attestations.
 **Security consequence.** A runtime that never bound a listener cannot be recorded as a clean drained shutdown, so the two terminal states remain distinguishable in an audit record.
 
 **Scope — what this does NOT establish.** Establishes what the RECORD can say. It does not establish that any request was refused. RuntimeState::admits_requests is a DESCRIPTIVE value, not a control: no production path consumes it, and the recorded state is never Serving while a request is in flight, because the serving events are applied only after serve_fleet returns Ok — so a consumer reading it during serving would read Materialized and refuse everything. What actually confines requests to the serving interval is resource ownership: the listener exists only inside the serve_fleet call. That the events are applied only on a proven Ok is the materialized-runtime owner's obligation, not this unit's. FailedToStart is currently unreachable from Materialized, so a serve that never bound is recorded as Materialized — the record is silent about the failure rather than wrong about it. Evidence is test:// only: the uniqueness-of-path argument is a match a reviewer reads, not a proof a prover checked.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0013 — No validated deployment enables online OCSP client-certificate revocation
+
+**Statement.** Every DeploymentRequest whose client_ocsp is Require is refused by the legality boundary, in every build and independently of the online_ocsp feature. Every ValidatedDeployment therefore carries client_ocsp = Off, and the serving path is handed no OCSP checker.
+
+**Security consequence.** A successfully validated MCP-RE deployment cannot advertise or rely upon online OCSP enforcement on the production async serving path. An operator who asks for it is refused at startup rather than served by a plane that performs no responder round trip.
+
+**Scope — what this does NOT establish.** Establishes reachability and legality only. It does NOT establish the correctness of the retained RFC 6960 implementation in ocsp.rs, of the blocking-path OCSP checker, of responder trust-chain validation, of the endpoint/SSRF network policy, or of any future async OCSP implementation. It says what no deployment can turn on, not that what is turned off would be correct if turned on.
 
 **Review requirement.** Owner security-specification review

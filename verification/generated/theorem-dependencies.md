@@ -79,3 +79,10 @@ graph BT
 graph BT
     THM_0012["THM-0012<br/>The lifecycle record cannot claim a shutdown that did not happen"]
 ```
+
+## Component 10
+
+```mermaid
+graph BT
+    THM_0013["THM-0013<br/>No validated deployment enables online OCSP client-certificate revocation"]
+```

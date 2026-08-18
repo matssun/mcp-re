@@ -365,3 +365,28 @@ owner = "proxy.runtime_lifecycle"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.runtime_lifecycle"]
 depends_on = []
+
+[[theorem]]
+id = "THM-0013"
+title = "No validated deployment enables online OCSP client-certificate revocation"
+statement = """
+Every DeploymentRequest whose client_ocsp is Require is refused by the legality boundary,
+in every build and independently of the online_ocsp feature. Every ValidatedDeployment
+therefore carries client_ocsp = Off, and the serving path is handed no OCSP checker.
+"""
+security_consequence = """
+A successfully validated MCP-RE deployment cannot advertise or rely upon online OCSP
+enforcement on the production async serving path. An operator who asks for it is refused at
+startup rather than served by a plane that performs no responder round trip.
+"""
+scope = """
+Establishes reachability and legality only. It does NOT establish the correctness of the
+retained RFC 6960 implementation in ocsp.rs, of the blocking-path OCSP checker, of responder
+trust-chain validation, of the endpoint/SSRF network policy, or of any future async OCSP
+implementation. It says what no deployment can turn on, not that what is turned off would
+be correct if turned on.
+"""
+owner = "proxy.online_ocsp_reachability"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.online_ocsp_reachability"]
+depends_on = []

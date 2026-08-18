@@ -451,6 +451,53 @@ pub(super) const INVENTORY: &[&str] = &[
 mod tests {
     use super::*;
 
+    /// THM-0013 evidence, half one: no build honours `--client-ocsp require`.
+    ///
+    /// Asserted on the predicate the validation boundary consults, and over BOTH modes, so
+    /// the claim is the biconditional the theorem states rather than "one refusal exists".
+    /// The result is feature-independent by construction: nothing here reads a `cfg`, which
+    /// is the point — a deployment cannot buy online OCSP by rebuilding with the backend.
+    #[test]
+    fn no_build_admits_the_online_ocsp_mode() {
+        let refusal = online_ocsp_refusal(OcspKind::Require)
+            .expect("--client-ocsp require is refused in every build");
+        assert!(
+            refusal.contains("--client-ocsp require cannot be honored"),
+            "the refusal must name the flag it refuses, got: {refusal}"
+        );
+        assert!(
+            refusal.contains("--client-crl"),
+            "and it must name the mechanism that does work on the async plane: {refusal}"
+        );
+        assert!(
+            online_ocsp_refusal(OcspKind::Off).is_none(),
+            "the OFF posture is the one the legality model admits"
+        );
+    }
+
+    /// THM-0013 evidence, half two: the refusal is on the route to a validated deployment.
+    ///
+    /// The predicate above could be correct and unreached. This asserts it through
+    /// `ocsp_mode_violations`, which is what the boundary's clause list calls, so what is
+    /// measured is the rule's PLACEMENT and not only its content. Together the two halves
+    /// give the theorem: every validated deployment has online OCSP off.
+    #[test]
+    fn the_boundary_clause_carries_the_online_ocsp_refusal() {
+        let mut config = crate::config_state::test_support::legal_config();
+        assert!(
+            ocsp_mode_violations(&config).is_empty(),
+            "the legal fixture does not request online OCSP"
+        );
+        config.client_ocsp = OcspKind::Require;
+        let violations = ocsp_mode_violations(&config);
+        assert_eq!(
+            violations.len(),
+            1,
+            "exactly one clause answers for the mode: {violations:?}"
+        );
+        assert!(violations[0].contains("--client-ocsp require cannot be honored"));
+    }
+
     /// The inventory names exactly the residue rules this file defines.
     ///
     /// Reads its own source at compile time, so adding a `pub(super) fn` without
