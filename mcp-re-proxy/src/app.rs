@@ -618,7 +618,11 @@ fn run_validated(
     let crate::replay_plane::MaterializedReplay {
         tier: replay_async,
         dispatch: dispatch_cfg,
-    } = crate::replay_plane::materialize(&replay_plan, values.max_clock_skew, control_rt.as_ref())?;
+    } = crate::replay_plane::materialize(
+        &replay_plan,
+        config.state().freshness(),
+        control_rt.as_ref(),
+    )?;
 
     // Materialized HERE, not where `tls_material` is built, so the CRL load and its
     // stale-CRL refusal keep the position they had before the extraction: after the trust
@@ -787,17 +791,18 @@ fn run_validated(
     // than serving a window the operator did not get. One value drives both the
     // acceptance window and the replay `retain_until`, so an admitted nonce is
     // retained for exactly as long as its signature can still be accepted.
-    let mut verifier_policy =
-        mcp_re_http_profile::VerifierPolicy::new(&["ed25519"], values.max_clock_skew).map_err(
-            |_| {
-                format!(
-                    "--max-clock-skew {} is out of bounds: the RFC 9421 freshness gate accepts \
+    let mut verifier_policy = mcp_re_http_profile::VerifierPolicy::new(
+        &["ed25519"],
+        config.state().freshness().verifier_skew_secs(),
+    )
+    .map_err(|_| {
+        format!(
+            "--max-clock-skew {} is out of bounds: the RFC 9421 freshness gate accepts \
                      0..={} seconds (§5.1 bounded skew)",
-                    values.max_clock_skew,
-                    mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
-                )
-            },
-        )?;
+            config.state().freshness().verifier_skew_secs(),
+            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
+        )
+    })?;
     let (mcp_transport, transport_state) = crate::serving_capabilities::mcp_transport_contract(
         config.state().mcp_transport_contract(),
     )
@@ -808,7 +813,7 @@ fn run_validated(
     posture.declare(Seam::McpTransportContract, transport_state);
     eprintln!(
         "mcp-re-proxy: freshness gate = created-{skew}s .. expires+{skew}s (RFC 9421 §5.1)",
-        skew = values.max_clock_skew
+        skew = config.state().freshness().verifier_skew_secs()
     );
     proxy = proxy.with_verifier_policy(verifier_policy);
     proxy = proxy.with_transport_binding(binding_policy);
@@ -859,7 +864,7 @@ fn run_validated(
 
     let (admission, admission_state) = crate::serving_capabilities::admission_currency(
         config.state().admission(),
-        values.max_clock_skew,
+        config.state().freshness().verifier_skew_secs(),
         control_rt.as_ref(),
     )?
     .into_parts();

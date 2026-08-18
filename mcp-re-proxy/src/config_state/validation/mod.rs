@@ -162,6 +162,8 @@ pub fn validate_configuration(
         crate::config_state::transport::classify_and_validate_binding(config);
     let (crl_revocation, crl_violations) =
         crate::config_state::transport::classify_and_validate_crl(config);
+    let (freshness, freshness_violations) =
+        crate::config_state::freshness::classify_and_validate(config);
     // This deployment's own actor identity. It takes the RESOLVED issuer kid rather than
     // re-reading the primitives it defaults from, so the keyid on the identity and the kid
     // the credential chains to are one value (CF-10).
@@ -190,6 +192,7 @@ pub fn validate_configuration(
         crl_revocation: crl_violations,
         custody: custody_violations,
         delegated_signing: delegated_signing_violations,
+        freshness: freshness_violations,
         replay: replay_violations,
         server_identity: server_identity_violations,
         tls_custody: tls_custody_violations,
@@ -241,11 +244,15 @@ pub fn validate_configuration(
     let Some(server_identity) = server_identity else {
         return Err(unrecognised("server-identity"));
     };
+    let Some(freshness) = freshness else {
+        return Err(unrecognised("freshness"));
+    };
     Ok(DeploymentConfigState::new(
         crate::config_state::RecognisedStates {
             admission,
             audit,
             channel_binding,
+            freshness,
             continuation_control,
             crl_revocation,
             custody,
@@ -271,6 +278,7 @@ struct MachineViolations {
     crl_revocation: Vec<String>,
     custody: Vec<String>,
     delegated_signing: Vec<String>,
+    freshness: Vec<String>,
     replay: Vec<String>,
     server_identity: Vec<String>,
     tls_custody: Vec<String>,
@@ -307,6 +315,7 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // clauses used to sit at the END of this list; they are emitted here now, which is a
     // DELIBERATE precedence change — the mode's own undeployability is what an operator
     // needs first, and it was previously reported after every unrelated limit.
+    violations.extend(decided.freshness);
     violations.extend(decided.channel_binding);
     // The deployment's own identity coordinates, immediately before `--target-uri`, which is
     // one of them and was the only one checked here. Each is a REQUIRED `String` that
@@ -402,12 +411,8 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // off silently, which left the binary asserting a maximal-security posture while its
     // own defense was disabled. Each default is `Some(30s)`, so `None` here only ever comes
     // from an operator explicitly passing `0`.
-    // The freshness tolerance, held to the bound `VerifierPolicy::new` re-checks. It is a
-    // range over a number, which is knowable here,
-    // and leaving it to the verifier's constructor meant a deployment learned about it after
-    // two planes had established resources. A negative skew narrows the window
-    // asymmetrically; one above the bound stops the freshness gate being a freshness gate.
-    violations.extend(residue::clock_skew_violations(config));
+    // The freshness tolerance moved to `config_state::freshness`, which owns the fact and
+    // its two projections; its violations arrive with every other owner's below.
     // The two `ServerLimits` quantities that are legally PRESENT but illegally zero, stated
     // ahead of the timeout clauses because they are the same class — a limit that disables
     // the control it bounds — and an operator reading about limits should meet them together.

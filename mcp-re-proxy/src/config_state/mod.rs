@@ -61,6 +61,7 @@ pub(crate) mod cross_machine;
 pub mod custody;
 pub mod delegated_signing;
 pub mod evidence;
+pub mod freshness;
 pub mod in_flight_limit;
 pub mod mcp_transport_contract;
 pub mod replay;
@@ -75,6 +76,7 @@ pub use continuation_control::ContinuationControlState;
 pub use custody::{AwsCredentialMode, CustodyMaterial, CustodyState};
 pub use delegated_signing::DelegatedSigningFacts;
 pub use evidence::{AuditState, RetentionState, VerifiedContextState};
+pub use freshness::FreshnessWindow;
 pub use in_flight_limit::{InFlightLimitBasis, InFlightLimitRequest};
 pub use mcp_transport_contract::McpTransportContractState;
 pub use replay::ReplayState;
@@ -99,6 +101,7 @@ pub struct DeploymentConfigState {
     crl_revocation: CrlRevocationState,
     custody: CustodyState,
     delegated_signing: DelegatedSigningFacts,
+    freshness: FreshnessWindow,
     in_flight_limit: InFlightLimitBasis,
     mcp_transport_contract: McpTransportContractState,
     replay: ReplayState,
@@ -119,6 +122,7 @@ pub(crate) struct RecognisedStates {
     pub(crate) crl_revocation: CrlRevocationState,
     pub(crate) custody: CustodyState,
     pub(crate) delegated_signing: DelegatedSigningFacts,
+    pub(crate) freshness: FreshnessWindow,
     pub(crate) in_flight_limit: InFlightLimitBasis,
     pub(crate) mcp_transport_contract: McpTransportContractState,
     pub(crate) replay: ReplayState,
@@ -141,6 +145,7 @@ impl DeploymentConfigState {
             crl_revocation,
             custody,
             delegated_signing,
+            freshness,
             in_flight_limit,
             mcp_transport_contract,
             replay,
@@ -158,6 +163,7 @@ impl DeploymentConfigState {
             crl_revocation,
             custody,
             delegated_signing,
+            freshness,
             in_flight_limit,
             mcp_transport_contract,
             replay,
@@ -216,6 +222,14 @@ impl DeploymentConfigState {
     ///
     /// A resolved fact rather than a posture: the control is on in both variants, and the
     /// two differ only in the altitude the operator stated it at.
+    /// The accepted temporal uncertainty, and what each mechanism derives from it.
+    ///
+    /// One fact with two consumers: the RFC 9421 acceptance window and the replay retention
+    /// horizon. They read projections of the same value rather than the same raw field.
+    pub fn freshness(&self) -> FreshnessWindow {
+        self.freshness
+    }
+
     pub fn in_flight_limit(&self) -> InFlightLimitBasis {
         self.in_flight_limit
     }
@@ -351,6 +365,17 @@ pub(crate) mod test_support {
     }
 
     /// The CRL state a deployment with these files and cadence reaches.
+    /// The freshness window a deployment with this skew resolves.
+    ///
+    /// Through the classifier, so a test cannot hold a window outside the §5.1 bound.
+    pub(crate) fn freshness(max_clock_skew: i64) -> super::FreshnessWindow {
+        let mut config = legal_config();
+        config.max_clock_skew = max_clock_skew;
+        super::freshness::classify_and_validate(&config)
+            .0
+            .expect("the fixture skew is within the bound")
+    }
+
     pub(crate) fn crl_posture(
         paths: &[&str],
         cadence_secs: Option<u64>,
@@ -460,6 +485,9 @@ mod tests {
                     .expect("the enforcing fixture names an admission authority"),
             audit: AuditState::Stderr,
             channel_binding: ChannelBindingState::ExactUriSan,
+            freshness: freshness::classify_and_validate(&test_support::legal_config())
+                .0
+                .expect("the legal fixture names a bounded freshness window"),
             server_identity: crate::config_state::server_identity::classify_and_validate(
                 &crate::config_state::test_support::legal_config(),
                 crate::config_state::delegated_signing::classify_and_validate(

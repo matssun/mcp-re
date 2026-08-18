@@ -217,7 +217,10 @@ fn replica(
     HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
         ProxyDispatchConfig {
             fleet_strict: false,
             tier: None,
@@ -649,7 +652,10 @@ fn replica_with_inner(
     HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
         ProxyDispatchConfig {
             fleet_strict: false,
             tier: None,
@@ -807,7 +813,10 @@ async fn an_unrecognized_result_type_is_refused_without_a_continuation_store() {
     let proxy = HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
         ProxyDispatchConfig {
             fleet_strict: false,
             tier: None,
@@ -834,7 +843,10 @@ fn replica_without_store(inner: Box<dyn AsyncInnerServer>) -> HttpProfileProxy {
     HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
         ProxyDispatchConfig {
             fleet_strict: false,
             tier: None,
@@ -1556,7 +1568,10 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
         HttpProfileProxy::new_delegated(
             actor_resolver(),
             audience(),
-            AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+            AsyncReplayTier::new(
+                Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+                mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+            ),
             ProxyDispatchConfig {
                 fleet_strict: false,
                 tier: None,
@@ -1785,7 +1800,10 @@ async fn a_retention_reservation_failure_leaves_the_backend_untouched() {
     let proxy = HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
         ProxyDispatchConfig {
             fleet_strict: false,
             tier: None,
@@ -1824,7 +1842,10 @@ async fn a_retention_reservation_failure_leaves_the_backend_untouched() {
     let healthy = HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
         ProxyDispatchConfig {
             fleet_strict: false,
             tier: None,
@@ -1865,7 +1886,10 @@ async fn a_consumption_followed_by_a_refusal_reports_a_spent_approval_and_an_unr
     let answerer = HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
         ProxyDispatchConfig {
             fleet_strict: false,
             tier: None,
@@ -1936,7 +1960,10 @@ async fn a_configured_transport_binding_refuses_a_request_that_presents_no_peer_
     let proxy = HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
         ProxyDispatchConfig {
             fleet_strict: false,
             tier: None,
@@ -1966,7 +1993,10 @@ async fn a_configured_transport_binding_refuses_a_request_that_presents_no_peer_
     let open = HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
         ProxyDispatchConfig {
             fleet_strict: false,
             tier: None,
@@ -2079,7 +2109,10 @@ async fn a_signed_reply_never_advertises_validity_past_its_delegated_credential(
     let proxy = HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
         ProxyDispatchConfig {
             fleet_strict: false,
             tier: None,
@@ -2109,7 +2142,10 @@ async fn a_signed_reply_never_advertises_validity_past_its_delegated_credential(
     let long = HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
         ProxyDispatchConfig {
             fleet_strict: false,
             tier: None,
@@ -2293,7 +2329,10 @@ async fn an_indeterminate_continuation_retirement_is_never_reported_as_retry_saf
     let b = HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
         ProxyDispatchConfig {
             fleet_strict: false,
             tier: None,
@@ -2373,7 +2412,10 @@ async fn an_inner_plane_refusal_leaves_no_durable_retention_marker() {
     let proxy = HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
         ProxyDispatchConfig {
             fleet_strict: false,
             tier: None,
@@ -2410,7 +2452,10 @@ async fn an_inner_plane_refusal_leaves_no_durable_retention_marker() {
     let healthy = HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
         ProxyDispatchConfig {
             fleet_strict: false,
             tier: None,
@@ -2454,7 +2499,10 @@ fn notification_proxy(outcome: InnerOutcome) -> HttpProfileProxy {
     HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
         ProxyDispatchConfig {
             fleet_strict: false,
             tier: None,
@@ -2567,7 +2615,10 @@ async fn a_post_dispatch_refusal_is_signed_with_the_key_the_exchange_snapshotted
     let proxy = HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
         ProxyDispatchConfig {
             fleet_strict: false,
             tier: None,
@@ -2660,7 +2711,10 @@ async fn a_body_that_is_not_a_json_rpc_request_never_reaches_the_backend() {
         let proxy = HttpProfileProxy::new_delegated(
             actor_resolver(),
             audience(),
-            AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+            AsyncReplayTier::new(
+                Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+                mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+            ),
             ProxyDispatchConfig {
                 fleet_strict: false,
                 tier: None,
@@ -2712,7 +2766,10 @@ async fn the_two_legal_request_shapes_still_reach_their_terminals() {
     let bodied = HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
         ProxyDispatchConfig {
             fleet_strict: false,
             tier: None,

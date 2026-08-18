@@ -340,27 +340,6 @@ pub(super) fn client_cert_lifetime_violations(config: &DeploymentRequest) -> Vec
     out
 }
 
-/// The freshness tolerance is inside the profile's bound.
-///
-/// **Why layer A enforces it.** One skew governs both the RFC 9421 freshness gate and the replay `retain_until`; outside the bound the gate stops bounding anything.
-///
-/// **Why no narrower owner.** It belongs to the verifier policy in another crate; layer A bounds it because `VerifierPolicy::new` is reached only after two planes have started.
-pub(super) fn clock_skew_violations(config: &DeploymentRequest) -> Vec<String> {
-    let mut out = Vec::new();
-    if !(0..=mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND)
-        .contains(&config.max_clock_skew)
-    {
-        out.push(format!(
-            "--max-clock-skew must be 0..={} seconds (§5.1 bounded skew), got {}: it is the \
-             tolerance applied to every verified request AND the replay retain_until, so \
-             outside this range the freshness gate stops bounding anything",
-            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
-            config.max_clock_skew
-        ));
-    }
-    out
-}
-
 /// The concurrent-connection ceiling is not zero.
 ///
 /// **Why layer A enforces it.** A limit of zero disables the control it bounds, which is a security posture whatever tier it sits in.
@@ -441,7 +420,6 @@ pub(super) const INVENTORY: &[&str] = &[
     "inner_plane_presence_violations",
     "inner_plane_structure_violations",
     "client_cert_lifetime_violations",
-    "clock_skew_violations",
     "connection_ceiling_violations",
     "drain_window_violations",
     "slow_loris_timeout_violations",

@@ -202,7 +202,10 @@ fn build_server_with_kid() -> (HttpProfileProxy, String) {
     let proxy = HttpProfileProxy::new_delegated(
         server_resolver(),
         expected_audience,
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
         ProxyDispatchConfig {
             fleet_strict: false,
             tier: None,
@@ -641,7 +644,10 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
             target_uri: config.target_uri.clone(),
             route: config.route.clone(),
         },
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
         ProxyDispatchConfig {
             fleet_strict: false,
             tier: None,
