@@ -1,0 +1,4 @@
+Post-commit verification on a quiet box (fseventsd back to 0.1%):
+  PASS  mcp_re_proxy lib suite      836 enumerated, 836 ran, 836 passed, 0 failed
+  PASS  --features redis_replay     868 passed, 0 failed
+The NOT RUN lines in 07ffaa3's message were an environment stall, now cleared.
