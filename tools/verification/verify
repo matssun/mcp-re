@@ -125,7 +125,10 @@ def validate_manifests() -> tuple[bool, list[str]]:
         assumptions = load_assumptions()
         boundaries = load_trust_boundaries()
         toolchains = load_toolchains()
-        theorems = load_theorems({unit["id"] for unit in doc.get("unit", [])})
+        theorems = load_theorems(
+            {unit["id"] for unit in doc.get("unit", [])},
+            [e for e in doc.get("edge", []) if e.get("kind") == "PROOF_DEPENDENCY"],
+        )
     except ManifestError as exc:
         return False, [str(exc)]
     # `max_class_without_assumption` is a gate, not a comment: a unit promoted past the

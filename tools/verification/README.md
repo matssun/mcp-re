@@ -118,6 +118,7 @@ introduced, observed to fail, and reverted:
 | `test://` evidence with no `tested_symbols` | manifest validation failure — an unrunnable claim is not evidence |
 | `supported_by` naming no declared unit | fail-closed refusal, never an empty closure |
 | a cycle in a theorem's `depends_on` | cycle failure naming the ring |
+| a `depends_on` inverting a declared `PROOF_DEPENDENCY` | direction failure naming both owners |
 | a theorem key restating a `[[unit]]` fact | duplicate-authority failure naming the owning file |
 | a stored `review = "approved"` in the registry | refused — an approval is evidence about a fingerprint |
 | a theorem no unit supports | declared, and reported as without a structural support closure |
