@@ -18,7 +18,6 @@ use crate::config_snapshot;
 use crate::config_state::ChannelBindingState;
 use crate::config_state::CustodyState;
 use crate::config_state::TlsCustodyState;
-use crate::deployment_request::KeySourceKind;
 use crate::http_inner::HttpInnerPool;
 use crate::startup_posture::PostureLog;
 use crate::startup_posture::Seam;
@@ -109,11 +108,20 @@ pub fn build_actor_resolver(
 /// still advertises the CRL as enforced.
 ///
 /// Pure, so the decision is assertable without a broken host clock: it takes the reading
-/// and how many CRLs the deployment configured, and returns the refusal.
-fn faulted_clock_refusal(startup_now_unix: i64, configured_crls: usize) -> Option<String> {
-    if configured_crls == 0 || !crate::startup_plan::host_clock_is_faulted(startup_now_unix) {
+/// and the CRL posture the owner classified, and returns the refusal.
+///
+/// The posture arrives as the owner's own value rather than as a count of paths. Whether
+/// this deployment enforces offline revocation is `CrlRevocationState`'s answer, and
+/// re-deriving it here from the length of a list is how composition ends up disagreeing
+/// with the transcript it prints.
+fn faulted_clock_refusal(
+    startup_now_unix: i64,
+    crl: &crate::config_state::CrlRevocationState,
+) -> Option<String> {
+    if !crl.is_enforced() || !crate::startup_plan::host_clock_is_faulted(startup_now_unix) {
         return None;
     }
+    let configured_crls = crl.paths().len();
     Some(format!(
         "mcp-re-proxy refuses to start: the system clock reads at/near the Unix epoch \
          ({startup_now_unix} < {}s), so the boot-time client-CRL freshness refusal cannot be \
@@ -412,7 +420,8 @@ fn run_validated(
     // `startup_now_unix` below agree on one instant. Whether that reading is a FAULT is
     // the plan's rule; reading the clock and deciding what it costs is this function's.
     let startup_now_unix = now_unix();
-    if let Some(refusal) = faulted_clock_refusal(startup_now_unix, values.client_crl_paths.len()) {
+    if let Some(refusal) = faulted_clock_refusal(startup_now_unix, config.state().crl_revocation())
+    {
         return Err(refusal);
     }
     if crate::startup_plan::host_clock_is_faulted(startup_now_unix) {
@@ -432,28 +441,15 @@ fn run_validated(
     // `config_state::validation::unsafe_config_violations` — the proxy never reaches here with them. Only
     // the env key source (a dev/CI-only build, `dev_env_key_source`) is worth a
     // runtime note, since that build deliberately permits it.
-    if values.key_source == KeySourceKind::Env {
+    // Which custody state this deployment is in is the custody owner's answer, taken
+    // through its material projection rather than re-tested against the raw selector.
+    if matches!(
+        config.state().custody().material(),
+        crate::config_state::CustodyMaterial::EnvSeed { .. }
+    ) {
         eprintln!(
             "mcp-re-proxy: WARNING: --key-source env is a dev/CI-only build (dev_env_key_source); \
              env key material is visible to the process tree. Never use in production."
-        );
-    }
-    // MCPS-3840 reverse-proxy ingress trust assumption — emit LOUDLY. When the
-    // identity is read from a trusted forwarded header, mTLS is terminated by an
-    // upstream proxy and the local client certificate is NOT consulted for
-    // identity. This is only safe if the listening socket is reachable ONLY by
-    // the trusted upstream; anyone who can reach the port could otherwise spoof
-    // any identity by setting the header. (Strict ingress enforcement is #3842.)
-    if let Some(header) = &values.reverse_proxy_identity_header {
-        eprintln!(
-            "mcp-re-proxy: WARNING: reverse-proxy identity mode is ENABLED (reading the trusted \
-             header '{header}', format {:?}, identity field {:?}). mTLS is assumed terminated \
-             UPSTREAM and the local client certificate is NOT used for identity. You are \
-             asserting the listening socket {} is reachable ONLY by the trusted upstream \
-             (loopback / private network / its own mTLS link) and that the upstream STRIPS any \
-             client-supplied copy of '{header}' before setting its own. If the socket is \
-             reachable by untrusted clients, they can SPOOF any identity.",
-            values.reverse_proxy_header_format, values.identity_source, values.bind,
         );
     }
     // A group/world-readable key file is a HARD error (refuse startup). The other
@@ -1027,6 +1023,7 @@ pub(crate) fn serve_fleet(
 mod tests {
     use super::check_key_file_perms;
     use super::faulted_clock_refusal;
+    use crate::config_state::test_support::crl_posture;
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
@@ -1482,24 +1479,33 @@ mod tests {
     fn a_faulted_clock_refuses_only_when_it_disables_the_crl_refusal() {
         use crate::startup_plan::EPOCH_CLOCK_FAULT_THRESHOLD_SECS;
 
-        let refusal = faulted_clock_refusal(0, 1).expect("a faulted clock plus CRLs must refuse");
+        let refusal = faulted_clock_refusal(0, &crl_posture(&["/a.crl"], None))
+            .expect("a faulted clock plus CRLs must refuse");
         assert!(
             refusal.contains("CRL") && refusal.contains("clock"),
             "the refusal must name both halves of why it fired: {refusal}"
         );
         assert!(
-            faulted_clock_refusal(EPOCH_CLOCK_FAULT_THRESHOLD_SECS - 1, 2).is_some(),
+            faulted_clock_refusal(
+                EPOCH_CLOCK_FAULT_THRESHOLD_SECS - 1,
+                &crl_posture(&["/a.crl", "/b.crl"], None),
+            )
+            .is_some(),
             "anything below the fault threshold disables the same refusal"
         );
         // The two negative controls. Without them a guard that refused unconditionally
         // would satisfy the assertions above.
         assert!(
-            faulted_clock_refusal(0, 0).is_none(),
+            faulted_clock_refusal(0, &crl_posture(&[], None)).is_none(),
             "with no CRL configured there is no boot-time refusal to disable; the \
              per-request posture is already fail-closed and warns"
         );
         assert!(
-            faulted_clock_refusal(EPOCH_CLOCK_FAULT_THRESHOLD_SECS, 3).is_none(),
+            faulted_clock_refusal(
+                EPOCH_CLOCK_FAULT_THRESHOLD_SECS,
+                &crl_posture(&["/a.crl", "/b.crl", "/c.crl"], None),
+            )
+            .is_none(),
             "a sane clock must not be refused however many CRLs are configured"
         );
     }

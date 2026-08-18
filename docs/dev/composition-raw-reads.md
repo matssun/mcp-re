@@ -47,8 +47,11 @@ relation has not been represented.
 | `key_source` (`== Env`) | `CustodyState` / `CustodyMaterial::EnvSeed` | `app.rs:435` |
 | `identity_source` | `ChannelBindingState` | `app.rs:456`, `startup_plan.rs:145` — derived in both places |
 | `binding` | `ChannelBindingState` | `startup_plan.rs:135` |
-| `fleet` | classified by four owners | `app.rs:657` |
-| `cores` | `InFlightLimitBasis::per_core()` / `fleet_total()` | `app.rs:740,941` — the per-core answer is already resolved at `app.rs:700` |
+~~`fleet`~~ and ~~`cores`~~ were listed here on first pass and are **wrong**: four owners
+*classify on* `fleet` and `InFlightLimitBasis` resolves a per-core ceiling, but no owner
+owns "this is a fleet deployment" or "this many cores". Swapping them would have meant
+inventing a projection so composition could keep asking — which is the failure this
+campaign exists to stop. They move to bucket 3.
 
 ## Dead, not a bucket — the reverse-proxy warning
 
@@ -71,6 +74,31 @@ Removing it retires 4 of the 39 raw reads on its own.
 `tls_cert` and `client_ca` are the argued case: `build_key_source`'s own documentation
 states they belong to no custody machine — all five states consume them, and shared use is
 not semantic ownership. They are strings whose *interpretation* the custody state decides.
+
+## Corrections from executing the swaps
+
+Re-measured after the mechanical head: `app.rs` is down from 29 reads / 20 fields to
+**23 reads / 15 fields**, and `crate::deployment_request::KeySourceKind` is no longer
+imported by the composition root at all.
+
+Two entries above were misclassified on the first pass (`fleet`, `cores`) — see the strike
+in bucket 1. That is the third bucket doing its job in the other direction: the test is
+whether an owner ALREADY owns the fact, not whether one plausibly could.
+
+`identity_source` and `binding` remain in `startup_plan::identity_strategy`, which is
+blocked on a ruling — see below.
+
+## A second orphan, needing the OCSP ruling rather than a deletion
+
+`startup_plan::identity_strategy` matches on the same `reverse_proxy_identity_header` that
+X7 refuses outright, and its `Some(header)` arm builds a `ReverseProxyMtlsProvider`. That
+arm is unreachable for the same reason the deleted warning was — but the provider behind it
+is **45 references across `transport.rs` (34) and `tls.rs` (11)**, with its own tests, and
+no declared seam.
+
+So this is the `build_ocsp_checker` question, not the dead-warning question: retained
+capability or dead code? A 45-reference deletion is an owner ruling. Until it is made,
+`identity_strategy` keeps two of the remaining raw reads.
 
 ## Order of work
 
