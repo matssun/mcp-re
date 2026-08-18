@@ -587,8 +587,8 @@ mod tests {
         let dir = TempDir::new("attaches");
         let (artifact, posture) =
             evidence_retention(&crate::config_state::test_support::retention_at(dir.path()))
-        .expect("a writable directory opens")
-        .into_parts();
+                .expect("a writable directory opens")
+                .into_parts();
         assert!(artifact.is_some());
         assert!(matches!(posture, SeamState::On { .. }));
 
@@ -605,9 +605,9 @@ mod tests {
     fn an_unopenable_retention_directory_refuses_startup_naming_the_flag() {
         let dir = TempDir::new("unopenable");
         std::fs::write(&dir.0, b"not a directory").expect("write the blocking file");
-        let Err(error) = evidence_retention(
-            &crate::config_state::test_support::retention_at(dir.path()),
-        ) else {
+        let Err(error) =
+            evidence_retention(&crate::config_state::test_support::retention_at(dir.path()))
+        else {
             panic!("a path occupied by a file cannot be opened");
         };
         assert!(

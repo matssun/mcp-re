@@ -180,16 +180,12 @@ impl TrustEpochPlan {
     /// Infallible: `PushNetworked` is the state that HAS a source, so layer A has already
     /// established both that this deployment may carry one and that it does.
     pub fn from_validated(config: &ValidatedDeployment) -> TrustEpochPlan {
-        match config.state().trust_revocation() {
-            crate::config_state::TrustRevocationState::PushNetworked {
-                epoch_url,
-                epoch_key,
-                ..
-            } => TrustEpochPlan::Redis {
-                url: epoch_url.clone(),
-                key: epoch_key.clone(),
+        match config.state().trust_revocation().epoch_source() {
+            Some(source) => TrustEpochPlan::Redis {
+                url: source.url().to_string(),
+                key: source.key().to_string(),
             },
-            _ => TrustEpochPlan::NoNetworkChannel,
+            None => TrustEpochPlan::NoNetworkChannel,
         }
     }
 
@@ -293,18 +289,13 @@ impl TrustPlan {
 /// consults the validated request, because only there is the cadence optional and both
 /// postures legal.
 fn trust_reload_plan(state: &crate::config_state::TrustRevocationState) -> TrustReloadPlan {
-    use crate::config_state::TrustRevocationState as S;
-    match state {
-        S::Live { reload_secs }
-        | S::PushInert { reload_secs, .. }
-        | S::PushNetworked { reload_secs, .. } => TrustReloadPlan::Every { secs: *reload_secs },
-        // Total, and reading no raw value: layer A normalized the optional cadence, so
-        // there is no `Some(0)` left to filter here — and therefore no way for a refused
-        // request to be re-read as a different legal posture.
-        S::BoundedCache { reload_secs, .. } => match reload_secs {
-            Some(secs) => TrustReloadPlan::Every { secs: *secs },
-            None => TrustReloadPlan::ReadOnceAtStartup,
-        },
+    // Which states require a cadence is the revocation machine's rule, so the cadence is
+    // read from it rather than matched out of its variants here. Total, and reading no raw
+    // value: layer A normalized the optional cadence, so there is no `Some(0)` left to
+    // filter, and therefore no way for a refused request to be re-read as a legal posture.
+    match state.reload_cadence() {
+        Some(secs) => TrustReloadPlan::Every { secs },
+        None => TrustReloadPlan::ReadOnceAtStartup,
     }
 }
 
@@ -509,7 +500,11 @@ pub fn control_runtime_requirement(
 ) -> crate::control_runtime::ControlRuntimeRequirement {
     crate::control_runtime::ControlRuntimeRequirement::any([
         replay.needs_control_runtime(),
-        config.state().continuation_control().continuation_plan().needs_control_runtime(),
+        config
+            .state()
+            .continuation_control()
+            .continuation_plan()
+            .needs_control_runtime(),
         admission_needs_control_runtime(config),
     ])
 }
@@ -804,11 +799,19 @@ mod tests {
         .expect("args parse");
         let validated = ValidatedDeployment::try_from(both).expect("independent facts, both legal");
         assert_eq!(
-            validated.state().continuation_control().continuation_plan().needs_control_runtime(),
+            validated
+                .state()
+                .continuation_control()
+                .continuation_plan()
+                .needs_control_runtime(),
             REDIS
         );
         assert!(
-            !validated.state().replay().materialization_plan().needs_control_runtime(),
+            !validated
+                .state()
+                .replay()
+                .materialization_plan()
+                .needs_control_runtime(),
             "the tier is etcd, so replay itself declares nothing"
         );
 
@@ -823,7 +826,11 @@ mod tests {
                 .shared_store(),
             None
         );
-        assert!(!validated.state().continuation_control().continuation_plan().needs_control_runtime());
+        assert!(!validated
+            .state()
+            .continuation_control()
+            .continuation_plan()
+            .needs_control_runtime());
     }
 
     /// The projected endpoint is the continuation store's own locator, character for
@@ -913,21 +920,22 @@ mod tests {
     /// its OWN carried cadence rather than some default.
     #[test]
     fn a_reload_bearing_state_cannot_be_projected_to_read_once() {
-        use crate::config_state::TrustRevocationState as S;
         let carried = [
-            S::Live {
-                reload_secs: crate::config_state::TrustRevocationState::cadence(7),
-            },
-            S::PushInert {
-                t_secs: 30,
-                reload_secs: crate::config_state::TrustRevocationState::cadence(7),
-            },
-            S::PushNetworked {
-                t_secs: 30,
-                reload_secs: crate::config_state::TrustRevocationState::cadence(7),
-                epoch_url: "redis://127.0.0.1:6379".to_string(),
-                epoch_key: "k".to_string(),
-            },
+            crate::config_state::test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::Live,
+                Some(7),
+                None,
+            ),
+            crate::config_state::test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::Push { t_secs: 30 },
+                Some(7),
+                None,
+            ),
+            crate::config_state::test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::Push { t_secs: 30 },
+                Some(7),
+                Some(("redis://127.0.0.1:6379", "k")),
+            ),
         ];
         for state in carried {
             assert_eq!(
@@ -947,22 +955,23 @@ mod tests {
     /// — an optional parameter moved into a state that does not require it.
     #[test]
     fn bounded_cache_keeps_both_refresh_postures() {
-        use crate::config_state::TrustRevocationState as S;
         assert_eq!(
-            trust_reload_plan(&S::BoundedCache {
-                t_secs: 60,
-                reload_secs: None,
-            }),
+            trust_reload_plan(&crate::config_state::test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::BoundedCache { t_secs: 60 },
+                None,
+                None
+            )),
             TrustReloadPlan::ReadOnceAtStartup,
             "an omitted cadence under bounded-cache reads the store once"
         );
         assert_eq!(
-            trust_reload_plan(&S::BoundedCache {
-                t_secs: 60,
-                reload_secs: Some(S::cadence(60)),
-            }),
+            trust_reload_plan(&crate::config_state::test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::BoundedCache { t_secs: 60 },
+                Some(60),
+                None
+            )),
             TrustReloadPlan::Every {
-                secs: S::cadence(60)
+                secs: crate::config_state::TrustRevocationState::cadence(60)
             },
             "a supplied cadence under bounded-cache still re-reads"
         );
@@ -1049,12 +1058,14 @@ mod tests {
         );
         assert_eq!(
             plan.revocation,
-            crate::config_state::TrustRevocationState::PushNetworked {
-                t_secs: 30,
-                reload_secs: crate::config_state::TrustRevocationState::cadence(15),
-                epoch_url: "redis://127.0.0.1:6379".to_string(),
-                epoch_key: crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY.to_string(),
-            },
+            crate::config_state::test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::Push { t_secs: 30 },
+                Some(15),
+                Some((
+                    "redis://127.0.0.1:6379",
+                    crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY
+                ))
+            ),
             "the plan must hold what layer A classified, not re-read --revocation-tier"
         );
         assert_eq!(
@@ -1295,7 +1306,10 @@ mod tests {
         let on = ValidatedDeployment::try_from(on).expect("validates");
         assert_eq!(admission_needs_control_runtime(&on), REDIS);
         assert!(
-            !on.state().replay().materialization_plan().needs_control_runtime(),
+            !on.state()
+                .replay()
+                .materialization_plan()
+                .needs_control_runtime(),
             "admission must not need the replay tier to have asked first"
         );
     }

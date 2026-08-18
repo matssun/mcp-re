@@ -769,12 +769,11 @@ mod store_cadence_tests {
     #[test]
     fn the_push_tier_bound_states_the_poll_interval_not_the_next_request() {
         let line = fleet_trust_bound(&plan(
-            TrustRevocationState::PushNetworked {
-                t_secs: 90,
-                reload_secs: crate::config_state::TrustRevocationState::cadence(5),
-                epoch_url: "redis://127.0.0.1:6379".to_string(),
-                epoch_key: "mcp-re:trust:epoch".to_string(),
-            },
+            crate::config_state::test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::Push { t_secs: 90 },
+                Some(5),
+                Some(("redis://127.0.0.1:6379", "mcp-re:trust:epoch")),
+            ),
             TrustReloadPlan::Every {
                 secs: crate::config_state::TrustRevocationState::cadence(30),
             },
@@ -801,10 +800,11 @@ mod store_cadence_tests {
     #[test]
     fn a_push_tier_without_a_source_reports_the_fallback_only() {
         let line = fleet_trust_bound(&plan(
-            TrustRevocationState::PushInert {
-                t_secs: 90,
-                reload_secs: crate::config_state::TrustRevocationState::cadence(5),
-            },
+            crate::config_state::test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::Push { t_secs: 90 },
+                Some(5),
+                None,
+            ),
             TrustReloadPlan::Every {
                 secs: crate::config_state::TrustRevocationState::cadence(30),
             },
@@ -826,23 +826,26 @@ mod store_cadence_tests {
     #[test]
     fn every_posture_names_the_reload_floor_under_its_number() {
         for revocation in [
-            TrustRevocationState::Live {
-                reload_secs: crate::config_state::TrustRevocationState::cadence(5),
-            },
-            TrustRevocationState::BoundedCache {
-                t_secs: 60,
-                reload_secs: None,
-            },
-            TrustRevocationState::PushInert {
-                t_secs: 60,
-                reload_secs: crate::config_state::TrustRevocationState::cadence(5),
-            },
-            TrustRevocationState::PushNetworked {
-                t_secs: 60,
-                reload_secs: crate::config_state::TrustRevocationState::cadence(5),
-                epoch_url: "redis://127.0.0.1:6379".to_string(),
-                epoch_key: "mcp-re:trust:epoch".to_string(),
-            },
+            crate::config_state::test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::Live,
+                Some(5),
+                None,
+            ),
+            crate::config_state::test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::BoundedCache { t_secs: 60 },
+                None,
+                None,
+            ),
+            crate::config_state::test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::Push { t_secs: 60 },
+                Some(5),
+                None,
+            ),
+            crate::config_state::test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::Push { t_secs: 60 },
+                Some(5),
+                Some(("redis://127.0.0.1:6379", "mcp-re:trust:epoch")),
+            ),
         ] {
             let with_reload = fleet_trust_bound(&plan(
                 revocation.clone(),

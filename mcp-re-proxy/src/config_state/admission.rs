@@ -296,7 +296,12 @@ pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<AdmissionSta
         availability,
     }) = authority
     else {
-        return (Some(AdmissionState { kind: AdmissionKindState::Off }), Vec::new());
+        return (
+            Some(AdmissionState {
+                kind: AdmissionKindState::Off,
+            }),
+            Vec::new(),
+        );
     };
     let state = match config.admission {
         // `validated_admission_authority` yields an authority only for the enforcing

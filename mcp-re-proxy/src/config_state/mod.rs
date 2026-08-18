@@ -269,7 +269,8 @@ pub(crate) mod test_support {
     pub(crate) fn legal_linearizable_config() -> DeploymentRequest {
         let mut config = legal_config();
         config.replay_redis_url = None;
-        config.replay_durability_tier = Some(crate::replay_tier::ReplayDurabilityTier::Linearizable);
+        config.replay_durability_tier =
+            Some(crate::replay_tier::ReplayDurabilityTier::Linearizable);
         config.cpstore_etcd_endpoint = Some("http://127.0.0.1:2379".to_string());
         config
     }
@@ -330,6 +331,25 @@ pub(crate) mod test_support {
         super::evidence::classify(&config).1
     }
 
+    /// The trust-revocation state a deployment with these settings reaches.
+    ///
+    /// Built through the classifier, so a test names a posture a configuration could
+    /// actually request rather than assembling one from parts.
+    pub(crate) fn revocation_posture(
+        tier: crate::revocation_tier::RevocationTier,
+        reload_secs: Option<u64>,
+        epoch: Option<(&str, &str)>,
+    ) -> super::TrustRevocationState {
+        let mut config = legal_config();
+        config.revocation_tier = tier;
+        config.trust_reload_secs = reload_secs;
+        config.trust_epoch_redis_url = epoch.map(|(url, _)| url.to_string());
+        config.trust_epoch_key = epoch.map(|(_, key)| key.to_string());
+        super::trust_revocation::classify_and_validate(&config)
+            .0
+            .expect("the requested revocation posture is legal")
+    }
+
     /// A configuration the parser accepts, for a machine's tests to mutate.
     ///
     /// From `parse_args` rather than a struct literal so that a test which expects a
@@ -381,9 +401,10 @@ mod tests {
     #[test]
     fn the_state_carries_what_the_planes_would_otherwise_re_derive() {
         let state = DeploymentConfigState::new(RecognisedStates {
-            admission: admission::classify_and_validate(&test_support::enforcing_admission_config())
-                .0
-                .expect("the enforcing fixture names an admission authority"),
+            admission:
+                admission::classify_and_validate(&test_support::enforcing_admission_config())
+                    .0
+                    .expect("the enforcing fixture names an admission authority"),
             audit: AuditState::Stderr,
             channel_binding: ChannelBindingState::ExactUriSan,
             server_identity: crate::config_state::server_identity::classify_and_validate(
@@ -430,12 +451,11 @@ mod tests {
                     key_label: "tls".to_string(),
                 },
             },
-            trust_revocation: TrustRevocationState::PushNetworked {
-                t_secs: 30,
-                reload_secs: crate::config_state::TrustRevocationState::cadence(5),
-                epoch_url: "redis://127.0.0.1:6379".to_string(),
-                epoch_key: "mcp-re:trust:epoch".to_string(),
-            },
+            trust_revocation: test_support::revocation_posture(
+                crate::revocation_tier::RevocationTier::Push { t_secs: 30 },
+                Some(5),
+                Some(("redis://127.0.0.1:6379", "mcp-re:trust:epoch")),
+            ),
             verified_context: VerifiedContextState::Trusted,
         });
         assert!(state.trust_revocation().has_networked_epoch());
