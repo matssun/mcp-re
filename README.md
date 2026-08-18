@@ -272,9 +272,10 @@ per-node cache exists to fall back on — every replay state is shared.
 The current implementation does not claim:
 
 - official MCP extension status;
-- reverse-proxy mTLS integration in the lean default (it is available via the
-  forwarded-identity path, but enterprise ingress hardening is delivered through
-  the high-assurance feature profile);
+- reverse-proxy mTLS integration — `--reverse-proxy-identity-header` is REFUSED by
+  configuration validation in every build (relation X7: a forwarded identity header can
+  be spoofed by any peer that can reach the socket), so no deployment reads identity from
+  a forwarded header. Production MCP-RE terminates client mTLS locally;
 - offline-hermetic or air-gapped build reproducibility (the cold-clone gate is
   "no-submodule, lockfile-reproducible with network access to crates.io", not
   offline-hermetic).
