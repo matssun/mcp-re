@@ -83,6 +83,63 @@ let you build a `CustodyState`.
 - `key_files_read_from_disk` in `app.rs` reconstructed a security answer — which secrets
   land on local disk, for a permissions floor — out of two owners' representations.
 
+## Where sealing buys nothing
+
+Privacy is only worth adding when **the owner is the sole legitimate producer**. Where a
+trait or closure seam lets code outside the module produce the value, a private field
+forces a public constructor, and `X::new(a, b, c)` is exactly as permissive as `X { a, b,
+c }` — the same arguments, the same absence of checking, one more line of ceremony.
+
+`ResolvedActor` (`mcp-re-http-profile/src/block.rs`) is the example. It looks like a
+verdict — *the trust layer authorized this actor for this slot* — but the trust seam is a
+resolver supplied by the caller, so every in-process and test resolver is a legitimate
+producer. The invariant genuinely does not belong to the type; it belongs to the seam's
+contract. Sealing it would relocate the ceremony without moving the authority, which is
+the same mistake as the wide composition object.
+
+The question to ask before sealing: **if this value is illegal, whose bug is it?** If the
+answer is "the owner's classifier", seal. If it is "whoever implemented the seam", the
+invariant is a contract on the seam and privacy is theatre.
+
+### A proved postcondition outranks a seal
+
+`VerifiedAdmission` (`mcp-re-http-profile/src/admission.rs`) is the strongest-looking
+target in the tree: it is the VERDICT of the admission check, and all five fields are
+`pub`, so `VerifiedAdmission { status: Admitted, .. }` is an ordinary expression in any
+crate that depends on this one. **It must stay that way.** Measured, not assumed — the seal
+was written, and `verify-verus` reported:
+
+```
+error: external_type_specification: private fields not supported for transparent
+       datatypes (try 'external_body' instead?)
+   --> mcp-re-http-profile/src/verus_std_specs.rs:100
+```
+
+`pub(crate)` does not satisfy it either; Verus requires the fields to be `pub`. The only
+way to seal the type is `external_body`, which makes the datatype OPAQUE — and this unit's
+postconditions are stated over exactly those fields:
+
+```
+&&& v.admission_id@ == binding.admission_id@
+&&& v.admitted_actor@ == presenter_actor_id@
+&&& !v.degraded ==> (… binding.generation == state.generation …)
+```
+
+Opaque fields make those conjuncts unstatable, so sealing would cost THM-0003, THM-0004,
+THM-0005 and THM-0006 the ability to say anything about the verdict's contents.
+
+The trade resolves on evidence strength, not on tidiness. A seal says *this value cannot be
+assembled by hand*. The proof says *every value this function returns satisfies these
+properties, over all executions* — including that the admitted actor IS the presenter,
+which is the conjunct that catches a refactor dropping the presenter check. The proof is
+the stronger claim and it subsumes what the seal would defend against on the path that
+actually runs. What the seal would still add — that no one FABRICATES a verdict instead of
+obtaining one — is a real but different property, and it belongs to review-unit membership
+in the assurance graph rather than to field privacy.
+
+With the seal reverted, `verify-verus` reports PASS over 6 units. **Do not re-seal this type
+without a plan for the four theorems.**
+
 ## Sealing the next owner
 
 1. Make the representation private: `pub struct X { kind: XKind }`, `enum XKind` private.
