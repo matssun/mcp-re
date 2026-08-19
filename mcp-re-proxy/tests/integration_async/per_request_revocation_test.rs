@@ -132,7 +132,7 @@ fn make_crl(ca: &Ca, revoked: &[u64]) -> Vec<u8> {
 }
 
 fn index_revoking(ca: &Ca, revoked: &[u64]) -> ClientRevocationIndex {
-    ClientRevocationIndex::from_crl_ders(&[make_crl(ca, revoked)], false).expect("index builds")
+    ClientRevocationIndex::from_crl_ders(&[make_crl(ca, revoked)]).expect("index builds")
 }
 
 fn server_config_trusting(client_ca: &Ca) -> Arc<rustls::ServerConfig> {
@@ -460,13 +460,10 @@ fn index_for_chain(
     root_revokes: &[u64],
     intermediate_revokes: &[u64],
 ) -> ClientRevocationIndex {
-    ClientRevocationIndex::from_crl_ders(
-        &[
-            make_crl(root, root_revokes),
-            make_crl(intermediate, intermediate_revokes),
-        ],
-        false,
-    )
+    ClientRevocationIndex::from_crl_ders(&[
+        make_crl(root, root_revokes),
+        make_crl(intermediate, intermediate_revokes),
+    ])
     .expect("index builds")
 }
 

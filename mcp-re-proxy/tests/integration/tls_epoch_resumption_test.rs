@@ -178,9 +178,7 @@ fn a_second_connection_resumes_while_the_trust_epoch_holds() {
     let (client_leaf, client_key) = make_leaf(&client_ca, "client", true);
 
     let anchors = vec![client_ca.der()];
-    let epoch = Arc::new(SharedTlsAuthEpoch::new(TlsAuthEpoch::compute(
-        &anchors, false,
-    )));
+    let epoch = Arc::new(SharedTlsAuthEpoch::new(TlsAuthEpoch::compute(&anchors)));
     let server = server_config(&anchors, vec![server_leaf], server_key, epoch);
     let client = client_config(&server_ca.der(), vec![client_leaf], client_key);
 
@@ -206,9 +204,7 @@ fn withdrawing_a_trusted_ca_stops_resumption_and_forces_a_full_handshake() {
 
     // Both CAs trusted: the client's chain builds under A.
     let anchors = vec![ca_a.der(), ca_b.der()];
-    let epoch = Arc::new(SharedTlsAuthEpoch::new(TlsAuthEpoch::compute(
-        &anchors, false,
-    )));
+    let epoch = Arc::new(SharedTlsAuthEpoch::new(TlsAuthEpoch::compute(&anchors)));
     let server = server_config(&anchors, vec![server_leaf], server_key, Arc::clone(&epoch));
     let client = client_config(&server_ca.der(), vec![client_leaf], client_key);
 
@@ -222,7 +218,7 @@ fn withdrawing_a_trusted_ca_stops_resumption_and_forces_a_full_handshake() {
     // Withdraw CA A. The verifier this `ServerConfig` holds is unchanged — this test
     // isolates the EPOCH's effect, so a pass cannot be explained by the chain simply
     // failing to build.
-    epoch.store(TlsAuthEpoch::compute(&[ca_b.der()], false));
+    epoch.store(TlsAuthEpoch::compute(&[ca_b.der()]));
 
     assert_eq!(
         handshake(&client, &server),
@@ -231,32 +227,51 @@ fn withdrawing_a_trusted_ca_stops_resumption_and_forces_a_full_handshake() {
     );
 }
 
+/// The negative half of [`withdrawing_a_trusted_ca_stops_resumption_and_forces_a_full_handshake`],
+/// and the one with production consequences.
+///
+/// Every CRL reload rebuilds the `ServerConfig` and REPUBLISHES the epoch computed from
+/// the anchors that build was given. If republishing an unchanged epoch invalidated
+/// stored sessions, each reload interval would be a fleet-wide teardown — TLS 1.3 has no
+/// renegotiation, so an epoch change is connection-fatal. Resumption must therefore
+/// survive an arbitrary number of republishes while the anchor set holds.
+///
+/// This replaces `a_policy_change_alone_stops_resumption`, which asserted that moving
+/// `allow_unknown_revocation_status` moved the epoch. That parameter no longer exists —
+/// unknown revocation status is denied unconditionally — so the anchor set is the epoch's
+/// only input and "policy changed" is not a state the system can be in.
 #[test]
-fn a_policy_change_alone_stops_resumption() {
-    // The anchor set is untouched; only `allow_unknown_revocation_status` moves. It
-    // changes which chains are acceptable, so a chain built under the old policy is no
-    // longer evidence under the new one.
+fn republishing_the_epoch_of_an_unchanged_ca_set_does_not_stop_resumption() {
     let client_ca = make_ca("epoch-client-ca");
     let server_ca = make_ca("epoch-server-ca");
     let (server_leaf, server_key) = make_leaf(&server_ca, "localhost", false);
     let (client_leaf, client_key) = make_leaf(&client_ca, "client", true);
 
     let anchors = vec![client_ca.der()];
-    let epoch = Arc::new(SharedTlsAuthEpoch::new(TlsAuthEpoch::compute(
-        &anchors, false,
-    )));
+    let epoch = Arc::new(SharedTlsAuthEpoch::new(TlsAuthEpoch::compute(&anchors)));
     let server = server_config(&anchors, vec![server_leaf], server_key, Arc::clone(&epoch));
     let client = client_config(&server_ca.der(), vec![client_leaf], client_key);
 
     assert_eq!(handshake(&client, &server), Some(HandshakeKind::Full));
     assert_eq!(handshake(&client, &server), Some(HandshakeKind::Resumed));
 
-    epoch.store(TlsAuthEpoch::compute(&anchors, true));
+    // Three reloads' worth of republishing, from the same anchors each time.
+    for reload in 1..=3 {
+        epoch.store(TlsAuthEpoch::compute(&anchors));
+        assert_eq!(
+            handshake(&client, &server),
+            Some(HandshakeKind::Resumed),
+            "reload {reload} republished an unchanged epoch and must not have torn down \
+             resumption; a CRL reload would otherwise be a fleet-wide teardown"
+        );
+    }
 
+    // And the lever still works afterwards: the store was never the reason it resumed.
+    epoch.store(TlsAuthEpoch::compute(&[make_ca("someone-else").der()]));
     assert_eq!(
         handshake(&client, &server),
         Some(HandshakeKind::Full),
-        "the client-auth policy is part of what a resumed chain was judged under"
+        "withdrawing the anchors must still force a full handshake after the republishes"
     );
 }
 
@@ -270,20 +285,18 @@ fn resumption_returns_once_the_original_trust_is_restored() {
     let (client_leaf, client_key) = make_leaf(&ca_a, "client", true);
 
     let anchors = vec![ca_a.der()];
-    let epoch = Arc::new(SharedTlsAuthEpoch::new(TlsAuthEpoch::compute(
-        &anchors, false,
-    )));
+    let epoch = Arc::new(SharedTlsAuthEpoch::new(TlsAuthEpoch::compute(&anchors)));
     let server = server_config(&anchors, vec![server_leaf], server_key, Arc::clone(&epoch));
     let client = client_config(&server_ca.der(), vec![client_leaf], client_key);
 
     assert_eq!(handshake(&client, &server), Some(HandshakeKind::Full));
-    epoch.store(TlsAuthEpoch::compute(&[make_ca("other").der()], false));
+    epoch.store(TlsAuthEpoch::compute(&[make_ca("other").der()]));
     assert_eq!(handshake(&client, &server), Some(HandshakeKind::Full));
 
     // Restoring the anchors restores the digest, but NOT the evicted session: a stale
     // entry is destroyed when it is rejected, so it cannot be resurrected by putting the
     // old trust back. The peer re-establishes one instead...
-    epoch.store(TlsAuthEpoch::compute(&anchors, false));
+    epoch.store(TlsAuthEpoch::compute(&anchors));
     assert_eq!(
         handshake(&client, &server),
         Some(HandshakeKind::Full),

@@ -17,8 +17,9 @@
 //!
 //! # What the epoch covers, and what it deliberately does not
 //!
-//! It covers the trusted client-CA set and the client-auth policy that governs chain
-//! acceptance. It EXCLUDES CRL contents and every CRL timestamp.
+//! It covers the trusted client-CA set. It EXCLUDES CRL contents and every CRL
+//! timestamp, and it excludes client revocation policy — unknown revocation status is
+//! denied unconditionally, so there is no policy dimension left to digest.
 //!
 //! That exclusion is the whole reason this is affordable. Revocation is already
 //! enforced on every request against the live index, so a newly revoked certificate is
@@ -29,9 +30,9 @@
 //! epoch change is connection-fatal. That is a fleet-wide teardown every reload
 //! interval — strictly worse than refusing resumption outright.
 //!
-//! With CRL data excluded the epoch moves only when an operator changes trusted CAs or
-//! client-auth policy: rare, deliberate, and exactly the event on which an old
-//! authentication result must stop being honoured.
+//! With CRL data excluded the epoch moves only when an operator changes trusted CAs:
+//! rare, deliberate, and exactly the event on which an old authentication result must
+//! stop being honoured.
 //!
 //! # Why a digest and not a counter
 //!
@@ -50,7 +51,12 @@ use sha2::Sha256;
 
 /// Domain separation, so this digest can never collide with another SHA-256 in the
 /// tree that happens to run over the same anchor bytes.
-const EPOCH_DOMAIN: &[u8] = b"mcp-re/tls-auth-epoch/v1";
+///
+/// `v2` is the anchor-set-only definition. `v1` additionally hashed a client-auth
+/// policy byte that had exactly one legal production value; removing a component
+/// changes what the digest means, so it gets a new domain rather than a silently
+/// redefined `v1`. Sessions are process-local, so no stored digest needed preserving.
+const EPOCH_DOMAIN: &[u8] = b"mcp-re/tls-auth-epoch/v2";
 
 /// The digest of everything that decides whether a previously built chain is still
 /// acceptable. Equality means a stored session may resume.
@@ -58,7 +64,7 @@ const EPOCH_DOMAIN: &[u8] = b"mcp-re/tls-auth-epoch/v1";
 pub struct TlsAuthEpoch([u8; 32]);
 
 impl TlsAuthEpoch {
-    /// Compute the epoch from the trust anchors and the client-auth policy.
+    /// Compute the epoch from the trust anchors.
     ///
     /// Anchors are hashed individually, then SORTED and DEDUPLICATED, so the epoch is a
     /// property of the anchor SET rather than of the order a config file happened to
@@ -71,10 +77,14 @@ impl TlsAuthEpoch {
     /// constraints, and those change which chains build. Hashing the bytes rustls
     /// actually trusts is the conservative direction: it can only ever move the epoch
     /// more often than strictly required, never less.
-    pub fn compute(
-        client_ca: &[CertificateDer<'_>],
-        allow_unknown_revocation_status: bool,
-    ) -> Self {
+    ///
+    /// # Why client revocation policy is not an input
+    ///
+    /// Unknown revocation status is unconditionally denied by MCP-RE and is therefore not
+    /// a configurable input to the authentication epoch. If that policy ever becomes
+    /// variable, it must become an explicit owned fact and the epoch definition must be
+    /// revised.
+    pub fn compute(client_ca: &[CertificateDer<'_>]) -> Self {
         let mut anchors: Vec<[u8; 32]> = client_ca
             .iter()
             .map(|anchor| {
@@ -93,7 +103,6 @@ impl TlsAuthEpoch {
         for anchor in &anchors {
             hasher.update(anchor);
         }
-        hasher.update([u8::from(allow_unknown_revocation_status)]);
 
         let mut out = [0u8; 32];
         out.copy_from_slice(hasher.finalize().as_slice());
@@ -274,38 +283,66 @@ mod tests {
 
     #[test]
     fn the_epoch_is_a_property_of_the_anchor_set_not_its_order() {
-        let forward = TlsAuthEpoch::compute(&[anchor(1), anchor(2)], false);
-        let reversed = TlsAuthEpoch::compute(&[anchor(2), anchor(1)], false);
+        let forward = TlsAuthEpoch::compute(&[anchor(1), anchor(2)]);
+        let reversed = TlsAuthEpoch::compute(&[anchor(2), anchor(1)]);
         assert_eq!(forward, reversed);
     }
 
     #[test]
     fn a_duplicated_anchor_does_not_change_the_epoch() {
-        let once = TlsAuthEpoch::compute(&[anchor(1)], false);
-        let twice = TlsAuthEpoch::compute(&[anchor(1), anchor(1)], false);
+        let once = TlsAuthEpoch::compute(&[anchor(1)]);
+        let twice = TlsAuthEpoch::compute(&[anchor(1), anchor(1)]);
         assert_eq!(once, twice);
     }
 
     #[test]
     fn withdrawing_an_anchor_changes_the_epoch() {
-        let both = TlsAuthEpoch::compute(&[anchor(1), anchor(2)], false);
-        let withdrawn = TlsAuthEpoch::compute(&[anchor(1)], false);
+        let both = TlsAuthEpoch::compute(&[anchor(1), anchor(2)]);
+        let withdrawn = TlsAuthEpoch::compute(&[anchor(1)]);
         assert_ne!(both, withdrawn);
     }
 
+    /// The `v1` epoch hashed a client-auth policy byte after the anchors, and a test here
+    /// asserted the two policy values produced different epochs. That proposition is gone
+    /// with the policy: unknown revocation status is denied unconditionally, so the anchor
+    /// set is the epoch's only input. What replaces it is the stronger statement — the
+    /// digest is a FUNCTION of the anchor set, so the same anchors always agree and no
+    /// other in-process state can move them apart.
     #[test]
-    fn the_client_auth_policy_is_part_of_the_epoch() {
-        let deny = TlsAuthEpoch::compute(&[anchor(1)], false);
-        let allow = TlsAuthEpoch::compute(&[anchor(1)], true);
-        assert_ne!(deny, allow);
+    fn the_anchor_set_alone_determines_the_epoch() {
+        let anchors = [anchor(1), anchor(2), anchor(3)];
+        let first = TlsAuthEpoch::compute(&anchors);
+        let second = TlsAuthEpoch::compute(&anchors);
+        assert_eq!(
+            first, second,
+            "the epoch must be a pure function of the anchor set"
+        );
+        for withheld in 0..anchors.len() {
+            let smaller: Vec<_> = anchors
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != withheld)
+                .map(|(_, a)| a.clone())
+                .collect();
+            assert_ne!(
+                first,
+                TlsAuthEpoch::compute(&smaller),
+                "dropping anchor {withheld} must move the epoch"
+            );
+        }
+    }
+
+    /// The domain separator is part of the digest's identity, not decoration: `v1` and
+    /// `v2` define different functions of the same anchors. Pinning it here means a future
+    /// change to what the epoch covers cannot silently reuse the current domain.
+    #[test]
+    fn the_epoch_domain_names_the_current_definition() {
+        assert_eq!(EPOCH_DOMAIN, b"mcp-re/tls-auth-epoch/v2");
     }
 
     #[test]
     fn a_session_stored_under_the_current_epoch_resumes() {
-        let epoch = Arc::new(SharedTlsAuthEpoch::new(TlsAuthEpoch::compute(
-            &[anchor(1)],
-            false,
-        )));
+        let epoch = Arc::new(SharedTlsAuthEpoch::new(TlsAuthEpoch::compute(&[anchor(1)])));
         let store = store_with(&epoch);
         assert!(store.put(b"key".to_vec(), b"session".to_vec()));
         assert_eq!(store.take(b"key"), Some(b"session".to_vec()));
@@ -313,28 +350,28 @@ mod tests {
 
     #[test]
     fn a_session_stored_under_a_withdrawn_anchor_does_not_resume() {
-        let epoch = Arc::new(SharedTlsAuthEpoch::new(TlsAuthEpoch::compute(
-            &[anchor(1), anchor(2)],
-            false,
-        )));
+        let epoch = Arc::new(SharedTlsAuthEpoch::new(TlsAuthEpoch::compute(&[
+            anchor(1),
+            anchor(2),
+        ])));
         let store = store_with(&epoch);
         assert!(store.put(b"key".to_vec(), b"session".to_vec()));
-        epoch.store(TlsAuthEpoch::compute(&[anchor(1)], false));
+        epoch.store(TlsAuthEpoch::compute(&[anchor(1)]));
         assert_eq!(store.take(b"key"), None, "a stale session must not resume");
     }
 
     #[test]
     fn a_stale_session_is_evicted_by_get_not_left_to_be_re_rejected() {
-        let epoch = Arc::new(SharedTlsAuthEpoch::new(TlsAuthEpoch::compute(
-            &[anchor(1), anchor(2)],
-            false,
-        )));
+        let epoch = Arc::new(SharedTlsAuthEpoch::new(TlsAuthEpoch::compute(&[
+            anchor(1),
+            anchor(2),
+        ])));
         let store = store_with(&epoch);
         assert!(store.put(b"key".to_vec(), b"session".to_vec()));
-        epoch.store(TlsAuthEpoch::compute(&[anchor(1)], false));
+        epoch.store(TlsAuthEpoch::compute(&[anchor(1)]));
         assert_eq!(store.get(b"key"), None);
         // Restoring the original trust must NOT resurrect it: the entry is gone.
-        epoch.store(TlsAuthEpoch::compute(&[anchor(1), anchor(2)], false));
+        epoch.store(TlsAuthEpoch::compute(&[anchor(1), anchor(2)]));
         assert_eq!(store.get(b"key"), None, "the stale entry was not evicted");
     }
 
@@ -346,11 +383,10 @@ mod tests {
     /// peer fleet takes full handshakes on the reload cadence.
     #[test]
     fn a_rebuild_that_republishes_the_same_trust_keeps_the_cache() {
-        let store =
-            EpochBoundSessionStore::memory_backed(TlsAuthEpoch::compute(&[anchor(1)], false), 64);
+        let store = EpochBoundSessionStore::memory_backed(TlsAuthEpoch::compute(&[anchor(1)]), 64);
         assert!(store.put(b"key".to_vec(), b"session".to_vec()));
         assert_eq!(
-            store.republish(TlsAuthEpoch::compute(&[anchor(1)], false)),
+            store.republish(TlsAuthEpoch::compute(&[anchor(1)])),
             None,
             "identical trust is not an epoch change"
         );
@@ -361,10 +397,10 @@ mod tests {
     /// stored under the old trust stop resuming.
     #[test]
     fn a_rebuild_with_withdrawn_trust_advances_the_epoch_and_stops_resumption() {
-        let first = TlsAuthEpoch::compute(&[anchor(1), anchor(2)], false);
+        let first = TlsAuthEpoch::compute(&[anchor(1), anchor(2)]);
         let store = EpochBoundSessionStore::memory_backed(first, 64);
         assert!(store.put(b"key".to_vec(), b"session".to_vec()));
-        let second = TlsAuthEpoch::compute(&[anchor(1)], false);
+        let second = TlsAuthEpoch::compute(&[anchor(1)]);
         assert_eq!(store.republish(second), Some(first));
         assert_eq!(*store.epoch(), second);
         assert_eq!(store.take(b"key"), None);
@@ -372,18 +408,15 @@ mod tests {
 
     #[test]
     fn storing_an_identical_epoch_reports_no_change() {
-        let epoch = SharedTlsAuthEpoch::new(TlsAuthEpoch::compute(&[anchor(1)], false));
-        assert_eq!(
-            epoch.store(TlsAuthEpoch::compute(&[anchor(1)], false)),
-            None
-        );
+        let epoch = SharedTlsAuthEpoch::new(TlsAuthEpoch::compute(&[anchor(1)]));
+        assert_eq!(epoch.store(TlsAuthEpoch::compute(&[anchor(1)])), None);
     }
 
     #[test]
     fn storing_a_different_epoch_reports_the_previous_one() {
-        let first = TlsAuthEpoch::compute(&[anchor(1)], false);
+        let first = TlsAuthEpoch::compute(&[anchor(1)]);
         let epoch = SharedTlsAuthEpoch::new(first);
-        let second = TlsAuthEpoch::compute(&[anchor(2)], false);
+        let second = TlsAuthEpoch::compute(&[anchor(2)]);
         assert_eq!(epoch.store(second), Some(first));
         assert_eq!(*epoch.load(), second);
     }
