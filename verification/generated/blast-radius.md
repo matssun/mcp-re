@@ -27,6 +27,7 @@ attestations this view cannot see.
 | unit://http_profile.continuation_unbypassability | source, contracts or evidence | THM-0009 | _no consumer_ |
 | unit://http_profile.freshness_window | source, contracts or evidence | THM-0001 | _no consumer_ |
 | unit://http_profile.keyid | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://proxy.online_ocsp_reachability | source, contracts or evidence | THM-0013 | _no consumer_ |
 | unit://proxy.runtime_lifecycle | source, contracts or evidence | THM-0012 | _no consumer_ |
 
 ## Theorems
@@ -44,6 +45,7 @@ attestations this view cannot see.
 | THM-0009 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0010 | statement, consequence, scope or review requirement | specification review | THM-0009 |
 | THM-0012 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0013 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 
 ## Assumptions
 

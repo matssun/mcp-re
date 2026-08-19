@@ -23,4 +23,5 @@ not an omission to hide.
 | http_profile.continuation_unbypassability | V1 | THM-0009 | 1 |
 | http_profile.freshness_window | V1 | THM-0001 | 6 |
 | http_profile.keyid | V0 | _none_ | 0 |
+| proxy.online_ocsp_reachability | V0 | THM-0013 | 0 |
 | proxy.runtime_lifecycle | V0 | THM-0012 | 0 |

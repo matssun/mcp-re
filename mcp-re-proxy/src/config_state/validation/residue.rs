@@ -224,11 +224,11 @@ pub(super) fn audience_violations(config: &DeploymentRequest) -> Vec<String> {
     out
 }
 
-/// The four locators this deployment opens are non-empty.
+/// The three locators this deployment opens are non-empty.
 ///
 /// **Why layer A enforces it.** That a string names nothing is purely knowable (ADR-MCPRE-056 §5.1); that the file is absent is an observation for materialization.
 ///
-/// **Why no narrower owner.** They span the listener, the TLS plane and the trust plane — no single existing machine owns the set, and inventing one to hold four strings would be the premature abstraction.
+/// **Why no narrower owner.** They span the listener and the TLS plane — no single existing machine owns the set, and inventing one to hold three strings would be the premature abstraction. `--trust` was the fourth until it acquired one: `TrustDocumentSource` exists because a `TrustPlan` has to pair the locator with a sealed revocation posture, which is a reason none of these three have.
 pub(super) fn required_locator_violations(config: &DeploymentRequest) -> Vec<String> {
     let mut out = Vec::new();
     for (value, message) in [
@@ -246,11 +246,6 @@ pub(super) fn required_locator_violations(config: &DeploymentRequest) -> Vec<Str
             config.client_ca.as_str(),
             "--client-ca is empty: it names the roots every client certificate is verified \
              against, which is the whole of who may connect",
-        ),
-        (
-            config.trust_path.as_str(),
-            "--trust is empty: it names the trust document the request-signer set is read \
-             from, so an empty path leaves no signer trusted and no file to say so",
         ),
     ] {
         if value.trim().is_empty() {
@@ -308,55 +303,6 @@ pub(super) fn inner_plane_structure_violations(config: &DeploymentRequest) -> Ve
              name one, or the pool carries a member no request can be forwarded to"
                 .to_string(),
         );
-    }
-    out
-}
-
-/// Client-certificate lifetime enforcement is on and within the ceiling.
-///
-/// **Why layer A enforces it.** Mode-A's revocation posture IS short-lived certificates, so a disabled or over-ceiling lifetime cannot be audited as `short_lived_cert`.
-///
-/// **Why no narrower owner.** The ceiling constant now lives with `CrlRevocation`, but this clause governs the CREDENTIAL's lifetime rather than the CRL posture, and no client-credential owner has been ruled.
-pub(super) fn client_cert_lifetime_violations(config: &DeploymentRequest) -> Vec<String> {
-    let mut out = Vec::new();
-    match config.max_client_cert_lifetime {
-        None => out.push(
-            "--max-client-cert-lifetime none/0 disables client-cert lifetime enforcement; \
-             set a bounded lifetime (default 1h)"
-                .to_string(),
-        ),
-        Some(lifetime) if lifetime > crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME => {
-            out.push(format!(
-                "--max-client-cert-lifetime {}s exceeds the ceiling of {}s: Mode-A's \
-             revocation posture is short-lived certificates, so a longer lifetime cannot be \
-             audited as short_lived_cert; set a lifetime <= {}s",
-                lifetime.as_secs(),
-                crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME.as_secs(),
-                crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME.as_secs(),
-            ))
-        }
-        Some(_) => {}
-    }
-    out
-}
-
-/// The freshness tolerance is inside the profile's bound.
-///
-/// **Why layer A enforces it.** One skew governs both the RFC 9421 freshness gate and the replay `retain_until`; outside the bound the gate stops bounding anything.
-///
-/// **Why no narrower owner.** It belongs to the verifier policy in another crate; layer A bounds it because `VerifierPolicy::new` is reached only after two planes have started.
-pub(super) fn clock_skew_violations(config: &DeploymentRequest) -> Vec<String> {
-    let mut out = Vec::new();
-    if !(0..=mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND)
-        .contains(&config.max_clock_skew)
-    {
-        out.push(format!(
-            "--max-clock-skew must be 0..={} seconds (§5.1 bounded skew), got {}: it is the \
-             tolerance applied to every verified request AND the replay retain_until, so \
-             outside this range the freshness gate stops bounding anything",
-            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
-            config.max_clock_skew
-        ));
     }
     out
 }
@@ -440,8 +386,6 @@ pub(super) const INVENTORY: &[&str] = &[
     "target_uri_violations",
     "inner_plane_presence_violations",
     "inner_plane_structure_violations",
-    "client_cert_lifetime_violations",
-    "clock_skew_violations",
     "connection_ceiling_violations",
     "drain_window_violations",
     "slow_loris_timeout_violations",
@@ -450,6 +394,53 @@ pub(super) const INVENTORY: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// THM-0013 evidence, half one: no build honours `--client-ocsp require`.
+    ///
+    /// Asserted on the predicate the validation boundary consults, and over BOTH modes, so
+    /// the claim is the biconditional the theorem states rather than "one refusal exists".
+    /// The result is feature-independent by construction: nothing here reads a `cfg`, which
+    /// is the point — a deployment cannot buy online OCSP by rebuilding with the backend.
+    #[test]
+    fn no_build_admits_the_online_ocsp_mode() {
+        let refusal = online_ocsp_refusal(OcspKind::Require)
+            .expect("--client-ocsp require is refused in every build");
+        assert!(
+            refusal.contains("--client-ocsp require cannot be honored"),
+            "the refusal must name the flag it refuses, got: {refusal}"
+        );
+        assert!(
+            refusal.contains("--client-crl"),
+            "and it must name the mechanism that does work on the async plane: {refusal}"
+        );
+        assert!(
+            online_ocsp_refusal(OcspKind::Off).is_none(),
+            "the OFF posture is the one the legality model admits"
+        );
+    }
+
+    /// THM-0013 evidence, half two: the refusal is on the route to a validated deployment.
+    ///
+    /// The predicate above could be correct and unreached. This asserts it through
+    /// `ocsp_mode_violations`, which is what the boundary's clause list calls, so what is
+    /// measured is the rule's PLACEMENT and not only its content. Together the two halves
+    /// give the theorem: every validated deployment has online OCSP off.
+    #[test]
+    fn the_boundary_clause_carries_the_online_ocsp_refusal() {
+        let mut config = crate::config_state::test_support::legal_config();
+        assert!(
+            ocsp_mode_violations(&config).is_empty(),
+            "the legal fixture does not request online OCSP"
+        );
+        config.client_ocsp = OcspKind::Require;
+        let violations = ocsp_mode_violations(&config);
+        assert_eq!(
+            violations.len(),
+            1,
+            "exactly one clause answers for the mode: {violations:?}"
+        );
+        assert!(violations[0].contains("--client-ocsp require cannot be honored"));
+    }
 
     /// The inventory names exactly the residue rules this file defines.
     ///

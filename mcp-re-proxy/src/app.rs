@@ -18,7 +18,6 @@ use crate::config_snapshot;
 use crate::config_state::ChannelBindingState;
 use crate::config_state::CustodyState;
 use crate::config_state::TlsCustodyState;
-use crate::deployment_request::KeySourceKind;
 use crate::http_inner::HttpInnerPool;
 use crate::startup_posture::PostureLog;
 use crate::startup_posture::Seam;
@@ -109,11 +108,20 @@ pub fn build_actor_resolver(
 /// still advertises the CRL as enforced.
 ///
 /// Pure, so the decision is assertable without a broken host clock: it takes the reading
-/// and how many CRLs the deployment configured, and returns the refusal.
-fn faulted_clock_refusal(startup_now_unix: i64, configured_crls: usize) -> Option<String> {
-    if configured_crls == 0 || !crate::startup_plan::host_clock_is_faulted(startup_now_unix) {
+/// and the CRL posture the owner classified, and returns the refusal.
+///
+/// The posture arrives as the owner's own value rather than as a count of paths. Whether
+/// this deployment enforces offline revocation is `CrlRevocationState`'s answer, and
+/// re-deriving it here from the length of a list is how composition ends up disagreeing
+/// with the transcript it prints.
+fn faulted_clock_refusal(
+    startup_now_unix: i64,
+    crl: &crate::config_state::CrlRevocationState,
+) -> Option<String> {
+    if !crl.is_enforced() || !crate::startup_plan::host_clock_is_faulted(startup_now_unix) {
         return None;
     }
+    let configured_crls = crl.paths().len();
     Some(format!(
         "mcp-re-proxy refuses to start: the system clock reads at/near the Unix epoch \
          ({startup_now_unix} < {}s), so the boot-time client-CRL freshness refusal cannot be \
@@ -124,11 +132,13 @@ fn faulted_clock_refusal(startup_now_unix: i64, configured_crls: usize) -> Optio
     ))
 }
 
-/// Enforce the key-file-permission posture for a sensitive key file. The proxy
-/// always runs the maximal-security posture, so a group/world-accessible key file
-/// is a HARD error returned to the caller (startup refuses). Uses the pure
-/// [`cli::key_file_posture_violation`] predicate so it stays consistent with (and
-/// testable alongside) the parse-time checks.
+/// Enforce the key-file-permission posture for a sensitive key file. A group- or
+/// world-accessible key file is a HARD error returned to the caller (startup refuses).
+///
+/// The policy decides; composition supplies the `stat` results. This function does not see
+/// `--allow-group-readable-key-files` and could not re-derive the rule from it if it did —
+/// which is the point, because the rule is three conditions and a boolean is one term in
+/// it.
 ///
 /// A `stat` that fails for any reason other than "there is no such file" is itself a
 /// refusal. The posture of a file the proxy is about to READ is either established or it
@@ -138,7 +148,10 @@ fn faulted_clock_refusal(startup_now_unix: i64, configured_crls: usize) -> Optio
 /// permissions could be wrong, the loader resolves the same path a moment later, and it
 /// reports the absence with the diagnostic that names what was missing.
 #[cfg(unix)]
-fn check_key_file_perms(path: &str, allow_group_read: bool) -> Result<(), String> {
+fn check_key_file_perms(
+    path: &str,
+    policy: crate::config_state::KeyFileAccessPolicy,
+) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt;
     use std::os::unix::fs::PermissionsExt;
     let meta = match std::fs::metadata(path) {
@@ -154,9 +167,7 @@ fn check_key_file_perms(path: &str, allow_group_read: bool) -> Result<(), String
         }
     };
     let mode = meta.permissions().mode();
-    if let Some(reason) =
-        cli::key_file_posture_violation(mode, meta.gid(), allow_group_read, &process_gids())
-    {
+    if let Some(reason) = policy.violation(mode, meta.gid(), &process_gids()) {
         return Err(format!(
             "mcp-re-proxy refuses unsafe configuration:\n  - key file {path} \
              is {reason} (mode {:o}); restrict to 0600",
@@ -228,7 +239,10 @@ fn key_files_read_from_disk<'a>(
 /// the unix signature above — it had drifted to a second `strict` parameter no caller
 /// passes, so this arm could not have compiled.
 #[cfg(not(unix))]
-fn check_key_file_perms(_path: &str, _allow_group_read: bool) -> Result<(), String> {
+fn check_key_file_perms(
+    _path: &str,
+    _policy: crate::config_state::KeyFileAccessPolicy,
+) -> Result<(), String> {
     Ok(())
 }
 
@@ -412,7 +426,8 @@ fn run_validated(
     // `startup_now_unix` below agree on one instant. Whether that reading is a FAULT is
     // the plan's rule; reading the clock and deciding what it costs is this function's.
     let startup_now_unix = now_unix();
-    if let Some(refusal) = faulted_clock_refusal(startup_now_unix, values.client_crl_paths.len()) {
+    if let Some(refusal) = faulted_clock_refusal(startup_now_unix, config.state().crl_revocation())
+    {
         return Err(refusal);
     }
     if crate::startup_plan::host_clock_is_faulted(startup_now_unix) {
@@ -427,40 +442,27 @@ fn run_validated(
     }
 
     // Security posture note. The hard guards (cn_legacy, memory/weak replay,
-    // over-ceiling/disabled cert lifetime, reverse-proxy ingress, lb-assertion,
-    // node-local replay under --fleet) are ALL rejected at parse time by
+    // over-ceiling/disabled cert lifetime, lb-assertion, node-local replay under
+    // --fleet) are ALL rejected at parse time by
     // `config_state::validation::unsafe_config_violations` — the proxy never reaches here with them. Only
     // the env key source (a dev/CI-only build, `dev_env_key_source`) is worth a
     // runtime note, since that build deliberately permits it.
-    if values.key_source == KeySourceKind::Env {
+    // Which custody state this deployment is in is the custody owner's answer, taken
+    // through its material projection rather than re-tested against the raw selector.
+    if matches!(
+        config.state().custody().material(),
+        crate::config_state::CustodyMaterial::EnvSeed { .. }
+    ) {
         eprintln!(
             "mcp-re-proxy: WARNING: --key-source env is a dev/CI-only build (dev_env_key_source); \
              env key material is visible to the process tree. Never use in production."
-        );
-    }
-    // MCPS-3840 reverse-proxy ingress trust assumption — emit LOUDLY. When the
-    // identity is read from a trusted forwarded header, mTLS is terminated by an
-    // upstream proxy and the local client certificate is NOT consulted for
-    // identity. This is only safe if the listening socket is reachable ONLY by
-    // the trusted upstream; anyone who can reach the port could otherwise spoof
-    // any identity by setting the header. (Strict ingress enforcement is #3842.)
-    if let Some(header) = &values.reverse_proxy_identity_header {
-        eprintln!(
-            "mcp-re-proxy: WARNING: reverse-proxy identity mode is ENABLED (reading the trusted \
-             header '{header}', format {:?}, identity field {:?}). mTLS is assumed terminated \
-             UPSTREAM and the local client certificate is NOT used for identity. You are \
-             asserting the listening socket {} is reachable ONLY by the trusted upstream \
-             (loopback / private network / its own mTLS link) and that the upstream STRIPS any \
-             client-supplied copy of '{header}' before setting its own. If the socket is \
-             reachable by untrusted clients, they can SPOOF any identity.",
-            values.reverse_proxy_header_format, values.identity_source, values.bind,
         );
     }
     // A group/world-readable key file is a HARD error (refuse startup). The other
     // guards are parse-time and already enforced inside `cli::parse_args`; this one is
     // filesystem-dependent so it lives here.
     for path in key_files_read_from_disk(config.state().custody(), config.state().tls_custody()) {
-        check_key_file_perms(path, values.allow_group_readable_key_files)?;
+        check_key_file_perms(path, config.state().key_file_access())?;
     }
     // A disabled (`none`/`0`) or over-ceiling `--max-client-cert-lifetime` is
     // rejected at parse time (`config_state::validation::unsafe_config_violations`), so by here it is
@@ -530,7 +532,7 @@ fn run_validated(
     let signing_plan = crate::startup_plan::SigningPlan::from_validated(
         config,
         response_kid.clone(),
-        trust_plan.epoch.clone(),
+        trust_plan.epoch().clone(),
     );
 
     // ADR-MCPRE-057 §3 — the lifecycle becomes a value here.
@@ -622,7 +624,11 @@ fn run_validated(
     let crate::replay_plane::MaterializedReplay {
         tier: replay_async,
         dispatch: dispatch_cfg,
-    } = crate::replay_plane::materialize(&replay_plan, values.max_clock_skew, control_rt.as_ref())?;
+    } = crate::replay_plane::materialize(
+        &replay_plan,
+        config.state().freshness(),
+        control_rt.as_ref(),
+    )?;
 
     // Materialized HERE, not where `tls_material` is built, so the CRL load and its
     // stale-CRL refusal keep the position they had before the extraction: after the trust
@@ -654,7 +660,7 @@ fn run_validated(
     // cross-replica revocation-lag bounds explicitly, derived from real config
     // (the two tiers have different cadences). Zero-window revocation is never
     // claimed on either.
-    if values.fleet {
+    if config.state().topology().is_fleet() {
         let trust_bound = crate::trust_plane::fleet_trust_bound(&trust_plan);
         let crl_bound = crate::tls_plane::fleet_crl_bound(&tls_plan);
         eprintln!(
@@ -678,7 +684,8 @@ fn run_validated(
     // Which field the connection seam reads the client's identity from. Decided purely,
     // from configuration alone, in `startup_plan` — the three modes are mutually
     // exclusive and `parse_args` already refused the combinations.
-    let identity_strategy = crate::startup_plan::identity_strategy(config);
+    let identity_strategy =
+        crate::startup_plan::identity_strategy(config.state().channel_binding());
 
     // ADR-MCPRE-056 §5.4: from here on, every optional capability states its posture in
     // BOTH directions through `posture`. `assert_complete` below refuses to start — in
@@ -704,7 +711,10 @@ fn run_validated(
         identity_policy,
         identity_strategy,
         limits,
-        max_client_cert_lifetime: values.max_client_cert_lifetime,
+        // From the owner, not the request: the lifetime and the connection age are one
+        // fact, and reading the lifetime raw here would be the relation split back into
+        // its terms one layer further on.
+        max_client_cert_lifetime: Some(config.state().client_credential_window().cert_lifetime()),
         client_revocation: client_revocation.clone(),
         #[cfg(feature = "online_ocsp")]
         ocsp_checker,
@@ -737,7 +747,8 @@ fn run_validated(
     // deliberate, to the inner pool, where it is an accident of core count.
     // The RULE is pure and lives in the plan; the core count is the environment reading it
     // needs, and the wiring is this function's business.
-    let cores = crate::async_fleet::resolve_core_count(values.cores);
+    let cores =
+        crate::async_fleet::resolve_core_count(config.state().shard_topology().shards_or_auto());
     let ceiling = crate::startup_plan::inner_plane_ceiling(
         in_flight_limit.per_core(),
         in_flight_limit.fleet_total(),
@@ -790,17 +801,18 @@ fn run_validated(
     // than serving a window the operator did not get. One value drives both the
     // acceptance window and the replay `retain_until`, so an admitted nonce is
     // retained for exactly as long as its signature can still be accepted.
-    let mut verifier_policy =
-        mcp_re_http_profile::VerifierPolicy::new(&["ed25519"], values.max_clock_skew).map_err(
-            |_| {
-                format!(
-                    "--max-clock-skew {} is out of bounds: the RFC 9421 freshness gate accepts \
+    let mut verifier_policy = mcp_re_http_profile::VerifierPolicy::new(
+        &["ed25519"],
+        config.state().freshness().verifier_skew_secs(),
+    )
+    .map_err(|_| {
+        format!(
+            "--max-clock-skew {} is out of bounds: the RFC 9421 freshness gate accepts \
                      0..={} seconds (§5.1 bounded skew)",
-                    values.max_clock_skew,
-                    mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
-                )
-            },
-        )?;
+            config.state().freshness().verifier_skew_secs(),
+            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
+        )
+    })?;
     let (mcp_transport, transport_state) = crate::serving_capabilities::mcp_transport_contract(
         config.state().mcp_transport_contract(),
     )
@@ -811,7 +823,7 @@ fn run_validated(
     posture.declare(Seam::McpTransportContract, transport_state);
     eprintln!(
         "mcp-re-proxy: freshness gate = created-{skew}s .. expires+{skew}s (RFC 9421 §5.1)",
-        skew = values.max_clock_skew
+        skew = config.state().freshness().verifier_skew_secs()
     );
     proxy = proxy.with_verifier_policy(verifier_policy);
     proxy = proxy.with_transport_binding(binding_policy);
@@ -862,7 +874,7 @@ fn run_validated(
 
     let (admission, admission_state) = crate::serving_capabilities::admission_currency(
         config.state().admission(),
-        values.max_clock_skew,
+        config.state().freshness().verifier_skew_secs(),
         control_rt.as_ref(),
     )?
     .into_parts();
@@ -899,7 +911,7 @@ fn run_validated(
     // Composed BEFORE the runtime exists. `--bind` resolution can fail, and a failure
     // after `finish` would drop a materialized runtime instead of tearing it down in the
     // order it owns — the one thing that type is for.
-    let fleet_cfg = fleet_config(values, in_flight_limit)?;
+    let fleet_cfg = fleet_config(values, config.state().shard_topology(), in_flight_limit)?;
 
     building.install_proxy(proxy);
     building.install_control(control_rt);
@@ -925,6 +937,7 @@ fn run_validated(
 /// fleet needs the fleet-wide half of it, and which half exists is the boundary's answer.
 fn fleet_config(
     values: &crate::deployment_request::DeploymentRequest,
+    shard_topology: crate::config_state::ShardTopologyRequest,
     in_flight_limit: crate::config_state::InFlightLimitBasis,
 ) -> Result<crate::async_fleet::FleetConfig, String> {
     use std::net::ToSocketAddrs;
@@ -938,8 +951,8 @@ fn fleet_config(
 
     Ok(crate::async_fleet::FleetConfig {
         addr,
-        cores: values.cores, // 0 = auto (one worker per core); --cores pins it
-        workers_per_shard: values.workers_per_shard,
+        cores: shard_topology.shards_or_auto(),
+        workers_per_shard: shard_topology.workers_per_shard_or_auto(),
         listen_backlog: crate::async_fleet::DEFAULT_LISTEN_BACKLOG,
         // MCPRE-114: a fleet-wide basis, divided evenly per core by
         // `async_fleet::apply_global_admission`. `None` when the limit is stated per core,
@@ -1027,6 +1040,8 @@ pub(crate) fn serve_fleet(
 mod tests {
     use super::check_key_file_perms;
     use super::faulted_clock_refusal;
+    use crate::config_state::test_support::crl_posture;
+    use crate::config_state::KeyFileAccessPolicy;
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
@@ -1198,7 +1213,8 @@ mod tests {
     #[test]
     fn a_world_readable_key_file_is_refused() {
         let f = KeyFile::at(0o644, "world.key");
-        let err = check_key_file_perms(f.path(), false).expect_err("0644 must be refused");
+        let err = check_key_file_perms(f.path(), KeyFileAccessPolicy::OwnerOnly)
+            .expect_err("0644 must be refused");
         assert!(err.contains("world-accessible"), "got: {err}");
     }
 
@@ -1207,7 +1223,8 @@ mod tests {
     #[test]
     fn a_group_readable_key_file_is_refused_without_the_opt_in() {
         let f = KeyFile::at(0o640, "group.key");
-        let err = check_key_file_perms(f.path(), false).expect_err("0640 must be refused");
+        let err = check_key_file_perms(f.path(), KeyFileAccessPolicy::OwnerOnly)
+            .expect_err("0640 must be refused");
         assert!(err.contains("group-accessible"), "got: {err}");
         assert!(
             err.contains("--allow-group-readable-key-files"),
@@ -1220,7 +1237,11 @@ mod tests {
     #[test]
     fn a_group_readable_key_file_owned_by_our_group_is_accepted_with_the_opt_in() {
         let f = KeyFile::at(0o640, "fsgroup.key");
-        check_key_file_perms(f.path(), true).expect("an fsGroup-shaped mount is accepted");
+        check_key_file_perms(
+            f.path(),
+            KeyFileAccessPolicy::GroupReadableUnderProcessGroup,
+        )
+        .expect("an fsGroup-shaped mount is accepted");
     }
 
     /// The opt-in does not reach group-WRITE: a peer able to replace the signing key is
@@ -1228,14 +1249,19 @@ mod tests {
     #[test]
     fn group_write_is_refused_even_with_the_opt_in() {
         let f = KeyFile::at(0o660, "groupwrite.key");
-        let err = check_key_file_perms(f.path(), true).expect_err("0660 must be refused");
+        let err = check_key_file_perms(
+            f.path(),
+            KeyFileAccessPolicy::GroupReadableUnderProcessGroup,
+        )
+        .expect_err("0660 must be refused");
         assert!(err.contains("group-writable"), "got: {err}");
     }
 
     #[test]
     fn an_owner_only_key_file_is_accepted() {
         let f = KeyFile::at(0o600, "owner.key");
-        check_key_file_perms(f.path(), false).expect("0600 is the required posture");
+        check_key_file_perms(f.path(), KeyFileAccessPolicy::OwnerOnly)
+            .expect("0600 is the required posture");
     }
 
     /// The load-bearing property, on the pure predicate `run` actually uses: the TLS
@@ -1291,8 +1317,9 @@ mod tests {
     /// a key file to check.
     #[test]
     fn an_absent_key_file_is_not_an_error() {
-        check_key_file_perms("", false).expect("no file configured is not a violation");
-        check_key_file_perms("/nonexistent/path/tls.key", false)
+        check_key_file_perms("", KeyFileAccessPolicy::OwnerOnly)
+            .expect("no file configured is not a violation");
+        check_key_file_perms("/nonexistent/path/tls.key", KeyFileAccessPolicy::OwnerOnly)
             .expect("a missing file is reported by the loader, not by this guard");
     }
 
@@ -1316,7 +1343,7 @@ mod tests {
         // openable by anything holding a descriptor, but `stat` on the path fails EACCES.
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).expect("chmod");
 
-        let result = check_key_file_perms(&key.to_string_lossy(), false);
+        let result = check_key_file_perms(&key.to_string_lossy(), KeyFileAccessPolicy::OwnerOnly);
 
         // Restore before asserting so a failure does not leave an unremovable directory.
         let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
@@ -1482,24 +1509,33 @@ mod tests {
     fn a_faulted_clock_refuses_only_when_it_disables_the_crl_refusal() {
         use crate::startup_plan::EPOCH_CLOCK_FAULT_THRESHOLD_SECS;
 
-        let refusal = faulted_clock_refusal(0, 1).expect("a faulted clock plus CRLs must refuse");
+        let refusal = faulted_clock_refusal(0, &crl_posture(&["/a.crl"], None))
+            .expect("a faulted clock plus CRLs must refuse");
         assert!(
             refusal.contains("CRL") && refusal.contains("clock"),
             "the refusal must name both halves of why it fired: {refusal}"
         );
         assert!(
-            faulted_clock_refusal(EPOCH_CLOCK_FAULT_THRESHOLD_SECS - 1, 2).is_some(),
+            faulted_clock_refusal(
+                EPOCH_CLOCK_FAULT_THRESHOLD_SECS - 1,
+                &crl_posture(&["/a.crl", "/b.crl"], None),
+            )
+            .is_some(),
             "anything below the fault threshold disables the same refusal"
         );
         // The two negative controls. Without them a guard that refused unconditionally
         // would satisfy the assertions above.
         assert!(
-            faulted_clock_refusal(0, 0).is_none(),
+            faulted_clock_refusal(0, &crl_posture(&[], None)).is_none(),
             "with no CRL configured there is no boot-time refusal to disable; the \
              per-request posture is already fail-closed and warns"
         );
         assert!(
-            faulted_clock_refusal(EPOCH_CLOCK_FAULT_THRESHOLD_SECS, 3).is_none(),
+            faulted_clock_refusal(
+                EPOCH_CLOCK_FAULT_THRESHOLD_SECS,
+                &crl_posture(&["/a.crl", "/b.crl", "/c.crl"], None),
+            )
+            .is_none(),
             "a sane clock must not be refused however many CRLs are configured"
         );
     }
@@ -1584,9 +1620,9 @@ mod tests {
         );
     }
 
-    /// The fleet's input is the serving TOPOLOGY. Each field is carried across unchanged —
-    /// no normalization happens here, because `0` means "auto" to `resolve_topology` and a
-    /// value substituted at this point would hide which of the two decided.
+    /// The fleet's input is the serving TOPOLOGY REQUEST, projected into the runtime's
+    /// `0 = auto` encoding. No normalization happens here: substituting a resolved count at
+    /// this point would hide whether the operator chose it or the host did.
     #[test]
     fn the_fleet_config_carries_the_topology_and_resolves_the_bind() {
         let config = config_with(
@@ -1595,12 +1631,16 @@ mod tests {
             "/key",
         );
         let basis = crate::config_state::in_flight_limit::classify(&config);
-        let fleet =
-            super::fleet_config(&config, basis).expect("the fixture binds a literal address");
+        let (_, shard_topology) = crate::config_state::topology::classify(&config);
+        let fleet = super::fleet_config(&config, shard_topology, basis)
+            .expect("the fixture binds a literal address");
 
         assert_eq!(fleet.addr, "127.0.0.1:8443".parse().expect("literal"));
-        assert_eq!(fleet.cores, config.cores);
-        assert_eq!(fleet.workers_per_shard, config.workers_per_shard);
+        assert_eq!(fleet.cores, shard_topology.shards_or_auto());
+        assert_eq!(
+            fleet.workers_per_shard,
+            shard_topology.workers_per_shard_or_auto()
+        );
         assert_eq!(
             fleet.max_in_flight_total,
             basis.fleet_total(),
@@ -1628,6 +1668,7 @@ mod tests {
 
         let refusal = super::fleet_config(
             &config,
+            crate::config_state::topology::classify(&config).1,
             crate::config_state::in_flight_limit::classify(&config),
         )
         .expect_err("no port, no socket address");

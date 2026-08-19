@@ -395,3 +395,18 @@ kind = "PROOF_DEPENDENCY"
 from = "http_profile.continuation_binding"
 to = "http_profile.continuation_unbypassability"
 rationale = "Unbypassability establishes that the binding check runs on every successful path; the role-separation contract establishes what that check guarantees. The end-to-end continuation claim is the composition, and neither half states it alone."
+
+[[unit]]
+id = "proxy.online_ocsp_reachability"
+class = "V0"
+description = "The legality model admits no online-OCSP deployment: --client-ocsp require is refused on the only route to a ValidatedDeployment."
+paths = ["mcp-re-proxy/src/config_state/validation/residue.rs"]
+exported_contracts = []
+evidence = ["test://proxy/online_ocsp_reachability/legality"]
+# Two halves, because a correct predicate that nothing calls establishes nothing: the
+# first states the rule over BOTH modes, the second states that the boundary's clause list
+# is what carries it.
+tested_symbols = [
+  "lib#config_state::validation::residue::tests::no_build_admits_the_online_ocsp_mode",
+  "lib#config_state::validation::residue::tests::the_boundary_clause_carries_the_online_ocsp_refusal",
+]

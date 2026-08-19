@@ -10,7 +10,7 @@
 //! pass rather than a second opinion: every question it asks has already been answered
 //! once, by the machine that owns it.
 //!
-//! All six live here: X2a, X2b, X5, X6, X7, X9.
+//! All four live here: X2a, X2b, X6, X9.
 
 use crate::config_state::tls_custody::TlsCustodyState;
 use crate::config_state::trust_revocation::TrustRevocationState;
@@ -25,12 +25,8 @@ pub(crate) struct CrossMachineViolations {
     pub(crate) x2a_delegated_selector: Vec<String>,
     /// X2b — `TlsCustody` × `Tls`.
     pub(crate) x2b_exclusive_tls_custody: Vec<String>,
-    /// X5 — `Limits` × `Tls`.
-    pub(crate) x5_connection_outlives_credential: Vec<String>,
     /// X6 — `Authz` × `Trust`.
     pub(crate) x6_unenforceable_deny_list: Vec<String>,
-    /// X7 — `ChannelBinding` × `Tls`.
-    pub(crate) x7_local_mtls_xor_forwarded: Vec<String>,
     /// X9 — `TrustRevocation` × `DelegatedSigning`.
     pub(crate) x9_trust_epoch_posture: Vec<String>,
 }
@@ -92,33 +88,6 @@ fn x2b(tls_custody: Option<&TlsCustodyState>, config: &DeploymentRequest) -> Vec
     Vec::new()
 }
 
-/// X5: a connection may not outlive the credential that authenticated it.
-///
-/// A client certificate's chain, CRL status and validity window are checked at the TLS
-/// handshake and never again on an established connection, so without a bound a peer
-/// holding a stolen or revoked certificate keeps authenticated access for as long as it
-/// keeps one connection open — and both the lifetime ceiling and the CRL cadence stop
-/// being true statements about the deployment.
-fn x5(config: &DeploymentRequest) -> Vec<String> {
-    let ceiling = super::transport::MAX_CLIENT_CERT_LIFETIME;
-    match config.limits.max_connection_age {
-        None => vec![
-            "--max-connection-age-secs 0 disables the connection-age bound: the client \
-             certificate is validated only at the handshake, so a peer that never \
-             reconnects is never re-checked against an expiry or a reloaded CRL. Set a \
-             bounded age (default 300s)"
-                .to_string(),
-        ],
-        Some(age) if age > ceiling => vec![format!(
-            "--max-connection-age-secs {}s exceeds the client-cert lifetime ceiling of {}s: \
-             a connection would outlive the credential that authenticated it",
-            age.as_secs(),
-            ceiling.as_secs(),
-        )],
-        Some(_) => Vec::new(),
-    }
-}
-
 /// X6: a deny-list no authorization profile will consult enforces nothing.
 ///
 /// `Authz` is degenerate — only `Off` is reachable — so this relation is currently
@@ -129,23 +98,6 @@ fn x6(config: &DeploymentRequest) -> Vec<String> {
     unenforceable_revocation_list_refusal(&config.revocation_list_paths)
         .into_iter()
         .collect()
-}
-
-/// X7: mTLS is terminated locally XOR a forwarded identity is trusted.
-///
-/// The header posture is refused outright — any peer that can reach the socket can spoof
-/// it — which is what makes the second half of the relation currently unreachable: with no
-/// forwarded identity there is always a local client certificate to bound.
-fn x7(config: &DeploymentRequest) -> Vec<String> {
-    if config.reverse_proxy_identity_header.is_some() {
-        return vec![
-            "--reverse-proxy-identity-header trusts a forwarded identity header that any peer \
-             able to reach the socket can spoof; production must terminate mTLS locally (omit \
-             --reverse-proxy-identity-header)"
-                .to_string(),
-        ];
-    }
-    Vec::new()
 }
 
 /// X9: the trust-epoch posture, interpreted once (CF-09).
@@ -177,9 +129,7 @@ pub(crate) fn validate(
     CrossMachineViolations {
         x2a_delegated_selector: x2a(custody_source, config),
         x2b_exclusive_tls_custody: x2b(tls_custody, config),
-        x5_connection_outlives_credential: x5(config),
         x6_unenforceable_deny_list: x6(config),
-        x7_local_mtls_xor_forwarded: x7(config),
         x9_trust_epoch_posture: x9(trust_revocation, config),
     }
 }
@@ -303,37 +253,11 @@ mod tests {
     }
 
     #[test]
-    fn a_connection_may_not_outlive_the_credential_that_authenticated_it() {
-        assert!(relations(|_| {})
-            .x5_connection_outlives_credential
-            .is_empty());
-        assert!(!relations(|c| c.limits.max_connection_age = None)
-            .x5_connection_outlives_credential
-            .is_empty());
-        assert!(!relations(|c| c.limits.max_connection_age = Some(
-            crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME
-                + std::time::Duration::from_secs(1)
-        ))
-        .x5_connection_outlives_credential
-        .is_empty());
-    }
-
-    #[test]
     fn a_deny_list_no_profile_will_read_is_refused() {
         assert!(relations(|_| {}).x6_unenforceable_deny_list.is_empty());
         assert!(
             !relations(|c| c.revocation_list_paths = vec!["/deny.json".to_string()])
                 .x6_unenforceable_deny_list
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn a_forwarded_identity_is_refused_where_mtls_terminates_locally() {
-        assert!(relations(|_| {}).x7_local_mtls_xor_forwarded.is_empty());
-        assert!(
-            !relations(|c| c.reverse_proxy_identity_header = Some("x-client-id".to_string()))
-                .x7_local_mtls_xor_forwarded
                 .is_empty()
         );
     }
@@ -377,45 +301,6 @@ mod tests {
         assert!(
             err.contains("delegated XOR exported"),
             "the rejection must name the XOR rule, got: {err}"
-        );
-    }
-
-    /// X7 refuses a forwarded identity header under EVERY binding, which is why the
-    /// attested-ingress restatement of it could be deleted rather than moved.
-    ///
-    /// `ingress_assertion_refusal` carried a clause refusing
-    /// `--reverse-proxy-identity-header` beside `--transport-binding attested-ingress`.
-    /// X7 refuses that header unconditionally, so the clause could never admit or refuse
-    /// anything X7 did not already decide — a second authority over one deployment fact,
-    /// and the weaker of the two. This is the control that deleting it admitted nothing:
-    /// the header is still refused under the binding the deleted clause named, and under
-    /// the default binding too.
-    #[test]
-    fn the_forwarded_identity_header_is_refused_under_every_binding() {
-        for binding in [
-            crate::deployment_request::BindingKind::Exact,
-            crate::deployment_request::BindingKind::AttestedIngress,
-            crate::deployment_request::BindingKind::LbAssertion,
-        ] {
-            let refusals = relations(|c| {
-                c.binding = binding;
-                c.reverse_proxy_identity_header = Some("x-forwarded-client-cert".to_string());
-            });
-            assert!(
-                refusals
-                    .x7_local_mtls_xor_forwarded
-                    .iter()
-                    .any(|r| r.contains("--reverse-proxy-identity-header")),
-                "{binding:?}: X7 must refuse the forwarded identity header"
-            );
-        }
-        // The positive control: without the header X7 has nothing to say, so the clause
-        // above is not simply refusing every configuration it is shown.
-        assert!(
-            relations(|c| c.binding = crate::deployment_request::BindingKind::AttestedIngress)
-                .x7_local_mtls_xor_forwarded
-                .is_empty(),
-            "X7 must refuse only the forwarded-identity posture"
         );
     }
 }

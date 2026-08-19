@@ -652,7 +652,10 @@ mod http_profile_full_stack {
         HttpProfileProxy::new_delegated(
             actor_resolver(),
             audience(),
-            AsyncReplayTier::new(store, 60),
+            AsyncReplayTier::new(
+                store,
+                mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+            ),
             ProxyDispatchConfig {
                 fleet_strict: false,
                 tier: None,

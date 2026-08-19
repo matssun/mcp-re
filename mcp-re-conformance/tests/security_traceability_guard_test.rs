@@ -291,9 +291,9 @@ const SOURCE_ENVS: &[(&str, &str)] = &[
         "mcp-re-proxy/tests/dev_env_key_source_test.rs",
         "MCP_RE_SRC_DEV_ENV_KEY_SOURCE",
     ),
-    // MCPS-62 (ADR-MCPS-023 §C, v0.10 Mode C): the Mode-C CLI guards + Mode-B
-    // strict-rejection conformance are in-crate `#[cfg(test)]` unit tests in
-    // `cli.rs` (run under `proxy_unit_test`).
+    // MCPS-62 (ADR-MCPS-023 §C, v0.10 Mode C): the Mode-C CLI guards + the
+    // Mode-B lb-assertion strict-rejection conformance are in-crate `#[cfg(test)]`
+    // unit tests in `cli.rs` (run under `proxy_unit_test`).
     ("mcp-re-proxy/src/cli.rs", "MCP_RE_SRC_CLI"),
 ];
 

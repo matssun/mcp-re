@@ -52,12 +52,15 @@ _PROXY_LIB_SRCS = [
     # The classified legal deployment state — layer A of the configuration state atlas.
     # One classifier/validator per configuration machine, and the value they produce.
     "src/config_state/admission.rs",
+    "src/config_state/client_credential_window.rs",
     "src/config_state/continuation_control.rs",
     "src/config_state/cross_machine.rs",
     "src/config_state/custody.rs",
     "src/config_state/delegated_signing.rs",
     "src/config_state/evidence.rs",
+    "src/config_state/freshness.rs",
     "src/config_state/in_flight_limit.rs",
+    "src/config_state/key_file_access.rs",
     "src/config_state/mcp_transport_contract.rs",
     "src/config_state/replay.rs",
     # Who this deployment IS, derived once: the server ActorIdentity two consumers used to
@@ -65,7 +68,9 @@ _PROXY_LIB_SRCS = [
     "src/config_state/server_identity.rs",
     "src/config_state/mod.rs",
     "src/config_state/tls_custody.rs",
+    "src/config_state/topology.rs",
     "src/config_state/transport.rs",
+    "src/config_state/trust_document.rs",
     "src/config_state/trust_revocation.rs",
     # Layer A's boundary: assembly, report-all, and the refusal-precedence contract.
     "src/config_state/validation/mod.rs",
@@ -549,6 +554,10 @@ nt_rust_test(
 # the production server config + the mcp-re-transport client presenting a cert; the
 # negotiated peer leaf DER is fed into verify_request_full. Positive (own channel),
 # relayed-onto-a-different-channel, and plain-HTTP-no-cert all fail closed.
+# `composition_raw_read_test`
+# ADR-MCPRE-056 §8: the fourth clause — after layer A the original request stops being a
+# semantic authority. The root may still READ it (it builds things out of it), so the rule
+# is an inventory of which fields, each with the sentence saying why it is ordinary.
 # `plane_config_reachback_test`
 # ADR-MCPRE-056 §8: the third clause of the completion criterion — a plane whose posture
 # comes from its plan must not read configuration to re-decide it. The signature proves no
@@ -574,6 +583,7 @@ nt_rust_test(
     data = [
         "//docs:sidecar-deployment-guide.md",
         ":mcp_re_proxy_cli",
+        "src/app.rs",
         "src/delegated_wiring.rs",
         "src/replay_plane.rs",
         "src/signing_plane.rs",
@@ -584,6 +594,7 @@ nt_rust_test(
     env = {
         "MCP_RE_SIDECAR_GUIDE": "$(rlocationpath //docs:sidecar-deployment-guide.md)",
         "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_cli)",
+        "MCP_RE_APP_SRC": "$(rlocationpath src/app.rs)",
         "MCP_RE_DELEGATED_WIRING_SRC": "$(rlocationpath src/delegated_wiring.rs)",
         "MCP_RE_REPLAY_PLANE_SRC": "$(rlocationpath src/replay_plane.rs)",
         "MCP_RE_SIGNING_PLANE_SRC": "$(rlocationpath src/signing_plane.rs)",

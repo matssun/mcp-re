@@ -161,7 +161,13 @@ fn rejection_body(id: Value, reason: &RejectionReason) -> Vec<u8> {
 /// A disposition of [`ExecutionDisposition::Unstated`] adds nothing, so every caller
 /// without a request machine — and every frozen conformance vector — produces exactly the
 /// bytes it produced before.
-fn retry_semantics(wire_code: &str, execution: ExecutionDisposition) -> Option<Value> {
+///
+/// **The canonical projection, and the only one.** It is public because the unsigned
+/// last-resort receipt is built in another crate and must state the same thing: a second
+/// projection over the same two inputs is a second authority, and the two drifted before —
+/// the copy took only the disposition, so it could not express the wire-code-dependent
+/// retention case at all. Adding a wrapper to keep this private would recreate exactly that.
+pub fn retry_semantics(wire_code: &str, execution: ExecutionDisposition) -> Option<Value> {
     if execution == ExecutionDisposition::ApprovalSpentNothingExecuted {
         // The action did NOT run, so this is not the indeterminate case — but the human
         // approval that authorized it is gone, and an ordinary retry cannot recover it.

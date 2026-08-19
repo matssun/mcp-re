@@ -297,10 +297,7 @@ pub(crate) fn undeployable_transport_binding_refusal(binding: BindingKind) -> Op
 ///
 /// `ChannelBinding`-LOCAL validity, which is why it lives beside the classifier rather than
 /// among the relations: every clause reads `binding` and the ingress material that binding
-/// names — nothing about another machine's state. The one clause that did reach outside
-/// (attested-ingress vs `--reverse-proxy-identity-header`) was a weaker restatement of X7,
-/// which refuses a forwarded identity header under EVERY binding, and it was deleted rather
-/// than moved: one authority, and X7 is the stronger one.
+/// names — nothing about another machine's state.
 /// Ingress-assertion coherence: the LB-assertion (Tier 3) and attested-ingress (Mode C)
 /// flag sets, as one rule.
 ///
@@ -323,7 +320,7 @@ fn ingress_assertion_refusal(
     //
     // (a) Dangling `--ingress-lb-key` without `--transport-binding lb-assertion`
     //     would SILENTLY do nothing (an illusion of request-bound ingress). Reject
-    //     it — mirrors the OCSP/reverse-proxy dangling-flag guards.
+    //     it — mirrors the OCSP dangling-flag guard.
     if !ingress_lb_keys.is_empty() && binding != BindingKind::LbAssertion {
         return Some(
             "--ingress-lb-key has no effect without --transport-binding lb-assertion".to_string(),

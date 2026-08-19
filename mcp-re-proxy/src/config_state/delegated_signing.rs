@@ -53,6 +53,35 @@ const _: () = {
     assert!(DEFAULT_DELEGATED_OVERLAP_SECS < DEFAULT_DELEGATED_TTL_SECS);
 };
 
+/// The rotation window this owner validated: the credential life `T` and the overlap `O`
+/// the rotor mints a successor within.
+///
+/// One value, because `0 < overlap < ttl` is a relation between the two and a relation
+/// cannot be carried by either half. Planning previously read two independent `i64`s out of
+/// the request and re-paired them, so the guard bound the request rather than anything
+/// downstream held: deleting it left `overlap >= ttl` constructible at the plan.
+///
+/// The fields are private to this module and the only producer is
+/// [`classify_and_validate`], so possessing one IS the statement that the pair satisfies the
+/// guard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RotationWindow {
+    ttl_secs: i64,
+    overlap_secs: i64,
+}
+
+impl RotationWindow {
+    /// The life of every delegated response-signing credential, in seconds.
+    pub fn ttl_secs(&self) -> i64 {
+        self.ttl_secs
+    }
+
+    /// How long before expiry the rotor mints the successor, in seconds.
+    pub fn overlap_secs(&self) -> i64 {
+        self.overlap_secs
+    }
+}
+
 /// What layer A established about delegated response signing.
 ///
 /// Built only where the required value is present, so holding one is evidence that the
@@ -62,6 +91,7 @@ pub struct DelegatedSigningFacts {
     trust_epoch: String,
     issuer_kid: String,
     audience_hash: String,
+    rotation: RotationWindow,
 }
 
 impl DelegatedSigningFacts {
@@ -82,6 +112,16 @@ impl DelegatedSigningFacts {
     /// so they cannot disagree about which key that is.
     pub fn issuer_kid(&self) -> &str {
         &self.issuer_kid
+    }
+
+    /// The validated rotation window.
+    ///
+    /// The pair, never the halves: a consumer that needs the TTL needs the overlap that was
+    /// checked against it. Where the two are handed to a type in another crate whose fields
+    /// are plain integers, the seal stops at that seam — it holds up to it, which is where
+    /// planning re-paired them before.
+    pub fn rotation_window(&self) -> RotationWindow {
+        self.rotation
     }
 
     /// The audience the delegated credential is scoped to.
@@ -119,13 +159,24 @@ pub fn classify_and_validate(
         );
     }
     // The range guards are reported whether or not an epoch was named: an operator fixing
-    // one defect should not have to run the proxy again to be told about the next.
-    violations.extend(ttl_violations(config));
+    // one defect should not have to run the proxy again to be told about the next. They now
+    // also GATE construction, on the same pattern as the empty-fact guards below: reporting
+    // everything and constructing nothing invalid are not in tension.
+    let range = ttl_violations(config);
+    let window_is_valid = range.is_empty();
+    violations.extend(range);
     let Some(trust_epoch) = epoch else {
         return (None, violations);
     };
+    if !window_is_valid {
+        return (None, violations);
+    }
     let facts = DelegatedSigningFacts {
         trust_epoch,
+        rotation: RotationWindow {
+            ttl_secs: config.delegated_ttl_secs,
+            overlap_secs: config.delegated_overlap_secs,
+        },
         issuer_kid: config
             .delegated_issuer_kid
             .clone()
@@ -394,14 +445,23 @@ mod tests {
         assert_eq!(facts.audience_hash(), "explicit-aud");
     }
 
-    /// A TTL defect is a defect in a posture that is otherwise fully determined, so the
-    /// facts still resolve and the violation is reported beside them.
+    /// A range defect is reported beside every other violation, and resolves no facts.
+    ///
+    /// This test previously asserted the opposite half — that the facts still resolve,
+    /// because a TTL defect leaves the posture "otherwise fully determined". That was true
+    /// while the window lived in the request: the facts did not carry it, so they could not
+    /// be wrong about it. Now that the PAIR is a fact, a resolved fact set carrying an
+    /// out-of-range window would be a witness to something no guard ever accepted.
+    ///
+    /// The half worth keeping is the reporting one, and it is unchanged: gating construction
+    /// and collecting every violation are not in tension, so an operator still sees all of
+    /// their defects in one run.
     #[test]
-    fn a_range_defect_is_reported_without_erasing_the_resolved_facts() {
+    fn a_range_defect_is_reported_and_resolves_no_facts() {
         let (facts, violations) = run(|c| c.delegated_ttl_secs = 0);
         assert!(
-            facts.is_some(),
-            "the epoch is present, so the facts resolve"
+            facts.is_none(),
+            "a fact set cannot carry a window the guard refused"
         );
         assert!(
             violations
@@ -409,6 +469,32 @@ mod tests {
                 .any(|v| v.contains("--delegated-ttl-secs must be greater than 0")),
             "{violations:?}"
         );
+    }
+
+    /// The pairing the window exists to hold: `0 < overlap < ttl`, as one value.
+    ///
+    /// The operational test for the seal — delete the guard and an invalid pair is still
+    /// unconstructible — holds because `RotationWindow`'s fields are private to this module
+    /// and `classify_and_validate` is its only producer. Planning can no longer take a
+    /// validated TTL and pair it with an overlap nothing checked.
+    #[test]
+    fn an_overlap_outside_the_ttl_resolves_no_window() {
+        let (facts, violations) = run(|c| {
+            c.delegated_ttl_secs = 300;
+            c.delegated_overlap_secs = 300;
+        });
+        assert!(facts.is_none(), "overlap == ttl is outside the guard");
+        assert!(
+            violations.iter().any(|v| v.contains("0 < overlap < ttl")),
+            "{violations:?}"
+        );
+        let (facts, violations) = run(|c| {
+            c.delegated_ttl_secs = 300;
+            c.delegated_overlap_secs = 60;
+        });
+        let window = facts.expect("a legal pair resolves").rotation_window();
+        assert!(violations.is_empty(), "{violations:?}");
+        assert_eq!((window.ttl_secs(), window.overlap_secs()), (300, 60));
     }
 
     #[test]

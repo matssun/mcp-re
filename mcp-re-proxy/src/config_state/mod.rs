@@ -56,30 +56,40 @@
 //! this".
 
 pub mod admission;
+pub mod client_credential_window;
 pub mod continuation_control;
 pub(crate) mod cross_machine;
 pub mod custody;
 pub mod delegated_signing;
 pub mod evidence;
+pub mod freshness;
 pub mod in_flight_limit;
+pub mod key_file_access;
 pub mod mcp_transport_contract;
 pub mod replay;
 pub mod server_identity;
 pub mod tls_custody;
+pub mod topology;
 pub mod transport;
+pub mod trust_document;
 pub mod trust_revocation;
 pub mod validation;
 
 pub use admission::{AdmissionAvailability, AdmissionPosture, AdmissionState, EnforcedAdmission};
+pub use client_credential_window::ClientCredentialWindow;
 pub use continuation_control::ContinuationControlState;
 pub use custody::{AwsCredentialMode, CustodyMaterial, CustodyState};
 pub use delegated_signing::DelegatedSigningFacts;
 pub use evidence::{AuditState, RetentionState, VerifiedContextState};
+pub use freshness::FreshnessWindow;
 pub use in_flight_limit::{InFlightLimitBasis, InFlightLimitRequest};
+pub use key_file_access::KeyFileAccessPolicy;
 pub use mcp_transport_contract::McpTransportContractState;
 pub use replay::ReplayState;
 pub use tls_custody::TlsCustodyState;
+pub use topology::{DeploymentTopology, ShardTopologyRequest};
 pub use transport::{ChannelBindingState, CrlRevocationState};
+pub use trust_document::TrustDocumentSource;
 pub use trust_revocation::TrustRevocationState;
 
 /// What layer A recognised: each machine's state, and each guard-only owner's facts.
@@ -95,16 +105,22 @@ pub struct DeploymentConfigState {
     admission: AdmissionState,
     audit: AuditState,
     channel_binding: ChannelBindingState,
+    client_credential_window: ClientCredentialWindow,
     continuation_control: ContinuationControlState,
     crl_revocation: CrlRevocationState,
     custody: CustodyState,
     delegated_signing: DelegatedSigningFacts,
+    freshness: FreshnessWindow,
     in_flight_limit: InFlightLimitBasis,
+    key_file_access: KeyFileAccessPolicy,
     mcp_transport_contract: McpTransportContractState,
     replay: ReplayState,
     retention: RetentionState,
     server_identity: server_identity::ServerIdentityFacts,
+    shard_topology: ShardTopologyRequest,
     tls_custody: TlsCustodyState,
+    topology: DeploymentTopology,
+    trust_document: TrustDocumentSource,
     trust_revocation: TrustRevocationState,
     verified_context: VerifiedContextState,
 }
@@ -115,16 +131,22 @@ pub(crate) struct RecognisedStates {
     pub(crate) admission: AdmissionState,
     pub(crate) audit: AuditState,
     pub(crate) channel_binding: ChannelBindingState,
+    pub(crate) client_credential_window: ClientCredentialWindow,
     pub(crate) continuation_control: ContinuationControlState,
     pub(crate) crl_revocation: CrlRevocationState,
     pub(crate) custody: CustodyState,
     pub(crate) delegated_signing: DelegatedSigningFacts,
+    pub(crate) freshness: FreshnessWindow,
     pub(crate) in_flight_limit: InFlightLimitBasis,
+    pub(crate) key_file_access: KeyFileAccessPolicy,
     pub(crate) mcp_transport_contract: McpTransportContractState,
     pub(crate) replay: ReplayState,
     pub(crate) retention: RetentionState,
     pub(crate) server_identity: server_identity::ServerIdentityFacts,
+    pub(crate) shard_topology: ShardTopologyRequest,
     pub(crate) tls_custody: TlsCustodyState,
+    pub(crate) topology: DeploymentTopology,
+    pub(crate) trust_document: TrustDocumentSource,
     pub(crate) trust_revocation: TrustRevocationState,
     pub(crate) verified_context: VerifiedContextState,
 }
@@ -137,16 +159,22 @@ impl DeploymentConfigState {
             admission,
             audit,
             channel_binding,
+            client_credential_window,
             continuation_control,
             crl_revocation,
             custody,
             delegated_signing,
+            freshness,
             in_flight_limit,
+            key_file_access,
             mcp_transport_contract,
             replay,
             retention,
             server_identity,
+            shard_topology,
             tls_custody,
+            topology,
+            trust_document,
             trust_revocation,
             verified_context,
         } = states;
@@ -154,16 +182,22 @@ impl DeploymentConfigState {
             admission,
             audit,
             channel_binding,
+            client_credential_window,
             continuation_control,
             crl_revocation,
             custody,
             delegated_signing,
+            freshness,
             in_flight_limit,
+            key_file_access,
             mcp_transport_contract,
             replay,
             retention,
             server_identity,
+            shard_topology,
             tls_custody,
+            topology,
+            trust_document,
             trust_revocation,
             verified_context,
         }
@@ -216,6 +250,14 @@ impl DeploymentConfigState {
     ///
     /// A resolved fact rather than a posture: the control is on in both variants, and the
     /// two differ only in the altitude the operator stated it at.
+    /// The accepted temporal uncertainty, and what each mechanism derives from it.
+    ///
+    /// One fact with two consumers: the RFC 9421 acceptance window and the replay retention
+    /// horizon. They read projections of the same value rather than the same raw field.
+    pub fn freshness(&self) -> FreshnessWindow {
+        self.freshness
+    }
+
     pub fn in_flight_limit(&self) -> InFlightLimitBasis {
         self.in_flight_limit
     }
@@ -247,6 +289,40 @@ impl DeploymentConfigState {
     /// Whether the TLS handshake key can leave the device it lives on.
     pub fn tls_custody(&self) -> &TlsCustodyState {
         &self.tls_custody
+    }
+
+    /// Whether this deployment is one node or one replica of several.
+    pub fn topology(&self) -> DeploymentTopology {
+        self.topology
+    }
+
+    /// The serving-shard shape as the operator stated it. Not a count: the host resolves
+    /// `Auto` into one.
+    pub fn shard_topology(&self) -> ShardTopologyRequest {
+        self.shard_topology
+    }
+
+    /// Which key-file permission postures this deployment accepts.
+    ///
+    /// The policy answers whether a posture is refused; composition never receives the
+    /// flag and re-derives the rule around it.
+    pub fn key_file_access(&self) -> KeyFileAccessPolicy {
+        self.key_file_access
+    }
+
+    /// How long a client credential authorizes traffic, and how long one connection may
+    /// serve on a single handshake — one fact, because the second is what makes the first
+    /// a statement about requests.
+    pub fn client_credential_window(&self) -> ClientCredentialWindow {
+        self.client_credential_window
+    }
+
+    /// Which document the request-signer set is read from.
+    ///
+    /// The locator's own authority, so a plan pairs a revocation posture with a document
+    /// both owners recognised rather than with whatever string reached the plan.
+    pub fn trust_document(&self) -> &TrustDocumentSource {
+        &self.trust_document
     }
 
     /// The trust-revocation state — the authority both `TrustPlan` and `SigningPlan`
@@ -350,7 +426,61 @@ pub(crate) mod test_support {
             .expect("the requested revocation posture is legal")
     }
 
+    /// The credential window a deployment with this lifetime and connection age reaches.
+    ///
+    /// Through the classifier, so a test cannot hold a window whose connection age outlives
+    /// its certificate — which is the pairing the owner exists to make unconstructible.
+    pub(crate) fn credential_window(
+        cert_lifetime_secs: u64,
+        connection_age_secs: u64,
+    ) -> super::ClientCredentialWindow {
+        let mut config = legal_config();
+        config.max_client_cert_lifetime = Some(std::time::Duration::from_secs(cert_lifetime_secs));
+        config.limits.max_connection_age =
+            Some(std::time::Duration::from_secs(connection_age_secs));
+        super::client_credential_window::classify_and_validate(&config)
+            .0
+            .expect("the fixture names a legal credential window")
+    }
+
+    /// The trust plan a deployment in this posture projects.
+    ///
+    /// Through the boundary and then through `TrustPlan::from_validated`, so the plan's
+    /// revocation posture, its derived reload cadence and its document all come from ONE
+    /// accepted deployment. The literal this replaced could pair any state with any
+    /// cadence, and did: it named a 30s reload beside a state carrying 5s.
+    pub(crate) fn trust_plan(
+        tier: crate::revocation_tier::RevocationTier,
+        reload_secs: Option<u64>,
+        epoch: Option<(&str, &str)>,
+    ) -> crate::startup_plan::TrustPlan {
+        let mut config = legal_config();
+        config.revocation_tier = tier;
+        config.trust_reload_secs = reload_secs;
+        config.trust_epoch_redis_url = epoch.map(|(url, _)| url.to_string());
+        config.trust_epoch_key = epoch.map(|(_, key)| key.to_string());
+        let validated = super::validation::ValidatedDeployment::try_from(config)
+            .expect("the requested trust posture is a legal deployment");
+        let epoch_plan = crate::startup_plan::TrustEpochPlan::from_validated(&validated);
+        crate::startup_plan::TrustPlan::from_validated(
+            &validated,
+            "response-kid".to_string(),
+            epoch_plan,
+        )
+    }
+
     /// The CRL state a deployment with these files and cadence reaches.
+    /// The freshness window a deployment with this skew resolves.
+    ///
+    /// Through the classifier, so a test cannot hold a window outside the §5.1 bound.
+    pub(crate) fn freshness(max_clock_skew: i64) -> super::FreshnessWindow {
+        let mut config = legal_config();
+        config.max_clock_skew = max_clock_skew;
+        super::freshness::classify_and_validate(&config)
+            .0
+            .expect("the fixture skew is within the bound")
+    }
+
     pub(crate) fn crl_posture(
         paths: &[&str],
         cadence_secs: Option<u64>,
@@ -460,6 +590,9 @@ mod tests {
                     .expect("the enforcing fixture names an admission authority"),
             audit: AuditState::Stderr,
             channel_binding: ChannelBindingState::ExactUriSan,
+            freshness: freshness::classify_and_validate(&test_support::legal_config())
+                .0
+                .expect("the legal fixture names a bounded freshness window"),
             server_identity: crate::config_state::server_identity::classify_and_validate(
                 &crate::config_state::test_support::legal_config(),
                 crate::config_state::delegated_signing::classify_and_validate(
@@ -470,6 +603,9 @@ mod tests {
             )
             .0
             .expect("the legal fixture has an identity"),
+            key_file_access: key_file_access::classify(&test_support::legal_config()),
+            topology: topology::classify(&test_support::legal_config()).0,
+            shard_topology: topology::classify(&test_support::legal_config()).1,
             in_flight_limit: InFlightLimitBasis::PerCore {
                 requests: std::num::NonZeroUsize::new(256).expect("non-zero"),
             },
@@ -478,6 +614,14 @@ mod tests {
             )
             .0,
             crl_revocation: test_support::crl_posture(&["/crl.pem"], Some(300)),
+            client_credential_window: client_credential_window::classify_and_validate(
+                &test_support::legal_config(),
+            )
+            .0
+            .expect("the legal fixture names a bounded credential window"),
+            trust_document: trust_document::classify_and_validate(&test_support::legal_config())
+                .0
+                .expect("the legal fixture names a trust document"),
             custody: test_support::custody_pkcs11(),
             mcp_transport_contract: mcp_transport_contract::classify(
                 &test_support::versioned_transport_config(),

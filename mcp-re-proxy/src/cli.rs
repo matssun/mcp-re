@@ -35,7 +35,6 @@ use crate::key_source::KeyError;
 use crate::key_source::KeySource;
 use crate::tls::ServerLimits;
 use crate::transport::IdentityPolicy;
-use crate::transport::ReverseProxyHeaderFormat;
 
 /// Parse CLI arguments (excluding argv[0]) into a [`DeploymentRequest`]. Returns a
 /// human-readable error string on any missing/invalid argument.
@@ -107,8 +106,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     };
     let mut binding = BindingKind::Exact;
     let mut identity_source = IdentityPolicy::UriSan;
-    let mut reverse_proxy_identity_header: Option<String> = None;
-    let mut reverse_proxy_header_format = ReverseProxyHeaderFormat::Xfcc;
     // ADR-MCPS-023 Tier 3 (issue #71): repeatable trusted LB verification keys for
     // request-bound ingress assertions, as (key_id, base64url-ed25519-pub) pairs.
     let mut ingress_lb_keys: Vec<(String, String)> = Vec::new();
@@ -481,23 +478,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
                     }
                 }
             }
-            // The trusted forwarded header name. Presence of this flag selects
-            // reverse-proxy ingress mode (mTLS terminated upstream), which relation X7
-            // refuses outright.
-            "--reverse-proxy-identity-header" => {
-                reverse_proxy_identity_header = Some(value.clone())
-            }
-            "--reverse-proxy-header-format" => {
-                reverse_proxy_header_format = match value.as_str() {
-                    "plain" => ReverseProxyHeaderFormat::Plain,
-                    "xfcc" => ReverseProxyHeaderFormat::Xfcc,
-                    other => {
-                        return Err(format!(
-                            "unknown --reverse-proxy-header-format '{other}' (plain|xfcc)"
-                        ))
-                    }
-                }
-            }
             "--authz" => {
                 authz = match value.as_str() {
                     "off" => AuthzKind::Off,
@@ -731,8 +711,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
         revocation_tier,
         binding,
         identity_source,
-        reverse_proxy_identity_header,
-        reverse_proxy_header_format,
         ingress_lb_keys,
         ingress_attestor_keys,
         ingress_identities,
@@ -819,49 +797,6 @@ fn second_admission_limit(
 /// group/world permission bit set is an insecure posture.
 pub fn key_file_mode_is_insecure(mode: u32) -> bool {
     mode & 0o077 != 0
-}
-
-/// Why a key file's posture was refused, or `None` when it is acceptable.
-///
-/// The strict rule ([`key_file_mode_is_insecure`]) is `0600`/`0400` and nothing else,
-/// which is correct on a normal host and IMPOSSIBLE under the Kubernetes model a
-/// non-root pod needs: a Secret mounted for a non-root uid is owned by the pod's
-/// `fsGroup` and delivered mode `0440`, so the strict predicate refuses to start
-/// exactly the deployment that stopped running as root (C053b).
-///
-/// So group READ is acceptable, but only under all three conditions, and only when the
-/// operator has explicitly asked for it:
-///
-///   1. `allow_group_read` — an explicit opt-in, never a silent default. This widens
-///      who can read a signing key, so the deployment states it (the same shape as
-///      `replay.allowPlaintextRedis` / `identity.allowExampleFixtures`).
-///   2. the file's group is one THIS PROCESS is in — otherwise "group-readable" grants
-///      a group the proxy has nothing to do with, which is strictly worse than the
-///      posture being relaxed.
-///   3. no group WRITE and no other/world bit at all. Group write would let a peer
-///      process replace the signing key; that is never a mount-model requirement.
-pub fn key_file_posture_violation(
-    mode: u32,
-    file_gid: u32,
-    allow_group_read: bool,
-    process_gids: &[u32],
-) -> Option<&'static str> {
-    if mode & 0o007 != 0 {
-        return Some("world-accessible");
-    }
-    if mode & 0o020 != 0 {
-        return Some("group-writable");
-    }
-    if mode & 0o050 == 0 {
-        return None;
-    }
-    if !allow_group_read {
-        return Some("group-accessible (pass --allow-group-readable-key-files if this is an fsGroup-owned mount)");
-    }
-    if !process_gids.contains(&file_gid) {
-        return Some("group-accessible to a group this process is not a member of");
-    }
-    None
 }
 
 /// Read the PKCS#11 User PIN from `path` into a short-lived [`SecretString`].
@@ -1252,7 +1187,6 @@ mod tests {
     use super::IdentityPolicy;
     use super::KeySourceKind;
     use super::OcspKind;
-    use super::ReverseProxyHeaderFormat;
     use crate::config_state::validation::unsafe_config_violations;
     use mcp_re_core::SigningKey;
 
@@ -1787,7 +1721,6 @@ mod tests {
             c.ingress_identities = vec!["ingress-1".to_string()];
             c.ingress_audience = Some("https://mcp.example.com/mcp".to_string());
             c.ingress_pinned_mtls = true;
-            c.reverse_proxy_identity_header = None;
         };
 
         let mut empty_identity = parsed_baseline();
@@ -2317,10 +2250,24 @@ mod tests {
         // Only lifetimes at/below the strict ceiling parse (the proxy always runs
         // strict): `none`/`0` (disabled) and over-ceiling values are hard errors,
         // covered by the strict_rejects_* cert-lifetime tests.
+        //
+        // Each case also names a connection age it can carry. This is a SPELLING test —
+        // does `90s` mean ninety seconds — and a spelling is not a deployment: the
+        // boundary refuses a connection that would outlive the credential, so a short
+        // lifetime beside the default 300s age is refused for a reason this test is not
+        // about.
         let cases = [("30m", 1800), ("60m", 3600), ("90s", 90), ("45", 45)];
         for (input, expected) in cases {
             let mut a = minimal_durable();
-            a.splice(0..0, args(&["--max-client-cert-lifetime", input]));
+            a.splice(
+                0..0,
+                args(&[
+                    "--max-client-cert-lifetime",
+                    input,
+                    "--max-connection-age-secs",
+                    "30",
+                ]),
+            );
             let got = parse_args(&a).expect("parse").max_client_cert_lifetime;
             assert_eq!(
                 got,
@@ -2381,58 +2328,6 @@ mod tests {
         let mut a = minimal();
         a.splice(0..0, args(&["--transport-identity-source", "email_san"]));
         assert!(parse_args(&a).unwrap_err().contains("email_san"));
-    }
-
-    // --- MCPS-3840 reverse-proxy ingress flags --------------------------------
-
-    #[test]
-    fn no_reverse_proxy_header_by_default() {
-        let config = parse_args(&minimal_durable()).expect("parse");
-        assert_eq!(config.reverse_proxy_identity_header, None);
-        // The default format is irrelevant when the header is unset, but it is
-        // the safer XFCC (structured) shape rather than the trust-the-whole-value
-        // plain shape.
-        assert_eq!(
-            config.reverse_proxy_header_format,
-            ReverseProxyHeaderFormat::Xfcc
-        );
-    }
-
-    // NOTE: reverse-proxy identity-header ingress is a spoofable posture that the
-    // unconditional strict/production posture always rejects (see
-    // `strict_rejects_reverse_proxy_identity_header_ingress`), so there is no
-    // successful-parse test for the header-format selection — the mode never parses.
-
-    #[test]
-    fn unknown_reverse_proxy_header_format_errors() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--reverse-proxy-identity-header",
-                "x-client-identity",
-                "--reverse-proxy-header-format",
-                "der",
-                "--max-client-cert-lifetime",
-                "none",
-            ]),
-        );
-        assert!(parse_args(&a).unwrap_err().contains("der"));
-    }
-
-    /// A blank forwarded-header name is refused, though not for being blank: relation X7
-    /// refuses the forwarded-identity posture whatever it names. Kept as the tripwire for
-    /// that — if X7 is ever narrowed, this fails, and the emptiness rule then belongs to
-    /// the owner of the header rather than back here.
-    #[test]
-    fn empty_reverse_proxy_header_name_errors() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--reverse-proxy-identity-header", "   "]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(
-            err.contains("--reverse-proxy-identity-header"),
-            "got: {err}"
-        );
     }
 
     // ---- ADR-MCPS-023 Tier 3 (issue #71): LB-signed request-bound assertion ----
@@ -2810,60 +2705,6 @@ mod tests {
             ]),
         );
         assert!(parse_args(&a).unwrap_err().contains("Ed25519 public key"));
-    }
-
-    /// Attested ingress beside a forwarded identity header is still refused — by X7.
-    ///
-    /// The proposition is unchanged: Mode C resolves identity from the signed assertion, so
-    /// a trusted reverse-proxy header would be a second, silently-ignored identity source.
-    /// What changed is which authority states it. `ingress_assertion_refusal` carried a
-    /// clause saying the two were "mutually exclusive"; relation X7 refuses a forwarded
-    /// identity header under EVERY binding, which is strictly stronger, so the clause was a
-    /// second authority over one fact and was deleted rather than moved. The assertion now
-    /// names the surviving one — see
-    /// `cross_machine::tests::the_forwarded_identity_header_is_refused_under_every_binding`
-    /// for the control that the deletion admits nothing.
-    #[test]
-    fn attested_ingress_rejects_reverse_proxy_header() {
-        let mut a = minimal();
-        let mut flags = attested_ingress_flags();
-        flags.extend(args(&[
-            "--reverse-proxy-identity-header",
-            "x-forwarded-client-cert",
-        ]));
-        a.splice(0..0, flags);
-        let err = parse_args(&a).unwrap_err();
-        assert!(
-            err.contains("--reverse-proxy-identity-header"),
-            "the forwarded-identity posture must be refused by name, got: {err}"
-        );
-    }
-
-    /// Reverse-proxy ingress cannot be deployed beside a local client-certificate control.
-    ///
-    /// The parser used to refuse this pair and name the remedy: disable the local control
-    /// with `--max-client-cert-lifetime none`. That remedy was never a deployment — the
-    /// boundary refuses a disabled lifetime outright — so the two layers disagreed about
-    /// what a legal configuration is. Relation X7 settles it in one direction: mTLS is
-    /// terminated locally XOR a forwarded identity is trusted, and the forwarded posture
-    /// is refused, so there is no reverse-proxy deployment for the pair to be a conflict
-    /// in.
-    #[test]
-    fn reverse_proxy_mode_conflicts_with_local_cert_lifetime() {
-        let mut a = minimal_durable();
-        a.splice(
-            0..0,
-            args(&["--reverse-proxy-identity-header", "x-forwarded-client-cert"]),
-        );
-        let err = parse_args(&a).unwrap_err();
-        assert!(
-            err.contains("--reverse-proxy-identity-header"),
-            "got: {err}"
-        );
-        assert!(
-            !err.contains("--max-client-cert-lifetime none"),
-            "the refusal must not name a remedy the boundary also refuses; got: {err}"
-        );
     }
 
     // In a production build (no `dev_env_key_source` feature) the env key source does
@@ -4237,27 +4078,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "online_ocsp")]
-    #[test]
-    fn client_ocsp_require_in_reverse_proxy_mode_errors() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--client-ocsp",
-                "require",
-                "--reverse-proxy-identity-header",
-                "x-client-id",
-                "--max-client-cert-lifetime",
-                "none",
-            ]),
-        );
-        // Refused — now for the stronger reason that the serving path performs no OCSP
-        // check at all, which subsumes the reverse-proxy-mode objection.
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("cannot be honored"), "got: {err}");
-    }
-
     // --- MCPS-3842 strict/production posture ("reject, not warn") ------------
     //
     // The strict/production posture is UNCONDITIONAL: the proxy always rejects an
@@ -4570,33 +4390,8 @@ mod tests {
 
     // --- #4082 (MCP-RE-MED-1) additional strict/production posture rejections -----
     //
-    // M10/M11/M22: the unconditional strict/production posture turns these
-    // otherwise-spoofable/decoupled postures into HARD parse errors.
-
-    // M10/M22 — reverse-proxy identity-header ingress is the documented
-    // identity-spoofable posture; production refuses to enable it.
-    #[test]
-    fn strict_rejects_reverse_proxy_identity_header_ingress() {
-        let mut a = minimal_durable();
-        a.splice(
-            0..0,
-            args(&[
-                "--reverse-proxy-identity-header",
-                "x-forwarded-client-cert",
-                // The local-cert lifetime is meaningless in reverse-proxy mode, so it
-                // must be explicitly disabled (existing parse rule); that disabled
-                // lifetime is itself a violation, but the reverse-proxy ingress
-                // rejection is what we assert here.
-                "--max-client-cert-lifetime",
-                "none",
-            ]),
-        );
-        let err = parse_args(&a).unwrap_err();
-        assert!(
-            err.contains("--reverse-proxy-identity-header"),
-            "got: {err}"
-        );
-    }
+    // M11: the unconditional strict/production posture turns an otherwise
+    // decoupled posture into a HARD parse error.
 
     // M11 — `--transport-binding none` is no longer a selectable value (the only
     // accepted bindings enforce a channel↔signer binding), so it fails closed at
@@ -4638,61 +4433,6 @@ mod tests {
             super::key_file_mode_is_insecure(0o777),
             "world-everything is insecure"
         );
-    }
-
-    // ---- C053b: the fsGroup-owned mount posture -------------------------------
-
-    #[test]
-    fn the_strict_posture_is_unchanged_by_default() {
-        // No opt-in: the 0600/0400 floor behaves exactly as before.
-        assert_eq!(
-            super::key_file_posture_violation(0o600, 1000, false, &[1000]),
-            None
-        );
-        assert_eq!(
-            super::key_file_posture_violation(0o400, 1000, false, &[1000]),
-            None
-        );
-        assert!(super::key_file_posture_violation(0o440, 1000, false, &[1000]).is_some());
-    }
-
-    #[test]
-    fn an_fsgroup_owned_mount_is_accepted_only_with_the_opt_in() {
-        // The Kubernetes shape: mode 0440, owned by a supplementary group the process
-        // is in. Refused by default, accepted when the operator asks for it.
-        assert!(super::key_file_posture_violation(0o440, 2000, false, &[1000, 2000]).is_some());
-        assert_eq!(
-            super::key_file_posture_violation(0o440, 2000, true, &[1000, 2000]),
-            None
-        );
-    }
-
-    #[test]
-    fn a_group_this_process_is_not_in_is_still_refused() {
-        // "Group-readable" to a group the proxy has nothing to do with is strictly
-        // worse than the posture being relaxed, so the opt-in does not reach it.
-        assert!(super::key_file_posture_violation(0o440, 9999, true, &[1000, 2000]).is_some());
-    }
-
-    #[test]
-    fn group_write_is_never_accepted() {
-        // A peer process able to REPLACE the signing key is never a mount requirement.
-        for mode in [0o460, 0o660, 0o620] {
-            assert!(
-                super::key_file_posture_violation(mode, 2000, true, &[2000]).is_some(),
-                "{mode:o} is group-writable and must be refused even with the opt-in"
-            );
-        }
-    }
-
-    #[test]
-    fn any_world_bit_is_never_accepted() {
-        for mode in [0o444, 0o604, 0o441, 0o642] {
-            assert!(
-                super::key_file_posture_violation(mode, 2000, true, &[2000]).is_some(),
-                "{mode:o} has a world bit and must be refused even with the opt-in"
-            );
-        }
     }
 
     /// The leading PKCS#11-source flags (no `--tls-key`, no TLS label, no inner

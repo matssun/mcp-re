@@ -92,7 +92,7 @@ impl MaterializedReplay {
 )]
 pub fn materialize(
     plan: &ReplayPlan,
-    max_clock_skew: i64,
+    freshness: crate::config_state::FreshnessWindow,
     control: Option<&ControlRuntime>,
 ) -> Result<MaterializedReplay, String> {
     // The tier is READ from the plan, never chosen beside it: the replay owner paired this
@@ -113,7 +113,7 @@ pub fn materialize(
                     crate::async_etcd_store::EtcdAsyncAtomicReplayStore::connect(endpoint),
                 );
                 (
-                    AsyncReplayTier::new(store, max_clock_skew),
+                    AsyncReplayTier::new(store, freshness),
                     ProxyDispatchConfig {
                         fleet_strict: true,
                         tier: Some(tier.clone()),
@@ -159,7 +159,7 @@ pub fn materialize(
                     store = store.with_wait_quorum(quorum, timeout_ms);
                 }
                 (
-                    AsyncReplayTier::new(Arc::new(store), max_clock_skew),
+                    AsyncReplayTier::new(Arc::new(store), freshness),
                     ProxyDispatchConfig {
                         fleet_strict: true,
                         tier: Some(tier.clone()),
@@ -216,7 +216,7 @@ mod tests {
     fn a_volatile_tier_is_never_handed_over() {
         let volatile = AsyncReplayTier::new(
             std::sync::Arc::new(crate::async_replay::InMemoryAsyncAtomicReplayStore::new()),
-            60,
+            crate::config_state::test_support::freshness(60),
         );
         let err = assert_durable(&volatile).expect_err("the volatile tier must be refused");
         assert!(err.contains("single-process reference"), "{err}");
@@ -256,7 +256,7 @@ mod tests {
     fn the_handover_value_cannot_be_built_around_a_volatile_tier() {
         let volatile = AsyncReplayTier::new(
             std::sync::Arc::new(crate::async_replay::InMemoryAsyncAtomicReplayStore::new()),
-            60,
+            crate::config_state::test_support::freshness(60),
         );
         let err = match MaterializedReplay::new(volatile, linearizable_dispatch()) {
             Ok(_) => panic!("a volatile tier must not produce a handover value"),
@@ -270,7 +270,10 @@ mod tests {
     /// constructor that refuses everything.
     #[test]
     fn a_durable_tier_produces_the_handover_value_with_its_posture() {
-        let durable = AsyncReplayTier::new(std::sync::Arc::new(DurableStore), 60);
+        let durable = AsyncReplayTier::new(
+            std::sync::Arc::new(DurableStore),
+            crate::config_state::test_support::freshness(60),
+        );
         let materialized = MaterializedReplay::new(durable, linearizable_dispatch())
             .unwrap_or_else(|e| panic!("a durable tier must be handed over: {e}"));
         assert!(materialized.dispatch.fleet_strict);
@@ -291,7 +294,7 @@ mod tests {
     fn a_backend_the_build_lacks_is_refused_and_named() {
         let etcd = materialize(
             &crate::config_state::test_support::linearizable_replay_plan(),
-            60,
+            crate::config_state::test_support::freshness(60),
             None,
         );
         if cfg!(feature = "cpstore_etcd") {
@@ -313,7 +316,7 @@ mod tests {
         if !cfg!(feature = "redis_replay") {
             let err = materialize(
                 &crate::config_state::test_support::redis_replay_plan(),
-                60,
+                crate::config_state::test_support::freshness(60),
                 None,
             )
             .err()
@@ -348,7 +351,12 @@ mod tests {
             // the runtime contract rather than reachability. One reachable state is
             // enough to show the build is a serving binary.
             assert!(
-                materialize(&etcd, 60, None).is_ok(),
+                materialize(
+                    &etcd,
+                    crate::config_state::test_support::freshness(60),
+                    None
+                )
+                .is_ok(),
                 "a build linking cpstore_etcd must reach the linearizable state"
             );
             return;
@@ -362,7 +370,7 @@ mod tests {
 
         for plan in [&etcd, &redis] {
             assert!(
-                materialize(plan, 60, None).is_err(),
+                materialize(plan, crate::config_state::test_support::freshness(60), None).is_err(),
                 "BF-01: with neither backend linked, no replay state may be reachable"
             );
         }

@@ -175,7 +175,7 @@ impl TrustPlane {
         plan: &crate::startup_plan::TrustPlan,
         deployment: Arc<AtomicBool>,
     ) -> Result<TrustPlane, String> {
-        let response_kid = plan.response_kid.as_str();
+        let response_kid = plan.response_kid();
         let mut workers = WorkerSet::new(deployment);
         // ADR-MCPS-021 Axis 2: the base trust store the revocation tiers resolve against.
         //
@@ -189,7 +189,7 @@ impl TrustPlane {
         // `response_kid` is the deployment's own issuer key id, passed in rather than
         // derived here: it is excluded from the request-signer set so the root can never be
         // presented as a client credential.
-        let trust_store = Arc::new(load_trust_snapshot(&plan.trust_path, response_kid)?);
+        let trust_store = Arc::new(load_trust_snapshot(plan.document_path(), response_kid)?);
 
         // ADR-MCPS-021 Axis 2: surface the DECLARED revocation tier and its honest
         // guarantee at startup. The proxy emits the tier's OWN guarantee string — never
@@ -202,8 +202,8 @@ impl TrustPlane {
         // about something else, and the tier line was quoted on its own.
         eprintln!(
             "mcp-re-proxy: {} store-change-cadence={}",
-            plan.revocation.tier().startup_audit_line("trust-store"),
-            store_change_cadence(plan.reload)
+            plan.revocation().tier().startup_audit_line("trust-store"),
+            store_change_cadence(plan.reload())
         );
         // ADR-MCPS-021 Axis 2: APPLY the declared tier to the resolver so the runtime
         // behavior actually matches the surfaced guarantee (Tier 1 bounds cached active
@@ -212,8 +212,8 @@ impl TrustPlane {
         // line above would be a claim the resolver does not enforce.
         // MCPS-84: connect the networked trust-epoch invalidation channel if one is
         // configured (only under --revocation-tier push; enforced at parse time).
-        let push_channel = build_trust_epoch_channel(&plan.epoch, &mut workers)?;
-        if plan.revocation.push_channel_is_inert() {
+        let push_channel = build_trust_epoch_channel(plan.epoch(), &mut workers)?;
+        if plan.revocation().push_channel_is_inert() {
             // Honesty (Tier 3): with no networked source wired, the in-process
             // reference channel is inert — Tier 3 runs at its bounded-`T` fallback
             // (already reflected in the tier's `guarantee()` string above), NOT an
@@ -230,7 +230,7 @@ impl TrustPlane {
             );
         }
         let resolver = crate::revocation_resolver::build_revocation_resolver_with_channel(
-            &plan.revocation.tier(),
+            &plan.revocation().tier(),
             Box::new(crate::reloading_trust::SharedTrustStore(Arc::clone(
                 &trust_store,
             ))),
@@ -246,11 +246,11 @@ impl TrustPlane {
         // (terminal). The second exists in every configuration, including one with no
         // `--trust-reload-secs`, so this flag is meaningful there too.
         let trust_freshness = Arc::new(TrustStoreFreshness::default());
-        if let Some(interval_secs) = plan.reload.cadence_secs() {
+        if let Some(interval_secs) = plan.reload().cadence_secs() {
             spawn_trust_reload_task(
                 &mut workers,
                 Arc::clone(&trust_store),
-                plan.trust_path.clone(),
+                plan.document_path().to_string(),
                 response_kid.to_string(),
                 interval_secs.get(),
                 Arc::clone(&trust_freshness),
@@ -262,8 +262,8 @@ impl TrustPlane {
             eprintln!(
                 "mcp-re-proxy: trust store reload ACTIVE every {interval_secs}s: a key removed \
                  from {} stops resolving within {}, with no restart.",
-                plan.trust_path,
-                delivered_revocation_window(&plan.revocation.tier(), plan.reload)
+                plan.document_path(),
+                delivered_revocation_window(&plan.revocation().tier(), plan.reload())
             );
         } else {
             eprintln!(
@@ -698,9 +698,9 @@ fn build_trust_epoch_channel(
 ///   * a key removed from `--trust` cannot stop resolving faster than the file is
 ///     re-read, whatever the tier does with its cache.
 pub fn fleet_trust_bound(plan: &crate::startup_plan::TrustPlan) -> String {
-    let tier = &plan.revocation.tier();
-    let epoch_source_configured = plan.revocation.has_networked_epoch();
-    let reload_floor = match plan.reload.cadence_secs() {
+    let tier = &plan.revocation().tier();
+    let epoch_source_configured = plan.revocation().has_networked_epoch();
+    let reload_floor = match plan.reload().cadence_secs() {
         Some(secs) => format!("--trust re-read every {secs}s"),
         None => "--trust read once at startup (no --trust-reload-secs), so the store itself \
                  changes only on a restart"
@@ -709,7 +709,7 @@ pub fn fleet_trust_bound(plan: &crate::startup_plan::TrustPlan) -> String {
     let poll = TRUST_EPOCH_POLL_SECS;
     // The two floors COMPOSE by addition, so the total is stated as arithmetic on the same
     // line rather than left to the reader of "over".
-    let delivered = delivered_revocation_window(tier, plan.reload);
+    let delivered = delivered_revocation_window(tier, plan.reload());
     match (tier, epoch_source_configured) {
         (RevocationTier::Push { t_secs }, true) => format!(
             "cache flush within one {poll}s trust-epoch poll interval of an \
@@ -736,30 +736,13 @@ mod store_cadence_tests {
     use super::fleet_trust_bound;
     use super::store_change_cadence;
     use super::TrustStoreFreshness;
-    use crate::config_state::TrustRevocationState;
-    use crate::startup_plan::{TrustEpochPlan, TrustPlan, TrustReloadPlan};
+    use crate::config_state::test_support::trust_plan as plan;
+    use crate::revocation_tier::RevocationTier;
+    use crate::startup_plan::TrustReloadPlan;
     use std::sync::Arc;
 
-    /// A plan in the posture under test. Written out rather than parsed, because these
-    /// assert what the operator-facing line SAYS about a posture — and a posture is now
-    /// nameable directly instead of being reassembled from a tier plus a boolean.
-    fn plan(revocation: TrustRevocationState, reload: TrustReloadPlan) -> TrustPlan {
-        let epoch = if revocation.has_networked_epoch() {
-            TrustEpochPlan::Redis {
-                url: "redis://127.0.0.1:6379".to_string(),
-                key: "mcp-re:trust:epoch".to_string(),
-            }
-        } else {
-            TrustEpochPlan::NoNetworkChannel
-        };
-        TrustPlan {
-            revocation,
-            trust_path: "/trust.json".to_string(),
-            response_kid: "response-kid".to_string(),
-            reload,
-            epoch,
-        }
-    }
+    /// The networked epoch source these postures use when they have one.
+    const EPOCH: Option<(&str, &str)> = Some(("redis://127.0.0.1:6379", "mcp-re:trust:epoch"));
 
     /// R7-C126: the `--fleet` push-tier line must not claim a mechanism that was
     /// removed. The epoch is read by a 5s background poller, never on the request path,
@@ -768,16 +751,7 @@ mod store_cadence_tests {
     /// short by up to the poll interval.
     #[test]
     fn the_push_tier_bound_states_the_poll_interval_not_the_next_request() {
-        let line = fleet_trust_bound(&plan(
-            crate::config_state::test_support::revocation_posture(
-                crate::revocation_tier::RevocationTier::Push { t_secs: 90 },
-                Some(5),
-                Some(("redis://127.0.0.1:6379", "mcp-re:trust:epoch")),
-            ),
-            TrustReloadPlan::Every {
-                secs: crate::config_state::TrustRevocationState::cadence(30),
-            },
-        ));
+        let line = fleet_trust_bound(&plan(RevocationTier::Push { t_secs: 90 }, Some(5), EPOCH));
         assert!(
             !line.contains("next request"),
             "the per-request flush no longer exists: {line}"
@@ -799,16 +773,7 @@ mod store_cadence_tests {
     /// the healthy-source number.
     #[test]
     fn a_push_tier_without_a_source_reports_the_fallback_only() {
-        let line = fleet_trust_bound(&plan(
-            crate::config_state::test_support::revocation_posture(
-                crate::revocation_tier::RevocationTier::Push { t_secs: 90 },
-                Some(5),
-                None,
-            ),
-            TrustReloadPlan::Every {
-                secs: crate::config_state::TrustRevocationState::cadence(30),
-            },
-        ));
+        let line = fleet_trust_bound(&plan(RevocationTier::Push { t_secs: 90 }, Some(5), None));
         assert!(line.contains("inert"), "got: {line}");
         assert!(
             !line.contains("poll interval"),
@@ -819,53 +784,52 @@ mod store_cadence_tests {
     /// Every tier's number sits over the same floor: nothing resolves faster than the
     /// store is re-read.
     ///
-    /// The postures are enumerated as STATES. The `(tier, epoch-configured)` pair this
-    /// used to iterate could name combinations layer A refuses — a bounded-cache tier with
-    /// an epoch source is X8 — so the old loop asserted the wording of lines for two
-    /// deployments that cannot exist.
+    /// The postures are enumerated as DEPLOYMENTS. Iterating `(tier, epoch-configured)`
+    /// pairs would name combinations layer A refuses — a bounded-cache tier with an epoch
+    /// source is X8 — and pairing a posture with a reload cadence of the test's choosing,
+    /// as this did before `TrustPlan` was sealed, names plans no configuration reaches:
+    /// three of the four states CARRY their cadence, so `Every { 15 }` beside a state
+    /// holding 5 was asserting the wording of a line the proxy never prints.
     #[test]
     fn every_posture_names_the_reload_floor_under_its_number() {
-        for revocation in [
-            crate::config_state::test_support::revocation_posture(
-                crate::revocation_tier::RevocationTier::Live,
-                Some(5),
-                None,
-            ),
-            crate::config_state::test_support::revocation_posture(
-                crate::revocation_tier::RevocationTier::BoundedCache { t_secs: 60 },
-                None,
-                None,
-            ),
-            crate::config_state::test_support::revocation_posture(
-                crate::revocation_tier::RevocationTier::Push { t_secs: 60 },
-                Some(5),
-                None,
-            ),
-            crate::config_state::test_support::revocation_posture(
-                crate::revocation_tier::RevocationTier::Push { t_secs: 60 },
-                Some(5),
-                Some(("redis://127.0.0.1:6379", "mcp-re:trust:epoch")),
-            ),
+        for tier in [
+            RevocationTier::Live,
+            RevocationTier::BoundedCache { t_secs: 60 },
+            RevocationTier::Push { t_secs: 60 },
         ] {
-            let with_reload = fleet_trust_bound(&plan(
-                revocation.clone(),
-                TrustReloadPlan::Every {
-                    secs: crate::config_state::TrustRevocationState::cadence(15),
-                },
-            ));
+            let line = fleet_trust_bound(&plan(tier.clone(), Some(15), None));
             assert!(
-                with_reload.contains("--trust re-read every 15s"),
-                "{revocation:?}: {with_reload}"
-            );
-            let frozen = fleet_trust_bound(&plan(
-                revocation.clone(),
-                TrustReloadPlan::ReadOnceAtStartup,
-            ));
-            assert!(
-                frozen.contains("only on a restart"),
-                "{revocation:?}: a frozen store must be named on the same line: {frozen}"
+                line.contains("--trust re-read every 15s"),
+                "{tier:?}: {line}"
             );
         }
+        let networked =
+            fleet_trust_bound(&plan(RevocationTier::Push { t_secs: 60 }, Some(15), EPOCH));
+        assert!(
+            networked.contains("--trust re-read every 15s"),
+            "a networked push tier states the same floor: {networked}"
+        );
+    }
+
+    /// A frozen store is named on the same line — and only bounded-cache can be in it.
+    ///
+    /// `ReadOnceAtStartup` is not a posture every tier can reach: the Required column of
+    /// `Live` and `Push` names a cadence, so a plan without one exists for bounded-cache
+    /// alone. Asserting the frozen wording for all four, as this test used to, described a
+    /// deployment layer A refuses.
+    #[test]
+    fn a_bounded_cache_with_no_cadence_names_the_frozen_store() {
+        let plan = plan(RevocationTier::BoundedCache { t_secs: 60 }, None, None);
+        assert_eq!(
+            plan.reload(),
+            TrustReloadPlan::ReadOnceAtStartup,
+            "no cadence is the posture under test"
+        );
+        let frozen = fleet_trust_bound(&plan);
+        assert!(
+            frozen.contains("only on a restart"),
+            "a frozen store must be named on the same line: {frozen}"
+        );
     }
 
     /// R7-C129: `bounded-cache` is the tier a deployment gets by omission, and it is

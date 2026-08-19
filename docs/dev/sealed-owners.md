@@ -53,10 +53,65 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `ClientRevocationPlan` | `config_state/transport.rs` | `paths()`, `reload_cadence_secs()`, `is_enforced()` |
 | `TlsCustodyState` | `config_state/tls_custody.rs` | `exported_key_path()`, `delegated_pkcs11_label()`, `delegated_aws_key_id()`, `delegated_gcp_key_version()`, `is_delegated()` |
 | `CustodyState` | `config_state/custody.rs` | `material() -> CustodyMaterial<'_>`, `disk_secret_paths()`, `locators_are_filesystem_paths()`, `is_non_exporting_device()` |
+| `FreshnessWindow` | `config_state/freshness.rs` | `verifier_skew_secs()`, `replay_retain_until()`, `verifier_accepts_until()` |
+| `TrustDocumentSource` | `config_state/trust_document.rs` | `path()` |
+| `ClientCredentialWindow` | `config_state/client_credential_window.rs` | `cert_lifetime()`, `connection_age()`, `exposure_window()` |
+| `ShardTopologyRequest` | `config_state/topology.rs` | `shards()`, `workers_per_shard()`, `shards_or_auto()`, `workers_per_shard_or_auto()` |
+| `TrustPlan` | `startup_plan.rs` | `revocation()`, `document_path()`, `response_kid()`, `reload()`, `epoch()` |
 
 A plan produced by an owner lives **with that owner**, not in `startup_plan.rs`.
 `startup_plan` re-exports it. The plan is the owner's projection of its own validated
 state, so building it in the planner was the planner restating the owner's semantics.
+
+## A composition may combine owned facts; it may not make them replaceable again
+
+`TrustPlan` is the first entry above that is a **composition**, not a classifier's output,
+and it is where the rule needed stating. It combines three independently owned facts — the
+revocation posture, the trust document, and the shared epoch mechanism — which is exactly
+what a composition is for. What it must not do is hand them back out as a public bag,
+because then the pairing holds only for as long as every construction site takes all three
+from one deployment.
+
+Two things make the combination stick:
+
+- the representation is private and `from_validated(&ValidatedDeployment, …)` is the only
+  producer, so both owned facts come from one accepted deployment by construction;
+- **`reload` is not a field.** It is derived from the revocation state on demand, because
+  that state is the authority on how often the document is re-read. A stored copy is a
+  second value that can disagree with the first — and it already had: the fixture in
+  `trust_plane`'s tests paired a 30s reload with a state carrying 5s, and asserted the
+  wording of an operator-facing line no deployment prints. Sealing surfaced it; deriving
+  removed the possibility.
+
+The same shape settled a second question. `ReadOnceAtStartup` is reachable only under
+bounded-cache — `Live` and `Push` name a cadence in their Required column — so the test
+that asserted the frozen-store wording for all four postures was describing deployments
+layer A refuses. It now asserts it where it is reachable.
+
+## A relation that is validated must not be split back into its terms
+
+`ClientCredentialWindow` is the second composition, and it is where asking the R-SEAL
+question found a live defect rather than a latent one.
+
+Relation X5 said, in its own refusal text, *"a connection would outlive the credential that
+authenticated it"*. It compared `max_connection_age` against the ceiling **constant**, never
+against the configured `max_client_cert_lifetime`. So this deployment was accepted:
+
+```text
+--max-client-cert-lifetime 600 --max-connection-age-secs 3000
+```
+
+Both halves are individually inside the ceiling; together they mean a connection serves
+requests for forty minutes after the certificate that authenticated it expired, while the
+startup transcript reports `exposure_window=600s`. `TlsPlan` then carried the two values on
+as `Option<Duration>` fields under a doc comment stating their relation "was settled at
+layer A" — the relation was stated three times and checked nowhere.
+
+The owner holds both durations and enforces the relation at construction, so
+`exposure_window()` is a claim the value can make rather than a number picked from two.
+Making them non-optional also deleted two tests: the `unbounded` and `none` rendering arms
+were only reachable for a configuration the boundary refuses, so the tests asserting their
+wording were describing a transcript no proxy prints.
 
 ## Borrowed views
 
@@ -82,6 +137,21 @@ let you build a `CustodyState`.
   `is_enforced()` called it true and the request path had nothing to check against.
 - `key_files_read_from_disk` in `app.rs` reconstructed a security answer — which secrets
   land on local disk, for a permissions floor — out of two owners' representations.
+
+## Owners that are not sealed, and why that is the right answer
+
+Two of this campaign's owners have public representations, deliberately.
+
+`KeyFileAccessPolicy` and `DeploymentTopology` are two-variant enums where **both variants
+are legal deployments**. There is no illegal inhabitant to exclude, so `X { kind: Kind }`
+would add ceremony and no theorem. What they own is not a constructible invariant but a
+RULE: `policy.violation(mode, gid, process_gids)` answers whether a file posture is refused,
+where the consumer used to receive a `bool` and re-derive three conditions around it. The
+question a value like this answers is *whose rule is this?*, not *which inhabitants exist?*
+
+`ShardTopologyRequest` IS sealed, and the difference is instructive: `0` there is not a
+count but a deferral, so a public `usize` is a value every reader has to remember to
+interpret — and the composition root was the reader remembering it.
 
 ## Where sealing buys nothing
 

@@ -47,6 +47,9 @@ const SOURCE_FALLBACKS: &[(&str, &str)] = &[
     ),
     // ADR-MCPRE-056 §8: a projected plane's own source, read by the reach-back rule
     // that asserts materialization names no configuration type.
+    // ADR-MCPRE-056 §8 fourth clause: the composition root's own source, read by the
+    // raw-read inventory that pins which request fields it still consumes directly.
+    ("MCP_RE_APP_SRC", "mcp-re-proxy/src/app.rs"),
     ("MCP_RE_TRUST_PLANE_SRC", "mcp-re-proxy/src/trust_plane.rs"),
     ("MCP_RE_TLS_PLANE_SRC", "mcp-re-proxy/src/tls_plane.rs"),
     (

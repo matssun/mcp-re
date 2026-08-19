@@ -2089,27 +2089,6 @@ struct Forwarded {
     seeded: bool,
 }
 
-/// What the exchange machine established about effects, in the shape a rejection body
-/// carries it.
-///
-/// `None` for the two dispositions that add nothing to the wire code. The authority for
-/// these tokens is [`mcp_re_http_profile::RejectionReason`]'s own serializer, which the
-/// signed path goes through; this exists because the unsigned last resort cannot.
-fn execution_claim(execution: ExecutionDisposition) -> Option<serde_json::Value> {
-    match execution {
-        ExecutionDisposition::Unstated | ExecutionDisposition::NothingExecuted => None,
-        ExecutionDisposition::ApprovalSpentNothingExecuted => Some(serde_json::json!({
-            "execution_status": "not_executed",
-            "continuation_status": "consumed",
-            "retry_safety": "unsafe_without_new_elicitation",
-        })),
-        ExecutionDisposition::PossiblyExecuted => Some(serde_json::json!({
-            "execution_status": "possibly_executed",
-            "retry_safety": "unsafe_without_reconciliation",
-        })),
-    }
-}
-
 /// A last-resort unsigned error body when even the signed rejection cannot be built
 /// (a server-key failure). Never a silent allow — an explicit error status.
 ///
@@ -2119,7 +2098,11 @@ fn execution_claim(execution: ExecutionDisposition) -> Option<serde_json::Value>
 /// knows the backend was dispatched.
 fn unsigned_error(status: u16, wire_code: &str, execution: ExecutionDisposition) -> HttpResponse {
     let mut mcp_re_error = serde_json::json!({ "wire_code": wire_code });
-    if let Some(claim) = execution_claim(execution) {
+    // The SAME projection the signed rejection uses. Both inputs are handed over, so this
+    // receipt can state the wire-code-dependent cases — a retention failure the client must
+    // reconcile against a store that has no record of the call — and not merely what the
+    // disposition alone knows.
+    if let Some(claim) = mcp_re_http_profile::retry_semantics(wire_code, execution) {
         if let (Some(target), Some(extra)) = (mcp_re_error.as_object_mut(), claim.as_object()) {
             for (k, v) in extra {
                 target.insert(k.clone(), v.clone());
@@ -2212,5 +2195,90 @@ mod admission_window_tests {
         let enforcer = enforcer(3_600, 30, false);
         enforcer.record_authoritative_read(1_000);
         assert!(enforcer.degraded_window_exhausted(1_001));
+    }
+}
+
+/// The last-resort unsigned receipt states what the signed one would have stated.
+///
+/// This is the exit where a client has least to go on: no signature, no binding, and an
+/// error object it would otherwise read as an ordinary transport failure. What it must
+/// still carry is the execution claim — and the claim is a function of the wire code as
+/// well as the disposition, which is why this receipt consumes the canonical projection
+/// rather than a local copy of it.
+#[cfg(test)]
+mod last_resort_receipt_tests {
+    use super::*;
+
+    /// Read the `mcp_re_error` object out of an unsigned last-resort body.
+    fn claim(status: u16, wire_code: &str, execution: ExecutionDisposition) -> serde_json::Value {
+        let resp = unsigned_error(status, wire_code, execution);
+        let body: serde_json::Value =
+            serde_json::from_slice(&resp.body).expect("the last-resort body is JSON");
+        body["error"]["data"]["mcp_re_error"].clone()
+    }
+
+    /// The negative control for the duplicated-authority defect.
+    ///
+    /// A local projection taking only the disposition CANNOT produce `retention_status`,
+    /// because that case is selected by the wire code. Before the duplicate was deleted
+    /// this assertion failed on the missing field while every other field passed — the
+    /// client was told to reconcile without being told the evidence store has no record of
+    /// the call it must reconcile.
+    #[test]
+    fn a_retention_indeterminate_last_resort_receipt_still_names_the_failed_obligation() {
+        let e = claim(
+            500,
+            mcp_re_core::McpReError::EvidenceRetentionIndeterminate.wire_code(),
+            ExecutionDisposition::PossiblyExecuted,
+        );
+        assert_eq!(e["execution_status"], "possibly_executed");
+        assert_eq!(
+            e["retention_status"], "failed",
+            "the unsigned receipt must state WHICH obligation failed: {e}"
+        );
+        assert_eq!(e["retry_safety"], "unsafe_without_reconciliation");
+    }
+
+    /// The field is selected by the wire code, not added to every possibly-executed exit.
+    #[test]
+    fn an_ordinary_post_dispatch_failure_claims_no_retention_status() {
+        let e = claim(
+            502,
+            mcp_re_core::McpReError::TrustResolverUnavailable.wire_code(),
+            ExecutionDisposition::PossiblyExecuted,
+        );
+        assert_eq!(e["execution_status"], "possibly_executed");
+        assert!(
+            e.get("retention_status").is_none(),
+            "no retention obligation failed here: {e}"
+        );
+    }
+
+    /// The spent-approval case is disposition-selected and survives the same path.
+    #[test]
+    fn a_spent_approval_last_resort_receipt_names_the_consumed_continuation() {
+        let e = claim(
+            503,
+            mcp_re_core::McpReError::ReplayCacheUnavailable.wire_code(),
+            ExecutionDisposition::ApprovalSpentNothingExecuted,
+        );
+        assert_eq!(e["execution_status"], "not_executed");
+        assert_eq!(e["continuation_status"], "consumed");
+        assert_eq!(e["retry_safety"], "unsafe_without_new_elicitation");
+    }
+
+    /// An exchange that states nothing adds nothing: the frozen vectors keep their bytes.
+    #[test]
+    fn an_unstated_disposition_adds_no_claim() {
+        let e = claim(
+            400,
+            mcp_re_core::McpReError::MalformedEnvelope.wire_code(),
+            ExecutionDisposition::Unstated,
+        );
+        assert_eq!(
+            e.as_object().expect("an object").len(),
+            1,
+            "only the wire code: {e}"
+        );
     }
 }

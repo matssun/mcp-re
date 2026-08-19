@@ -391,8 +391,6 @@ pub use transport::LbAssertionV2Binding;
 pub use transport::LbAssertionV2Rejection;
 pub use transport::MappedBinding;
 pub use transport::RequestHeaders;
-pub use transport::ReverseProxyHeaderFormat;
-pub use transport::ReverseProxyMtlsProvider;
 pub use transport::RoutingHeaderRejection;
 pub use transport::StaticIdentityProvider;
 pub use transport::TransportBindingPolicy;

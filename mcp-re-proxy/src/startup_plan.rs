@@ -15,9 +15,8 @@
 //! the confusion.
 
 use crate::config_state::validation::ValidatedDeployment;
-use crate::deployment_request::BindingKind;
+use crate::config_state::ChannelBindingState;
 use crate::tls::IdentityStrategy;
-use crate::transport::ReverseProxyMtlsProvider;
 
 /// The replay plan and the store view materialization reads it through.
 ///
@@ -114,36 +113,25 @@ pub fn response_issuer_kid(config: &ValidatedDeployment) -> String {
 
 /// Where the connection seam reads the client's identity from.
 ///
-/// Three mutually-exclusive modes, and the exclusivity is the whole content of the
-/// decision: an assertion-carried identity is verified INSIDE the proxy after signature
-/// verification, a forwarded header is read at the seam and the local client certificate
-/// is ignored, and direct mTLS reads the verified peer certificate. `parse_args` already
-/// refuses the combinations, so this chooses rather than validates.
+/// Derived from the channel-binding OWNER, not from the request. `ChannelBindingState` is
+/// what layer A decided the deployment's identity binding is, and both of its states read
+/// the verified peer certificate — they differ in which SAN, which is the identity policy's
+/// business and not this seam's.
 ///
-/// Pure, and derived from configuration alone, which is why it is here rather than in the
-/// composition root: nothing about which field the identity comes from depends on what
-/// this process has managed to establish. Selecting it beside the wiring made a
-/// three-way exclusivity readable only by reading an `if`/`else` inside a 300-line
-/// assembly, and testable only by starting a proxy.
-pub fn identity_strategy(config: &ValidatedDeployment) -> IdentityStrategy {
-    let values = config.config();
-    // Mode B (lb-assertion) and Mode C (attested-ingress) both carry identity in the
-    // signed `mcp-ingress-assertion` header, verified post-verification inside the proxy
-    // rather than at the connection seam. The serve loop extracts the same header for
-    // both, failing closed on a duplicate.
-    if matches!(
-        values.binding,
-        BindingKind::LbAssertion | BindingKind::AttestedIngress
-    ) {
-        return IdentityStrategy::LbAssertion;
-    }
-    match &values.reverse_proxy_identity_header {
-        None => IdentityStrategy::DirectTls,
-        Some(header) => IdentityStrategy::ReverseProxyHeader(ReverseProxyMtlsProvider::new(
-            header.clone(),
-            values.reverse_proxy_header_format,
-            values.identity_source,
-        )),
+/// The match is exhaustive over the owner's states on purpose. The other two
+/// `IdentityStrategy` arms serve capabilities the boundary refuses and
+/// `docs/AGENT_INSTRUCTIONS.md` item 9 retains deliberately (Mode B / Mode C); they stay
+/// compiled and tested. What is gone is composition BRANCHING on raw request fields to
+/// reach them: no `ValidatedDeployment` could ever satisfy those branches, because a
+/// binding that is not `Exact` produces no `ChannelBindingState` and therefore no validated
+/// deployment at all. If a refused mode is ever admitted, it becomes a state here and this
+/// match stops compiling — which is where the arm should be wired, rather than in an `if`
+/// that silently never fires.
+pub fn identity_strategy(binding: ChannelBindingState) -> IdentityStrategy {
+    match binding {
+        ChannelBindingState::ExactUriSan | ChannelBindingState::ExactDnsSan => {
+            IdentityStrategy::DirectTls
+        }
     }
 }
 
@@ -241,43 +229,79 @@ impl TrustReloadPlan {
 /// What the trust plane must establish (ADR-MCPRE-056 §8).
 ///
 /// Everything the plane needs and nothing it could re-decide: the classified revocation
-/// state, the two locators, and the epoch mechanism normalized above it. `TrustPlane` used
-/// to receive the whole `ValidatedDeployment` and answer "which posture is this?" for itself —
-/// a second derivation of a fact layer A had already classified.
+/// state, the document it is a posture over, and the epoch mechanism normalized above it.
+/// `TrustPlane` used to receive the whole `ValidatedDeployment` and answer "which posture is
+/// this?" for itself — a second derivation of a fact layer A had already classified.
+///
+/// # A composition may combine owned facts; it may not make them replaceable again
+///
+/// The representation is private to this module. That is the difference between this and
+/// the public bag it replaced: a plan used to pair a sealed `TrustRevocationState` with a
+/// free `trust_path: String`, so the pairing held only because every construction site
+/// happened to take both from the same deployment. Nothing said they had to.
+///
+/// `reload` is not a field. It is DERIVED from the revocation state on demand, because the
+/// state is the authority on how often the document is re-read — a stored copy is a second
+/// value that can disagree with the first, and the fixture in `trust_plane`'s tests had
+/// already drifted that way, naming a 30s reload beside a state carrying 5s.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrustPlan {
     /// Which revocation posture this deployment asked for.
-    pub revocation: crate::config_state::TrustRevocationState,
-    /// The trust document.
-    pub trust_path: String,
+    revocation: crate::config_state::TrustRevocationState,
+    /// The document the request-signer set is read from.
+    document: crate::config_state::TrustDocumentSource,
     /// The root issuer whose key must never be enrolled as a request signer.
-    pub response_kid: String,
-    /// How the document is kept current.
-    pub reload: TrustReloadPlan,
+    response_kid: String,
     /// The shared epoch mechanism — an INPUT, so this plane cannot become its authority
     /// merely by being materialized first (CF-09).
-    pub epoch: TrustEpochPlan,
+    epoch: TrustEpochPlan,
 }
 
 impl TrustPlan {
-    /// Project the plan from the retained classification and the validated locators.
+    /// Project the plan from the retained classification and the validated locator.
     ///
     /// `response_kid` and `epoch` are passed IN rather than derived here. Both are shared
     /// with the signing plane, and a value derived inside one consumer is a value the other
     /// consumer must re-derive.
+    ///
+    /// The one producer, and it takes a `ValidatedDeployment` — so both owned facts come
+    /// from one deployment, and no caller can supply them separately.
     pub fn from_validated(
         config: &ValidatedDeployment,
         response_kid: String,
         epoch: TrustEpochPlan,
     ) -> TrustPlan {
-        let values = config.config();
         TrustPlan {
             revocation: config.state().trust_revocation().clone(),
-            trust_path: values.trust_path.clone(),
+            document: config.state().trust_document().clone(),
             response_kid,
-            reload: trust_reload_plan(config.state().trust_revocation()),
             epoch,
         }
+    }
+
+    /// The revocation posture, for the tier wrapping and the startup audit line.
+    pub fn revocation(&self) -> &crate::config_state::TrustRevocationState {
+        &self.revocation
+    }
+
+    /// The locator the trust document is read from.
+    pub fn document_path(&self) -> &str {
+        self.document.path()
+    }
+
+    /// The root issuer whose key is excluded from the request-signer set.
+    pub fn response_kid(&self) -> &str {
+        &self.response_kid
+    }
+
+    /// How the document is kept current, derived from the posture that decides it.
+    pub fn reload(&self) -> TrustReloadPlan {
+        trust_reload_plan(&self.revocation)
+    }
+
+    /// The shared epoch mechanism.
+    pub fn epoch(&self) -> &TrustEpochPlan {
+        &self.epoch
     }
 }
 
@@ -341,6 +365,7 @@ impl SigningPlan {
     ) -> SigningPlan {
         let values = config.config();
         let facts = config.state().delegated_signing();
+        let rotation = facts.rotation_window();
         let identity = config.state().server_identity().actor();
         SigningPlan {
             custody: mcp_re_http_profile::CustodyConfig {
@@ -356,8 +381,10 @@ impl SigningPlan {
                 server_role: identity.role.clone(),
                 server_trust_domain: identity.trust_domain.clone(),
                 server_subject: identity.subject.clone(),
-                ttl: values.delegated_ttl_secs,
-                overlap: values.delegated_overlap_secs,
+                // The pair as the owner validated it. Reading two independent integers
+                // here is what let a validated TTL be paired with an arbitrary overlap.
+                ttl: rotation.ttl_secs(),
+                overlap: rotation.overlap_secs(),
             },
             epoch,
         }
@@ -372,19 +399,21 @@ pub use crate::config_state::transport::ClientRevocationPlan;
 
 /// What the TLS plane must establish (ADR-MCPRE-056 §8).
 ///
-/// Two classified states and the resource inputs each posture needs. The certificate
-/// lifetime and the connection-age bound are INPUTS, not decisions: X5's compatibility
-/// relation between them was settled at layer A and is not re-checked here.
+/// Three classified states. The certificate lifetime and the connection-age bound used to
+/// travel here as two `Option<Duration>` inputs, with a doc comment claiming their
+/// compatibility "was settled at layer A" — which was not true: relation X5 compared the
+/// connection age against the ceiling CONSTANT and never against the configured lifetime.
+/// `ClientCredentialWindow` states the relation over the chosen values and owns both, so
+/// the plan carries one fact instead of two durations that could disagree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsPlan {
     /// Whether the handshake key can leave the device it lives on.
     pub custody: crate::config_state::TlsCustodyState,
     /// The offline client-certificate revocation posture.
     pub client_revocation: ClientRevocationPlan,
-    /// The client-certificate lifetime ceiling, for the operator-facing exposure window.
-    pub max_client_cert_lifetime: Option<std::time::Duration>,
-    /// The connection-age bound the exposure window's honesty depends on.
-    pub max_connection_age: Option<std::time::Duration>,
+    /// How long a client credential authorizes traffic, and how long one connection may
+    /// serve on a single handshake — the pair that makes the exposure window honest.
+    pub credential_window: crate::config_state::ClientCredentialWindow,
 }
 
 impl TlsPlan {
@@ -395,12 +424,10 @@ impl TlsPlan {
     /// would collapse the A/B split: the request is coherent either way, and only
     /// materialization can say whether this executable can serve it.
     pub fn from_validated(config: &ValidatedDeployment) -> TlsPlan {
-        let values = config.config();
         TlsPlan {
             custody: config.state().tls_custody().clone(),
             client_revocation: config.state().crl_revocation().client_revocation_plan(),
-            max_client_cert_lifetime: values.max_client_cert_lifetime,
-            max_connection_age: values.limits.max_connection_age,
+            credential_window: config.state().client_credential_window(),
         }
     }
 }
@@ -502,35 +529,33 @@ mod tests {
         argv.extend_from_slice(extra);
         let config = parse(&argv).expect("args parse");
         let validated = ValidatedDeployment::try_from(config).expect("config validates");
-        identity_strategy(&validated)
+        identity_strategy(validated.state().channel_binding())
     }
 
     /// A deployable configuration reads identity from the verified peer certificate.
     ///
-    /// `DirectTls` is the only arm a `ValidatedDeployment` can select today. The other two
-    /// belong to capabilities the boundary refuses — see the test below — so this is not
-    /// "the default among three" but "the one that exists".
+    /// `DirectTls` is the only arm a `ValidatedDeployment` can select today. The other
+    /// belongs to a capability the boundary refuses — see the test below — so this is not
+    /// "the default among two" but "the one that exists".
     #[test]
     fn a_deployable_configuration_reads_the_verified_peer_certificate() {
         assert!(matches!(strategy_for(&[]), IdentityStrategy::DirectTls));
     }
 
-    /// The other two arms are unreachable through the boundary, and that is the property
+    /// The `LbAssertion` arm is unreachable through the boundary, and that is the property
     /// worth pinning.
     ///
-    /// `ReverseProxyHeader` trusts a forwarded header any peer reaching the socket could
-    /// spoof; `LbAssertion` serves the two ingress-assertion modes. Both are refused by
+    /// It serves the two ingress-assertion modes, and both are refused by
     /// `unsafe_config_violations`, so no command line reaches them — they are retained
     /// capabilities (`docs/AGENT_INSTRUCTIONS.md` §9), not dead vocabulary, and the
     /// distinction is exactly that a decision gates them rather than nothing does.
     ///
     /// This asserts the refusal rather than the strategy because that is what makes the
-    /// classifier's shape honest: if one of these ever becomes selectable, this fails and
-    /// the arm needs its own coverage rather than acquiring it silently.
+    /// classifier's shape honest: if one ever becomes selectable, this fails and the arm
+    /// needs its own coverage rather than acquiring it silently.
     #[test]
-    fn the_assertion_and_forwarded_identity_arms_are_refused_at_the_boundary() {
+    fn the_assertion_arm_is_refused_at_the_boundary() {
         for extra in [
-            vec!["--reverse-proxy-identity-header", "x-client-id"],
             vec!["--transport-binding", "lb-assertion"],
             vec!["--transport-binding", "attested-ingress"],
         ] {
@@ -995,7 +1020,7 @@ mod tests {
             TrustEpochPlan::from_validated(&config),
         );
         assert_eq!(
-            plan.revocation,
+            *plan.revocation(),
             crate::config_state::test_support::revocation_posture(
                 crate::revocation_tier::RevocationTier::Push { t_secs: 30 },
                 Some(15),
@@ -1007,13 +1032,13 @@ mod tests {
             "the plan must hold what layer A classified, not re-read --revocation-tier"
         );
         assert_eq!(
-            plan.reload,
+            plan.reload(),
             TrustReloadPlan::Every {
                 secs: crate::config_state::TrustRevocationState::cadence(15)
             }
         );
-        assert_eq!(plan.response_kid, "root-1");
-        assert!(matches!(plan.epoch, TrustEpochPlan::Redis { .. }));
+        assert_eq!(plan.response_kid(), "root-1");
+        assert!(matches!(plan.epoch(), TrustEpochPlan::Redis { .. }));
 
         let default_tier = validated(&[]);
         let plan = TrustPlan::from_validated(
@@ -1022,7 +1047,7 @@ mod tests {
             TrustEpochPlan::from_validated(&default_tier),
         );
         assert_eq!(
-            plan.reload,
+            plan.reload(),
             TrustReloadPlan::ReadOnceAtStartup,
             "no cadence is a posture, not a missing value"
         );
@@ -1200,11 +1225,15 @@ mod tests {
         }
     }
 
-    /// The plan carries the classified custody, and the cert-lifetime/connection-age
-    /// values as INPUTS. X5's relation between the latter two was settled at layer A and
-    /// is not re-checked here — the plan simply carries what the posture must state.
+    /// The plan carries three classified states, and the credential window is one of them.
+    ///
+    /// The cert lifetime and the connection age used to travel as two `Option<Duration>`
+    /// inputs under a comment saying their relation "was settled at layer A". It was not:
+    /// the relation compared the age against the ceiling constant, never against the
+    /// configured lifetime. The plan now carries the pair as one owned fact, so the
+    /// assertion is about a window rather than about two durations.
     #[test]
-    fn the_tls_plan_carries_the_classified_custody_and_its_inputs() {
+    fn the_tls_plan_carries_the_classified_custody_and_the_credential_window() {
         let config = validated(&["--max-client-cert-lifetime", "3600"]);
         let plan = TlsPlan::from_validated(&config);
         assert_eq!(
@@ -1213,8 +1242,12 @@ mod tests {
             "the fixture's TLS key is an exported file, and the plan carries its path"
         );
         assert_eq!(
-            plan.max_client_cert_lifetime,
-            Some(std::time::Duration::from_secs(3600))
+            plan.credential_window.cert_lifetime(),
+            std::time::Duration::from_secs(3600)
+        );
+        assert!(
+            plan.credential_window.connection_age() <= plan.credential_window.exposure_window(),
+            "the plan cannot hold a connection age that outlives the credential"
         );
         assert!(!plan.client_revocation.is_enforced());
     }

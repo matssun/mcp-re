@@ -30,8 +30,8 @@ use crate::deployment_request::DeploymentRequest;
 /// the end of [`parse_args`]. What was missing is that passing through `parse_args` was
 /// the ONLY thing that ran them. `DeploymentRequest` has 76 public fields, so any caller that built
 /// one in code and handed it to `app::run` got a proxy with cn_legacy identity, a
-/// non-durable replay tier, a disabled client-cert lifetime or reverse-proxy header
-/// ingress — every posture the project refuses — with nothing to stop it. The guard was
+/// non-durable replay tier or a disabled client-cert lifetime — every posture the
+/// project refuses — with nothing to stop it. The guard was
 /// at the wrong altitude: on one path into the runtime rather than on the runtime.
 ///
 /// This type moves it onto the runtime. The serving path accepts only a
@@ -118,8 +118,8 @@ impl TryFrom<DeploymentRequest> for ValidatedDeployment {
 /// `max_client_cert_lifetime == None`) is likewise rejected.
 ///
 /// The postures rejected here are the pure-config, platform-independent fail-open
-/// ones: reverse-proxy header ingress (M10/M22), a non-durable/weak replay tier
-/// (#90/ADR-MCPS-020), lb-assertion binding, and cn_legacy identity.
+/// ones: a non-durable/weak replay tier (#90/ADR-MCPS-020), lb-assertion binding, and
+/// cn_legacy identity.
 ///
 /// The violations alone. [`validate_configuration`] is the boundary proper — it runs the
 /// same single pass and additionally returns what that pass RECOGNISED, which is what the
@@ -162,6 +162,12 @@ pub fn validate_configuration(
         crate::config_state::transport::classify_and_validate_binding(config);
     let (crl_revocation, crl_violations) =
         crate::config_state::transport::classify_and_validate_crl(config);
+    let (freshness, freshness_violations) =
+        crate::config_state::freshness::classify_and_validate(config);
+    let (trust_document, trust_document_violations) =
+        crate::config_state::trust_document::classify_and_validate(config);
+    let (client_credential_window, credential_window_violations) =
+        crate::config_state::client_credential_window::classify_and_validate(config);
     // This deployment's own actor identity. It takes the RESOLVED issuer kid rather than
     // re-reading the primitives it defaults from, so the keyid on the identity and the kid
     // the credential chains to are one value (CF-10).
@@ -175,6 +181,13 @@ pub fn validate_configuration(
     // Infallible: the request states one of three things and the default makes the third
     // a basis too. Nothing to refuse — the illegal combination is not representable.
     let in_flight_limit = crate::config_state::in_flight_limit::classify(config);
+    // Infallible for the same reason: both key-file postures are legal deployments. What
+    // the owner holds is the RULE, and the rule is applied to a file rather than to the
+    // request.
+    let key_file_access = crate::config_state::key_file_access::classify(config);
+    // Two facts at two altitudes, deliberately not one owner: the topology is knowable from
+    // the request, the shard COUNT is not — `0` means ask the host.
+    let (topology, shard_topology) = crate::config_state::topology::classify(config);
     // PASS 2 — the relations between machines, asked of the RECOGNISED states rather than
     // of the fields again.
     let cross = crate::config_state::cross_machine::validate(
@@ -190,7 +203,10 @@ pub fn validate_configuration(
         crl_revocation: crl_violations,
         custody: custody_violations,
         delegated_signing: delegated_signing_violations,
+        freshness: freshness_violations,
         replay: replay_violations,
+        trust_document: trust_document_violations,
+        client_credential_window: credential_window_violations,
         server_identity: server_identity_violations,
         tls_custody: tls_custody_violations,
         trust_revocation: trust_violations,
@@ -241,21 +257,36 @@ pub fn validate_configuration(
     let Some(server_identity) = server_identity else {
         return Err(unrecognised("server-identity"));
     };
+    let Some(freshness) = freshness else {
+        return Err(unrecognised("freshness"));
+    };
+    let Some(trust_document) = trust_document else {
+        return Err(unrecognised("trust-document"));
+    };
+    let Some(client_credential_window) = client_credential_window else {
+        return Err(unrecognised("client-credential-window"));
+    };
     Ok(DeploymentConfigState::new(
         crate::config_state::RecognisedStates {
             admission,
             audit,
             channel_binding,
+            client_credential_window,
+            freshness,
             continuation_control,
             crl_revocation,
             custody,
             delegated_signing,
             in_flight_limit,
+            key_file_access,
             mcp_transport_contract,
             replay,
             retention,
             server_identity,
+            shard_topology,
             tls_custody,
+            topology,
+            trust_document,
             trust_revocation,
             verified_context,
         },
@@ -271,7 +302,10 @@ struct MachineViolations {
     crl_revocation: Vec<String>,
     custody: Vec<String>,
     delegated_signing: Vec<String>,
+    freshness: Vec<String>,
     replay: Vec<String>,
+    trust_document: Vec<String>,
+    client_credential_window: Vec<String>,
     server_identity: Vec<String>,
     tls_custody: Vec<String>,
     trust_revocation: Vec<String>,
@@ -307,6 +341,7 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // clauses used to sit at the END of this list; they are emitted here now, which is a
     // DELIBERATE precedence change — the mode's own undeployability is what an operator
     // needs first, and it was previously reported after every unrelated limit.
+    violations.extend(decided.freshness);
     violations.extend(decided.channel_binding);
     // The deployment's own identity coordinates, immediately before `--target-uri`, which is
     // one of them and was the only one checked here. Each is a REQUIRED `String` that
@@ -380,13 +415,17 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // so the family was split across two layers with no reason beyond history. It is one
     // owner now, and this is where an operator has always read it.
     violations.extend(decided.delegated_signing);
-    // ADR-MCPS-023 §A1 (MCPS-57): `None` disables enforcement outright; a lifetime
-    // above the ceiling would let a NOT-short-lived cert be audited as
-    // `short_lived_cert`. Both fail closed.
-    violations.extend(residue::client_cert_lifetime_violations(config));
-    // X5 — Limits × Tls: a connection may not outlive the credential that authenticated
-    // it, because the client certificate is checked at the handshake and never again.
-    violations.extend(decided.cross.x5_connection_outlives_credential);
+    // ADR-MCPS-023 §A1 (MCPS-57) and the old relation X5, now one owner: `None` disables
+    // enforcement on either side, a lifetime above the ceiling would let a NOT-short-lived
+    // cert be audited as `short_lived_cert`, and a connection age above the lifetime means
+    // a connection outlives the credential that authenticated it. All fail closed, and
+    // they are spliced where the two clause groups have always been read.
+    violations.extend(decided.client_credential_window);
+    // The trust locator, immediately before the posture over it. It left the required-
+    // locator group when it acquired an owner: `TrustDocumentSource` is what a `TrustPlan`
+    // now carries instead of a bare string, so the refusal belongs where the trust plane's
+    // other clauses are rather than among three locators it shares nothing else with.
+    violations.extend(decided.trust_document);
     // The `TrustRevocation` machine (ADR-MCPS-021 Axis 2): the declared tier, the reload
     // cadence that IS its revocation window, and the epoch source that splits Push into
     // its inert and networked states. Spliced here because this is where its clauses have
@@ -402,12 +441,8 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // off silently, which left the binary asserting a maximal-security posture while its
     // own defense was disabled. Each default is `Some(30s)`, so `None` here only ever comes
     // from an operator explicitly passing `0`.
-    // The freshness tolerance, held to the bound `VerifierPolicy::new` re-checks. It is a
-    // range over a number, which is knowable here,
-    // and leaving it to the verifier's constructor meant a deployment learned about it after
-    // two planes had established resources. A negative skew narrows the window
-    // asymmetrically; one above the bound stops the freshness gate being a freshness gate.
-    violations.extend(residue::clock_skew_violations(config));
+    // The freshness tolerance moved to `config_state::freshness`, which owns the fact and
+    // its two projections; its violations arrive with every other owner's below.
     // The two `ServerLimits` quantities that are legally PRESENT but illegally zero, stated
     // ahead of the timeout clauses because they are the same class — a limit that disables
     // the control it bounds — and an operator reading about limits should meet them together.
@@ -431,10 +466,6 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // kind is representable now — every classifiable replay state is shared, and a request
     // that declares no durability tier names no state at all — so the fleet posture needs
     // no replay clause of its own. The tier's own strength requirement is enforced above.
-    // X7 — ChannelBinding × Tls: mTLS is terminated locally XOR a forwarded identity is
-    // trusted. The two binding-kind clauses that used to close this list moved up into the
-    // `ChannelBinding` machine's own position.
-    violations.extend(decided.cross.x7_local_mtls_xor_forwarded);
     // X9 — TrustRevocation × DelegatedSigning. The epoch posture is decided once, by the
     // `TrustRevocation` machine, and carried in the classification; nothing is re-derived
     // here (CF-09).

@@ -299,10 +299,11 @@ Every one of these is enforced at startup (fail closed):
   hop is a pinned mTLS channel (§C2). Absent, the node **refuses to start** — the
   pinned backend channel is load-bearing and cannot be silently missing.
 
-The node resolves identity from the signed assertion, so `attested-ingress` is
-mutually exclusive with a reverse-proxy identity header. The plain `lb-assertion`
-(Mode B, Tier 3) and the raw `trusted_ingress_asserted` header (Tier 2) remain
-**strict-rejected** — legacy/migration only, never an enterprise option.
+The node resolves identity from the signed assertion. The plain `lb-assertion`
+(Mode B, Tier 3) remains **strict-rejected** — legacy/migration only, never an
+enterprise option. The raw `trusted_ingress_asserted` header (Tier 2) is not a mode
+at all: the forwarded-header identity path was removed, so identity comes from the
+locally-terminated client certificate or from a signed assertion, never a header.
 
 ---
 
