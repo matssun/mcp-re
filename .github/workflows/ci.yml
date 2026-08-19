@@ -230,21 +230,30 @@ jobs:
       # FFI bindings with libclang; install it defensively so the cargo closure
       # links on a clean runner.
       - name: System build dependencies
-        # BOTH apt operations are unbounded network calls against a mirror this runner
-        # does not control, so each carries its own bound rather than inheriting the
-        # 6-hour job default. A healthy run takes ~57s.
+        # Both apt operations are network calls against a mirror this runner does not
+        # control, and they fail in two different ways. Measured on 2026-08-19, all on
+        # the same mirror:
         #
-        # Measured failures, both on 2026-08-19 and both on this one mirror: with no
-        # bound at all, six jobs across four branches sat in `update` for 28-58 minutes
-        # reporting `pending` the whole time — which says strictly less than a red
-        # would. With only `update` bounded, `update` finished in 16s and `install`
-        # stalled fetching a 28.8 MB archive until the step cap killed it. Bounding one
-        # network call and not the other just moves where the run hangs.
+        #   * WEDGED. With no bound at all, six jobs across four branches sat in
+        #     `update` for 28-58 minutes, each reporting `pending` the whole time —
+        #     which says strictly less than a red would. `timeout 300` bounds that.
+        #   * SLOW. `install` fetches libclang-18-dev, a 28.8 MB archive. A healthy
+        #     run takes ~57s end to end; a bad-day run measured 7min 30s for that one
+        #     file (64.0 kB/s), and an earlier run was killed mid-fetch by a 10-minute
+        #     step cap. The connection is not stalling, it is dribbling — which is why
+        #     `Acquire::http::Timeout` does NOT catch it. That option bounds
+        #     INACTIVITY, and a slow transfer is never inactive.
+        #
+        # So the budget is what has to accommodate slowness: 20 minutes leaves room for
+        # a fetch an order of magnitude slower than healthy, while still turning a truly
+        # wedged mirror red instead of leaving it pending for hours. The Acquire options
+        # cover the failure the budget cannot — a connection that genuinely dies mid-fetch
+        # is aborted at 30s and retried, rather than failing the run outright.
         #
         # Nothing here is weakened. A stale index is tolerated because the runner image
         # ships a fresh one; a package that genuinely cannot be installed still fails the
         # step, and every gate below is untouched.
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: |
           timeout 300 sudo apt-get update \
             || echo "apt-get update did not finish in 300s; using the runner image's package index"
@@ -417,21 +426,30 @@ jobs:
 
       # cryptoki-sys builds its FFI bindings with libclang (see the `cargo` job).
       - name: System build dependencies
-        # BOTH apt operations are unbounded network calls against a mirror this runner
-        # does not control, so each carries its own bound rather than inheriting the
-        # 6-hour job default. A healthy run takes ~57s.
+        # Both apt operations are network calls against a mirror this runner does not
+        # control, and they fail in two different ways. Measured on 2026-08-19, all on
+        # the same mirror:
         #
-        # Measured failures, both on 2026-08-19 and both on this one mirror: with no
-        # bound at all, six jobs across four branches sat in `update` for 28-58 minutes
-        # reporting `pending` the whole time — which says strictly less than a red
-        # would. With only `update` bounded, `update` finished in 16s and `install`
-        # stalled fetching a 28.8 MB archive until the step cap killed it. Bounding one
-        # network call and not the other just moves where the run hangs.
+        #   * WEDGED. With no bound at all, six jobs across four branches sat in
+        #     `update` for 28-58 minutes, each reporting `pending` the whole time —
+        #     which says strictly less than a red would. `timeout 300` bounds that.
+        #   * SLOW. `install` fetches libclang-18-dev, a 28.8 MB archive. A healthy
+        #     run takes ~57s end to end; a bad-day run measured 7min 30s for that one
+        #     file (64.0 kB/s), and an earlier run was killed mid-fetch by a 10-minute
+        #     step cap. The connection is not stalling, it is dribbling — which is why
+        #     `Acquire::http::Timeout` does NOT catch it. That option bounds
+        #     INACTIVITY, and a slow transfer is never inactive.
+        #
+        # So the budget is what has to accommodate slowness: 20 minutes leaves room for
+        # a fetch an order of magnitude slower than healthy, while still turning a truly
+        # wedged mirror red instead of leaving it pending for hours. The Acquire options
+        # cover the failure the budget cannot — a connection that genuinely dies mid-fetch
+        # is aborted at 30s and retried, rather than failing the run outright.
         #
         # Nothing here is weakened. A stale index is tolerated because the runner image
         # ships a fresh one; a package that genuinely cannot be installed still fails the
         # step, and every gate below is untouched.
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: |
           timeout 300 sudo apt-get update \
             || echo "apt-get update did not finish in 300s; using the runner image's package index"
@@ -514,21 +532,30 @@ jobs:
       # The FFI closure (cryptoki-sys) builds bindings with libclang, same as the
       # cargo jobs; install it so the Bazel build links on a clean runner.
       - name: System build dependencies
-        # BOTH apt operations are unbounded network calls against a mirror this runner
-        # does not control, so each carries its own bound rather than inheriting the
-        # 6-hour job default. A healthy run takes ~57s.
+        # Both apt operations are network calls against a mirror this runner does not
+        # control, and they fail in two different ways. Measured on 2026-08-19, all on
+        # the same mirror:
         #
-        # Measured failures, both on 2026-08-19 and both on this one mirror: with no
-        # bound at all, six jobs across four branches sat in `update` for 28-58 minutes
-        # reporting `pending` the whole time — which says strictly less than a red
-        # would. With only `update` bounded, `update` finished in 16s and `install`
-        # stalled fetching a 28.8 MB archive until the step cap killed it. Bounding one
-        # network call and not the other just moves where the run hangs.
+        #   * WEDGED. With no bound at all, six jobs across four branches sat in
+        #     `update` for 28-58 minutes, each reporting `pending` the whole time —
+        #     which says strictly less than a red would. `timeout 300` bounds that.
+        #   * SLOW. `install` fetches libclang-18-dev, a 28.8 MB archive. A healthy
+        #     run takes ~57s end to end; a bad-day run measured 7min 30s for that one
+        #     file (64.0 kB/s), and an earlier run was killed mid-fetch by a 10-minute
+        #     step cap. The connection is not stalling, it is dribbling — which is why
+        #     `Acquire::http::Timeout` does NOT catch it. That option bounds
+        #     INACTIVITY, and a slow transfer is never inactive.
+        #
+        # So the budget is what has to accommodate slowness: 20 minutes leaves room for
+        # a fetch an order of magnitude slower than healthy, while still turning a truly
+        # wedged mirror red instead of leaving it pending for hours. The Acquire options
+        # cover the failure the budget cannot — a connection that genuinely dies mid-fetch
+        # is aborted at 30s and retried, rather than failing the run outright.
         #
         # Nothing here is weakened. A stale index is tolerated because the runner image
         # ships a fresh one; a package that genuinely cannot be installed still fails the
         # step, and every gate below is untouched.
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: |
           timeout 300 sudo apt-get update \
             || echo "apt-get update did not finish in 300s; using the runner image's package index"
