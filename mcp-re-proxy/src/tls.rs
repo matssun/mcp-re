@@ -312,7 +312,7 @@ impl RustlsDirectProvider {
         server_key: PrivateKeyDer<'static>,
         client_ca: Vec<CertificateDer<'static>>,
     ) -> Result<ServerConfig, TlsError> {
-        Self::build_server_config_with_crls(server_chain, server_key, client_ca, Vec::new(), false)
+        Self::build_server_config_with_crls(server_chain, server_key, client_ca, Vec::new())
     }
 
     /// As [`build_server_config`](Self::build_server_config), additionally checking
@@ -328,26 +328,23 @@ impl RustlsDirectProvider {
     ///   * the FULL chain to the trust anchor has revocation checked
     ///     (`RevocationCheckDepth::Chain`, the default);
     ///   * a cert whose revocation status cannot be determined from the CRLs is
-    ///     REJECTED (`UnknownStatusPolicy::Deny`, the default) UNLESS
-    ///     `allow_unknown_revocation_status` is `true` (operator opt-out).
+    ///     REJECTED (`UnknownStatusPolicy::Deny`). This is unconditional — see
+    ///     [`build_client_verifier`], which takes no policy input that could relax it.
     ///
     /// When `crls` is empty this behaves exactly like the no-CRL path:
-    /// `.with_crls([])` adds nothing and rustls performs no revocation checks, so
-    /// `allow_unknown_revocation_status` has no effect.
+    /// `.with_crls([])` adds nothing and rustls performs no revocation checks.
     pub fn build_server_config_with_crls(
         server_chain: Vec<CertificateDer<'static>>,
         server_key: PrivateKeyDer<'static>,
         client_ca: Vec<CertificateDer<'static>>,
         crls: Vec<CertificateRevocationListDer<'static>>,
-        allow_unknown_revocation_status: bool,
     ) -> Result<ServerConfig, TlsError> {
-        let resumption = new_resumption_state(&client_ca, allow_unknown_revocation_status);
+        let resumption = new_resumption_state(&client_ca);
         Self::build_server_config_with_crls_resuming(
             server_chain,
             server_key,
             client_ca,
             crls,
-            allow_unknown_revocation_status,
             &resumption,
         )
     }
@@ -363,22 +360,13 @@ impl RustlsDirectProvider {
         server_key: PrivateKeyDer<'static>,
         client_ca: Vec<CertificateDer<'static>>,
         crls: Vec<CertificateRevocationListDer<'static>>,
-        allow_unknown_revocation_status: bool,
         resumption: &Arc<crate::tls_auth_epoch::EpochBoundSessionStore>,
     ) -> Result<ServerConfig, TlsError> {
         // Computed BEFORE `client_ca` is moved into the verifier: the anchors are the
-        // epoch's primary input (ADR-MCPRE-055).
-        let epoch = crate::tls_auth_epoch::TlsAuthEpoch::compute(
-            &client_ca,
-            allow_unknown_revocation_status,
-        );
+        // epoch's only input (ADR-MCPRE-055).
+        let epoch = crate::tls_auth_epoch::TlsAuthEpoch::compute(&client_ca);
         let provider = Arc::new(ring::default_provider());
-        let verifier = build_client_verifier(
-            client_ca,
-            crls,
-            allow_unknown_revocation_status,
-            provider.clone(),
-        )?;
+        let verifier = build_client_verifier(client_ca, crls, provider.clone())?;
 
         // MCPS-079 fault injection ("test of the tests"), the symmetric mirror of
         // mcp-re-transport's `fault_accept_any_server`. When — and ONLY when — the
@@ -424,14 +412,10 @@ impl RustlsDirectProvider {
 /// resumable session on each rebuild and leaves the epoch unable to move.
 pub(crate) fn new_resumption_state(
     client_ca: &[CertificateDer<'_>],
-    allow_unknown_revocation_status: bool,
 ) -> Arc<crate::tls_auth_epoch::EpochBoundSessionStore> {
     Arc::new(
         crate::tls_auth_epoch::EpochBoundSessionStore::memory_backed(
-            crate::tls_auth_epoch::TlsAuthEpoch::compute(
-                client_ca,
-                allow_unknown_revocation_status,
-            ),
+            crate::tls_auth_epoch::TlsAuthEpoch::compute(client_ca),
             TLS_SESSION_CACHE_ENTRIES,
         ),
     )
@@ -539,10 +523,9 @@ const TLS_SESSION_CACHE_ENTRIES: usize = 4096;
 /// Build the fail-closed WebPKI client-certificate verifier shared by the
 /// exported-key ([`RustlsDirectProvider::build_server_config_with_crls`]) and delegated-key
 /// ([`build_server_config_delegated_with_crls`]) server-config paths. Sharing it
-/// keeps the security-critical verifier posture identical across both: strict
-/// unknown-status rejection by default, full-chain revocation, operator opt-out
-/// only via `allow_unknown_revocation_status`, and a malformed CRL → startup
-/// `TlsError::Verifier` (fail closed).
+/// keeps the security-critical verifier posture identical across both: unconditional
+/// unknown-status rejection with no operator opt-out, full-chain revocation, and a
+/// malformed CRL → startup `TlsError::Verifier` (fail closed).
 ///
 /// ADR-MCPS-023 §A1 (v0.9, MCPS-58): the verifier now **enforces CRL expiration**
 /// (`enforce_revocation_expiration`). Before this, the builder used the rustls
@@ -553,23 +536,26 @@ const TLS_SESSION_CACHE_ENTRIES: usize = 4096;
 /// ([`crl_freshness`]) and the "restart before `nextUpdate`" operator contract;
 /// the in-process hot-reloader is tracked as a v0.10 follow-up. The call is a
 /// no-op when no CRLs are configured (revocation checks are not performed).
+/// Build the client-certificate verifier every serving path shares.
+///
+/// `allow_unknown_revocation_status()` is NOT called, and there is no parameter that
+/// could cause it to be: rustls' `UnknownStatusPolicy::Deny` default stands on every
+/// verifier this function can produce. Deny-unknown is therefore a property of the
+/// construction rather than of an argument a caller passed correctly — the same
+/// invariant `ClientRevocationIndex::admits` holds on the per-request side, which is
+/// what keeps the handshake and the per-request check from disagreeing.
 fn build_client_verifier(
     client_ca: Vec<CertificateDer<'static>>,
     crls: Vec<CertificateRevocationListDer<'static>>,
-    allow_unknown_revocation_status: bool,
     provider: Arc<rustls::crypto::CryptoProvider>,
 ) -> Result<Arc<dyn rustls::server::danger::ClientCertVerifier>, TlsError> {
     let mut roots = RootCertStore::empty();
     for ca in client_ca {
         roots.add(ca).map_err(|_| TlsError::BadClientCa)?;
     }
-    let mut builder = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider)
+    WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider)
         .with_crls(crls)
-        .enforce_revocation_expiration();
-    if allow_unknown_revocation_status {
-        builder = builder.allow_unknown_revocation_status();
-    }
-    builder
+        .enforce_revocation_expiration()
         .build()
         .map_err(|e| TlsError::Verifier(e.to_string()))
 }
@@ -713,16 +699,9 @@ pub fn build_server_config_delegated_with_crls(
     cert_resolver: Arc<dyn rustls::server::ResolvesServerCert>,
     client_ca: Vec<CertificateDer<'static>>,
     crls: Vec<CertificateRevocationListDer<'static>>,
-    allow_unknown_revocation_status: bool,
 ) -> Result<ServerConfig, TlsError> {
-    let resumption = new_resumption_state(&client_ca, allow_unknown_revocation_status);
-    build_server_config_delegated_with_crls_resuming(
-        cert_resolver,
-        client_ca,
-        crls,
-        allow_unknown_revocation_status,
-        &resumption,
-    )
+    let resumption = new_resumption_state(&client_ca);
+    build_server_config_delegated_with_crls_resuming(cert_resolver, client_ca, crls, &resumption)
 }
 
 /// As [`build_server_config_delegated_with_crls`], reusing a resumption state that
@@ -732,19 +711,12 @@ pub(crate) fn build_server_config_delegated_with_crls_resuming(
     cert_resolver: Arc<dyn rustls::server::ResolvesServerCert>,
     client_ca: Vec<CertificateDer<'static>>,
     crls: Vec<CertificateRevocationListDer<'static>>,
-    allow_unknown_revocation_status: bool,
     resumption: &Arc<crate::tls_auth_epoch::EpochBoundSessionStore>,
 ) -> Result<ServerConfig, TlsError> {
     // Computed BEFORE `client_ca` is moved into the verifier (ADR-MCPRE-055).
-    let epoch =
-        crate::tls_auth_epoch::TlsAuthEpoch::compute(&client_ca, allow_unknown_revocation_status);
+    let epoch = crate::tls_auth_epoch::TlsAuthEpoch::compute(&client_ca);
     let provider = Arc::new(ring::default_provider());
-    let verifier = build_client_verifier(
-        client_ca,
-        crls,
-        allow_unknown_revocation_status,
-        provider.clone(),
-    )?;
+    let verifier = build_client_verifier(client_ca, crls, provider.clone())?;
     let server_config = ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .map_err(|e| TlsError::Config(e.to_string()))?
@@ -792,16 +764,14 @@ pub fn build_server_config_delegated_validated(
     signer: Arc<dyn crate::delegated_tls::RawEd25519TlsSigner>,
     client_ca: Vec<CertificateDer<'static>>,
     crls: Vec<CertificateRevocationListDer<'static>>,
-    allow_unknown_revocation_status: bool,
 ) -> Result<ServerConfig, TlsError> {
-    let resumption = new_resumption_state(&client_ca, allow_unknown_revocation_status);
+    let resumption = new_resumption_state(&client_ca);
     let budget = Arc::new(crate::delegated_tls::TlsHandshakeSignBudget::default());
     build_server_config_delegated_validated_resuming(
         server_chain,
         signer,
         client_ca,
         crls,
-        allow_unknown_revocation_status,
         &resumption,
         &budget,
     )
@@ -814,13 +784,11 @@ pub fn build_server_config_delegated_validated(
 /// bounds how fast unauthenticated peers can drive a remote, billed, account-throttled
 /// signer, and a bucket refilled to full on every reload cadence bounds a window rather
 /// than a rate.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_server_config_delegated_validated_resuming(
     server_chain: Vec<CertificateDer<'static>>,
     signer: Arc<dyn crate::delegated_tls::RawEd25519TlsSigner>,
     client_ca: Vec<CertificateDer<'static>>,
     crls: Vec<CertificateRevocationListDer<'static>>,
-    allow_unknown_revocation_status: bool,
     resumption: &Arc<crate::tls_auth_epoch::EpochBoundSessionStore>,
     budget: &Arc<crate::delegated_tls::TlsHandshakeSignBudget>,
 ) -> Result<ServerConfig, TlsError> {
@@ -863,13 +831,7 @@ pub(crate) fn build_server_config_delegated_validated_resuming(
         signer,
         Arc::clone(budget),
     );
-    build_server_config_delegated_with_crls_resuming(
-        resolver,
-        client_ca,
-        crls,
-        allow_unknown_revocation_status,
-        resumption,
-    )
+    build_server_config_delegated_with_crls_resuming(resolver, client_ca, crls, resumption)
 }
 
 /// Extract the verified client identity from a leaf certificate (DER) using the
@@ -2412,7 +2374,6 @@ mod resumption_state_tests {
             key,
             client_ca,
             Vec::new(),
-            false,
             resumption,
         )
         .expect("server config")
@@ -2427,7 +2388,7 @@ mod resumption_state_tests {
     #[test]
     fn a_crl_reload_does_not_empty_the_session_cache() {
         let ca = ca_der();
-        let resumption = new_resumption_state(std::slice::from_ref(&ca), false);
+        let resumption = new_resumption_state(std::slice::from_ref(&ca));
         let before = build(vec![ca.clone()], &resumption);
         assert!(before
             .session_storage
@@ -2453,7 +2414,7 @@ mod resumption_state_tests {
     fn a_rebuild_with_a_withdrawn_client_ca_advances_the_epoch() {
         let original = ca_der();
         let replacement = ca_der();
-        let resumption = new_resumption_state(std::slice::from_ref(&original), false);
+        let resumption = new_resumption_state(std::slice::from_ref(&original));
         let original_again = original.clone();
         let before = build(vec![original], &resumption);
         let epoch_before = *resumption.epoch();
@@ -2495,7 +2456,7 @@ mod resumption_state_tests {
     #[test]
     fn a_built_config_issues_no_stateless_session_tickets() {
         let ca = ca_der();
-        let resumption = new_resumption_state(std::slice::from_ref(&ca), false);
+        let resumption = new_resumption_state(std::slice::from_ref(&ca));
         let config = build(vec![ca], &resumption);
         assert!(
             !config.ticketer.enabled(),
@@ -2768,7 +2729,7 @@ mod per_request_revocation_tests {
 
     fn shared(crls: &[Vec<u8>]) -> Arc<SharedClientRevocation> {
         Arc::new(SharedClientRevocation::new(
-            ClientRevocationIndex::from_crl_ders(crls, false).expect("index builds"),
+            ClientRevocationIndex::from_crl_ders(crls).expect("index builds"),
         ))
     }
 
@@ -2830,7 +2791,7 @@ mod per_request_revocation_tests {
         assert!(!rejected(&[peer.as_ref()], &options));
 
         revocation.store(
-            ClientRevocationIndex::from_crl_ders(&[crl(&ca, &[LEAF_SERIAL], (2035, 1, 1))], false)
+            ClientRevocationIndex::from_crl_ders(&[crl(&ca, &[LEAF_SERIAL], (2035, 1, 1))])
                 .expect("index builds"),
         );
         assert!(

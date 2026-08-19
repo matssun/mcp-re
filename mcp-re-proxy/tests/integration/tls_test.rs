@@ -606,7 +606,6 @@ fn server_config_with_crls_for(
         server_key,
         vec![ca.cert.der().clone()],
         crls,
-        false, // fail closed on unknown revocation status
     )
     .expect("server config with crls");
     Arc::new(config)
@@ -750,7 +749,6 @@ fn delegated_ed25519_tls_handshake_round_trip() {
             resolver,
             vec![client_ca.cert.der().clone()],
             Vec::new(),
-            false,
         )
         .expect("delegated server config"),
     );
@@ -853,7 +851,6 @@ fn validated_delegated_build_round_trip_and_corrupted_sig_fails() {
             std::sync::Arc::new(delegated_signer),
             vec![client_ca.cert.der().clone()],
             Vec::new(),
-            false,
         )
         .expect("validated delegated server config (matching key) must build"),
     );
@@ -919,7 +916,6 @@ fn validated_delegated_build_round_trip_and_corrupted_sig_fails() {
             std::sync::Arc::new(corrupting),
             vec![client_ca2.cert.der().clone()],
             Vec::new(),
-            false,
         )
         .expect("build still succeeds: the public key matches; the BREAK is the bad signature"),
     );
@@ -971,7 +967,6 @@ fn validated_delegated_build_rejects_cert_signer_key_mismatch() {
         std::sync::Arc::new(mismatched),
         vec![client_ca.cert.der().clone()],
         Vec::new(),
-        false,
     )
     .expect_err("a cert↔signer key mismatch must fail closed at config construction");
     assert!(
@@ -995,7 +990,6 @@ fn validated_delegated_build_rejects_non_ed25519_leaf() {
         std::sync::Arc::new(signer),
         vec![client_ca.cert.der().clone()],
         Vec::new(),
-        false,
     )
     .expect_err("a non-Ed25519 leaf must fail closed under delegated mode");
     assert!(
@@ -1067,7 +1061,6 @@ fn aws_kms_delegated_tls_handshake_round_trip_and_corruption_fails() {
             std::sync::Arc::new(backend),
             vec![client_ca.cert.der().clone()],
             Vec::new(),
-            false,
         )
         .expect("validated delegated config with the matching KMS TLS key must build"),
     );
@@ -1131,7 +1124,6 @@ fn aws_kms_delegated_tls_handshake_round_trip_and_corruption_fails() {
             std::sync::Arc::new(CorruptingAwsKms(backend2)),
             vec![client_ca2.cert.der().clone()],
             Vec::new(),
-            false,
         )
         .expect("build succeeds: public key matches; the BREAK is the corrupted signature"),
     );
@@ -1187,7 +1179,6 @@ fn aws_kms_delegated_build_rejects_mismatch_and_non_ed25519_leaf() {
         std::sync::Arc::new(mismatched),
         vec![client_ca.cert.der().clone()],
         Vec::new(),
-        false,
     )
     .expect_err("a cert↔KMS-key mismatch must fail closed at config construction");
     assert!(
@@ -1207,7 +1198,6 @@ fn aws_kms_delegated_build_rejects_mismatch_and_non_ed25519_leaf() {
         std::sync::Arc::new(backend),
         vec![client_ca.cert.der().clone()],
         Vec::new(),
-        false,
     )
     .expect_err("a non-Ed25519 leaf must fail closed under AWS-delegated mode");
     assert!(
@@ -1248,7 +1238,6 @@ fn gcp_kms_delegated_tls_handshake_round_trip_and_corruption_fails() {
             std::sync::Arc::new(backend),
             vec![client_ca.cert.der().clone()],
             Vec::new(),
-            false,
         )
         .expect("validated delegated config with the matching KMS TLS key must build"),
     );
@@ -1311,7 +1300,6 @@ fn gcp_kms_delegated_tls_handshake_round_trip_and_corruption_fails() {
             std::sync::Arc::new(CorruptingGcpKms(backend2)),
             vec![client_ca2.cert.der().clone()],
             Vec::new(),
-            false,
         )
         .expect("build succeeds: public key matches; the BREAK is the corrupted signature"),
     );
@@ -1364,7 +1352,6 @@ fn gcp_kms_delegated_build_rejects_mismatch_and_non_ed25519_leaf() {
         std::sync::Arc::new(mismatched),
         vec![client_ca.cert.der().clone()],
         Vec::new(),
-        false,
     )
     .expect_err("a cert↔KMS-key mismatch must fail closed at config construction");
     assert!(
@@ -1381,7 +1368,6 @@ fn gcp_kms_delegated_build_rejects_mismatch_and_non_ed25519_leaf() {
         std::sync::Arc::new(backend),
         vec![client_ca.cert.der().clone()],
         Vec::new(),
-        false,
     )
     .expect_err("a non-Ed25519 leaf must fail closed under GCP-delegated mode");
     assert!(

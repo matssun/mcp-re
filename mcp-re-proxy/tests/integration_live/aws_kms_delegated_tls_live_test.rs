@@ -316,7 +316,6 @@ fn aws_kms_delegated_tls_handshake_round_trip() {
             signer,
             vec![client_ca.cert.der().clone()],
             Vec::new(),
-            false,
         )
         .expect("validated delegated server config (leaf must bind the KMS public key)"),
     );
@@ -388,7 +387,6 @@ fn aws_kms_delegated_tls_wrong_key_binding_fails_closed() {
         signer,
         vec![client_ca.cert.der().clone()],
         Vec::new(),
-        false,
     ) {
         Ok(_) => panic!(
             "a server leaf NOT bound to the KMS TLS key must be rejected at construction \
@@ -424,7 +422,6 @@ fn aws_kms_delegated_tls_untrusted_client_rejected() {
             signer,
             vec![client_ca.cert.der().clone()],
             Vec::new(),
-            false,
         )
         .expect("validated delegated server config"),
     );

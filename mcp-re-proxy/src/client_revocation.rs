@@ -26,8 +26,9 @@
 //!   * a serial listed in a CRL for the certificate's issuer ⇒
 //!     [`RevocationVerdict::Revoked`];
 //!   * a certificate whose issuer no CRL covers ⇒ [`RevocationVerdict::Unknown`],
-//!     refused unless the operator set `allow_unknown_revocation_status` (rustls'
-//!     `UnknownStatusPolicy::Deny` is the default this follows);
+//!     which is REFUSED — unconditionally, with no policy input that could make it
+//!     acceptable (rustls' `UnknownStatusPolicy::Deny`, which this follows and which
+//!     the verifier is likewise built with);
 //!   * a CRL past its `nextUpdate` covers nothing, so its issuer's certificates
 //!     become `Unknown` — the same fail-closed direction as
 //!     `enforce_revocation_expiration`.
@@ -102,8 +103,6 @@ pub struct ClientRevocationIndex {
     /// than in the certificate simply fails to match, which yields `Unknown` and a
     /// refusal, never a missed revocation.
     per_issuer: HashMap<Vec<u8>, IssuerCrl>,
-    /// The operator opt-out, carried so the verdict-to-decision rule is the handshake's.
-    allow_unknown_status: bool,
 }
 
 /// Strip leading zero bytes from a DER INTEGER's content octets.
@@ -131,10 +130,7 @@ impl ClientRevocationIndex {
     /// [`crl_posture`](crate::tls::crl_posture): the same bytes are about to be given
     /// to rustls, which would refuse them, so accepting them here would leave the two
     /// disagreeing about what is enforced.
-    pub fn from_crl_ders(
-        crls: &[impl AsRef<[u8]>],
-        allow_unknown_status: bool,
-    ) -> Result<Self, TlsError> {
+    pub fn from_crl_ders(crls: &[impl AsRef<[u8]>]) -> Result<Self, TlsError> {
         // x509-parser for BOTH sides of the issuer comparison — the same crate the
         // leaf is parsed with. Decoding the name and RE-ENCODING it (x509-cert's
         // `Name::to_der()`) would compare a round-tripped spelling against the leaf's
@@ -168,10 +164,7 @@ impl ClientRevocationIndex {
                 (None, b) => b,
             };
         }
-        Ok(ClientRevocationIndex {
-            per_issuer,
-            allow_unknown_status,
-        })
+        Ok(ClientRevocationIndex { per_issuer })
     }
 
     /// An index built from no CRLs. Admits every certificate, which is what rustls
@@ -179,7 +172,6 @@ impl ClientRevocationIndex {
     pub fn empty() -> Self {
         ClientRevocationIndex {
             per_issuer: HashMap::new(),
-            allow_unknown_status: false,
         }
     }
 
@@ -206,10 +198,18 @@ impl ClientRevocationIndex {
         }
     }
 
-    /// Whether a leaf is admitted, applying the operator's unknown-status policy.
+    /// Whether a leaf is admitted.
     ///
     /// An index with no CRLs admits everything: revocation is not configured, and
-    /// refusing every request would turn "no CRL" into a total outage.
+    /// refusing every request would turn "no CRL" into a total outage. That is a
+    /// statement about an index carrying no lists at all, and it is the ONLY admission
+    /// this type grants without a `Good` verdict.
+    ///
+    /// Once revocation IS configured, `Unknown` is refused. There is no parameter, field
+    /// or policy object that could make it acceptable — the arm below is a literal
+    /// `false`, so fail-closed is a property of the type rather than of what a caller
+    /// remembered to pass. Restoring an operator opt-out means changing this function,
+    /// which is the point.
     pub fn admits(&self, issuer_der: &[u8], serial: &[u8], now: i64) -> bool {
         if self.is_empty() {
             return true;
@@ -217,7 +217,7 @@ impl ClientRevocationIndex {
         match self.verdict(issuer_der, serial, now) {
             RevocationVerdict::Good => true,
             RevocationVerdict::Revoked => false,
-            RevocationVerdict::Unknown => self.allow_unknown_status,
+            RevocationVerdict::Unknown => false,
         }
     }
 }
@@ -345,11 +345,7 @@ mod tests {
         )
     }
 
-    fn index(
-        revoked: &[&[u8]],
-        next_update: Option<i64>,
-        allow_unknown: bool,
-    ) -> ClientRevocationIndex {
+    fn index(revoked: &[&[u8]], next_update: Option<i64>) -> ClientRevocationIndex {
         let mut per_issuer = HashMap::new();
         per_issuer.insert(
             ISSUER.to_vec(),
@@ -361,15 +357,12 @@ mod tests {
                 next_update_unix: next_update,
             },
         );
-        ClientRevocationIndex {
-            per_issuer,
-            allow_unknown_status: allow_unknown,
-        }
+        ClientRevocationIndex { per_issuer }
     }
 
     #[test]
     fn a_listed_serial_is_revoked_and_an_unlisted_one_is_good() {
-        let idx = index(&[b"\x01\x02\x03"], Some(9_000), false);
+        let idx = index(&[b"\x01\x02\x03"], Some(9_000));
         assert_eq!(
             idx.verdict(ISSUER, b"\x01\x02\x03", 1_000),
             RevocationVerdict::Revoked
@@ -387,12 +380,12 @@ mod tests {
     /// bytes would miss the revocation — the one direction this must never fail in.
     #[test]
     fn a_zero_padded_serial_still_matches() {
-        let idx = index(&[b"\x00\x80\x01"], Some(9_000), false);
+        let idx = index(&[b"\x00\x80\x01"], Some(9_000));
         assert_eq!(
             idx.verdict(ISSUER, b"\x80\x01", 1_000),
             RevocationVerdict::Revoked
         );
-        let idx = index(&[b"\x80\x01"], Some(9_000), false);
+        let idx = index(&[b"\x80\x01"], Some(9_000));
         assert_eq!(
             idx.verdict(ISSUER, b"\x00\x80\x01", 1_000),
             RevocationVerdict::Revoked
@@ -403,16 +396,13 @@ mod tests {
     /// (`UnknownStatusPolicy::Deny`). A per-request check that admitted it would let
     /// request 2 through the door request 1 was refused at.
     #[test]
-    fn an_uncovered_issuer_is_unknown_and_refused_unless_allowed() {
-        let idx = index(&[], Some(9_000), false);
+    fn an_uncovered_issuer_is_unknown_and_refused() {
+        let idx = index(&[], Some(9_000));
         assert_eq!(
             idx.verdict(OTHER_ISSUER, b"\x01", 1_000),
             RevocationVerdict::Unknown
         );
         assert!(!idx.admits(OTHER_ISSUER, b"\x01", 1_000));
-
-        let permissive = index(&[], Some(9_000), true);
-        assert!(permissive.admits(OTHER_ISSUER, b"\x01", 1_000));
     }
 
     /// `enforce_revocation_expiration` makes a stale CRL fail new handshakes closed.
@@ -421,7 +411,7 @@ mod tests {
     /// than discarding it.
     #[test]
     fn a_stale_crl_certifies_nothing_but_still_revokes() {
-        let idx = index(&[b"\x01\x02\x03"], Some(5_000), false);
+        let idx = index(&[b"\x01\x02\x03"], Some(5_000));
         assert_eq!(
             idx.verdict(ISSUER, b"\x09", 4_999),
             RevocationVerdict::Good,
@@ -446,17 +436,21 @@ mod tests {
     /// and signing planes. That is only safe because an unrefreshed CRL converges on
     /// REFUSING its issuer rather than on admitting it — which is what this asserts.
     ///
-    /// The second half shows what the contract rests on: flip `allow_unknown_status` and
-    /// the same expired CRL starts ADMITTING. Production wires it to a hard `false` on
-    /// every verifier builder, with no operator knob.
+    /// This used to carry a counterfactual second half — build the same index with
+    /// unknown-status admissible and watch the expired CRL start ADMITTING — to show what
+    /// the contract rested on. That half can no longer be written: the type has no such
+    /// input, so no inhabitant of `ClientRevocationIndex` admits an `Unknown` verdict.
+    /// The contract now rests on the type rather than on a value production remembered to
+    /// set, which is a stronger premise than the counterfactual documented.
     ///
-    /// **If a knob for `allow_unknown_status` is introduced, `TlsPlane`'s post-owner
-    /// contract must be re-derived before that change lands** — a surviving snapshot would
-    /// otherwise become exactly the frozen authorization state `trust_plane` fails closed
-    /// to avoid.
+    /// **If an operator knob for unknown status is ever introduced, `TlsPlane`'s
+    /// post-owner contract must be re-derived before that change lands** — a surviving
+    /// snapshot would otherwise become exactly the frozen authorization state
+    /// `trust_plane` fails closed to avoid. See
+    /// [`unknown_status_is_refused_with_no_policy_input_that_could_admit_it`].
     #[test]
     fn an_expired_crl_refuses_its_issuer_rather_than_admitting_it() {
-        let unrefreshed = index(&[], Some(5_000), false);
+        let unrefreshed = index(&[], Some(5_000));
         assert!(
             unrefreshed.admits(ISSUER, b"\x09", 4_999),
             "in force before nextUpdate, so an unlisted serial is admitted"
@@ -466,13 +460,69 @@ mod tests {
             "past nextUpdate an unrefreshed CRL must refuse its issuer, not admit it — \
              this is what lets a TLS snapshot safely outlive its reload worker"
         );
+    }
 
-        // The counterfactual, stated so the dependency is visible rather than implied.
-        let if_unknown_were_admissible = index(&[], Some(5_000), true);
+    /// The property control for the deny-unknown invariant.
+    ///
+    /// It asserts the two halves that together mean fail-closed is structural: every input
+    /// that yields `Unknown` is refused, and it is refused by an index built through the
+    /// PUBLIC constructor, which takes no policy argument. There is no second call shape
+    /// to try — `from_crl_ders` accepts CRL bytes and nothing else — so the refusal cannot
+    /// be configured away without editing this crate.
+    ///
+    /// The distinction this pins is `is_empty()` vs. configured: an index carrying no CRLs
+    /// admits (revocation is not configured), while a configured index refuses everything
+    /// it cannot vouch for. Those are different questions and only the second is a policy.
+    #[test]
+    fn unknown_status_is_refused_with_no_policy_input_that_could_admit_it() {
+        let covered = test_ca("covered-ca");
+        let uncovered = test_ca("uncovered-ca");
+
+        // Built the way production builds it: CRL bytes in, no policy argument to pass.
+        let configured = ClientRevocationIndex::from_crl_ders(&[covered.crl(&[], 2035)])
+            .expect("a well-formed CRL parses");
         assert!(
-            if_unknown_were_admissible.admits(ISSUER, b"\x09", 5_000),
-            "with unknown status admissible the same expired CRL admits — the premise \
-             behind TlsPlane's post-owner contract would no longer hold"
+            !configured.is_empty(),
+            "this index IS configured for revocation"
+        );
+
+        // The two independent routes to Unknown, each through a real leaf's coordinate.
+        let (covered_issuer, covered_serial) = leaf_coordinate(&covered.leaf(0x11));
+        let (uncovered_issuer, uncovered_serial) = leaf_coordinate(&uncovered.leaf(0x22));
+        let in_force = 1_600_000_000; // well before the 2035 nextUpdate
+        let cases: [(&str, &[u8], &[u8], i64); 2] = [
+            (
+                "issuer covered by no CRL",
+                &uncovered_issuer,
+                &uncovered_serial,
+                in_force,
+            ),
+            (
+                "CRL past its nextUpdate",
+                &covered_issuer,
+                &covered_serial,
+                i64::MAX,
+            ),
+        ];
+
+        for (label, issuer, serial, now) in cases {
+            assert_eq!(
+                configured.verdict(issuer, serial, now),
+                RevocationVerdict::Unknown,
+                "{label} must yield Unknown"
+            );
+            assert!(
+                !configured.admits(issuer, serial, now),
+                "{label} yielded Unknown and MUST be refused; there is no policy input \
+                 that could make it admissible"
+            );
+        }
+
+        // The control on the control: the same index DOES admit while it can vouch.
+        assert!(
+            configured.admits(&covered_issuer, &covered_serial, in_force),
+            "an in-force CRL that does not list the serial admits — otherwise the refusals \
+             above would prove nothing but a uniformly closed door"
         );
     }
 
@@ -489,9 +539,9 @@ mod tests {
 
     #[test]
     fn the_snapshot_swaps_atomically() {
-        let shared = SharedClientRevocation::new(index(&[], Some(9_000), false));
+        let shared = SharedClientRevocation::new(index(&[], Some(9_000)));
         assert!(shared.load().admits(ISSUER, b"\x01\x02\x03", 1_000));
-        shared.store(index(&[b"\x01\x02\x03"], Some(9_000), false));
+        shared.store(index(&[b"\x01\x02\x03"], Some(9_000)));
         assert!(
             !shared.load().admits(ISSUER, b"\x01\x02\x03", 1_000),
             "a reloaded CRL must reach a request being served on an already-open connection"
@@ -506,7 +556,6 @@ mod tests {
         let shared = Arc::new(SharedClientRevocation::new(index(
             &[b"\x01\x02\x03"],
             Some(9_000),
-            false,
         )));
 
         let poisoner = Arc::clone(&shared);
@@ -529,7 +578,7 @@ mod tests {
             "and it must be the last-good index, not an empty or default one"
         );
 
-        shared.store(index(&[], Some(9_000), false));
+        shared.store(index(&[], Some(9_000)));
         assert!(
             shared.load().admits(ISSUER, b"\x01\x02\x03", 1_000),
             "a later reload must still be able to publish through a poisoned lock"
@@ -544,8 +593,8 @@ mod tests {
     fn a_crl_revokes_a_leaf_of_the_same_ca_and_says_nothing_about_another_ca() {
         let ca = test_ca("mcp-re-client-revocation-ca");
         let stranger = test_ca("mcp-re-client-revocation-stranger-ca");
-        let idx = ClientRevocationIndex::from_crl_ders(&[ca.crl(&[0x4242], 2035)], false)
-            .expect("index builds");
+        let idx =
+            ClientRevocationIndex::from_crl_ders(&[ca.crl(&[0x4242], 2035)]).expect("index builds");
 
         let (issuer, serial) = leaf_coordinate(&ca.leaf(0x4242));
         assert_eq!(
@@ -575,10 +624,10 @@ mod tests {
     #[test]
     fn two_crls_for_one_issuer_union_their_serials_and_keep_the_earliest_next_update() {
         let ca = test_ca("mcp-re-client-revocation-merge-ca");
-        let idx = ClientRevocationIndex::from_crl_ders(
-            &[ca.crl(&[0x4242], 2030), ca.crl(&[0x1337], 2035)],
-            false,
-        )
+        let idx = ClientRevocationIndex::from_crl_ders(&[
+            ca.crl(&[0x4242], 2030),
+            ca.crl(&[0x1337], 2035),
+        ])
         .expect("index builds");
 
         for revoked in [0x4242_u64, 0x1337] {
@@ -609,11 +658,9 @@ mod tests {
     #[test]
     fn a_malformed_crl_is_refused_rather_than_skipped() {
         let ca = test_ca("mcp-re-client-revocation-malformed-ca");
-        let err = ClientRevocationIndex::from_crl_ders(
-            &[ca.crl(&[0x4242], 2035), b"not der".to_vec()],
-            false,
-        )
-        .expect_err("a malformed CRL is a hard error");
+        let err =
+            ClientRevocationIndex::from_crl_ders(&[ca.crl(&[0x4242], 2035), b"not der".to_vec()])
+                .expect_err("a malformed CRL is a hard error");
         assert!(matches!(err, TlsError::Verifier(_)));
     }
 }

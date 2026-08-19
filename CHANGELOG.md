@@ -212,6 +212,59 @@ value, the other two parseable values are refused, there is no value that turns 
 and `MappedBinding` has no deployment route.
 
 
+### Changed — fail-closed client revocation is a property of the type, not a parameter (BREAKING, internal API)
+
+`allow_unknown_revocation_status` is gone. It was a `bool` carried through eight signatures
+in `tls.rs`, into `build_client_verifier`, into `ClientRevocationIndex`, and into the
+`TlsAuthEpoch` digest — and production had exactly one value for it. `tls_plane.rs` seeded a
+literal `let allow_unknown_status = false;` and threaded it everywhere; the code comment
+already said what the parameter really was: *"unknown revocation status is refused
+unconditionally; there is no operator knob."*
+
+A parameter whose only legal production value is `false` is not a policy. It is a
+correctness obligation on every caller, and the whole `TlsPlane` post-owner contract —
+which lets a serving snapshot outlive its plane and perform no fail-closed transition on
+drop — rested on nobody ever passing `true`.
+
+Now:
+
+  * `ClientRevocationIndex::admits` returns `false` for `RevocationVerdict::Unknown` as a
+    literal. `from_crl_ders` takes CRL bytes and nothing else, so no constructible index
+    admits an unknown status.
+  * `build_client_verifier` never calls `allow_unknown_revocation_status()` and takes no
+    input that could make it do so; rustls' `UnknownStatusPolicy::Deny` stands on every
+    verifier the crate can produce.
+  * The seven `build_server_config*` entry points and `new_resumption_state` lost the
+    parameter.
+
+**`TlsAuthEpoch` is redefined and its domain separator moves `v1` → `v2`.** The digest no
+longer hashes a client-auth policy byte; it is now `H(domain-v2, canonical-set(client-CA
+anchors))`. Removing a component changes what the digest means, so it gets a new domain
+rather than a silently redefined `v1`. Sessions are process-local and the store is rebuilt
+on start, so no persisted digest needed preserving. The doc states why the policy is absent
+and that reintroducing it requires revising the epoch definition — so the byte cannot be
+casually added back.
+
+Tests followed the propositions rather than the code. `the_client_auth_policy_is_part_of_the_epoch`
+and `a_policy_change_alone_stops_resumption` asserted claims that no longer exist and were
+replaced, not deleted:
+
+  * `the_anchor_set_alone_determines_the_epoch` — the epoch is a pure function of the anchor
+    set, and dropping any single anchor moves it.
+  * `republishing_the_epoch_of_an_unchanged_ca_set_does_not_stop_resumption` — the property
+    with production consequences, and the stronger test. Every CRL reload republishes the
+    epoch; if that invalidated sessions, each reload interval would be a fleet-wide teardown,
+    because TLS 1.3 has no renegotiation and an epoch change is connection-fatal.
+  * `unknown_status_is_refused_with_no_policy_input_that_could_admit_it` — the property
+    control: both routes to `Unknown` (an issuer no CRL covers, a CRL past `nextUpdate`) are
+    refused through an index built by the public constructor, with a positive control that
+    the same index still admits while it can vouch.
+
+`client_revocation`'s post-owner contract test kept its first half and lost its
+counterfactual — building an index that admits unknown status is no longer expressible. The
+contract now rests on the type rather than on a value production remembered to set.
+
+
 ## [0.16.0] — 2026-08-10
 
 ### Added — the exchange lifecycle is a value, and refusals derive their retry contract from it (ADR-MCPRE-057, ADR-MCPRE-058)

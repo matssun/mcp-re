@@ -206,8 +206,10 @@ Two bounds remain, and they are narrower than before:
 * TLS session resumption is **bound to the trust epoch** (ADR-MCPRE-055). A resumed
   session restores the stored peer chain and skips client auth entirely, and the
   per-request checks cover validity and revocation but not the chain — so resumption is
-  gated on a digest of the trusted client-CA set and the client-auth policy, the inputs
-  chain building depends on. While that digest holds, a stored chain is one the current
+  gated on a digest of the trusted client-CA set, the input chain building depends on.
+  Client revocation policy is not a second input: unknown revocation status is denied
+  unconditionally, so there is no policy dimension to digest. While that digest holds,
+  a stored chain is one the current
   trust would still build; when a CA is withdrawn it changes and every stored session
   stops being a shortcut. CRL contents are deliberately NOT in the digest: revocation is
   already enforced per request, and a re-signed CRL would otherwise tear down every

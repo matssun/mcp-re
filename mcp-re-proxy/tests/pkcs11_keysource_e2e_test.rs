@@ -498,7 +498,6 @@ fn pkcs11_tls_delegated_signer_none_then_some() {
         signer,
         vec![ca.cert.der().clone()],
         Vec::new(),
-        false,
     )
     .expect("matching cert must build the validated delegated config");
 }
@@ -537,7 +536,6 @@ fn pkcs11_tls_cert_signer_mismatch_fails_closed() {
         signer,
         vec![ca.cert.der().clone()],
         Vec::new(),
-        false,
     );
     assert!(
         matches!(result, Err(TlsError::DelegatedKeyMismatch(_))),
@@ -656,7 +654,6 @@ fn pkcs11_tls_full_mtls_handshake_token_resident_no_disk_read() {
             signer,
             vec![client_ca.cert.der().clone()],
             Vec::new(),
-            false,
         )
         .expect("validated delegated server config (cert matches token key)"),
     );

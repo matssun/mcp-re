@@ -21,8 +21,8 @@
 //!   refused where it is read ([`tls::crl_next_update_required`]), at startup and on
 //!   every reload, because it would never fall out of force. Past `nextUpdate` the
 //!   verdict for that issuer is `Unknown`,
-//!   and unknown status is refused unconditionally — `allow_unknown_status` is wired to a
-//!   hard `false` on every builder, with no operator knob. So a CRL nobody is refreshing
+//!   and unknown status is refused unconditionally — no builder on either the handshake
+//!   or the per-request side takes a policy input at all. So a CRL nobody is refreshing
 //!   converges on refusing that issuer's certificates rather than on admitting revoked
 //!   ones. The artifact bounds itself; the plane does not have to.
 //!
@@ -38,11 +38,12 @@
 //! Both clauses are load-bearing and both are enforced rather than assumed. The first is
 //! enforced by refusing a CRL with no `nextUpdate`, pinned by `tls`'s
 //! `crl_next_update_tests`; the second is pinned by `client_revocation`'s
-//! `an_expired_crl_refuses_its_issuer_rather_than_admitting_it`, which also asserts the
-//! counterfactual. **Introducing an operator knob for `allow_unknown_status` means
-//! re-deriving this contract before the change lands** — with unknown admissible, a
-//! surviving snapshot becomes exactly the frozen authorization state `trust_plane` fails
-//! closed to avoid.
+//! `an_expired_crl_refuses_its_issuer_rather_than_admitting_it` and its property control
+//! `unknown_status_is_refused_with_no_policy_input_that_could_admit_it`. The second clause
+//! is now structural rather than configured — no constructible index or verifier admits an
+//! unknown status. **Introducing an operator knob for unknown status means re-deriving
+//! this contract before the change lands** — with unknown admissible, a surviving snapshot
+//! becomes exactly the frozen authorization state `trust_plane` fails closed to avoid.
 //!
 //! A failed reload keeps the last-good configuration, for the same reason
 //! `reloading_trust` does: a truncated file mid-write must not empty what is enforced.
@@ -86,8 +87,8 @@ impl ClientCrlEvidence {
 ///   account-throttled TLS handshake signer. A per-build bucket is refilled to full on
 ///   every reload, so it bounds a window rather than a rate.
 ///
-/// `client_ca` and `allow_unknown_status` are the CLIENT-AUTHENTICATION INPUTS, and they
-/// live here because they are exactly the inputs
+/// `client_ca` is the CLIENT-AUTHENTICATION INPUT, and it lives here because it is
+/// exactly the input
 /// [`TlsAuthEpoch`](crate::tls_auth_epoch::TlsAuthEpoch) digests. One owner, read by the
 /// startup build and by every reload rebuild alike: a build cannot be handed an anchor
 /// set that disagrees with the epoch the store publishes, and there is no second copy
@@ -95,10 +96,6 @@ impl ClientCrlEvidence {
 struct TlsRebuildState {
     /// The trusted client-CA set every build of this plane's config is bound to.
     client_ca: Vec<rustls_pki_types::CertificateDer<'static>>,
-    /// Unknown revocation status is refused unconditionally; `false` is deny-unknown and
-    /// there is no operator knob. It is a client-auth policy input, so it is digested
-    /// into the epoch together with the anchors above.
-    allow_unknown_status: bool,
     resumption: Arc<crate::tls_auth_epoch::EpochBoundSessionStore>,
     sign_budget: Arc<crate::delegated_tls::TlsHandshakeSignBudget>,
 }
@@ -107,14 +104,10 @@ impl TlsRebuildState {
     /// Seed the plane's serving state from the client-authentication inputs it will be
     /// built around. The epoch the session store starts under is computed from THESE
     /// anchors and THIS policy, so the store and the builds agree by construction.
-    fn new(
-        client_ca: Vec<rustls_pki_types::CertificateDer<'static>>,
-        allow_unknown_status: bool,
-    ) -> Self {
-        let resumption = tls::new_resumption_state(&client_ca, allow_unknown_status);
+    fn new(client_ca: Vec<rustls_pki_types::CertificateDer<'static>>) -> Self {
+        let resumption = tls::new_resumption_state(&client_ca);
         TlsRebuildState {
             client_ca,
-            allow_unknown_status,
             resumption,
             sign_budget: Arc::new(crate::delegated_tls::TlsHandshakeSignBudget::default()),
         }
@@ -326,11 +319,6 @@ impl TlsPlane {
         // re-reads only the CRLs, never this.
         let reload_chain = server_chain.clone();
         let reload_crl_paths = crl_paths.to_vec();
-        // The CRL verifier ALWAYS fails closed on an unknown revocation status — there
-        // is no relax knob. `false` = deny-unknown, and the module note's self-bounding
-        // argument depends on it staying that way.
-        let allow_unknown_status = false;
-
         // The PER-REQUEST revocation index, built from the same CRL bytes the handshake
         // verifier is about to be given. Without this, revocation reaches only NEW
         // connections: rustls runs client authentication on a full handshake alone, so a
@@ -344,7 +332,6 @@ impl TlsPlane {
                     .iter()
                     .map(|crl| crl.as_ref().to_vec())
                     .collect::<Vec<_>>(),
-                allow_unknown_status,
             )
             .map_err(|e| e.to_string())?;
             Some(Arc::new(client_revocation::SharedClientRevocation::new(
@@ -353,9 +340,9 @@ impl TlsPlane {
         };
 
         // Created once, before the first build, and handed to every later one: the trust
-        // anchors, the client-auth policy, the session cache and the trust epoch survive
-        // a reload, and so does the delegated handshake-signature bucket.
-        let rebuild_state = Arc::new(TlsRebuildState::new(client_ca, allow_unknown_status));
+        // anchors, the session cache and the trust epoch survive a reload, and so does the
+        // delegated handshake-signature bucket.
+        let rebuild_state = Arc::new(TlsRebuildState::new(client_ca));
 
         // The same construction a CRL reload performs, so the serving config a reload
         // installs cannot diverge from the one startup installed.
@@ -466,7 +453,6 @@ impl TlsKeyMaterial {
                     key.clone_key(),
                     state.client_ca.clone(),
                     crls,
-                    state.allow_unknown_status,
                     &state.resumption,
                 )
                 .map_err(|e| e.to_string())
@@ -477,7 +463,6 @@ impl TlsKeyMaterial {
                     Arc::clone(signer),
                     state.client_ca.clone(),
                     crls,
-                    state.allow_unknown_status,
                     &state.resumption,
                     &state.sign_budget,
                 )
@@ -565,7 +550,6 @@ fn crl_reload_loop(task: CrlReloadTask, halt: &crate::managed_worker::Halt) {
                         .iter()
                         .map(|crl| crl.as_ref().to_vec())
                         .collect::<Vec<_>>(),
-                    rebuild_state.allow_unknown_status,
                 )
                 .map_err(|e| e.to_string())?;
                 let rebuilt = material.rebuild(server_chain.clone(), crls, &rebuild_state)?;
@@ -1006,24 +990,20 @@ mod trust_epoch_binding_tests {
         )
     }
 
-    /// The session store starts under the digest of the anchors and the policy the plane
-    /// was given, not under a digest of anything else.
+    /// The session store starts under the digest of the anchor set the plane was given,
+    /// not under a digest of anything else.
     #[test]
     fn the_store_starts_under_the_epoch_of_the_planes_own_client_auth_inputs() {
         let anchors = vec![ca_der(), ca_der()];
-        let state = TlsRebuildState::new(anchors.clone(), false);
-        assert!(
-            !state.allow_unknown_status,
-            "unknown revocation status is refused unconditionally"
-        );
+        let state = TlsRebuildState::new(anchors.clone());
         assert_eq!(
             *state.resumption.epoch(),
-            TlsAuthEpoch::compute(&anchors, false),
+            TlsAuthEpoch::compute(&anchors),
             "the epoch in force must digest the anchor set the plane holds"
         );
         assert_ne!(
             *state.resumption.epoch(),
-            TlsAuthEpoch::compute(&[], false),
+            TlsAuthEpoch::compute(&[]),
             "an epoch over no anchors would describe a verifier this plane never built"
         );
     }
@@ -1035,7 +1015,7 @@ mod trust_epoch_binding_tests {
     fn a_rebuild_republishes_the_epoch_of_the_anchor_set_the_plane_owns() {
         let anchors = vec![ca_der()];
         let (chain, material) = exported_credential();
-        let state = TlsRebuildState::new(anchors.clone(), false);
+        let state = TlsRebuildState::new(anchors.clone());
 
         let first = material
             .rebuild(chain.clone(), Vec::new(), &state)
@@ -1050,7 +1030,7 @@ mod trust_epoch_binding_tests {
             .expect("rebuild");
         assert_eq!(
             *state.resumption.epoch(),
-            TlsAuthEpoch::compute(&anchors, false),
+            TlsAuthEpoch::compute(&anchors),
             "a rebuild must digest the anchors the plane holds"
         );
         assert_eq!(
