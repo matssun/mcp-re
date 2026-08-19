@@ -101,11 +101,16 @@ pub mod gcp_kms_keysource;
 // (`cargo test -p mcp-re-proxy --features ...`), not in the default workspace lane.
 #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
 pub(crate) mod handshake_quota;
+// ADR-MCPS-028 §B/§C: one remote-signer call, as it failed — the HTTP status and the body
+// kept SEPARABLE, so the quota question is answered from the wire fact rather than from a
+// rendered string. Gated with the two backends that produce it.
 pub mod key_source;
 /// Whether an operator-supplied KMS/STS endpoint may be used at all — a security rule
 /// the command line, the validation boundary and the key sources all consume.
 pub mod kms_endpoint_policy;
 pub mod log_sink;
+#[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
+pub(crate) mod remote_signer_call;
 // Test / embedding helpers that drive the async serving path synchronously
 // (a private current-thread runtime per call). NOT a serving path — the
 // production data plane is the per-core async fleet. Used by this crate's tests

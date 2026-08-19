@@ -33,10 +33,14 @@ use crate::aws_sts::WebIdentityConfig;
 use crate::aws_sts::WebIdentityCredentialSource;
 use crate::delegated_tls::RawEd25519TlsSigner;
 use crate::handshake_quota::HandshakeQuotaWindow;
+use crate::handshake_quota::QuotaGuarded;
 use crate::handshake_quota::QuotaVerdict;
 use crate::key_source::KeyError;
 use crate::kms_keysource::ed25519_raw_point_from_spki;
 use crate::kms_keysource::KmsEd25519Backend;
+use crate::remote_signer_call::is_load_shedding_status;
+use crate::remote_signer_call::json_string_field;
+use crate::remote_signer_call::RemoteSignerFailure;
 
 /// The KMS JSON content type and the two `X-Amz-Target` operations used.
 const KMS_CONTENT_TYPE: &str = "application/x-amz-json-1.1";
@@ -86,7 +90,12 @@ pub struct AwsKmsConfig {
 /// local-key fake and no network (the SigV4 signing itself is golden-tested in
 /// [`crate::aws_sigv4`]).
 pub(crate) trait KmsHttpClient {
-    fn post_kms(&self, target: &str, body: &[u8]) -> Result<Vec<u8>, KeyError>;
+    /// The response body, or the call's failure with its HTTP status still separable.
+    ///
+    /// Returning [`RemoteSignerFailure`] rather than a rendered [`KeyError`] is what lets
+    /// [`quota_verdict`] answer from the wire fact. It used to render here and the
+    /// classifier parsed the prose back out.
+    fn post_kms(&self, target: &str, body: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure>;
 }
 
 /// Production [`KmsHttpClient`]: SigV4-signs and sends over `ureq` (rustls HTTPS).
@@ -141,7 +150,7 @@ impl UreqKmsClient {
 }
 
 impl KmsHttpClient for UreqKmsClient {
-    fn post_kms(&self, target: &str, body: &[u8]) -> Result<Vec<u8>, KeyError> {
+    fn post_kms(&self, target: &str, body: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure> {
         // Refresh before signing. Cheap on both sources (a `getenv`, or a cache hit
         // until the refresh margin) and on the cold KMS path only — the root is off
         // the request path — and it is what lets a re-exchanged IRSA session or a
@@ -215,9 +224,13 @@ impl KmsHttpClient for UreqKmsClient {
                     // accepted; only a body strictly larger (len > cap) is rejected.
                     .take(MAX_KMS_RESPONSE_BYTES + 1)
                     .read_to_end(&mut buf)
-                    .map_err(|e| KeyError::NotFound(format!("aws-kms: read response body: {e}")))?;
+                    .map_err(|e| {
+                        RemoteSignerFailure::rendered(KeyError::NotFound(format!(
+                            "aws-kms: read response body: {e}"
+                        )))
+                    })?;
                 if buf.len() as u64 > MAX_KMS_RESPONSE_BYTES {
-                    return Err(KeyError::Malformed(format!(
+                    return Err(RemoteSignerFailure::malformed(format!(
                         "aws-kms: response body exceeds {MAX_KMS_RESPONSE_BYTES}-byte cap"
                     )));
                 }
@@ -230,14 +243,12 @@ impl KmsHttpClient for UreqKmsClient {
                 // just as fully, by returning any non-2xx status, so `into_string()`'s
                 // ~10 MiB read left the guard trivially bypassable. Bounded like the GCP
                 // sibling's `read_error_body`.
-                let body = read_error_body(resp);
-                Err(KeyError::NotFound(format!(
-                    "aws-kms: {target} returned HTTP {code}: {body}"
-                )))
+                Err(RemoteSignerFailure::status_body(
+                    code,
+                    read_error_body(resp),
+                ))
             }
-            Err(e) => Err(KeyError::NotFound(format!(
-                "aws-kms: {target} transport: {e}"
-            ))),
+            Err(e) => Err(RemoteSignerFailure::transport(format!("transport: {e}"))),
         }
     }
 }
@@ -405,33 +416,50 @@ pub struct AwsKmsEd25519Backend {
     tls_quota: HandshakeQuotaWindow,
 }
 
+/// The KMS `__type` values that mean the ACCOUNT is over its budget, rather than that this
+/// one request was refused.
+///
+/// `KMSInternalException` is here deliberately: KMS returns it for its own transient
+/// capacity failures, which is a statement about the service and not about the request.
+/// `AccessDeniedException` and its siblings are NOT, and must not be — evicting the
+/// handshake path over a missing IAM grant would turn a permanent misconfiguration into a
+/// permanent local refusal that hides it.
+const ACCOUNT_QUOTA_ERROR_TYPES: &[&str] = &[
+    "ThrottlingException",
+    "LimitExceededException",
+    "KMSInternalException",
+    "TooManyRequestsException",
+];
+
 /// Does this KMS failure say the ACCOUNT is over its quota, rather than that one request
 /// was malformed?
 ///
-/// Classified from the RENDERED error, which is the defect and is named as one: the fact
-/// is known typed at the transport — an HTTP status and a KMS `__type` — and
-/// [`KmsHttpClient::post_kms`] flattens both into a [`KeyError`] string that this then
-/// parses back out. The text it matches is produced by [`UreqKmsClient::post_kms`] in this
-/// module, which interpolates the KMS JSON error body verbatim
-/// (`{"__type":"ThrottlingException"}` and its siblings) and the HTTP status for the
-/// gateway-level limits that never reach KMS's own error shape.
+/// Read from the WIRE FACT: the HTTP status the front door answered with, and the `__type`
+/// field of the KMS JSON error body. Both arrive typed on [`RemoteSignerFailure`] and
+/// neither is recovered from prose.
 ///
-/// A rewording upstream silently stops arming the window; a malformed-request body that
-/// happens to contain one of these tokens arms it. Both are consequences of recovering a
-/// structured fact from prose, and the fix is at the transport seam, not here.
-fn quota_verdict(error: &KeyError) -> QuotaVerdict {
-    let rendered = format!("{error:?}");
-    let exhausted = [
-        "ThrottlingException",
-        "LimitExceededException",
-        "KMSInternalException",
-        "TooManyRequestsException",
-        "returned HTTP 429",
-        "returned HTTP 503",
-    ]
-    .iter()
-    .any(|marker| rendered.contains(marker));
-    if exhausted {
+/// It used to be `format!("{error:?}")` and `contains`, because the transport rendered the
+/// status and the body into a `KeyError` string before anything could ask. Two live
+/// consequences: a rewording upstream silently stopped arming the window, and any failure
+/// whose text happened to carry one of these tokens armed it — including, once
+/// `AccessDeniedException` and `ThrottlingException` can appear in the same operator
+/// message, a chained diagnosis about something else.
+///
+/// `__type` is namespaced on the wire (`com.amazonaws.kms#ThrottlingException`), so the
+/// suffix is what is compared. A body that states no `__type` at all states nothing, which
+/// is not a positive.
+fn quota_verdict(failure: &RemoteSignerFailure) -> QuotaVerdict {
+    if is_load_shedding_status(failure.status()) {
+        return QuotaVerdict::Exhausted;
+    }
+    let stated = failure
+        .body()
+        .and_then(|body| json_string_field(body, &["__type"]));
+    let named_quota = stated.as_deref().is_some_and(|error_type| {
+        let name = error_type.rsplit('#').next().unwrap_or(error_type);
+        ACCOUNT_QUOTA_ERROR_TYPES.contains(&name)
+    });
+    if named_quota {
         QuotaVerdict::Exhausted
     } else {
         QuotaVerdict::Unrelated
@@ -446,7 +474,9 @@ impl AwsKmsEd25519Backend {
         key_id: String,
     ) -> Result<Self, KeyError> {
         let body = get_public_key_request_body(&key_id);
-        let resp = client.post_kms(TARGET_GET_PUBLIC_KEY, &body)?;
+        let resp = client
+            .post_kms(TARGET_GET_PUBLIC_KEY, &body)
+            .map_err(|failure| failure.into_key_error("aws-kms", TARGET_GET_PUBLIC_KEY))?;
         let spki_der = parse_get_public_key_response(&resp)?;
         let raw = ed25519_raw_point_from_spki(&spki_der)?;
         let verify_key = VerificationKey::from_bytes(&raw).map_err(|e| {
@@ -514,10 +544,47 @@ impl AwsKmsEd25519Backend {
         message: &[u8],
         clock: &dyn Fn() -> std::time::Instant,
     ) -> Result<Vec<u8>, KeyError> {
-        // The object-signing RAW-Ed25519 sign path verbatim over the handshake transcript,
-        // length-checked + verified.
-        self.tls_quota
-            .guard(clock, || self.sign_raw_ed25519(message), quota_verdict)
+        // The WIRE call is what the window guards, and it is the only part of the signature
+        // path the quota question can be asked about: the length check and
+        // verify-before-return below are local, and a local failure is never a statement
+        // about the account.
+        let response = self
+            .tls_quota
+            .guard(clock, || self.sign_once(message), quota_verdict)
+            .map_err(|guarded| match guarded {
+                QuotaGuarded::Refused(why) => KeyError::NotFound(why.to_string()),
+                QuotaGuarded::Call(failure) => failure.into_key_error("aws-kms", TARGET_SIGN),
+            })?;
+        self.accept_signature(message, response)
+    }
+
+    /// The `Sign` wire call, with its failure still typed.
+    fn sign_once(&self, preimage: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure> {
+        self.client
+            .post_kms(TARGET_SIGN, &sign_request_body(&self.key_id, preimage))
+    }
+
+    /// Parse, length-check and VERIFY-BEFORE-RETURN a `Sign` response body.
+    ///
+    /// ADR-MCPS-028 §D / guardrail: the signature MUST verify against the advertised public
+    /// key under the unmodified `mcp-re-core` verifier. This catches a misconfigured
+    /// DIGEST/prehash KMS key, a key mismatch, or any corruption — fail closed, never emit
+    /// it.
+    fn accept_signature(&self, preimage: &[u8], response: Vec<u8>) -> Result<Vec<u8>, KeyError> {
+        let signature = parse_sign_response(&response)?;
+        if signature.len() != ED25519_SIGNATURE_LEN {
+            return Err(KeyError::Malformed(format!(
+                "aws-kms: Sign returned a {}-byte signature; expected a raw {ED25519_SIGNATURE_LEN}-byte Ed25519 signature",
+                signature.len()
+            )));
+        }
+        verify_ed25519(preimage, &b64url_encode(&signature), &self.verify_key).map_err(|e| {
+            KeyError::Malformed(format!(
+                "aws-kms: KMS signature did NOT verify against the advertised public key \
+                 (misconfigured DIGEST/prehash key or key mismatch?): {e}"
+            ))
+        })?;
+        Ok(signature)
     }
 
     /// TEST-ONLY (issue #60): build a backend over an in-memory FAKE KMS transport
@@ -549,7 +616,7 @@ struct LocalKeyKmsTransport {
 }
 
 impl KmsHttpClient for LocalKeyKmsTransport {
-    fn post_kms(&self, target: &str, body: &[u8]) -> Result<Vec<u8>, KeyError> {
+    fn post_kms(&self, target: &str, body: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure> {
         match target {
             TARGET_GET_PUBLIC_KEY => {
                 let mut der = crate::kms_keysource::ED25519_SPKI_PREFIX.to_vec();
@@ -562,13 +629,16 @@ impl KmsHttpClient for LocalKeyKmsTransport {
                 .into_bytes())
             }
             TARGET_SIGN => {
-                let v: serde_json::Value = serde_json::from_slice(body)
-                    .map_err(|e| KeyError::Malformed(format!("fake kms: Sign body: {e}")))?;
+                let v: serde_json::Value = serde_json::from_slice(body).map_err(|e| {
+                    RemoteSignerFailure::malformed(format!("fake kms: Sign body: {e}"))
+                })?;
                 let msg = STANDARD
                     .decode(v.get("Message").and_then(|m| m.as_str()).unwrap_or(""))
-                    .map_err(|e| KeyError::Malformed(format!("fake kms: Message b64: {e}")))?;
+                    .map_err(|e| {
+                        RemoteSignerFailure::malformed(format!("fake kms: Message b64: {e}"))
+                    })?;
                 let raw = mcp_re_core::b64url_decode(&self.key.sign(&msg))
-                    .map_err(|e| KeyError::Malformed(format!("fake kms: sign: {e}")))?;
+                    .map_err(|e| RemoteSignerFailure::malformed(format!("fake kms: sign: {e}")))?;
                 Ok(serde_json::json!({
                     "Signature": STANDARD.encode(&raw),
                     "SigningAlgorithm": SIGNING_ALGORITHM_ED25519,
@@ -576,7 +646,7 @@ impl KmsHttpClient for LocalKeyKmsTransport {
                 .to_string()
                 .into_bytes())
             }
-            other => Err(KeyError::Malformed(format!(
+            other => Err(RemoteSignerFailure::malformed(format!(
                 "fake kms: unexpected target {other}"
             ))),
         }
@@ -585,26 +655,10 @@ impl KmsHttpClient for LocalKeyKmsTransport {
 
 impl KmsEd25519Backend for AwsKmsEd25519Backend {
     fn sign_raw_ed25519(&self, preimage: &[u8]) -> Result<Vec<u8>, KeyError> {
-        let body = sign_request_body(&self.key_id, preimage);
-        let resp = self.client.post_kms(TARGET_SIGN, &body)?;
-        let signature = parse_sign_response(&resp)?;
-        if signature.len() != ED25519_SIGNATURE_LEN {
-            return Err(KeyError::Malformed(format!(
-                "aws-kms: Sign returned a {}-byte signature; expected a raw {ED25519_SIGNATURE_LEN}-byte Ed25519 signature",
-                signature.len()
-            )));
-        }
-        // VERIFY-BEFORE-RETURN (ADR-MCPS-028 §D / guardrail): the signature MUST
-        // verify against the advertised public key under the unmodified mcp-re-core
-        // verifier. This catches a misconfigured DIGEST/prehash KMS key, a key
-        // mismatch, or any corruption — fail closed, never emit it.
-        verify_ed25519(preimage, &b64url_encode(&signature), &self.verify_key).map_err(|e| {
-            KeyError::Malformed(format!(
-                "aws-kms: KMS signature did NOT verify against the advertised public key \
-                 (misconfigured DIGEST/prehash key or key mismatch?): {e}"
-            ))
-        })?;
-        Ok(signature)
+        let response = self
+            .sign_once(preimage)
+            .map_err(|failure| failure.into_key_error("aws-kms", TARGET_SIGN))?;
+        self.accept_signature(preimage, response)
     }
 
     fn public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
@@ -846,7 +900,7 @@ mod tests {
         prehash: bool,
     }
     impl KmsHttpClient for FakeKms {
-        fn post_kms(&self, target: &str, body: &[u8]) -> Result<Vec<u8>, KeyError> {
+        fn post_kms(&self, target: &str, body: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure> {
             match target {
                 TARGET_GET_PUBLIC_KEY => {
                     let der = spki_from_raw(&self.key.public_key().to_bytes());
@@ -985,7 +1039,7 @@ mod tests {
         signs: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     }
     impl KmsHttpClient for ThrottlingKms {
-        fn post_kms(&self, target: &str, _body: &[u8]) -> Result<Vec<u8>, KeyError> {
+        fn post_kms(&self, target: &str, _body: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure> {
             match target {
                 TARGET_GET_PUBLIC_KEY => {
                     let der = spki_from_raw(&self.key.public_key().to_bytes());
@@ -998,11 +1052,12 @@ mod tests {
                 }
                 TARGET_SIGN => {
                     self.signs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    // The shape `post_kms` renders for a KMS error response.
-                    Err(KeyError::NotFound(format!(
-                        "aws-kms: {target} returned HTTP 400: \
-                         {{\"__type\":\"ThrottlingException\"}}"
-                    )))
+                    // Exactly what `UreqKmsClient::post_kms` hands back for a KMS error
+                    // response: the status and the body, still separable.
+                    Err(RemoteSignerFailure::status_body(
+                        400,
+                        "{\"__type\":\"com.amazonaws.kms#ThrottlingException\"}".to_string(),
+                    ))
                 }
                 other => panic!("unexpected KMS target {other}"),
             }
@@ -1063,25 +1118,52 @@ mod tests {
     /// happens to contain one of these tokens arms it.
     #[test]
     fn only_account_quota_failures_reach_the_exhausted_verdict() {
-        for throttling in [
-            "aws-kms: TrentService.Sign returned HTTP 400: {\"__type\":\"ThrottlingException\"}",
-            "aws-kms: TrentService.Sign returned HTTP 400: {\"__type\":\"LimitExceededException\"}",
-            "aws-kms: TrentService.Sign returned HTTP 429: slow down",
+        for exhausted in [
+            RemoteSignerFailure::status_body(
+                400,
+                "{\"__type\":\"com.amazonaws.kms#ThrottlingException\"}".to_string(),
+            ),
+            RemoteSignerFailure::status_body(
+                400,
+                "{\"__type\":\"LimitExceededException\"}".to_string(),
+            ),
+            RemoteSignerFailure::status_body(
+                400,
+                "{\"__type\":\"KMSInternalException\"}".to_string(),
+            ),
+            // The front door sheds load before KMS's own error shape is reached, so the
+            // body states no `__type` at all.
+            RemoteSignerFailure::status_body(429, "slow down".to_string()),
+            RemoteSignerFailure::status_body(503, String::new()),
         ] {
             assert_eq!(
-                quota_verdict(&KeyError::NotFound(throttling.to_string())),
+                quota_verdict(&exhausted),
                 QuotaVerdict::Exhausted,
-                "{throttling}"
+                "{exhausted:?}"
             );
         }
-        for other in [
-            "aws-kms: TrentService.Sign returned HTTP 400: {\"__type\":\"AccessDeniedException\"}",
-            "aws-kms: TrentService.Sign transport: connection refused",
+        for unrelated in [
+            RemoteSignerFailure::status_body(
+                400,
+                "{\"__type\":\"AccessDeniedException\"}".to_string(),
+            ),
+            RemoteSignerFailure::status_body(403, "{\"__type\":\"NotFoundException\"}".to_string()),
+            RemoteSignerFailure::transport("connection refused".to_string()),
+            RemoteSignerFailure::malformed("a body that never reached the wire".to_string()),
+            // The regression the wire fact closes: a DIAGNOSIS that merely MENTIONS a
+            // quota error is not a quota error. The old classifier matched this.
+            RemoteSignerFailure::status_body(
+                400,
+                "{\"__type\":\"AccessDeniedException\",\"message\":\"not a ThrottlingException\"}"
+                    .to_string(),
+            ),
+            // A body that states nothing states nothing.
+            RemoteSignerFailure::status_body(400, "not json at all".to_string()),
         ] {
             assert_eq!(
-                quota_verdict(&KeyError::NotFound(other.to_string())),
+                quota_verdict(&unrelated),
                 QuotaVerdict::Unrelated,
-                "{other}"
+                "{unrelated:?}"
             );
         }
     }
