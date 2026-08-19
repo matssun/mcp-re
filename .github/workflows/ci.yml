@@ -230,7 +230,20 @@ jobs:
       # FFI bindings with libclang; install it defensively so the cargo closure
       # links on a clean runner.
       - name: System build dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libclang-dev
+        # `apt-get update` is an unbounded network operation and the step had no bound of
+        # its own, so a wedged mirror ran toward the 6-hour job default. Measured on a
+        # healthy run: 57s. Measured on 2026-08-19: six jobs across four branches sat here
+        # for 28-58 minutes, and every one of them reported `pending` the whole time — which
+        # says strictly less than a red would.
+        #
+        # Nothing here is weakened. A stale index is tolerated because the runner image
+        # ships a fresh one; a package that genuinely cannot be installed still fails the
+        # step, and every gate below is untouched.
+        timeout-minutes: 10
+        run: |
+          timeout 300 sudo apt-get update \
+            || echo "apt-get update did not finish in 300s; using the runner image's package index"
+          sudo apt-get install -y --no-install-recommends libclang-dev
 
       - name: Select pinned toolchain (from rust-toolchain.toml)
         run: rustup show && rustc --version && cargo --version
@@ -396,7 +409,20 @@ jobs:
 
       # cryptoki-sys builds its FFI bindings with libclang (see the `cargo` job).
       - name: System build dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libclang-dev
+        # `apt-get update` is an unbounded network operation and the step had no bound of
+        # its own, so a wedged mirror ran toward the 6-hour job default. Measured on a
+        # healthy run: 57s. Measured on 2026-08-19: six jobs across four branches sat here
+        # for 28-58 minutes, and every one of them reported `pending` the whole time — which
+        # says strictly less than a red would.
+        #
+        # Nothing here is weakened. A stale index is tolerated because the runner image
+        # ships a fresh one; a package that genuinely cannot be installed still fails the
+        # step, and every gate below is untouched.
+        timeout-minutes: 10
+        run: |
+          timeout 300 sudo apt-get update \
+            || echo "apt-get update did not finish in 300s; using the runner image's package index"
+          sudo apt-get install -y --no-install-recommends libclang-dev
 
       - name: Select pinned toolchain (from rust-toolchain.toml)
         run: rustup show && rustc --version && cargo --version
@@ -472,7 +498,20 @@ jobs:
       # The FFI closure (cryptoki-sys) builds bindings with libclang, same as the
       # cargo jobs; install it so the Bazel build links on a clean runner.
       - name: System build dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libclang-dev
+        # `apt-get update` is an unbounded network operation and the step had no bound of
+        # its own, so a wedged mirror ran toward the 6-hour job default. Measured on a
+        # healthy run: 57s. Measured on 2026-08-19: six jobs across four branches sat here
+        # for 28-58 minutes, and every one of them reported `pending` the whole time — which
+        # says strictly less than a red would.
+        #
+        # Nothing here is weakened. A stale index is tolerated because the runner image
+        # ships a fresh one; a package that genuinely cannot be installed still fails the
+        # step, and every gate below is untouched.
+        timeout-minutes: 10
+        run: |
+          timeout 300 sudo apt-get update \
+            || echo "apt-get update did not finish in 300s; using the runner image's package index"
+          sudo apt-get install -y --no-install-recommends libclang-dev
 
       # Cache the Bazel repository + disk cache across runs (crate_universe hub,
       # the gazelle_rust Go binary, rules_go/gazelle). Keyed on the module lock +
