@@ -76,14 +76,22 @@ jobs:
 
       # One policy, every lockfile. Each manifest is checked in its own step so a
       # failure names the workspace at fault instead of one merged wall of output.
+      #
+      # `if: !cancelled()` is what makes that true. Without it a failure in the
+      # root workspace skips the other three, and the run reports nothing at all
+      # about them — an advisory affecting two crate universes would be found one
+      # release at a time. Every step runs; the job still fails if any of them do.
       - name: Root workspace (shipped proxy + conformance)
         run: cargo deny --manifest-path Cargo.toml check advisories licenses bans sources
 
       - name: sdk/python (pyo3 crate universe)
+        if: ${{ !cancelled() }}
         run: cargo deny --manifest-path sdk/python/Cargo.toml check advisories licenses bans sources
 
       - name: sdk/typescript (napi crate universe)
+        if: ${{ !cancelled() }}
         run: cargo deny --manifest-path sdk/typescript/Cargo.toml check advisories licenses bans sources
 
       - name: mcp-re-proxy/tests/mock-pkcs11 (in-tree mock provider)
+        if: ${{ !cancelled() }}
         run: cargo deny --manifest-path mcp-re-proxy/tests/mock-pkcs11/Cargo.toml check advisories licenses bans sources

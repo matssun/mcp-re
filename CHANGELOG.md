@@ -132,6 +132,35 @@ absent corpus while its own docs described a `runner::RunReport` and a
 carries evidence: the three corpora and the sixteen test targets that replay and guard
 them. It is now test-only and has no library.
 
+### Security — `h2` queued empty DATA frames without a bound (RUSTSEC-2026-0258)
+
+`h2` 0.4.15 → 0.4.16. The crate accepted and queued empty HTTP/2 DATA frames without
+limit; a stream that is not actively drained grows without bound, and the accumulated
+length can overflow into a panic (GHSA-q83h-524g-xf6h, low severity).
+
+It reaches MCP-RE on the shipped serving path, not incidentally: `hyper` is declared with
+the `http2` feature and the proxy is the server, so the frames come from a remote client
+over the same connection that carries signed exchanges. The advisory's fix is entirely in
+the crate — no MCP-RE code changes — and `deny.toml` keeps an intentionally empty
+`ignore` list, so bumping the dependency is the only route.
+
+Only the root workspace resolves `h2`; `sdk/python`, `sdk/typescript` and the in-tree
+mock-PKCS#11 provider do not, and all four crate universes are clean under the policy
+after the bump. `MODULE.bazel.lock` re-resolves the crate-universe hub with it.
+
+### Fixed — the supply-chain gate stopped measuring after the first failing workspace
+
+The four `cargo deny` invocations are separate steps so a failure names the workspace at
+fault rather than producing one merged wall of output. They carried the default
+`success()` condition, so a failure in the root workspace skipped the other three and the
+run reported nothing whatsoever about them — an advisory reaching two crate universes
+would have been discovered one release at a time, and the RUSTSEC-2026-0258 run is an
+instance: three of the four lockfiles went unexamined.
+
+Each subsequent step is now `if: ${{ !cancelled() }}`. Every manifest is checked on every
+run, and the job still fails if any of them does.
+
+
 ## [0.16.0] — 2026-08-10
 
 ### Added — the exchange lifecycle is a value, and refusals derive their retry contract from it (ADR-MCPRE-057, ADR-MCPRE-058)
