@@ -49,6 +49,8 @@ use mcp_re_core::VerificationKey;
 use zeroize::Zeroizing;
 
 use crate::delegated_tls::RawEd25519TlsSigner;
+use crate::handshake_quota::HandshakeQuotaWindow;
+use crate::handshake_quota::QuotaVerdict;
 use crate::key_source::KeyError;
 use crate::kms_keysource::ed25519_raw_point_from_spki;
 use crate::kms_keysource::KmsEd25519Backend;
@@ -577,7 +579,7 @@ enum KmsCallError {
 }
 
 impl KmsCallError {
-    /// The rendered error. [`is_kms_throttling`] classifies Cloud KMS failures out of this
+    /// The rendered error. [`quota_verdict`] classifies Cloud KMS failures out of this
     /// text, so the two shapes it matches are produced here and nowhere else.
     fn into_key_error(self, operation: &str) -> KeyError {
         match self {
@@ -606,7 +608,7 @@ impl KmsCallError {
     /// KMS call -> 403 -> throw away a good token -> real metadata round trip -> KMS call
     /// -> 403. That is exactly the per-handshake metadata amplification
     /// [`UNKNOWN_EXPIRY_REUSE`] exists to prevent, re-entered through a different door and
-    /// drivable by an unauthenticated peer — and [`is_kms_throttling`] excludes 403, so the
+    /// drivable by an unauthenticated peer — and [`quota_verdict`] excludes 403, so the
     /// handshake cooldown is no backstop for it.
     fn rejected_the_bearer_token(&self) -> bool {
         matches!(self, KmsCallError::Status(401, _))
@@ -923,34 +925,39 @@ fn parse_sign_response(body: &[u8]) -> Result<Vec<u8>, KeyError> {
 /// TTL runs out. A handshake flood becomes a signing outage.
 ///
 /// So the throttle is treated as a signal about the shared quota, not as one request's
-/// bad luck: for this window the handshake path refuses locally WITHOUT calling Cloud
-/// KMS, leaving the quota to the issuance path. Refusing handshakes is the cheap
-/// failure — a peer retries a connection; a replica that has lost response signing does
-/// not recover until a credential can be minted. Matches the AWS sibling's
-/// `TLS_SIGN_THROTTLE_COOLDOWN`.
+/// bad luck. The window, the single-flight probe and the straggler rule live in
+/// [`crate::handshake_quota`]; its length is DERIVED from [`NETWORK_TIMEOUT`], because a
+/// window shorter than the call it reacts to can be installed already elapsed.
+/// What is Cloud KMS's is the two things below.
 ///
-/// It is at least [`NETWORK_TIMEOUT`] long, for the same reason
-/// [`METADATA_FAILURE_COOLDOWN`] is. The window is opened in reaction to a call that may
-/// have taken a whole timeout, so a window shorter than that timeout can be installed
-/// already elapsed — and it would be exactly in the regime the window exists for, an
-/// overloaded Cloud KMS answering slowly, that the mitigation degenerated to no throttle at
-/// all. `the_throttle_window_must_outlast_the_network_timeout` fails the build if that
-/// stops being true.
-const TLS_SIGN_THROTTLE_COOLDOWN: Duration = NETWORK_TIMEOUT;
+/// What a locally-refused handshake signature says, and it names the quota an operator
+/// has to go and look at.
+const QUOTA_REFUSAL: &str = "gcp-kms: Cloud KMS is throttling this project; the \
+     delegated-TLS handshake signature is refused locally so the delegated-credential \
+     issuance keeps its share of the quota";
 
 /// Does this Cloud KMS failure say the PROJECT is over its quota, rather than that one
 /// request was malformed?
 ///
-/// Classified from the rendered error because [`KeyError`] carries no machine-readable
-/// status and its taxonomy is frozen. The text it matches is produced by
-/// [`UreqGcpClient::asymmetric_sign`] in this module, which renders the HTTP status and
-/// interpolates the Cloud KMS JSON error body verbatim — `RESOURCE_EXHAUSTED` and
-/// `UNAVAILABLE` are the two statuses that mean the project, not the request.
-fn is_kms_throttling(error: &KeyError) -> bool {
+/// Classified from the RENDERED error, which is the defect and is named as one: the fact
+/// is known typed one layer down — [`KmsCallError::Status`] holds the HTTP status and the
+/// body — and [`KmsCallError::into_key_error`] flattens both into a [`KeyError`] string
+/// that this then parses back out. `RESOURCE_EXHAUSTED` and `UNAVAILABLE` are the two
+/// Cloud KMS statuses that mean the project rather than the request.
+///
+/// A rewording upstream silently stops arming the window; a malformed-request body that
+/// happens to contain one of these tokens arms it. Both are consequences of recovering a
+/// structured fact from prose, and the fix is at the transport seam, not here.
+fn quota_verdict(error: &KeyError) -> QuotaVerdict {
     let rendered = format!("{error:?}");
-    ["RESOURCE_EXHAUSTED", "UNAVAILABLE", "HTTP 429", "HTTP 503"]
+    let exhausted = ["RESOURCE_EXHAUSTED", "UNAVAILABLE", "HTTP 429", "HTTP 503"]
         .iter()
-        .any(|marker| rendered.contains(marker))
+        .any(|marker| rendered.contains(marker));
+    if exhausted {
+        QuotaVerdict::Exhausted
+    } else {
+        QuotaVerdict::Unrelated
+    }
 }
 
 /// A non-exporting [`KmsEd25519Backend`] backed by GCP Cloud KMS.
@@ -958,9 +965,11 @@ pub struct GcpKmsEd25519Backend {
     transport: Box<dyn GcpKmsTransport + Send + Sync>,
     spki_der: Vec<u8>,
     verify_key: VerificationKey,
-    /// When the delegated-TLS path may call Cloud KMS again, set after Cloud KMS
-    /// reported throttling. `None` outside a cooldown, which is the steady state.
-    tls_cooldown_until: Mutex<Option<Instant>>,
+    /// The handshake path's share of the project quota (ADR-MCPS-028 §G). The window,
+    /// the single-flight probe and the straggler rule are
+    /// [`HandshakeQuotaWindow`](crate::handshake_quota::HandshakeQuotaWindow)'s; what is
+    /// this backend's is which failures mean the quota is gone, and what the refusal says.
+    tls_quota: HandshakeQuotaWindow,
 }
 
 impl GcpKmsEd25519Backend {
@@ -979,98 +988,25 @@ impl GcpKmsEd25519Backend {
             transport,
             spki_der,
             verify_key,
-            tls_cooldown_until: Mutex::new(None),
+            tls_quota: HandshakeQuotaWindow::for_network_timeout(NETWORK_TIMEOUT, QUOTA_REFUSAL),
         })
     }
 
-    /// Open a throttle window ending [`TLS_SIGN_THROTTLE_COOLDOWN`] after `now`, never
-    /// SHORTENING one already in force.
-    ///
-    /// `now` MUST be a clock reading taken AFTER the call being reacted to. That is what
-    /// keeps the window from being installed stale: it was previously the handshake's ENTRY
-    /// instant, so a Cloud KMS call slower than the cooldown opened a window that had
-    /// already elapsed — no throttle at all, precisely when Cloud KMS was slow enough to
-    /// need one.
-    ///
-    /// `max` is a narrower guarantee than it looks and the two are easy to confuse: it
-    /// stops a thread REPLACING a longer window with a shorter one, which is what plain
-    /// assignment did when two threads reported failures out of order. It does NOT sanitise
-    /// a stale reading — on the `None` branch, which is the steady state and the state a
-    /// successful probe leaves behind, whatever `until` it is handed is installed outright.
-    /// Freshness comes from the caller reading the clock here, not from `max`.
-    fn arm_cooldown(&self, now: Instant) {
-        let mut cooldown = self
-            .tls_cooldown_until
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        let until = now + TLS_SIGN_THROTTLE_COOLDOWN;
-        *cooldown = Some(cooldown.map_or(until, |current| current.max(until)));
-    }
-
     /// The delegated-TLS handshake signature, against an explicit clock so the
-    /// quota-preserving cooldown is provable without waiting on one.
+    /// quota-preserving window is provable without waiting on one.
     ///
-    /// Inside a cooldown this refuses WITHOUT reaching Cloud KMS. See
-    /// [`TLS_SIGN_THROTTLE_COOLDOWN`]: the handshake path is the one an unauthenticated
-    /// peer can drive, and it shares a project quota with the delegated-credential issuance
-    /// that keeps the replica able to sign responses at all.
-    ///
-    /// `clock` is read TWICE and the distinction is load-bearing: once at the gate, to
-    /// decide whether this handshake may reach Cloud KMS, and again AFTER the call, to open
-    /// a window that reacts to when the call finished rather than to when the handshake
-    /// arrived.
+    /// The window is [`HandshakeQuotaWindow`]'s and so is every rule about it. This
+    /// supplies the two things that are Cloud KMS's: the signing operation, and which
+    /// failures say the project is out of budget.
     fn tls_sign_at(
         &self,
         message: &[u8],
         clock: &dyn Fn() -> Instant,
     ) -> Result<Vec<u8>, KeyError> {
-        let now = clock();
-        // Whether THIS thread is the one probing a lapsed window. Only the thread that
-        // observes the lapse takes the probe: it re-arms the window before releasing the
-        // lock, so the rest of a concurrent handshake cohort at the boundary is still
-        // refused instead of all calling Cloud KMS at once — which is the flood the
-        // window exists to stop, arriving one cooldown late.
-        let probing = {
-            // Poison recovery, not propagation: the state is one whole-value swap, and a
-            // sticky lock error here would refuse every later handshake signature for the
-            // process lifetime — a far worse failure than the throttle it guards against.
-            let mut cooldown = self
-                .tls_cooldown_until
-                .lock()
-                .unwrap_or_else(|p| p.into_inner());
-            match *cooldown {
-                Some(until) if now < until => {
-                    return Err(KeyError::NotFound(
-                        "gcp-kms: Cloud KMS is throttling this project; the delegated-TLS \
-                         handshake signature is refused locally so the delegated-credential \
-                         issuance keeps its share of the quota"
-                            .to_string(),
-                    ))
-                }
-                Some(_) => {
-                    *cooldown = Some(now + TLS_SIGN_THROTTLE_COOLDOWN);
-                    true
-                }
-                None => false,
-            }
-        };
         // The object-signing RAW-Ed25519 sign path verbatim over the handshake transcript,
         // length-checked + verified.
-        let signed = self.sign_raw_ed25519(message);
-        match &signed {
-            Ok(_) if probing => {
-                // The probe went through: the quota is available again, so reopen the path
-                // rather than leaving the window this thread armed to run its course.
-                *self
-                    .tls_cooldown_until
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner()) = None;
-            }
-            // Armed from a reading taken NOW, after the call — not from the entry instant.
-            Err(error) if is_kms_throttling(error) => self.arm_cooldown(clock()),
-            _ => {}
-        }
-        signed
+        self.tls_quota
+            .guard(clock, || self.sign_raw_ed25519(message), quota_verdict)
     }
 
     /// Build a production GCP Cloud KMS backend (ureq HTTPS + bearer token).
@@ -1742,19 +1678,6 @@ mod tests {
         );
     }
 
-    /// The same property on the handshake path's own lock: a poisoned cooldown must not
-    /// refuse every later TLS signature.
-    #[test]
-    fn a_poisoned_tls_cooldown_lock_still_signs() {
-        let backend =
-            GcpKmsEd25519Backend::with_transport(Box::new(FakeGcp::good(17))).expect("construct");
-        poison(&backend.tls_cooldown_until);
-        let sig = backend
-            .tls_sign_at(b"transcript", &Instant::now)
-            .expect("a poisoned cooldown lock must not refuse the handshake");
-        assert_eq!(sig.len(), 64);
-    }
-
     // ------------------------------------------------------------------
     // R9-C060 / R9-C108 — the unknown-expiry floor's real bound.
     // ------------------------------------------------------------------
@@ -2041,7 +1964,7 @@ mod tests {
         );
 
         backend
-            .tls_sign_at(b"transcript", &|| start + TLS_SIGN_THROTTLE_COOLDOWN)
+            .tls_sign_at(b"transcript", &|| start + NETWORK_TIMEOUT)
             .expect_err("Cloud KMS is still throttling");
         assert_eq!(
             signs(),
@@ -2050,261 +1973,24 @@ mod tests {
         );
     }
 
-    /// A throttling transport whose call TAKES TIME, so a cohort of handshakes really is
-    /// inside the probe when it runs. With an instantaneous fake the prober finishes before
-    /// the next thread takes the lock, and the race the window exists to close never opens
-    /// — which is why the first version of this test passed against the defect.
-    struct SlowThrottlingGcp {
-        key: SigningKey,
-        signs: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-        call_time: Duration,
-    }
-    impl GcpKmsTransport for SlowThrottlingGcp {
-        fn get_public_key(&self) -> Result<Vec<u8>, KeyError> {
-            Ok(serde_json::json!({
-                "algorithm": ALGORITHM_ED25519,
-                "pem": pem_from_raw(&self.key.public_key().to_bytes()),
-            })
-            .to_string()
-            .into_bytes())
-        }
-        fn asymmetric_sign(&self, _body: &[u8]) -> Result<Vec<u8>, KeyError> {
-            self.signs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            std::thread::sleep(self.call_time);
-            Err(KeyError::NotFound(
-                "gcp-kms: asymmetricSign HTTP 429: RESOURCE_EXHAUSTED".to_string(),
-            ))
-        }
-    }
-
-    /// The window must be armed from a reading taken AFTER the call, and must outlast the
-    /// call it reacts to.
+    /// Cloud KMS's half of the window: which failures mean the PROJECT is over its quota,
+    /// and not that one request was refused.
     ///
-    /// Armed from the handshake's ENTRY instant with a 2s window against a 5s timeout, any
-    /// Cloud KMS call slower than 2s installed a window that had ALREADY elapsed — no
-    /// throttle at all, in exactly the regime the throttle exists for: an overloaded Cloud
-    /// KMS answering slowly, with an unauthenticated peer still driving one
-    /// `asymmetricSign` per handshake against the quota the rotor needs.
+    /// The mechanism the verdict drives — the window, the single-flight probe, the
+    /// straggler rule — is [`crate::handshake_quota`]'s and is tested there, against a
+    /// closure rather than through a fake Cloud KMS transport. What is Cloud KMS's is this
+    /// vocabulary, and it is worth its own test because it is recovered from a RENDERED
+    /// error: a reworded body silently stops arming the window, and an unrelated failure
+    /// that happens to contain one of these tokens arms it.
     #[test]
-    fn a_slow_throttled_call_still_opens_a_live_window() {
-        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let slow = TLS_SIGN_THROTTLE_COOLDOWN + Duration::from_millis(20);
-        let backend = GcpKmsEd25519Backend::with_transport(Box::new(SlowThrottlingGcp {
-            key: SigningKey::from_seed_bytes(&[46u8; 32]),
-            signs: std::sync::Arc::clone(&counter),
-            call_time: slow,
-        }))
-        .expect("construct");
-        let entry = Instant::now();
-        // The clock advances by `slow` across the call, exactly as the real one would.
-        let reads = std::sync::atomic::AtomicUsize::new(0);
-        let clock = || {
-            if reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
-                entry
-            } else {
-                entry + slow
-            }
-        };
-        backend
-            .tls_sign_at(b"transcript", &clock)
-            .expect_err("Cloud KMS is throttling");
-        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 1);
-        // A handshake arriving just after that call finished must be REFUSED. Armed from
-        // the entry instant, the window would already have expired and this would reach
-        // Cloud KMS.
-        backend
-            .tls_sign_at(b"transcript", &|| entry + slow + Duration::from_millis(1))
-            .expect_err("the window opened by the slow call must still be in force");
-        assert_eq!(
-            counter.load(std::sync::atomic::Ordering::SeqCst),
-            1,
-            "a window armed from the entry instant is dead on arrival after a slow call"
-        );
-    }
-
-    /// The window must outlast the call it reacts to, or it can be installed already
-    /// elapsed. Pinned as a build guard, exactly like the metadata cool-off's.
-    #[test]
-    fn the_throttle_window_must_outlast_the_network_timeout() {
-        assert!(
-            TLS_SIGN_THROTTLE_COOLDOWN >= NETWORK_TIMEOUT,
-            "a {TLS_SIGN_THROTTLE_COOLDOWN:?} window cannot survive a call that may take \
-             {NETWORK_TIMEOUT:?}"
-        );
-    }
-
-    /// At the cooldown boundary exactly ONE handshake probes Cloud KMS.
-    ///
-    /// Clearing the window before probing made every concurrent handshake at the boundary
-    /// call Cloud KMS at once — the flood the window exists to stop, arriving one cooldown
-    /// late. Re-arming INSIDE the same critical section as the read is what makes the
-    /// cohort behind the prober see a closed window instead of an open one.
-    #[test]
-    fn only_one_handshake_probes_at_the_cooldown_boundary() {
-        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let backend = std::sync::Arc::new(
-            GcpKmsEd25519Backend::with_transport(Box::new(SlowThrottlingGcp {
-                key: SigningKey::from_seed_bytes(&[43u8; 32]),
-                signs: std::sync::Arc::clone(&counter),
-                // LONGER than the window it is probing: the previous 40ms was 50x shorter
-                // than the cooldown, so the test only covered calls faster than it.
-                call_time: TLS_SIGN_THROTTLE_COOLDOWN + Duration::from_millis(20),
-            }))
-            .expect("construct"),
-        );
-        let start = Instant::now();
-        backend
-            .tls_sign_at(b"transcript", &|| start)
-            .expect_err("Cloud KMS is throttling");
-        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 1);
-
-        // 16 handshakes arrive together at the instant the window lapses, and stay inside
-        // the prober's call for its whole duration.
-        let boundary = start + TLS_SIGN_THROTTLE_COOLDOWN;
-        let threads: Vec<_> = (0..16)
-            .map(|_| {
-                let backend = std::sync::Arc::clone(&backend);
-                std::thread::spawn(move || {
-                    let _ = backend.tls_sign_at(b"transcript", &|| boundary);
-                })
-            })
-            .collect();
-        for t in threads {
-            t.join().expect("joined");
-        }
-        assert_eq!(
-            counter.load(std::sync::atomic::Ordering::SeqCst),
-            2,
-            "the boundary must admit ONE probe, not the whole cohort"
-        );
-    }
-
-    /// A straggler reporting an OLD failure must not shorten the window in force.
-    ///
-    /// Two handshakes can both pass a `None` gate and then fail; whichever wrote last used
-    /// to win outright, so a thread holding an earlier `now` could replace a later thread's
-    /// window with one that has already elapsed. Driven through `arm_cooldown` directly
-    /// because the ordering that produces it is a race, and a test that has to win a race
-    /// in order to fail is not a test.
-    #[test]
-    fn a_straggler_cannot_shorten_the_cooldown_window() {
-        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let backend = GcpKmsEd25519Backend::with_transport(Box::new(ThrottlingGcp {
-            key: SigningKey::from_seed_bytes(&[45u8; 32]),
-            signs: std::sync::Arc::clone(&counter),
-        }))
-        .expect("construct");
-        let start = Instant::now();
-        let later = start + Duration::from_secs(10);
-
-        // The later thread reports first and opens a window to later + COOLDOWN.
-        backend.arm_cooldown(later);
-        // The straggler, holding `start`, reports second. Its window has already elapsed.
-        backend.arm_cooldown(start);
-
-        // Between the two windows: the straggler's has passed, the real one has not.
-        let between = start + TLS_SIGN_THROTTLE_COOLDOWN + Duration::from_secs(1);
-        backend
-            .tls_sign_at(b"transcript", &|| between)
-            .expect_err("still inside the window the later thread opened");
-        assert_eq!(
-            counter.load(std::sync::atomic::Ordering::SeqCst),
-            0,
-            "a straggler's stale window must not reopen the handshake path"
-        );
-        // POSITIVE CONTROL: past the REAL window the path probes again, so the rule bounds
-        // the window rather than pinning it open.
-        backend
-            .tls_sign_at(b"transcript", &|| later + TLS_SIGN_THROTTLE_COOLDOWN)
-            .expect_err("Cloud KMS is still throttling");
-        assert_eq!(
-            counter.load(std::sync::atomic::Ordering::SeqCst),
-            1,
-            "past the real window the path must probe"
-        );
-    }
-
-    /// POSITIVE CONTROL: a probe that SUCCEEDS reopens the path immediately, rather than
-    /// leaving the window it armed to run its course.
-    ///
-    /// Without this, re-arming before probing would turn one throttle into a permanent
-    /// stutter — the recovery case is the whole point of probing at all.
-    #[test]
-    fn a_successful_probe_reopens_the_handshake_path_at_once() {
-        /// Throttles until `heal` is set, then signs normally.
-        struct HealingGcp {
-            key: SigningKey,
-            healed: std::sync::Arc<std::sync::atomic::AtomicBool>,
-            signs: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-        }
-        impl GcpKmsTransport for HealingGcp {
-            fn get_public_key(&self) -> Result<Vec<u8>, KeyError> {
-                Ok(serde_json::json!({
-                    "algorithm": ALGORITHM_ED25519,
-                    "pem": pem_from_raw(&self.key.public_key().to_bytes()),
-                })
-                .to_string()
-                .into_bytes())
-            }
-            fn asymmetric_sign(&self, body: &[u8]) -> Result<Vec<u8>, KeyError> {
-                self.signs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if !self.healed.load(std::sync::atomic::Ordering::SeqCst) {
-                    return Err(KeyError::NotFound(
-                        "gcp-kms: asymmetricSign HTTP 429: RESOURCE_EXHAUSTED".to_string(),
-                    ));
-                }
-                let v: serde_json::Value = serde_json::from_slice(body).expect("body");
-                let data = STANDARD
-                    .decode(v.get("data").and_then(|d| d.as_str()).unwrap_or(""))
-                    .expect("b64");
-                let raw = b64url_decode(&self.key.sign(&data)).expect("sign");
-                Ok(serde_json::json!({ "signature": STANDARD.encode(&raw) })
-                    .to_string()
-                    .into_bytes())
-            }
-        }
-        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let healed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let transport = Box::new(HealingGcp {
-            key: SigningKey::from_seed_bytes(&[44u8; 32]),
-            healed: std::sync::Arc::clone(&healed),
-            signs: std::sync::Arc::clone(&counter),
-        });
-        let backend = GcpKmsEd25519Backend::with_transport(transport).expect("construct");
-        let start = Instant::now();
-        backend
-            .tls_sign_at(b"transcript", &|| start)
-            .expect_err("throttled");
-        // The quota comes back; the probe past the window must reopen the path for
-        // everyone, not just for itself.
-        healed.store(true, std::sync::atomic::Ordering::SeqCst);
-        let boundary = start + TLS_SIGN_THROTTLE_COOLDOWN;
-        backend
-            .tls_sign_at(b"transcript", &|| boundary)
-            .expect("the probe succeeds");
-        let before = counter.load(std::sync::atomic::Ordering::SeqCst);
-        for _ in 0..5 {
-            backend
-                .tls_sign_at(b"transcript", &|| boundary + Duration::from_millis(1))
-                .expect("the path is open again");
-        }
-        assert_eq!(
-            counter.load(std::sync::atomic::Ordering::SeqCst),
-            before + 5,
-            "after a successful probe every handshake must reach Cloud KMS again"
-        );
-    }
-
-    /// The classifier must fire on the project-quota statuses and NOT on an ordinary
-    /// per-request refusal, which says nothing about the shared quota.
-    #[test]
-    fn only_quota_failures_open_the_cooldown() {
+    fn only_project_quota_failures_reach_the_exhausted_verdict() {
         for throttling in [
             "gcp-kms: asymmetricSign HTTP 429: {\"error\":{\"status\":\"RESOURCE_EXHAUSTED\"}}",
             "gcp-kms: asymmetricSign HTTP 503: {\"error\":{\"status\":\"UNAVAILABLE\"}}",
         ] {
-            assert!(
-                is_kms_throttling(&KeyError::NotFound(throttling.to_string())),
+            assert_eq!(
+                quota_verdict(&KeyError::NotFound(throttling.to_string())),
+                QuotaVerdict::Exhausted,
                 "{throttling}"
             );
         }
@@ -2312,8 +1998,9 @@ mod tests {
             "gcp-kms: asymmetricSign HTTP 403: {\"error\":{\"status\":\"PERMISSION_DENIED\"}}",
             "gcp-kms: asymmetricSign: connection refused",
         ] {
-            assert!(
-                !is_kms_throttling(&KeyError::NotFound(other.to_string())),
+            assert_eq!(
+                quota_verdict(&KeyError::NotFound(other.to_string())),
+                QuotaVerdict::Unrelated,
                 "{other}"
             );
         }
@@ -2545,7 +2232,7 @@ mod tests {
     /// Cloud KMS answers 403 for `PERMISSION_DENIED` (no `useToSign` binding on the key),
     /// `SERVICE_DISABLED` and billing failures — the most common Cloud KMS
     /// misconfigurations, in every one of which the bearer token is perfectly valid. On the
-    /// delegated-TLS path an unauthenticated peer drives that, and `is_kms_throttling`
+    /// delegated-TLS path an unauthenticated peer drives that, and `quota_verdict`
     /// excludes 403 so the handshake cooldown is no backstop.
     #[test]
     fn a_cloud_kms_403_does_not_discard_a_valid_token() {
@@ -2624,7 +2311,7 @@ mod tests {
     ///
     /// A success costs one call and discards nothing; a quota refusal (429/503) discards
     /// nothing either — throwing the token away there would re-fetch from the metadata
-    /// server on every throttled handshake, and `is_kms_throttling` still has to classify
+    /// server on every throttled handshake, and `quota_verdict` still has to classify
     /// the error it renders; and a 401 with NOTHING cached does not spend a second Cloud
     /// KMS call re-proving the same refusal.
     #[test]
@@ -2654,8 +2341,9 @@ mod tests {
             .expect_err("over quota");
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
         assert_eq!(source.invalidations(), 0, "a quota refusal must not evict");
-        assert!(
-            is_kms_throttling(&err),
+        assert_eq!(
+            quota_verdict(&err),
+            QuotaVerdict::Exhausted,
             "the throttle classifier must still see the rendered error, got {err:?}"
         );
 

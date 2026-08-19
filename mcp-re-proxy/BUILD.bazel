@@ -85,6 +85,11 @@ _PROXY_LIB_SRCS = [
     # HTTPS + OAuth2 bearer; behind #[cfg(feature = "gcp_kms_keysource")], cfg'd out
     # of the default build). No async google-cloud SDK (ADR-MCPS-018 lean-sync).
     "src/gcp_kms_keysource.rs",
+    # ADR-MCPS-028 §G: the handshake path's share of a remote signer's quota — the
+    # throttle window, its single-flight probe and the straggler rule, owned once for both
+    # KMS backends. Behind #[cfg(any(aws_kms_keysource, gcp_kms_keysource))], so it is
+    # cfg'd out of the default build and compiled by `mcp_re_proxy_ext`.
+    "src/handshake_quota.rs",
     # Issue #3838 (ADR-MCPS-014): non-exporting reference ResponseSigner proving the
     # response-signing delegation seam. Always compiled; default-build, Bazel-tested.
     "src/delegated_response_signer.rs",
