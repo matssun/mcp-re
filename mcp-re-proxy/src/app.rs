@@ -132,11 +132,13 @@ fn faulted_clock_refusal(
     ))
 }
 
-/// Enforce the key-file-permission posture for a sensitive key file. The proxy
-/// always runs the maximal-security posture, so a group/world-accessible key file
-/// is a HARD error returned to the caller (startup refuses). Uses the pure
-/// [`cli::key_file_posture_violation`] predicate so it stays consistent with (and
-/// testable alongside) the parse-time checks.
+/// Enforce the key-file-permission posture for a sensitive key file. A group- or
+/// world-accessible key file is a HARD error returned to the caller (startup refuses).
+///
+/// The policy decides; composition supplies the `stat` results. This function does not see
+/// `--allow-group-readable-key-files` and could not re-derive the rule from it if it did —
+/// which is the point, because the rule is three conditions and a boolean is one term in
+/// it.
 ///
 /// A `stat` that fails for any reason other than "there is no such file" is itself a
 /// refusal. The posture of a file the proxy is about to READ is either established or it
@@ -146,7 +148,10 @@ fn faulted_clock_refusal(
 /// permissions could be wrong, the loader resolves the same path a moment later, and it
 /// reports the absence with the diagnostic that names what was missing.
 #[cfg(unix)]
-fn check_key_file_perms(path: &str, allow_group_read: bool) -> Result<(), String> {
+fn check_key_file_perms(
+    path: &str,
+    policy: crate::config_state::KeyFileAccessPolicy,
+) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt;
     use std::os::unix::fs::PermissionsExt;
     let meta = match std::fs::metadata(path) {
@@ -162,9 +167,7 @@ fn check_key_file_perms(path: &str, allow_group_read: bool) -> Result<(), String
         }
     };
     let mode = meta.permissions().mode();
-    if let Some(reason) =
-        cli::key_file_posture_violation(mode, meta.gid(), allow_group_read, &process_gids())
-    {
+    if let Some(reason) = policy.violation(mode, meta.gid(), &process_gids()) {
         return Err(format!(
             "mcp-re-proxy refuses unsafe configuration:\n  - key file {path} \
              is {reason} (mode {:o}); restrict to 0600",
@@ -236,7 +239,10 @@ fn key_files_read_from_disk<'a>(
 /// the unix signature above — it had drifted to a second `strict` parameter no caller
 /// passes, so this arm could not have compiled.
 #[cfg(not(unix))]
-fn check_key_file_perms(_path: &str, _allow_group_read: bool) -> Result<(), String> {
+fn check_key_file_perms(
+    _path: &str,
+    _policy: crate::config_state::KeyFileAccessPolicy,
+) -> Result<(), String> {
     Ok(())
 }
 
@@ -456,7 +462,7 @@ fn run_validated(
     // guards are parse-time and already enforced inside `cli::parse_args`; this one is
     // filesystem-dependent so it lives here.
     for path in key_files_read_from_disk(config.state().custody(), config.state().tls_custody()) {
-        check_key_file_perms(path, values.allow_group_readable_key_files)?;
+        check_key_file_perms(path, config.state().key_file_access())?;
     }
     // A disabled (`none`/`0`) or over-ceiling `--max-client-cert-lifetime` is
     // rejected at parse time (`config_state::validation::unsafe_config_violations`), so by here it is
@@ -654,7 +660,7 @@ fn run_validated(
     // cross-replica revocation-lag bounds explicitly, derived from real config
     // (the two tiers have different cadences). Zero-window revocation is never
     // claimed on either.
-    if values.fleet {
+    if config.state().topology().is_fleet() {
         let trust_bound = crate::trust_plane::fleet_trust_bound(&trust_plan);
         let crl_bound = crate::tls_plane::fleet_crl_bound(&tls_plan);
         eprintln!(
@@ -738,7 +744,8 @@ fn run_validated(
     // deliberate, to the inner pool, where it is an accident of core count.
     // The RULE is pure and lives in the plan; the core count is the environment reading it
     // needs, and the wiring is this function's business.
-    let cores = crate::async_fleet::resolve_core_count(values.cores);
+    let cores =
+        crate::async_fleet::resolve_core_count(config.state().shard_topology().shards_or_auto());
     let ceiling = crate::startup_plan::inner_plane_ceiling(
         in_flight_limit.per_core(),
         in_flight_limit.fleet_total(),
@@ -901,7 +908,7 @@ fn run_validated(
     // Composed BEFORE the runtime exists. `--bind` resolution can fail, and a failure
     // after `finish` would drop a materialized runtime instead of tearing it down in the
     // order it owns — the one thing that type is for.
-    let fleet_cfg = fleet_config(values, in_flight_limit)?;
+    let fleet_cfg = fleet_config(values, config.state().shard_topology(), in_flight_limit)?;
 
     building.install_proxy(proxy);
     building.install_control(control_rt);
@@ -927,6 +934,7 @@ fn run_validated(
 /// fleet needs the fleet-wide half of it, and which half exists is the boundary's answer.
 fn fleet_config(
     values: &crate::deployment_request::DeploymentRequest,
+    shard_topology: crate::config_state::ShardTopologyRequest,
     in_flight_limit: crate::config_state::InFlightLimitBasis,
 ) -> Result<crate::async_fleet::FleetConfig, String> {
     use std::net::ToSocketAddrs;
@@ -940,8 +948,8 @@ fn fleet_config(
 
     Ok(crate::async_fleet::FleetConfig {
         addr,
-        cores: values.cores, // 0 = auto (one worker per core); --cores pins it
-        workers_per_shard: values.workers_per_shard,
+        cores: shard_topology.shards_or_auto(),
+        workers_per_shard: shard_topology.workers_per_shard_or_auto(),
         listen_backlog: crate::async_fleet::DEFAULT_LISTEN_BACKLOG,
         // MCPRE-114: a fleet-wide basis, divided evenly per core by
         // `async_fleet::apply_global_admission`. `None` when the limit is stated per core,
@@ -1030,6 +1038,7 @@ mod tests {
     use super::check_key_file_perms;
     use super::faulted_clock_refusal;
     use crate::config_state::test_support::crl_posture;
+    use crate::config_state::KeyFileAccessPolicy;
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
@@ -1201,7 +1210,8 @@ mod tests {
     #[test]
     fn a_world_readable_key_file_is_refused() {
         let f = KeyFile::at(0o644, "world.key");
-        let err = check_key_file_perms(f.path(), false).expect_err("0644 must be refused");
+        let err = check_key_file_perms(f.path(), KeyFileAccessPolicy::OwnerOnly)
+            .expect_err("0644 must be refused");
         assert!(err.contains("world-accessible"), "got: {err}");
     }
 
@@ -1210,7 +1220,8 @@ mod tests {
     #[test]
     fn a_group_readable_key_file_is_refused_without_the_opt_in() {
         let f = KeyFile::at(0o640, "group.key");
-        let err = check_key_file_perms(f.path(), false).expect_err("0640 must be refused");
+        let err = check_key_file_perms(f.path(), KeyFileAccessPolicy::OwnerOnly)
+            .expect_err("0640 must be refused");
         assert!(err.contains("group-accessible"), "got: {err}");
         assert!(
             err.contains("--allow-group-readable-key-files"),
@@ -1223,7 +1234,11 @@ mod tests {
     #[test]
     fn a_group_readable_key_file_owned_by_our_group_is_accepted_with_the_opt_in() {
         let f = KeyFile::at(0o640, "fsgroup.key");
-        check_key_file_perms(f.path(), true).expect("an fsGroup-shaped mount is accepted");
+        check_key_file_perms(
+            f.path(),
+            KeyFileAccessPolicy::GroupReadableUnderProcessGroup,
+        )
+        .expect("an fsGroup-shaped mount is accepted");
     }
 
     /// The opt-in does not reach group-WRITE: a peer able to replace the signing key is
@@ -1231,14 +1246,19 @@ mod tests {
     #[test]
     fn group_write_is_refused_even_with_the_opt_in() {
         let f = KeyFile::at(0o660, "groupwrite.key");
-        let err = check_key_file_perms(f.path(), true).expect_err("0660 must be refused");
+        let err = check_key_file_perms(
+            f.path(),
+            KeyFileAccessPolicy::GroupReadableUnderProcessGroup,
+        )
+        .expect_err("0660 must be refused");
         assert!(err.contains("group-writable"), "got: {err}");
     }
 
     #[test]
     fn an_owner_only_key_file_is_accepted() {
         let f = KeyFile::at(0o600, "owner.key");
-        check_key_file_perms(f.path(), false).expect("0600 is the required posture");
+        check_key_file_perms(f.path(), KeyFileAccessPolicy::OwnerOnly)
+            .expect("0600 is the required posture");
     }
 
     /// The load-bearing property, on the pure predicate `run` actually uses: the TLS
@@ -1294,8 +1314,9 @@ mod tests {
     /// a key file to check.
     #[test]
     fn an_absent_key_file_is_not_an_error() {
-        check_key_file_perms("", false).expect("no file configured is not a violation");
-        check_key_file_perms("/nonexistent/path/tls.key", false)
+        check_key_file_perms("", KeyFileAccessPolicy::OwnerOnly)
+            .expect("no file configured is not a violation");
+        check_key_file_perms("/nonexistent/path/tls.key", KeyFileAccessPolicy::OwnerOnly)
             .expect("a missing file is reported by the loader, not by this guard");
     }
 
@@ -1319,7 +1340,7 @@ mod tests {
         // openable by anything holding a descriptor, but `stat` on the path fails EACCES.
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).expect("chmod");
 
-        let result = check_key_file_perms(&key.to_string_lossy(), false);
+        let result = check_key_file_perms(&key.to_string_lossy(), KeyFileAccessPolicy::OwnerOnly);
 
         // Restore before asserting so a failure does not leave an unremovable directory.
         let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
@@ -1596,9 +1617,9 @@ mod tests {
         );
     }
 
-    /// The fleet's input is the serving TOPOLOGY. Each field is carried across unchanged —
-    /// no normalization happens here, because `0` means "auto" to `resolve_topology` and a
-    /// value substituted at this point would hide which of the two decided.
+    /// The fleet's input is the serving TOPOLOGY REQUEST, projected into the runtime's
+    /// `0 = auto` encoding. No normalization happens here: substituting a resolved count at
+    /// this point would hide whether the operator chose it or the host did.
     #[test]
     fn the_fleet_config_carries_the_topology_and_resolves_the_bind() {
         let config = config_with(
@@ -1607,12 +1628,16 @@ mod tests {
             "/key",
         );
         let basis = crate::config_state::in_flight_limit::classify(&config);
-        let fleet =
-            super::fleet_config(&config, basis).expect("the fixture binds a literal address");
+        let (_, shard_topology) = crate::config_state::topology::classify(&config);
+        let fleet = super::fleet_config(&config, shard_topology, basis)
+            .expect("the fixture binds a literal address");
 
         assert_eq!(fleet.addr, "127.0.0.1:8443".parse().expect("literal"));
-        assert_eq!(fleet.cores, config.cores);
-        assert_eq!(fleet.workers_per_shard, config.workers_per_shard);
+        assert_eq!(fleet.cores, shard_topology.shards_or_auto());
+        assert_eq!(
+            fleet.workers_per_shard,
+            shard_topology.workers_per_shard_or_auto()
+        );
         assert_eq!(
             fleet.max_in_flight_total,
             basis.fleet_total(),
@@ -1640,6 +1665,7 @@ mod tests {
 
         let refusal = super::fleet_config(
             &config,
+            crate::config_state::topology::classify(&config).1,
             crate::config_state::in_flight_limit::classify(&config),
         )
         .expect_err("no port, no socket address");

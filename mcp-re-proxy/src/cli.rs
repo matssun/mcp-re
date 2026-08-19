@@ -799,49 +799,6 @@ pub fn key_file_mode_is_insecure(mode: u32) -> bool {
     mode & 0o077 != 0
 }
 
-/// Why a key file's posture was refused, or `None` when it is acceptable.
-///
-/// The strict rule ([`key_file_mode_is_insecure`]) is `0600`/`0400` and nothing else,
-/// which is correct on a normal host and IMPOSSIBLE under the Kubernetes model a
-/// non-root pod needs: a Secret mounted for a non-root uid is owned by the pod's
-/// `fsGroup` and delivered mode `0440`, so the strict predicate refuses to start
-/// exactly the deployment that stopped running as root (C053b).
-///
-/// So group READ is acceptable, but only under all three conditions, and only when the
-/// operator has explicitly asked for it:
-///
-///   1. `allow_group_read` — an explicit opt-in, never a silent default. This widens
-///      who can read a signing key, so the deployment states it (the same shape as
-///      `replay.allowPlaintextRedis` / `identity.allowExampleFixtures`).
-///   2. the file's group is one THIS PROCESS is in — otherwise "group-readable" grants
-///      a group the proxy has nothing to do with, which is strictly worse than the
-///      posture being relaxed.
-///   3. no group WRITE and no other/world bit at all. Group write would let a peer
-///      process replace the signing key; that is never a mount-model requirement.
-pub fn key_file_posture_violation(
-    mode: u32,
-    file_gid: u32,
-    allow_group_read: bool,
-    process_gids: &[u32],
-) -> Option<&'static str> {
-    if mode & 0o007 != 0 {
-        return Some("world-accessible");
-    }
-    if mode & 0o020 != 0 {
-        return Some("group-writable");
-    }
-    if mode & 0o050 == 0 {
-        return None;
-    }
-    if !allow_group_read {
-        return Some("group-accessible (pass --allow-group-readable-key-files if this is an fsGroup-owned mount)");
-    }
-    if !process_gids.contains(&file_gid) {
-        return Some("group-accessible to a group this process is not a member of");
-    }
-    None
-}
-
 /// Read the PKCS#11 User PIN from `path` into a short-lived [`SecretString`].
 ///
 /// Enforces the key-file permission floor here as well as at startup: `run()` checks it
@@ -4476,61 +4433,6 @@ mod tests {
             super::key_file_mode_is_insecure(0o777),
             "world-everything is insecure"
         );
-    }
-
-    // ---- C053b: the fsGroup-owned mount posture -------------------------------
-
-    #[test]
-    fn the_strict_posture_is_unchanged_by_default() {
-        // No opt-in: the 0600/0400 floor behaves exactly as before.
-        assert_eq!(
-            super::key_file_posture_violation(0o600, 1000, false, &[1000]),
-            None
-        );
-        assert_eq!(
-            super::key_file_posture_violation(0o400, 1000, false, &[1000]),
-            None
-        );
-        assert!(super::key_file_posture_violation(0o440, 1000, false, &[1000]).is_some());
-    }
-
-    #[test]
-    fn an_fsgroup_owned_mount_is_accepted_only_with_the_opt_in() {
-        // The Kubernetes shape: mode 0440, owned by a supplementary group the process
-        // is in. Refused by default, accepted when the operator asks for it.
-        assert!(super::key_file_posture_violation(0o440, 2000, false, &[1000, 2000]).is_some());
-        assert_eq!(
-            super::key_file_posture_violation(0o440, 2000, true, &[1000, 2000]),
-            None
-        );
-    }
-
-    #[test]
-    fn a_group_this_process_is_not_in_is_still_refused() {
-        // "Group-readable" to a group the proxy has nothing to do with is strictly
-        // worse than the posture being relaxed, so the opt-in does not reach it.
-        assert!(super::key_file_posture_violation(0o440, 9999, true, &[1000, 2000]).is_some());
-    }
-
-    #[test]
-    fn group_write_is_never_accepted() {
-        // A peer process able to REPLACE the signing key is never a mount requirement.
-        for mode in [0o460, 0o660, 0o620] {
-            assert!(
-                super::key_file_posture_violation(mode, 2000, true, &[2000]).is_some(),
-                "{mode:o} is group-writable and must be refused even with the opt-in"
-            );
-        }
-    }
-
-    #[test]
-    fn any_world_bit_is_never_accepted() {
-        for mode in [0o444, 0o604, 0o441, 0o642] {
-            assert!(
-                super::key_file_posture_violation(mode, 2000, true, &[2000]).is_some(),
-                "{mode:o} has a world bit and must be refused even with the opt-in"
-            );
-        }
     }
 
     /// The leading PKCS#11-source flags (no `--tls-key`, no TLS label, no inner

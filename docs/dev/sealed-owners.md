@@ -56,6 +56,7 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `FreshnessWindow` | `config_state/freshness.rs` | `verifier_skew_secs()`, `replay_retain_until()`, `verifier_accepts_until()` |
 | `TrustDocumentSource` | `config_state/trust_document.rs` | `path()` |
 | `ClientCredentialWindow` | `config_state/client_credential_window.rs` | `cert_lifetime()`, `connection_age()`, `exposure_window()` |
+| `ShardTopologyRequest` | `config_state/topology.rs` | `shards()`, `workers_per_shard()`, `shards_or_auto()`, `workers_per_shard_or_auto()` |
 | `TrustPlan` | `startup_plan.rs` | `revocation()`, `document_path()`, `response_kid()`, `reload()`, `epoch()` |
 
 A plan produced by an owner lives **with that owner**, not in `startup_plan.rs`.
@@ -136,6 +137,21 @@ let you build a `CustodyState`.
   `is_enforced()` called it true and the request path had nothing to check against.
 - `key_files_read_from_disk` in `app.rs` reconstructed a security answer — which secrets
   land on local disk, for a permissions floor — out of two owners' representations.
+
+## Owners that are not sealed, and why that is the right answer
+
+Two of this campaign's owners have public representations, deliberately.
+
+`KeyFileAccessPolicy` and `DeploymentTopology` are two-variant enums where **both variants
+are legal deployments**. There is no illegal inhabitant to exclude, so `X { kind: Kind }`
+would add ceremony and no theorem. What they own is not a constructible invariant but a
+RULE: `policy.violation(mode, gid, process_gids)` answers whether a file posture is refused,
+where the consumer used to receive a `bool` and re-derive three conditions around it. The
+question a value like this answers is *whose rule is this?*, not *which inhabitants exist?*
+
+`ShardTopologyRequest` IS sealed, and the difference is instructive: `0` there is not a
+count but a deferral, so a public `usize` is a value every reader has to remember to
+interpret — and the composition root was the reader remembering it.
 
 ## Where sealing buys nothing
 

@@ -181,6 +181,13 @@ pub fn validate_configuration(
     // Infallible: the request states one of three things and the default makes the third
     // a basis too. Nothing to refuse — the illegal combination is not representable.
     let in_flight_limit = crate::config_state::in_flight_limit::classify(config);
+    // Infallible for the same reason: both key-file postures are legal deployments. What
+    // the owner holds is the RULE, and the rule is applied to a file rather than to the
+    // request.
+    let key_file_access = crate::config_state::key_file_access::classify(config);
+    // Two facts at two altitudes, deliberately not one owner: the topology is knowable from
+    // the request, the shard COUNT is not — `0` means ask the host.
+    let (topology, shard_topology) = crate::config_state::topology::classify(config);
     // PASS 2 — the relations between machines, asked of the RECOGNISED states rather than
     // of the fields again.
     let cross = crate::config_state::cross_machine::validate(
@@ -271,11 +278,14 @@ pub fn validate_configuration(
             custody,
             delegated_signing,
             in_flight_limit,
+            key_file_access,
             mcp_transport_contract,
             replay,
             retention,
             server_identity,
+            shard_topology,
             tls_custody,
+            topology,
             trust_document,
             trust_revocation,
             verified_context,

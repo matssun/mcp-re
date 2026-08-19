@@ -64,10 +64,12 @@ pub mod delegated_signing;
 pub mod evidence;
 pub mod freshness;
 pub mod in_flight_limit;
+pub mod key_file_access;
 pub mod mcp_transport_contract;
 pub mod replay;
 pub mod server_identity;
 pub mod tls_custody;
+pub mod topology;
 pub mod transport;
 pub mod trust_document;
 pub mod trust_revocation;
@@ -81,9 +83,11 @@ pub use delegated_signing::DelegatedSigningFacts;
 pub use evidence::{AuditState, RetentionState, VerifiedContextState};
 pub use freshness::FreshnessWindow;
 pub use in_flight_limit::{InFlightLimitBasis, InFlightLimitRequest};
+pub use key_file_access::KeyFileAccessPolicy;
 pub use mcp_transport_contract::McpTransportContractState;
 pub use replay::ReplayState;
 pub use tls_custody::TlsCustodyState;
+pub use topology::{DeploymentTopology, ShardTopologyRequest};
 pub use transport::{ChannelBindingState, CrlRevocationState};
 pub use trust_document::TrustDocumentSource;
 pub use trust_revocation::TrustRevocationState;
@@ -108,11 +112,14 @@ pub struct DeploymentConfigState {
     delegated_signing: DelegatedSigningFacts,
     freshness: FreshnessWindow,
     in_flight_limit: InFlightLimitBasis,
+    key_file_access: KeyFileAccessPolicy,
     mcp_transport_contract: McpTransportContractState,
     replay: ReplayState,
     retention: RetentionState,
     server_identity: server_identity::ServerIdentityFacts,
+    shard_topology: ShardTopologyRequest,
     tls_custody: TlsCustodyState,
+    topology: DeploymentTopology,
     trust_document: TrustDocumentSource,
     trust_revocation: TrustRevocationState,
     verified_context: VerifiedContextState,
@@ -131,11 +138,14 @@ pub(crate) struct RecognisedStates {
     pub(crate) delegated_signing: DelegatedSigningFacts,
     pub(crate) freshness: FreshnessWindow,
     pub(crate) in_flight_limit: InFlightLimitBasis,
+    pub(crate) key_file_access: KeyFileAccessPolicy,
     pub(crate) mcp_transport_contract: McpTransportContractState,
     pub(crate) replay: ReplayState,
     pub(crate) retention: RetentionState,
     pub(crate) server_identity: server_identity::ServerIdentityFacts,
+    pub(crate) shard_topology: ShardTopologyRequest,
     pub(crate) tls_custody: TlsCustodyState,
+    pub(crate) topology: DeploymentTopology,
     pub(crate) trust_document: TrustDocumentSource,
     pub(crate) trust_revocation: TrustRevocationState,
     pub(crate) verified_context: VerifiedContextState,
@@ -156,11 +166,14 @@ impl DeploymentConfigState {
             delegated_signing,
             freshness,
             in_flight_limit,
+            key_file_access,
             mcp_transport_contract,
             replay,
             retention,
             server_identity,
+            shard_topology,
             tls_custody,
+            topology,
             trust_document,
             trust_revocation,
             verified_context,
@@ -176,11 +189,14 @@ impl DeploymentConfigState {
             delegated_signing,
             freshness,
             in_flight_limit,
+            key_file_access,
             mcp_transport_contract,
             replay,
             retention,
             server_identity,
+            shard_topology,
             tls_custody,
+            topology,
             trust_document,
             trust_revocation,
             verified_context,
@@ -273,6 +289,25 @@ impl DeploymentConfigState {
     /// Whether the TLS handshake key can leave the device it lives on.
     pub fn tls_custody(&self) -> &TlsCustodyState {
         &self.tls_custody
+    }
+
+    /// Whether this deployment is one node or one replica of several.
+    pub fn topology(&self) -> DeploymentTopology {
+        self.topology
+    }
+
+    /// The serving-shard shape as the operator stated it. Not a count: the host resolves
+    /// `Auto` into one.
+    pub fn shard_topology(&self) -> ShardTopologyRequest {
+        self.shard_topology
+    }
+
+    /// Which key-file permission postures this deployment accepts.
+    ///
+    /// The policy answers whether a posture is refused; composition never receives the
+    /// flag and re-derives the rule around it.
+    pub fn key_file_access(&self) -> KeyFileAccessPolicy {
+        self.key_file_access
     }
 
     /// How long a client credential authorizes traffic, and how long one connection may
@@ -568,6 +603,9 @@ mod tests {
             )
             .0
             .expect("the legal fixture has an identity"),
+            key_file_access: key_file_access::classify(&test_support::legal_config()),
+            topology: topology::classify(&test_support::legal_config()).0,
+            shard_topology: topology::classify(&test_support::legal_config()).1,
             in_flight_limit: InFlightLimitBasis::PerCore {
                 requests: std::num::NonZeroUsize::new(256).expect("non-zero"),
             },

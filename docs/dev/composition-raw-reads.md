@@ -79,7 +79,7 @@ not semantic ownership. They are strings whose *interpretation* the custody stat
 
 Re-measured after the mechanical head: `app.rs` is down from 29 reads / 20 fields to
 **23 reads / 15 fields**, and `crate::deployment_request::KeySourceKind` is no longer
-imported by the composition root at all. After the owner work above it is **18**, and
+imported by the composition root at all. After the owner work above it is **13**, and
 `startup_plan.rs` is down from 10 to **3**.
 
 Two entries above were misclassified on the first pass (`fleet`, `cores`) — see the strike
@@ -122,8 +122,11 @@ when the refusal turns out to be all the capability still did.
 4. ~~Eliminate plan re-widening, starting with `TrustPlan`~~. **Done** — see below.
 5. ~~`max_client_cert_lifetime`~~ — **done**, as `ClientCredentialWindow`, and it found a
    live defect: see below.
-6. Bucket 3 — the remaining fields needing an owner or a represented relation:
-   `allow_group_readable_key_files` and the `fleet`/`cores` topology pair.
+6. ~~Bucket 3~~ — **done**. `allow_group_readable_key_files` became `KeyFileAccessPolicy`
+   (a rule, not a boolean: it answers whether a file posture is refused). `fleet` and
+   `cores` split by ALTITUDE, which was the point of the third bucket — `DeploymentTopology`
+   is knowable from the request, while a shard COUNT is not, so layer A owns
+   `ShardTopologyRequest` (`Auto` vs pinned) and the host still resolves it.
 7. Then narrow or remove `ValidatedDeployment::config()`, and the grep becomes a regression
    guard rather than the argument.
 
