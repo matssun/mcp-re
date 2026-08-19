@@ -87,7 +87,7 @@ use crate::http_profile_dispatch::dispatch_request_with_async_tier;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
 use crate::request_stages::ReadyForDispatch;
 use crate::request_stages::RetentionDisposition;
-use crate::transport::TransportBindingPolicy;
+use crate::transport::TransportBinding;
 
 /// Default lifetime of a recorded MRTR continuation in the shared correlation store
 /// (ADR-MCPS-047): long enough for a client to answer an `InputRequiredResult`,
@@ -287,7 +287,7 @@ pub struct HttpProfileProxy {
     inner_async: Box<dyn AsyncInnerServer>,
     /// Optional Mode-A transport binding: bind the verified request actor to the
     /// mTLS peer identity. `None` disables the channel binding.
-    transport_binding: Option<Box<dyn TransportBindingPolicy + Send + Sync>>,
+    transport_binding: Option<TransportBinding>,
     /// Response-signature validity window (seconds added to `created`).
     sig_ttl_secs: i64,
     /// Optional MRTR continuation correlation store (ADR-MCPS-047) — the fleet-shared
@@ -504,10 +504,21 @@ impl HttpProfileProxy {
     }
 
     /// Bind the verified request actor to the mTLS peer identity (Mode A, ADR-MCPS-014).
-    pub fn with_transport_binding(
-        mut self,
-        binding: Box<dyn TransportBindingPolicy + Send + Sync>,
-    ) -> Self {
+    ///
+    /// A named capability rather than a policy parameter. The caller chooses whether the
+    /// channel is bound; it does not get to supply the rule that decides, because a
+    /// supplied rule can admit everything while the serving path still records the
+    /// exchange as bound. See [`TransportBinding`].
+    pub fn with_exact_match_transport_binding(mut self) -> Self {
+        self.transport_binding = Some(TransportBinding::exact_match());
+        self
+    }
+
+    /// Install a binding the configuration owner recognised.
+    ///
+    /// `pub(crate)`, so the composition root can pass the binding derived from the
+    /// deployment's channel-binding state while no crate outside can install one at all.
+    pub(crate) fn with_transport_binding(mut self, binding: TransportBinding) -> Self {
         self.transport_binding = Some(binding);
         self
     }

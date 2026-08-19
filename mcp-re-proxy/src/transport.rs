@@ -297,6 +297,49 @@ impl TransportBindingPolicy for ExactMatchBinding {
     }
 }
 
+/// A binding the serving path is permitted to enforce.
+///
+/// [`TransportBindingPolicy`] is the vocabulary of binding rules; this is the subset the
+/// configuration owner recognised. The distinction is the whole point: a
+/// `Box<dyn TransportBindingPolicy>` parameter states only that SOME rule will run, and
+/// every implementation satisfies it — including one whose `check` returns `Ok(())` for
+/// every request, which the serving path cannot distinguish from a binding that held.
+///
+/// The representation is private and every constructor is `pub(crate)`, so a value of this
+/// type exists only where `config_state::transport` recognised a
+/// [`ChannelBindingState`](crate::config_state::ChannelBindingState). Possession is
+/// therefore the proof that the mode was approved, with no trailing clause about which
+/// call site built it.
+///
+/// `pub(crate)` seals nothing against this crate's own composition root, and normally that
+/// makes it the wrong lever. Here it is the right one, because the consumers being excluded
+/// are the ones outside the crate: `app.rs` SHOULD build these, and an embedder should not.
+pub(crate) struct TransportBinding {
+    policy: Box<dyn TransportBindingPolicy + Send + Sync>,
+}
+
+impl TransportBinding {
+    /// The exact-match binding (Mode A): the request signer must equal the channel identity.
+    ///
+    /// The one binding any deployment can be in — `BindingKind::Exact` is the only kind
+    /// that reaches a channel-binding state. A second deployable mode arrives here as a
+    /// second constructor, not as a caller-supplied policy object.
+    pub(crate) fn exact_match() -> Self {
+        TransportBinding {
+            policy: Box::new(ExactMatchBinding::new()),
+        }
+    }
+
+    /// Apply the binding. The serving path's only projection of the private policy.
+    pub(crate) fn check(
+        &self,
+        signer: &str,
+        identity: Option<&TransportIdentity>,
+    ) -> Result<(), McpReError> {
+        self.policy.check(signer, identity)
+    }
+}
+
 /// Cross-namespace binding: each `signer` maps to a set of allowed transport
 /// identities (e.g. a DID signer permitted over one or more SPIFFE IDs). A signer
 /// with no mapping, or an identity outside its set (or absent), fails closed.
@@ -1275,6 +1318,7 @@ mod tests {
     use super::MappedBinding;
     use super::RequestHeaders;
     use super::StaticIdentityProvider;
+    use super::TransportBinding;
     use super::TransportBindingPolicy;
     use super::TransportBindingProvider;
     use super::TransportIdentity;
@@ -1345,6 +1389,58 @@ mod tests {
         assert_eq!(
             policy.check("did:example:agent-1", None).unwrap_err(),
             McpReError::TransportBindingFailed
+        );
+    }
+
+    /// The installable binding enforces the exact-match rule, not merely some rule.
+    ///
+    /// `TransportBinding` exists to make "a rule ran" and "THE approved rule ran" the same
+    /// statement, so its behaviour is pinned here rather than inferred from the policy it
+    /// happens to wrap today.
+    #[test]
+    fn the_installable_binding_is_exact_match() {
+        let binding = TransportBinding::exact_match();
+        let id = spiffe("did:example:agent-1");
+        assert!(binding.check("did:example:agent-1", Some(&id)).is_ok());
+        assert_eq!(
+            binding.check("did:example:agent-2", Some(&id)).unwrap_err(),
+            McpReError::TransportBindingFailed,
+            "a signer that is not the channel identity was admitted"
+        );
+        assert_eq!(
+            binding.check("did:example:agent-1", None).unwrap_err(),
+            McpReError::TransportBindingFailed,
+            "a request with no channel identity at all was admitted"
+        );
+    }
+
+    /// A permissive policy is expressible, which is exactly why it must not be installable.
+    ///
+    /// This is the state the seal excludes: an implementation of the public
+    /// [`TransportBindingPolicy`] trait that admits every request. Nothing stops an
+    /// embedder writing it — the point is that there is no longer a public route from one
+    /// of these to the serving path, so `TransportBinding` cannot wrap it.
+    #[test]
+    fn a_permissive_policy_is_not_what_the_installable_binding_does() {
+        struct AdmitEverything;
+        impl TransportBindingPolicy for AdmitEverything {
+            fn check(&self, _: &str, _: Option<&TransportIdentity>) -> Result<(), McpReError> {
+                Ok(())
+            }
+        }
+
+        let id = spiffe("did:example:agent-1");
+        // The negative control: this is what the serving path would do if a caller could
+        // supply the rule.
+        assert!(AdmitEverything
+            .check("did:example:impostor", Some(&id))
+            .is_ok());
+        assert_eq!(
+            TransportBinding::exact_match()
+                .check("did:example:impostor", Some(&id))
+                .unwrap_err(),
+            McpReError::TransportBindingFailed,
+            "the installable binding must not behave like the policy the seal excludes"
         );
     }
 
