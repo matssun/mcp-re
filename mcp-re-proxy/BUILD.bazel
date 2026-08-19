@@ -558,6 +558,10 @@ nt_rust_test(
 # ADR-MCPRE-056 §8: the fourth clause — after layer A the original request stops being a
 # semantic authority. The root may still READ it (it builds things out of it), so the rule
 # is an inventory of which fields, each with the sentence saying why it is ordinary.
+# `exchange_transition_ownership_test`
+# ADR-MCPRE-057 §4: a stage's transition is the stage's. `Established<T>` makes the machine
+# learn a step ran by the assembly CONSUMING its result, so the decidable regression is an
+# `advance` added back beside a stage — legal, compiling, and invisible to every other test.
 # `plane_config_reachback_test`
 # ADR-MCPRE-056 §8: the third clause of the completion criterion — a plane whose posture
 # comes from its plan must not read configuration to re-decide it. The signature proves no
@@ -585,6 +589,7 @@ nt_rust_test(
         ":mcp_re_proxy_cli",
         "src/app.rs",
         "src/delegated_wiring.rs",
+        "src/http_profile_serve.rs",
         "src/replay_plane.rs",
         "src/signing_plane.rs",
         "src/tls_plane.rs",
@@ -595,6 +600,7 @@ nt_rust_test(
         "MCP_RE_SIDECAR_GUIDE": "$(rlocationpath //docs:sidecar-deployment-guide.md)",
         "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_cli)",
         "MCP_RE_APP_SRC": "$(rlocationpath src/app.rs)",
+        "MCP_RE_HTTP_PROFILE_SERVE_SRC": "$(rlocationpath src/http_profile_serve.rs)",
         "MCP_RE_DELEGATED_WIRING_SRC": "$(rlocationpath src/delegated_wiring.rs)",
         "MCP_RE_REPLAY_PLANE_SRC": "$(rlocationpath src/replay_plane.rs)",
         "MCP_RE_SIGNING_PLANE_SRC": "$(rlocationpath src/signing_plane.rs)",

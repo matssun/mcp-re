@@ -6,52 +6,23 @@
 //! the compiler can hold — the pre-dispatch prerequisites, and the fact that crossing is
 //! one-way.
 //!
-//! # The inventory this was frozen from
+//! # Where the ordering lives
 //!
-//! `handle` sequenced sixteen ordered operations around one irreversible inner dispatch,
-//! with seventeen rejection exits, and the ordering was carried by comments numbered
+//! Not here. The pipeline order and its legal transitions are
+//! [`crate::exchange_state::transition`], and the correspondence between a step and the
+//! state it establishes is [`crate::exchange_state::Established`] — a stage returns the
+//! event it justifies, so the serving path cannot state one the stage did not.
 //!
-//! ```text
-//! 2, 3, 3b, 4, 5, 5a, 5b, 6, 6a, [dispatch], 7, 7a, 6b, 7, 8
-//! ```
+//! This module doc used to restate the whole sequence as a prose table, and the table had
+//! drifted: it listed the retention reservation and the inner-plane admission in the
+//! opposite order to the relation. Two statements of one fact is one statement and one
+//! liability, and a comment is the half nothing checks.
 //!
-//! which is not execution order — 6b runs after 7a, and 7 appears twice. The numbering
-//! had drifted, which is what a hand-maintained sequence does. What it was standing in
-//! for is below, derived from the source rather than from the comments, with the
-//! REVERSIBILITY of each step named because that is the property the numbers were
-//! failing to carry:
-//!
-//! ```text
-//! stage                     operation                        on failure       reversible
-//! ------------------------------------------------------------------------------------
-//! Received                  --                               --               --
-//! Verified                  verify_request_full_with_policy  403, unbound     yes
-//! TransportBound            transport_binding.check          403              yes
-//! AdmissionChecked          admission_gate (awaited)         403 (x3)         yes
-//! ContinuationPrepared      continuation_store.peek          none (-> None)   yes
-//! ReplayAdmitted            dispatch_request_with_async_tier 409              NO: nonce burned
-//! Answerable                signer.current(now)              503              yes
-//! ContinuationRetired       continuation_store.consume       409              NO: entry consumed
-//! Forwarded                 forwarded_body                   500              yes
-//! InnerPlaneAccepted        inner_async.admit                503              yes
-//! RetentionReserved         retention.reserve (awaited)      503              NO: durable marker
-//! ==================== IRREVERSIBLE INNER DISPATCH ====================
-//! ResponseObserved          inner_async.dispatch             503 / 504 / 502  the backend has acted
-//! (notification)            sign_delegated_accepted_202      500
-//! ResponseValidated         validate_response_envelope       502
-//! ResponseClassified        classify_result_type             502
-//! ResponseSigned            sign_delegated_response_full     500
-//! ContinuationSettled       input_required_state + store     502 / 503
-//! Retained                  retain_accepted                  500 (x2)
-//! CompletedTerminal /       audit + served                   --
-//!   CompletedContinuationOpen
-//! ```
-//!
-//! Three stages before the dispatch are already irreversible on their own — the replay
-//! nonce, the consumed continuation, the durable retention marker. They are not the
-//! boundary this module draws, because their failure is still answerable with *nothing
-//! happened at the backend*, which is the distinction that changes what a client may
-//! safely retry.
+//! What is worth saying here, because no other file says it: three pre-dispatch steps are
+//! already irreversible on their own — the burned replay nonce, the consumed continuation,
+//! and the durable retention marker. They are NOT the boundary this module draws, because
+//! their failure is still answerable with *nothing happened at the backend*, which is the
+//! distinction that changes what a client may safely retry.
 //!
 //! # What the types enforce
 //!
