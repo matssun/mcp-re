@@ -230,37 +230,55 @@ jobs:
       # FFI bindings with libclang; install it defensively so the cargo closure
       # links on a clean runner.
       - name: System build dependencies
-        # Both apt operations are network calls against a mirror this runner does not
-        # control, and they fail in two different ways. Measured on 2026-08-19, all on
-        # the same mirror:
+        # The bounds on the fallback are not decoration; they are what the two earlier
+        # attempts at this step were. With no bound at all, six jobs across four branches
+        # sat in `apt-get update` for 28-58 minutes each reporting `pending` — which says
+        # strictly less than a red would. With only `update` bounded, the `install` hung
+        # instead. `Acquire::http::Timeout` does not help either: it bounds INACTIVITY,
+        # and a transfer dribbling at 32 kB/s is never inactive.
         #
-        #   * WEDGED. With no bound at all, six jobs across four branches sat in
-        #     `update` for 28-58 minutes, each reporting `pending` the whole time —
-        #     which says strictly less than a red would. `timeout 300` bounds that.
-        #   * SLOW. `install` fetches libclang-18-dev, a 28.8 MB archive. A healthy
-        #     run takes ~57s end to end; a bad-day run measured 7min 30s for that one
-        #     file (64.0 kB/s), and an earlier run was killed mid-fetch by a 10-minute
-        #     step cap. The connection is not stalling, it is dribbling — which is why
-        #     `Acquire::http::Timeout` does NOT catch it. That option bounds
-        #     INACTIVITY, and a slow transfer is never inactive.
-        #
-        # So the budget is what has to accommodate slowness: 20 minutes leaves room for
-        # a fetch an order of magnitude slower than healthy, while still turning a truly
-        # wedged mirror red instead of leaving it pending for hours. The Acquire options
-        # cover the failure the budget cannot — a connection that genuinely dies mid-fetch
-        # is aborted at 30s and retried, rather than failing the run outright.
-        #
-        # Nothing here is weakened. A stale index is tolerated because the runner image
-        # ships a fresh one; a package that genuinely cannot be installed still fails the
-        # step, and every gate below is untouched.
+        # Nothing here is weakened. If the image ever stops shipping Clang the fallback
+        # installs it exactly as before; a package that genuinely cannot be installed
+        # still fails the step, and every gate below is untouched.
         timeout-minutes: 20
         run: |
-          timeout 300 sudo apt-get update \
-            || echo "apt-get update did not finish in 300s; using the runner image's package index"
-          sudo apt-get install -y --no-install-recommends \
-            -o Acquire::Retries=3 \
-            -o Acquire::http::Timeout=30 \
-            libclang-dev
+          set -euo pipefail
+          # cryptoki-sys builds its FFI bindings with bindgen, which needs libclang at
+          # RUNTIME — the shared object, not the headers. The ubuntu-24.04 runner image
+          # already ships Clang 18.1.3, so `libclang-dev` was re-downloading a library
+          # the box already had: 28.8 MB fetched and ~292 MB unpacked, on every one of
+          # three jobs, every run.
+          #
+          # That download is also the single least reliable thing in this workflow.
+          # Measured on 2026-08-19 against the same Azure mirror, same file: 64.0 kB/s,
+          # then 43.1 kB/s, then 32.1 kB/s — 14min 57s for the fetch alone, with the
+          # unpack pushing past a 20-minute cap. Raising the cap is a race against a
+          # mirror that keeps getting slower; not needing the file wins it outright.
+          #
+          # So: find what is already installed and point bindgen at it. apt is the
+          # FALLBACK, not the default, and it keeps its bounds for the case where the
+          # image stops shipping Clang.
+          found=""
+          for dir in /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu; do
+            if compgen -G "$dir/libclang*.so*" > /dev/null 2>&1; then
+              found="$dir"
+              break
+            fi
+          done
+
+          if [ -n "$found" ]; then
+            echo "LIBCLANG_PATH=$found" >> "$GITHUB_ENV"
+            echo "using the runner image's libclang in $found:"
+            ls -1 "$found"/libclang*.so* | sed 's/^/  /'
+          else
+            echo "no libclang on the image — falling back to apt (bounded)"
+            timeout 300 sudo apt-get update \
+              || echo "apt-get update did not finish in 300s; using the runner image's package index"
+            sudo apt-get install -y --no-install-recommends \
+              -o Acquire::Retries=3 \
+              -o Acquire::http::Timeout=30 \
+              libclang-dev
+          fi
 
       - name: Select pinned toolchain (from rust-toolchain.toml)
         run: rustup show && rustc --version && cargo --version
@@ -426,37 +444,55 @@ jobs:
 
       # cryptoki-sys builds its FFI bindings with libclang (see the `cargo` job).
       - name: System build dependencies
-        # Both apt operations are network calls against a mirror this runner does not
-        # control, and they fail in two different ways. Measured on 2026-08-19, all on
-        # the same mirror:
+        # The bounds on the fallback are not decoration; they are what the two earlier
+        # attempts at this step were. With no bound at all, six jobs across four branches
+        # sat in `apt-get update` for 28-58 minutes each reporting `pending` — which says
+        # strictly less than a red would. With only `update` bounded, the `install` hung
+        # instead. `Acquire::http::Timeout` does not help either: it bounds INACTIVITY,
+        # and a transfer dribbling at 32 kB/s is never inactive.
         #
-        #   * WEDGED. With no bound at all, six jobs across four branches sat in
-        #     `update` for 28-58 minutes, each reporting `pending` the whole time —
-        #     which says strictly less than a red would. `timeout 300` bounds that.
-        #   * SLOW. `install` fetches libclang-18-dev, a 28.8 MB archive. A healthy
-        #     run takes ~57s end to end; a bad-day run measured 7min 30s for that one
-        #     file (64.0 kB/s), and an earlier run was killed mid-fetch by a 10-minute
-        #     step cap. The connection is not stalling, it is dribbling — which is why
-        #     `Acquire::http::Timeout` does NOT catch it. That option bounds
-        #     INACTIVITY, and a slow transfer is never inactive.
-        #
-        # So the budget is what has to accommodate slowness: 20 minutes leaves room for
-        # a fetch an order of magnitude slower than healthy, while still turning a truly
-        # wedged mirror red instead of leaving it pending for hours. The Acquire options
-        # cover the failure the budget cannot — a connection that genuinely dies mid-fetch
-        # is aborted at 30s and retried, rather than failing the run outright.
-        #
-        # Nothing here is weakened. A stale index is tolerated because the runner image
-        # ships a fresh one; a package that genuinely cannot be installed still fails the
-        # step, and every gate below is untouched.
+        # Nothing here is weakened. If the image ever stops shipping Clang the fallback
+        # installs it exactly as before; a package that genuinely cannot be installed
+        # still fails the step, and every gate below is untouched.
         timeout-minutes: 20
         run: |
-          timeout 300 sudo apt-get update \
-            || echo "apt-get update did not finish in 300s; using the runner image's package index"
-          sudo apt-get install -y --no-install-recommends \
-            -o Acquire::Retries=3 \
-            -o Acquire::http::Timeout=30 \
-            libclang-dev
+          set -euo pipefail
+          # cryptoki-sys builds its FFI bindings with bindgen, which needs libclang at
+          # RUNTIME — the shared object, not the headers. The ubuntu-24.04 runner image
+          # already ships Clang 18.1.3, so `libclang-dev` was re-downloading a library
+          # the box already had: 28.8 MB fetched and ~292 MB unpacked, on every one of
+          # three jobs, every run.
+          #
+          # That download is also the single least reliable thing in this workflow.
+          # Measured on 2026-08-19 against the same Azure mirror, same file: 64.0 kB/s,
+          # then 43.1 kB/s, then 32.1 kB/s — 14min 57s for the fetch alone, with the
+          # unpack pushing past a 20-minute cap. Raising the cap is a race against a
+          # mirror that keeps getting slower; not needing the file wins it outright.
+          #
+          # So: find what is already installed and point bindgen at it. apt is the
+          # FALLBACK, not the default, and it keeps its bounds for the case where the
+          # image stops shipping Clang.
+          found=""
+          for dir in /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu; do
+            if compgen -G "$dir/libclang*.so*" > /dev/null 2>&1; then
+              found="$dir"
+              break
+            fi
+          done
+
+          if [ -n "$found" ]; then
+            echo "LIBCLANG_PATH=$found" >> "$GITHUB_ENV"
+            echo "using the runner image's libclang in $found:"
+            ls -1 "$found"/libclang*.so* | sed 's/^/  /'
+          else
+            echo "no libclang on the image — falling back to apt (bounded)"
+            timeout 300 sudo apt-get update \
+              || echo "apt-get update did not finish in 300s; using the runner image's package index"
+            sudo apt-get install -y --no-install-recommends \
+              -o Acquire::Retries=3 \
+              -o Acquire::http::Timeout=30 \
+              libclang-dev
+          fi
 
       - name: Select pinned toolchain (from rust-toolchain.toml)
         run: rustup show && rustc --version && cargo --version
@@ -532,37 +568,55 @@ jobs:
       # The FFI closure (cryptoki-sys) builds bindings with libclang, same as the
       # cargo jobs; install it so the Bazel build links on a clean runner.
       - name: System build dependencies
-        # Both apt operations are network calls against a mirror this runner does not
-        # control, and they fail in two different ways. Measured on 2026-08-19, all on
-        # the same mirror:
+        # The bounds on the fallback are not decoration; they are what the two earlier
+        # attempts at this step were. With no bound at all, six jobs across four branches
+        # sat in `apt-get update` for 28-58 minutes each reporting `pending` — which says
+        # strictly less than a red would. With only `update` bounded, the `install` hung
+        # instead. `Acquire::http::Timeout` does not help either: it bounds INACTIVITY,
+        # and a transfer dribbling at 32 kB/s is never inactive.
         #
-        #   * WEDGED. With no bound at all, six jobs across four branches sat in
-        #     `update` for 28-58 minutes, each reporting `pending` the whole time —
-        #     which says strictly less than a red would. `timeout 300` bounds that.
-        #   * SLOW. `install` fetches libclang-18-dev, a 28.8 MB archive. A healthy
-        #     run takes ~57s end to end; a bad-day run measured 7min 30s for that one
-        #     file (64.0 kB/s), and an earlier run was killed mid-fetch by a 10-minute
-        #     step cap. The connection is not stalling, it is dribbling — which is why
-        #     `Acquire::http::Timeout` does NOT catch it. That option bounds
-        #     INACTIVITY, and a slow transfer is never inactive.
-        #
-        # So the budget is what has to accommodate slowness: 20 minutes leaves room for
-        # a fetch an order of magnitude slower than healthy, while still turning a truly
-        # wedged mirror red instead of leaving it pending for hours. The Acquire options
-        # cover the failure the budget cannot — a connection that genuinely dies mid-fetch
-        # is aborted at 30s and retried, rather than failing the run outright.
-        #
-        # Nothing here is weakened. A stale index is tolerated because the runner image
-        # ships a fresh one; a package that genuinely cannot be installed still fails the
-        # step, and every gate below is untouched.
+        # Nothing here is weakened. If the image ever stops shipping Clang the fallback
+        # installs it exactly as before; a package that genuinely cannot be installed
+        # still fails the step, and every gate below is untouched.
         timeout-minutes: 20
         run: |
-          timeout 300 sudo apt-get update \
-            || echo "apt-get update did not finish in 300s; using the runner image's package index"
-          sudo apt-get install -y --no-install-recommends \
-            -o Acquire::Retries=3 \
-            -o Acquire::http::Timeout=30 \
-            libclang-dev
+          set -euo pipefail
+          # cryptoki-sys builds its FFI bindings with bindgen, which needs libclang at
+          # RUNTIME — the shared object, not the headers. The ubuntu-24.04 runner image
+          # already ships Clang 18.1.3, so `libclang-dev` was re-downloading a library
+          # the box already had: 28.8 MB fetched and ~292 MB unpacked, on every one of
+          # three jobs, every run.
+          #
+          # That download is also the single least reliable thing in this workflow.
+          # Measured on 2026-08-19 against the same Azure mirror, same file: 64.0 kB/s,
+          # then 43.1 kB/s, then 32.1 kB/s — 14min 57s for the fetch alone, with the
+          # unpack pushing past a 20-minute cap. Raising the cap is a race against a
+          # mirror that keeps getting slower; not needing the file wins it outright.
+          #
+          # So: find what is already installed and point bindgen at it. apt is the
+          # FALLBACK, not the default, and it keeps its bounds for the case where the
+          # image stops shipping Clang.
+          found=""
+          for dir in /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu; do
+            if compgen -G "$dir/libclang*.so*" > /dev/null 2>&1; then
+              found="$dir"
+              break
+            fi
+          done
+
+          if [ -n "$found" ]; then
+            echo "LIBCLANG_PATH=$found" >> "$GITHUB_ENV"
+            echo "using the runner image's libclang in $found:"
+            ls -1 "$found"/libclang*.so* | sed 's/^/  /'
+          else
+            echo "no libclang on the image — falling back to apt (bounded)"
+            timeout 300 sudo apt-get update \
+              || echo "apt-get update did not finish in 300s; using the runner image's package index"
+            sudo apt-get install -y --no-install-recommends \
+              -o Acquire::Retries=3 \
+              -o Acquire::http::Timeout=30 \
+              libclang-dev
+          fi
 
       # Cache the Bazel repository + disk cache across runs (crate_universe hub,
       # the gazelle_rust Go binary, rules_go/gazelle). Keyed on the module lock +
