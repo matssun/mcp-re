@@ -307,34 +307,6 @@ pub(super) fn inner_plane_structure_violations(config: &DeploymentRequest) -> Ve
     out
 }
 
-/// Client-certificate lifetime enforcement is on and within the ceiling.
-///
-/// **Why layer A enforces it.** Mode-A's revocation posture IS short-lived certificates, so a disabled or over-ceiling lifetime cannot be audited as `short_lived_cert`.
-///
-/// **Why no narrower owner.** The ceiling constant now lives with `CrlRevocation`, but this clause governs the CREDENTIAL's lifetime rather than the CRL posture, and no client-credential owner has been ruled.
-pub(super) fn client_cert_lifetime_violations(config: &DeploymentRequest) -> Vec<String> {
-    let mut out = Vec::new();
-    match config.max_client_cert_lifetime {
-        None => out.push(
-            "--max-client-cert-lifetime none/0 disables client-cert lifetime enforcement; \
-             set a bounded lifetime (default 1h)"
-                .to_string(),
-        ),
-        Some(lifetime) if lifetime > crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME => {
-            out.push(format!(
-                "--max-client-cert-lifetime {}s exceeds the ceiling of {}s: Mode-A's \
-             revocation posture is short-lived certificates, so a longer lifetime cannot be \
-             audited as short_lived_cert; set a lifetime <= {}s",
-                lifetime.as_secs(),
-                crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME.as_secs(),
-                crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME.as_secs(),
-            ))
-        }
-        Some(_) => {}
-    }
-    out
-}
-
 /// The concurrent-connection ceiling is not zero.
 ///
 /// **Why layer A enforces it.** A limit of zero disables the control it bounds, which is a security posture whatever tier it sits in.
@@ -414,7 +386,6 @@ pub(super) const INVENTORY: &[&str] = &[
     "target_uri_violations",
     "inner_plane_presence_violations",
     "inner_plane_structure_violations",
-    "client_cert_lifetime_violations",
     "connection_ceiling_violations",
     "drain_window_violations",
     "slow_loris_timeout_violations",

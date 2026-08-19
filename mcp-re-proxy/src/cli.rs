@@ -2293,10 +2293,24 @@ mod tests {
         // Only lifetimes at/below the strict ceiling parse (the proxy always runs
         // strict): `none`/`0` (disabled) and over-ceiling values are hard errors,
         // covered by the strict_rejects_* cert-lifetime tests.
+        //
+        // Each case also names a connection age it can carry. This is a SPELLING test —
+        // does `90s` mean ninety seconds — and a spelling is not a deployment: the
+        // boundary refuses a connection that would outlive the credential, so a short
+        // lifetime beside the default 300s age is refused for a reason this test is not
+        // about.
         let cases = [("30m", 1800), ("60m", 3600), ("90s", 90), ("45", 45)];
         for (input, expected) in cases {
             let mut a = minimal_durable();
-            a.splice(0..0, args(&["--max-client-cert-lifetime", input]));
+            a.splice(
+                0..0,
+                args(&[
+                    "--max-client-cert-lifetime",
+                    input,
+                    "--max-connection-age-secs",
+                    "30",
+                ]),
+            );
             let got = parse_args(&a).expect("parse").max_client_cert_lifetime;
             assert_eq!(
                 got,

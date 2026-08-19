@@ -166,6 +166,8 @@ pub fn validate_configuration(
         crate::config_state::freshness::classify_and_validate(config);
     let (trust_document, trust_document_violations) =
         crate::config_state::trust_document::classify_and_validate(config);
+    let (client_credential_window, credential_window_violations) =
+        crate::config_state::client_credential_window::classify_and_validate(config);
     // This deployment's own actor identity. It takes the RESOLVED issuer kid rather than
     // re-reading the primitives it defaults from, so the keyid on the identity and the kid
     // the credential chains to are one value (CF-10).
@@ -197,6 +199,7 @@ pub fn validate_configuration(
         freshness: freshness_violations,
         replay: replay_violations,
         trust_document: trust_document_violations,
+        client_credential_window: credential_window_violations,
         server_identity: server_identity_violations,
         tls_custody: tls_custody_violations,
         trust_revocation: trust_violations,
@@ -253,11 +256,15 @@ pub fn validate_configuration(
     let Some(trust_document) = trust_document else {
         return Err(unrecognised("trust-document"));
     };
+    let Some(client_credential_window) = client_credential_window else {
+        return Err(unrecognised("client-credential-window"));
+    };
     Ok(DeploymentConfigState::new(
         crate::config_state::RecognisedStates {
             admission,
             audit,
             channel_binding,
+            client_credential_window,
             freshness,
             continuation_control,
             crl_revocation,
@@ -288,6 +295,7 @@ struct MachineViolations {
     freshness: Vec<String>,
     replay: Vec<String>,
     trust_document: Vec<String>,
+    client_credential_window: Vec<String>,
     server_identity: Vec<String>,
     tls_custody: Vec<String>,
     trust_revocation: Vec<String>,
@@ -397,13 +405,12 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // so the family was split across two layers with no reason beyond history. It is one
     // owner now, and this is where an operator has always read it.
     violations.extend(decided.delegated_signing);
-    // ADR-MCPS-023 §A1 (MCPS-57): `None` disables enforcement outright; a lifetime
-    // above the ceiling would let a NOT-short-lived cert be audited as
-    // `short_lived_cert`. Both fail closed.
-    violations.extend(residue::client_cert_lifetime_violations(config));
-    // X5 — Limits × Tls: a connection may not outlive the credential that authenticated
-    // it, because the client certificate is checked at the handshake and never again.
-    violations.extend(decided.cross.x5_connection_outlives_credential);
+    // ADR-MCPS-023 §A1 (MCPS-57) and the old relation X5, now one owner: `None` disables
+    // enforcement on either side, a lifetime above the ceiling would let a NOT-short-lived
+    // cert be audited as `short_lived_cert`, and a connection age above the lifetime means
+    // a connection outlives the credential that authenticated it. All fail closed, and
+    // they are spliced where the two clause groups have always been read.
+    violations.extend(decided.client_credential_window);
     // The trust locator, immediately before the posture over it. It left the required-
     // locator group when it acquired an owner: `TrustDocumentSource` is what a `TrustPlan`
     // now carries instead of a bare string, so the refusal belongs where the trust plane's

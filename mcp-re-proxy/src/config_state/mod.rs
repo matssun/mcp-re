@@ -56,6 +56,7 @@
 //! this".
 
 pub mod admission;
+pub mod client_credential_window;
 pub mod continuation_control;
 pub(crate) mod cross_machine;
 pub mod custody;
@@ -73,6 +74,7 @@ pub mod trust_revocation;
 pub mod validation;
 
 pub use admission::{AdmissionAvailability, AdmissionPosture, AdmissionState, EnforcedAdmission};
+pub use client_credential_window::ClientCredentialWindow;
 pub use continuation_control::ContinuationControlState;
 pub use custody::{AwsCredentialMode, CustodyMaterial, CustodyState};
 pub use delegated_signing::DelegatedSigningFacts;
@@ -99,6 +101,7 @@ pub struct DeploymentConfigState {
     admission: AdmissionState,
     audit: AuditState,
     channel_binding: ChannelBindingState,
+    client_credential_window: ClientCredentialWindow,
     continuation_control: ContinuationControlState,
     crl_revocation: CrlRevocationState,
     custody: CustodyState,
@@ -121,6 +124,7 @@ pub(crate) struct RecognisedStates {
     pub(crate) admission: AdmissionState,
     pub(crate) audit: AuditState,
     pub(crate) channel_binding: ChannelBindingState,
+    pub(crate) client_credential_window: ClientCredentialWindow,
     pub(crate) continuation_control: ContinuationControlState,
     pub(crate) crl_revocation: CrlRevocationState,
     pub(crate) custody: CustodyState,
@@ -145,6 +149,7 @@ impl DeploymentConfigState {
             admission,
             audit,
             channel_binding,
+            client_credential_window,
             continuation_control,
             crl_revocation,
             custody,
@@ -164,6 +169,7 @@ impl DeploymentConfigState {
             admission,
             audit,
             channel_binding,
+            client_credential_window,
             continuation_control,
             crl_revocation,
             custody,
@@ -267,6 +273,13 @@ impl DeploymentConfigState {
     /// Whether the TLS handshake key can leave the device it lives on.
     pub fn tls_custody(&self) -> &TlsCustodyState {
         &self.tls_custody
+    }
+
+    /// How long a client credential authorizes traffic, and how long one connection may
+    /// serve on a single handshake — one fact, because the second is what makes the first
+    /// a statement about requests.
+    pub fn client_credential_window(&self) -> ClientCredentialWindow {
+        self.client_credential_window
     }
 
     /// Which document the request-signer set is read from.
@@ -376,6 +389,23 @@ pub(crate) mod test_support {
         super::trust_revocation::classify_and_validate(&config)
             .0
             .expect("the requested revocation posture is legal")
+    }
+
+    /// The credential window a deployment with this lifetime and connection age reaches.
+    ///
+    /// Through the classifier, so a test cannot hold a window whose connection age outlives
+    /// its certificate — which is the pairing the owner exists to make unconstructible.
+    pub(crate) fn credential_window(
+        cert_lifetime_secs: u64,
+        connection_age_secs: u64,
+    ) -> super::ClientCredentialWindow {
+        let mut config = legal_config();
+        config.max_client_cert_lifetime = Some(std::time::Duration::from_secs(cert_lifetime_secs));
+        config.limits.max_connection_age =
+            Some(std::time::Duration::from_secs(connection_age_secs));
+        super::client_credential_window::classify_and_validate(&config)
+            .0
+            .expect("the fixture names a legal credential window")
     }
 
     /// The trust plan a deployment in this posture projects.
@@ -546,6 +576,11 @@ mod tests {
             )
             .0,
             crl_revocation: test_support::crl_posture(&["/crl.pem"], Some(300)),
+            client_credential_window: client_credential_window::classify_and_validate(
+                &test_support::legal_config(),
+            )
+            .0
+            .expect("the legal fixture names a bounded credential window"),
             trust_document: trust_document::classify_and_validate(&test_support::legal_config())
                 .0
                 .expect("the legal fixture names a trust document"),

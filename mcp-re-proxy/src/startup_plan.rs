@@ -399,19 +399,21 @@ pub use crate::config_state::transport::ClientRevocationPlan;
 
 /// What the TLS plane must establish (ADR-MCPRE-056 §8).
 ///
-/// Two classified states and the resource inputs each posture needs. The certificate
-/// lifetime and the connection-age bound are INPUTS, not decisions: X5's compatibility
-/// relation between them was settled at layer A and is not re-checked here.
+/// Three classified states. The certificate lifetime and the connection-age bound used to
+/// travel here as two `Option<Duration>` inputs, with a doc comment claiming their
+/// compatibility "was settled at layer A" — which was not true: relation X5 compared the
+/// connection age against the ceiling CONSTANT and never against the configured lifetime.
+/// `ClientCredentialWindow` states the relation over the chosen values and owns both, so
+/// the plan carries one fact instead of two durations that could disagree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsPlan {
     /// Whether the handshake key can leave the device it lives on.
     pub custody: crate::config_state::TlsCustodyState,
     /// The offline client-certificate revocation posture.
     pub client_revocation: ClientRevocationPlan,
-    /// The client-certificate lifetime ceiling, for the operator-facing exposure window.
-    pub max_client_cert_lifetime: Option<std::time::Duration>,
-    /// The connection-age bound the exposure window's honesty depends on.
-    pub max_connection_age: Option<std::time::Duration>,
+    /// How long a client credential authorizes traffic, and how long one connection may
+    /// serve on a single handshake — the pair that makes the exposure window honest.
+    pub credential_window: crate::config_state::ClientCredentialWindow,
 }
 
 impl TlsPlan {
@@ -422,12 +424,10 @@ impl TlsPlan {
     /// would collapse the A/B split: the request is coherent either way, and only
     /// materialization can say whether this executable can serve it.
     pub fn from_validated(config: &ValidatedDeployment) -> TlsPlan {
-        let values = config.config();
         TlsPlan {
             custody: config.state().tls_custody().clone(),
             client_revocation: config.state().crl_revocation().client_revocation_plan(),
-            max_client_cert_lifetime: values.max_client_cert_lifetime,
-            max_connection_age: values.limits.max_connection_age,
+            credential_window: config.state().client_credential_window(),
         }
     }
 }
@@ -1225,11 +1225,15 @@ mod tests {
         }
     }
 
-    /// The plan carries the classified custody, and the cert-lifetime/connection-age
-    /// values as INPUTS. X5's relation between the latter two was settled at layer A and
-    /// is not re-checked here — the plan simply carries what the posture must state.
+    /// The plan carries three classified states, and the credential window is one of them.
+    ///
+    /// The cert lifetime and the connection age used to travel as two `Option<Duration>`
+    /// inputs under a comment saying their relation "was settled at layer A". It was not:
+    /// the relation compared the age against the ceiling constant, never against the
+    /// configured lifetime. The plan now carries the pair as one owned fact, so the
+    /// assertion is about a window rather than about two durations.
     #[test]
-    fn the_tls_plan_carries_the_classified_custody_and_its_inputs() {
+    fn the_tls_plan_carries_the_classified_custody_and_the_credential_window() {
         let config = validated(&["--max-client-cert-lifetime", "3600"]);
         let plan = TlsPlan::from_validated(&config);
         assert_eq!(
@@ -1238,8 +1242,12 @@ mod tests {
             "the fixture's TLS key is an exported file, and the plan carries its path"
         );
         assert_eq!(
-            plan.max_client_cert_lifetime,
-            Some(std::time::Duration::from_secs(3600))
+            plan.credential_window.cert_lifetime(),
+            std::time::Duration::from_secs(3600)
+        );
+        assert!(
+            plan.credential_window.connection_age() <= plan.credential_window.exposure_window(),
+            "the plan cannot hold a connection age that outlives the credential"
         );
         assert!(!plan.client_revocation.is_enforced());
     }

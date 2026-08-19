@@ -55,6 +55,7 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `CustodyState` | `config_state/custody.rs` | `material() -> CustodyMaterial<'_>`, `disk_secret_paths()`, `locators_are_filesystem_paths()`, `is_non_exporting_device()` |
 | `FreshnessWindow` | `config_state/freshness.rs` | `verifier_skew_secs()`, `replay_retain_until()`, `verifier_accepts_until()` |
 | `TrustDocumentSource` | `config_state/trust_document.rs` | `path()` |
+| `ClientCredentialWindow` | `config_state/client_credential_window.rs` | `cert_lifetime()`, `connection_age()`, `exposure_window()` |
 | `TrustPlan` | `startup_plan.rs` | `revocation()`, `document_path()`, `response_kid()`, `reload()`, `epoch()` |
 
 A plan produced by an owner lives **with that owner**, not in `startup_plan.rs`.
@@ -85,6 +86,31 @@ The same shape settled a second question. `ReadOnceAtStartup` is reachable only 
 bounded-cache — `Live` and `Push` name a cadence in their Required column — so the test
 that asserted the frozen-store wording for all four postures was describing deployments
 layer A refuses. It now asserts it where it is reachable.
+
+## A relation that is validated must not be split back into its terms
+
+`ClientCredentialWindow` is the second composition, and it is where asking the R-SEAL
+question found a live defect rather than a latent one.
+
+Relation X5 said, in its own refusal text, *"a connection would outlive the credential that
+authenticated it"*. It compared `max_connection_age` against the ceiling **constant**, never
+against the configured `max_client_cert_lifetime`. So this deployment was accepted:
+
+```text
+--max-client-cert-lifetime 600 --max-connection-age-secs 3000
+```
+
+Both halves are individually inside the ceiling; together they mean a connection serves
+requests for forty minutes after the certificate that authenticated it expired, while the
+startup transcript reports `exposure_window=600s`. `TlsPlan` then carried the two values on
+as `Option<Duration>` fields under a doc comment stating their relation "was settled at
+layer A" — the relation was stated three times and checked nowhere.
+
+The owner holds both durations and enforces the relation at construction, so
+`exposure_window()` is a claim the value can make rather than a number picked from two.
+Making them non-optional also deleted two tests: the `unbounded` and `none` rendering arms
+were only reachable for a configuration the boundary refuses, so the tests asserting their
+wording were describing a transcript no proxy prints.
 
 ## Borrowed views
 

@@ -71,10 +71,14 @@ const PROJECTED_PLANES: &[Plane] = &[
     Plane {
         env: "MCP_RE_TLS_PLANE_SRC",
         why: "tls_plane establishes the posture in TlsPlan (ADR-MCPRE-056 §8)",
-        // NOT `max_client_cert_lifetime`. It is a validated INPUT the posture needs, not a
-        // state layer A classified, so the plan carries it under its own name and the
-        // plane renders it. The distinction is the whole test: is this an unresolved
-        // decision, or a value required to establish a decided one?
+        // NOT `max_client_cert_lifetime`, and no longer for the old reason. It used to be
+        // "a validated INPUT, not a state layer A classified"; it IS classified now, as
+        // half of `ClientCredentialWindow`, and the plan carries the window rather than
+        // two durations. It stays off this list because the plane prints the field name as
+        // an operator-facing LABEL (`max_client_cert_lifetime=3600s`), and this rule
+        // matches whole identifiers on a line without knowing a read from a string. The
+        // seal is what enforces it here: there is no `Option<Duration>` left to
+        // reconstruct a posture from.
         reconstructed: &["client_crl_paths", "client_crl_reload_secs"],
     },
     Plane {

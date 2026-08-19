@@ -624,21 +624,19 @@ pub(crate) fn revocation_posture_lines(
     plan: &crate::startup_plan::TlsPlan,
     crls: &ClientCrlEvidence,
 ) -> Vec<String> {
-    let exposure_window = match plan.max_client_cert_lifetime {
-        Some(d) => format!("{}s", d.as_secs()),
-        None => "unbounded".to_string(),
-    };
+    // Both durations come from ONE owned window, so the exposure window is never reported
+    // beside a connection age that outlives it. There is no `unbounded` arm because there
+    // is no such deployment: disabling either bound is refused at layer A, and a window
+    // exists only where both are set and the age respects the lifetime.
+    let exposure_window = format!("{}s", plan.credential_window.exposure_window().as_secs());
     // The exposure window above is only true because these two bounds hold: the
     // certificate is re-checked against the clock on EVERY request (not just at the
     // handshake), and a connection is closed at a bounded age so the peer must
     // re-handshake through the current CRL. Stated alongside the window it makes honest.
     let mut lines = vec![format!(
-        "mcp-re.revocation.posture connection_max_age={} per_request_cert_validity=enforced \
+        "mcp-re.revocation.posture connection_max_age={}s per_request_cert_validity=enforced \
          per_request_crl_check={} tls_session_resumption=epoch-bound",
-        match plan.max_connection_age {
-            Some(d) => format!("{}s", d.as_secs()),
-            None => "unbounded".to_string(),
-        },
+        plan.credential_window.connection_age().as_secs(),
         // The claim the CRL lines below rest on. rustls consults the CRLs during client
         // authentication, which runs on a full handshake only, so without this a revoked
         // peer serves every later request on the connection it already holds and the
@@ -650,13 +648,10 @@ pub(crate) fn revocation_posture_lines(
         }
     )];
     if crls.is_empty() {
-        let max_lifetime = match plan.max_client_cert_lifetime {
-            Some(d) => format!("{}s", d.as_secs()),
-            None => "none".to_string(),
-        };
+        let max_lifetime = plan.credential_window.cert_lifetime().as_secs();
         lines.push(format!(
             "mcp-re.revocation.posture revocation_mode=short_lived_cert dynamic_revocation=false \
-             exposure_window={exposure_window} max_client_cert_lifetime={max_lifetime}"
+             exposure_window={exposure_window} max_client_cert_lifetime={max_lifetime}s"
         ));
     } else {
         // Facts parsed once by the plane that loaded the CRLs, rendered here.
@@ -702,11 +697,8 @@ pub(crate) fn revocation_posture_lines(
 /// nothing enforces.
 pub fn fleet_crl_bound(plan: &crate::startup_plan::TlsPlan) -> String {
     if !plan.client_revocation.is_enforced() {
-        let window = plan
-            .max_client_cert_lifetime
-            .map(|d| format!("{}s", d.as_secs()))
-            .unwrap_or_else(|| "unbounded".to_string());
-        return format!("short-lived-cert only (exposure_window {window}); no client CRL");
+        let window = plan.credential_window.exposure_window().as_secs();
+        return format!("short-lived-cert only (exposure_window {window}s); no client CRL");
     }
     match plan.client_revocation.reload_cadence_secs() {
         Some(cadence_secs) => format!(
@@ -815,15 +807,17 @@ mod revocation_posture_tests {
 
     /// A plan with no CRLs and the given client-cert lifetime.
     ///
-    /// Written out rather than parsed. These assert what an operator is TOLD about a
-    /// posture, and a posture is nameable directly now instead of being assembled out of a
-    /// whole command line around two fields.
-    fn plan(max_client_cert_lifetime: Option<std::time::Duration>) -> TlsPlan {
+    /// The credential window comes through its classifier, so a lifetime the boundary
+    /// refuses — disabled, over the ceiling, or shorter than the connection age — cannot be
+    /// written here at all. The `Option<Duration>` this took could name every one of them.
+    fn plan(cert_lifetime_secs: u64) -> TlsPlan {
         TlsPlan {
             custody: crate::config_state::test_support::tls_custody_exported("/key"),
             client_revocation: crate::config_state::test_support::crl_plan(&[], None),
-            max_client_cert_lifetime,
-            max_connection_age: Some(std::time::Duration::from_secs(300)),
+            credential_window: crate::config_state::test_support::credential_window(
+                cert_lifetime_secs,
+                300,
+            ),
         }
     }
 
@@ -839,7 +833,7 @@ mod revocation_posture_tests {
     /// loaded would describe a mechanism that is not running.
     #[test]
     fn with_no_crl_the_per_request_check_is_reported_as_not_configured() {
-        let lines = revocation_posture_lines(&plan(None), &no_crls());
+        let lines = revocation_posture_lines(&plan(3600), &no_crls());
         assert!(
             lines[0].contains("per_request_crl_check=not_configured"),
             "got: {}",
@@ -850,29 +844,6 @@ mod revocation_posture_tests {
                 .iter()
                 .any(|l| l.contains("revocation_mode=short_lived_cert")),
             "with no CRL the only mechanism is the certificate lifetime: {lines:?}"
-        );
-    }
-
-    /// A disabled client-cert lifetime must render as `unbounded`, never as a number and
-    /// never omitted.
-    ///
-    /// It is the posture `unsafe_config_violations` refuses, so if it ever reaches a
-    /// transcript it has to name the thing that should have been impossible. A default
-    /// substituted here would hide exactly that.
-    #[test]
-    fn a_disabled_certificate_lifetime_renders_as_unbounded() {
-        let lines = revocation_posture_lines(&plan(None), &no_crls());
-        assert!(
-            lines
-                .iter()
-                .any(|l| l.contains("exposure_window=unbounded")),
-            "got: {lines:?}"
-        );
-        assert!(
-            lines
-                .iter()
-                .any(|l| l.contains("max_client_cert_lifetime=none")),
-            "got: {lines:?}"
         );
     }
 
@@ -899,8 +870,7 @@ mod revocation_posture_tests {
                 },
             ],
         };
-        let lines =
-            revocation_posture_lines(&plan(Some(std::time::Duration::from_secs(3600))), &crls);
+        let lines = revocation_posture_lines(&plan(3600), &crls);
         assert!(
             lines[0].contains("per_request_crl_check=enforced"),
             "got: {}",
@@ -940,8 +910,7 @@ mod custody_agreement_tests {
         TlsPlan {
             custody,
             client_revocation: crate::config_state::test_support::crl_plan(&[], None),
-            max_client_cert_lifetime: None,
-            max_connection_age: None,
+            credential_window: crate::config_state::test_support::credential_window(3600, 300),
         }
     }
 
@@ -1107,13 +1076,18 @@ mod fleet_crl_bound_tests {
     /// all. The old `(has_crls, lifetime, cadence)` triple could name it, and did.
     fn plan(
         client_revocation: crate::startup_plan::ClientRevocationPlan,
-        max_client_cert_lifetime: Option<std::time::Duration>,
+        cert_lifetime_secs: u64,
     ) -> TlsPlan {
         TlsPlan {
             custody: crate::config_state::test_support::tls_custody_exported("/key"),
             client_revocation,
-            max_client_cert_lifetime,
-            max_connection_age: None,
+            // The connection age is the default 300s, or the lifetime where that is
+            // shorter: a fixture cannot name an age that outlives the credential, because
+            // no deployment can.
+            credential_window: crate::config_state::test_support::credential_window(
+                cert_lifetime_secs,
+                cert_lifetime_secs.min(300),
+            ),
         }
     }
 
@@ -1123,22 +1097,10 @@ mod fleet_crl_bound_tests {
     fn without_a_crl_the_bound_is_the_certificate_lifetime() {
         let bound = fleet_crl_bound(&plan(
             crate::config_state::test_support::crl_plan(&[], None),
-            Some(std::time::Duration::from_secs(3600)),
+            3600,
         ));
         assert!(bound.contains("exposure_window 3600s"), "got: {bound}");
         assert!(bound.contains("no client CRL"), "got: {bound}");
-    }
-
-    /// A disabled lifetime must not silently render as a number. `unbounded` is the honest
-    /// word, and it is the posture `unsafe_config_violations` refuses — so if it ever
-    /// appears in a transcript, it names the thing that should have been impossible.
-    #[test]
-    fn a_disabled_lifetime_renders_as_unbounded_not_as_a_number() {
-        let bound = fleet_crl_bound(&plan(
-            crate::config_state::test_support::crl_plan(&[], None),
-            None,
-        ));
-        assert!(bound.contains("exposure_window unbounded"), "got: {bound}");
     }
 
     /// The reload cadence IS the bound, and the claim must say it reaches ESTABLISHED
@@ -1149,7 +1111,7 @@ mod fleet_crl_bound_tests {
     fn a_reload_cadence_bounds_established_connections_not_only_handshakes() {
         let bound = fleet_crl_bound(&plan(
             crate::config_state::test_support::crl_plan(&["/crl.pem"], Some(300)),
-            None,
+            3600,
         ));
         assert!(bound.contains("bounded 300s"), "got: {bound}");
         assert!(
@@ -1164,7 +1126,7 @@ mod fleet_crl_bound_tests {
     fn without_a_cadence_the_bound_is_the_crls_own_expiry() {
         let bound = fleet_crl_bound(&plan(
             crate::config_state::test_support::crl_plan(&["/crl.pem"], None),
-            Some(std::time::Duration::from_secs(60)),
+            60,
         ));
         assert!(bound.contains("nextUpdate"), "got: {bound}");
         assert!(

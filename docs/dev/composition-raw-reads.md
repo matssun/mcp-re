@@ -120,10 +120,11 @@ when the refusal turns out to be all the capability still did.
 2. ~~Bucket 1 — replace each re-derivation with the owner's projection~~ (−7 reads). **Done.**
 3. ~~Delete the forwarded-identity provider~~ (owner ruling above). **Done.**
 4. ~~Eliminate plan re-widening, starting with `TrustPlan`~~. **Done** — see below.
-5. Bucket 3 — the remaining fields needing an owner or a represented relation:
-   `allow_group_readable_key_files`, `max_client_cert_lifetime`, and the `fleet`/`cores`
-   topology pair.
-6. Then narrow or remove `ValidatedDeployment::config()`, and the grep becomes a regression
+5. ~~`max_client_cert_lifetime`~~ — **done**, as `ClientCredentialWindow`, and it found a
+   live defect: see below.
+6. Bucket 3 — the remaining fields needing an owner or a represented relation:
+   `allow_group_readable_key_files` and the `fleet`/`cores` topology pair.
+7. Then narrow or remove `ValidatedDeployment::config()`, and the grep becomes a regression
    guard rather than the argument.
 
 ## Plan re-widening — `TrustPlan`, and what sealing found
@@ -147,3 +148,25 @@ layer A refuses.
 
 That is the argument for sealing a composition, stated concretely: a public bag of owned
 facts had already drifted into a combination no configuration reaches, and nothing failed.
+
+## A validated relation, split back into its terms — `max_client_cert_lifetime`
+
+The third bucket's test is *"if this value changes while every existing owner state stays
+unchanged, can a security-sensitive decision or effect change?"* For the certificate
+lifetime the answer was yes, and asking it found a defect rather than a shape.
+
+Relation X5 refused with the words *"a connection would outlive the credential that
+authenticated it"*, and compared `max_connection_age` against the ceiling **constant** —
+never against the configured lifetime. `--max-client-cert-lifetime 600
+--max-connection-age-secs 3000` was therefore accepted: a connection served requests for
+forty minutes past the expiry of the certificate that authenticated it, while the startup
+transcript reported `exposure_window=600s`. `TlsPlan` then carried both values on as
+`Option<Duration>` under a comment saying their relation "was settled at layer A".
+
+`ClientCredentialWindow` owns both durations and enforces the relation at construction, so
+`exposure_window()` is something the value can claim. X5 and the residue's lifetime clause
+are gone — one owner, one refusal per defect.
+
+**This tightens what the proxy accepts.** A deployment whose connection age exceeds its
+certificate lifetime now fails to start. That is the rule the codebase already stated; it
+was simply not the rule it checked.
