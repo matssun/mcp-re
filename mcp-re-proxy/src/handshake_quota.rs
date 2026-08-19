@@ -48,7 +48,21 @@ use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::key_source::KeyError;
+/// How a guarded signature failed.
+///
+/// Two cases, because they are different facts about the deployment and the caller has to
+/// be able to tell them apart: one says THIS replica declined to spend quota, and the
+/// signer was never asked; the other says the signer was asked and answered badly. They
+/// used to arrive as the same `KeyError::NotFound(String)`, which made "we protected the
+/// issuance path" indistinguishable from "the signer is broken".
+#[derive(Debug)]
+pub(crate) enum QuotaGuarded<E> {
+    /// The window was open, so the signer was NOT called. Carries the sentence the
+    /// backend supplied, which names the quota an operator has to go and look at.
+    Refused(&'static str),
+    /// The signer was called and failed.
+    Call(E),
+}
 
 /// What a signer-backend failure says about the shared quota.
 ///
@@ -117,13 +131,16 @@ impl HandshakeQuotaWindow {
     /// reach the signer, and again AFTER the call, to open a window that reacts to when the
     /// call finished rather than to when the handshake arrived.
     ///
-    /// `verdict` classifies a failure. It is the provider's, because the codes are.
-    pub(crate) fn guard(
+    /// `verdict` classifies a failure. It is the provider's, because the codes are — and
+    /// it is handed the failure in whatever TYPE the signer produced, so a provider that
+    /// keeps its wire status can answer from it rather than from a rendered string. That
+    /// is the whole reason this is generic over `E`.
+    pub(crate) fn guard<T, E>(
         &self,
         clock: &dyn Fn() -> Instant,
-        sign: impl FnOnce() -> Result<Vec<u8>, KeyError>,
-        verdict: impl Fn(&KeyError) -> QuotaVerdict,
-    ) -> Result<Vec<u8>, KeyError> {
+        sign: impl FnOnce() -> Result<T, E>,
+        verdict: impl Fn(&E) -> QuotaVerdict,
+    ) -> Result<T, QuotaGuarded<E>> {
         let now = clock();
         // Whether THIS thread is the one probing a lapsed window. Only the thread that
         // observes the lapse takes the probe: it re-arms the window before releasing the
@@ -136,9 +153,7 @@ impl HandshakeQuotaWindow {
             // process lifetime — a far worse failure than the throttle it guards against.
             let mut window = self.until.lock().unwrap_or_else(|p| p.into_inner());
             match *window {
-                Some(until) if now < until => {
-                    return Err(KeyError::NotFound(self.refusal.to_string()))
-                }
+                Some(until) if now < until => return Err(QuotaGuarded::Refused(self.refusal)),
                 Some(_) => {
                     *window = Some(now + self.cooldown);
                     true
@@ -157,7 +172,7 @@ impl HandshakeQuotaWindow {
             Err(error) if verdict(error) == QuotaVerdict::Exhausted => self.arm(clock()),
             _ => {}
         }
-        signed
+        signed.map_err(QuotaGuarded::Call)
     }
 }
 
@@ -170,24 +185,43 @@ mod tests {
     const TIMEOUT: Duration = Duration::from_secs(5);
     const REFUSAL: &str = "test-kms: the shared quota is exhausted";
 
+    /// A signer failure, in a type of this test's own. The window is generic over it on
+    /// purpose — nothing here knows what a `KeyError` is, which is the property that lets a
+    /// provider hand the verdict its typed wire failure instead of a rendered string.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Failed {
+        OverQuota,
+        BadRequest,
+    }
+
     fn window() -> HandshakeQuotaWindow {
         HandshakeQuotaWindow::for_network_timeout(TIMEOUT, REFUSAL)
     }
 
-    fn throttled() -> KeyError {
-        KeyError::NotFound("ThrottlingException".to_string())
+    fn throttled() -> Failed {
+        Failed::OverQuota
     }
 
-    fn malformed() -> KeyError {
-        KeyError::Malformed("one bad request".to_string())
+    fn malformed() -> Failed {
+        Failed::BadRequest
     }
 
     /// Every failure that is not a quota failure.
-    fn only_throttling(error: &KeyError) -> QuotaVerdict {
-        if format!("{error:?}").contains("ThrottlingException") {
-            QuotaVerdict::Exhausted
-        } else {
-            QuotaVerdict::Unrelated
+    fn only_throttling(error: &Failed) -> QuotaVerdict {
+        match error {
+            Failed::OverQuota => QuotaVerdict::Exhausted,
+            Failed::BadRequest => QuotaVerdict::Unrelated,
+        }
+    }
+
+    /// The sentence a LOCAL refusal carries — and an assertion that it is one, rather than
+    /// a signer failure wearing the same shape.
+    fn refusal_of<E: std::fmt::Debug>(guarded: QuotaGuarded<E>) -> &'static str {
+        match guarded {
+            QuotaGuarded::Refused(why) => why,
+            QuotaGuarded::Call(other) => {
+                panic!("expected a local refusal, got a signer failure: {other:?}")
+            }
         }
     }
 
@@ -198,7 +232,7 @@ mod tests {
         let calls = AtomicUsize::new(0);
         let sign = || {
             calls.fetch_add(1, Ordering::SeqCst);
-            Err(throttled())
+            Err::<Vec<u8>, _>(throttled())
         };
         let start = Instant::now();
         assert!(w.guard(&|| start, sign, only_throttling).is_err());
@@ -216,9 +250,10 @@ mod tests {
                 only_throttling,
             )
             .unwrap_err();
-        assert!(
-            format!("{err}").contains("shared quota is exhausted"),
-            "{err}"
+        assert_eq!(
+            refusal_of(err),
+            REFUSAL,
+            "a closed window refuses LOCALLY, and says which quota it is protecting"
         );
         assert_eq!(
             calls.load(Ordering::SeqCst),
@@ -247,7 +282,7 @@ mod tests {
             }
         };
         assert!(w
-            .guard(&clock, || Err(throttled()), only_throttling)
+            .guard(&clock, || Err::<Vec<u8>, _>(throttled()), only_throttling)
             .is_err());
 
         let just_after_the_call = start + slow + Duration::from_millis(1);
@@ -257,7 +292,7 @@ mod tests {
                 &|| just_after_the_call,
                 || {
                     calls.fetch_add(1, Ordering::SeqCst);
-                    Ok(vec![])
+                    Ok::<Vec<u8>, Failed>(Vec::new())
                 },
                 only_throttling,
             )
@@ -277,7 +312,11 @@ mod tests {
         let w = window();
         let start = Instant::now();
         assert!(w
-            .guard(&|| start, || Err(throttled()), only_throttling)
+            .guard(
+                &|| start,
+                || Err::<Vec<u8>, _>(throttled()),
+                only_throttling
+            )
             .is_err());
 
         let boundary = start + TIMEOUT;
@@ -288,7 +327,7 @@ mod tests {
                 &|| boundary,
                 || {
                     calls.fetch_add(1, Ordering::SeqCst);
-                    Err(throttled())
+                    Err::<Vec<u8>, _>(throttled())
                 },
                 only_throttling,
             );
@@ -316,7 +355,7 @@ mod tests {
                 &|| between,
                 || {
                     calls.fetch_add(1, Ordering::SeqCst);
-                    Ok(vec![])
+                    Ok::<Vec<u8>, Failed>(Vec::new())
                 },
                 only_throttling,
             )
@@ -333,7 +372,11 @@ mod tests {
         let w = window();
         let start = Instant::now();
         assert!(w
-            .guard(&|| start, || Err(throttled()), only_throttling)
+            .guard(
+                &|| start,
+                || Err::<Vec<u8>, _>(throttled()),
+                only_throttling
+            )
             .is_err());
 
         let boundary = start + TIMEOUT;
@@ -354,7 +397,11 @@ mod tests {
         let w = window();
         let start = Instant::now();
         assert!(w
-            .guard(&|| start, || Err(malformed()), only_throttling)
+            .guard(
+                &|| start,
+                || Err::<Vec<u8>, _>(malformed()),
+                only_throttling
+            )
             .is_err());
 
         let calls = AtomicUsize::new(0);

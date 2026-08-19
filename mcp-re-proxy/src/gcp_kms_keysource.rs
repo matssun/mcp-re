@@ -50,10 +50,14 @@ use zeroize::Zeroizing;
 
 use crate::delegated_tls::RawEd25519TlsSigner;
 use crate::handshake_quota::HandshakeQuotaWindow;
+use crate::handshake_quota::QuotaGuarded;
 use crate::handshake_quota::QuotaVerdict;
 use crate::key_source::KeyError;
 use crate::kms_keysource::ed25519_raw_point_from_spki;
 use crate::kms_keysource::KmsEd25519Backend;
+use crate::remote_signer_call::is_load_shedding_status;
+use crate::remote_signer_call::json_string_field;
+use crate::remote_signer_call::RemoteSignerFailure;
 
 /// The only Cloud KMS key algorithm this adapter accepts.
 const ALGORITHM_ED25519: &str = "EC_SIGN_ED25519";
@@ -552,8 +556,13 @@ impl GcpAccessTokenSource for MetadataServerTokenSource {
 /// calls. A trait so the adapter's parsing + verify-before-return logic is
 /// unit-testable with a local-key fake and no network.
 pub(crate) trait GcpKmsTransport {
-    fn get_public_key(&self) -> Result<Vec<u8>, KeyError>;
-    fn asymmetric_sign(&self, body: &[u8]) -> Result<Vec<u8>, KeyError>;
+    /// The response body, or the call's failure with its HTTP status still separable.
+    ///
+    /// Returning [`RemoteSignerFailure`] rather than a rendered [`KeyError`] is what lets
+    /// [`quota_verdict`] answer from the wire fact. It used to render here and the
+    /// classifier parsed the prose back out.
+    fn get_public_key(&self) -> Result<Vec<u8>, RemoteSignerFailure>;
+    fn asymmetric_sign(&self, body: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure>;
 }
 
 /// Production [`GcpKmsTransport`]: bearer-authed `ureq` (rustls HTTPS).
@@ -568,60 +577,23 @@ pub(crate) struct UreqGcpClient {
     token_retry_suspended_until: Mutex<Option<Instant>>,
 }
 
-/// One Cloud KMS call's failure, with the HTTP status kept separable from the rendered
-/// message so the bearer-token retry keys on 401/403 rather than on message text.
-enum KmsCallError {
-    /// A failure that carries its own rendered diagnosis — no bearer token could be
-    /// produced, or the response body could not be read — passed through unchanged.
-    Rendered(KeyError),
-    Status(u16, String),
-    Transport(String),
-}
-
-impl KmsCallError {
-    /// The rendered error. [`quota_verdict`] classifies Cloud KMS failures out of this
-    /// text, so the two shapes it matches are produced here and nowhere else.
-    fn into_key_error(self, operation: &str) -> KeyError {
-        match self {
-            KmsCallError::Rendered(error) => error,
-            KmsCallError::Status(code, body) => {
-                KeyError::NotFound(format!("gcp-kms: {operation} HTTP {code}: {body}"))
-            }
-            KmsCallError::Transport(error) => {
-                KeyError::NotFound(format!("gcp-kms: {operation}: {error}"))
-            }
-        }
-    }
-
-    /// Did Cloud KMS reject the BEARER TOKEN itself, rather than what the caller may do
-    /// with it?
-    ///
-    /// ONLY 401. Cloud KMS answers 401 `UNAUTHENTICATED` for a credential it will not read
-    /// — missing, malformed, expired, revoked — and that is the one state a fresh token
-    /// can fix.
-    ///
-    /// 403 is deliberately NOT here, and was a defect while it was: Cloud KMS returns 403
-    /// for `PERMISSION_DENIED` (the service account is authenticated fine but has no
-    /// `cloudkms.cryptoKeyVersions.useToSign` binding), for `SERVICE_DISABLED`, and for
-    /// billing failures. Those are the most common Cloud KMS misconfigurations, the token
-    /// is perfectly valid in all of them, and evicting on 403 turned every handshake into
-    /// KMS call -> 403 -> throw away a good token -> real metadata round trip -> KMS call
-    /// -> 403. That is exactly the per-handshake metadata amplification
-    /// [`UNKNOWN_EXPIRY_REUSE`] exists to prevent, re-entered through a different door and
-    /// drivable by an unauthenticated peer — and [`quota_verdict`] excludes 403, so the
-    /// handshake cooldown is no backstop for it.
-    fn rejected_the_bearer_token(&self) -> bool {
-        matches!(self, KmsCallError::Status(401, _))
-    }
-
-    /// The rendered text, for chaining a first failure onto the retry's.
-    fn describe(&self, operation: &str) -> String {
-        match self {
-            KmsCallError::Rendered(error) => format!("{error}"),
-            KmsCallError::Status(code, body) => format!("{operation} HTTP {code}: {body}"),
-            KmsCallError::Transport(error) => format!("{operation}: {error}"),
-        }
-    }
+/// Did Cloud KMS reject the BEARER TOKEN itself, rather than what the caller may do with
+/// it?
+///
+/// ONLY 401. Cloud KMS answers 401 `UNAUTHENTICATED` for a credential it will not read —
+/// missing, malformed, expired, revoked — and that is the one state a fresh token can fix.
+///
+/// 403 is deliberately NOT here, and was a defect while it was: Cloud KMS returns 403 for
+/// `PERMISSION_DENIED` (the service account is authenticated fine but has no
+/// `cloudkms.cryptoKeyVersions.useToSign` binding), for `SERVICE_DISABLED`, and for billing
+/// failures. Those are the most common Cloud KMS misconfigurations, the token is perfectly
+/// valid in all of them, and evicting on 403 turned every handshake into KMS call -> 403 ->
+/// throw away a good token -> real metadata round trip -> KMS call -> 403. That is exactly
+/// the per-handshake metadata amplification [`UNKNOWN_EXPIRY_REUSE`] exists to prevent,
+/// re-entered through a different door and drivable by an unauthenticated peer — and
+/// [`quota_verdict`] excludes 403, so the handshake cooldown is no backstop for it.
+fn refused_the_bearer_token(failure: &RemoteSignerFailure) -> bool {
+    failure.status() == Some(401)
 }
 
 impl UreqGcpClient {
@@ -686,8 +658,8 @@ impl UreqGcpClient {
     fn with_token_retry(
         &self,
         operation: &str,
-        call: impl Fn(&str) -> Result<Vec<u8>, KmsCallError>,
-    ) -> Result<Vec<u8>, KeyError> {
+        call: impl Fn(&str) -> Result<Vec<u8>, RemoteSignerFailure>,
+    ) -> Result<Vec<u8>, RemoteSignerFailure> {
         self.with_token_retry_at(operation, Instant::now(), call)
     }
 
@@ -697,31 +669,28 @@ impl UreqGcpClient {
         &self,
         operation: &str,
         now: Instant,
-        call: impl Fn(&str) -> Result<Vec<u8>, KmsCallError>,
-    ) -> Result<Vec<u8>, KeyError> {
+        call: impl Fn(&str) -> Result<Vec<u8>, RemoteSignerFailure>,
+    ) -> Result<Vec<u8>, RemoteSignerFailure> {
         let token = self
             .token_source
             .access_token()
-            .map_err(|error| KmsCallError::Rendered(error).into_key_error(operation))?;
+            .map_err(RemoteSignerFailure::rendered)?;
         let refused = match call(&Self::bearer(&token)) {
             Ok(body) => return Ok(body),
             Err(error) => error,
         };
-        if !refused.rejected_the_bearer_token() || self.token_retry_suspended(now) {
-            return Err(refused.into_key_error(operation));
+        if !refused_the_bearer_token(&refused) || self.token_retry_suspended(now) {
+            return Err(refused);
         }
         if !self.token_source.invalidate(&token) {
-            return Err(refused.into_key_error(operation));
+            return Err(refused);
         }
         let cause = refused.describe(operation);
         let fresh = match self.token_source.access_token() {
             Ok(fresh) => fresh,
             Err(error) => {
                 self.suspend_token_retry(now);
-                return Err(KeyError::NotFound(format!(
-                    "gcp-kms: {error} (after Cloud KMS refused the cached token with: \
-                     gcp-kms: {cause})"
-                )));
+                return Err(RemoteSignerFailure::rendered(error).after(cause));
             }
         };
         match call(&Self::bearer(&fresh)) {
@@ -735,16 +704,15 @@ impl UreqGcpClient {
                 Ok(body)
             }
             Err(error) => {
-                if error.rejected_the_bearer_token() {
+                if refused_the_bearer_token(&error) {
                     // A FRESH token was refused too, so this is not a rotation and no
                     // number of retries will fix it. Stop paying for them.
                     self.suspend_token_retry(now);
                 }
-                Err(KeyError::NotFound(format!(
-                    "gcp-kms: {} (after Cloud KMS refused the cached token with: gcp-kms: \
-                     {cause})",
-                    error.describe(operation)
-                )))
+                // The cause travels ALONGSIDE, never inside the body: this second failure
+                // may itself be a 429 whose body states `RESOURCE_EXHAUSTED`, and the
+                // window has to be able to read it.
+                Err(error.after(cause))
             }
         }
     }
@@ -777,7 +745,7 @@ impl UreqGcpClient {
         *suspended = Some(suspended.map_or(until, |current| current.max(until)));
     }
 
-    fn get_public_key_once(&self, auth: &str) -> Result<Vec<u8>, KmsCallError> {
+    fn get_public_key_once(&self, auth: &str) -> Result<Vec<u8>, RemoteSignerFailure> {
         match self
             .agent
             .get(&self.public_key_url)
@@ -785,15 +753,20 @@ impl UreqGcpClient {
             .timeout(NETWORK_TIMEOUT)
             .call()
         {
-            Ok(resp) => read_body(resp).map_err(KmsCallError::Rendered),
-            Err(ureq::Error::Status(code, resp)) => {
-                Err(KmsCallError::Status(code, read_error_body(resp)))
-            }
-            Err(e) => Err(KmsCallError::Transport(e.to_string())),
+            Ok(resp) => read_body(resp).map_err(RemoteSignerFailure::rendered),
+            Err(ureq::Error::Status(code, resp)) => Err(RemoteSignerFailure::status_body(
+                code,
+                read_error_body(resp),
+            )),
+            Err(e) => Err(RemoteSignerFailure::transport(e.to_string())),
         }
     }
 
-    fn asymmetric_sign_once(&self, auth: &str, body: &[u8]) -> Result<Vec<u8>, KmsCallError> {
+    fn asymmetric_sign_once(
+        &self,
+        auth: &str,
+        body: &[u8],
+    ) -> Result<Vec<u8>, RemoteSignerFailure> {
         match self
             .agent
             .post(&self.sign_url)
@@ -802,21 +775,22 @@ impl UreqGcpClient {
             .timeout(NETWORK_TIMEOUT)
             .send_bytes(body)
         {
-            Ok(resp) => read_body(resp).map_err(KmsCallError::Rendered),
-            Err(ureq::Error::Status(code, resp)) => {
-                Err(KmsCallError::Status(code, read_error_body(resp)))
-            }
-            Err(e) => Err(KmsCallError::Transport(e.to_string())),
+            Ok(resp) => read_body(resp).map_err(RemoteSignerFailure::rendered),
+            Err(ureq::Error::Status(code, resp)) => Err(RemoteSignerFailure::status_body(
+                code,
+                read_error_body(resp),
+            )),
+            Err(e) => Err(RemoteSignerFailure::transport(e.to_string())),
         }
     }
 }
 
 impl GcpKmsTransport for UreqGcpClient {
-    fn get_public_key(&self) -> Result<Vec<u8>, KeyError> {
+    fn get_public_key(&self) -> Result<Vec<u8>, RemoteSignerFailure> {
         self.with_token_retry("getPublicKey", |auth| self.get_public_key_once(auth))
     }
 
-    fn asymmetric_sign(&self, body: &[u8]) -> Result<Vec<u8>, KeyError> {
+    fn asymmetric_sign(&self, body: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure> {
         self.with_token_retry("asymmetricSign", |auth| {
             self.asymmetric_sign_once(auth, body)
         })
@@ -936,24 +910,37 @@ const QUOTA_REFUSAL: &str = "gcp-kms: Cloud KMS is throttling this project; the 
      delegated-TLS handshake signature is refused locally so the delegated-credential \
      issuance keeps its share of the quota";
 
+/// The Cloud KMS canonical statuses that mean the PROJECT is over its budget, rather than
+/// that this one request was refused.
+///
+/// `PERMISSION_DENIED` is NOT here, and must not be: a missing
+/// `cloudkms.cryptoKeyVersions.useToSign` binding is permanent, and refusing the handshake
+/// path locally over it would hide the misconfiguration behind a throttle.
+const PROJECT_QUOTA_STATUSES: &[&str] = &["RESOURCE_EXHAUSTED", "UNAVAILABLE"];
+
 /// Does this Cloud KMS failure say the PROJECT is over its quota, rather than that one
 /// request was malformed?
 ///
-/// Classified from the RENDERED error, which is the defect and is named as one: the fact
-/// is known typed one layer down — [`KmsCallError::Status`] holds the HTTP status and the
-/// body — and [`KmsCallError::into_key_error`] flattens both into a [`KeyError`] string
-/// that this then parses back out. `RESOURCE_EXHAUSTED` and `UNAVAILABLE` are the two
-/// Cloud KMS statuses that mean the project rather than the request.
+/// Read from the WIRE FACT: the HTTP status, and the canonical `error.status` field of the
+/// Cloud KMS JSON error body. Both arrive typed on [`RemoteSignerFailure`] and neither is
+/// recovered from prose.
 ///
-/// A rewording upstream silently stops arming the window; a malformed-request body that
-/// happens to contain one of these tokens arms it. Both are consequences of recovering a
-/// structured fact from prose, and the fix is at the transport seam, not here.
-fn quota_verdict(error: &KeyError) -> QuotaVerdict {
-    let rendered = format!("{error:?}");
-    let exhausted = ["RESOURCE_EXHAUSTED", "UNAVAILABLE", "HTTP 429", "HTTP 503"]
-        .iter()
-        .any(|marker| rendered.contains(marker));
-    if exhausted {
+/// It used to be `format!("{error:?}")` and `contains`, because the transport rendered the
+/// status and the body into a `KeyError` string before anything could ask. Two live
+/// consequences: a rewording upstream silently stopped arming the window, and any failure
+/// whose text happened to carry one of these tokens armed it — the chained "after Cloud KMS
+/// refused the cached token with: ..." diagnosis being the readiest source of exactly that.
+fn quota_verdict(failure: &RemoteSignerFailure) -> QuotaVerdict {
+    if is_load_shedding_status(failure.status()) {
+        return QuotaVerdict::Exhausted;
+    }
+    let stated = failure
+        .body()
+        .and_then(|body| json_string_field(body, &["error", "status"]));
+    if stated
+        .as_deref()
+        .is_some_and(|status| PROJECT_QUOTA_STATUSES.contains(&status))
+    {
         QuotaVerdict::Exhausted
     } else {
         QuotaVerdict::Unrelated
@@ -978,7 +965,9 @@ impl GcpKmsEd25519Backend {
     pub(crate) fn with_transport(
         transport: Box<dyn GcpKmsTransport + Send + Sync>,
     ) -> Result<Self, KeyError> {
-        let resp = transport.get_public_key()?;
+        let resp = transport
+            .get_public_key()
+            .map_err(|failure| failure.into_key_error("gcp-kms", "getPublicKey"))?;
         let spki_der = parse_public_key_response(&resp)?;
         let raw = ed25519_raw_point_from_spki(&spki_der)?;
         let verify_key = VerificationKey::from_bytes(&raw).map_err(|e| {
@@ -1003,10 +992,45 @@ impl GcpKmsEd25519Backend {
         message: &[u8],
         clock: &dyn Fn() -> Instant,
     ) -> Result<Vec<u8>, KeyError> {
-        // The object-signing RAW-Ed25519 sign path verbatim over the handshake transcript,
-        // length-checked + verified.
-        self.tls_quota
-            .guard(clock, || self.sign_raw_ed25519(message), quota_verdict)
+        // The WIRE call is what the window guards, and it is the only part of the signature
+        // path the quota question can be asked about: the length check and
+        // verify-before-return below are local, and a local failure is never a statement
+        // about the project.
+        let response = self
+            .tls_quota
+            .guard(clock, || self.sign_once(message), quota_verdict)
+            .map_err(|guarded| match guarded {
+                QuotaGuarded::Refused(why) => KeyError::NotFound(why.to_string()),
+                QuotaGuarded::Call(failure) => failure.into_key_error("gcp-kms", "asymmetricSign"),
+            })?;
+        self.accept_signature(message, response)
+    }
+
+    /// The `asymmetricSign` wire call, with its failure still typed.
+    fn sign_once(&self, preimage: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure> {
+        self.transport.asymmetric_sign(&sign_request_body(preimage))
+    }
+
+    /// Parse, length-check and VERIFY-BEFORE-RETURN an `asymmetricSign` response body.
+    ///
+    /// ADR-MCPS-028 §D: the signature MUST verify against the advertised public key under
+    /// the unmodified `mcp-re-core` verifier — fail closed on any mismatch, never emit a
+    /// non-verifying signature.
+    fn accept_signature(&self, preimage: &[u8], response: Vec<u8>) -> Result<Vec<u8>, KeyError> {
+        let signature = parse_sign_response(&response)?;
+        if signature.len() != ED25519_SIGNATURE_LEN {
+            return Err(KeyError::Malformed(format!(
+                "gcp-kms: asymmetricSign returned a {}-byte signature; expected a raw \
+                 {ED25519_SIGNATURE_LEN}-byte Ed25519 signature",
+                signature.len()
+            )));
+        }
+        verify_ed25519(preimage, &b64url_encode(&signature), &self.verify_key).map_err(|e| {
+            KeyError::Malformed(format!(
+                "gcp-kms: KMS signature did NOT verify against the advertised public key: {e}"
+            ))
+        })?;
+        Ok(signature)
     }
 
     /// Build a production GCP Cloud KMS backend (ureq HTTPS + bearer token).
@@ -1052,7 +1076,7 @@ struct LocalKeyGcpTransport {
 }
 
 impl GcpKmsTransport for LocalKeyGcpTransport {
-    fn get_public_key(&self) -> Result<Vec<u8>, KeyError> {
+    fn get_public_key(&self) -> Result<Vec<u8>, RemoteSignerFailure> {
         let mut der = crate::kms_keysource::ED25519_SPKI_PREFIX.to_vec();
         der.extend_from_slice(&self.key.public_key().to_bytes());
         let b64 = STANDARD.encode(&der);
@@ -1070,14 +1094,14 @@ impl GcpKmsTransport for LocalKeyGcpTransport {
         .into_bytes())
     }
 
-    fn asymmetric_sign(&self, body: &[u8]) -> Result<Vec<u8>, KeyError> {
+    fn asymmetric_sign(&self, body: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure> {
         let v: serde_json::Value = serde_json::from_slice(body)
-            .map_err(|e| KeyError::Malformed(format!("fake gcp kms: sign body: {e}")))?;
+            .map_err(|e| RemoteSignerFailure::malformed(format!("fake gcp kms: sign body: {e}")))?;
         let data = STANDARD
             .decode(v.get("data").and_then(|d| d.as_str()).unwrap_or(""))
-            .map_err(|e| KeyError::Malformed(format!("fake gcp kms: data b64: {e}")))?;
+            .map_err(|e| RemoteSignerFailure::malformed(format!("fake gcp kms: data b64: {e}")))?;
         let raw = mcp_re_core::b64url_decode(&self.key.sign(&data))
-            .map_err(|e| KeyError::Malformed(format!("fake gcp kms: sign: {e}")))?;
+            .map_err(|e| RemoteSignerFailure::malformed(format!("fake gcp kms: sign: {e}")))?;
         Ok(serde_json::json!({ "signature": STANDARD.encode(&raw) })
             .to_string()
             .into_bytes())
@@ -1086,26 +1110,10 @@ impl GcpKmsTransport for LocalKeyGcpTransport {
 
 impl KmsEd25519Backend for GcpKmsEd25519Backend {
     fn sign_raw_ed25519(&self, preimage: &[u8]) -> Result<Vec<u8>, KeyError> {
-        let resp = self
-            .transport
-            .asymmetric_sign(&sign_request_body(preimage))?;
-        let signature = parse_sign_response(&resp)?;
-        if signature.len() != ED25519_SIGNATURE_LEN {
-            return Err(KeyError::Malformed(format!(
-                "gcp-kms: asymmetricSign returned a {}-byte signature; expected a raw \
-                 {ED25519_SIGNATURE_LEN}-byte Ed25519 signature",
-                signature.len()
-            )));
-        }
-        // VERIFY-BEFORE-RETURN (ADR-MCPS-028 §D): the signature MUST verify against
-        // the advertised public key under the unmodified mcp-re-core verifier — fail
-        // closed on any mismatch, never emit a non-verifying signature.
-        verify_ed25519(preimage, &b64url_encode(&signature), &self.verify_key).map_err(|e| {
-            KeyError::Malformed(format!(
-                "gcp-kms: KMS signature did NOT verify against the advertised public key: {e}"
-            ))
-        })?;
-        Ok(signature)
+        let response = self
+            .sign_once(preimage)
+            .map_err(|failure| failure.into_key_error("gcp-kms", "asymmetricSign"))?;
+        self.accept_signature(preimage, response)
     }
 
     fn public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
@@ -1816,9 +1824,9 @@ mod tests {
         }
     }
     impl GcpKmsTransport for FakeGcp {
-        fn get_public_key(&self) -> Result<Vec<u8>, KeyError> {
+        fn get_public_key(&self) -> Result<Vec<u8>, RemoteSignerFailure> {
             if self.fail_get_public_key {
-                return Err(KeyError::Malformed(
+                return Err(RemoteSignerFailure::malformed(
                     "fake gcp kms: getPublicKey unavailable (key version destroyed/disabled)"
                         .into(),
                 ));
@@ -1830,9 +1838,9 @@ mod tests {
             .to_string()
             .into_bytes())
         }
-        fn asymmetric_sign(&self, body: &[u8]) -> Result<Vec<u8>, KeyError> {
+        fn asymmetric_sign(&self, body: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure> {
             if self.fail_sign {
-                return Err(KeyError::Malformed(
+                return Err(RemoteSignerFailure::malformed(
                     "fake gcp kms: asymmetricSign denied (key version disabled)".into(),
                 ));
             }
@@ -1912,7 +1920,7 @@ mod tests {
         signs: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     }
     impl GcpKmsTransport for ThrottlingGcp {
-        fn get_public_key(&self) -> Result<Vec<u8>, KeyError> {
+        fn get_public_key(&self) -> Result<Vec<u8>, RemoteSignerFailure> {
             Ok(serde_json::json!({
                 "algorithm": ALGORITHM_ED25519,
                 "pem": pem_from_raw(&self.key.public_key().to_bytes()),
@@ -1920,13 +1928,13 @@ mod tests {
             .to_string()
             .into_bytes())
         }
-        fn asymmetric_sign(&self, _body: &[u8]) -> Result<Vec<u8>, KeyError> {
+        fn asymmetric_sign(&self, _body: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure> {
             self.signs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            // The shape `UreqGcpClient::asymmetric_sign` renders for an error response.
-            Err(KeyError::NotFound(
-                "gcp-kms: asymmetricSign HTTP 429: {\"error\":{\"status\":\
-                 \"RESOURCE_EXHAUSTED\"}}"
-                    .to_string(),
+            // Exactly what `UreqGcpClient::asymmetric_sign` hands back for an error
+            // response: the status and the body, still separable.
+            Err(RemoteSignerFailure::status_body(
+                429,
+                "{\"error\":{\"status\":\"RESOURCE_EXHAUSTED\"}}".to_string(),
             ))
         }
     }
@@ -1984,24 +1992,52 @@ mod tests {
     /// that happens to contain one of these tokens arms it.
     #[test]
     fn only_project_quota_failures_reach_the_exhausted_verdict() {
-        for throttling in [
-            "gcp-kms: asymmetricSign HTTP 429: {\"error\":{\"status\":\"RESOURCE_EXHAUSTED\"}}",
-            "gcp-kms: asymmetricSign HTTP 503: {\"error\":{\"status\":\"UNAVAILABLE\"}}",
+        for exhausted in [
+            RemoteSignerFailure::status_body(
+                429,
+                "{\"error\":{\"status\":\"RESOURCE_EXHAUSTED\"}}".to_string(),
+            ),
+            RemoteSignerFailure::status_body(
+                503,
+                "{\"error\":{\"status\":\"UNAVAILABLE\"}}".to_string(),
+            ),
+            // The front door sheds load before Cloud KMS's own error shape is reached, so
+            // the body states no canonical status at all.
+            RemoteSignerFailure::status_body(429, "slow down".to_string()),
+            // A 500 whose body DOES state the canonical status still means the project.
+            RemoteSignerFailure::status_body(
+                500,
+                "{\"error\":{\"status\":\"RESOURCE_EXHAUSTED\"}}".to_string(),
+            ),
         ] {
             assert_eq!(
-                quota_verdict(&KeyError::NotFound(throttling.to_string())),
+                quota_verdict(&exhausted),
                 QuotaVerdict::Exhausted,
-                "{throttling}"
+                "{exhausted:?}"
             );
         }
-        for other in [
-            "gcp-kms: asymmetricSign HTTP 403: {\"error\":{\"status\":\"PERMISSION_DENIED\"}}",
-            "gcp-kms: asymmetricSign: connection refused",
+        for unrelated in [
+            RemoteSignerFailure::status_body(
+                403,
+                "{\"error\":{\"status\":\"PERMISSION_DENIED\"}}".to_string(),
+            ),
+            RemoteSignerFailure::transport("connection refused".to_string()),
+            RemoteSignerFailure::malformed("no bearer token could be produced".to_string()),
+            // The regression the wire fact closes. A permanent 403 CHAINED onto the
+            // "Cloud KMS refused the cached token" diagnosis renders text carrying the
+            // other call's status — and the old classifier read the rendered string.
+            RemoteSignerFailure::status_body(
+                403,
+                "{\"error\":{\"status\":\"PERMISSION_DENIED\"}}".to_string(),
+            )
+            .after("asymmetricSign HTTP 503: {\"error\":{\"status\":\"UNAVAILABLE\"}}".to_string()),
+            // A body that states nothing states nothing.
+            RemoteSignerFailure::status_body(403, "not json at all".to_string()),
         ] {
             assert_eq!(
-                quota_verdict(&KeyError::NotFound(other.to_string())),
+                quota_verdict(&unrelated),
                 QuotaVerdict::Unrelated,
-                "{other}"
+                "{unrelated:?}"
             );
         }
     }
@@ -2206,7 +2242,7 @@ mod tests {
             .with_token_retry("asymmetricSign", |auth| {
                 calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 assert_eq!(auth, "Bearer ya29.SECRET");
-                Err(KmsCallError::Status(
+                Err(RemoteSignerFailure::status_body(
                     401,
                     "{\"error\":{\"status\":\"UNAUTHENTICATED\"}}".to_string(),
                 ))
@@ -2219,9 +2255,13 @@ mod tests {
         );
         assert_eq!(source.invalidations(), 1);
         // BOTH failures are reported: the 401 is the cause, the retry's error the symptom.
-        let rendered = format!("{err:?}");
-        assert!(
-            rendered.matches("asymmetricSign HTTP 401").count() == 2,
+        // Asserted on the RENDERED form, because that is where an operator reads them —
+        // the two halves are separate fields now, so that the cause cannot contaminate the
+        // body a classifier reads.
+        let rendered = format!("{}", err.into_key_error("gcp-kms", "asymmetricSign"));
+        assert_eq!(
+            rendered.matches("asymmetricSign HTTP 401").count(),
+            2,
             "the retry error must carry the 401 that caused it, got {rendered}"
         );
     }
@@ -2247,7 +2287,7 @@ mod tests {
             let err = client
                 .with_token_retry("asymmetricSign", |_auth| {
                     calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    Err(KmsCallError::Status(403, body.to_string()))
+                    Err(RemoteSignerFailure::status_body(403, body.to_string()))
                 })
                 .expect_err("permission denied");
             assert_eq!(
@@ -2260,10 +2300,7 @@ mod tests {
                 0,
                 "{body}: a 403 says nothing about the token and must not evict it"
             );
-            assert!(
-                matches!(&err, KeyError::NotFound(m) if m.contains("asymmetricSign HTTP 403")),
-                "got {err:?}"
-            );
+            assert_eq!(err.status(), Some(403), "got {err:?}");
         }
     }
 
@@ -2333,7 +2370,7 @@ mod tests {
         let err = client
             .with_token_retry("asymmetricSign", |_auth| {
                 calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                Err(KmsCallError::Status(
+                Err(RemoteSignerFailure::status_body(
                     429,
                     "{\"error\":{\"status\":\"RESOURCE_EXHAUSTED\"}}".to_string(),
                 ))
@@ -2368,7 +2405,7 @@ mod tests {
         client
             .with_token_retry("getPublicKey", |_auth| {
                 calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                Err(KmsCallError::Status(401, String::new()))
+                Err(RemoteSignerFailure::status_body(401, String::new()))
             })
             .expect_err("refused");
         assert_eq!(
@@ -2397,7 +2434,7 @@ mod tests {
         let calls = std::sync::atomic::AtomicUsize::new(0);
         let always_401 = |_auth: &str| {
             calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Err(KmsCallError::Status(401, "revoked".to_string()))
+            Err(RemoteSignerFailure::status_body(401, "revoked".to_string()))
         };
         let start = Instant::now();
 
@@ -2456,7 +2493,7 @@ mod tests {
                 .with_token_retry_at("asymmetricSign", start, |_auth| {
                     // First call refused, retry with the fresh token succeeds.
                     if calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
-                        Err(KmsCallError::Status(401, "stale".to_string()))
+                        Err(RemoteSignerFailure::status_body(401, "stale".to_string()))
                     } else {
                         Ok(b"ok".to_vec())
                     }

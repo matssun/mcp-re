@@ -90,6 +90,10 @@ _PROXY_LIB_SRCS = [
     # KMS backends. Behind #[cfg(any(aws_kms_keysource, gcp_kms_keysource))], so it is
     # cfg'd out of the default build and compiled by `mcp_re_proxy_ext`.
     "src/handshake_quota.rs",
+    # ADR-MCPS-028 §B/§C: one remote-signer call as it failed, with the HTTP status kept
+    # separable from the body so the quota question is answered from the wire fact. Same
+    # cfg gate as `handshake_quota`, and compiled by `mcp_re_proxy_ext`.
+    "src/remote_signer_call.rs",
     # Issue #3838 (ADR-MCPS-014): non-exporting reference ResponseSigner proving the
     # response-signing delegation seam. Always compiled; default-build, Bazel-tested.
     "src/delegated_response_signer.rs",
