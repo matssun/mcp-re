@@ -21,9 +21,8 @@ use crate::config_state::TlsCustodyState;
 use crate::http_inner::HttpInnerPool;
 use crate::startup_posture::PostureLog;
 use crate::startup_posture::Seam;
-use crate::transport::ExactMatchBinding;
 use crate::transport::IdentityPolicy;
-use crate::transport::TransportBindingPolicy;
+use crate::transport::TransportBinding;
 use crate::HttpProfileProxy;
 use crate::ServerOptions;
 use mcp_re_http_profile::ActorIdentity;
@@ -340,7 +339,7 @@ fn audit_drain_line(drained: bool, report: bool) -> Option<String> {
 /// identity is read from. Splitting them across two derivations is what lets them
 /// disagree.
 struct ChannelBindingEffects {
-    binding_policy: Box<dyn TransportBindingPolicy + Send + Sync>,
+    binding: TransportBinding,
     identity_policy: IdentityPolicy,
 }
 
@@ -361,7 +360,7 @@ fn channel_binding_effects(state: ChannelBindingState) -> ChannelBindingEffects 
         ChannelBindingState::ExactDnsSan => IdentityPolicy::DnsSan,
     };
     ChannelBindingEffects {
-        binding_policy: Box::new(ExactMatchBinding::new()),
+        binding: TransportBinding::exact_match(),
         identity_policy,
     }
 }
@@ -593,7 +592,7 @@ fn run_validated(
     // Mode-A transport binding and the certificate field the connection seam reads the
     // identity from, both derived from the ONE state `config_state::transport` recognised.
     let ChannelBindingEffects {
-        binding_policy,
+        binding,
         identity_policy,
     } = channel_binding_effects(config.state().channel_binding());
     // ADR-MCPRE-051 §4: the AUTHORITATIVE async replay tier. The atomic
@@ -826,7 +825,7 @@ fn run_validated(
         skew = config.state().freshness().verifier_skew_secs()
     );
     proxy = proxy.with_verifier_policy(verifier_policy);
-    proxy = proxy.with_transport_binding(binding_policy);
+    proxy = proxy.with_transport_binding(binding);
 
     // ADR-MCPS-035: the per-request security record. Both arms install a sink — the OFF
     // state is a real `NoAuditSink` — so this one is a pair rather than an `Established`.
@@ -1588,21 +1587,18 @@ mod tests {
             );
             let identity = TransportIdentity::new("did:example:agent-1", field);
             assert!(effects
-                .binding_policy
+                .binding
                 .check("did:example:agent-1", Some(&identity))
                 .is_ok());
             assert!(
                 effects
-                    .binding_policy
+                    .binding
                     .check("did:example:agent-2", Some(&identity))
                     .is_err(),
                 "{expected_state:?} left the signer unbound to the channel identity"
             );
             assert!(
-                effects
-                    .binding_policy
-                    .check("did:example:agent-1", None)
-                    .is_err(),
+                effects.binding.check("did:example:agent-1", None).is_err(),
                 "{expected_state:?} admitted a request with no channel identity at all"
             );
         }

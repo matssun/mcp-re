@@ -1972,7 +1972,7 @@ async fn a_configured_transport_binding_refuses_a_request_that_presents_no_peer_
         300,
         ready_signer(),
     )
-    .with_transport_binding(Box::new(mcp_re_proxy::transport::ExactMatchBinding::new()));
+    .with_exact_match_transport_binding();
 
     // `served_of` presents no `identity` — the plain-HTTP case.
     let (req, _e) = signed_request("nonce-TB1", OPEN_BODY, None);

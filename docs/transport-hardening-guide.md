@@ -71,22 +71,35 @@ silently downgraded to a DNS SAN or CN.
 Source: [`transport.rs`](../mcp-re-proxy/src/transport.rs).
 
 The binding policy asserts the request's verified `signer` is consistent with the
-verified transport identity. Configure it with `--transport-binding`:
+verified transport identity.
 
-- **`exact`** (`ExactMatchBinding`, default) — the request `signer` must equal
-  the verified transport identity (the key-holder is the cert-holder). A
-  required-but-absent identity fails closed.
-- **`none`** — no binding; the mTLS identity is ignored. Only for deployments
-  where the channel identity is genuinely not the signer.
+**`--transport-binding exact` is the default and the only deployable value.** The
+request `signer` must equal the verified transport identity (the key-holder is the
+cert-holder), and a required-but-absent identity fails closed. The parser accepts two
+other values — `lb-assertion` (Mode B) and `attested-ingress` (Mode C) — and the
+validation boundary refuses both; they are retained and tested, not deployable.
 
-A third policy, `MappedBinding`, maps each `signer` to a set of allowed transport
-identities (e.g. a DID signer permitted over one or more SPIFFE IDs). It is a
-**strict, explicit allowlist**: matches are exact, byte-for-byte, case-sensitive
-string equality — no wildcards, no globs, no regex (a literal `"*"` is just an
-ordinary string). It is available in the library; the production CLI currently
-wires `exact` or `none`. A failure of any policy is always
-`mcp-re.transport_binding_failed`, emitted at the proxy (the only component holding
-the connection).
+**There is no value that turns binding off.** `--transport-binding none` is not
+accepted by the parser, and `BindingKind::None` is refused at validation, so a
+programmatically built configuration cannot reach the serving path with the mTLS
+identity ignored either.
+
+**The binding is not caller-supplied.** `HttpProfileProxy` takes a `TransportBinding`
+— a value only this crate constructs, from a channel-binding state the configuration
+owner recognised — and the one public way to install it is
+`with_exact_match_transport_binding()`. A `Box<dyn TransportBindingPolicy>` parameter
+would have stated only that *some* rule runs, which is satisfied equally by a rule that
+admits every request; possession of a `TransportBinding` states *which* rule.
+
+`MappedBinding` maps each `signer` to a set of allowed transport identities (e.g. a DID
+signer permitted over one or more SPIFFE IDs). It is a **strict, explicit allowlist**:
+matches are exact, byte-for-byte, case-sensitive string equality — no wildcards, no
+globs, no regex (a literal `"*"` is just an ordinary string). No configuration selects
+it and the serving path never constructs it, so it is a library type with no deployment
+route.
+
+A failure of any binding is always `mcp-re.transport_binding_failed`, emitted at the
+proxy (the only component holding the connection).
 
 ## KeySource
 

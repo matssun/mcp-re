@@ -161,6 +161,57 @@ Each subsequent step is now `if: ${{ !cancelled() }}`. Every manifest is checked
 run, and the job still fails if any of them does.
 
 
+### Changed — the transport binding is a value the owner produced, not a policy the caller supplies
+
+`HttpProfileProxy::with_transport_binding` took a `Box<dyn TransportBindingPolicy + Send +
+Sync>`, and both the trait and the method were public. That parameter states only that
+*some* binding rule will run. Every implementation satisfies it — including one whose
+`check` returns `Ok(())` for every request, which the serving path cannot distinguish from
+a binding that held, because the exchange is recorded as `TransportBindingChecked` either
+way. The configuration owner's refusals (`--transport-binding none`, `lb-assertion`,
+`attested-ingress`) therefore bound the CLI path only; an embedder linking the crate reached
+the serving path without passing through them.
+
+The serving path now takes a `TransportBinding`: a private representation whose every
+constructor is `pub(crate)`, produced from the `ChannelBindingState` that
+`config_state::transport` recognised. Possession is the proof that the mode was approved,
+with no trailing clause about which call site built it. Embedders get one named capability,
+`with_exact_match_transport_binding()`, which chooses *whether* the channel is bound and
+cannot choose *what* binding means.
+
+`pub(crate)` normally seals nothing in this workspace, because an owner's consumers live in
+its own crate. Here it is the correct lever precisely because the consumers being excluded
+are the ones outside the crate: `app.rs` should build these and an embedder should not. The
+seal is also self-reinforcing — `TransportBinding` being `pub(crate)` means re-publishing
+the setter alone fails the `private_interfaces` lint, and CI runs clippy with `-D warnings`.
+Undoing it takes three deliberate edits, not one.
+
+No behaviour changes for any deployment: `channel_binding_effects` installed
+`ExactMatchBinding` unconditionally before and installs `TransportBinding::exact_match()`
+now.
+
+Measured while sealing, and recorded against the two round-10 ledger findings it answers
+(`2ffecbbbe6e1e143`, `372e0f9c3638e53b`): **no crate or test wires `MappedBinding` or either
+LB-assertion verifier into a live proxy.** The only external installation in the tree was
+one integration test passing `ExactMatchBinding`. With `MappedBinding`'s public re-export
+removed, rustc reports it as never-constructed outright — measured, then reverted, because
+whether the type should exist is an owner decision and it is not on `AGENT_INSTRUCTIONS`
+§9's refused-not-removed list.
+
+### Fixed — the transport-hardening guide documented a way to turn channel binding off
+
+`docs/transport-hardening-guide.md` told operators that `--transport-binding none` gives
+"no binding; the mTLS identity is ignored". No such value exists: the parser accepts only
+`exact`, `lb-assertion` and `attested-ingress`, and `BindingKind::None` is refused at the
+validation boundary if a programmatically built configuration carries it. The guide also
+said `MappedBinding` "is available in the library" and that the CLI "wires `exact` or
+`none`".
+
+The section now states what the code does: `exact` is the default and the only deployable
+value, the other two parseable values are refused, there is no value that turns binding off,
+and `MappedBinding` has no deployment route.
+
+
 ## [0.16.0] — 2026-08-10
 
 ### Added — the exchange lifecycle is a value, and refusals derive their retry contract from it (ADR-MCPRE-057, ADR-MCPRE-058)
