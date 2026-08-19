@@ -27,6 +27,12 @@
 //! privately (`KmsCallError`) and used its typed status for the bearer-token retry, while
 //! AWS had none and matched text for the same class of question. What differs is the
 //! VOCABULARY inside the body, and that stays with each provider.
+//!
+//! Two members are `#[cfg(feature = "gcp_kms_keysource")]` — the chained cause and its
+//! rendering. They serve the refused-bearer-token retry, which Cloud KMS has and AWS SigV4
+//! does not, so a build carrying only the AWS backend must not carry them. `clippy
+//! --features <one feature> -- -D warnings` is what says so, and it is a CI lane of its
+//! own.
 
 use crate::key_source::KeyError;
 
@@ -95,6 +101,11 @@ impl RemoteSignerFailure {
     }
 
     /// Record the failure that made this call happen. Does not touch [`Self::body`].
+    ///
+    /// Cloud KMS's, because the credential retry is: AWS SigV4 re-signs per call and has no
+    /// refused-token round to chain a cause from. Gated so a build with only the AWS
+    /// backend does not carry a method nothing there can reach.
+    #[cfg(feature = "gcp_kms_keysource")]
     pub(crate) fn after(mut self, cause: String) -> Self {
         self.after = Some(cause);
         self
@@ -121,7 +132,9 @@ impl RemoteSignerFailure {
         }
     }
 
-    /// The rendered text, for chaining this failure onto a retry's.
+    /// The rendered text, for chaining this failure onto a retry's. Cloud KMS's, for the
+    /// same reason [`Self::after`] is.
+    #[cfg(feature = "gcp_kms_keysource")]
     pub(crate) fn describe(&self, operation: &str) -> String {
         match &self.outcome {
             CallOutcome::Rendered(error) => format!("{error}"),
@@ -214,6 +227,7 @@ mod tests {
     /// This is the property the separate field exists for: appending the cause to the body
     /// is the obvious implementation, and it would make a `__type` lookup fail on a body
     /// that genuinely states one.
+    #[cfg(feature = "gcp_kms_keysource")]
     #[test]
     fn a_chained_cause_renders_but_never_enters_the_body() {
         let failure = RemoteSignerFailure::status_body(
