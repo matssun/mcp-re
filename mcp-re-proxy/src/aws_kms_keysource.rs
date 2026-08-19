@@ -32,6 +32,8 @@ use crate::aws_sts::EnvCredentialSource;
 use crate::aws_sts::WebIdentityConfig;
 use crate::aws_sts::WebIdentityCredentialSource;
 use crate::delegated_tls::RawEd25519TlsSigner;
+use crate::handshake_quota::HandshakeQuotaWindow;
+use crate::handshake_quota::QuotaVerdict;
 use crate::key_source::KeyError;
 use crate::kms_keysource::ed25519_raw_point_from_spki;
 use crate::kms_keysource::KmsEd25519Backend;
@@ -373,19 +375,22 @@ fn parse_sign_response(body: &[u8]) -> Result<Vec<u8>, KeyError> {
 /// it; the replica then fails closed on `delegated_signing_unavailable` when the current
 /// credential's TTL runs out. A handshake flood becomes a signing outage.
 ///
-/// So the throttle is treated as a signal about the shared quota, not as one request's
-/// bad luck: for this window the handshake path refuses locally WITHOUT calling KMS,
-/// leaving the quota to the issuance path. Refusing handshakes is the cheap failure —
-/// a peer retries a connection; a replica that has lost response signing does not
-/// recover until a credential can be minted.
-const TLS_SIGN_THROTTLE_COOLDOWN: std::time::Duration = NETWORK_TIMEOUT;
-
 /// MANDATORY per-request network timeout on the KMS calls below. The serve loop is
 /// blocking, so an unbounded call (stalled connect/TLS handshake) would wedge the serving
-/// thread indefinitely. Named here because [`TLS_SIGN_THROTTLE_COOLDOWN`] is defined
-/// against it: a window opened in reaction to a call that may have taken this long must be
-/// at least this long, or it is installed already elapsed.
+/// thread indefinitely.
+///
+/// It is also what the handshake-path throttle window is derived from — see
+/// [`HandshakeQuotaWindow::for_network_timeout`]. A window opened in reaction to a call
+/// that may have taken this long must be at least this long, or it is installed already
+/// elapsed; deriving it from this value is what makes that a theorem rather than two
+/// constants a test has to keep in step.
 const NETWORK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// What a locally-refused handshake signature says, and it names the quota an operator
+/// has to go and look at.
+const QUOTA_REFUSAL: &str = "aws-kms: KMS is throttling this account; the delegated-TLS \
+     handshake signature is refused locally so the delegated-credential issuance keeps \
+     its share of the quota";
 
 /// A non-exporting [`KmsEd25519Backend`] backed by AWS KMS.
 pub struct AwsKmsEd25519Backend {
@@ -393,22 +398,30 @@ pub struct AwsKmsEd25519Backend {
     key_id: String,
     spki_der: Vec<u8>,
     verify_key: VerificationKey,
-    /// When the delegated-TLS path may call KMS again, set after KMS reported
-    /// throttling. `None` outside a cooldown, which is the steady state.
-    tls_cooldown_until: std::sync::Mutex<Option<std::time::Instant>>,
+    /// The handshake path's share of the account quota (ADR-MCPS-028 §G). The window,
+    /// the single-flight probe and the straggler rule are
+    /// [`HandshakeQuotaWindow`](crate::handshake_quota::HandshakeQuotaWindow)'s; what is
+    /// this backend's is which failures mean the quota is gone, and what the refusal says.
+    tls_quota: HandshakeQuotaWindow,
 }
 
-/// Does this KMS failure say the ACCOUNT is over its quota, rather than that one
-/// request was malformed?
+/// Does this KMS failure say the ACCOUNT is over its quota, rather than that one request
+/// was malformed?
 ///
-/// Classified from the rendered error because [`KeyError`] carries no machine-readable
-/// KMS code and its taxonomy is frozen. The text it matches is produced by
-/// [`UreqKmsClient::post_kms`] in this module, which interpolates the KMS JSON error
-/// body verbatim — `{"__type":"ThrottlingException"}` and its siblings — and the HTTP
-/// status for the gateway-level limits that never reach KMS's own error shape.
-fn is_kms_throttling(error: &KeyError) -> bool {
+/// Classified from the RENDERED error, which is the defect and is named as one: the fact
+/// is known typed at the transport — an HTTP status and a KMS `__type` — and
+/// [`KmsHttpClient::post_kms`] flattens both into a [`KeyError`] string that this then
+/// parses back out. The text it matches is produced by [`UreqKmsClient::post_kms`] in this
+/// module, which interpolates the KMS JSON error body verbatim
+/// (`{"__type":"ThrottlingException"}` and its siblings) and the HTTP status for the
+/// gateway-level limits that never reach KMS's own error shape.
+///
+/// A rewording upstream silently stops arming the window; a malformed-request body that
+/// happens to contain one of these tokens arms it. Both are consequences of recovering a
+/// structured fact from prose, and the fix is at the transport seam, not here.
+fn quota_verdict(error: &KeyError) -> QuotaVerdict {
     let rendered = format!("{error:?}");
-    [
+    let exhausted = [
         "ThrottlingException",
         "LimitExceededException",
         "KMSInternalException",
@@ -417,7 +430,12 @@ fn is_kms_throttling(error: &KeyError) -> bool {
         "returned HTTP 503",
     ]
     .iter()
-    .any(|marker| rendered.contains(marker))
+    .any(|marker| rendered.contains(marker));
+    if exhausted {
+        QuotaVerdict::Exhausted
+    } else {
+        QuotaVerdict::Unrelated
+    }
 }
 
 impl AwsKmsEd25519Backend {
@@ -439,7 +457,7 @@ impl AwsKmsEd25519Backend {
             key_id,
             spki_der,
             verify_key,
-            tls_cooldown_until: std::sync::Mutex::new(None),
+            tls_quota: HandshakeQuotaWindow::for_network_timeout(NETWORK_TIMEOUT, QUOTA_REFUSAL),
         })
     }
 
@@ -485,95 +503,21 @@ impl AwsKmsEd25519Backend {
         Self::with_client(Box::new(client), config.key_id.clone())
     }
 
-    /// The delegated-TLS handshake signature, at an explicit instant so the
-    /// quota-preserving cooldown is provable without waiting on a clock.
-    ///
-    /// Inside a cooldown this refuses WITHOUT reaching KMS. See
-    /// [`TLS_SIGN_THROTTLE_COOLDOWN`]: the handshake path is the one an unauthenticated
-    /// peer can drive, and it shares an account quota with the delegated-credential
-    /// issuance that keeps the replica able to sign responses at all.
-    /// Open a throttle window ending [`TLS_SIGN_THROTTLE_COOLDOWN`] after `now`, never
-    /// SHORTENING one already in force.
-    ///
-    /// `now` MUST be a clock reading taken AFTER the call being reacted to. That is what
-    /// keeps the window from being installed stale: it was previously the handshake's ENTRY
-    /// instant, so a KMS call slower than the cooldown opened a window that had already
-    /// elapsed — no throttle at all, precisely when KMS was slow enough to need one.
-    ///
-    /// `max` is a narrower guarantee than it looks: it stops a thread REPLACING a longer
-    /// window with a shorter one, which is what plain assignment did when two threads
-    /// reported failures out of order. It does NOT sanitise a stale reading — on the `None`
-    /// branch, the steady state and the state a successful probe leaves, whatever `until`
-    /// it is handed is installed outright. Freshness comes from the caller reading the
-    /// clock here, not from `max`.
-    fn arm_cooldown(&self, now: std::time::Instant) {
-        let mut cooldown = self
-            .tls_cooldown_until
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        let until = now + TLS_SIGN_THROTTLE_COOLDOWN;
-        *cooldown = Some(cooldown.map_or(until, |current| current.max(until)));
-    }
-
     /// The delegated-TLS handshake signature, against an explicit clock so the
-    /// quota-preserving cooldown is provable without waiting on one.
+    /// quota-preserving window is provable without waiting on one.
     ///
-    /// Inside a cooldown this refuses WITHOUT reaching KMS. `clock` is read TWICE and the
-    /// distinction is load-bearing: once at the gate, to decide whether this handshake may
-    /// reach KMS, and again AFTER the call, to open a window that reacts to when the call
-    /// finished rather than to when the handshake arrived.
+    /// The window is [`HandshakeQuotaWindow`]'s and so is every rule about it. This
+    /// supplies the two things that are AWS's: the signing operation, and which failures
+    /// say the account is out of budget.
     fn tls_sign_at(
         &self,
         message: &[u8],
         clock: &dyn Fn() -> std::time::Instant,
     ) -> Result<Vec<u8>, KeyError> {
-        let now = clock();
-        // Whether THIS thread is the one probing a lapsed window. Only the thread that
-        // observes the lapse takes the probe: it re-arms the window before releasing the
-        // lock, so the rest of a concurrent handshake cohort at the boundary is still
-        // refused instead of all calling KMS at once — which is the flood the
-        // window exists to stop, arriving one cooldown late.
-        let probing = {
-            // Poison recovery, not propagation: the state is one whole-value swap, and a
-            // sticky lock error here would refuse every later handshake signature for the
-            // process lifetime — a far worse failure than the throttle it guards against.
-            let mut cooldown = self
-                .tls_cooldown_until
-                .lock()
-                .unwrap_or_else(|p| p.into_inner());
-            match *cooldown {
-                Some(until) if now < until => {
-                    return Err(KeyError::NotFound(
-                        "aws-kms: KMS is throttling this account; the delegated-TLS \
-                         handshake signature is refused locally so the delegated-credential \
-                         issuance keeps its share of the quota"
-                            .to_string(),
-                    ))
-                }
-                Some(_) => {
-                    *cooldown = Some(now + TLS_SIGN_THROTTLE_COOLDOWN);
-                    true
-                }
-                None => false,
-            }
-        };
         // The object-signing RAW-Ed25519 sign path verbatim over the handshake transcript,
         // length-checked + verified.
-        let signed = self.sign_raw_ed25519(message);
-        match &signed {
-            Ok(_) if probing => {
-                // The probe went through: the quota is available again, so reopen the path
-                // rather than leaving the window this thread armed to run its course.
-                *self
-                    .tls_cooldown_until
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner()) = None;
-            }
-            // Armed from a reading taken NOW, after the call — not from the entry instant.
-            Err(error) if is_kms_throttling(error) => self.arm_cooldown(clock()),
-            _ => {}
-        }
-        signed
+        self.tls_quota
+            .guard(clock, || self.sign_raw_ed25519(message), quota_verdict)
     }
 
     /// TEST-ONLY (issue #60): build a backend over an in-memory FAKE KMS transport
@@ -938,37 +882,19 @@ mod tests {
         }
     }
 
-    /// The AWS twin of the GCP mutex-poison property: one panic anywhere under these
-    /// locks must not remove AWS KMS signing from the replica for the rest of the process.
+    /// One panic under the SigV4 credential lock must not remove AWS KMS signing from the
+    /// replica for the rest of the process.
     ///
-    /// Poison is sticky. The `signer` read take and the handshake cooldown both used to
-    /// map it to a hard `KeyError`, so a single panic turned every later `post_kms` and
-    /// every later handshake signature into a permanent failure — the delegated rotor then
-    /// cannot mint a successor and the replica fails closed at the current key's `exp`.
-    /// Neither lock protects an invariant: both guard whole-value swaps.
+    /// Poison is sticky. The `signer` read take used to map it to a hard `KeyError`, so a
+    /// single panic turned every later `post_kms` into a permanent failure — the delegated
+    /// rotor then cannot mint a successor and the replica fails closed at the current key's
+    /// `exp`. The lock protects no invariant: it guards a whole-value swap.
+    ///
+    /// The handshake window's own poison property is
+    /// `handshake_quota::tests::a_poisoned_window_lock_still_signs`; this backend no longer
+    /// holds that lock.
     #[test]
-    fn a_poisoned_signer_or_cooldown_lock_still_signs() {
-        let backend = AwsKmsEd25519Backend::with_client(
-            Box::new(FakeKms {
-                key: SigningKey::from_seed_bytes(&[19u8; 32]),
-                prehash: false,
-            }),
-            "alias/mcp-re".to_string(),
-        )
-        .expect("construct");
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _held = backend.tls_cooldown_until.lock().expect("not yet poisoned");
-            panic!("poisoning the cooldown on purpose");
-        }));
-        assert!(
-            backend.tls_cooldown_until.lock().is_err(),
-            "the cooldown lock must now be poisoned"
-        );
-        let sig = backend
-            .tls_sign_at(b"transcript", &std::time::Instant::now)
-            .expect("a poisoned cooldown lock must not refuse the handshake");
-        assert_eq!(sig.len(), 64);
-
+    fn a_poisoned_signer_lock_still_signs() {
         // The credential lock on the real `UreqKmsClient`: poisoned, `post_kms` must still
         // reach the point where it fails on the NETWORK, not on the lock.
         let client = UreqKmsClient::new(
@@ -1121,250 +1047,30 @@ mod tests {
         );
 
         backend
-            .tls_sign_at(b"transcript", &|| start + TLS_SIGN_THROTTLE_COOLDOWN)
+            .tls_sign_at(b"transcript", &|| start + NETWORK_TIMEOUT)
             .expect_err("KMS is still throttling");
         assert_eq!(signs(), 2, "past the cooldown the path probes KMS again");
     }
 
-    /// The classifier must fire on the account-quota failures and NOT on an ordinary
-    /// A throttling transport whose call TAKES LONGER THAN THE WINDOW, which is the regime
-    /// the window exists for and the one a fast fake cannot reach.
-    struct SlowThrottlingKms {
-        key: SigningKey,
-        signs: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-        call_time: std::time::Duration,
-    }
-    impl KmsHttpClient for SlowThrottlingKms {
-        fn post_kms(&self, target: &str, _body: &[u8]) -> Result<Vec<u8>, KeyError> {
-            if target == TARGET_GET_PUBLIC_KEY {
-                let der = spki_from_raw(&self.key.public_key().to_bytes());
-                return Ok(serde_json::json!({
-                    "KeySpec": KEY_SPEC_ED25519,
-                    "PublicKey": STANDARD.encode(&der),
-                })
-                .to_string()
-                .into_bytes());
-            }
-            self.signs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            std::thread::sleep(self.call_time);
-            Err(KeyError::NotFound(
-                "aws-kms: Sign returned HTTP 400: ThrottlingException".to_string(),
-            ))
-        }
-    }
-
-    fn slow_throttling_backend(
-        counter: &std::sync::Arc<std::sync::atomic::AtomicUsize>,
-        call_time: std::time::Duration,
-    ) -> AwsKmsEd25519Backend {
-        AwsKmsEd25519Backend::with_client(
-            Box::new(SlowThrottlingKms {
-                key: SigningKey::from_seed_bytes(&[71u8; 32]),
-                signs: std::sync::Arc::clone(counter),
-                call_time,
-            }),
-            "alias/mcp-re".to_string(),
-        )
-        .expect("construct")
-    }
-
-    /// The window must be armed from a reading taken AFTER the call, and must outlast the
-    /// call it reacts to.
+    /// AWS's half of the window: which failures mean the ACCOUNT is over its quota, and
+    /// not that one request was refused.
     ///
-    /// Armed from the handshake's ENTRY instant with a 2s window against a 5s timeout, any
-    /// KMS call slower than 2s installed a window that had ALREADY elapsed — no throttle at
-    /// all, in exactly the regime the throttle exists for. The AWS twin carried this with
-    /// no coverage at all.
+    /// The mechanism the verdict drives — the window, the single-flight probe, the
+    /// straggler rule — is [`crate::handshake_quota`]'s and is tested there, against a
+    /// closure rather than through a fake KMS transport. What is AWS's is this vocabulary,
+    /// and it is worth its own test because it is recovered from a RENDERED error: a
+    /// reworded body silently stops arming the window, and an unrelated failure that
+    /// happens to contain one of these tokens arms it.
     #[test]
-    fn a_slow_throttled_call_still_opens_a_live_window() {
-        assert!(
-            TLS_SIGN_THROTTLE_COOLDOWN >= NETWORK_TIMEOUT,
-            "a {TLS_SIGN_THROTTLE_COOLDOWN:?} window cannot survive a call that may take \
-             {NETWORK_TIMEOUT:?}"
-        );
-        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        // A call that takes longer than the whole window.
-        let slow = TLS_SIGN_THROTTLE_COOLDOWN + std::time::Duration::from_millis(20);
-        let backend = slow_throttling_backend(&counter, slow);
-        let entry = std::time::Instant::now();
-        // The clock advances by `slow` across the call, exactly as the real one would.
-        let reads = std::sync::atomic::AtomicUsize::new(0);
-        let clock = || {
-            if reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
-                entry
-            } else {
-                entry + slow
-            }
-        };
-        backend
-            .tls_sign_at(b"transcript", &clock)
-            .expect_err("KMS is throttling");
-        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 1);
-        // A handshake arriving just after the call finished must be REFUSED. Armed from the
-        // entry instant the window would already have expired and this would reach KMS.
-        backend
-            .tls_sign_at(b"transcript", &|| {
-                entry + slow + std::time::Duration::from_millis(1)
-            })
-            .expect_err("the window opened by the slow call must still be in force");
-        assert_eq!(
-            counter.load(std::sync::atomic::Ordering::SeqCst),
-            1,
-            "a window armed from the entry instant is dead on arrival after a slow call"
-        );
-    }
-
-    /// At the boundary exactly ONE handshake probes KMS.
-    #[test]
-    fn only_one_handshake_probes_at_the_cooldown_boundary() {
-        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let backend = std::sync::Arc::new(slow_throttling_backend(
-            &counter,
-            TLS_SIGN_THROTTLE_COOLDOWN + std::time::Duration::from_millis(20),
-        ));
-        let start = std::time::Instant::now();
-        backend
-            .tls_sign_at(b"transcript", &|| start)
-            .expect_err("throttling");
-        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 1);
-        let boundary = start + TLS_SIGN_THROTTLE_COOLDOWN;
-        let threads: Vec<_> = (0..16)
-            .map(|_| {
-                let backend = std::sync::Arc::clone(&backend);
-                std::thread::spawn(move || {
-                    let _ = backend.tls_sign_at(b"transcript", &|| boundary);
-                })
-            })
-            .collect();
-        for t in threads {
-            t.join().expect("joined");
-        }
-        assert_eq!(
-            counter.load(std::sync::atomic::Ordering::SeqCst),
-            2,
-            "the boundary must admit ONE probe, not the whole cohort"
-        );
-    }
-
-    /// A straggler reporting an OLD failure must not shorten the window in force.
-    #[test]
-    fn a_straggler_cannot_shorten_the_cooldown_window() {
-        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let backend = AwsKmsEd25519Backend::with_client(
-            Box::new(ThrottlingKms {
-                key: SigningKey::from_seed_bytes(&[72u8; 32]),
-                signs: std::sync::Arc::clone(&counter),
-            }),
-            "alias/mcp-re".to_string(),
-        )
-        .expect("construct");
-        let start = std::time::Instant::now();
-        let later = start + std::time::Duration::from_secs(30);
-        backend.arm_cooldown(later);
-        backend.arm_cooldown(start);
-        let between = start + TLS_SIGN_THROTTLE_COOLDOWN + std::time::Duration::from_secs(1);
-        backend
-            .tls_sign_at(b"transcript", &|| between)
-            .expect_err("still inside the window the later thread opened");
-        assert_eq!(
-            counter.load(std::sync::atomic::Ordering::SeqCst),
-            0,
-            "a straggler's stale window must not reopen the handshake path"
-        );
-        backend
-            .tls_sign_at(b"transcript", &|| later + TLS_SIGN_THROTTLE_COOLDOWN)
-            .expect_err("KMS is still throttling");
-        assert_eq!(
-            counter.load(std::sync::atomic::Ordering::SeqCst),
-            1,
-            "past the real window the path must probe"
-        );
-    }
-
-    /// POSITIVE CONTROL: a probe that SUCCEEDS reopens the path at once, so re-arming
-    /// before probing cannot turn one throttle into a permanent stutter.
-    #[test]
-    fn a_successful_probe_reopens_the_handshake_path_at_once() {
-        struct HealingKms {
-            key: SigningKey,
-            healed: std::sync::Arc<std::sync::atomic::AtomicBool>,
-            signs: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-        }
-        impl KmsHttpClient for HealingKms {
-            fn post_kms(&self, target: &str, body: &[u8]) -> Result<Vec<u8>, KeyError> {
-                if target == TARGET_GET_PUBLIC_KEY {
-                    let der = spki_from_raw(&self.key.public_key().to_bytes());
-                    return Ok(serde_json::json!({
-                        "KeySpec": KEY_SPEC_ED25519,
-                        "PublicKey": STANDARD.encode(&der),
-                    })
-                    .to_string()
-                    .into_bytes());
-                }
-                self.signs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if !self.healed.load(std::sync::atomic::Ordering::SeqCst) {
-                    return Err(KeyError::NotFound(
-                        "aws-kms: Sign returned HTTP 400: ThrottlingException".to_string(),
-                    ));
-                }
-                let v: serde_json::Value = serde_json::from_slice(body).expect("body");
-                let msg = STANDARD
-                    .decode(v.get("Message").and_then(|m| m.as_str()).unwrap_or(""))
-                    .expect("b64");
-                let raw = b64url_decode(&self.key.sign(&msg)).expect("sign");
-                Ok(serde_json::json!({
-                    "Signature": STANDARD.encode(&raw),
-                    "SigningAlgorithm": SIGNING_ALGORITHM_ED25519,
-                })
-                .to_string()
-                .into_bytes())
-            }
-        }
-        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let healed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let backend = AwsKmsEd25519Backend::with_client(
-            Box::new(HealingKms {
-                key: SigningKey::from_seed_bytes(&[73u8; 32]),
-                healed: std::sync::Arc::clone(&healed),
-                signs: std::sync::Arc::clone(&counter),
-            }),
-            "alias/mcp-re".to_string(),
-        )
-        .expect("construct");
-        let start = std::time::Instant::now();
-        backend
-            .tls_sign_at(b"transcript", &|| start)
-            .expect_err("throttled");
-        healed.store(true, std::sync::atomic::Ordering::SeqCst);
-        let boundary = start + TLS_SIGN_THROTTLE_COOLDOWN;
-        backend
-            .tls_sign_at(b"transcript", &|| boundary)
-            .expect("the probe succeeds");
-        let before = counter.load(std::sync::atomic::Ordering::SeqCst);
-        for _ in 0..5 {
-            backend
-                .tls_sign_at(b"transcript", &|| {
-                    boundary + std::time::Duration::from_millis(1)
-                })
-                .expect("the path is open again");
-        }
-        assert_eq!(
-            counter.load(std::sync::atomic::Ordering::SeqCst),
-            before + 5,
-            "after a successful probe every handshake must reach KMS again"
-        );
-    }
-
-    /// per-request refusal, which says nothing about the shared quota.
-    #[test]
-    fn only_quota_failures_open_the_cooldown() {
+    fn only_account_quota_failures_reach_the_exhausted_verdict() {
         for throttling in [
             "aws-kms: TrentService.Sign returned HTTP 400: {\"__type\":\"ThrottlingException\"}",
             "aws-kms: TrentService.Sign returned HTTP 400: {\"__type\":\"LimitExceededException\"}",
             "aws-kms: TrentService.Sign returned HTTP 429: slow down",
         ] {
-            assert!(
-                is_kms_throttling(&KeyError::NotFound(throttling.to_string())),
+            assert_eq!(
+                quota_verdict(&KeyError::NotFound(throttling.to_string())),
+                QuotaVerdict::Exhausted,
                 "{throttling}"
             );
         }
@@ -1372,8 +1078,9 @@ mod tests {
             "aws-kms: TrentService.Sign returned HTTP 400: {\"__type\":\"AccessDeniedException\"}",
             "aws-kms: TrentService.Sign transport: connection refused",
         ] {
-            assert!(
-                !is_kms_throttling(&KeyError::NotFound(other.to_string())),
+            assert_eq!(
+                quota_verdict(&KeyError::NotFound(other.to_string())),
+                QuotaVerdict::Unrelated,
                 "{other}"
             );
         }
