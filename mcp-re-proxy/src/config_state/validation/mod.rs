@@ -30,8 +30,8 @@ use crate::deployment_request::DeploymentRequest;
 /// the end of [`parse_args`]. What was missing is that passing through `parse_args` was
 /// the ONLY thing that ran them. `DeploymentRequest` has 76 public fields, so any caller that built
 /// one in code and handed it to `app::run` got a proxy with cn_legacy identity, a
-/// non-durable replay tier, a disabled client-cert lifetime or reverse-proxy header
-/// ingress — every posture the project refuses — with nothing to stop it. The guard was
+/// non-durable replay tier or a disabled client-cert lifetime — every posture the
+/// project refuses — with nothing to stop it. The guard was
 /// at the wrong altitude: on one path into the runtime rather than on the runtime.
 ///
 /// This type moves it onto the runtime. The serving path accepts only a
@@ -118,8 +118,8 @@ impl TryFrom<DeploymentRequest> for ValidatedDeployment {
 /// `max_client_cert_lifetime == None`) is likewise rejected.
 ///
 /// The postures rejected here are the pure-config, platform-independent fail-open
-/// ones: reverse-proxy header ingress (M10/M22), a non-durable/weak replay tier
-/// (#90/ADR-MCPS-020), lb-assertion binding, and cn_legacy identity.
+/// ones: a non-durable/weak replay tier (#90/ADR-MCPS-020), lb-assertion binding, and
+/// cn_legacy identity.
 ///
 /// The violations alone. [`validate_configuration`] is the boundary proper — it runs the
 /// same single pass and additionally returns what that pass RECOGNISED, which is what the
@@ -436,10 +436,6 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // kind is representable now — every classifiable replay state is shared, and a request
     // that declares no durability tier names no state at all — so the fleet posture needs
     // no replay clause of its own. The tier's own strength requirement is enforced above.
-    // X7 — ChannelBinding × Tls: mTLS is terminated locally XOR a forwarded identity is
-    // trusted. The two binding-kind clauses that used to close this list moved up into the
-    // `ChannelBinding` machine's own position.
-    violations.extend(decided.cross.x7_local_mtls_xor_forwarded);
     // X9 — TrustRevocation × DelegatedSigning. The epoch posture is decided once, by the
     // `TrustRevocation` machine, and carried in the classification; nothing is re-derived
     // here (CF-09).

@@ -35,7 +35,6 @@ use crate::key_source::KeyError;
 use crate::key_source::KeySource;
 use crate::tls::ServerLimits;
 use crate::transport::IdentityPolicy;
-use crate::transport::ReverseProxyHeaderFormat;
 
 /// Parse CLI arguments (excluding argv[0]) into a [`DeploymentRequest`]. Returns a
 /// human-readable error string on any missing/invalid argument.
@@ -107,8 +106,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     };
     let mut binding = BindingKind::Exact;
     let mut identity_source = IdentityPolicy::UriSan;
-    let mut reverse_proxy_identity_header: Option<String> = None;
-    let mut reverse_proxy_header_format = ReverseProxyHeaderFormat::Xfcc;
     // ADR-MCPS-023 Tier 3 (issue #71): repeatable trusted LB verification keys for
     // request-bound ingress assertions, as (key_id, base64url-ed25519-pub) pairs.
     let mut ingress_lb_keys: Vec<(String, String)> = Vec::new();
@@ -481,23 +478,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
                     }
                 }
             }
-            // The trusted forwarded header name. Presence of this flag selects
-            // reverse-proxy ingress mode (mTLS terminated upstream), which relation X7
-            // refuses outright.
-            "--reverse-proxy-identity-header" => {
-                reverse_proxy_identity_header = Some(value.clone())
-            }
-            "--reverse-proxy-header-format" => {
-                reverse_proxy_header_format = match value.as_str() {
-                    "plain" => ReverseProxyHeaderFormat::Plain,
-                    "xfcc" => ReverseProxyHeaderFormat::Xfcc,
-                    other => {
-                        return Err(format!(
-                            "unknown --reverse-proxy-header-format '{other}' (plain|xfcc)"
-                        ))
-                    }
-                }
-            }
             "--authz" => {
                 authz = match value.as_str() {
                     "off" => AuthzKind::Off,
@@ -731,8 +711,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
         revocation_tier,
         binding,
         identity_source,
-        reverse_proxy_identity_header,
-        reverse_proxy_header_format,
         ingress_lb_keys,
         ingress_attestor_keys,
         ingress_identities,
@@ -1252,7 +1230,6 @@ mod tests {
     use super::IdentityPolicy;
     use super::KeySourceKind;
     use super::OcspKind;
-    use super::ReverseProxyHeaderFormat;
     use crate::config_state::validation::unsafe_config_violations;
     use mcp_re_core::SigningKey;
 
@@ -1787,7 +1764,6 @@ mod tests {
             c.ingress_identities = vec!["ingress-1".to_string()];
             c.ingress_audience = Some("https://mcp.example.com/mcp".to_string());
             c.ingress_pinned_mtls = true;
-            c.reverse_proxy_identity_header = None;
         };
 
         let mut empty_identity = parsed_baseline();
@@ -2383,58 +2359,6 @@ mod tests {
         assert!(parse_args(&a).unwrap_err().contains("email_san"));
     }
 
-    // --- MCPS-3840 reverse-proxy ingress flags --------------------------------
-
-    #[test]
-    fn no_reverse_proxy_header_by_default() {
-        let config = parse_args(&minimal_durable()).expect("parse");
-        assert_eq!(config.reverse_proxy_identity_header, None);
-        // The default format is irrelevant when the header is unset, but it is
-        // the safer XFCC (structured) shape rather than the trust-the-whole-value
-        // plain shape.
-        assert_eq!(
-            config.reverse_proxy_header_format,
-            ReverseProxyHeaderFormat::Xfcc
-        );
-    }
-
-    // NOTE: reverse-proxy identity-header ingress is a spoofable posture that the
-    // unconditional strict/production posture always rejects (see
-    // `strict_rejects_reverse_proxy_identity_header_ingress`), so there is no
-    // successful-parse test for the header-format selection — the mode never parses.
-
-    #[test]
-    fn unknown_reverse_proxy_header_format_errors() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--reverse-proxy-identity-header",
-                "x-client-identity",
-                "--reverse-proxy-header-format",
-                "der",
-                "--max-client-cert-lifetime",
-                "none",
-            ]),
-        );
-        assert!(parse_args(&a).unwrap_err().contains("der"));
-    }
-
-    /// A blank forwarded-header name is refused, though not for being blank: relation X7
-    /// refuses the forwarded-identity posture whatever it names. Kept as the tripwire for
-    /// that — if X7 is ever narrowed, this fails, and the emptiness rule then belongs to
-    /// the owner of the header rather than back here.
-    #[test]
-    fn empty_reverse_proxy_header_name_errors() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--reverse-proxy-identity-header", "   "]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(
-            err.contains("--reverse-proxy-identity-header"),
-            "got: {err}"
-        );
-    }
-
     // ---- ADR-MCPS-023 Tier 3 (issue #71): LB-signed request-bound assertion ----
 
     /// A valid base64url-no-pad 32-byte Ed25519 public key for `--ingress-lb-key`.
@@ -2810,60 +2734,6 @@ mod tests {
             ]),
         );
         assert!(parse_args(&a).unwrap_err().contains("Ed25519 public key"));
-    }
-
-    /// Attested ingress beside a forwarded identity header is still refused — by X7.
-    ///
-    /// The proposition is unchanged: Mode C resolves identity from the signed assertion, so
-    /// a trusted reverse-proxy header would be a second, silently-ignored identity source.
-    /// What changed is which authority states it. `ingress_assertion_refusal` carried a
-    /// clause saying the two were "mutually exclusive"; relation X7 refuses a forwarded
-    /// identity header under EVERY binding, which is strictly stronger, so the clause was a
-    /// second authority over one fact and was deleted rather than moved. The assertion now
-    /// names the surviving one — see
-    /// `cross_machine::tests::the_forwarded_identity_header_is_refused_under_every_binding`
-    /// for the control that the deletion admits nothing.
-    #[test]
-    fn attested_ingress_rejects_reverse_proxy_header() {
-        let mut a = minimal();
-        let mut flags = attested_ingress_flags();
-        flags.extend(args(&[
-            "--reverse-proxy-identity-header",
-            "x-forwarded-client-cert",
-        ]));
-        a.splice(0..0, flags);
-        let err = parse_args(&a).unwrap_err();
-        assert!(
-            err.contains("--reverse-proxy-identity-header"),
-            "the forwarded-identity posture must be refused by name, got: {err}"
-        );
-    }
-
-    /// Reverse-proxy ingress cannot be deployed beside a local client-certificate control.
-    ///
-    /// The parser used to refuse this pair and name the remedy: disable the local control
-    /// with `--max-client-cert-lifetime none`. That remedy was never a deployment — the
-    /// boundary refuses a disabled lifetime outright — so the two layers disagreed about
-    /// what a legal configuration is. Relation X7 settles it in one direction: mTLS is
-    /// terminated locally XOR a forwarded identity is trusted, and the forwarded posture
-    /// is refused, so there is no reverse-proxy deployment for the pair to be a conflict
-    /// in.
-    #[test]
-    fn reverse_proxy_mode_conflicts_with_local_cert_lifetime() {
-        let mut a = minimal_durable();
-        a.splice(
-            0..0,
-            args(&["--reverse-proxy-identity-header", "x-forwarded-client-cert"]),
-        );
-        let err = parse_args(&a).unwrap_err();
-        assert!(
-            err.contains("--reverse-proxy-identity-header"),
-            "got: {err}"
-        );
-        assert!(
-            !err.contains("--max-client-cert-lifetime none"),
-            "the refusal must not name a remedy the boundary also refuses; got: {err}"
-        );
     }
 
     // In a production build (no `dev_env_key_source` feature) the env key source does
@@ -4237,27 +4107,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "online_ocsp")]
-    #[test]
-    fn client_ocsp_require_in_reverse_proxy_mode_errors() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--client-ocsp",
-                "require",
-                "--reverse-proxy-identity-header",
-                "x-client-id",
-                "--max-client-cert-lifetime",
-                "none",
-            ]),
-        );
-        // Refused — now for the stronger reason that the serving path performs no OCSP
-        // check at all, which subsumes the reverse-proxy-mode objection.
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("cannot be honored"), "got: {err}");
-    }
-
     // --- MCPS-3842 strict/production posture ("reject, not warn") ------------
     //
     // The strict/production posture is UNCONDITIONAL: the proxy always rejects an
@@ -4570,33 +4419,8 @@ mod tests {
 
     // --- #4082 (MCP-RE-MED-1) additional strict/production posture rejections -----
     //
-    // M10/M11/M22: the unconditional strict/production posture turns these
-    // otherwise-spoofable/decoupled postures into HARD parse errors.
-
-    // M10/M22 — reverse-proxy identity-header ingress is the documented
-    // identity-spoofable posture; production refuses to enable it.
-    #[test]
-    fn strict_rejects_reverse_proxy_identity_header_ingress() {
-        let mut a = minimal_durable();
-        a.splice(
-            0..0,
-            args(&[
-                "--reverse-proxy-identity-header",
-                "x-forwarded-client-cert",
-                // The local-cert lifetime is meaningless in reverse-proxy mode, so it
-                // must be explicitly disabled (existing parse rule); that disabled
-                // lifetime is itself a violation, but the reverse-proxy ingress
-                // rejection is what we assert here.
-                "--max-client-cert-lifetime",
-                "none",
-            ]),
-        );
-        let err = parse_args(&a).unwrap_err();
-        assert!(
-            err.contains("--reverse-proxy-identity-header"),
-            "got: {err}"
-        );
-    }
+    // M11: the unconditional strict/production posture turns an otherwise
+    // decoupled posture into a HARD parse error.
 
     // M11 — `--transport-binding none` is no longer a selectable value (the only
     // accepted bindings enforce a channel↔signer binding), so it fails closed at

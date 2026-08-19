@@ -436,8 +436,8 @@ fn run_validated(
     }
 
     // Security posture note. The hard guards (cn_legacy, memory/weak replay,
-    // over-ceiling/disabled cert lifetime, reverse-proxy ingress, lb-assertion,
-    // node-local replay under --fleet) are ALL rejected at parse time by
+    // over-ceiling/disabled cert lifetime, lb-assertion, node-local replay under
+    // --fleet) are ALL rejected at parse time by
     // `config_state::validation::unsafe_config_violations` — the proxy never reaches here with them. Only
     // the env key source (a dev/CI-only build, `dev_env_key_source`) is worth a
     // runtime note, since that build deliberately permits it.

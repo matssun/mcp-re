@@ -88,24 +88,38 @@ whether an owner ALREADY owns the fact, not whether one plausibly could.
 `identity_source` and `binding` remain in `startup_plan::identity_strategy`, which is
 blocked on a ruling — see below.
 
-## A second orphan, needing the OCSP ruling rather than a deletion
+## A second orphan — RULED, and deleted
 
-`startup_plan::identity_strategy` matches on the same `reverse_proxy_identity_header` that
-X7 refuses outright, and its `Some(header)` arm builds a `ReverseProxyMtlsProvider`. That
-arm is unreachable for the same reason the deleted warning was — but the provider behind it
-is **45 references across `transport.rs` (34) and `tls.rs` (11)**, with its own tests, and
-no declared seam.
+`startup_plan::identity_strategy` matched on the same `reverse_proxy_identity_header` that
+X7 refused outright, and its `Some(header)` arm built a `ReverseProxyMtlsProvider`. The arm
+was unreachable for the same reason the deleted warning was, so the question was the
+`build_ocsp_checker` one: retained capability or dead code?
 
-So this is the `build_ocsp_checker` question, not the dead-warning question: retained
-capability or dead code? A 45-reference deletion is an owner ruling. Until it is made,
-`identity_strategy` keeps two of the remaining raw reads.
+The measurement that settled it. The 45 references were **12 production and 30 test**;
+there were no consumers outside this crate; `docs/AGENT_INSTRUCTIONS.md` §9 lists the
+retained-but-refused capabilities and the forwarded-identity header is **not** among them;
+and the one document that claimed the capability was supported — `README.md`, "available
+via the forwarded-identity path" — was false, contradicted by `SECURITY.md` in two places.
+With that claim corrected there was no declared contract on either side.
+
+Owner ruling: delete. The flag, the `DeploymentRequest` fields, relation X7, the provider,
+the XFCC/RFC2253 parsers and the `IdentityStrategy::ReverseProxyHeader` variant are gone.
+The strongest evidence that the seam really was header-shaped is that
+`tls::resolve_identity` and `resolve_identity_from_leaf` no longer take `&RequestHeaders` at
+all: no strategy can derive a transport identity from a request header, and the signature
+now says so. Direct locally-terminated mTLS is unchanged and remains the production posture.
+
+This is the `--replay-cache` precedent, not a precedent for the other four §9 entries: the
+answer here was "the input should not exist", which is what raising a refusal looks like
+when the refusal turns out to be all the capability still did.
 
 ## Order of work
 
-1. Delete the dead reverse-proxy warning (−4 reads, no design decision).
-2. Bucket 1 — replace each re-derivation with the owner's projection (−7 reads).
-3. Bucket 3 — six fields needing an owner or a represented relation. `trust_path` and the
-   delegated TTL/overlap pair are the two that also re-widen what an owner had sealed, so
-   they belong with the plan-sealing half of the campaign.
-4. Then narrow or remove `ValidatedDeployment::config()`, and the grep becomes a regression
+1. ~~Delete the dead reverse-proxy warning~~ (−4 reads, no design decision). **Done.**
+2. ~~Bucket 1 — replace each re-derivation with the owner's projection~~ (−7 reads). **Done.**
+3. ~~Delete the forwarded-identity provider~~ (owner ruling above). **Done.**
+4. Eliminate plan re-widening, starting with `TrustPlan`: a sealed `TrustRevocationState`
+   paired with a public `trust_path: String` is a second construction site one layer later.
+5. Bucket 3 — the remaining fields needing an owner or a represented relation.
+6. Then narrow or remove `ValidatedDeployment::config()`, and the grep becomes a regression
    guard rather than the argument.

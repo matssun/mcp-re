@@ -29,7 +29,6 @@ use std::time::Duration;
 
 use crate::tls::ServerLimits;
 use crate::transport::IdentityPolicy;
-use crate::transport::ReverseProxyHeaderFormat;
 
 /// A deployment as REQUESTED: every field an operator can state, and nothing decided.
 ///
@@ -257,21 +256,8 @@ pub struct DeploymentRequest {
     pub revocation_tier: crate::revocation_tier::RevocationTier,
     /// Transport-binding selection.
     pub binding: BindingKind,
-    /// The authoritative identity field (no implicit fallback). For the default
-    /// direct-TLS path this is the client-certificate field; for reverse-proxy
-    /// mode it selects which forwarded-header field is authoritative.
+    /// The authoritative client-certificate identity field (no implicit fallback).
     pub identity_source: IdentityPolicy,
-    /// Reverse-proxy ingress (MCPS-3840): when `Some`, the proxy reads the
-    /// verified client identity from this TRUSTED forwarded header (set by an
-    /// upstream mTLS-terminating reverse proxy) instead of extracting it from a
-    /// locally-terminated client certificate. Enabling this is an explicit
-    /// operator assertion that the listening socket is reachable ONLY by the
-    /// trusted upstream. Mutually exclusive with local client-cert identity.
-    pub reverse_proxy_identity_header: Option<String>,
-    /// The wire format of the trusted reverse-proxy identity header (plain
-    /// identity string or Envoy XFCC). Only meaningful when
-    /// `reverse_proxy_identity_header` is set.
-    pub reverse_proxy_header_format: ReverseProxyHeaderFormat,
     /// ADR-MCPS-023 Tier 3 (issue #71): the trusted LB verification keys for
     /// LB-signed request-bound ingress assertions, as `(key_id, base64url-ed25519-pub)`
     /// pairs from repeatable `--ingress-lb-key <keyid>:<base64-pub>`. Required (and

@@ -10,7 +10,7 @@
 //! pass rather than a second opinion: every question it asks has already been answered
 //! once, by the machine that owns it.
 //!
-//! All six live here: X2a, X2b, X5, X6, X7, X9.
+//! All five live here: X2a, X2b, X5, X6, X9.
 
 use crate::config_state::tls_custody::TlsCustodyState;
 use crate::config_state::trust_revocation::TrustRevocationState;
@@ -29,8 +29,6 @@ pub(crate) struct CrossMachineViolations {
     pub(crate) x5_connection_outlives_credential: Vec<String>,
     /// X6 — `Authz` × `Trust`.
     pub(crate) x6_unenforceable_deny_list: Vec<String>,
-    /// X7 — `ChannelBinding` × `Tls`.
-    pub(crate) x7_local_mtls_xor_forwarded: Vec<String>,
     /// X9 — `TrustRevocation` × `DelegatedSigning`.
     pub(crate) x9_trust_epoch_posture: Vec<String>,
 }
@@ -131,23 +129,6 @@ fn x6(config: &DeploymentRequest) -> Vec<String> {
         .collect()
 }
 
-/// X7: mTLS is terminated locally XOR a forwarded identity is trusted.
-///
-/// The header posture is refused outright — any peer that can reach the socket can spoof
-/// it — which is what makes the second half of the relation currently unreachable: with no
-/// forwarded identity there is always a local client certificate to bound.
-fn x7(config: &DeploymentRequest) -> Vec<String> {
-    if config.reverse_proxy_identity_header.is_some() {
-        return vec![
-            "--reverse-proxy-identity-header trusts a forwarded identity header that any peer \
-             able to reach the socket can spoof; production must terminate mTLS locally (omit \
-             --reverse-proxy-identity-header)"
-                .to_string(),
-        ];
-    }
-    Vec::new()
-}
-
 /// X9: the trust-epoch posture, interpreted once (CF-09).
 ///
 /// `TrustRevocation` owns whether the epoch configuration is LEGAL — that is X8, and it is
@@ -179,7 +160,6 @@ pub(crate) fn validate(
         x2b_exclusive_tls_custody: x2b(tls_custody, config),
         x5_connection_outlives_credential: x5(config),
         x6_unenforceable_deny_list: x6(config),
-        x7_local_mtls_xor_forwarded: x7(config),
         x9_trust_epoch_posture: x9(trust_revocation, config),
     }
 }
@@ -328,16 +308,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_forwarded_identity_is_refused_where_mtls_terminates_locally() {
-        assert!(relations(|_| {}).x7_local_mtls_xor_forwarded.is_empty());
-        assert!(
-            !relations(|c| c.reverse_proxy_identity_header = Some("x-client-id".to_string()))
-                .x7_local_mtls_xor_forwarded
-                .is_empty()
-        );
-    }
-
     /// CF-09 holding, asserted rather than assumed: the epoch posture is decided by the
     /// `TrustRevocation` machine, so this relation has nothing left to re-decide.
     #[test]
@@ -377,45 +347,6 @@ mod tests {
         assert!(
             err.contains("delegated XOR exported"),
             "the rejection must name the XOR rule, got: {err}"
-        );
-    }
-
-    /// X7 refuses a forwarded identity header under EVERY binding, which is why the
-    /// attested-ingress restatement of it could be deleted rather than moved.
-    ///
-    /// `ingress_assertion_refusal` carried a clause refusing
-    /// `--reverse-proxy-identity-header` beside `--transport-binding attested-ingress`.
-    /// X7 refuses that header unconditionally, so the clause could never admit or refuse
-    /// anything X7 did not already decide — a second authority over one deployment fact,
-    /// and the weaker of the two. This is the control that deleting it admitted nothing:
-    /// the header is still refused under the binding the deleted clause named, and under
-    /// the default binding too.
-    #[test]
-    fn the_forwarded_identity_header_is_refused_under_every_binding() {
-        for binding in [
-            crate::deployment_request::BindingKind::Exact,
-            crate::deployment_request::BindingKind::AttestedIngress,
-            crate::deployment_request::BindingKind::LbAssertion,
-        ] {
-            let refusals = relations(|c| {
-                c.binding = binding;
-                c.reverse_proxy_identity_header = Some("x-forwarded-client-cert".to_string());
-            });
-            assert!(
-                refusals
-                    .x7_local_mtls_xor_forwarded
-                    .iter()
-                    .any(|r| r.contains("--reverse-proxy-identity-header")),
-                "{binding:?}: X7 must refuse the forwarded identity header"
-            );
-        }
-        // The positive control: without the header X7 has nothing to say, so the clause
-        // above is not simply refusing every configuration it is shown.
-        assert!(
-            relations(|c| c.binding = crate::deployment_request::BindingKind::AttestedIngress)
-                .x7_local_mtls_xor_forwarded
-                .is_empty(),
-            "X7 must refuse only the forwarded-identity posture"
         );
     }
 }

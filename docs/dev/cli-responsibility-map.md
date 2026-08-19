@@ -32,17 +32,17 @@ operation lands in exactly one of four buckets, the last of which is the negativ
 | local bindings and their defaults | 785–909 | 125 | mixed — see the defaults inventory |
 | five valueless boolean flags | 910–951 | 42 | syntax |
 | value fetch (`flag requires a value`) | 952–954 | 3 | syntax |
-| the flag `match`, ~80 arms | 955–1376 | 422 | mostly syntax — see below |
+| the flag `match`, ~78 arms | 955–1376 | 422 | mostly syntax — see below |
 | `require` closure, `has_delegated_tls`, two delegated defaults | 1380–1394 | 15 | mixed |
 | struct literal | 1396–1503 | 108 | normalization, two exceptions |
 | handoff to `ValidatedDeployment::try_from` | 1505–1509 | 5 | — |
 
-### The ~80 match arms
+### The ~78 match arms
 
-**Syntax — 73 arms.** 42 plain `Some(value.clone())` / `push` captures; 10 enum-spelling
+**Syntax — 71 arms.** 41 plain `Some(value.clone())` / `push` captures; 9 enum-spelling
 arms (`--key-source`, `--client-ocsp`, `--admission`, `--audit-sink`,
 `--verified-context-carrier`, `--admission-allow-degraded`, `--transport-binding`,
-`--transport-identity-source`, `--reverse-proxy-header-format`, `--authz`); 2 arms
+`--transport-identity-source`, `--authz`); 2 arms
 delegating to a domain type's own parser (`ReplayDurabilityTier::parse`,
 `RevocationTier::parse`); 11 bare numeric parses; 4 via `parse_timeout`; 1 via
 `parse_cert_lifetime`; 2 structured `<keyid>:<base64url>` pairs; the unknown-flag arm.
@@ -133,7 +133,7 @@ Defaults are where provenance disappears, so each is listed with where its value
 | `max_clock_skew` | `VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW` | owner-sourced |
 | `limits` | `ServerLimits::default()` | owner-sourced |
 | `revocation_tier` | `BoundedCache { trust_cache::DEFAULT_T_SECS }` | owner-sourced |
-| `key_source`, `client_ocsp`, `admission`, `authz`, `verified_context`, `audit_sink`, `binding`, `identity_source`, `reverse_proxy_header_format` | enum variant | absence = the off/strict variant |
+| `key_source`, `client_ocsp`, `admission`, `authz`, `verified_context`, `audit_sink`, `binding`, `identity_source` | enum variant | absence = the off/strict variant |
 | four booleans (`--fleet`, `--gcp-kms-use-metadata`, `--aws-kms-use-web-identity`, `--ingress-pinned-mtls`, `--allow-group-readable-key-files`) | `false` | absence of a valueless flag |
 | `cores`, `workers_per_shard` | `0` = auto | `0` is a real value, not a sentinel for absence |
 | `admission_degraded_bound_secs` | `0` | boundary has clauses for both directions |
@@ -267,12 +267,12 @@ this one asks the different question: **what is the control-flow shape of what i
 |---|---:|---|
 | declarations and defaults | 130 | 27 defaults, each now sourced from an owner |
 | valueless flags + value acquisition | 44 | 5 boolean flags; **one** value-fetch site |
-| the dispatch `match` | 422 | **79 arms** |
+| the dispatch `match` | 422 | **77 arms** |
 | tail | 139 | `require`, two coordinations, the struct literal, the handoff |
 
 The arm distribution is the decisive evidence:
 
-- **79 arms, median arm length 1 code line**
+- **77 arms, median arm length 1 code line**
 - **32 arms are literally `x = Some(value.clone()),`**
 - only **two** arms exceed five lines — `--key-source` (15, holding the function's single
   `#[cfg]`) and `--pkcs11-pin` (10, almost all of it the refusal text)

@@ -732,8 +732,7 @@ async fn handle_request<H: AsyncRequestHandler>(
 
     // A header view with the SAME case-insensitive lookup + duplicate-count
     // semantics the blocking path's `RequestHeaders::parse` produces (used by the
-    // reverse-proxy identity provider, the Tier-3 assertion extractor, and the
-    // routing-header hygiene guard).
+    // Tier-3 assertion extractor and the routing-header hygiene guard).
     let headers = RequestHeaders::from_pairs(
         req.headers()
             .iter()
@@ -795,7 +794,7 @@ async fn handle_request<H: AsyncRequestHandler>(
 
     let chain: Vec<&[u8]> = peer_chain.iter().map(Vec::as_slice).collect();
     let leaf = chain.first().copied();
-    let identity = resolve_identity_from_leaf(leaf, &options, &headers);
+    let identity = resolve_identity_from_leaf(leaf, &options);
     let assertion = assertion_header(&options, &headers);
 
     // SAME order as the blocking loop: per-connection cert-lifetime rejection, then

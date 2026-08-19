@@ -40,8 +40,6 @@ use x509_parser::prelude::FromDer;
 use crate::transport::IdentityPolicy;
 use crate::transport::IdentitySource;
 use crate::transport::RequestHeaders;
-use crate::transport::ReverseProxyMtlsProvider;
-use crate::transport::TransportBindingProvider;
 use crate::transport::TransportIdentity;
 
 /// Resource limits applied to every served connection — the blocking server's
@@ -182,10 +180,9 @@ pub const MCP_INGRESS_ASSERTION_HEADER: &str = "mcp-ingress-assertion";
 
 /// Where the served request's verified transport identity comes from. These are
 /// mutually exclusive: a connection is bound EITHER by a locally-terminated mTLS
-/// client certificate OR by a header set by a trusted upstream reverse proxy,
-/// OR by an LB-signed request-bound ingress assertion — never more than one. The
-/// CLI enforces the exclusivity; the serve loop honours the one chosen strategy
-/// and never mixes them on a single connection.
+/// client certificate OR by an LB-signed request-bound ingress assertion — never
+/// both. The serve loop honours the one chosen strategy and never mixes them on a
+/// single connection.
 #[derive(Debug, Clone, Default)]
 pub enum IdentityStrategy {
     /// Direct mTLS: the identity is the configured field of the verified peer
@@ -193,12 +190,6 @@ pub enum IdentityStrategy {
     /// fully intact.
     #[default]
     DirectTls,
-    /// Reverse-proxy ingress: mTLS is terminated UPSTREAM and the verified client
-    /// identity is read from a trusted forwarded header. The local client-cert is
-    /// NOT consulted for identity (the two sources are mutually exclusive). The
-    /// operator asserts the listening socket is reachable only by the trusted
-    /// upstream (see [`ReverseProxyMtlsProvider`]).
-    ReverseProxyHeader(ReverseProxyMtlsProvider),
     /// ADR-MCPS-023 Tier 3 (issue #71): the verified transport identity comes from
     /// an LB-signed, request-bound ingress assertion presented in the
     /// [`MCP_INGRESS_ASSERTION_HEADER`]. The identity CANNOT be resolved at the
@@ -216,11 +207,10 @@ pub enum IdentityStrategy {
 #[derive(Debug, Clone, Default)]
 pub struct ServerOptions {
     /// The authoritative client-certificate identity field (no implicit fallback).
-    /// Used for [`IdentityStrategy::DirectTls`]; for the reverse-proxy strategy the
-    /// field is carried inside the provider instead.
+    /// Used for [`IdentityStrategy::DirectTls`].
     pub identity_policy: IdentityPolicy,
-    /// Where the request's verified transport identity is taken from (local mTLS
-    /// vs a trusted upstream header). Mutually exclusive by construction.
+    /// Where the request's verified transport identity is taken from. Mutually
+    /// exclusive by construction.
     pub identity_strategy: IdentityStrategy,
     /// Connection resource limits (DoS defense).
     pub limits: ServerLimits,
@@ -947,24 +937,16 @@ fn connection_identity(
 }
 
 /// Resolve the verified transport identity for one served request under the
-/// configured [`IdentityStrategy`]. The two strategies are MUTUALLY EXCLUSIVE on
-/// a per-connection basis:
-///   * [`IdentityStrategy::DirectTls`] reads it from the verified peer
-///     certificate via [`connection_identity`] and IGNORES request headers;
-///   * [`IdentityStrategy::ReverseProxyHeader`] reads it from the trusted
-///     forwarded header via the [`ReverseProxyMtlsProvider`] and NEVER consults
-///     the local client certificate (mTLS is terminated upstream).
+/// configured [`IdentityStrategy`]. The connection is the ONLY input:
+/// [`IdentityStrategy::DirectTls`] reads the identity from the verified peer
+/// certificate via [`connection_identity`], and no strategy can derive it from a
+/// request header — the signature takes none.
 ///
 /// Either way a missing/unparseable identity is `None`, and the downstream
 /// transport-binding policy fails closed.
-fn resolve_identity(
-    conn: &ServerConnection,
-    options: &ServerOptions,
-    headers: &RequestHeaders,
-) -> Option<TransportIdentity> {
+fn resolve_identity(conn: &ServerConnection, options: &ServerOptions) -> Option<TransportIdentity> {
     match &options.identity_strategy {
         IdentityStrategy::DirectTls => connection_identity(conn, options.identity_policy),
-        IdentityStrategy::ReverseProxyHeader(provider) => provider.verified_identity(headers),
         // The Tier-3 identity binds the request hash and is resolved AFTER object
         // verification (inside the proxy), so it is intentionally absent here.
         IdentityStrategy::LbAssertion => None,
@@ -981,11 +963,9 @@ fn resolve_identity(
 pub(crate) fn resolve_identity_from_leaf(
     leaf_der: Option<&[u8]>,
     options: &ServerOptions,
-    headers: &RequestHeaders,
 ) -> Option<TransportIdentity> {
     match &options.identity_strategy {
         IdentityStrategy::DirectTls => extract_identity(leaf_der?, options.identity_policy),
-        IdentityStrategy::ReverseProxyHeader(provider) => provider.verified_identity(headers),
         IdentityStrategy::LbAssertion => None,
     }
 }
@@ -1021,9 +1001,8 @@ pub(crate) fn connection_rejection_for_chain(
 /// Returns `Some(value)` for a single present header; `None` when the strategy is
 /// not LB-assertion, when the header is absent (the proxy then fails closed because
 /// the LB verifier requires it), or when the header is duplicated (a downstream
-/// injection attempt — fail closed). The `None`-on-duplicate behaviour mirrors the
-/// reverse-proxy provider's duplicate-trust-header rule: the proxy's required-header
-/// guard turns the resulting `None` into a closed rejection.
+/// injection attempt — fail closed). The proxy's required-header guard turns the
+/// resulting `None` into a closed rejection.
 pub(crate) fn assertion_header<'a>(
     options: &ServerOptions,
     headers: &'a RequestHeaders,
@@ -1457,7 +1436,7 @@ where
     // or untrusted client certificate surfaces here as an error (fail closed).
     let request = read_http_request(&mut stream, &options.limits)?;
     let headers = RequestHeaders::parse(&request.header_block);
-    let identity = resolve_identity(&stream.conn, options, &headers);
+    let identity = resolve_identity(&stream.conn, options);
     let assertion = assertion_header(options, &headers);
     // Enforce the per-connection rejection guards (max client-cert lifetime, then
     // online OCSP revocation under the `online_ocsp` feature) BEFORE the handler
@@ -1531,7 +1510,7 @@ where
     let mut stream = StreamOwned::new(conn, DeadlineStream::new(tcp, &options.limits));
     let request = read_http_request(&mut stream, &options.limits)?;
     let headers = RequestHeaders::parse(&request.header_block);
-    let identity = resolve_identity(&stream.conn, options, &headers);
+    let identity = resolve_identity(&stream.conn, options);
     let response = match connection_rejection(&stream.conn, options, &request.body)
         .or_else(|| routing_header_rejection(&headers, &request.body))
     {
@@ -1638,8 +1617,8 @@ impl<S: Write> Write for DeadlineStream<S> {
 
 /// One parsed HTTP/1.1 request: the request/header block (text up to and
 /// including the `\r\n\r\n` terminator) and the body bytes (the JSON-RPC
-/// payload). The header block is retained so the reverse-proxy identity strategy
-/// can read its trusted forwarded header; the direct-TLS path simply ignores it.
+/// payload). The header block is retained for the Tier-3 assertion extractor and
+/// the routing-header hygiene guard; transport identity never comes from it.
 struct HttpRequest {
     /// The full header block (request line + headers + terminator), lossily
     /// decoded as UTF-8 (header bytes are ASCII in practice).
@@ -2049,127 +2028,12 @@ mod lifetime_tests {
 }
 
 #[cfg(test)]
-mod identity_parity_tests {
-    //! M23 (audit 0.2, MCP-RE-MED-7 / #4080): cross-strategy identity PARITY.
+mod header_framing_tests {
+    //! Issue #38: obs-fold / bare-CR / bare-LF header framing must fail closed.
     //!
-    //! The SAME verified client certificate must resolve to the SAME identity
-    //! string under a given [`IdentityPolicy`] REGARDLESS of whether the cert was
-    //! terminated locally (direct-TLS, [`extract_identity`]) or upstream and
-    //! forwarded in an Envoy XFCC `Subject=` field (the [`ReverseProxyMtlsProvider`]).
-    //! Before the fix, the direct-TLS `CnLegacy` path extracted only the CN
-    //! (`agent-1`) while the XFCC `Subject=` path yielded the full RFC2253 DN
-    //! (`CN=agent-1,OU=agents,O=example`) — so one `IdentityPolicy` resolved two
-    //! different identities for the same cert, and the ExactMatch / Mapped binding
-    //! could not be configured to admit both transports with one signer mapping.
-    //!
-    //! These are black-box tests over the two PUBLIC extraction paths: they mint a
-    //! real cert (rcgen), read its identity via the direct-TLS path, build the XFCC
-    //! header the way Envoy would (`Subject="<full DN>"`), read it via the
-    //! reverse-proxy path, and assert the resolved identity strings are EQUAL.
-
-    use super::extract_identity;
-
-    use crate::transport::IdentityPolicy;
-    use crate::transport::IdentitySource;
-    use crate::transport::RequestHeaders;
-    use crate::transport::ReverseProxyHeaderFormat;
-    use crate::transport::ReverseProxyMtlsProvider;
-    use crate::transport::TransportBindingProvider;
-
-    use rcgen::CertificateParams;
-    use rcgen::DnType;
-    use rcgen::ExtendedKeyUsagePurpose;
-    use rcgen::KeyPair;
-
-    /// Mint a self-signed client leaf whose subject carries the given CN, OU and O,
-    /// plus a URI SAN and a DNS SAN. Returns `(der, rfc2253_subject_dn)` where the
-    /// DN string is the Envoy-style `CN=..,OU=..,O=..` rendering an upstream proxy
-    /// would put in the XFCC `Subject=` field.
-    fn mint_client_leaf() -> (Vec<u8>, String) {
-        let key = KeyPair::generate().expect("leaf key");
-        let mut params =
-            CertificateParams::new(vec!["agent-1.example.org".to_string()]).expect("leaf params");
-        params
-            .distinguished_name
-            .push(DnType::CommonName, "agent-1");
-        params
-            .distinguished_name
-            .push(DnType::OrganizationalUnitName, "agents");
-        params
-            .distinguished_name
-            .push(DnType::OrganizationName, "example");
-        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
-        let cert = params.self_signed(&key).expect("leaf self-signed");
-        // The RFC2253 DN as a reverse-proxy would forward it in `Subject=`.
-        let subject_dn = "CN=agent-1,OU=agents,O=example".to_string();
-        (cert.der().as_ref().to_vec(), subject_dn)
-    }
-
-    /// Build the XFCC reverse-proxy identity for the given full Subject DN under the
-    /// given policy (Envoy quotes a DN because it contains commas).
-    fn xfcc_identity(subject_dn: &str, policy: IdentityPolicy) -> Option<String> {
-        let provider = ReverseProxyMtlsProvider::new(
-            "x-forwarded-client-cert",
-            ReverseProxyHeaderFormat::Xfcc,
-            policy,
-        );
-        let header = format!("Hash=abc;Subject=\"{subject_dn}\"");
-        let req = RequestHeaders::from_pairs([("x-forwarded-client-cert", header)]);
-        provider.verified_identity(&req).map(|id| id.value)
-    }
-
-    #[test]
-    fn cn_legacy_identity_is_equal_across_direct_tls_and_xfcc() {
-        // THE PARITY ASSERTION (M23): the SAME cert, the SAME CnLegacy policy, must
-        // yield the SAME identity string whether terminated locally or forwarded as
-        // an XFCC Subject DN. Direct-TLS extracts the CN; the XFCC path must extract
-        // the CN out of the Subject DN too — not the whole DN.
-        let (der, subject_dn) = mint_client_leaf();
-
-        let direct = extract_identity(&der, IdentityPolicy::CnLegacy)
-            .expect("direct-TLS CnLegacy must extract the CN");
-        assert_eq!(direct.source, IdentitySource::CommonName);
-
-        let xfcc = xfcc_identity(&subject_dn, IdentityPolicy::CnLegacy)
-            .expect("XFCC CnLegacy must extract an identity from the Subject DN");
-
-        assert_eq!(
-            direct.value, xfcc,
-            "the SAME cert under CnLegacy must resolve to the SAME identity via \
-             direct-TLS and via the XFCC Subject DN (got direct={:?}, xfcc={:?})",
-            direct.value, xfcc
-        );
-        // And concretely: both are the bare CN, not the full DN.
-        assert_eq!(direct.value, "agent-1");
-        assert_eq!(xfcc, "agent-1");
-    }
-
-    #[test]
-    fn explicit_cn_field_still_equals_direct_tls_cn() {
-        // An upstream that forwards an explicit `CN=` pair (rather than a full
-        // `Subject=` DN) must agree with the direct-TLS CN too.
-        let (der, _dn) = mint_client_leaf();
-        let direct = extract_identity(&der, IdentityPolicy::CnLegacy)
-            .expect("direct-TLS CnLegacy CN")
-            .value;
-
-        let provider = ReverseProxyMtlsProvider::new(
-            "x-forwarded-client-cert",
-            ReverseProxyHeaderFormat::Xfcc,
-            IdentityPolicy::CnLegacy,
-        );
-        let req = RequestHeaders::from_pairs([("x-forwarded-client-cert", "Hash=abc;CN=agent-1")]);
-        let xfcc = provider
-            .verified_identity(&req)
-            .expect("explicit CN pair")
-            .value;
-        assert_eq!(
-            direct, xfcc,
-            "explicit XFCC CN must equal the direct-TLS CN"
-        );
-    }
-
-    // --- issue #38: obs-fold / bare-CR / bare-LF header framing must fail closed ---
+    //! A request whose header section is not strict CRLF-framed is rejected at
+    //! read time rather than handed on to a line parser that would silently drop
+    //! or re-join the offending bytes.
 
     fn read_req(bytes: &[u8]) -> std::io::Result<super::HttpRequest> {
         super::read_http_request(

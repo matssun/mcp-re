@@ -43,8 +43,6 @@ pub enum StartupEvent {
     ClockFaultWarning,
     /// The dev/CI-only environment key source is in use.
     DevKeySourceWarning,
-    /// Reverse-proxy identity ingress is enabled.
-    ReverseProxyIdentityWarning,
     /// The declared revocation tier, and whether the trust store itself can change.
     RevocationTier {
         tier: String,
@@ -260,9 +258,6 @@ fn normalize(line: &str) -> Option<StartupEvent> {
     }
     if l.contains("--key-source env is a dev/CI-only build") {
         return Some(StartupEvent::DevKeySourceWarning);
-    }
-    if l.contains("reverse-proxy identity mode is ENABLED") {
-        return Some(StartupEvent::ReverseProxyIdentityWarning);
     }
     if l.contains("revocation-tier=") {
         return Some(StartupEvent::RevocationTier {

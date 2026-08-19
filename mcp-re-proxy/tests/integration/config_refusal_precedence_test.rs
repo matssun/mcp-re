@@ -121,7 +121,6 @@ fn keys(violations: &[String]) -> Vec<&'static str> {
         "--request-deadline-secs",
         "--transport-identity-source cn_legacy",
         "--replay-durability-tier",
-        "--reverse-proxy-identity-header",
         "--transport-binding none",
     ];
     violations
@@ -190,6 +189,12 @@ fn the_boundary_refuses_in_this_order() {
             "--revocation-list",
             "--authz",
             "TLS signing is delegated XOR exported",
+            // Moved UP with `FreshnessWindow`. The skew bound used to be a residue clause
+            // among the quantity guards; it is now the constructor of the owner that holds
+            // the one chosen skew, so it is refused where the machines are, not where the
+            // leftovers are. An operator learns the freshness posture does not resolve
+            // before being told which limits are unset.
+            "--max-clock-skew",
             // Both moved UP with the `ChannelBinding` machine, from the end of the list to
             // its own position. Deliberate: an undeployable binding kind and a deprecated
             // identity source are statements about whether this deployment exists at all,
@@ -232,8 +237,7 @@ fn the_boundary_refuses_in_this_order() {
             "--max-connection-age-secs",
             // NEW. The quantity guards, grouped with the timeouts they share a class with
             // — a limit that disables the control it bounds — and ahead of them because a
-            // skew outside its bound or a zero ceiling is the graver of the two.
-            "--max-clock-skew",
+            // zero ceiling is the graver of the two.
             "--max-connections 0",
             "--drain-grace-secs 0",
             "--read-timeout-secs",
@@ -260,7 +264,6 @@ fn the_trust_and_fleet_clauses_keep_their_places() {
     // they are the same guard answering two ways, so only one can fire per run and they
     // are pinned together rather than each claiming its own slot.
     config.binding = BindingKind::LbAssertion;
-    config.reverse_proxy_identity_header = Some("x-client-id".to_string());
 
     let order = keys(&mcp_re_proxy::config_state::validation::unsafe_config_violations(&config));
     assert_eq!(
@@ -276,7 +279,6 @@ fn the_trust_and_fleet_clauses_keep_their_places() {
             "--transport-binding lb-assertion places",
             "--ingress-",
             "--revocation-tier live|push requires",
-            "--reverse-proxy-identity-header",
         ],
         "the boundary's refusal order changed"
     );
@@ -316,7 +318,6 @@ fn the_zero_cadence_clause_takes_the_cadence_slot() {
     config.trust_reload_secs = Some(0);
     config.fleet = true;
     config.binding = BindingKind::LbAssertion;
-    config.reverse_proxy_identity_header = Some("x-client-id".to_string());
 
     let order = keys(&mcp_re_proxy::config_state::validation::unsafe_config_violations(&config));
     assert_eq!(
@@ -325,7 +326,6 @@ fn the_zero_cadence_clause_takes_the_cadence_slot() {
             "--transport-binding lb-assertion places",
             "--ingress-",
             "--trust-reload-secs 0",
-            "--reverse-proxy-identity-header",
         ],
         "the boundary's refusal order changed"
     );

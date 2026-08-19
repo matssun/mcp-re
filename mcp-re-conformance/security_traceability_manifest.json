@@ -192,13 +192,6 @@
       "notes": "MCPS-62. ADR-MCPS-023 \u00a7B1. The plain lb-assertion path places the LB in the TCB without the Mode-C strict bar; strict/production refuses to enable it (legacy/migration only, never presented beside Mode A/C). GREEN-OFFLINE."
     },
     {
-      "property": "Mode B demotion: the Tier-2 trusted reverse-proxy identity header is strict-rejected",
-      "bazel_target": "//mcp-re-proxy:proxy_unit_test",
-      "source": "mcp-re-proxy/src/cli.rs",
-      "test_fn": "strict_rejects_reverse_proxy_identity_header_ingress",
-      "notes": "MCPS-62. ADR-MCPS-023 \u00a7B1. The forwarded trusted-ingress identity header (Tier 2) is spoofable by any peer that can reach the socket; strict refuses it. Raw forwarded-identity headers remain forbidden under strict. GREEN-OFFLINE."
-    },
-    {
       "property": "method-transparency: the verify verdict is independent of the JSON-RPC method",
       "bazel_target": "//mcp-re-conformance:method_transparency_test",
       "source": "mcp-re-conformance/tests/method_transparency_test.rs",
@@ -446,6 +439,6 @@
   ],
   "counts": {
     "comment": "Recorded count. The guard re-derives this from the entries array length and FAILS on mismatch.",
-    "entries": 63
+    "entries": 62
   }
 }

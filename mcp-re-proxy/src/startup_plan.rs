@@ -498,30 +498,28 @@ mod tests {
 
     /// A deployable configuration reads identity from the verified peer certificate.
     ///
-    /// `DirectTls` is the only arm a `ValidatedDeployment` can select today. The other two
-    /// belong to capabilities the boundary refuses — see the test below — so this is not
-    /// "the default among three" but "the one that exists".
+    /// `DirectTls` is the only arm a `ValidatedDeployment` can select today. The other
+    /// belongs to a capability the boundary refuses — see the test below — so this is not
+    /// "the default among two" but "the one that exists".
     #[test]
     fn a_deployable_configuration_reads_the_verified_peer_certificate() {
         assert!(matches!(strategy_for(&[]), IdentityStrategy::DirectTls));
     }
 
-    /// The other two arms are unreachable through the boundary, and that is the property
+    /// The `LbAssertion` arm is unreachable through the boundary, and that is the property
     /// worth pinning.
     ///
-    /// `ReverseProxyHeader` trusts a forwarded header any peer reaching the socket could
-    /// spoof; `LbAssertion` serves the two ingress-assertion modes. Both are refused by
+    /// It serves the two ingress-assertion modes, and both are refused by
     /// `unsafe_config_violations`, so no command line reaches them — they are retained
     /// capabilities (`docs/AGENT_INSTRUCTIONS.md` §9), not dead vocabulary, and the
     /// distinction is exactly that a decision gates them rather than nothing does.
     ///
     /// This asserts the refusal rather than the strategy because that is what makes the
-    /// classifier's shape honest: if one of these ever becomes selectable, this fails and
-    /// the arm needs its own coverage rather than acquiring it silently.
+    /// classifier's shape honest: if one ever becomes selectable, this fails and the arm
+    /// needs its own coverage rather than acquiring it silently.
     #[test]
-    fn the_assertion_and_forwarded_identity_arms_are_refused_at_the_boundary() {
+    fn the_assertion_arm_is_refused_at_the_boundary() {
         for extra in [
-            vec!["--reverse-proxy-identity-header", "x-client-id"],
             vec!["--transport-binding", "lb-assertion"],
             vec!["--transport-binding", "attested-ingress"],
         ] {
