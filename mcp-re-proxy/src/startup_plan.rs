@@ -229,43 +229,79 @@ impl TrustReloadPlan {
 /// What the trust plane must establish (ADR-MCPRE-056 §8).
 ///
 /// Everything the plane needs and nothing it could re-decide: the classified revocation
-/// state, the two locators, and the epoch mechanism normalized above it. `TrustPlane` used
-/// to receive the whole `ValidatedDeployment` and answer "which posture is this?" for itself —
-/// a second derivation of a fact layer A had already classified.
+/// state, the document it is a posture over, and the epoch mechanism normalized above it.
+/// `TrustPlane` used to receive the whole `ValidatedDeployment` and answer "which posture is
+/// this?" for itself — a second derivation of a fact layer A had already classified.
+///
+/// # A composition may combine owned facts; it may not make them replaceable again
+///
+/// The representation is private to this module. That is the difference between this and
+/// the public bag it replaced: a plan used to pair a sealed `TrustRevocationState` with a
+/// free `trust_path: String`, so the pairing held only because every construction site
+/// happened to take both from the same deployment. Nothing said they had to.
+///
+/// `reload` is not a field. It is DERIVED from the revocation state on demand, because the
+/// state is the authority on how often the document is re-read — a stored copy is a second
+/// value that can disagree with the first, and the fixture in `trust_plane`'s tests had
+/// already drifted that way, naming a 30s reload beside a state carrying 5s.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrustPlan {
     /// Which revocation posture this deployment asked for.
-    pub revocation: crate::config_state::TrustRevocationState,
-    /// The trust document.
-    pub trust_path: String,
+    revocation: crate::config_state::TrustRevocationState,
+    /// The document the request-signer set is read from.
+    document: crate::config_state::TrustDocumentSource,
     /// The root issuer whose key must never be enrolled as a request signer.
-    pub response_kid: String,
-    /// How the document is kept current.
-    pub reload: TrustReloadPlan,
+    response_kid: String,
     /// The shared epoch mechanism — an INPUT, so this plane cannot become its authority
     /// merely by being materialized first (CF-09).
-    pub epoch: TrustEpochPlan,
+    epoch: TrustEpochPlan,
 }
 
 impl TrustPlan {
-    /// Project the plan from the retained classification and the validated locators.
+    /// Project the plan from the retained classification and the validated locator.
     ///
     /// `response_kid` and `epoch` are passed IN rather than derived here. Both are shared
     /// with the signing plane, and a value derived inside one consumer is a value the other
     /// consumer must re-derive.
+    ///
+    /// The one producer, and it takes a `ValidatedDeployment` — so both owned facts come
+    /// from one deployment, and no caller can supply them separately.
     pub fn from_validated(
         config: &ValidatedDeployment,
         response_kid: String,
         epoch: TrustEpochPlan,
     ) -> TrustPlan {
-        let values = config.config();
         TrustPlan {
             revocation: config.state().trust_revocation().clone(),
-            trust_path: values.trust_path.clone(),
+            document: config.state().trust_document().clone(),
             response_kid,
-            reload: trust_reload_plan(config.state().trust_revocation()),
             epoch,
         }
+    }
+
+    /// The revocation posture, for the tier wrapping and the startup audit line.
+    pub fn revocation(&self) -> &crate::config_state::TrustRevocationState {
+        &self.revocation
+    }
+
+    /// The locator the trust document is read from.
+    pub fn document_path(&self) -> &str {
+        self.document.path()
+    }
+
+    /// The root issuer whose key is excluded from the request-signer set.
+    pub fn response_kid(&self) -> &str {
+        &self.response_kid
+    }
+
+    /// How the document is kept current, derived from the posture that decides it.
+    pub fn reload(&self) -> TrustReloadPlan {
+        trust_reload_plan(&self.revocation)
+    }
+
+    /// The shared epoch mechanism.
+    pub fn epoch(&self) -> &TrustEpochPlan {
+        &self.epoch
     }
 }
 
@@ -984,7 +1020,7 @@ mod tests {
             TrustEpochPlan::from_validated(&config),
         );
         assert_eq!(
-            plan.revocation,
+            *plan.revocation(),
             crate::config_state::test_support::revocation_posture(
                 crate::revocation_tier::RevocationTier::Push { t_secs: 30 },
                 Some(15),
@@ -996,13 +1032,13 @@ mod tests {
             "the plan must hold what layer A classified, not re-read --revocation-tier"
         );
         assert_eq!(
-            plan.reload,
+            plan.reload(),
             TrustReloadPlan::Every {
                 secs: crate::config_state::TrustRevocationState::cadence(15)
             }
         );
-        assert_eq!(plan.response_kid, "root-1");
-        assert!(matches!(plan.epoch, TrustEpochPlan::Redis { .. }));
+        assert_eq!(plan.response_kid(), "root-1");
+        assert!(matches!(plan.epoch(), TrustEpochPlan::Redis { .. }));
 
         let default_tier = validated(&[]);
         let plan = TrustPlan::from_validated(
@@ -1011,7 +1047,7 @@ mod tests {
             TrustEpochPlan::from_validated(&default_tier),
         );
         assert_eq!(
-            plan.reload,
+            plan.reload(),
             TrustReloadPlan::ReadOnceAtStartup,
             "no cadence is a posture, not a missing value"
         );

@@ -164,6 +164,8 @@ pub fn validate_configuration(
         crate::config_state::transport::classify_and_validate_crl(config);
     let (freshness, freshness_violations) =
         crate::config_state::freshness::classify_and_validate(config);
+    let (trust_document, trust_document_violations) =
+        crate::config_state::trust_document::classify_and_validate(config);
     // This deployment's own actor identity. It takes the RESOLVED issuer kid rather than
     // re-reading the primitives it defaults from, so the keyid on the identity and the kid
     // the credential chains to are one value (CF-10).
@@ -194,6 +196,7 @@ pub fn validate_configuration(
         delegated_signing: delegated_signing_violations,
         freshness: freshness_violations,
         replay: replay_violations,
+        trust_document: trust_document_violations,
         server_identity: server_identity_violations,
         tls_custody: tls_custody_violations,
         trust_revocation: trust_violations,
@@ -247,6 +250,9 @@ pub fn validate_configuration(
     let Some(freshness) = freshness else {
         return Err(unrecognised("freshness"));
     };
+    let Some(trust_document) = trust_document else {
+        return Err(unrecognised("trust-document"));
+    };
     Ok(DeploymentConfigState::new(
         crate::config_state::RecognisedStates {
             admission,
@@ -263,6 +269,7 @@ pub fn validate_configuration(
             retention,
             server_identity,
             tls_custody,
+            trust_document,
             trust_revocation,
             verified_context,
         },
@@ -280,6 +287,7 @@ struct MachineViolations {
     delegated_signing: Vec<String>,
     freshness: Vec<String>,
     replay: Vec<String>,
+    trust_document: Vec<String>,
     server_identity: Vec<String>,
     tls_custody: Vec<String>,
     trust_revocation: Vec<String>,
@@ -396,6 +404,11 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // X5 — Limits × Tls: a connection may not outlive the credential that authenticated
     // it, because the client certificate is checked at the handshake and never again.
     violations.extend(decided.cross.x5_connection_outlives_credential);
+    // The trust locator, immediately before the posture over it. It left the required-
+    // locator group when it acquired an owner: `TrustDocumentSource` is what a `TrustPlan`
+    // now carries instead of a bare string, so the refusal belongs where the trust plane's
+    // other clauses are rather than among three locators it shares nothing else with.
+    violations.extend(decided.trust_document);
     // The `TrustRevocation` machine (ADR-MCPS-021 Axis 2): the declared tier, the reload
     // cadence that IS its revocation window, and the epoch source that splits Push into
     // its inert and networked states. Spliced here because this is where its clauses have

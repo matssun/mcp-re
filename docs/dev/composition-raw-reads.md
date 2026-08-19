@@ -79,7 +79,8 @@ not semantic ownership. They are strings whose *interpretation* the custody stat
 
 Re-measured after the mechanical head: `app.rs` is down from 29 reads / 20 fields to
 **23 reads / 15 fields**, and `crate::deployment_request::KeySourceKind` is no longer
-imported by the composition root at all.
+imported by the composition root at all. After the owner work above it is **18**, and
+`startup_plan.rs` is down from 10 to **3**.
 
 Two entries above were misclassified on the first pass (`fleet`, `cores`) — see the strike
 in bucket 1. That is the third bucket doing its job in the other direction: the test is
@@ -118,8 +119,31 @@ when the refusal turns out to be all the capability still did.
 1. ~~Delete the dead reverse-proxy warning~~ (−4 reads, no design decision). **Done.**
 2. ~~Bucket 1 — replace each re-derivation with the owner's projection~~ (−7 reads). **Done.**
 3. ~~Delete the forwarded-identity provider~~ (owner ruling above). **Done.**
-4. Eliminate plan re-widening, starting with `TrustPlan`: a sealed `TrustRevocationState`
-   paired with a public `trust_path: String` is a second construction site one layer later.
-5. Bucket 3 — the remaining fields needing an owner or a represented relation.
+4. ~~Eliminate plan re-widening, starting with `TrustPlan`~~. **Done** — see below.
+5. Bucket 3 — the remaining fields needing an owner or a represented relation:
+   `allow_group_readable_key_files`, `max_client_cert_lifetime`, and the `fleet`/`cores`
+   topology pair.
 6. Then narrow or remove `ValidatedDeployment::config()`, and the grep becomes a regression
    guard rather than the argument.
+
+## Plan re-widening — `TrustPlan`, and what sealing found
+
+`TrustPlan` paired a sealed `TrustRevocationState` with a public `trust_path: String` and a
+public `reload: TrustReloadPlan`. Both halves were defects, and only one was the expected
+one.
+
+The locator now has an owner. `TrustDocumentSource` claims exactly that the string names
+something — not that the file exists, parses, or holds a trusted key, which are
+observations belonging to materialization. Its guard left the residue's required-locator
+group, which is down to three.
+
+The reload cadence turned out not to be a fact the plan should hold at all. The revocation
+state already decides it (`reload_cadence()`), so a stored copy was a second value free to
+disagree — and it did: `trust_plane`'s fixture named a 30s reload beside a state carrying
+5s, and asserted the wording of an operator-facing line no deployment prints. `reload()` is
+derived now. The same seal showed that `ReadOnceAtStartup` is reachable only under
+bounded-cache, so a second test was asserting the frozen-store wording for three postures
+layer A refuses.
+
+That is the argument for sealing a composition, stated concretely: a public bag of owned
+facts had already drifted into a combination no configuration reaches, and nothing failed.

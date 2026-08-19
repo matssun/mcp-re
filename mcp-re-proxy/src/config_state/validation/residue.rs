@@ -224,11 +224,11 @@ pub(super) fn audience_violations(config: &DeploymentRequest) -> Vec<String> {
     out
 }
 
-/// The four locators this deployment opens are non-empty.
+/// The three locators this deployment opens are non-empty.
 ///
 /// **Why layer A enforces it.** That a string names nothing is purely knowable (ADR-MCPRE-056 §5.1); that the file is absent is an observation for materialization.
 ///
-/// **Why no narrower owner.** They span the listener, the TLS plane and the trust plane — no single existing machine owns the set, and inventing one to hold four strings would be the premature abstraction.
+/// **Why no narrower owner.** They span the listener and the TLS plane — no single existing machine owns the set, and inventing one to hold three strings would be the premature abstraction. `--trust` was the fourth until it acquired one: `TrustDocumentSource` exists because a `TrustPlan` has to pair the locator with a sealed revocation posture, which is a reason none of these three have.
 pub(super) fn required_locator_violations(config: &DeploymentRequest) -> Vec<String> {
     let mut out = Vec::new();
     for (value, message) in [
@@ -246,11 +246,6 @@ pub(super) fn required_locator_violations(config: &DeploymentRequest) -> Vec<Str
             config.client_ca.as_str(),
             "--client-ca is empty: it names the roots every client certificate is verified \
              against, which is the whole of who may connect",
-        ),
-        (
-            config.trust_path.as_str(),
-            "--trust is empty: it names the trust document the request-signer set is read \
-             from, so an empty path leaves no signer trusted and no file to say so",
         ),
     ] {
         if value.trim().is_empty() {

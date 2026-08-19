@@ -526,7 +526,7 @@ fn run_validated(
     let signing_plan = crate::startup_plan::SigningPlan::from_validated(
         config,
         response_kid.clone(),
-        trust_plan.epoch.clone(),
+        trust_plan.epoch().clone(),
     );
 
     // ADR-MCPRE-057 §3 — the lifecycle becomes a value here.

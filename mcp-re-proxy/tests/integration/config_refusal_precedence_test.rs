@@ -217,7 +217,6 @@ fn the_boundary_refuses_in_this_order() {
             "--bind is empty",
             "--tls-cert is empty",
             "--client-ca is empty",
-            "--trust is empty",
             "--target-uri",
             // NEW, and it arrived from the trust plane rather than from nowhere: naming no
             // inner server was previously refused only after trust had read its document
@@ -235,6 +234,11 @@ fn the_boundary_refuses_in_this_order() {
             "--delegated-overlap-secs",
             "--max-client-cert-lifetime",
             "--max-connection-age-secs",
+            // Moved UP out of the required-locator group with `TrustDocumentSource`. The
+            // locator is no longer one of four interchangeable strings: it is the fact a
+            // `TrustPlan` pairs with a revocation posture, so it is refused beside the
+            // trust plane's other clauses rather than beside `--bind`.
+            "--trust is empty",
             // NEW. The quantity guards, grouped with the timeouts they share a class with
             // — a limit that disables the control it bounds — and ahead of them because a
             // zero ceiling is the graver of the two.

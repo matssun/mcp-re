@@ -68,6 +68,7 @@ pub mod replay;
 pub mod server_identity;
 pub mod tls_custody;
 pub mod transport;
+pub mod trust_document;
 pub mod trust_revocation;
 pub mod validation;
 
@@ -82,6 +83,7 @@ pub use mcp_transport_contract::McpTransportContractState;
 pub use replay::ReplayState;
 pub use tls_custody::TlsCustodyState;
 pub use transport::{ChannelBindingState, CrlRevocationState};
+pub use trust_document::TrustDocumentSource;
 pub use trust_revocation::TrustRevocationState;
 
 /// What layer A recognised: each machine's state, and each guard-only owner's facts.
@@ -108,6 +110,7 @@ pub struct DeploymentConfigState {
     retention: RetentionState,
     server_identity: server_identity::ServerIdentityFacts,
     tls_custody: TlsCustodyState,
+    trust_document: TrustDocumentSource,
     trust_revocation: TrustRevocationState,
     verified_context: VerifiedContextState,
 }
@@ -129,6 +132,7 @@ pub(crate) struct RecognisedStates {
     pub(crate) retention: RetentionState,
     pub(crate) server_identity: server_identity::ServerIdentityFacts,
     pub(crate) tls_custody: TlsCustodyState,
+    pub(crate) trust_document: TrustDocumentSource,
     pub(crate) trust_revocation: TrustRevocationState,
     pub(crate) verified_context: VerifiedContextState,
 }
@@ -152,6 +156,7 @@ impl DeploymentConfigState {
             retention,
             server_identity,
             tls_custody,
+            trust_document,
             trust_revocation,
             verified_context,
         } = states;
@@ -170,6 +175,7 @@ impl DeploymentConfigState {
             retention,
             server_identity,
             tls_custody,
+            trust_document,
             trust_revocation,
             verified_context,
         }
@@ -261,6 +267,14 @@ impl DeploymentConfigState {
     /// Whether the TLS handshake key can leave the device it lives on.
     pub fn tls_custody(&self) -> &TlsCustodyState {
         &self.tls_custody
+    }
+
+    /// Which document the request-signer set is read from.
+    ///
+    /// The locator's own authority, so a plan pairs a revocation posture with a document
+    /// both owners recognised rather than with whatever string reached the plan.
+    pub fn trust_document(&self) -> &TrustDocumentSource {
+        &self.trust_document
     }
 
     /// The trust-revocation state — the authority both `TrustPlan` and `SigningPlan`
@@ -362,6 +376,32 @@ pub(crate) mod test_support {
         super::trust_revocation::classify_and_validate(&config)
             .0
             .expect("the requested revocation posture is legal")
+    }
+
+    /// The trust plan a deployment in this posture projects.
+    ///
+    /// Through the boundary and then through `TrustPlan::from_validated`, so the plan's
+    /// revocation posture, its derived reload cadence and its document all come from ONE
+    /// accepted deployment. The literal this replaced could pair any state with any
+    /// cadence, and did: it named a 30s reload beside a state carrying 5s.
+    pub(crate) fn trust_plan(
+        tier: crate::revocation_tier::RevocationTier,
+        reload_secs: Option<u64>,
+        epoch: Option<(&str, &str)>,
+    ) -> crate::startup_plan::TrustPlan {
+        let mut config = legal_config();
+        config.revocation_tier = tier;
+        config.trust_reload_secs = reload_secs;
+        config.trust_epoch_redis_url = epoch.map(|(url, _)| url.to_string());
+        config.trust_epoch_key = epoch.map(|(_, key)| key.to_string());
+        let validated = super::validation::ValidatedDeployment::try_from(config)
+            .expect("the requested trust posture is a legal deployment");
+        let epoch_plan = crate::startup_plan::TrustEpochPlan::from_validated(&validated);
+        crate::startup_plan::TrustPlan::from_validated(
+            &validated,
+            "response-kid".to_string(),
+            epoch_plan,
+        )
     }
 
     /// The CRL state a deployment with these files and cadence reaches.
@@ -506,6 +546,9 @@ mod tests {
             )
             .0,
             crl_revocation: test_support::crl_posture(&["/crl.pem"], Some(300)),
+            trust_document: trust_document::classify_and_validate(&test_support::legal_config())
+                .0
+                .expect("the legal fixture names a trust document"),
             custody: test_support::custody_pkcs11(),
             mcp_transport_contract: mcp_transport_contract::classify(
                 &test_support::versioned_transport_config(),

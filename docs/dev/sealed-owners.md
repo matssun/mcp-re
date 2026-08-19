@@ -53,10 +53,38 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `ClientRevocationPlan` | `config_state/transport.rs` | `paths()`, `reload_cadence_secs()`, `is_enforced()` |
 | `TlsCustodyState` | `config_state/tls_custody.rs` | `exported_key_path()`, `delegated_pkcs11_label()`, `delegated_aws_key_id()`, `delegated_gcp_key_version()`, `is_delegated()` |
 | `CustodyState` | `config_state/custody.rs` | `material() -> CustodyMaterial<'_>`, `disk_secret_paths()`, `locators_are_filesystem_paths()`, `is_non_exporting_device()` |
+| `FreshnessWindow` | `config_state/freshness.rs` | `verifier_skew_secs()`, `replay_retain_until()`, `verifier_accepts_until()` |
+| `TrustDocumentSource` | `config_state/trust_document.rs` | `path()` |
+| `TrustPlan` | `startup_plan.rs` | `revocation()`, `document_path()`, `response_kid()`, `reload()`, `epoch()` |
 
 A plan produced by an owner lives **with that owner**, not in `startup_plan.rs`.
 `startup_plan` re-exports it. The plan is the owner's projection of its own validated
 state, so building it in the planner was the planner restating the owner's semantics.
+
+## A composition may combine owned facts; it may not make them replaceable again
+
+`TrustPlan` is the first entry above that is a **composition**, not a classifier's output,
+and it is where the rule needed stating. It combines three independently owned facts — the
+revocation posture, the trust document, and the shared epoch mechanism — which is exactly
+what a composition is for. What it must not do is hand them back out as a public bag,
+because then the pairing holds only for as long as every construction site takes all three
+from one deployment.
+
+Two things make the combination stick:
+
+- the representation is private and `from_validated(&ValidatedDeployment, …)` is the only
+  producer, so both owned facts come from one accepted deployment by construction;
+- **`reload` is not a field.** It is derived from the revocation state on demand, because
+  that state is the authority on how often the document is re-read. A stored copy is a
+  second value that can disagree with the first — and it already had: the fixture in
+  `trust_plane`'s tests paired a 30s reload with a state carrying 5s, and asserted the
+  wording of an operator-facing line no deployment prints. Sealing surfaced it; deriving
+  removed the possibility.
+
+The same shape settled a second question. `ReadOnceAtStartup` is reachable only under
+bounded-cache — `Live` and `Push` name a cadence in their Required column — so the test
+that asserted the frozen-store wording for all four postures was describing deployments
+layer A refuses. It now asserts it where it is reachable.
 
 ## Borrowed views
 
