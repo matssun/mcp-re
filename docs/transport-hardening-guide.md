@@ -208,12 +208,11 @@ Two bounds remain, and they are narrower than before:
   per-request checks cover validity and revocation but not the chain — so resumption is
   gated on a digest of the trusted client-CA set, the input chain building depends on.
   Client revocation policy is not a second input: unknown revocation status is denied
-  unconditionally, so there is no policy dimension to digest. While that digest holds,
-  a stored chain is one the current
-  trust would still build; when a CA is withdrawn it changes and every stored session
-  stops being a shortcut. CRL contents are deliberately NOT in the digest: revocation is
-  already enforced per request, and a re-signed CRL would otherwise tear down every
-  connection on each reload.
+  unconditionally, so there is no policy dimension to digest. While that digest holds, a
+  stored chain is one the current trust would still build; when a CA is withdrawn it
+  changes and every stored session stops being a shortcut. CRL contents are deliberately
+  NOT in the digest: revocation is already enforced per request, and a re-signed CRL
+  would otherwise tear down every connection on each reload.
 
 **This is what makes warm connections safe to keep.** A deployment holding connections
 open pays the full handshake once per connection rather than once per request, and an
