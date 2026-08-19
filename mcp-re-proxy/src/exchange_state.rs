@@ -24,7 +24,7 @@
 //! either side of a single irreversible effect:
 //!
 //! ```text
-//! ... -> RetentionReserved -> InnerPlaneAccepted -> [DISPATCH] -> Dispatched -> ...
+//! ... -> InnerPlaneAccepted -> RetentionReserved -> [DISPATCH] -> Dispatched -> ...
 //! ```
 //!
 //! The response region is not a second machine standing beside the first. A response is an
@@ -99,16 +99,25 @@ pub(crate) enum ExchangeState {
     ContinuationRetired,
     /// The proxy-owned `_meta` is stripped and the backend-bound body is prepared.
     Forwarded,
-    /// Durable retention responsibility is taken.
-    RetentionReserved,
     /// The inner plane has capacity and a live backend, so the request CAN be transmitted.
     ///
-    /// **The last point at which refusing is free.** Asked before the dispatch for the same
-    /// reason [`Answerable`](Self::Answerable) is: local saturation and an all-ejected
-    /// backend set are facts about THIS proxy, knowable without transmitting anything, and
-    /// discovering them from the far side of the threshold turns a definitely-not-executed
-    /// outage into an exchange that must report `possibly_executed` forever after.
+    /// Asked before the dispatch for the same reason [`Answerable`](Self::Answerable) is:
+    /// local saturation and an all-ejected backend set are facts about THIS proxy, knowable
+    /// without transmitting anything, and discovering them from the far side of the
+    /// threshold turns a definitely-not-executed outage into an exchange that must report
+    /// `possibly_executed` forever after.
+    ///
+    /// Asked BEFORE [`RetentionReserved`](Self::RetentionReserved), because a saturated
+    /// plane must leave nothing on disk: refusing after the reservation would write a
+    /// durable marker asserting that a request crossed the execution threshold, for a
+    /// request that provably never reached a backend.
     InnerPlaneAccepted,
+    /// Durable retention responsibility is taken.
+    ///
+    /// **The last point at which refusing is free**, and the last state before the
+    /// threshold. Nothing between this and the dispatch can refuse, and past the dispatch
+    /// no refusal can say nothing happened.
+    RetentionReserved,
     /// The inner server has been handed the request. **The execution threshold.** No state
     /// at or after this may claim nothing happened.
     Dispatched,
@@ -173,9 +182,9 @@ pub(crate) enum ExchangeEvent {
     DelegatedKeySnapshotted,
     ContinuationRetired,
     ForwardBodyPrepared,
-    RetentionReserved,
     /// The inner plane took a permit and selected a live backend. Nothing is transmitted.
     InnerPlaneAccepted,
+    RetentionReserved,
     /// The inner server has been handed the request. Emitted at the dispatch, not around
     /// it: an event asserting that the threshold was crossed must not be emitted by a path
     /// that did not cross it.
@@ -321,8 +330,8 @@ impl ExchangeEvent {
             Self::DelegatedKeySnapshotted => S::Answerable,
             Self::ContinuationRetired => S::ContinuationRetired,
             Self::ForwardBodyPrepared => S::Forwarded,
-            Self::RetentionReserved => S::RetentionReserved,
             Self::InnerPlaneAccepted => S::InnerPlaneAccepted,
+            Self::RetentionReserved => S::RetentionReserved,
             Self::BackendDispatched => S::Dispatched,
             Self::ResponseObserved => S::ResponseObserved,
             Self::EnvelopeValidated => S::ResponseValidated,
@@ -375,8 +384,8 @@ impl ExchangeState {
             | Self::Answerable
             | Self::ContinuationRetired
             | Self::Forwarded
-            | Self::RetentionReserved
             | Self::InnerPlaneAccepted
+            | Self::RetentionReserved
             | Self::RefusedBeforeDispatch => false,
             Self::Dispatched
             | Self::ResponseObserved
@@ -454,9 +463,9 @@ pub(crate) fn transition(
         (S::ReplayAdmitted, E::DelegatedKeySnapshotted) => Ok(S::Answerable),
         (S::Answerable, E::ContinuationRetired) => Ok(S::ContinuationRetired),
         (S::ContinuationRetired, E::ForwardBodyPrepared) => Ok(S::Forwarded),
-        (S::Forwarded, E::RetentionReserved) => Ok(S::RetentionReserved),
-        (S::RetentionReserved, E::InnerPlaneAccepted) => Ok(S::InnerPlaneAccepted),
-        (S::InnerPlaneAccepted, E::BackendDispatched) => Ok(S::Dispatched),
+        (S::Forwarded, E::InnerPlaneAccepted) => Ok(S::InnerPlaneAccepted),
+        (S::InnerPlaneAccepted, E::RetentionReserved) => Ok(S::RetentionReserved),
+        (S::RetentionReserved, E::BackendDispatched) => Ok(S::Dispatched),
         // ================== THE EXECUTION THRESHOLD ==================
         // The notification arm branches out of the pipeline HERE, at the only point where
         // the backend has acted and no bodied reply has been observed yet.
@@ -476,6 +485,62 @@ pub(crate) fn transition(
         (S::Retained, E::TerminalResponseServed) => Ok(S::CompletedTerminal),
         (S::Retained, E::OpenLegResponseServed) => Ok(S::CompletedContinuationOpen),
         _ => illegal,
+    }
+}
+
+/// A fact a stage established, carrying the event that records it.
+///
+/// # The invariant this owns
+///
+/// The exchange machine learns that a stage ran by CONSUMING the stage's result — not by
+/// the assembly remembering to assert it afterwards. There is no `advance` call at the
+/// call site to forget, to misplace, or to write for work that did not happen: the only
+/// way to reach the `T` a stage produced is [`ExchangeProgress::establish`], and taking it
+/// advances the machine by the event the stage itself named.
+///
+/// Apply the ownership test to what this replaces. `handle` used to run a stage and then
+/// state its event on the next line, so the correspondence between *the work happened* and
+/// *the event was emitted* was a deletable statement — twenty of them, in the one function
+/// where every refusal's retry contract is decided. Deleting one left the machine silently
+/// behind the code until some later advance happened to be illegal. The check could be
+/// deleted; therefore it was remembered, not owned.
+///
+/// [`ExchangeProgress`] already owned transition LEGALITY — `(state, event)` is checked on
+/// every advance of every build, and a refusal latches. What it did not own is this. The
+/// two together are what make the pipeline order one statement instead of several.
+///
+/// # Why the event is named inside the stage
+///
+/// The event is written next to the work that justifies it, in the same function whose
+/// contract documents what the stage ensures. A stage and its transition are one unit of
+/// review, and neither the assembly nor a future caller can pair them differently. What
+/// the pairing may NOT do is invent an order: the event is still presented to
+/// [`transition`], so a stage moved to the wrong place in the pipeline is refused by the
+/// relation exactly as before.
+///
+/// # What this deliberately does not cover
+///
+/// The sibling machines. `observe_origin`, `observe_continuation` and `observe_open_leg`
+/// stay ordinary calls: they latch monotonically, so they are already safe by
+/// construction, and several of them legitimately fire on a stage's REFUSING arm — which
+/// is precisely the case a value returned only on success cannot express.
+///
+/// Nor the transitions that are the assembly's own rather than any stage's — the dispatch
+/// itself, the retirement decided from a [`ContinuationState`], and the terminals. Those
+/// are stated in `handle` because that is where the fact is established.
+#[must_use = "a stage's established fact must be handed to ExchangeProgress::establish, or \
+              the machine does not learn the stage ran"]
+pub(crate) struct Established<T> {
+    value: T,
+    event: ExchangeEvent,
+}
+
+impl<T> Established<T> {
+    /// Pair a stage's result with the event it establishes.
+    ///
+    /// Called by the stage, at the point the work succeeded — never by the assembly.
+    pub(crate) fn new(value: T, event: ExchangeEvent) -> Self {
+        Self { value, event }
     }
 }
 
@@ -597,6 +662,15 @@ impl ExchangeProgress {
         if let Some(violation) = self.invariant_violation() {
             self.latch(violation);
         }
+    }
+
+    /// Take a stage's established fact, advancing the machine by the event the stage named.
+    ///
+    /// The only way to open an [`Established`]. The machine cannot learn less than the
+    /// pipeline did, because the value and the transition arrive together.
+    pub(crate) fn establish<T>(&mut self, established: Established<T>) -> T {
+        self.advance(established.event);
+        established.value
     }
 
     /// Record the FIRST anomaly and keep it. A later one cannot describe how the exchange
@@ -753,8 +827,8 @@ mod tests {
         ExchangeState::Answerable,
         ExchangeState::ContinuationRetired,
         ExchangeState::Forwarded,
-        ExchangeState::RetentionReserved,
         ExchangeState::InnerPlaneAccepted,
+        ExchangeState::RetentionReserved,
         ExchangeState::Dispatched,
         ExchangeState::ResponseObserved,
         ExchangeState::ResponseValidated,
@@ -778,8 +852,8 @@ mod tests {
         ExchangeEvent::DelegatedKeySnapshotted,
         ExchangeEvent::ContinuationRetired,
         ExchangeEvent::ForwardBodyPrepared,
-        ExchangeEvent::RetentionReserved,
         ExchangeEvent::InnerPlaneAccepted,
+        ExchangeEvent::RetentionReserved,
         ExchangeEvent::BackendDispatched,
         ExchangeEvent::ResponseObserved,
         ExchangeEvent::EnvelopeValidated,
@@ -844,16 +918,16 @@ mod tests {
         ),
         (
             ExchangeState::Forwarded,
-            ExchangeEvent::RetentionReserved,
-            ExchangeState::RetentionReserved,
-        ),
-        (
-            ExchangeState::RetentionReserved,
             ExchangeEvent::InnerPlaneAccepted,
             ExchangeState::InnerPlaneAccepted,
         ),
         (
             ExchangeState::InnerPlaneAccepted,
+            ExchangeEvent::RetentionReserved,
+            ExchangeState::RetentionReserved,
+        ),
+        (
+            ExchangeState::RetentionReserved,
             ExchangeEvent::BackendDispatched,
             ExchangeState::Dispatched,
         ),
@@ -935,12 +1009,12 @@ mod tests {
         ),
         (ExchangeEvent::ForwardBodyPrepared, ExchangeState::Forwarded),
         (
-            ExchangeEvent::RetentionReserved,
-            ExchangeState::RetentionReserved,
-        ),
-        (
             ExchangeEvent::InnerPlaneAccepted,
             ExchangeState::InnerPlaneAccepted,
+        ),
+        (
+            ExchangeEvent::RetentionReserved,
+            ExchangeState::RetentionReserved,
         ),
         (ExchangeEvent::BackendDispatched, ExchangeState::Dispatched),
         (
@@ -1075,9 +1149,10 @@ mod tests {
     /// Non-vacuity control for the test above: the threshold actually partitions the
     /// pipeline, rather than every state falling on one side of it.
     ///
-    /// `InnerPlaneAccepted` is named explicitly because it is the newest state on the safe
-    /// side and the whole reason it exists: local saturation is knowable without
-    /// transmitting anything, so it must refuse from the retry-safe half.
+    /// The two states either side of the last free refusal are named explicitly, because
+    /// they are the whole reason the threshold sits where it does: local saturation is
+    /// knowable without transmitting anything, and the retention marker is written before
+    /// the dispatch and not after — so both must refuse from the retry-safe half.
     #[test]
     fn the_execution_threshold_partitions_the_pipeline_into_two_non_empty_halves() {
         let executed = STATES
@@ -1151,7 +1226,7 @@ mod tests {
         }
         // Every refusal site in the window: forwarding, retention reservation, and the
         // inner-plane admission that D4 added below them.
-        assert_eq!(progress.state(), ExchangeState::InnerPlaneAccepted);
+        assert_eq!(progress.state(), ExchangeState::RetentionReserved);
         let mut refused = progress;
         refused.apply(ExchangeEvent::Refused).unwrap();
         assert_eq!(refused.state(), ExchangeState::RefusedBeforeDispatch);
@@ -1525,8 +1600,8 @@ mod tests {
             E::DelegatedKeySnapshotted,
             E::ContinuationRetired,
             E::ForwardBodyPrepared,
-            E::RetentionReserved,
             E::InnerPlaneAccepted,
+            E::RetentionReserved,
         ];
         let mut p = ExchangeProgress::new();
         for e in ladder {
@@ -1542,7 +1617,7 @@ mod tests {
 
     #[test]
     fn the_whole_legal_ladder_latches_no_anomaly() {
-        let p = progressed_to(ExchangeState::InnerPlaneAccepted);
+        let p = progressed_to(ExchangeState::RetentionReserved);
         assert_eq!(p.anomaly(), None);
         assert_eq!(p.retry_semantics(), RetrySemantics::SafeNothingExecuted);
     }
@@ -1591,8 +1666,8 @@ mod tests {
             ExchangeEvent::DelegatedKeySnapshotted,
             ExchangeEvent::ContinuationRetired,
             ExchangeEvent::ForwardBodyPrepared,
-            ExchangeEvent::RetentionReserved,
             ExchangeEvent::InnerPlaneAccepted,
+            ExchangeEvent::RetentionReserved,
             ExchangeEvent::BackendDispatched,
             ExchangeEvent::ResponseObserved,
             ExchangeEvent::EnvelopeValidated,
@@ -1625,7 +1700,7 @@ mod tests {
 
     #[test]
     fn an_illegal_advance_still_never_moves_consequence_backward() {
-        let mut p = progressed_to(ExchangeState::InnerPlaneAccepted);
+        let mut p = progressed_to(ExchangeState::RetentionReserved);
         p.advance(ExchangeEvent::BackendDispatched);
         assert_eq!(p.retry_semantics(), RetrySemantics::NotRetrySafe);
         // An event establishing an EARLIER state cannot walk the exchange back below the

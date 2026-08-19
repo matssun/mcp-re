@@ -50,6 +50,12 @@ const SOURCE_FALLBACKS: &[(&str, &str)] = &[
     // ADR-MCPRE-056 §8 fourth clause: the composition root's own source, read by the
     // raw-read inventory that pins which request fields it still consumes directly.
     ("MCP_RE_APP_SRC", "mcp-re-proxy/src/app.rs"),
+    // ADR-MCPRE-057 §4: the serving path's own source, read by the transition-ownership
+    // rule that asserts no event a stage establishes is also advanced by the assembly.
+    (
+        "MCP_RE_HTTP_PROFILE_SERVE_SRC",
+        "mcp-re-proxy/src/http_profile_serve.rs",
+    ),
     ("MCP_RE_TRUST_PLANE_SRC", "mcp-re-proxy/src/trust_plane.rs"),
     ("MCP_RE_TLS_PLANE_SRC", "mcp-re-proxy/src/tls_plane.rs"),
     (
