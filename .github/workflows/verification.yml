@@ -36,6 +36,9 @@ on:
       - "mcp-re-core/src/**"
       - "mcp-re-http-profile/src/**"
       - "mcp-re-proxy/src/runtime_state.rs"
+      # THM-0013 reads the boundary's OCSP clauses, so the lane must re-measure when
+      # they move: the theorem is that no validated deployment enables online OCSP.
+      - "mcp-re-proxy/src/config_state/validation/residue.rs"
       # The build inputs every ReviewFingerprint reads. A dependency bump moves
       # Cargo.lock, which dirties every declared unit — so a lane that did not
       # re-run on it would leave `main` carrying attestations over a dependency
@@ -56,6 +59,9 @@ on:
       - "mcp-re-core/src/**"
       - "mcp-re-http-profile/src/**"
       - "mcp-re-proxy/src/runtime_state.rs"
+      # THM-0013 reads the boundary's OCSP clauses, so the lane must re-measure when
+      # they move: the theorem is that no validated deployment enables online OCSP.
+      - "mcp-re-proxy/src/config_state/validation/residue.rs"
       # The build inputs every ReviewFingerprint reads. A dependency bump moves
       # Cargo.lock, which dirties every declared unit — so a lane that did not
       # re-run on it would leave `main` carrying attestations over a dependency

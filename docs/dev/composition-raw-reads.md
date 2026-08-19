@@ -173,3 +173,40 @@ are gone — one owner, one refusal per defect.
 **This tightens what the proxy accepts.** A deployment whose connection age exceeds its
 certificate lifetime now fails to start. That is the rule the codebase already stated; it
 was simply not the rule it checked.
+
+## Where this ends: the criterion, and the gate that holds it
+
+The campaign's completion criterion is the owner's, stated once:
+
+> No post-validation consumer may call `ValidatedDeployment::config()` to make a
+> security-sensitive decision.
+
+`config()` is not deleted, and deleting it was never the goal — the composition root is
+entitled to read the request, because it BUILDS things out of it. A listen address, a
+certificate path and a backend URL are things you construct with, not decisions you make.
+
+What the criterion forbids is a DECISION taken from a raw field, and that is not
+mechanically decidable. So `mcp-re-proxy/tests/integration/composition_raw_read_test.rs`
+pins the decidable half: the exact set of fields `app.rs` still reads, each with the
+sentence saying why it is ordinary. A new raw read fails the gate. The fix is normally to
+find the owner, not to add an entry — six fields that looked ordinary on the first pass
+were not, and two of those were holding live defects.
+
+The remaining nine are locators and coordinates: `bind`, `tls_cert`, `client_ca`,
+`inner_http_urls`, `route`, `target_uri`, `audience`, `trust_domain`, `limits`.
+
+`app.rs` went **29 raw reads → 13**; `startup_plan.rs` **10 → 3**.
+
+### Still open
+
+- The resolved shard count is established twice (`app.rs` and `serve_fleet`) from the same
+  request. They agree; nothing makes them agree. That is a change to the serving runtime's
+  shape rather than to configuration ownership — see `config_state/topology.rs`.
+- `ServerLimits` still carries `max_connection_age` into the runtime as a plain duration,
+  beside a `ServerOptions` lifetime that now comes from `ClientCredentialWindow`. The
+  relation holds because layer A refused the deployments where it would not, which is the
+  seal working at the boundary it was drawn at — not a reason to widen it downstream.
+- The PKCS#11 PIN file is held to the strict `0600`/`0400` rule whichever
+  `KeyFileAccessPolicy` resolves, so an fsGroup-mounted PIN is refused where an
+  fsGroup-mounted key is accepted. Refusing more is not a fail-open; loosening it is an
+  owner decision.

@@ -31,6 +31,7 @@ mod serving_fixtures;
 mod startup_transcript;
 
 mod app_startup_characterization_test;
+mod composition_raw_read_test;
 mod config_legality_characterization_test;
 mod config_refusal_precedence_test;
 mod documented_cli_test;

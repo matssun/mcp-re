@@ -711,7 +711,10 @@ fn run_validated(
         identity_policy,
         identity_strategy,
         limits,
-        max_client_cert_lifetime: values.max_client_cert_lifetime,
+        // From the owner, not the request: the lifetime and the connection age are one
+        // fact, and reading the lifetime raw here would be the relation split back into
+        // its terms one layer further on.
+        max_client_cert_lifetime: Some(config.state().client_credential_window().cert_lifetime()),
         client_revocation: client_revocation.clone(),
         #[cfg(feature = "online_ocsp")]
         ocsp_checker,
