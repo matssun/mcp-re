@@ -14,6 +14,18 @@ repeat transmission the same day — the repeat carried substantial new material
 [ADR-MCPRE-059](https://github.com/matssun/mcp-re/discussions/527); `CLAUDE.md`;
 `work/REFACTOR-COLLECTION.md` (private collection file).
 
+> **SUPERSEDED BEFORE RATIFICATION.** This draft is retained as historical capture of
+> the modular-refactoring discussion that led to
+> [ADR-MCPRE-061](ADR-MCPRE-061-hierarchical-authority-architecture.md). It was never
+> published or accepted as an ADR and is not current implementation guidance. Current
+> architectural policy lives in ADR-MCPRE-061 and `docs/architecture/`; current agent
+> execution rules remain in `CLAUDE.md` and `docs/AGENT_INSTRUCTIONS.md`. The
+> disposition of every conflict this document raised in §10 is recorded in
+> ADR-MCPRE-061 §6.5 — nothing here was dropped silently.
+>
+> The body below is **not** rewritten to agree with later decisions. Its value is
+> provenance; current authority belongs elsewhere.
+
 > **Placement.** ADR bodies are retired from the repo — the ADRs are GitHub
 > Discussions in the **ADRs** category, the single source of truth
 > (`docs/adr/README.md`). This is a **draft body staged for publication**, held

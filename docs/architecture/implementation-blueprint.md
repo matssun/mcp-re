@@ -29,6 +29,24 @@ flowchart TD
     A --> B --> C --> D --> E --> F --> G --> H --> I --> J --> K --> B
 ```
 
+## 2.1 Re-measure at the top of every cycle
+
+An audit invalidates its own inventory. Step A (rebaseline) and step B (measure) are not
+ceremony: a census taken on a working branch describes a tree that the next merge changes,
+and a finding cited in the present tense after it has been fixed sends the next
+investigator to a file that no longer has the problem.
+
+Two instances from this campaign's own census, both closed on `main` before the blueprint
+citing them was written:
+
+- the stage order stated four times, with a drifted prose table — the table was deleted;
+- the work/event correspondence carried by ~20 deletable `advance` calls — now carried by
+  `Established<T>`, with five assembly-owned transitions remaining by design.
+
+The rule that follows: **a finding is quoted with the commit it was measured on, and
+re-checked against `main` before it is acted on.** A component blueprint that cites a
+number without naming the rule and the commit is citing nothing.
+
 ## 3. Investigation order
 
 Priority is determined by a combination of:
@@ -117,6 +135,22 @@ pub                supported external API
 ```
 
 Whenever a security-relevant item is `pub(crate)` or `pub`, the review must answer why the broader authority is legitimate.
+
+Two limits, measured and recorded in [`docs/dev/sealed-owners.md`](../dev/sealed-owners.md):
+privacy buys nothing where a seam lets code outside the module produce the value, and a
+Verus-proved postcondition outranks a seal. Ask *if this value is illegal, whose bug is
+it?* before adding a private field.
+
+### 7.1 What the toolchain checks, and what it does not
+
+ADR-MCPRE-061 §6 is the authority. In short: function length and cognitive complexity are
+enforced by `/.clippy.toml` via `cargo clippy -- -D warnings`; **file length is not
+enforced at all** — clippy has no file-length lint — and the substitute gate is specified
+in ADR-061 §6.3 but not landed, pending an owner ruling on when it lands and with what
+allowlist.
+
+Do not read an unenforced rule as an enforced one. Where this blueprint says a step is
+required, the check is a human reading a diff unless §6.1 lists a mechanism.
 
 ## 8. Tests and proofs
 

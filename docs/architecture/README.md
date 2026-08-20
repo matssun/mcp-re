@@ -29,7 +29,7 @@ flowchart TD
 
 ## Top-level documents
 
-- [`ADR-MCPRE-061-hierarchical-authority-architecture.md`](../adr/drafts/ADR-MCPRE-061-hierarchical-authority-architecture.md) — proposed durable architectural decision.
+- [`ADR-MCPRE-061-hierarchical-authority-architecture.md`](../adr/drafts/ADR-MCPRE-061-hierarchical-authority-architecture.md) — proposed durable architectural decision. **Draft path.** When the ADR is published as a Discussion, this link is retargeted to the Discussion URL on the same commit that removes the draft (ADR-061 §13.2).
 - [`implementation-blueprint.md`](implementation-blueprint.md) — current execution method for the refactoring campaign.
 - [`component-blueprint-template.md`](component-blueprint-template.md) — standard anatomy for subordinate component design documents.
 
@@ -41,6 +41,38 @@ flowchart TD
 - [`components/exchange-lifecycle.md`](components/exchange-lifecycle.md)
 
 These are first-pass architectural documents, not declarations that every boundary is already final. The shallow-module census and subsequent investigation may refine the tree. Refinement must preserve the governing rule: **one authority, narrow facade, private subordinate implementation tree**.
+
+## Current campaign order
+
+The component blueprints are not a work queue. The order below is the ruled one; each step
+is DESIGN-only until it receives its own Go.
+
+1. **Evidence verification — split the cryptographic floor from the full profile.**
+   [`components/evidence-verification.md`](components/evidence-verification.md) §2. This is
+   the blocking step: the theorem and negative-control gaps in that component all follow
+   from one product type carrying two propositions.
+2. **TLS — make the listener-lifetime security state an explicit owner.**
+   [`components/tls-and-transport-identity.md`](components/tls-and-transport-identity.md) §5.
+3. **TLS — relocate the blocking mTLS/HTTP-1 harness out of the security authority.**
+   Same document, §8.
+
+Trust & revocation and exchange lifecycle are documented here because their boundaries are
+settled enough to state, not because work on them is scheduled next.
+
+## This directory describes the target; `sealed-owners.md` describes the present
+
+Two documents describing the same ownership are two authorities over one fact, and they drift. The split is fixed by ADR-061 §13.1 and stated in both places:
+
+| document | owns |
+|---|---|
+| [`docs/dev/sealed-owners.md`](../dev/sealed-owners.md) | the **current** sealed state — which owners are sealed today, the exact projections each exposes, which are deliberately unsealed and why, and the procedure for sealing the next one |
+| this directory's `components/` | the **target** design — what each authority domain should own, its intended hierarchy and visibility, its theorem and test inventory, and its implementation map |
+
+Each component blueprint's **Known deviations** section is the diff between the two. Neither document restates the other's tables; each links to it.
+
+## Measurements in these documents
+
+Production-line counts quoted in the component blueprints are measured by the ADR-061 §5.1 rule — lines before the first module matching `^#\[cfg\((all\()?test` — on `main` at commit `527b1ac`. They will drift; re-measure before acting on one. A blueprint quoting a number without stating the rule and the commit is quoting nothing.
 
 ## Existing ADRs this hierarchy composes
 

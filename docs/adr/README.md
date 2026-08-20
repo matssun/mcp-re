@@ -82,6 +82,22 @@ The current MCP-RE worldview is frozen in [`docs/design/active-profile-and-legac
 - **Active production evidence profile:** ADR-MCPRE-050 (RFC 9421 + RFC 9530 HTTP profile — the one carrier), ADR-MCPRE-051 (serving architecture), ADR-MCPRE-052 (delegated signing via a JOSE/JWS credential in the HTTP evidence), and later `ADR-MCPRE-*` records.
 - **Deprecated:** the Native JCS / object profile — ADR-MCPS-004 (Ed25519-over-JCS), ADR-MCPS-005 (JCS canonicalization), and the draft-01/02 native-envelope material (`status:deprecated`). These are **historical**: not a security mechanism, not an alternative carrier, not a fallback. They MUST NOT be the foundation for new evidence, delegated signing, runtime profiles, SEP/IG proposals, or production design.
 
+## Unpublished drafts and the gap at 060
+
+Two draft bodies live in [`docs/adr/drafts/`](drafts/) and are **not** published as
+Discussions:
+
+- **ADR-MCPRE-060** — *Modular Decomposition, Mechanical Enforcement, and the Real-Time
+  Verification Loop.* Captured, never ratified, **superseded before ratification** by
+  ADR-MCPRE-061. Retained as provenance for the modular-refactoring discussion; not
+  current implementation guidance.
+- **ADR-MCPRE-061** — *Hierarchical Authority Architecture, Reviewable Security Design,
+  and Modular Engineering.* Draft, pending owner review before publication.
+
+Because 060 was never published, the Discussions sequence skips from 059 to 061. **The
+number 060 is not reused.** The disposition of every conflict 060 raised for owner ruling
+is recorded in ADR-MCPRE-061 §6.5.
+
 ## Conventions
 
 - One decision per ADR discussion, titled `ADR-<TAG>-<NNN>: <title>`. Historical IDs are preserved: `ADR-MCPS-001…049` keep the `MCPS` tag; `ADR-MCPRE-050+` use `MCPRE`.
