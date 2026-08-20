@@ -2,7 +2,7 @@
 
 # MCP-RE Architecture Decision Records
 
-The ADRs now live as **GitHub Discussions** in the [**ADRs** category](https://github.com/matssun/mcp-re/discussions/categories/adrs) — that is the single source of truth for both the decision text and its current status. This file is a generated index; the committed `adr-*.md` bodies were retired on 2026-07-10 (recover any from git history if needed).
+The ADRs now live as **GitHub Discussions** in the [**ADRs** category](https://github.com/matssun/mcp-re/discussions/categories/adrs) — that is the single source of truth for both the decision text and its current status. This file is a hand-maintained index — no generator produces it, so a row is only as current as the last edit; the committed `adr-*.md` bodies were retired on 2026-07-10 (recover any from git history if needed).
 
 ## Track status at a glance
 
@@ -75,6 +75,18 @@ Every ADR discussion carries the `adr` label plus one status label. Filter:
 > ADR-MCPRE-053 and -054 are **Proposed** with their implementation on
 > [PR #436](https://github.com/matssun/mcp-re/pull/436); they move to Implemented
 > only after owner ratification.
+
+## Implementation trackers
+
+Accepted ADRs may have repository issue trackers for implementation work. A tracker
+records execution state; **it is not part of the ADR decision text or status.** The
+Discussion remains the single source of truth for what was decided and where it stands;
+the tracker only says how far the work has got.
+
+| ADR | Tracker |
+|---|---|
+| [ADR-MCPRE-059](https://github.com/matssun/mcp-re/discussions/527) | [MCPRE-125 · #544](https://github.com/matssun/mcp-re/issues/544) — theorem registry and compositional assurance |
+| [ADR-MCPRE-061](https://github.com/matssun/mcp-re/discussions/567) | [MCPRE-153 · #589](https://github.com/matssun/mcp-re/issues/589) — hierarchical authority architecture, component campaign |
 
 ## Active vs Legacy
 
