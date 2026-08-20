@@ -1,0 +1,185 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# MCP-RE Hierarchical Refactoring Implementation Blueprint
+
+**Status:** Working blueprint. This document describes the current method for moving the implementation toward ADR-MCPRE-061. It is deliberately separate from the durable ADR so refactoring sequence can evolve without rewriting the architectural constitution.
+
+## 1. Objective
+
+Reduce the maximum amount of security semantics a reviewer must understand simultaneously while preserving or strengthening executable guarantees.
+
+The campaign does not optimize for file count or raw LOC reduction. It uses size aggressively to locate architectural hotspots, then decomposes them according to authority, lifecycle, and assurance boundaries.
+
+## 2. Iterative cycle
+
+```mermaid
+flowchart TD
+    A[Rebaseline main]
+    B[Measure production functions and modules]
+    C[Rank by size + security relevance]
+    D[Authority census]
+    E[Investigate seams and invariants]
+    F[Fix discovered defects]
+    G[Decompose along authority boundaries]
+    H[Seal visibility and construction]
+    I[Attach tests / theorems / evidence]
+    J[Run exact required lanes]
+    K[Update architecture map and census]
+
+    A --> B --> C --> D --> E --> F --> G --> H --> I --> J --> K --> B
+```
+
+## 3. Investigation order
+
+Priority is determined by a combination of:
+
+1. production size;
+2. security consequence;
+3. number of independently describable authorities;
+4. public API surface;
+5. lifecycle/state complexity;
+6. evidence weakness or feature-lane ambiguity;
+7. known duplication or reconstruction of semantic facts.
+
+A large security module is not skipped because another metric is more sophisticated. Size is the initial searchlight when little else is known.
+
+## 4. Authority census format
+
+For each candidate, record:
+
+```text
+module/function:
+production LOC:
+total LOC:
+public surface:
+production callers:
+test-only callers:
+
+candidate authorities:
+- ...
+- ...
+
+facts owned:
+facts consumed:
+facts reconstructed:
+state/lifecycle obligations:
+unreachable branches:
+test-widened interfaces:
+formal evidence:
+feature/build lanes:
+
+recommendation:
+- decompose
+- investigate further
+- reviewed exception
+```
+
+The census must correct earlier measurements openly when call-site or feature analysis changes the result.
+
+## 5. Decomposition method
+
+For each surviving authority:
+
+1. Name the proposition the authority exists to establish.
+2. Identify raw inputs and owner-established inputs.
+3. Define its legal state/value representation.
+4. Make invalid construction impossible or explicitly fallible.
+5. Define narrow semantic projections or capabilities.
+6. Restrict subordinate visibility to the smallest ancestor that legitimately needs it.
+7. Move tests with the owner rather than widening production APIs for inspection.
+8. Replace duplicate downstream decisions with owner projections.
+9. Prove or test the property at the smallest meaningful boundary.
+10. Re-run composition tests and exact feature/build lanes.
+
+## 6. No cosmetic split rule
+
+A refactoring that only relocates code is not automatically wrong, but it must have a semantic reason such as separating a harness, lifecycle boundary, or subordinate authority from a security decision module.
+
+A split is incomplete when:
+
+- all previous helpers remain independently callable;
+- orchestration still reconstructs owner semantics;
+- tests still require widened production visibility;
+- the same consistency checks remain;
+- callers can still construct invalid combinations;
+- the original module remains the real semantic authority despite files moving elsewhere.
+
+## 7. Compiler-enforced hierarchy
+
+Preferred visibility:
+
+```text
+private            implementation detail
+pub(super)         parent authority only
+pub(in path)       explicit ancestor subtree
+pub(crate)         intentional crate-wide capability
+pub                supported external API
+```
+
+Whenever a security-relevant item is `pub(crate)` or `pub`, the review must answer why the broader authority is legitimate.
+
+## 8. Tests and proofs
+
+Each component should have:
+
+- leaf unit tests for local invariants;
+- property/negative controls for parser, bounds, and state legality;
+- relation tests for subordinate composition;
+- integration tests for the component facade;
+- theorem mappings where formal support exists;
+- exact build/feature lane identity;
+- negative controls proving the measurement mechanism fails when the property is broken.
+
+A passing command that selected zero tests is no evidence.
+
+## 9. Parallel-agent execution
+
+Parallel work begins only after the top-level authority map and component boundaries are sufficiently stable.
+
+Each agent receives exactly one vertical authority seam with:
+
+- component blueprint;
+- permitted implementation subtree;
+- public facade contract;
+- dependencies and assumptions;
+- theorem obligations;
+- test/evidence obligations;
+- prohibited cross-boundary actions.
+
+If two agents conclude they must own the same fact, neither silently proceeds. The conflict is escalated as an architecture decision.
+
+```mermaid
+flowchart TD
+    ROOT[Stable authority map]
+    T[Trust agent]
+    TLS[TLS agent]
+    V[Verification agent]
+    E[Exchange agent]
+    C[Custody agent]
+    COMP[Composition review]
+
+    ROOT --> T
+    ROOT --> TLS
+    ROOT --> V
+    ROOT --> E
+    ROOT --> C
+
+    T --> COMP
+    TLS --> COMP
+    V --> COMP
+    E --> COMP
+    C --> COMP
+```
+
+## 10. Completion criteria for a refactoring round
+
+A round is complete when:
+
+- every investigated hotspot has a documented disposition;
+- discovered security defects are fixed or explicitly tracked;
+- new owner boundaries are compiler-enforced where possible;
+- no tests widened production APIs merely for inspection;
+- architecture and component documents match current code;
+- theorem/evidence references are current;
+- exact required cargo/Bazel/feature lanes are green and non-vacuous;
+- the shallow-module census is rebaselined on the resulting main commit.
