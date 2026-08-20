@@ -169,14 +169,14 @@ fn verify_and_check(
     )?;
     // The binding is inside the protected block the verifier just parsed.
     let binding = verified
-        .request_block
-        .as_ref()
-        .and_then(|b| b.admission.clone())
+        .request_block()
+        .admission
+        .clone()
         .expect("the request carries an admission binding");
     check_admission(
         &binding,
         assertion,
-        &verified.resolved_actor.actor_id(),
+        &verified.resolved_actor().actor_id(),
         authoritative,
         PROFILE_TAG,
         &[AUD],
@@ -264,5 +264,5 @@ fn no_binding_verifies_when_admission_is_not_enforced() {
         NOW,
     )
     .expect("verifies");
-    assert!(verified.request_block.as_ref().unwrap().admission.is_none());
+    assert!(verified.request_block().admission.is_none());
 }

@@ -33,7 +33,7 @@ use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
-use mcp_re_http_profile::VerifiedHttpRequestEvidence;
+use mcp_re_http_profile::VerifiedMcpRequest;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_proxy::http_profile_dispatch::dispatch_request_with_tier_gate;
@@ -128,7 +128,7 @@ fn no_material() -> impl Fn(&ArtifactBinding) -> Option<Vec<u8>> {
 /// A signed + verified request with a fresh `nonce`. Returns both the verified
 /// evidence and the raw signed request (the e2e test needs the request to bind and
 /// verify the response's `;req` components).
-fn signed_and_verified(nonce: &str) -> (HttpRequest, VerifiedHttpRequestEvidence) {
+fn signed_and_verified(nonce: &str) -> (HttpRequest, VerifiedMcpRequest) {
     let block = request_block();
     let mut req = base_request();
     sign_request_full(

@@ -2026,7 +2026,7 @@ async fn a_configured_transport_binding_refuses_a_request_that_presents_no_peer_
     .expect("the client's own request verifies");
     let mut with_identity = served_of(&req);
     with_identity.identity = Some(mcp_re_proxy::transport::TransportIdentity::new(
-        verified.resolved_actor.actor_id(),
+        verified.resolved_actor().actor_id(),
         mcp_re_proxy::transport::IdentitySource::UriSan,
     ));
     let admitted = proxy.handle(with_identity, NOW).await;

@@ -314,6 +314,10 @@ paths = [
   "mcp-re-http-profile/src/dispatch.rs",
   "mcp-re-http-profile/src/block.rs",
   "mcp-re-http-profile/src/verify.rs",
+  # The postcondition reads `verified.request_block` on the product type, so the type's
+  # own module is part of what the proof depends on. A path set narrower than the
+  # dependency set does not go red when the gap matters — it stops asking.
+  "mcp-re-http-profile/src/verified_request.rs",
   "mcp-re-http-profile/src/verus_std_specs.rs",
 ]
 exported_contracts = ["contract://http_profile/dispatch/prepare_http_dispatch"]

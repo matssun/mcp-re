@@ -51,9 +51,10 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-http-profile/src/verify.rs"
-baseline_prod_loc = 1640
+baseline_prod_loc = 1598
 baseline_sha = "d1fc5fa"
-status = "unreviewed"
+status = "reviewed-action-required"
+review_ref = "EX-003 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-http-profile/src/scitt.rs"
@@ -557,7 +558,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-http-profile/src/lib.rs"
-baseline_prod_loc = 241
+baseline_prod_loc = 240
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -618,12 +619,6 @@ status = "unreviewed"
 [[debt]]
 path = "mcp-re-proxy/src/runtime_state.rs"
 baseline_prod_loc = 212
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-http-profile/src/verus_std_specs.rs"
-baseline_prod_loc = 211
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 

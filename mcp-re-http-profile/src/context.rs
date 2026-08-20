@@ -39,7 +39,7 @@ use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
 use crate::ids::REQUEST_EVIDENCE_BLOCK_KEY;
 use crate::ids::VERIFIED_CONTEXT_BLOCK_KEY;
-use crate::verify::VerifiedHttpRequestEvidence;
+use crate::verified_request::VerifiedMcpRequest;
 
 /// Whether a deployment has an explicitly trusted channel to its inner server.
 ///
@@ -73,7 +73,13 @@ pub struct VerifiedContext {
     /// The presented keyid. AUDIT CORRELATION ONLY: a keyid is a selector the
     /// caller chose, never a trust-resolution output. Authorize on `actor_id`.
     pub key_id: String,
-    /// The verified audience tuple, when the full profile ran.
+    /// The verified audience tuple.
+    ///
+    /// Always present on a context this crate BUILDS: [`VerifiedContext::from_verified`]
+    /// takes a [`VerifiedMcpRequest`], so the full profile ran by construction. It stays
+    /// optional because [`extract_verified_context`] also DESERIALIZES contexts, and what
+    /// an inner server receives on the wire is a separate trust question from what this
+    /// verifier concluded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audience: Option<AudienceTuple>,
     /// The request evidence handle — the audit correlation key linking whatever
@@ -87,13 +93,13 @@ impl VerifiedContext {
     /// Build the context from the verifier's own output. Constructing it from
     /// anything else would defeat the point — this type exists to say "the PEP
     /// concluded this", so only the PEP's conclusion may build it.
-    pub fn from_verified(verified: &VerifiedHttpRequestEvidence, verified_at: i64) -> Self {
+    pub fn from_verified(verified: &VerifiedMcpRequest, verified_at: i64) -> Self {
         VerifiedContext {
-            profile: verified.profile_id.clone(),
-            actor_id: verified.resolved_actor.actor_id(),
-            key_id: verified.key_id.clone(),
-            audience: verified.audience.clone(),
-            request_evidence: verified.evidence.clone(),
+            profile: verified.profile_id().to_owned(),
+            actor_id: verified.resolved_actor().actor_id(),
+            key_id: verified.key_id().to_owned(),
+            audience: Some(verified.audience().clone()),
+            request_evidence: verified.evidence().clone(),
             verified_at,
         }
     }

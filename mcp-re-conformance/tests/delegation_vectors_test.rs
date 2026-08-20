@@ -51,7 +51,7 @@ use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
-use mcp_re_http_profile::VerifiedHttpRequestEvidence;
+use mcp_re_http_profile::VerifiedMcpRequest;
 use mcp_re_http_profile::DELEGATION_ALG;
 use mcp_re_http_profile::DELEGATION_TYP;
 use mcp_re_http_profile::JWK_CRV_ED25519;
@@ -293,7 +293,7 @@ fn signed_request() -> (HttpRequest, RequestEvidence) {
     (req, ev)
 }
 
-fn recompute_verified_request(req: &HttpRequest) -> VerifiedHttpRequestEvidence {
+fn recompute_verified_request(req: &HttpRequest) -> VerifiedMcpRequest {
     verify_request_full(req, &audience(), &no_material(), &resolver(), NOW)
         .expect("frozen request re-verifies")
 }

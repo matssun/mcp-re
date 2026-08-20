@@ -61,51 +61,8 @@ use crate::sigbase::CoveredComponent;
 use crate::sigbase::SignatureParams;
 use crate::sigbase::SourceMessage;
 use crate::sign::base64_standard_decode;
-
-/// The verifier's structured product for a request (MCPRE-100): the resolved
-/// signer identity, the evidence handle (for response binding, MRTR, audit), the
-/// covered content digest, and the accepted freshness window. Downstream
-/// consumers (replay-key construction, response/body-block validation, signed
-/// rejections) read this context instead of re-parsing headers/body.
-///
-/// The verifier no longer returns "signature valid" alone — it returns a
-/// *verified evidence context*. In particular `resolved_actor` carries the
-/// trust-resolution output, so `resolved_actor.actor_id()` — not the raw
-/// `key_id` — is the identity replay and audit bind to.
-#[derive(Debug, Clone)]
-pub struct VerifiedHttpRequestEvidence {
-    /// The profile id (`tag`) the signature was accepted under (`PROFILE_TAG`).
-    pub profile_id: String,
-    /// The RFC 9421 dictionary label of the verified signature (`REQUEST_LABEL`).
-    pub signature_label: String,
-    /// The resolved signing actor (identity + key + vouched slot).
-    pub resolved_actor: ResolvedActor,
-    /// The request signature-base handle (`SHA-256` over the reconstructed base).
-    pub evidence: RequestEvidence,
-    /// The exact RFC 9421 request signature-base bytes the signature was verified
-    /// over. Retained so the MRTR continuation correlation store (ADR-MCPS-047)
-    /// can record the previous-request base the answer leg binds to; `evidence` is
-    /// its digest. Not secret — derived from the public message.
-    pub request_signature_base: Vec<u8>,
-    /// The verified `Content-Digest` header value covered by the signature.
-    pub content_digest: String,
-    pub created: i64,
-    pub expires: i64,
-    pub nonce: String,
-    /// The presented keyid. Distinct from `resolved_actor.actor_id()`: a keyid
-    /// is a wire selector, not a trust-resolution output.
-    pub key_id: String,
-    /// The verified audience tuple from the request body block. `None` on the
-    /// minimal proof path; `Some` after `verify_request_full` (MCPRE-101).
-    pub audience: Option<AudienceTuple>,
-    /// `audience_hash` over the canonical audience tuple — the replay-key
-    /// component (MCPRE-102). `None` on the minimal path.
-    pub audience_hash: Option<String>,
-    /// The parsed, validated request evidence block (audience, artifact
-    /// bindings, optional continuation). `None` on the minimal path; carried
-    /// here so replay/MRTR wiring (MCPRE-102) need not re-parse the body.
-    pub request_block: Option<HttpRequestEvidenceBlock>,
-}
+use crate::verified_request::CryptographicFloorVerifiedRequest;
+use crate::verified_request::VerifiedMcpRequest;
 
 /// The verifier's structured product for a response (MCPRE-100): the resolved
 /// server signer and the response signature-base handle. `bound_request_evidence`
@@ -827,7 +784,7 @@ pub fn verify_request<R: Into<ResolverOutcome>>(
     request: &HttpRequest,
     resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     now: i64,
-) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
+) -> Result<CryptographicFloorVerifiedRequest, HttpProfileError> {
     verify_request_with_policy(request, resolve_actor, &VerifierPolicy::default(), now)
 }
 
@@ -839,7 +796,7 @@ pub fn verify_request_with_policy<R: Into<ResolverOutcome>>(
     resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &VerifierPolicy,
     now: i64,
-) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
+) -> Result<CryptographicFloorVerifiedRequest, HttpProfileError> {
     reject_content_encoding(&request.headers)?;
     // JSON mode (§3.4): a covered exchange carries JSON. Checked before the
     // content binding — there is no point digesting a body the profile could not
@@ -922,7 +879,7 @@ pub fn verify_request_with_policy<R: Into<ResolverOutcome>>(
 
     // 6. Derive the handle from the exact verified base and return the full
     //    verified evidence context.
-    Ok(VerifiedHttpRequestEvidence {
+    Ok(CryptographicFloorVerifiedRequest {
         profile_id: PROFILE_TAG.to_owned(),
         signature_label: REQUEST_LABEL.to_owned(),
         resolved_actor,
@@ -933,9 +890,6 @@ pub fn verify_request_with_policy<R: Into<ResolverOutcome>>(
         expires,
         nonce,
         key_id,
-        audience: None,
-        audience_hash: None,
-        request_block: None,
     })
 }
 
@@ -958,7 +912,7 @@ pub fn verify_request_full<R: Into<ResolverOutcome>>(
     artifact_material: &dyn Fn(&ArtifactBinding) -> Option<Vec<u8>>,
     resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     now: i64,
-) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
+) -> Result<VerifiedMcpRequest, HttpProfileError> {
     verify_request_full_with_policy(
         request,
         expected_audience,
@@ -977,9 +931,9 @@ pub fn verify_request_full_with_policy<R: Into<ResolverOutcome>>(
     resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &VerifierPolicy,
     now: i64,
-) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
+) -> Result<VerifiedMcpRequest, HttpProfileError> {
     // 1. Cryptographic floor: content digest, evidence, trust, signature.
-    let mut verified = verify_request_with_policy(request, resolve_actor, policy, now)?;
+    let floor = verify_request_with_policy(request, resolve_actor, policy, now)?;
 
     // 2. Parse the request evidence block — protected because content-digest is a
     //    covered component of the signature just verified.
@@ -988,15 +942,19 @@ pub fn verify_request_full_with_policy<R: Into<ResolverOutcome>>(
         REQUEST_EVIDENCE_BLOCK_KEY,
         "request evidence block",
     )?;
-    block.validate(&verified.profile_id)?;
+    block.validate(floor.profile_id())?;
 
     // 3-4. Audience binding and strict artifact enforcement.
     enforce_full_profile_bindings(request, &block, expected_audience, artifact_material)?;
 
-    verified.audience_hash = Some(block.audience.audience_hash());
-    verified.audience = Some(block.audience.clone());
-    verified.request_block = Some(block);
-    Ok(verified)
+    // 5. The full product is CONSTRUCTED from the floor one, not the floor one relabelled.
+    //    There is no path that produces a `VerifiedMcpRequest` without reaching here.
+    Ok(VerifiedMcpRequest {
+        audience_hash: block.audience.audience_hash(),
+        audience: block.audience.clone(),
+        request_block: block,
+        floor,
+    })
 }
 
 /// The two full-profile checks that need inputs the request cannot supply for itself:
@@ -1132,27 +1090,27 @@ pub fn verify_response_with_policy<R: Into<ResolverOutcome>>(
 ///    explicit MCP semantic defense-in-depth ON TOP of the cryptographic `;req`
 ///    binding. A mismatch is `request_binding_mismatch`.
 ///
-/// `verified_request` is the [`VerifiedHttpRequestEvidence`] from
+/// `verified_request` is the [`VerifiedMcpRequest`] from
 /// `verify_request_full`; its `evidence` handle is the recomputed request
 /// signature-base digest compared here — no re-parse of the request.
 pub fn verify_response_full<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
-    verified_request: &VerifiedHttpRequestEvidence,
+    verified_request: &VerifiedMcpRequest,
     resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     verify_response_bound_full(
         response,
         request,
-        &verified_request.evidence,
+        verified_request.evidence(),
         resolve_actor,
         now,
     )
 }
 
 /// Full-profile response verification bound to a request evidence HANDLE
-/// ([`RequestEvidence`]) rather than the whole [`VerifiedHttpRequestEvidence`].
+/// ([`RequestEvidence`]) rather than the whole [`VerifiedMcpRequest`].
 ///
 /// This is the CLIENT-side entry point: the client that signed the request holds
 /// only the [`RequestEvidence`] handle (`SignedRequest::evidence`), not a
@@ -1254,7 +1212,7 @@ pub struct DelegationExpectations<'a> {
 /// `resolve_actor(issuer_kid, Response)` must resolve the credential's root
 /// `issuer_kid`; `is_revoked(kid)` reports revocation at the current epoch.
 ///
-/// `verified_request` is the [`VerifiedHttpRequestEvidence`] from
+/// `verified_request` is the [`VerifiedMcpRequest`] from
 /// `verify_request_full`; only its `evidence` handle is used. A client that signed
 /// the request holds only that [`RequestEvidence`] handle — it uses
 /// [`verify_delegated_response_bound_full`] directly (the delegated analogue of
@@ -1263,7 +1221,7 @@ pub struct DelegationExpectations<'a> {
 pub fn verify_delegated_response_full<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
-    verified_request: &VerifiedHttpRequestEvidence,
+    verified_request: &VerifiedMcpRequest,
     resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     expect: &DelegationExpectations<'_>,
     is_revoked: &dyn Fn(&str) -> bool,
@@ -1272,7 +1230,7 @@ pub fn verify_delegated_response_full<R: Into<ResolverOutcome>>(
     verify_delegated_response_bound_full(
         response,
         request,
-        &verified_request.evidence,
+        verified_request.evidence(),
         resolve_actor,
         expect,
         is_revoked,
@@ -1281,7 +1239,7 @@ pub fn verify_delegated_response_full<R: Into<ResolverOutcome>>(
 }
 
 /// Delegated-response verification bound to a request evidence HANDLE
-/// ([`RequestEvidence`]) rather than the whole [`VerifiedHttpRequestEvidence`] — the
+/// ([`RequestEvidence`]) rather than the whole [`VerifiedMcpRequest`] — the
 /// CLIENT-side entry point (the delegated analogue of [`verify_response_bound_full`]).
 ///
 /// Semantics are identical to [`verify_delegated_response_full`]: delegation is

@@ -36,7 +36,7 @@ use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
-use mcp_re_http_profile::VerifiedHttpRequestEvidence;
+use mcp_re_http_profile::VerifiedMcpRequest;
 use mcp_re_http_profile::DELEGATION_ALG;
 use mcp_re_http_profile::DELEGATION_TYP;
 use mcp_re_http_profile::JWK_CRV_ED25519;
@@ -129,7 +129,7 @@ fn no_material() -> impl Fn(&ArtifactBinding) -> Option<Vec<u8>> {
     move |_b: &ArtifactBinding| None
 }
 
-fn signed_request() -> (HttpRequest, RequestEvidence, VerifiedHttpRequestEvidence) {
+fn signed_request() -> (HttpRequest, RequestEvidence, VerifiedMcpRequest) {
     let mut req = base_request();
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),

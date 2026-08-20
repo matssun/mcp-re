@@ -13,9 +13,9 @@
 //! crate has a verifier for that". So the registry is typed.
 
 use mcp_re_core::SigningKey;
-use mcp_re_http_profile::policy::ProfileAlgorithm;
 use mcp_re_http_profile::sigbase::signature_base;
 use mcp_re_http_profile::sigbase::SourceMessage;
+use mcp_re_http_profile::ProfileAlgorithm;
 use mcp_re_http_profile::*;
 
 const CREATED: i64 = 1_700_000_000;

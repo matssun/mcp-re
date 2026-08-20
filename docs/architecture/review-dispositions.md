@@ -185,3 +185,72 @@ found named work, call for opposite next actions.
 that 290 of those are code and the rest is the exception argument. A file-level number is
 therefore a poor proxy for a file-level authority count here — which is ADR-061 §7 in one
 unit: **size ordered this investigation; it did not decide it.**
+
+---
+
+## EX-003 — `mcp-re-http-profile/src/verify.rs` — **census complete, disposition: decompose first**
+
+**Status:** `reviewed-action-required`. **Remediation:** [#571](https://github.com/matssun/mcp-re/issues/571)
+(response split, `_with_policy` axis) and [#572](https://github.com/matssun/mcp-re/issues/572)
+(composition theorems). **Measured:** 1598 production lines on the branch that split the
+request product; 1640 before it. **Component blueprint:**
+[`components/evidence-verification.md`](components/evidence-verification.md).
+
+Required by ADR-061 §5.3 before the work in [#570](https://github.com/matssun/mcp-re/issues/570):
+a band-3 unit gets an authority census *before* substantial new functionality, not after.
+
+### §8 question 2 — how many independently describable authorities?
+
+**Four axes, multiplied into a flat public function list.** The interface answers the
+question without reading the body:
+
+| axis | values |
+|---|---|
+| assurance | cryptographic floor · full MCP-RE profile |
+| direction | request · response |
+| binding | bound · unbound |
+| policy | default · explicit `VerifierPolicy` |
+
+plus a delegated variant of three response forms — seventeen public items over one module.
+
+### §8 questions 3–5 — decides, executes, transports
+
+It **decides** two things: whether the cryptographic floor holds, and whether the full
+profile's bindings hold. It **executes** signature-base reconstruction, digest comparison
+and trust-seam resolution, all of which have owners (`sigbase`, `digest`, `keyid`, the
+caller-supplied resolver). It **transports** nothing.
+
+Two decisions, so question 1 needs an "and" — which ADR-061 §8 names as evidence of a
+shallow authority boundary.
+
+### §8 question 10 — facts represented more than once
+
+The assurance level was represented **twice and inconsistently**: once in the name of the
+function called, and once in whether three `Option` fields were populated. Nothing related
+them, so a consumer that received the product could not recover which had run without a
+runtime probe — and one did exactly that (`prepare_http_dispatch` failed closed on a
+missing `audience_hash`, commented *"minimal-path evidence reached the dispatcher"*).
+
+### §8 question 9 — branches unreachable under the current legality model
+
+That probe. Its case is now unconstructible, so it is deleted rather than moved — the
+ADR-061 §11 operational test applied to a real check.
+
+### Disposition
+
+The request half is done in #570. The response half and the `_with_policy` axis are #571;
+the two composition theorems the split makes expressible are #572. `verify.rs` stays
+`reviewed-action-required` until those close and this census is re-run.
+
+### What the census found that the issue did not anticipate
+
+- The Verus postcondition for THM-0009 was **guarded by the assurance ambiguity**:
+  `request_block matches Some(block) ==> …` is vacuously true for a floor-verified request.
+  The type split removes the guard, so the obligation is now unconditional.
+- The verification unit's `paths` did not include the new product module, so a change to
+  the type the proof reads would not have marked the theorem dirty. Corrected in
+  `verification/policy/verification.toml`.
+- Sealing the products is **not available**: Verus rejects private fields on a transparent
+  datatype and cannot call accessors from verified code. Recorded in
+  [`docs/dev/sealed-owners.md`](../dev/sealed-owners.md) as the second measurement of a
+  rule that already existed — a proved postcondition outranks a seal.

@@ -112,9 +112,9 @@ fn signed_exchange() -> (HttpRequest, HttpResponse) {
 fn request_roundtrip_verifies_and_yields_split_form_evidence() {
     let req = signed_request();
     let verified = verify_request(&req, &resolver(), NOW).expect("verifies");
-    assert_eq!(verified.evidence.digest_alg, "sha256");
-    assert_eq!(verified.nonce, "nonce-1");
-    assert_eq!(verified.key_id, "client-key-1");
+    assert_eq!(verified.evidence().digest_alg, "sha256");
+    assert_eq!(verified.nonce(), "nonce-1");
+    assert_eq!(verified.key_id(), "client-key-1");
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn signer_and_verifier_derive_the_same_evidence_handle() {
     )
     .expect("signing succeeds");
     let verified = verify_request(&req, &resolver(), NOW).expect("verifies");
-    assert_eq!(signer_evidence, verified.evidence);
+    assert_eq!(&signer_evidence, verified.evidence());
 }
 
 #[test]
@@ -452,20 +452,20 @@ fn duplicate_authorization_fails_closed() {
 fn verified_request_exposes_resolved_actor_identity() {
     let req = signed_request();
     let v = verify_request(&req, &resolver(), NOW).expect("verifies");
-    assert_eq!(v.key_id, "client-key-1");
-    assert_eq!(v.resolved_actor.identity.role, "client");
-    assert_eq!(v.resolved_actor.identity.keyid, "client-key-1");
-    assert_eq!(v.resolved_actor.slot, SignerSlot::Request);
+    assert_eq!(v.key_id(), "client-key-1");
+    assert_eq!(v.resolved_actor().identity.role, "client");
+    assert_eq!(v.resolved_actor().identity.keyid, "client-key-1");
+    assert_eq!(v.resolved_actor().slot, SignerSlot::Request);
     // actor_id is the trust-resolution output, NOT the raw keyid.
-    let actor_id = v.resolved_actor.actor_id();
-    assert_ne!(actor_id, v.key_id);
+    let actor_id = v.resolved_actor().actor_id();
+    assert_ne!(actor_id, v.key_id());
     assert!(actor_id.starts_with("client:"));
     // deterministic + stable.
-    assert_eq!(actor_id, v.resolved_actor.identity.actor_id());
+    assert_eq!(actor_id, v.resolved_actor().identity.actor_id());
     // full verified evidence context carried forward.
-    assert_eq!(v.profile_id, "mcp-re-http-v1");
-    assert_eq!(v.signature_label, "mcp-re");
-    assert!(v.content_digest.starts_with("sha-256=:"));
+    assert_eq!(v.profile_id(), "mcp-re-http-v1");
+    assert_eq!(v.signature_label(), "mcp-re");
+    assert!(v.content_digest().starts_with("sha-256=:"));
 }
 
 /// (2)(8) A response signed by a response-slot actor verifies AND the result

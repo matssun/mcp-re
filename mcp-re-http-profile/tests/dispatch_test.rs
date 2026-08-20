@@ -30,7 +30,7 @@ use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::RetainedContinuation;
 use mcp_re_http_profile::SignerSlot;
-use mcp_re_http_profile::VerifiedHttpRequestEvidence;
+use mcp_re_http_profile::VerifiedMcpRequest;
 use mcp_re_http_profile::PROFILE_TAG;
 
 const CLIENT_A_SEED: [u8; 32] = [11u8; 32];
@@ -128,7 +128,7 @@ fn verified_request(
     key_id: &str,
     nonce: &str,
     block: &HttpRequestEvidenceBlock,
-) -> VerifiedHttpRequestEvidence {
+) -> VerifiedMcpRequest {
     let mut req = base_request();
     sign_request_full(&mut req, block, key, key_id, CREATED, EXPIRES, nonce).expect("full sign");
     verify_request_full(&req, &block.audience, &no_material(), &resolver(), NOW)

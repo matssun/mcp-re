@@ -32,7 +32,7 @@ use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
-use mcp_re_http_profile::VerifiedHttpRequestEvidence;
+use mcp_re_http_profile::VerifiedMcpRequest;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_proxy::async_replay::AsyncReplayTier;
@@ -166,7 +166,7 @@ fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
 
 /// Sign an RFC 9421 request carrying a DPoP artifact binding (its credential is the
 /// covered `Authorization` header), and verify it for the response binding.
-fn signed_request(nonce: &str) -> (HttpRequest, RequestEvidence, VerifiedHttpRequestEvidence) {
+fn signed_request(nonce: &str) -> (HttpRequest, RequestEvidence, VerifiedMcpRequest) {
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
         audience: audience(),
