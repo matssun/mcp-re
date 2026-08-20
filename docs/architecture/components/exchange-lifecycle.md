@@ -152,7 +152,7 @@ The first row is the interesting one. The property is now structurally true for 
 
 ## 9. Implementation map
 
-Measured by the ADR-061 §5.1 rule on `main` @ `527b1ac`.
+Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_gate.py::production_lines`).
 
 | file | prod | current role | target role |
 |---|---:|---|---|

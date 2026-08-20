@@ -72,7 +72,7 @@ Each component blueprint's **Known deviations** section is the diff between the 
 
 ## Measurements in these documents
 
-Production-line counts quoted in the component blueprints are measured by the ADR-061 §5.1 rule — every line **not inside a test region**, where a region opens at `^#\[cfg\((all\()?test` and closes with its module, counting resuming afterwards — on `main` at commit `527b1ac`. They will drift; re-measure before acting on one. A blueprint quoting a number without stating the rule and the commit is quoting nothing.
+Production-line counts quoted in the component blueprints are measured by the ADR-061 §5.1 rule — every line **not inside a test region**, where a region opens at `^#\[cfg\((all\()?test` and closes with its module, counting resuming afterwards — on `main` at commit `fede93b`. They will drift; re-measure before acting on one. A blueprint quoting a number without stating the rule and the commit is quoting nothing.
 
 Re-measure with the gate's counter, not by hand:
 
@@ -82,6 +82,44 @@ python3 -c "import sys; sys.path.insert(0,'scripts'); from module_size_gate impo
 ```
 
 A hand-rolled count that stops at the first `#[cfg(test)]` reported `trust_plane.rs` as **134** production lines; it is **690**, because the file has production code after that region. Every count in these documents was corrected against `scripts/module_size_gate.py` for exactly that reason.
+
+## Current inventory — `main` @ `fede93b`
+
+Re-measured after the ADR-061 merge, per the ADR's own procedure: **merge → establish the
+exact new main SHA → re-measure the architecture inventory → begin the ruled component.**
+Re-measuring refreshes the census; it does **not** reset either ratchet or grant existing
+debt new headroom. Both gates pass at their pre-merge baselines on this SHA.
+
+`git diff --name-only 527b1ac fede93b -- '*/src/*.rs'` returns **zero files**, so every
+count below is re-verified rather than carried over.
+
+| §5.3 band | files |
+|---|---:|
+| >2,000 — exceptional review surface | 1 |
+| >1,000 — architectural hotspot | 9 |
+| >500 — high-priority shallow-module investigation | 26 |
+| >200 — mandatory review | 64 |
+| **total in the debt registry** | **100** |
+
+The units the bands select first, with interface width, since ADR-061 §5.3 is explicit that
+size orders the queue while §8 question 2 decides the outcome:
+
+| prod | pub fn | pub ty | priv fn | unit |
+|---:|---:|---:|---:|---|
+| 2127 | 11 | 2 | 44 | `mcp-re-proxy/src/http_profile_serve.rs` — the only band-4 unit |
+| 1907 | 23 | 9 | 100 | `mcp-re-proxy/src/tls.rs` |
+| 1640 | 23 | 4 | 15 | `mcp-re-http-profile/src/verify.rs` — **the ruled first component** |
+| 1629 | 25 | 12 | 70 | `mcp-re-http-profile/src/scitt.rs` — band 3, no blueprint yet |
+| 1305 | 25 | 21 | 73 | `mcp-re-proxy/src/transport.rs` — band 3, no blueprint yet |
+| 1271 | 14 | 3 | 91 | `mcp-re-proxy/src/ocsp.rs` — band 3, no blueprint yet |
+| 1177 | 6 | 0 | 184 | `mcp-re-proxy/src/cli.rs` — reviewed exception under ADR-058 |
+| 1149 | 5 | 7 | 105 | `mcp-re-proxy/src/gcp_kms_keysource.rs` |
+| 1114 | 32 | 12 | 44 | `mcp-re-client-core/src/response.rs` — band 3, no blueprint yet |
+| 1037 | 3 | 0 | 31 | `mcp-re-proxy/src/app.rs` — carries a §14 function-level exception |
+
+Five band-3 hotspots have no component blueprint (`scitt.rs`, `transport.rs`, `ocsp.rs`,
+`response.rs`, and the two KMS key sources). They are named here so their absence is a
+recorded gap rather than an implied claim of coverage.
 
 ## Existing ADRs this hierarchy composes
 
