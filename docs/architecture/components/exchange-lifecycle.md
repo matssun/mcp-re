@@ -156,7 +156,7 @@ Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_g
 
 | file | prod | current role | target role |
 |---|---:|---|---|
-| `mcp-re-proxy/src/exchange_state.rs` | 789 | the transition relation and its projections — 17 pub fns, 4 private fns | unchanged. Long and **deep**; the census verdict is *nothing to do here*, recorded as [EX-001](../exceptions.md) and carried in the debt registry as `reviewed-exception` |
+| `mcp-re-proxy/src/exchange_state.rs` | 789 | the transition relation and its projections — 17 pub fns, 4 private fns | unchanged. Long and **deep**; the census verdict is *nothing to do here*, recorded as [EX-001](../review-dispositions.md) and carried in the debt registry as `reviewed-exception` |
 | `mcp-re-proxy/src/request_stages.rs` | 159 | stage vocabulary + a prose ordering table | vocabulary only; the prose table is deleted, not corrected (§11) |
 | `mcp-re-proxy/src/http_profile_serve.rs` | 2127 | serving assembly **plus** six other authorities (§11) | the assembly only, consuming stage-returned transitions |
 | `mcp-re-proxy/src/async_serve.rs` | 898 | async serving runtime | subordinate to the same machine |

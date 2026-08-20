@@ -32,7 +32,7 @@ flowchart TD
 - [**ADR-MCPRE-061**](https://github.com/matssun/mcp-re/discussions/567) — the durable architectural decision. ✅ Accepted 2026-08-20; the Discussion is the source of truth (`docs/adr/README.md`).
 - [`implementation-blueprint.md`](implementation-blueprint.md) — current execution method for the refactoring campaign.
 - [`component-blueprint-template.md`](component-blueprint-template.md) — standard anatomy for subordinate component design documents.
-- [`exceptions.md`](exceptions.md) — the ADR-061 §14 exception register: the records `config/module-size-debt.toml`'s `exception_ref` fields point at, and the censuses that declined to grant one.
+- [`review-dispositions.md`](review-dispositions.md) — the ADR-061 §14 review dispositions: the records `config/module-size-debt.toml`'s `review_ref` fields point at, granted and declined alike, and the disposition lifecycle they move through.
 
 ## Initial component blueprints
 
@@ -51,7 +51,7 @@ is DESIGN-only until it receives its own Go. The backlog that carries it is
 
 0. **Reconcile the review ledger before it drives work.** A registry introduced to
    distinguish unreviewed debt from reviewed exceptions may not open the campaign
-   misclassifying its own review state — [`exceptions.md`](exceptions.md).
+   misclassifying its own review state — [`review-dispositions.md`](review-dispositions.md).
 1. **Evidence verification — split the cryptographic floor from the full profile.**
    [`components/evidence-verification.md`](components/evidence-verification.md) §2. This is
    the blocking step: the theorem and negative-control gaps in that component all follow
@@ -126,7 +126,7 @@ size orders the queue while §8 question 2 decides the outcome:
 | 1177 | 6 | 0 | 184 | `mcp-re-proxy/src/cli.rs` — **unreviewed**; ADR-058 ruled on `parse_args`, not on the file |
 | 1149 | 5 | 7 | 105 | `mcp-re-proxy/src/gcp_kms_keysource.rs` |
 | 1114 | 32 | 12 | 44 | `mcp-re-client-core/src/response.rs` — band 3, no blueprint yet |
-| 1037 | 3 | 0 | 31 | `mcp-re-proxy/src/app.rs` — **unreviewed**; census complete, exception not granted ([EX-002](exceptions.md)) |
+| 1037 | 3 | 0 | 31 | `mcp-re-proxy/src/app.rs` — **reviewed-action-required**; census complete, disposition *decompose first* ([EX-002](review-dispositions.md), remediation #592) |
 
 **Six** band-3 hotspots have no component blueprint: `scitt.rs`, `transport.rs`, `ocsp.rs`,
 `cli.rs`, `response.rs`, and the two KMS key sources — one census covering both backends,
