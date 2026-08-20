@@ -237,7 +237,7 @@ disposition are separate facts** — so it has three states, not two:
 A completed census must stay distinguishable from an unperformed one *even when its
 disposition is "decompose before any exception"* — those two call for opposite next
 actions. Both reviewed states carry a `review_ref` naming their record in
-[`docs/architecture/exceptions.md`](docs/architecture/exceptions.md), and the gate fails if
+[`docs/architecture/review-dispositions.md`](docs/architecture/review-dispositions.md), and the gate fails if
 the named document does not exist: a completed review must point at a record rather than at
 a memory of one. The field was `exception_ref` until a §14 record first *declined* an
 exception; a leftover `exception_ref` is refused as an unknown field.

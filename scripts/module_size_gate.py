@@ -222,7 +222,7 @@ def referenced_documents(review_ref: str) -> list[str]:
     """The repo-relative document paths a `review_ref` names.
 
     Free text with a path in it, so a record can be cited as "EX-001 in
-    docs/architecture/exceptions.md" rather than as a bare filename that says nothing
+    docs/architecture/review-dispositions.md" rather than as a bare filename that says nothing
     about which record.
     """
     return re.findall(r"\S+\.md", review_ref)

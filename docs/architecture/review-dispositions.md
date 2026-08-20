@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# ADR-MCPRE-061 §14 review register
+# ADR-MCPRE-061 §14 review dispositions
 
 The durable records that `config/module-size-debt.toml`'s `review_ref` fields point at.
 
@@ -34,8 +34,9 @@ unreviewed
 Every permitted move preserves or increases what is known. **Nothing returns to
 `unreviewed`** — that would tell the next reader nobody had looked.
 
-The record IDs keep the `EX-` prefix they were created with; it identifies the record, not
-its disposition.
+Record IDs keep the `EX-` prefix. It is stable identity vocabulary — it names the record,
+not its disposition — and identities are not churned because our understanding of the
+register improved.
 
 **Review granularity equals exception granularity.** A function-level exception does not
 make its file a reviewed exception, and a ruling about one aspect of a unit does not close

@@ -11,7 +11,7 @@
 #   reviewed-exception         investigated, and deliberately kept intact
 #
 # Both reviewed states carry a `review_ref` naming their ADR-MCPRE-061 §14 record in
-# `docs/architecture/exceptions.md`, and the gate checks the named document exists: a
+# `docs/architecture/review-dispositions.md`, and the gate checks the named document exists: a
 # completed review must point at a record, not at a memory of one. The field was called
 # `exception_ref` until a §14 record first DECLINED an exception (EX-002); a leftover
 # `exception_ref` is now refused as an unknown field.
@@ -96,7 +96,7 @@ path = "mcp-re-proxy/src/app.rs"
 baseline_prod_loc = 1037
 baseline_sha = "d1fc5fa"
 status = "reviewed-action-required"
-review_ref = "EX-002 in docs/architecture/exceptions.md"
+review_ref = "EX-002 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-transport/src/lib.rs"
@@ -139,7 +139,7 @@ path = "mcp-re-proxy/src/exchange_state.rs"
 baseline_prod_loc = 789
 baseline_sha = "d1fc5fa"
 status = "reviewed-exception"
-review_ref = "EX-001 in docs/architecture/exceptions.md"
+review_ref = "EX-001 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/aws_sts.rs"
