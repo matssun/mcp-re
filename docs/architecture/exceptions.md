@@ -1,15 +1,41 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# ADR-MCPRE-061 §14 exception register
+# ADR-MCPRE-061 §14 review register
 
-The durable records that `config/module-size-debt.toml`'s `exception_ref` fields point at.
+The durable records that `config/module-size-debt.toml`'s `review_ref` fields point at.
 
-A registry entry says one of two things about a unit over the 200-line threshold:
+A §14 record adjudicates a unit. It does **not** necessarily grant it an exception — this
+register holds declined censuses too, because:
+
+> **Investigation status and disposition are separate facts.** A completed census must stay
+> distinguishable from an unperformed one, even when its disposition is *decompose before
+> any exception*.
+
+So a registry entry says one of three things about a unit over the 200-line threshold:
 
 | status | meaning |
 |---|---|
-| `unreviewed` | over the threshold and **not yet investigated** |
+| `unreviewed` | over the threshold and **nobody has investigated it** |
+| `reviewed-action-required` | investigated under ADR-061 §8; **specific architectural work identified**, and the record below names it |
 | `reviewed-exception` | investigated under ADR-061 §8 and **deliberately kept intact**, with the record below saying why |
+
+The lifecycle, enforced by `scripts/module_size_gate.py` against `origin/main`:
+
+```text
+unreviewed
+    ├──> reviewed-exception
+    └──> reviewed-action-required
+              │  remediation + re-census
+              ├──> reviewed-exception
+              ├──> reviewed-action-required   (the re-census found more)
+              └──> entry removed, once the unit is <= 200 production lines
+```
+
+Every permitted move preserves or increases what is known. **Nothing returns to
+`unreviewed`** — that would tell the next reader nobody had looked.
+
+The record IDs keep the `EX-` prefix they were created with; it identifies the record, not
+its disposition.
 
 **Review granularity equals exception granularity.** A function-level exception does not
 make its file a reviewed exception, and a ruling about one aspect of a unit does not close
@@ -102,9 +128,11 @@ because there is no subordinate: the file is deep, not wide.
 
 ---
 
-## EX-002 — `mcp-re-proxy/src/app.rs` — **census complete, exception NOT granted**
+## EX-002 — `mcp-re-proxy/src/app.rs` — **census complete, disposition: decompose first**
 
-**Status:** stays `unreviewed`. **Measured:** 1037 production lines on `main` @ `a735e8c`.
+**Status:** `reviewed-action-required` — the census is complete and the disposition is
+*decompose first*. **Remediation:** [#592](https://github.com/matssun/mcp-re/issues/592).
+**Measured:** 1037 production lines on `main` @ `a735e8c`.
 
 This record exists because the registry may not be changed on the strength of a
 function-level ruling. `app.rs` carries a well-substantiated **function** exception for
@@ -141,10 +169,14 @@ An authority with its own constant, its own two-valued semantics, its own tests,
 existing owner next door (`crate::audit_sink`, which already owns the flush) is not a unit
 being *deliberately kept intact*. It is a unit nobody has moved yet.
 
-ADR-061 §14 records a decision to keep something whole. It is not a place to park work.
-So `app.rs` keeps `status = "unreviewed"` and this record states precisely what remains:
-**relocate authority G to the audit-sink owner, then re-run this census.** Authorities B
-through F are closed by it and need not be re-argued.
+ADR-061 §14 records a decision to keep something whole. It is not a place to park work. So
+`app.rs` does not become `reviewed-exception`, and this record states precisely what
+remains: **relocate authority G to the audit-sink owner, then re-run this census.**
+Authorities B through F are closed by it and need not be re-argued.
+
+Its status is `reviewed-action-required`, not `unreviewed`. Those are different facts and
+the next agent must be able to tell them apart: nobody having looked, and having looked and
+found named work, call for opposite next actions.
 
 ### The measurement worth keeping
 

@@ -17,10 +17,24 @@ records what was already oversized at a baseline SHA. From that point:
     registered file grows                -> FAIL
     registered file shrinks              -> PASS (and the entry is updated)
     registered file reaches <= threshold -> FAIL until the entry is removed
-    reviewed large unit                  -> entry carries an ADR-061 §14 exception ref
+    reviewed large unit                  -> entry carries an ADR-061 §14 `review_ref`
 
 The last two are what stop the registry rotting into a permanent allowlist: an entry that
 no longer describes reality is an error, not a shrug.
+
+# Investigation status and disposition are separate facts
+
+An entry's `status` says what is KNOWN about a unit, and there are three states because
+there are three facts to tell apart:
+
+    unreviewed                 nobody has investigated it
+    reviewed-action-required   investigated; specific architectural work identified
+    reviewed-exception         investigated, and deliberately kept intact
+
+A completed census whose disposition is "decompose first" is still a completed census. If
+it were recorded as `unreviewed`, the next reader would be told nobody had looked, and
+would repeat the work — so `PERMITTED_TRANSITIONS` refuses every move back toward
+`unreviewed`, checked against `origin/main` on every run.
 
 # Measuring production lines
 
@@ -72,7 +86,35 @@ TEST_ATTR = re.compile(r"^#\[cfg\((all\()?test\b")
 # Directories that are not this repository's production Rust.
 SKIP_DIRS = {"target", "node_modules", ".git", "bazel-out", "vendor"}
 
-STATUSES = {"unreviewed", "reviewed-exception"}
+#: ADR-MCPRE-061 §14 dispositions. Investigation status and disposition are separate facts:
+#: a completed census must stay distinguishable from an unperformed one EVEN WHEN its
+#: disposition is "decompose before any exception". Collapsing `reviewed-action-required`
+#: into `unreviewed` would tell the next agent that nobody has looked.
+STATUSES = {"unreviewed", "reviewed-exception", "reviewed-action-required"}
+
+#: Both reviewed dispositions must name the record that adjudicated them. The field is
+#: `review_ref`, not `exception_ref`: EX-002 is a completed census that DECLINED an
+#: exception, so the reference is to an adjudication, not to a grant.
+REVIEWED = {"reviewed-exception", "reviewed-action-required"}
+
+#: Anything else in a `[[debt]]` table is a typo or a stale field name, and both fail.
+ENTRY_FIELDS = {"path", "baseline_prod_loc", "baseline_sha", "status", "review_ref"}
+
+#: The permitted disposition transitions, as ADR-MCPRE-061 §14 defines the lifecycle.
+#: Every one of them either preserves or increases what is known about a unit; none
+#: returns it to "nobody has investigated this".
+PERMITTED_TRANSITIONS = {
+    ("unreviewed", "unreviewed"),
+    ("unreviewed", "reviewed-exception"),
+    ("unreviewed", "reviewed-action-required"),
+    ("reviewed-action-required", "reviewed-action-required"),
+    ("reviewed-action-required", "reviewed-exception"),
+    ("reviewed-exception", "reviewed-exception"),
+    # A re-census of a granted exception may find new work. Refusing this would force the
+    # registry to assert that no work exists, which is the defect the lifecycle exists to
+    # prevent — so it is permitted, unlike any move back toward `unreviewed`.
+    ("reviewed-exception", "reviewed-action-required"),
+}
 
 
 def production_lines(text: str) -> int:
@@ -176,14 +218,23 @@ def check(root: Path, registry: dict[str, dict]) -> tuple[list[str], int]:
     return problems, len(sources)
 
 
-def referenced_documents(exception_ref: str) -> list[str]:
-    """The repo-relative document paths an `exception_ref` names.
+def referenced_documents(review_ref: str) -> list[str]:
+    """The repo-relative document paths a `review_ref` names.
 
     Free text with a path in it, so a record can be cited as "EX-001 in
     docs/architecture/exceptions.md" rather than as a bare filename that says nothing
     about which record.
     """
-    return re.findall(r"\S+\.md", exception_ref)
+    return re.findall(r"\S+\.md", review_ref)
+
+
+def permitted_transition(old: str, new: str) -> bool:
+    """Whether a disposition may move from `old` to `new` (ADR-MCPRE-061 §14).
+
+    Total, so the selftest can assert the relation rather than re-implement it. An
+    unknown status is not a transition question — `validate_registry` rejects it first.
+    """
+    return (old, new) in PERMITTED_TRANSITIONS
 
 
 def validate_registry(registry: dict[str, dict], root: Path | None = None) -> list[str]:
@@ -197,27 +248,33 @@ def validate_registry(registry: dict[str, dict], root: Path | None = None) -> li
             problems.append(
                 f"{rel}: status `{status}` is not one of {sorted(STATUSES)}"
             )
-        if status == "reviewed-exception" and not entry.get("exception_ref"):
+        if status in REVIEWED and not entry.get("review_ref"):
             problems.append(
-                f"{rel}: status is `reviewed-exception` but no `exception_ref` names the "
-                f"ADR-MCPRE-061 §14 record"
+                f"{rel}: status is `{status}` but no `review_ref` names the "
+                f"ADR-MCPRE-061 §14 record that adjudicated it"
+            )
+        unknown = sorted(set(entry) - ENTRY_FIELDS)
+        if unknown:
+            problems.append(
+                f"{rel}: unknown debt field(s) {unknown} — `exception_ref` was renamed to "
+                f"`review_ref` because a §14 record may also DECLINE an exception"
             )
         # A reference to a record that is not there is the same defect as a stale entry:
         # the registry claims the review exists and nothing can be read to check it. The
         # point of `reviewed-exception` is that it points at evidence.
-        ref = entry.get("exception_ref")
+        ref = entry.get("review_ref")
         if ref and root is not None:
             named = referenced_documents(ref)
             if not named:
                 problems.append(
-                    f"{rel}: `exception_ref` names no document — cite the record's file so "
+                    f"{rel}: `review_ref` names no document — cite the record's file so "
                     f"the claim can be read"
                 )
             for doc in named:
                 if not (root / doc).exists():
                     problems.append(
-                        f"{rel}: `exception_ref` names {doc}, which does not exist — a "
-                        f"reviewed exception must point at a record, not at a memory of one"
+                        f"{rel}: `review_ref` names {doc}, which does not exist — a "
+                        f"completed review must point at a record, not at a memory of one"
                     )
     return problems
 
@@ -352,7 +409,7 @@ def selftest() -> int:
                               "baseline_prod_loc": THRESHOLD + 2,
                               "baseline_sha": "0" * 7,
                               "status": "reviewed-exception",
-                              "exception_ref": "EX-000 in record.md"}}
+                              "review_ref": "EX-000 in record.md"}}
         if validate_registry(reviewed, root):
             print("selftest FAIL: a reviewed exception citing a real record was rejected")
             return 1
@@ -368,17 +425,86 @@ def selftest() -> int:
             print(f"selftest FAIL: a reviewed exception was allowed to grow: {problems}")
             return 1
 
+        # A completed census whose disposition is "decompose first" is still a completed
+        # census, and the registry has a state for it.
+        big.write_text("\n".join(f"fn f{i}() {{}}" for i in range(THRESHOLD + 2)) + "\n")
+        action = {rel_big: dict(reviewed[rel_big], status="reviewed-action-required")}
+        if validate_registry(action, root):
+            print("selftest FAIL: a reviewed-action-required entry with a record was rejected")
+            return 1
+        problems, _ = check(root, action)
+        if problems:
+            print(f"selftest FAIL: reviewed-action-required at its baseline failed: {problems}")
+            return 1
+
+        # ...and it is not a licence to grow either.
+        big.write_text(big.read_text() + "fn more() {}\n")
+        problems, _ = check(root, action)
+        if not any("the ratchet only turns one way" in p for p in problems):
+            print(f"selftest FAIL: reviewed-action-required was allowed to grow: {problems}")
+            return 1
+
         # A record that is not there is the same defect as a stale entry.
         record.unlink()
         if not any("does not exist" in p for p in validate_registry(reviewed, root)):
-            print("selftest FAIL: an exception_ref naming a missing record was accepted")
+            print("selftest FAIL: a review_ref naming a missing record was accepted")
             return 1
 
     # Registry schema validation.
-    bad = {"a.rs": {"path": "a.rs", "baseline_prod_loc": 1, "baseline_sha": "x",
-                    "status": "reviewed-exception"}}
-    if not any("exception_ref" in p for p in validate_registry(bad)):
-        print("selftest FAIL: reviewed-exception without a reference was accepted")
+    for reviewed_status in sorted(REVIEWED):
+        bad = {"a.rs": {"path": "a.rs", "baseline_prod_loc": 1, "baseline_sha": "x",
+                        "status": reviewed_status}}
+        if not any("review_ref" in p for p in validate_registry(bad)):
+            print(f"selftest FAIL: {reviewed_status} without a reference was accepted")
+            return 1
+
+    # The renamed field does not linger: a stale `exception_ref` is an unknown field.
+    stale = {"a.rs": {"path": "a.rs", "baseline_prod_loc": 1, "baseline_sha": "x",
+                      "status": "unreviewed", "exception_ref": "EX-000 in record.md"}}
+    if not any("unknown debt field" in p for p in validate_registry(stale)):
+        print("selftest FAIL: the pre-rename `exception_ref` field was accepted")
+        return 1
+
+    # The §14 disposition lifecycle, asserted as a relation rather than restated.
+    permitted = [
+        ("unreviewed", "reviewed-exception"),
+        ("unreviewed", "reviewed-action-required"),
+        ("reviewed-action-required", "reviewed-action-required"),
+        ("reviewed-action-required", "reviewed-exception"),
+        ("reviewed-exception", "reviewed-action-required"),
+    ]
+    # Nothing returns to `unreviewed`: that would say nobody had looked.
+    refused = [
+        ("reviewed-exception", "unreviewed"),
+        ("reviewed-action-required", "unreviewed"),
+    ]
+    for old_s, new_s in permitted:
+        if not permitted_transition(old_s, new_s):
+            print(f"selftest FAIL: `{old_s}` -> `{new_s}` should be permitted")
+            return 1
+    for old_s, new_s in refused:
+        if permitted_transition(old_s, new_s):
+            print(f"selftest FAIL: `{old_s}` -> `{new_s}` should be refused")
+            return 1
+    for status in sorted(STATUSES):
+        if not permitted_transition(status, status):
+            print(f"selftest FAIL: `{status}` -> itself should be permitted")
+            return 1
+
+    # And the relation is actually APPLIED, not merely defined.
+    before = {"a.rs": {"path": "a.rs", "baseline_prod_loc": 1, "baseline_sha": "x",
+                       "status": "reviewed-action-required",
+                       "review_ref": "EX-000 in record.md"}}
+    after = {"a.rs": dict(before["a.rs"], status="unreviewed")}
+    if not any("does not permit" in p for p in check_transitions(before, after)):
+        print("selftest FAIL: a completed census was allowed back to `unreviewed`")
+        return 1
+    if check_transitions(before, {"a.rs": dict(before["a.rs"], status="reviewed-exception")}):
+        print("selftest FAIL: a permitted disposition transition was refused")
+        return 1
+    # A unit that is not in the baseline is a new debt, not a transition.
+    if check_transitions({}, after):
+        print("selftest FAIL: a newly registered file was judged as a transition")
         return 1
     bad2 = {"a.rs": {"path": "a.rs", "baseline_prod_loc": 1, "baseline_sha": "x",
                      "status": "whatever"}}
@@ -387,8 +513,8 @@ def selftest() -> int:
         return 1
 
     print("module-size gate selftest: PASS (7 counter cases, ratchet in both directions, "
-          "empty scope, stale + malformed registry entries, the §14 reviewed-exception "
-          "transition and its two failure modes)")
+          "empty scope, stale + malformed registry entries, the §14 disposition lifecycle "
+          "and its refusals, and the pre-rename `exception_ref` field)")
     return 0
 
 
@@ -396,6 +522,52 @@ def empty_scope_is_failure(examined: int) -> bool:
     """A gate that examined nothing must not report OK. Named so the selftest can assert
     the contract rather than re-implement it."""
     return examined == 0
+
+
+def previous_registry(ref: str = "origin/main") -> tuple[dict[str, dict] | None, str]:
+    """The registry as of `ref`, and a sentence saying which it is.
+
+    Returns `(None, why)` when the ref cannot be read. The caller PRINTS that sentence: a
+    transition check that quietly no-ops when it cannot find its baseline is the "green
+    that measured nothing" failure applied to this gate, and a skipped check must be
+    visible in the output rather than inferred from its silence.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "show", f"{ref}:config/module-size-debt.toml"],
+            cwd=REPO, capture_output=True, text=True, check=True,
+        ).stdout
+    except Exception as e:  # noqa: BLE001 - any git failure is the same answer here
+        return None, f"no baseline registry at {ref} ({type(e).__name__})"
+    entries = {}
+    for entry in tomllib.loads(out).get("debt", []):
+        entries[entry["path"]] = entry
+    return entries, f"against {ref}"
+
+
+def check_transitions(previous: dict[str, dict], current: dict[str, dict]) -> list[str]:
+    """Refuse a disposition change ADR-MCPRE-061 §14 does not permit.
+
+    Only entries present in BOTH registries are transitions. An entry that appears is a
+    new debt (the threshold rules judge it) and one that disappears is a paid or removed
+    debt (the `debt is paid` and `not in the debt registry` rules judge that).
+    """
+    problems = []
+    for rel, entry in current.items():
+        before = previous.get(rel)
+        if before is None:
+            continue
+        old = before.get("status")
+        new = entry.get("status")
+        if old not in STATUSES or new not in STATUSES:
+            continue
+        if not permitted_transition(old, new):
+            problems.append(
+                f"{rel}: disposition moved `{old}` -> `{new}`, which ADR-MCPRE-061 §14 does "
+                f"not permit — a completed census may not be returned to `unreviewed`, "
+                f"because that tells the next reader nobody has looked"
+            )
+    return problems
 
 
 def baseline_sha() -> str:
@@ -409,8 +581,15 @@ def baseline_sha() -> str:
 
 
 def emit_registry() -> int:
-    """Print a debt registry for the current tree. Used once, to baseline."""
+    """Print a debt registry for the current tree.
+
+    Dispositions and their `review_ref`s are CARRIED FORWARD from the existing registry.
+    Re-emitting used to stamp every entry `unreviewed`, which would silently erase every
+    completed census — the same defect the disposition states exist to prevent, arriving
+    through the tool that refreshes the numbers.
+    """
     sha = baseline_sha()
+    existing = load_registry(REGISTRY)
     rows = []
     for p in rust_sources(REPO):
         prod = production_lines(p.read_text(encoding="utf-8", errors="replace"))
@@ -419,11 +598,18 @@ def emit_registry() -> int:
     rows.sort(key=lambda r: (-r[1], r[0]))
     print(f"# Baselined at {sha}: {len(rows)} files over {THRESHOLD} production lines.")
     for rel, prod in rows:
+        prior = existing.get(rel, {})
+        status = prior.get("status", "unreviewed")
         print("\n[[debt]]")
         print(f'path = "{rel}"')
         print(f"baseline_prod_loc = {prod}")
-        print(f'baseline_sha = "{sha}"')
-        print('status = "unreviewed"')
+        # A number that did not move keeps the SHA where it was established; only a
+        # changed count is newly baselined.
+        established = prior.get("baseline_sha") if prior.get("baseline_prod_loc") == prod else None
+        print(f'baseline_sha = "{established or sha}"')
+        print(f'status = "{status}"')
+        if prior.get("review_ref"):
+            print(f'review_ref = "{prior["review_ref"]}"')
     return 0
 
 
@@ -436,7 +622,9 @@ def main() -> int:
     registry = load_registry(REGISTRY)
     schema_problems = validate_registry(registry, REPO)
     problems, examined = check(REPO, registry)
-    problems = schema_problems + problems
+    previous, baseline_note = previous_registry()
+    transition_problems = check_transitions(previous, registry) if previous is not None else []
+    problems = schema_problems + problems + transition_problems
 
     if empty_scope_is_failure(examined):
         print("module-size gate: FAIL — examined 0 production Rust files. A gate that "
@@ -452,13 +640,18 @@ def main() -> int:
         )
         return 1
 
-    unreviewed = sum(1 for e in registry.values() if e["status"] == "unreviewed")
-    excepted = len(registry) - unreviewed
+    def with_status(name: str) -> int:
+        return sum(1 for e in registry.values() if e.get("status") == name)
+
+    unreviewed = with_status("unreviewed")
+    excepted = with_status("reviewed-exception")
+    action_required = with_status("reviewed-action-required")
     print(
         f"module-size gate: OK — {examined} production Rust files examined against a "
         f"{THRESHOLD}-line threshold (production lines = every line not inside a test region (a region opens at ^#[cfg((all()?test and closes with its module; counting resumes after it); ADR-MCPRE-061 §5.1). Debt registry: "
-        f"{len(registry)} file(s) — {unreviewed} unreviewed, {excepted} with a §14 "
-        f"exception. No new oversized file, no registered file grew."
+        f"{len(registry)} file(s) — {unreviewed} unreviewed, {excepted} reviewed-exception, "
+        f"{action_required} reviewed-action-required. No new oversized file, no registered "
+        f"file grew. Disposition transitions checked {baseline_note}."
     )
     return 0
 

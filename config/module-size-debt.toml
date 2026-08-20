@@ -3,11 +3,21 @@
 # Module-size debt registry — ADR-MCPRE-061 §6.3, §6.4.
 #
 # Enforced by `scripts/module_size_gate.py`. This is a DEBT REGISTER, not an exception
-# mechanism. An entry means "over the 200-line threshold and not yet investigated". A unit
-# that has been investigated and deliberately kept intact carries
-# `status = "reviewed-exception"` and an `exception_ref` naming its ADR-MCPRE-061 §14
-# record in `docs/architecture/exceptions.md`. The gate checks that the named document
-# exists: a reviewed exception must point at a record, not at a memory of one.
+# mechanism. Investigation status and disposition are separate facts, so there are three
+# states rather than two:
+#
+#   unreviewed                 over the threshold, and nobody has investigated it
+#   reviewed-action-required   investigated; specific architectural work identified
+#   reviewed-exception         investigated, and deliberately kept intact
+#
+# Both reviewed states carry a `review_ref` naming their ADR-MCPRE-061 §14 record in
+# `docs/architecture/exceptions.md`, and the gate checks the named document exists: a
+# completed review must point at a record, not at a memory of one. The field was called
+# `exception_ref` until a §14 record first DECLINED an exception (EX-002); a leftover
+# `exception_ref` is now refused as an unknown field.
+#
+# Permitted transitions are checked against `origin/main`. Every one preserves or increases
+# what is known, and NOTHING returns to `unreviewed` — that would say nobody had looked.
 #
 # Review granularity equals exception granularity. A function-level exception does not make
 # its file a reviewed exception — `mcp-re-proxy/src/cli.rs` stays `unreviewed` despite the
@@ -85,7 +95,8 @@ status = "unreviewed"
 path = "mcp-re-proxy/src/app.rs"
 baseline_prod_loc = 1037
 baseline_sha = "d1fc5fa"
-status = "unreviewed"
+status = "reviewed-action-required"
+review_ref = "EX-002 in docs/architecture/exceptions.md"
 
 [[debt]]
 path = "mcp-re-transport/src/lib.rs"
@@ -128,7 +139,7 @@ path = "mcp-re-proxy/src/exchange_state.rs"
 baseline_prod_loc = 789
 baseline_sha = "d1fc5fa"
 status = "reviewed-exception"
-exception_ref = "EX-001 in docs/architecture/exceptions.md"
+review_ref = "EX-001 in docs/architecture/exceptions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/aws_sts.rs"

@@ -225,21 +225,34 @@ be created. Two registries carry that debt:
 - `config/module-size-debt.toml` — files over 200 production lines at the baseline SHA;
 - `config/clippy-debt.toml` — per-crate counts of the adopted lints.
 
-An entry means **"over the threshold and not yet investigated"** — it is a debt register,
-not an exception mechanism. A unit that has been investigated and deliberately kept intact
-gets `status = "reviewed-exception"` plus an `exception_ref` naming the B-case record in
-[`docs/architecture/exceptions.md`](docs/architecture/exceptions.md); the gate fails if the
-named document does not exist, because a reviewed exception must point at a record rather
-than at a memory of one. A registry may only shrink: a file that grows fails — whatever its
-status, an exception is not a licence to grow — and a file that drops to the threshold fails
-until its entry is removed.
+It is a debt register, not an exception mechanism, and **investigation status and
+disposition are separate facts** — so it has three states, not two:
+
+| status | meaning |
+|---|---|
+| `unreviewed` | over the threshold, and **nobody has investigated it** |
+| `reviewed-action-required` | investigated; **specific architectural work identified** |
+| `reviewed-exception` | investigated, and **deliberately kept intact** |
+
+A completed census must stay distinguishable from an unperformed one *even when its
+disposition is "decompose before any exception"* — those two call for opposite next
+actions. Both reviewed states carry a `review_ref` naming their record in
+[`docs/architecture/exceptions.md`](docs/architecture/exceptions.md), and the gate fails if
+the named document does not exist: a completed review must point at a record rather than at
+a memory of one. The field was `exception_ref` until a §14 record first *declined* an
+exception; a leftover `exception_ref` is refused as an unknown field.
+
+Permitted transitions are checked against `origin/main` and every one preserves or
+increases what is known. **Nothing returns to `unreviewed`.** A registry may only shrink: a
+file that grows fails — whatever its status, neither reviewed state is a licence to grow —
+and a file that drops to the threshold fails until its entry is removed.
 
 **Review granularity equals exception granularity.** A function-level exception does not
 make its file a reviewed exception. `parse_args` is a reviewed exception; `cli.rs` is not.
-`run_validated` is a reviewed exception; `app.rs` is not — its file-level census is
-complete and *declined* to grant one, because the audit-drain teardown authority is
-separable and has an owner next door. §14 records a decision to keep something whole; it is
-not a place to park work.
+`run_validated` is a reviewed exception; `app.rs` is `reviewed-action-required` — its
+file-level census is complete and *declined* to grant one, because the audit-drain teardown
+authority is separable and has an owner next door. §14 records a decision to keep something
+whole; it is not a place to park work.
 
 ### Testing Requirements
 
