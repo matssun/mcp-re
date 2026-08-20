@@ -6,7 +6,16 @@
 # mechanism. An entry means "over the 200-line threshold and not yet investigated". A unit
 # that has been investigated and deliberately kept intact carries
 # `status = "reviewed-exception"` and an `exception_ref` naming its ADR-MCPRE-061 §14
-# record.
+# record in `docs/architecture/exceptions.md`. The gate checks that the named document
+# exists: a reviewed exception must point at a record, not at a memory of one.
+#
+# Review granularity equals exception granularity. A function-level exception does not make
+# its file a reviewed exception — `mcp-re-proxy/src/cli.rs` stays `unreviewed` despite the
+# ADR-MCPRE-058 ruling on `parse_args`, and `mcp-re-proxy/src/app.rs` stays `unreviewed`
+# despite the substantiated item-level exception on `run_validated` (see EX-002).
+#
+# An exception is not a licence to grow. The ratchet applies to every entry whatever its
+# status, and `--selftest` pins that.
 #
 # The registry may only shrink. The gate fails if a listed file grows, if a new file
 # crosses the threshold, if a listed file drops to or below the threshold without its entry
@@ -118,7 +127,8 @@ status = "unreviewed"
 path = "mcp-re-proxy/src/exchange_state.rs"
 baseline_prod_loc = 789
 baseline_sha = "d1fc5fa"
-status = "unreviewed"
+status = "reviewed-exception"
+exception_ref = "EX-001 in docs/architecture/exceptions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/aws_sts.rs"

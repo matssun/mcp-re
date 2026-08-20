@@ -32,6 +32,7 @@ flowchart TD
 - [**ADR-MCPRE-061**](https://github.com/matssun/mcp-re/discussions/567) — the durable architectural decision. ✅ Accepted 2026-08-20; the Discussion is the source of truth (`docs/adr/README.md`).
 - [`implementation-blueprint.md`](implementation-blueprint.md) — current execution method for the refactoring campaign.
 - [`component-blueprint-template.md`](component-blueprint-template.md) — standard anatomy for subordinate component design documents.
+- [`exceptions.md`](exceptions.md) — the ADR-061 §14 exception register: the records `config/module-size-debt.toml`'s `exception_ref` fields point at, and the censuses that declined to grant one.
 
 ## Initial component blueprints
 
@@ -45,8 +46,12 @@ These are first-pass architectural documents, not declarations that every bounda
 ## Current campaign order
 
 The component blueprints are not a work queue. The order below is the ruled one; each step
-is DESIGN-only until it receives its own Go.
+is DESIGN-only until it receives its own Go. The backlog that carries it is
+[**#589 — MCPRE-153**](https://github.com/matssun/mcp-re/issues/589).
 
+0. **Reconcile the review ledger before it drives work.** A registry introduced to
+   distinguish unreviewed debt from reviewed exceptions may not open the campaign
+   misclassifying its own review state — [`exceptions.md`](exceptions.md).
 1. **Evidence verification — split the cryptographic floor from the full profile.**
    [`components/evidence-verification.md`](components/evidence-verification.md) §2. This is
    the blocking step: the theorem and negative-control gaps in that component all follow
@@ -83,15 +88,21 @@ python3 -c "import sys; sys.path.insert(0,'scripts'); from module_size_gate impo
 
 A hand-rolled count that stops at the first `#[cfg(test)]` reported `trust_plane.rs` as **134** production lines; it is **690**, because the file has production code after that region. Every count in these documents was corrected against `scripts/module_size_gate.py` for exactly that reason.
 
-## Current inventory — `main` @ `fede93b`
+## Current inventory — re-verified on `main` @ `a735e8c`
 
 Re-measured after the ADR-061 merge, per the ADR's own procedure: **merge → establish the
 exact new main SHA → re-measure the architecture inventory → begin the ruled component.**
 Re-measuring refreshes the census; it does **not** reset either ratchet or grant existing
 debt new headroom. Both gates pass at their pre-merge baselines on this SHA.
 
-`git diff --name-only 527b1ac fede93b -- '*/src/*.rs'` returns **zero files**, so every
-count below is re-verified rather than carried over.
+`python3 scripts/module_size_gate.py --emit-registry` at `a735e8c` produces **100 entries
+with byte-identical counts** to the registry baselined at `d1fc5fa`: nothing grew, nothing
+shrank, nothing crossed the threshold in either direction. `git diff --name-only 527b1ac
+a735e8c -- '*/src/*.rs'` returns **zero files**, which is why.
+
+The registry's `baseline_sha` fields therefore stay at `d1fc5fa`. That field records where
+a number was *established*, not where it was last confirmed; advancing it on a
+zero-drift re-measurement would overwrite real provenance with a timestamp.
 
 | §5.3 band | files |
 |---|---:|
@@ -112,14 +123,20 @@ size orders the queue while §8 question 2 decides the outcome:
 | 1629 | 25 | 12 | 70 | `mcp-re-http-profile/src/scitt.rs` — band 3, no blueprint yet |
 | 1305 | 25 | 21 | 73 | `mcp-re-proxy/src/transport.rs` — band 3, no blueprint yet |
 | 1271 | 14 | 3 | 91 | `mcp-re-proxy/src/ocsp.rs` — band 3, no blueprint yet |
-| 1177 | 6 | 0 | 184 | `mcp-re-proxy/src/cli.rs` — reviewed exception under ADR-058 |
+| 1177 | 6 | 0 | 184 | `mcp-re-proxy/src/cli.rs` — **unreviewed**; ADR-058 ruled on `parse_args`, not on the file |
 | 1149 | 5 | 7 | 105 | `mcp-re-proxy/src/gcp_kms_keysource.rs` |
 | 1114 | 32 | 12 | 44 | `mcp-re-client-core/src/response.rs` — band 3, no blueprint yet |
-| 1037 | 3 | 0 | 31 | `mcp-re-proxy/src/app.rs` — carries a §14 function-level exception |
+| 1037 | 3 | 0 | 31 | `mcp-re-proxy/src/app.rs` — **unreviewed**; census complete, exception not granted ([EX-002](exceptions.md)) |
 
-Five band-3 hotspots have no component blueprint (`scitt.rs`, `transport.rs`, `ocsp.rs`,
-`response.rs`, and the two KMS key sources). They are named here so their absence is a
-recorded gap rather than an implied claim of coverage.
+**Six** band-3 hotspots have no component blueprint: `scitt.rs`, `transport.rs`, `ocsp.rs`,
+`cli.rs`, `response.rs`, and the two KMS key sources — one census covering both backends,
+since the question there is the shared authority structure. They are named here so their
+absence is a recorded gap rather than an implied claim of coverage.
+
+`cli.rs` was previously left off this list as a reviewed exception. It was not one: ADR-058
+ruled on the `parse_args` function, and the file states of itself that it carries three
+pipeline responsibilities — CLI parsing, the Layer-A validation boundary, and key-source
+materialization. Review granularity equals exception granularity, so it re-joins the queue.
 
 ## Existing ADRs this hierarchy composes
 
