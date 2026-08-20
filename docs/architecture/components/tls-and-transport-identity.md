@@ -151,7 +151,7 @@ The last row is ADR-061 §2 class 8 in this component: the harness is not `#[ign
 
 ## 12. Implementation map
 
-Measured by the ADR-061 §5.1 rule on `main` @ `527b1ac`.
+Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_gate.py::production_lines`).
 
 | file | prod | current role | target role |
 |---|---:|---|---|

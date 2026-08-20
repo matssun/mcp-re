@@ -153,7 +153,7 @@ Lane identity is part of each property (ADR-061 §12). `mcp-re-http-profile` tes
 
 ## 10. Implementation map
 
-Measured by the ADR-061 §5.1 rule on `main` @ `527b1ac`. `prod` = production lines.
+Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_gate.py::production_lines`). `prod` = production lines.
 
 | file | prod | current role | target role |
 |---|---:|---|---|

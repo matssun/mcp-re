@@ -121,7 +121,7 @@ Four of six are true by construction and unstated. `TrustRevocationState`'s seal
 
 ## 10. Implementation map
 
-Measured by the ADR-061 §5.1 rule on `main` @ `527b1ac`.
+Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_gate.py::production_lines`).
 
 | file | prod | current role | target role |
 |---|---:|---|---|
