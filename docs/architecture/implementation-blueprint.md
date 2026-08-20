@@ -151,7 +151,7 @@ without new debt accumulating behind it:
 | gate | stage | holds |
 |---|---|---|
 | `scripts/module_size_gate.py` | 1 (no build) | 200 production lines per file, baselined in `config/module-size-debt.toml` |
-| `scripts/clippy_ratchet_gate.py` | 2 (with the build) | `unwrap_used` at zero; `expect_used`, `indexing_slicing`, `too_many_lines`, `excessive_nesting` at per-crate baselines in `config/clippy-debt.toml` |
+| `scripts/clippy_ratchet_gate.py` | 2 (with the build) | `unwrap_used` at zero; `expect_used`, `indexing_slicing`, `too_many_lines`, `excessive_nesting`, `arithmetic_side_effects` at per-crate baselines in `config/clippy-debt.toml`; and the shape of every exception |
 
 Two things about them are load-bearing for this method:
 
@@ -159,6 +159,10 @@ Two things about them are load-bearing for this method:
   switch allow-by-default lints on. The gate runs `--activation-probe` and `--nesting-probe`
   before it measures, so a lint that silently stopped firing fails the build instead of
   reporting a clean count.
+- **An exception is narrow and justified, and that is enforced too.** A crate- or
+  module-wide `allow` of an adopted lint is refused by static scan, because it is a bypass
+  of the ratchet rather than merely bad style: suppressing a lint across a crate makes the
+  count fall, and a falling count is otherwise a legitimate reason to lower the baseline.
 - **Do not read an unenforced rule as an enforced one.** Where this blueprint says a step is
   required, the check is a human reading a diff unless §6.2 lists a mechanism. Visibility
   (§4), the twelve questions (§8), and every §7 small-module smell are in that category.

@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -73,19 +74,26 @@ STRICT_CONF = REPO / "config" / "clippy-strict"
 # The ruling exempts test code; running the lints here, over `--lib --bins`, exempts it by
 # construction rather than by an allowlist somebody has to maintain.
 ADOPTED = (
-    "unwrap_used",          # measured at 0 production sites -> denied at zero
-    "expect_used",          # 60 -> ratcheted
-    "indexing_slicing",     # 69 -> ratcheted
-    "too_many_lines",       # 27 -> ratcheted
-    "excessive_nesting",    # 164 -> ratcheted
+    "unwrap_used",              # measured at 0 production sites -> denied at zero
+    "expect_used",              # 60  -> ratcheted
+    "indexing_slicing",         # 69  -> ratcheted
+    "too_many_lines",           # 27  -> ratcheted
+    "excessive_nesting",        # 164 -> ratcheted
+    "arithmetic_side_effects",  # 124 -> ratcheted
 )
 
 # `unwrap_used` is absent: it is denied at zero and carries no debt entry.
-RATCHETED = ("expect_used", "indexing_slicing", "too_many_lines", "excessive_nesting")
+RATCHETED = (
+    "expect_used",
+    "indexing_slicing",
+    "too_many_lines",
+    "excessive_nesting",
+    "arithmetic_side_effects",
+)
 
 # Deliberately NOT adopted; see §6.5.
-#   arithmetic_side_effects — 124 sites, returned for a ruling
-#   cognitive_complexity    — 7 sites, 6 already reported by too_many_lines
+#   cognitive_complexity — 7 sites, 6 already reported by too_many_lines, and the 7th only
+#   because that lint is locally allowed there. Zero independent signal.
 
 LINT_FLAGS = [f"-W clippy::{lint}".split()[i] for lint in ADOPTED for i in (0, 1)]
 
@@ -191,6 +199,95 @@ def compare(counts: Counter, baseline: dict[str, int]) -> list[str]:
 
 
 # --------------------------------------------------------------------------------------
+# allow discipline
+
+
+ALLOW_INNER = re.compile(r"#!\[allow\(([^)]*)\)\]")
+ALLOW_OUTER = re.compile(r"#\[allow\(([^)]*)\)\]")
+# `arithmetic-side-effects-allowed*` exempts whole TYPES from the lint everywhere.
+CONF_EXEMPTION = re.compile(r"^\s*arithmetic-side-effects-allowed[a-z-]*\s*=")
+
+
+def adopted_in(attr_body: str) -> list[str]:
+    return [l for l in ADOPTED if f"clippy::{l}" in attr_body]
+
+
+def allow_discipline(root: Path) -> tuple[list[str], int]:
+    """An exception must be narrow and must name its invariant.
+
+    The ratchet counts occurrences, so anything that suppresses the lint over a whole crate
+    or module makes the count fall — and a falling count is a legitimate reason to lower the
+    baseline. Without this check, `#![allow(clippy::arithmetic_side_effects)]` in a crate
+    root is a one-line permanent exemption that the ratchet would report as progress.
+
+    Three rules, from the C-4 ruling:
+
+    - no crate- or module-wide allow of an adopted lint;
+    - an item-level allow must carry a justification comment naming the invariant;
+    - no `arithmetic-side-effects-allowed*` type exemption in the clippy config, which is
+      global and unbounded.
+    """
+    problems: list[str] = []
+    files = 0
+    for p in sorted(root.rglob("*.rs")):
+        rel = p.relative_to(root)
+        if any(part in {"target", "node_modules", ".git", "tests", "benches", "examples"}
+               for part in rel.parts):
+            continue
+        files += 1
+        lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        for i, line in enumerate(lines):
+            m = ALLOW_INNER.search(line)
+            if m:
+                for lint in adopted_in(m.group(1)):
+                    problems.append(
+                        f"{rel}:{i + 1}: `#![allow(clippy::{lint})]` is crate- or "
+                        f"module-wide. Scope the exception to the item it was granted for; "
+                        f"a wide allow covers code not yet written and hides it from the "
+                        f"ratchet."
+                    )
+                continue
+            m = ALLOW_OUTER.search(line)
+            if not m:
+                continue
+            lints = adopted_in(m.group(1))
+            if not lints:
+                continue
+            nxt = lines[i + 1].lstrip() if i + 1 < len(lines) else ""
+            if nxt.startswith("mod ") or nxt.startswith("pub mod "):
+                for lint in lints:
+                    problems.append(
+                        f"{rel}:{i + 1}: `#[allow(clippy::{lint})]` on a module applies to "
+                        f"every item inside it, including future ones. Move it to the item "
+                        f"that needs it."
+                    )
+                continue
+            # A justification is a trailing comment, or a comment line just above.
+            trailing = "//" in line[m.end():]
+            above = i > 0 and lines[i - 1].lstrip().startswith("//")
+            if not (trailing or above):
+                for lint in lints:
+                    problems.append(
+                        f"{rel}:{i + 1}: `#[allow(clippy::{lint})]` carries no justification. "
+                        f"State the invariant that makes the ordinary form safe — name the "
+                        f"owning type, check or theorem, not merely \"cannot overflow\"."
+                    )
+
+    for conf in (root / ".clippy.toml", STRICT_CONF / ".clippy.toml"):
+        if not conf.exists():
+            continue
+        for i, line in enumerate(conf.read_text().splitlines()):
+            if CONF_EXEMPTION.match(line):
+                problems.append(
+                    f"{conf.relative_to(root)}:{i + 1}: an "
+                    f"`arithmetic-side-effects-allowed*` type exemption is global and "
+                    f"unbounded. The C-4 ruling declines it until a genuinely algebraic "
+                    f"type is found for which the exception is universally true."
+                )
+    return problems, files
+
+
+# --------------------------------------------------------------------------------------
 # probes and selftest
 
 
@@ -292,6 +389,16 @@ def activation_probe() -> int:
         "#[allow(clippy::collapsible_if)]\n"
         "pub fn deep(a: bool, b: bool, c: bool) -> u32 {\n"
         "    if a { if b { if c { return 3; } } }\n    0\n}\n"
+        # Unconstrained integer addition: overflow semantics are not statically evident.
+        # The neighbours below are the forms the lint deliberately EXCLUDES, so a probe
+        # that started reporting them would be flagging the wrong thing.
+        "pub fn unbounded(x: u64) -> u64 { x + 1 }\n"
+        "pub fn saturating(x: u64) -> u64 { x.saturating_add(1) }\n"
+        "pub fn wrapping(x: u64) -> u64 { x.wrapping_add(1) }\n"
+        "pub fn floating(x: f64) -> f64 { x + 1.0 }\n"
+        "pub fn wrapped(x: std::num::Wrapping<u64>) -> std::num::Wrapping<u64> "
+        "{ x + std::num::Wrapping(1) }\n"
+        "pub const fn constant() -> u64 { 2 + 2 }\n"
     )
     with tempfile.TemporaryDirectory() as tmp:
         crate = Path(tmp) / "activation"
@@ -306,6 +413,7 @@ def activation_probe() -> int:
             cwd=crate, capture_output=True, text=True, env=strict_env(),
         )
         fired = set()
+        arithmetic_lines = []
         for line in proc.stdout.splitlines():
             line = line.strip()
             if not line.startswith("{"):
@@ -317,9 +425,17 @@ def activation_probe() -> int:
             if m.get("reason") != "compiler-message":
                 continue
             code = (m["message"].get("code") or {}).get("code") or ""
-            if code.startswith("clippy::"):
-                fired.add(code.split("::", 1)[1])
-        missing = [x for x in ("too_many_lines", "excessive_nesting") if x not in fired]
+            if not code.startswith("clippy::"):
+                continue
+            lint = code.split("::", 1)[1]
+            fired.add(lint)
+            if lint == "arithmetic_side_effects":
+                spans = [x for x in m["message"].get("spans", []) if x.get("is_primary")]
+                arithmetic_lines.append(spans[0]["line_start"] if spans else None)
+        missing = [
+            x for x in ("too_many_lines", "excessive_nesting", "arithmetic_side_effects")
+            if x not in fired
+        ]
         if missing:
             print(
                 "activation probe: FAIL — an 80-line function with triple nesting did not "
@@ -328,9 +444,25 @@ def activation_probe() -> int:
                 "[workspace.lints.clippy] (ADR-MCPRE-061 §6.1)."
             )
             return 1
+        # The exclusions matter as much as the hits: if the lint ever started reporting
+        # saturating or float arithmetic, the 124-site baseline would stop meaning what
+        # §6.5 says it means.
+        arith_spans = sum(
+            1 for ln in arithmetic_lines if ln is not None
+        )
+        if arith_spans != 1:
+            print(
+                f"activation probe: FAIL — clippy::arithmetic_side_effects fired on "
+                f"{arith_spans} of 6 arithmetic expressions; exactly one (the unconstrained "
+                f"`x + 1`) should fire. Saturating, wrapping, `Wrapping`, float and const "
+                f"arithmetic are excluded by the lint's definition, and ADR-MCPRE-061 §6.6 "
+                f"relies on those exclusions for what a hit MEANS."
+            )
+            return 1
         print(
-            "activation probe: PASS — an 80-line function and a depth-3 block both fired "
-            "under this workspace's lint configuration (ADR-MCPRE-061 §6.1)."
+            "activation probe: PASS — an 80-line function, a depth-3 block and an "
+            "unconstrained `x + 1` fired; saturating, wrapping, `Wrapping`, float and const "
+            "arithmetic did not (ADR-MCPRE-061 §6.1, §6.6)."
         )
         return 0
 
@@ -361,7 +493,7 @@ def selftest() -> int:
         print("selftest FAIL: unwrap_used was not denied at zero")
         return 1
     # Lints outside the adopted set are ignored, not silently counted.
-    if compare(Counter({**at_base, "crate-b::arithmetic_side_effects": 99}), base):
+    if compare(Counter({**at_base, "crate-b::cognitive_complexity": 99}), base):
         print("selftest FAIL: a lint outside the adopted set was counted")
         return 1
     # A baseline the tree no longer reaches must be lowered, not silently accepted.
@@ -369,8 +501,56 @@ def selftest() -> int:
         print("selftest FAIL: a vanished baseline entry was accepted")
         return 1
 
+    # allow discipline
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        src = root / "probe" / "src"
+        src.mkdir(parents=True)
+        f = src / "lib.rs"
+
+        f.write_text("#![allow(clippy::arithmetic_side_effects)]\nfn a() {}\n")
+        if not any("crate- or module-wide" in p for p in allow_discipline(root)[0]):
+            print("selftest FAIL: a crate-wide allow was accepted")
+            return 1
+
+        f.write_text("#[allow(clippy::unwrap_used)]\nmod inner {}\n")
+        if not any("on a module" in p for p in allow_discipline(root)[0]):
+            print("selftest FAIL: a module-scoped allow was accepted")
+            return 1
+
+        f.write_text("#[allow(clippy::expect_used)]\nfn a() {}\n")
+        if not any("no justification" in p for p in allow_discipline(root)[0]):
+            print("selftest FAIL: an unjustified item allow was accepted")
+            return 1
+
+        f.write_text("// bounded by FreshnessWindow::verifier_accepts_until\n"
+                     "#[allow(clippy::expect_used)]\nfn a() {}\n")
+        if allow_discipline(root)[0]:
+            print(f"selftest FAIL: a justified item allow was rejected: "
+                  f"{allow_discipline(root)[0]}")
+            return 1
+
+        f.write_text("#[allow(clippy::expect_used)] // invariant: checked in classify()\n"
+                     "fn a() {}\n")
+        if allow_discipline(root)[0]:
+            print("selftest FAIL: a trailing-comment justification was rejected")
+            return 1
+
+        # A lint outside the adopted set is none of this gate's business.
+        f.write_text("#![allow(clippy::collapsible_if)]\nfn a() {}\n")
+        if allow_discipline(root)[0]:
+            print("selftest FAIL: an unadopted lint's allow was policed")
+            return 1
+
+        # An empty scan must not read as clean.
+        if allow_discipline(root / "nonexistent")[1] != 0:
+            print("selftest FAIL: empty scan reported files")
+            return 1
+
     print("clippy-ratchet gate selftest: PASS (at-baseline, growth, improvement, "
-          "deny-at-zero for unbaselined and for unwrap_used, unadopted lint ignored)")
+          "deny-at-zero for unbaselined and for unwrap_used, unadopted lint ignored; "
+          "allow discipline: crate-wide, module-scoped, unjustified, both justified forms, "
+          "unadopted lint, empty scan)")
     return 0
 
 
@@ -394,6 +574,17 @@ def main() -> int:
             print(f"count = {n}")
         return 0
 
+    discipline, scanned = allow_discipline(REPO)
+    if scanned == 0:
+        print("clippy-ratchet gate: FAIL — scanned 0 production Rust files for allow "
+              "discipline. A scan that examined nothing is not a pass.")
+        return 1
+    if discipline:
+        print(f"clippy-ratchet gate: FAIL — {len(discipline)} allow-discipline problem(s)")
+        for p in discipline:
+            print(f"  - {p}")
+        return 1
+
     baseline = load_registry(REGISTRY)
     counts, messages = measure(REPO)
     if messages == 0:
@@ -412,7 +603,9 @@ def main() -> int:
     print(
         f"clippy-ratchet gate: OK — production targets only (--lib --bins). "
         f"clippy::unwrap_used denied at zero; {total} baselined occurrence(s) of "
-        f"{', '.join(RATCHETED)} across {len(baseline)} crate/lint entries, none grew."
+        f"{', '.join(RATCHETED)} across {len(baseline)} crate/lint entries, none grew. "
+        f"Allow discipline: {scanned} file(s) scanned, no crate/module-wide or "
+        f"unjustified exception."
     )
     return 0
 

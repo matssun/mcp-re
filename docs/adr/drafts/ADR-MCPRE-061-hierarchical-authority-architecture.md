@@ -337,7 +337,9 @@ A gate that vouches for a lint must prove the lint fires. `scripts/clippy_ratche
 | function length | `clippy::too_many_lines` via `scripts/clippy_ratchet_gate.py` | 60 | production targets |
 | nesting depth | `clippy::excessive_nesting` at `excessive-nesting-threshold = 3` (in `config/clippy-strict/`) | > 2 rejected | production targets |
 | no production `unwrap` | `clippy::unwrap_used`, denied at zero | 0 | production targets |
-| `expect` / indexing debt | `clippy::expect_used`, `clippy::indexing_slicing`, ratcheted | per-crate baseline | production targets |
+| implicit proof recovery | `clippy::expect_used`, `clippy::indexing_slicing`, ratcheted | per-crate baseline | production targets |
+| implicit arithmetic semantics | `clippy::arithmetic_side_effects`, ratcheted | per-crate baseline | production targets |
+| exception discipline | `scripts/clippy_ratchet_gate.py` static scan | narrow + justified | all production `.rs` |
 | file/module length | `scripts/module_size_gate.py` | 200 | all production `.rs` |
 | feature-lane identity of tests | `scripts/cargo_test_target_gate.py`, `scripts/slo_invocation_gate.py`, `scripts/bazel_srcs_gate.py` | — | repo |
 | evidence-graph freshness | ADR-MCPRE-059 lane + `scripts/verification_trigger_gate.py` | — | repo |
@@ -363,7 +365,6 @@ The cost is stated rather than hidden: a bare `cargo clippy` does not surface th
 | visibility hierarchy (§4) | Judgement only. No lint distinguishes a legitimate `pub(crate)` from a lazy one; §8 question 8 and review are the control. |
 | §8 investigation actually performed | Judgement only. A gate can flag the unit; it cannot verify that anyone thought about it. |
 | the §7 small-module smells | Judgement only, and they have no size trigger — a campaign driven by the §5.3 bands will not find them. |
-| `arithmetic_side_effects` | Measured at 124 production sites; not adopted, awaiting a ruling (§6.5). |
 
 Listing a rule here is not a decision to leave it unenforced. It is a refusal to let an unenforced rule read as an enforced one.
 
@@ -421,11 +422,36 @@ ADR-MCPRE-060 §10 recorded nine conflicts for owner ruling. All are now disposi
 | `unwrap_used` | **0** | ADOPT | denied at zero — it costs nothing today and refuses the first one tomorrow |
 | `expect_used` | 60 | ADOPT, ratcheted per crate | per-crate baseline; a justified production `expect` carries a local `#[allow(clippy::expect_used)]` naming the invariant |
 | `indexing_slicing` | 69 | ADOPT, ratcheted per crate | per-crate baseline; explicit exceptions where bounded indexing is itself established |
-| `arithmetic_side_effects` | 124 | **MEASURE FIRST** — measured, returned for ruling | not adopted; not in the gate's lint set |
+| `arithmetic_side_effects` | 124 | MEASURE FIRST, then **ADOPT**, ratcheted per crate | per-crate baseline; §6.6 governs what happens when a site is touched |
 
 The first three are exactly the implicit proof-recovery sites this architecture wants exposed: in production code an `unwrap` is an unstated proof obligation, where in a test it is an assertion. That `unwrap_used` measured **zero** across all production code is the single most useful number in this section — the rule was already being followed, and now it cannot be un-followed.
 
-`arithmetic_side_effects` at 124 sites is broad enough that a blanket adoption could damage clarity rather than improve it. The measurement is done; the decision is not this ADR's to take.
+`arithmetic_side_effects` was ruled on in two steps, and the measurement is what moved it. At 124 production sites it is not a wall of noise; it is a manageable set of places where arithmetic semantics are currently implicit, and it is ratchetable rather than a mass rewrite.
+
+### 6.6 Arithmetic semantics SHALL be explicit
+
+> **Production arithmetic whose overflow/panic semantics are not statically evident SHALL make those semantics explicit, or carry a narrow documented exception stating the invariant that makes the ordinary operator safe.**
+
+The architectural reason is that a bare `x + y` in this codebase can mean any of four different things — mathematical addition, addition proven bounded elsewhere, panic on overflow, or wrap on overflow — and which one it means depends on build mode rather than on anything written down. For ordinary application code, demanding that distinction everywhere is ceremony. For security-sensitive production code it is the same discipline as §11 applied to integers: the expression should state its own semantics rather than inherit them.
+
+The lint's own definition is well matched to that: it flags arithmetic that may overflow or panic and **excludes** the forms that already state their algebra. Verified by probe — of `x + 1`, `x.saturating_add(1)`, `x.wrapping_add(1)`, `Wrapping(a) + Wrapping(b)`, `x + 1.0` (float), and a `const` expression, exactly one fires: the first. `--activation-probe` asserts that ratio, because if the exclusions ever changed the 124-site baseline would stop meaning what this section says it means.
+
+When a site is touched there are exactly three legitimate outcomes:
+
+| # | situation | what to write |
+|---|---|---|
+| 1 | overflow is a meaningful possibility | `checked_add` / `checked_sub` / `checked_mul`, with the failure handled explicitly |
+| 2 | saturation or wrapping genuinely IS the intended algebra | `saturating_add` / `wrapping_add` — now the code documents the mathematical model |
+| 3 | the operation is provably bounded and `a + b` is clearer | keep `a + b`, with the smallest possible `#[allow(clippy::arithmetic_side_effects)]` |
+
+For outcome 3 the comment must identify the **actual invariant** — preferably the owning type, check, or theorem that establishes the bound — not merely assert "cannot overflow". A comment that restates the lint is not a justification.
+
+**Two things are refused, and the gate enforces both by static scan** rather than by review:
+
+- **No crate-wide or module-wide `allow`** of any adopted lint. A wide allow covers code not yet written, which turns a proof obligation back into remembered policy. It is also a live bypass of the ratchet itself: suppressing a lint across a crate makes the count fall, and a falling count is otherwise a legitimate reason to lower the baseline — so a one-line attribute would launder a permanent exemption as progress.
+- **No `arithmetic-side-effects-allowed*` type exemption** in the clippy config. Clippy supports exempting whole types globally; that is too wide for this rule, and would only become reasonable for a genuinely algebraic type where the exception is universally true.
+
+An item-level allow with no justification comment fails the gate as well, so the exception cannot be taken silently.
 
 ## 7. Small can also be wrong
 
@@ -610,7 +636,9 @@ The current refactoring method is described in [`docs/architecture/implementatio
 
 Component-specific work is described under [`docs/architecture/components/`](../../architecture/components/).
 
-One open item requires an owner ruling before this ADR is complete: whether **`clippy::arithmetic_side_effects`** is adopted, and if so at what strictness. It is measured at 124 production sites (§6.5, C-4) and is deliberately not in the gate's lint set until ruled on. Every other conflict ADR-060 raised is dispositioned in §6.5, and the mechanisms behind each `SHALL` in this document are either landed or listed as unenforced in §6.3.
+**No enforcement ruling remains open.** Every conflict ADR-MCPRE-060 raised is dispositioned in §6.5, every adopted mechanism is landed with a negative control, and the mechanisms behind each `SHALL` in this document are either enforced (§6.2) or listed as unenforced (§6.3) — never assumed.
+
+That is the difference between this ADR and the draft it supersedes. ADR-060 prescribed professional architecture and left its enforcement blocked on nine unresolved conflicts. ADR-061 carries a mechanical system that keeps the codebase from quietly sliding back toward the style that made this campaign necessary: the machine locates the places that demand thought, and the humans decide the semantic design.
 
 On numbering: ADR-MCPRE-060 was never published, so the Discussions sequence will skip from 059 to 061. `docs/adr/README.md` records the gap and the reason; the number is not reused.
 

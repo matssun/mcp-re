@@ -33,6 +33,21 @@
    `/.clippy.toml`: this lint is warn-by-default, so a value there is enforced immediately
    against all targets by every `-D warnings` lane.
 3. **Security Code**: Parsing, authentication, and execution MUST be isolated into distinct types/functions. Do not combine I/O operations with cryptographic or authorization logic in the same function.
+4. **Explicit Arithmetic Semantics**: production arithmetic whose overflow/panic semantics
+   are not statically evident MUST make those semantics explicit. A bare `x + y` can mean
+   mathematical addition, addition proven bounded elsewhere, panic on overflow, or wrap on
+   overflow — and which one it means depends on build mode. Pick the true one:
+
+   | situation | write |
+   |---|---|
+   | overflow is a real possibility | `checked_add` / `checked_sub` / `checked_mul`, failure handled |
+   | wrapping or saturating IS the intended algebra | `saturating_add` / `wrapping_add` |
+   | provably bounded, and `a + b` is clearer | keep it, with a narrow `#[allow(clippy::arithmetic_side_effects)]` naming the invariant |
+
+   **Mechanically enforced** by `clippy::arithmetic_side_effects`, ratcheted from a
+   124-site baseline by `scripts/clippy_ratchet_gate.py`. The lint already excludes
+   `Wrapping`, `Saturating`, floats, constants, and operations it can prove bounded, so a
+   hit means the semantics really are unstated.
 
 ### Visibility is part of the architecture
 
@@ -53,6 +68,27 @@ Two rules on top of the ladder:
   a test-shaped justification.
 - **Widening needs a reason at the point of widening.** Whenever a security-relevant item is
   `pub(crate)` or `pub`, answer why the broader authority is legitimate.
+
+### Exceptions are narrow and justified
+
+An `#[allow(...)]` of an ADR-MCPRE-061 §6 lint (`unwrap_used`, `expect_used`,
+`indexing_slicing`, `too_many_lines`, `excessive_nesting`, `arithmetic_side_effects`) is an
+exception, and **`scripts/clippy_ratchet_gate.py` enforces its shape**:
+
+- **Never crate-wide or module-wide.** `#![allow(...)]`, or an `#[allow(...)]` on a `mod`,
+  covers code not yet written — that turns a proof obligation back into remembered policy.
+  It is also a ratchet bypass: suppressing a lint across a crate makes the count fall, and a
+  falling count is otherwise a legitimate reason to lower the baseline, so a one-line
+  attribute would launder a permanent exemption as progress. Scope it to the item.
+- **Always justified.** The allow must carry a comment naming the invariant that makes the
+  ordinary form safe — the owning type, check, or theorem. "Cannot overflow" restates the
+  lint; it does not justify the exception.
+- **No `arithmetic-side-effects-allowed*` type exemption** in any clippy config. It is
+  global and unbounded.
+
+The worked example is `mcp-re-proxy/src/app.rs::run_validated`: it states what the function
+owns, what most recently left it and why, the three pieces of compensating evidence, and
+why the allowance sits on the function rather than the module.
 
 Two limits on what visibility buys, both measured — see
 [`docs/dev/sealed-owners.md`](docs/dev/sealed-owners.md):
