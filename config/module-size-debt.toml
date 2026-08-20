@@ -1,0 +1,617 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Module-size debt registry — ADR-MCPRE-061 §6.3, §6.4.
+#
+# Enforced by `scripts/module_size_gate.py`. This is a DEBT REGISTER, not an exception
+# mechanism. An entry means "over the 200-line threshold and not yet investigated". A unit
+# that has been investigated and deliberately kept intact carries
+# `status = "reviewed-exception"` and an `exception_ref` naming its ADR-MCPRE-061 §14
+# record.
+#
+# The registry may only shrink. The gate fails if a listed file grows, if a new file
+# crosses the threshold, if a listed file drops to or below the threshold without its entry
+# being removed, or if an entry names a file that no longer exists.
+#
+# `baseline_prod_loc` is measured by the ADR-MCPRE-061 §5.1 rule: lines before the first
+# module matching `^#[cfg((all()?test`. Re-measure with
+# `python3 scripts/module_size_gate.py --emit-registry`; never hand-edit a count upward.
+
+[[debt]]
+path = "mcp-re-proxy/src/http_profile_serve.rs"
+baseline_prod_loc = 2127
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/tls.rs"
+baseline_prod_loc = 1907
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/verify.rs"
+baseline_prod_loc = 1640
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/scitt.rs"
+baseline_prod_loc = 1629
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/transport.rs"
+baseline_prod_loc = 1305
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/ocsp.rs"
+baseline_prod_loc = 1271
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/cli.rs"
+baseline_prod_loc = 1177
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/gcp_kms_keysource.rs"
+baseline_prod_loc = 1149
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-client-core/src/response.rs"
+baseline_prod_loc = 1114
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/app.rs"
+baseline_prod_loc = 1037
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-transport/src/lib.rs"
+baseline_prod_loc = 938
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/async_replay.rs"
+baseline_prod_loc = 924
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/async_serve.rs"
+baseline_prod_loc = 898
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/transparency.rs"
+baseline_prod_loc = 888
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/pkcs11_keysource.rs"
+baseline_prod_loc = 857
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "sdk/python/src/lib.rs"
+baseline_prod_loc = 845
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/exchange_state.rs"
+baseline_prod_loc = 789
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/aws_sts.rs"
+baseline_prod_loc = 783
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/pkcs11_native.rs"
+baseline_prod_loc = 783
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "sdk/typescript/src/lib.rs"
+baseline_prod_loc = 780
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-client/src/serve.rs"
+baseline_prod_loc = 756
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/redis_store.rs"
+baseline_prod_loc = 719
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/bodyless.rs"
+baseline_prod_loc = 713
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/aws_kms_keysource.rs"
+baseline_prod_loc = 694
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/trust_plane.rs"
+baseline_prod_loc = 690
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/tls_plane.rs"
+baseline_prod_loc = 679
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/chain.rs"
+baseline_prod_loc = 660
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/block.rs"
+baseline_prod_loc = 647
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-demo/src/demo_fixtures.rs"
+baseline_prod_loc = 608
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/signing_plane.rs"
+baseline_prod_loc = 601
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/http_inner.rs"
+baseline_prod_loc = 589
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/async_fleet.rs"
+baseline_prod_loc = 578
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-client/src/config.rs"
+baseline_prod_loc = 562
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-client-proxy/src/proxy.rs"
+baseline_prod_loc = 532
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/admission.rs"
+baseline_prod_loc = 522
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/admission.rs"
+baseline_prod_loc = 509
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/transport.rs"
+baseline_prod_loc = 488
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/custody.rs"
+baseline_prod_loc = 480
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/startup_plan.rs"
+baseline_prod_loc = 476
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/validation/mod.rs"
+baseline_prod_loc = 474
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/custody.rs"
+baseline_prod_loc = 471
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/serving_capabilities.rs"
+baseline_prod_loc = 466
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/sign.rs"
+baseline_prod_loc = 462
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/trust_epoch.rs"
+baseline_prod_loc = 451
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/shared_replay.rs"
+baseline_prod_loc = 447
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-core/src/error.rs"
+baseline_prod_loc = 442
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/trust_cache.rs"
+baseline_prod_loc = 442
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-client-core/src/request.rs"
+baseline_prod_loc = 439
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/trust_revocation.rs"
+baseline_prod_loc = 429
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/lib.rs"
+baseline_prod_loc = 420
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/deployment_request/mod.rs"
+baseline_prod_loc = 416
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-client-core/src/trust_manifest.rs"
+baseline_prod_loc = 411
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-core/src/replay.rs"
+baseline_prod_loc = 395
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/etcd_store.rs"
+baseline_prod_loc = 395
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/async_redis_store.rs"
+baseline_prod_loc = 393
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/replay.rs"
+baseline_prod_loc = 391
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/delegated_server_signer.rs"
+baseline_prod_loc = 387
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/delegation.rs"
+baseline_prod_loc = 384
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/validation/residue.rs"
+baseline_prod_loc = 378
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/rejection.rs"
+baseline_prod_loc = 377
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/async_etcd_store.rs"
+baseline_prod_loc = 370
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/key_source.rs"
+baseline_prod_loc = 362
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-client-proxy/src/manifest_floor.rs"
+baseline_prod_loc = 342
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/mod.rs"
+baseline_prod_loc = 335
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/audit_sink.rs"
+baseline_prod_loc = 331
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/delegated_tls.rs"
+baseline_prod_loc = 313
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/sigbase.rs"
+baseline_prod_loc = 306
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/materialized_runtime.rs"
+baseline_prod_loc = 298
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-test-paths/src/lib.rs"
+baseline_prod_loc = 298
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/error.rs"
+baseline_prod_loc = 294
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-client/src/anchors.rs"
+baseline_prod_loc = 287
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/delegated_signing.rs"
+baseline_prod_loc = 287
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/envelope.rs"
+baseline_prod_loc = 280
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/continuation_store.rs"
+baseline_prod_loc = 279
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/stage_timers.rs"
+baseline_prod_loc = 275
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/retained_evidence.rs"
+baseline_prod_loc = 271
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/kms_endpoint_policy.rs"
+baseline_prod_loc = 270
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/tls_auth_epoch.rs"
+baseline_prod_loc = 270
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/mcp_transport.rs"
+baseline_prod_loc = 269
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/managed_worker.rs"
+baseline_prod_loc = 268
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/client_revocation.rs"
+baseline_prod_loc = 263
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-core/src/audit.rs"
+baseline_prod_loc = 257
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-core/src/time.rs"
+baseline_prod_loc = 250
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/dispatch.rs"
+baseline_prod_loc = 248
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/body.rs"
+baseline_prod_loc = 247
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/push_trust.rs"
+baseline_prod_loc = 244
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/lib.rs"
+baseline_prod_loc = 241
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/policy.rs"
+baseline_prod_loc = 240
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-client/src/lib.rs"
+baseline_prod_loc = 237
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/aws_sigv4.rs"
+baseline_prod_loc = 233
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/startup_posture.rs"
+baseline_prod_loc = 233
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/kms_keysource.rs"
+baseline_prod_loc = 232
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/ids.rs"
+baseline_prod_loc = 225
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-client/src/main.rs"
+baseline_prod_loc = 215
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/replay_tier.rs"
+baseline_prod_loc = 215
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-core/src/crypto.rs"
+baseline_prod_loc = 213
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/runtime_state.rs"
+baseline_prod_loc = 212
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-http-profile/src/verus_std_specs.rs"
+baseline_prod_loc = 211
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/materializing_runtime.rs"
+baseline_prod_loc = 204
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/replay_plane.rs"
+baseline_prod_loc = 202
+baseline_sha = "d1fc5fa"
+status = "unreviewed"

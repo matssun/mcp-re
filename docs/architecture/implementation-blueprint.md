@@ -143,14 +143,25 @@ it?* before adding a private field.
 
 ### 7.1 What the toolchain checks, and what it does not
 
-ADR-MCPRE-061 §6 is the authority. In short: function length and cognitive complexity are
-enforced by `/.clippy.toml` via `cargo clippy -- -D warnings`; **file length is not
-enforced at all** — clippy has no file-length lint — and the substitute gate is specified
-in ADR-061 §6.3 but not landed, pending an owner ruling on when it lands and with what
-allowlist.
+ADR-MCPRE-061 §6 is the authority; §6.2 lists what is enforced and §6.3 what is not.
 
-Do not read an unenforced rule as an enforced one. Where this blueprint says a step is
-required, the check is a human reading a diff unless §6.1 lists a mechanism.
+Two ratchets run on every gate invocation and are the reason this campaign can proceed
+without new debt accumulating behind it:
+
+| gate | stage | holds |
+|---|---|---|
+| `scripts/module_size_gate.py` | 1 (no build) | 200 production lines per file, baselined in `config/module-size-debt.toml` |
+| `scripts/clippy_ratchet_gate.py` | 2 (with the build) | `unwrap_used` at zero; `expect_used`, `indexing_slicing`, `too_many_lines`, `excessive_nesting` at per-crate baselines in `config/clippy-debt.toml` |
+
+Two things about them are load-bearing for this method:
+
+- **A configured lint is not an enforced lint.** `.clippy.toml` parameterises; it does not
+  switch allow-by-default lints on. The gate runs `--activation-probe` and `--nesting-probe`
+  before it measures, so a lint that silently stopped firing fails the build instead of
+  reporting a clean count.
+- **Do not read an unenforced rule as an enforced one.** Where this blueprint says a step is
+  required, the check is a human reading a diff unless §6.2 lists a mechanism. Visibility
+  (§4), the twelve questions (§8), and every §7 small-module smell are in that category.
 
 ## 8. Tests and proofs
 

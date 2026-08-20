@@ -125,10 +125,10 @@ Measured by the ADR-061 §5.1 rule on `main` @ `527b1ac`.
 
 | file | prod | current role | target role |
 |---|---:|---|---|
-| `mcp-re-proxy/src/config_state/trust_revocation.rs` | 433 | `TrustRevocationState`, `EpochSource`, `classify_and_validate` | the revocation fact owner — unchanged, already sealed |
+| `mcp-re-proxy/src/config_state/trust_revocation.rs` | 429 | `TrustRevocationState`, `EpochSource`, `classify_and_validate` | the revocation fact owner — unchanged, already sealed |
 | `mcp-re-proxy/src/config_state/trust_document.rs` | 83 | `TrustDocumentSource` | the locator fact owner — unchanged, already sealed |
 | `mcp-re-proxy/src/startup_plan.rs` | 476 | hosts `TrustPlan` among other plans | `TrustPlan` moves to live **with its owner**; `startup_plan` re-exports |
-| `mcp-re-proxy/src/trust_plane.rs` | 134 | materialization entry | trust facade |
+| `mcp-re-proxy/src/trust_plane.rs` | 690 | materialization entry | trust facade |
 | `mcp-re-proxy/src/trust_cache.rs` | 442 | cached resolution | private subordinate |
 | `mcp-re-proxy/src/trust_epoch.rs` | 451 | shared epoch mechanism | private subordinate |
 | `mcp-re-proxy/src/live_trust.rs` | 134 | live document reads | private subordinate |
@@ -137,7 +137,7 @@ Measured by the ADR-061 §5.1 rule on `main` @ `527b1ac`.
 | `mcp-re-proxy/src/revocation_resolver.rs` | 78 | resolver seam | private subordinate |
 | `mcp-re-proxy/src/revocation_tier.rs` | 186 | tier vocabulary | shared with TLS |
 
-No file in this component is above the ADR-061 §5.3 mandatory-review threshold by a wide margin, and none is a hotspot. The open work here is **interface width and placement**, not size — this is the §7-of-ADR-061 case where a size-driven campaign would find nothing.
+One file is an ADR-061 §5.3 band-2 unit: `trust_plane.rs` at 690 production lines (>500, high-priority shallow-module investigation). Nothing here is a band-3 hotspot. The open work is mostly **interface width and placement** rather than size — largely the ADR-061 §7 case, where a campaign driven only by the size bands would under-report.
 
 The measured fan-out is the signal instead: nine subordinate modules expose 51 public or `pub(crate)` items between them, and consumers reach several of them directly rather than through a facade.
 
@@ -145,7 +145,9 @@ The measured fan-out is the signal instead: nine subordinate modules expose 51 p
 
 1. **`TrustPlan` lives in `startup_plan.rs`, not with its owner.** The rule established by the sealing campaign is that a plan produced by an owner lives with that owner and `startup_plan` re-exports it; building it in the planner was the planner restating the owner's semantics. `TrustPlan` is the one composition in the sealed-owner table and is still in the planner file.
 
-2. **No facade.** `trust_plane.rs` is the natural facade at 134 production lines, but `trust_cache`, `trust_epoch`, `live_trust`, `push_trust`, and `reloading_trust` are reachable independently. This is ADR-061 §3.4's undesired shape: modular physically, flat architecturally.
+2. **No facade, and the candidate is itself a band-2 unit.** `trust_plane.rs` is the natural facade, but at 690 production lines it is not currently a thin one, and `trust_cache`, `trust_epoch`, `live_trust`, `push_trust`, and `reloading_trust` are reachable independently of it. This is ADR-061 §3.4's undesired shape: modular physically, flat architecturally.
+
+   This number is also a measurement lesson. A first pass reported `trust_plane.rs` as **134** production lines by stopping at its first `#[cfg(test)]` attribute; the file has production code after that region, and the real figure is 690. `scripts/module_size_gate.py` counts every non-test region and its `--selftest` pins that case, because a counter that silently undercounts turns a band-2 unit into a rounding error.
 
 3. **Four structural properties have no theorem** — §8.
 

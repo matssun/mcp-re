@@ -11,6 +11,9 @@
    `.rs` file. Crossing it is a **mandatory design-review trigger, not an automatic
    split** — see "Thresholds are review triggers" below. Let responsibility boundaries
    drive a file split; never create arbitrary files merely to get under the number.
+   **Mechanically enforced** by `scripts/module_size_gate.py` as a ratchet: a new file over
+   the threshold fails, and a file already in `config/module-size-debt.toml` may not grow.
+   Production lines are the lines before the first module matching `^#[cfg((all()?test`.
 3. **Module Re-exports**: Use `mod.rs` to encapsulate module internals and re-export public interfaces using `pub use`.
 
 ### Function Boundaries & Security
@@ -18,9 +21,78 @@
 1. **Function Line Limit**: 60 lines of code is the threshold for a function. Crossing it
    is a **mandatory design-review trigger, not an automatic split** — see "Thresholds are
    review triggers" below. The usual outcome is decomposition into private helper
-   functions (`pub(crate)` or `fn`) or pipeline stages.
-2. **Cognitive Complexity**: Avoid nested `match` or `if let` statements deeper than 2 levels. Use early returns (`?` operator or `let-else` statements).
+   functions (`pub(crate)` or `fn`) or pipeline stages. **Mechanically enforced** by
+   `clippy::too_many_lines`, run and ratcheted by `scripts/clippy_ratchet_gate.py`.
+   Note that `.clippy.toml` alone does **not** enforce it: the lint is allow-by-default,
+   so a threshold there with nothing switching the lint on is inert.
+2. **Nesting Depth**: Avoid nested `match` or `if let` statements deeper than 2 levels. Use
+   early returns (`?` operator or `let-else` statements). **Mechanically enforced** by
+   `clippy::excessive_nesting` at `excessive-nesting-threshold = 3` (the threshold names the
+   depth that is *rejected*), configured in `config/clippy-strict/.clippy.toml` and run by
+   `scripts/clippy_ratchet_gate.py`. Do not move that threshold into the root
+   `/.clippy.toml`: this lint is warn-by-default, so a value there is enforced immediately
+   against all targets by every `-D warnings` lane.
 3. **Security Code**: Parsing, authentication, and execution MUST be isolated into distinct types/functions. Do not combine I/O operations with cryptographic or authorization logic in the same function.
+
+### Visibility is part of the architecture
+
+Mirrors ADR-MCPRE-061 §4. Pick the narrowest level that lets the legitimate consumer work:
+
+| level | meaning |
+|---|---|
+| `fn` / private | local implementation detail |
+| `pub(super)` | visible only to the parent authority |
+| `pub(in crate::path)` | visible only inside a declared ancestor subtree |
+| `pub(crate)` | crate-wide capability — only when crate-wide access is genuinely intended |
+| `pub` | external API — must correspond to an explicitly supported contract |
+
+Two rules on top of the ladder:
+
+- **Never widen production visibility so a test can inspect a representation.** Move the
+  test to the owner instead. A `pub(crate)` that exists for a test is a production API with
+  a test-shaped justification.
+- **Widening needs a reason at the point of widening.** Whenever a security-relevant item is
+  `pub(crate)` or `pub`, answer why the broader authority is legitimate.
+
+Two limits on what visibility buys, both measured — see
+[`docs/dev/sealed-owners.md`](docs/dev/sealed-owners.md):
+
+- Privacy is worth adding only where **the owner is the sole legitimate producer**. Where a
+  trait or closure seam lets outside code produce the value, a private field only forces a
+  public constructor taking the same arguments with the same absence of checking. Ask *if
+  this value is illegal, whose bug is it?* — if the answer is "whoever implemented the
+  seam", privacy is theatre.
+- A Verus-proved postcondition outranks a seal.
+
+No lint enforces this. It is a review rule, and the compile errors you get while narrowing
+a field are the boundary detector, not an obstacle.
+
+### The twelve questions — investigating an oversized or suspicious unit
+
+Mirrors ADR-MCPRE-061 §8. When a gate flags a unit, or when a unit looks wrong regardless
+of size, the investigation must answer all twelve before it is closed:
+
+1. What single security/control fact does this unit own?
+2. How many independently describable authorities exist inside it?
+3. What does it decide?
+4. What does it merely execute?
+5. What does it merely transport?
+6. What facts does it reconstruct that another owner already decided?
+7. What security relationship exists only through call ordering or local variables?
+8. What public interface exists only because tests need it?
+9. What branches are unreachable under the current legality model?
+10. What facts are represented more than once?
+11. What inconsistent values can callers construct?
+12. Which test/build/proof lane actually establishes each claimed property?
+
+Question 2 decides the outcome; size only decides the order in which units are examined. An
+answer to question 1 that needs an "and" is evidence of a shallow authority boundary.
+
+**The investigation is not closed by** "LOC is not architecture", "the logic is
+complicated", "tests are green", "the functions inside the file are individually small",
+"decomposition is not the goal", or "the module has always been this size". It is closed by
+answering the twelve, by recording an ADR-MCPRE-061 §14 exception, or by a measurement
+correction. Never self-grant an exception for a unit over 1,000 production lines.
 
 ### Ownership: the constructed value owns the invariant
 
@@ -105,10 +177,29 @@ overarching argument in the module documentation and let the subordinate checks 
 separately testable predicates — that usually makes the invariant easier to
 substantiate, not harder.
 
+**The ratchet runs while you decide.** The thresholds being review triggers does not make
+them advisory: `scripts/module_size_gate.py` and `scripts/clippy_ratchet_gate.py` hold the
+current debt at a baseline, so the campaign fixes yesterday's units while new ones cannot
+be created. Two registries carry that debt:
+
+- `config/module-size-debt.toml` — files over 200 production lines at the baseline SHA;
+- `config/clippy-debt.toml` — per-crate counts of the adopted lints.
+
+An entry means **"over the threshold and not yet investigated"** — it is a debt register,
+not an exception mechanism. A unit that has been investigated and deliberately kept intact
+gets `status = "reviewed-exception"` plus an `exception_ref` naming the B-case record. A
+registry may only shrink: a file that grows fails, and a file that drops to the threshold
+fails until its entry is removed.
+
 ### Testing Requirements
 
 1. Every file must include a `#[cfg(test)] mod tests` block at the bottom containing unit tests for the types defined in that specific file.
-2. Run `cargo clippy -- -D warnings` after every edit. Do not mark a task complete if Clippy emits warnings or functions exceed complexity thresholds.
+2. Run `cargo clippy -- -D warnings` after every edit. Do not mark a task complete if Clippy
+   emits warnings or functions exceed complexity thresholds. Note the scope: `-D warnings`
+   does **not** cover the five ADR-MCPRE-061 §6 lints (`unwrap_used`, `expect_used`,
+   `indexing_slicing`, `too_many_lines`, `excessive_nesting`) — they are allow-by-default
+   and are switched on by `scripts/clippy_ratchet_gate.py` over production targets only. Run
+   that gate before claiming a unit is clean.
 
 ## Working rules
 
@@ -143,6 +234,15 @@ The known instance: `tls_load_harness_bench` (the SLO load harness) is **not** a
 propagated into four documented places before anyone noticed. Use
 `scripts/local_slo_lane.sh`; `scripts/slo_invocation_gate.py` fails the build if the
 bad form comes back.
+
+**The second instance was configuration that enforced nothing.** `/.clippy.toml` carried
+`too-many-lines-threshold = 60`, `cargo clippy -- -D warnings` ran in CI and in the local
+gate, and the project described the 60-line function rule as mechanically enforced. It was
+not: `clippy::too_many_lines` is allow-by-default, so the threshold parameterised a lint
+nobody had switched on, and an 80-line function produced no warning at all. A threshold is
+not an enforcement; the thing that turns the lint on is.
+`scripts/clippy_ratchet_gate.py --activation-probe` compiles a deliberately violating file
+and fails the build if the lints stop firing.
 
 **Never read a gate's result through a pipe.** `scripts/local_gate.sh --fast | tail`
 reports `tail`'s exit status, not the gate's — a failed gate reads as a clean pass, and

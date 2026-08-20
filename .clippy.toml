@@ -1,3 +1,23 @@
-# .clippy.toml
+# SPDX-License-Identifier: Apache-2.0
+#
+# Thresholds for the DEFAULT clippy lane — the one every `cargo clippy --all-targets --
+# -D warnings` invocation in `scripts/local_gate.sh` and `.github/workflows/ci.yml` runs.
+#
+# Keep this file conservative. A threshold here applies to ALL targets including test code,
+# and every lane treats warnings as errors, so tightening one turns the build red on the
+# same commit. The ADR-MCPRE-061 §6 thresholds live in `config/clippy-strict/.clippy.toml`
+# and are applied only by `scripts/clippy_ratchet_gate.py`, over production targets.
+#
+# A threshold here does NOT enable a lint. `too-many-lines-threshold = 60` sat in this file
+# alone while the project described the 60-line function rule as mechanically enforced; an
+# 80-line function produced no warning, because `clippy::too_many_lines` is
+# allow-by-default. Retained here so the two lanes agree on the value, but the lint is
+# switched on by the ratchet gate, which is also what proves it fires (§6.1).
 too-many-lines-threshold = 60
-cognitive-complexity-threshold = 10
+
+# NOTE: `excessive-nesting-threshold` is deliberately NOT set here. Unlike the other four
+# adopted lints, `clippy::excessive_nesting` is WARN-by-default (complexity group) with a
+# default threshold of 5 — so a value in this file is enforced immediately, against all
+# targets, by the existing `-D warnings` lanes. At the ADR-MCPRE-061 value of 3 that is 164
+# production sites plus test code, red on the first commit. It is set in
+# `config/clippy-strict/.clippy.toml` instead and ratcheted.

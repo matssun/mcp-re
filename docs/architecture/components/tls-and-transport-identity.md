@@ -155,16 +155,16 @@ Measured by the ADR-061 §5.1 rule on `main` @ `527b1ac`.
 
 | file | prod | current role | target role |
 |---|---:|---|---|
-| `mcp-re-proxy/src/tls.rs` | 1788 | everything below, in one module — 18 public items | TLS authority facade over a private subtree |
+| `mcp-re-proxy/src/tls.rs` | 1907 | everything below, in one module — 18 public items | TLS authority facade over a private subtree |
 | `mcp-re-proxy/src/tls_auth_epoch.rs` | 270 | `TlsAuthEpoch`, `SharedTlsAuthEpoch`, `EpochBoundSessionStore` | private subordinate of the listener-lifetime state |
-| `mcp-re-proxy/src/tls_plane.rs` | 697 | holds the resumption state across rebuilds — the de facto listener lifetime | the explicit `TlsListenerSecurityState` owner of §5 |
+| `mcp-re-proxy/src/tls_plane.rs` | 679 | holds the resumption state across rebuilds — the de facto listener lifetime | the explicit `TlsListenerSecurityState` owner of §5 |
 | `mcp-re-proxy/src/delegated_tls.rs` | 313 | delegated server-credential resolver | private subordinate |
 | `mcp-re-proxy/src/transport.rs` | 1305 | transport binding and identity | separate authority; band-3 hotspot in its own right |
 | `mcp-re-proxy/src/handshake_quota.rs` | 178 | handshake admission quota | private subordinate |
 | `mcp-re-proxy/src/client_revocation.rs` | 263 | CRL plan consumption | private subordinate |
-| `mcp-re-proxy/src/ocsp.rs` | 1280 | full RFC 6960 responder + client | separate authority behind `online_ocsp`; band-3 hotspot |
+| `mcp-re-proxy/src/ocsp.rs` | 1271 | full RFC 6960 responder + client | separate authority behind `online_ocsp`; band-3 hotspot |
 
-`tls.rs` at 1788 production lines is an ADR-061 §5.3 band-3 hotspot (>1,000): authority census required before substantial new functionality. `transport.rs` and `ocsp.rs` are the same band and are *not* covered by this blueprint's target; each needs its own.
+`tls.rs` at 1907 production lines is an ADR-061 §5.3 band-3 hotspot (>1,000): authority census required before substantial new functionality. `transport.rs` and `ocsp.rs` are the same band and are *not* covered by this blueprint's target; each needs its own.
 
 ## 13. Known deviations
 
@@ -172,7 +172,7 @@ Measured by the ADR-061 §5.1 rule on `main` @ `527b1ac`.
 
 2. **The blocking harness is inside the security authority** — §8.
 
-3. **`transport.rs` (1305) and `ocsp.rs` (1280) are band-3 units with no blueprint.** They are named here so their absence is a recorded gap rather than an implied claim of coverage.
+3. **`transport.rs` (1305) and `ocsp.rs` (1271) are band-3 units with no blueprint.** They are named here so their absence is a recorded gap rather than an implied claim of coverage.
 
 4. **Three properties in §10 have no theorem.** Structural and tested is not the same as stated.
 

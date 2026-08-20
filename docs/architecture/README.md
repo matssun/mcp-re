@@ -74,6 +74,15 @@ Each component blueprint's **Known deviations** section is the diff between the 
 
 Production-line counts quoted in the component blueprints are measured by the ADR-061 §5.1 rule — lines before the first module matching `^#\[cfg\((all\()?test` — on `main` at commit `527b1ac`. They will drift; re-measure before acting on one. A blueprint quoting a number without stating the rule and the commit is quoting nothing.
 
+Re-measure with the gate's counter, not by hand:
+
+```sh
+python3 -c "import sys; sys.path.insert(0,'scripts'); from module_size_gate import production_lines; \
+            from pathlib import Path; print(production_lines(Path('<file>').read_text()))"
+```
+
+A hand-rolled count that stops at the first `#[cfg(test)]` reported `trust_plane.rs` as **134** production lines; it is **690**, because the file has production code after that region. Every count in these documents was corrected against `scripts/module_size_gate.py` for exactly that reason.
+
 ## Existing ADRs this hierarchy composes
 
 ```mermaid

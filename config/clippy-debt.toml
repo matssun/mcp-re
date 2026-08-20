@@ -1,0 +1,155 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Clippy debt registry — ADR-MCPRE-061 §6.4, §6.5 (C-4, C-5).
+#
+# Enforced by `scripts/clippy_ratchet_gate.py`, which switches the adopted lints on over
+# PRODUCTION targets only (`--lib --bins`) and compares per-crate counts against this file.
+# Baselined at d1fc5fa.
+#
+# A count may only fall. Lowering one is the point; the gate FAILS if a count drops below
+# its baseline without this file being updated, so an improvement cannot silently create
+# new headroom.
+#
+# `clippy::unwrap_used` is absent by design: it was measured at 0 production sites across
+# the workspace and is denied at zero. The first production `unwrap` fails the gate.
+#
+# Not adopted, and therefore not listed:
+#   arithmetic_side_effects — 124 production sites; returned for an owner ruling
+#   cognitive_complexity    — 7 sites, 6 of which too_many_lines already reports
+#
+# Re-emit with: python3 scripts/clippy_ratchet_gate.py --emit-registry
+
+[[debt]]
+crate = "mcp-re-client-core"
+lint = "excessive_nesting"
+count = 1
+
+[[debt]]
+crate = "mcp-re-client-core"
+lint = "expect_used"
+count = 1
+
+[[debt]]
+crate = "mcp-re-client-core"
+lint = "too_many_lines"
+count = 1
+
+[[debt]]
+crate = "mcp-re-client-proxy"
+lint = "excessive_nesting"
+count = 5
+
+[[debt]]
+crate = "mcp-re-client-proxy"
+lint = "indexing_slicing"
+count = 1
+
+[[debt]]
+crate = "mcp-re-client-proxy"
+lint = "too_many_lines"
+count = 1
+
+[[debt]]
+crate = "mcp-re-client"
+lint = "excessive_nesting"
+count = 13
+
+[[debt]]
+crate = "mcp-re-client"
+lint = "expect_used"
+count = 3
+
+[[debt]]
+crate = "mcp-re-client"
+lint = "indexing_slicing"
+count = 5
+
+[[debt]]
+crate = "mcp-re-client"
+lint = "too_many_lines"
+count = 3
+
+[[debt]]
+crate = "mcp-re-core"
+lint = "indexing_slicing"
+count = 9
+
+[[debt]]
+crate = "mcp-re-demo"
+lint = "expect_used"
+count = 11
+
+[[debt]]
+crate = "mcp-re-host"
+lint = "expect_used"
+count = 1
+
+[[debt]]
+crate = "mcp-re-host"
+lint = "indexing_slicing"
+count = 1
+
+[[debt]]
+crate = "mcp-re-http-profile"
+lint = "excessive_nesting"
+count = 31
+
+[[debt]]
+crate = "mcp-re-http-profile"
+lint = "expect_used"
+count = 8
+
+[[debt]]
+crate = "mcp-re-http-profile"
+lint = "indexing_slicing"
+count = 10
+
+[[debt]]
+crate = "mcp-re-http-profile"
+lint = "too_many_lines"
+count = 9
+
+[[debt]]
+crate = "mcp-re-proxy"
+lint = "excessive_nesting"
+count = 108
+
+[[debt]]
+crate = "mcp-re-proxy"
+lint = "expect_used"
+count = 35
+
+[[debt]]
+crate = "mcp-re-proxy"
+lint = "indexing_slicing"
+count = 40
+
+[[debt]]
+crate = "mcp-re-proxy"
+lint = "too_many_lines"
+count = 12
+
+[[debt]]
+crate = "mcp-re-test-paths"
+lint = "excessive_nesting"
+count = 3
+
+[[debt]]
+crate = "mcp-re-test-paths"
+lint = "expect_used"
+count = 1
+
+[[debt]]
+crate = "mcp-re-transport"
+lint = "excessive_nesting"
+count = 3
+
+[[debt]]
+crate = "mcp-re-transport"
+lint = "indexing_slicing"
+count = 3
+
+[[debt]]
+crate = "mcp-re-transport"
+lint = "too_many_lines"
+count = 1

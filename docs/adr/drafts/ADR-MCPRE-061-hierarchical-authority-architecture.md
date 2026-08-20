@@ -246,7 +246,7 @@ The current mandatory review thresholds are:
 
 **Production lines** are the lines of a file before its first test module. The test module is located with the pattern `^#\[cfg\((all\()?test`, **not** `^#\[cfg\(test\)\]`. This is not pedantry: a first census pass matching only the narrow form reported `mcp-re-proxy/src/app.rs` as 1680 production lines with no tests at all, because its module is `#[cfg(all(test, unix))]`. Its real production half is 1038.
 
-A threshold whose measurement is unspecified is the "green that measured nothing" failure applied to the census itself. Any tool, script, or manual count claiming to apply these thresholds SHALL state the rule it used.
+A threshold whose measurement is unspecified is the "green that measured nothing" failure applied to the census itself. Any tool, script, or manual count claiming to apply these thresholds SHALL state the rule it used. `scripts/module_size_gate.py` is that tool for files: it prints the rule and the number of files examined on every run, and its `--selftest` pins the counter against the cases that have actually broken hand-rolled counts here (§6.4).
 
 ### 5.2 Presumption
 
@@ -276,8 +276,8 @@ Size orders the queue. It does not decide the outcome. **The outcome is decided 
 
 | unit | production | interface | verdict |
 |---|---|---|---|
-| `mcp-re-proxy/src/exchange_state.rs` | 815 | 17 pub fns, 4 private fns | long and **deep** — a relation and its projections over one tuple; nothing to do |
-| `mcp-re-proxy/src/gcp_kms_keysource.rs` | ~1,150 | 5 pub fns, 44 private fns | small interface, but the implementation is an OAuth token cache, a failed-fetch replay, a single-flight, a retry loop with its own suspension window, a TLS-handshake cooldown, HTTP transport, response parsing, and a test double — **shallow**, decompose |
+| `mcp-re-proxy/src/exchange_state.rs` | 789 | 17 pub fns, 4 private fns | long and **deep** — a relation and its projections over one tuple; nothing to do |
+| `mcp-re-proxy/src/gcp_kms_keysource.rs` | 1149 | 5 pub fns, 44 private fns | small interface, but the implementation is an OAuth token cache, a failed-fetch replay, a single-flight, a retry loop with its own suspension window, a TLS-handshake cooldown, HTTP transport, response parsing, and a test double — **shallow**, decompose |
 
 Neither raw size nor interface width alone separates these. Both bands sent the investigator to the right files; only the authority count told them what to do on arrival.
 
@@ -291,67 +291,141 @@ ADR-MCPRE-060 §1 recorded the governing observation this section exists to hono
 
 and, separately, that a remediation campaign which used successive agent rounds over a single large file cost a great deal and ended with a **higher** defect count than it started with. Both halves bind. A rule discharged only by an author's judgement is a rule whose enforcement cost is paid per file, by the least reliable available party.
 
-This ADR therefore states, for each rule it asserts, whether a machine checks it.
+This ADR therefore states, for each rule it asserts, whether a machine checks it — and holds itself to the standard that a *configured* check is not an *enforced* one.
 
-### 6.1 Enforced today
+### 6.1 Configuration is not enforcement
 
-| rule | mechanism | value |
+The first draft of this ADR claimed the 60-line function rule was mechanically enforced, on the strength of `/.clippy.toml` carrying `too-many-lines-threshold = 60` while every CI and local lane ran `cargo clippy -- -D warnings`.
+
+That claim was false, and the falsification is reproducible:
+
+```text
+80-line fn, too-many-lines-threshold = 60, plain `cargo clippy -- -D warnings`
+    -> no warning
+
+same file, `-W clippy::too_many_lines`
+    -> "this function has too many lines (80/60)"
+```
+
+`clippy::too_many_lines` is allow-by-default. **A threshold in `.clippy.toml` parameterises a lint; it does not switch one on.** The repository had a threshold, a `-D warnings` lane, a documented rule, and zero enforcement — the "green that measured nothing" failure applied to a lint configuration rather than to a test lane. `cognitive-complexity-threshold = 10` sat in the same file and was inert for the same reason.
+
+**The lints do not behave uniformly, and assuming they did was the second error.** They fall into two groups, and the difference decides where a threshold may safely be written:
+
+| lint | default level | consequence of setting its threshold in `/.clippy.toml` |
 |---|---|---|
-| function length | `/.clippy.toml` → `too-many-lines-threshold`, surfaced by `cargo clippy -- -D warnings` | 60 |
-| cognitive complexity | `/.clippy.toml` → `cognitive-complexity-threshold` | 10 |
-| feature-lane identity of tests | `scripts/cargo_test_target_gate.py`, `scripts/slo_invocation_gate.py`, `scripts/bazel_srcs_gate.py` | — |
-| evidence-graph freshness | ADR-MCPRE-059 verification lane + `scripts/verification_trigger_gate.py` | — |
-| composition re-reading owner semantics | `mcp-re-proxy/tests/integration/composition_raw_read_test.rs` | — |
+| `too_many_lines`, `unwrap_used`, `expect_used`, `indexing_slicing`, `arithmetic_side_effects`, `cognitive_complexity` | **allow** | none — inert until something enables the lint |
+| `excessive_nesting` | **warn** (complexity group, default threshold 5) | enforced **immediately**, against all targets, by every existing `-D warnings` lane |
 
-`cargo clippy -- -D warnings` after every edit is a standing rule in `CLAUDE.md` and is the delivery mechanism for the first two rows.
+Writing `excessive-nesting-threshold = 3` into the root config turned the default lane red on the spot — 164 production sites plus test code. So the ADR-MCPRE-061 thresholds live in `config/clippy-strict/.clippy.toml` and are applied only by the ratchet gate, which points `CLIPPY_CONF_DIR` there. The root `/.clippy.toml` stays conservative, because a threshold in it is a change to the lane that must stay green.
 
-### 6.2 Not enforced, and why
+The corrected enforcement architecture is:
+
+```text
+function size       -> clippy::too_many_lines,     explicitly enabled + ratcheted
+nesting depth       -> clippy::excessive_nesting,  thresholded in the gate lane + ratcheted
+proof-recovery      -> clippy::unwrap_used / expect_used / indexing_slicing
+file/module size    -> scripts/module_size_gate.py (clippy has no file-length lint)
+semantic judgement  -> the §8 review protocol
+```
+
+A gate that vouches for a lint must prove the lint fires. `scripts/clippy_ratchet_gate.py --activation-probe` compiles a deliberately violating file under the exact flag list the gate measures with, and fails if either rule stops firing. It cannot drift from the gate it vouches for, because both read one list.
+
+### 6.2 What is enforced, and where
+
+| rule | mechanism | value | scope |
+|---|---|---|---|
+| function length | `clippy::too_many_lines` via `scripts/clippy_ratchet_gate.py` | 60 | production targets |
+| nesting depth | `clippy::excessive_nesting` at `excessive-nesting-threshold = 3` (in `config/clippy-strict/`) | > 2 rejected | production targets |
+| no production `unwrap` | `clippy::unwrap_used`, denied at zero | 0 | production targets |
+| `expect` / indexing debt | `clippy::expect_used`, `clippy::indexing_slicing`, ratcheted | per-crate baseline | production targets |
+| file/module length | `scripts/module_size_gate.py` | 200 | all production `.rs` |
+| feature-lane identity of tests | `scripts/cargo_test_target_gate.py`, `scripts/slo_invocation_gate.py`, `scripts/bazel_srcs_gate.py` | — | repo |
+| evidence-graph freshness | ADR-MCPRE-059 lane + `scripts/verification_trigger_gate.py` | — | repo |
+| composition re-reading owner semantics | `mcp-re-proxy/tests/integration/composition_raw_read_test.rs` | — | proxy |
+
+**Why the five lints are not in `[workspace.lints.clippy]`, and the thresholds not in `/.clippy.toml`.** Every clippy lane in this repository — `scripts/local_gate.sh` and four `ci.yml` invocations — runs `--all-targets -- -D warnings`. A workspace-level entry at `warn` is therefore a hard error in CI applied to *all* targets, including the thousands of `unwrap`/`expect`/indexing sites in test code that §6.5's ruling explicitly exempts. Landing them that way is precisely the "turns the build red immediately" failure.
+
+So there are two lanes with two configurations:
+
+| lane | invocation | config | job |
+|---|---|---|---|
+| default | `cargo clippy --workspace --all-targets -- -D warnings` | `/.clippy.toml` | stays green; the whole tree carries zero warnings |
+| ratchet | `scripts/clippy_ratchet_gate.py` → `--lib --bins` + `-W` flags, `CLIPPY_CONF_DIR=config/clippy-strict` | `config/clippy-strict/.clippy.toml` | reports a per-crate **count** that may only fall |
+
+Running the adopted lints in the second lane exempts test code **by construction** rather than by an allowlist somebody has to maintain, and lets a threshold be tightened without breaking a build.
+
+The cost is stated rather than hidden: a bare `cargo clippy` does not surface these five lints. The gate is where they run, and `CLAUDE.md` says so at the point it tells an agent to run clippy.
+
+### 6.3 What is still not enforced
 
 | rule | status |
 |---|---|
-| file/module length (200 production lines) | **No mechanical form exists.** Clippy has no file-length lint under any name; `clippy::module_lines` was probed against clippy 0.1.97 and does not exist. §6.3 specifies the substitute. |
-| nesting depth ≤ 2 (`CLAUDE.md`) | `clippy::excessive_nesting` with `excessive-nesting-threshold` is the only mechanical form. Not currently configured. |
 | visibility hierarchy (§4) | Judgement only. No lint distinguishes a legitimate `pub(crate)` from a lazy one; §8 question 8 and review are the control. |
 | §8 investigation actually performed | Judgement only. A gate can flag the unit; it cannot verify that anyone thought about it. |
-| `unwrap_used` / `expect_used` / `indexing_slicing` / `arithmetic_side_effects` | Not configured; violation counts across the workspace are unmeasured. |
+| the §7 small-module smells | Judgement only, and they have no size trigger — a campaign driven by the §5.3 bands will not find them. |
+| `arithmetic_side_effects` | Measured at 124 production sites; not adopted, awaiting a ruling (§6.5). |
 
 Listing a rule here is not a decision to leave it unenforced. It is a refusal to let an unenforced rule read as an enforced one.
 
-### 6.3 The specified file-length gate
-
-Because clippy cannot express it, the 200-line rule takes the form the repository already uses for structural rules — a gate script in the `scripts/*_gate.py` family, run by `scripts/local_gate.sh` stage 1.
-
-Its specification:
-
-- measures production lines by the §5.1 rule, and **prints the rule it applied**;
-- prints how many files it examined and **fails on an empty scope** — a gate that examines nothing must not print OK (a `tests/` glob silently exempted an entire crate from `scripts/bazel_srcs_gate.py` for a whole campaign while it printed OK);
-- carries an explicit allowlist of units with a recorded §14 exception, keyed by path, with the exception's reference;
-- fails on any unit above threshold that is not on the allowlist.
-
-**This gate is specified here but NOT landed.** Landing it turns the build red immediately: 62 of 139 files exceeded 250 production lines at the last measurement and the count at 200 is higher. Whether it lands at once with a large allowlist, ratchets per crate, or waits for the current campaign is an owner ruling (§6.5, C-8'). Specifying it without landing it is deliberate — the gap is now written down instead of being rediscovered.
-
 ### 6.4 Ratchet, not a cliff
 
-Where a mechanical rule cannot go from unenforced to enforced without a large immediate breakage, the enforcement lands as a ratchet: the gate is introduced with an allowlist of current violations, the allowlist may only shrink, and each removal is a decomposition or a §14 exception. A rule that cannot be turned on is worth less than a rule that is turned on against a frozen baseline.
+Where a mechanical rule cannot go from unenforced to enforced without a large immediate breakage, the enforcement lands as a ratchet: the gate is introduced with a baseline of current violations at an exact SHA, the baseline may only shrink, and each removal is a decomposition or a §14 exception.
 
-The allowlist is a debt register. It is not an exception mechanism — an entry on it means "not yet investigated", while a §14 exception means "investigated and kept intact".
+This is why the ratchets land **now**, during the refactoring campaign rather than after it. Otherwise the campaign fixes yesterday's debt while new debt is created at the same rate.
+
+Two registries carry it:
+
+| registry | holds | gate |
+|---|---|---|
+| `config/module-size-debt.toml` | files over 200 production lines: `path`, `baseline_prod_loc`, `baseline_sha`, `status`, optional `exception_ref` | `scripts/module_size_gate.py` |
+| `config/clippy-debt.toml` | per-crate counts of the ratcheted lints | `scripts/clippy_ratchet_gate.py` |
+
+Both enforce the same five transitions:
+
+```text
+new unit over threshold              -> FAIL
+registered unit grows                -> FAIL
+registered unit shrinks              -> PASS  (module size) / FAIL until the baseline is lowered (clippy)
+registered unit reaches threshold    -> FAIL until the entry is removed
+reviewed large unit                  -> entry carries a §14 exception_ref
+```
+
+The asymmetry on "shrinks" is deliberate. A file's exact line count changes constantly, so requiring an update on every improvement would be noise; a crate's lint count changes rarely and deliberately, so an unrecorded drop is silent headroom for a future regression.
+
+An entry means **"over the threshold and not yet investigated"**. The registry is a debt register, not an exception mechanism — that distinction is what stops it rotting into a permanent allowlist, and it is why an entry that no longer describes reality is an error rather than a shrug.
+
+**Measurement integrity.** `module_size_gate.py` counts production lines by the §5.1 rule, prints the rule it applied, prints how many files it examined, and **fails on an empty scope** — a `tests/` glob once silently exempted an entire crate from `scripts/bazel_srcs_gate.py` for a whole campaign while it printed OK. Its `--selftest` pins seven counter cases including `#[cfg(all(test, unix))]`, production code appearing *after* a test region, and multiple test regions in one file. That is not hypothetical precision: a hand-rolled counter that stopped at the first `#[cfg(test)]` reported `trust_plane.rs` as 134 production lines when it is 690, turning a band-2 unit into a rounding error.
 
 ### 6.5 Disposition of ADR-060's open rulings
 
-ADR-MCPRE-060 §10 recorded nine conflicts for owner ruling. Their disposition:
+ADR-MCPRE-060 §10 recorded nine conflicts for owner ruling. All are now dispositioned; one remains open by decision.
 
 | id | conflict | disposition |
 |---|---|---|
-| C-1 | function threshold: 50 vs 60 vs 100 | **Resolved: 60.** `/.clippy.toml` and `CLAUDE.md` agree; §5.1 restates it. Measured impact at the time: 67 functions over 60, 99 over 50, of 1420 total. |
-| C-2 | file threshold: 200 vs 250 | **Resolved: 200**, excluding unit tests, measured per §5.1. `CLAUDE.md` agrees. |
-| C-3 | `clippy::module_lines` does not exist | **Resolved as a substitution, not landed.** §6.3 specifies the gate script. The lint name must not appear in any `[workspace.lints.clippy]` block — an unknown lint name there is itself a build error. |
-| C-4 | `unwrap_used` / `expect_used` / `indexing_slicing` / `arithmetic_side_effects` at `deny` | **Open.** Violation counts unmeasured. Measuring them requires no ruling; landing them does. Per §6.4 the expected shape is a per-crate ratchet, not a workspace-wide flip. |
-| C-5 | `clippy::excessive_nesting` not in any owner list | **Open.** It is the only mechanical form of `CLAUDE.md`'s two-level nesting rule, which otherwise has none. Add or decline — recorded either way. |
-| C-6 | §7.1 Verus directives overlap ADR-MCPRE-059 | **Resolved: #527 is the authority.** §12 of this ADR creates no second theorem registry and no second verification pipeline. |
-| C-7 | ADR-MCPRE-058 §5 "No Arbitrary Line-Count Rule" | **Resolved as both.** §5's rule is the review standard; the thresholds are the discovery trigger. §15 states the reading. |
-| C-8 | ADR-MCPRE-058 was not followed; its authority unsettled | **Resolved: ADR-058 retains authority** for state-driven decomposition (§15). The separate question of *when the file-length gate lands* is re-raised as C-8' below, because it is a scheduling decision, not a question about ADR-058. |
-| C-8' | when the §6.3 gate lands, and with what allowlist | **Open — owner ruling required.** See §6.3. |
-| C-9 | identity and publication of ADR-060 | **Resolved:** ADR-060 is superseded before ratification and stays a repository draft; this ADR is published in its place. §13 states where each kind of rule terminally lives. |
+| C-1 | function threshold: 50 vs 60 vs 100 | **Resolved: 60.** Enforced by `clippy::too_many_lines`; `CLAUDE.md` and `.clippy.toml` agree. Measured: 27 production functions over 60. |
+| C-2 | file threshold: 200 vs 250 | **Resolved: 200**, excluding unit tests, measured per §5.1. Measured: 100 of 167 production files over the threshold. |
+| C-3 | `clippy::module_lines` does not exist | **Resolved as a substitution, landed.** `scripts/module_size_gate.py` (§6.4). The lint name must never appear in a `[workspace.lints.clippy]` block — an unknown lint name there is itself a build error. |
+| C-4 | four safety lints at `deny` | **Resolved, and deliberately not as one decision.** See the table below. |
+| C-5 | `clippy::excessive_nesting` | **Resolved: ADOPT**, at `excessive-nesting-threshold = 3`. The threshold names the depth that is *rejected*, so "deeper than two levels" is 3, not 2. Enforcement is not claimed without the negative control required by the ruling: `--nesting-probe` asserts depth 2 accepted **and** depth 3 rejected, and fails on both sides of a misconfigured threshold. Measured: 164 production sites. |
+| C-5b | is `cognitive_complexity = 10` a meaningful architectural mechanism? | **Resolved: no — dropped.** The ruling's condition was independent value, and measurement refutes it: **7** production sites, **6** of which `too_many_lines` already reports. The 7th (`app.rs:402`) is independent only because `too_many_lines` is locally allowed there, so the genuinely independent signal is **zero**. The threshold is removed from `.clippy.toml` and the lint is not adopted. |
+| C-6 | §7.1 Verus directives overlap ADR-MCPRE-059 | **Resolved: #527 is the authority.** §12 creates no second theorem registry and no second verification pipeline. |
+| C-7 | ADR-MCPRE-058 §5 "No Arbitrary Line-Count Rule" | **Resolved as both.** §5's flatness rule is the review standard; the thresholds are the discovery trigger. §15 states the reading. |
+| C-8 | ADR-MCPRE-058 was not followed; its authority unsettled | **Resolved: ADR-058 retains authority** for state-driven decomposition (§15). |
+| C-8' | when the file-size gate lands | **Resolved: now, as a ratchet.** Baselined at 100 files; the gate is wired into `scripts/local_gate.sh` stage 1. The campaign proceeds while the ratchet prevents new debt. |
+| C-9 | identity and publication of ADR-060 | **Resolved:** ADR-060 is superseded before ratification and stays a repository draft. §13 states where each kind of rule terminally lives. |
+
+**C-4 in detail.** The four lints are four decisions, not one:
+
+| lint | production sites | ruling | landed as |
+|---|---:|---|---|
+| `unwrap_used` | **0** | ADOPT | denied at zero — it costs nothing today and refuses the first one tomorrow |
+| `expect_used` | 60 | ADOPT, ratcheted per crate | per-crate baseline; a justified production `expect` carries a local `#[allow(clippy::expect_used)]` naming the invariant |
+| `indexing_slicing` | 69 | ADOPT, ratcheted per crate | per-crate baseline; explicit exceptions where bounded indexing is itself established |
+| `arithmetic_side_effects` | 124 | **MEASURE FIRST** — measured, returned for ruling | not adopted; not in the gate's lint set |
+
+The first three are exactly the implicit proof-recovery sites this architecture wants exposed: in production code an `unwrap` is an unstated proof obligation, where in a test it is an assertion. That `unwrap_used` measured **zero** across all production code is the single most useful number in this section — the rule was already being followed, and now it cannot be un-followed.
+
+`arithmetic_side_effects` at 124 sites is broad enough that a blanket adoption could damage clarity rather than improve it. The measurement is done; the decision is not this ADR's to take.
 
 ## 7. Small can also be wrong
 
@@ -366,7 +440,7 @@ Tiny modules are not automatically good architecture. The following are design s
 
 The target is hierarchical depth, not fragmentation.
 
-These smells have no size trigger, and none of them is mechanically detected. They are found by §8 question 2 applied in the other direction: *this unit owns a fraction of one authority, and no unit owns the whole of it.* A campaign driven only by the §5.3 bands will not find them, which is a known limit of this ADR's enforcement story rather than a claim that they do not matter.
+These smells have no size trigger, and none of them is mechanically detected (§6.3). They are found by §8 question 2 applied in the other direction: *this unit owns a fraction of one authority, and no unit owns the whole of it.* A campaign driven only by the §5.3 bands will not find them, which is a known limit of this ADR's enforcement story rather than a claim that they do not matter.
 
 ## 8. Shallow-module investigation protocol
 
@@ -483,7 +557,17 @@ ADR-060 §10 C-9 observed that a GitHub Discussion is not read by an agent mid-t
 | component blueprints and the refactoring method | `docs/architecture/`, in-tree, because they are implementation contracts consumed during work |
 | current sealed state | `docs/dev/sealed-owners.md`, in-tree |
 
-Publishing this ADR without landing §4/§5/§8 in `CLAUDE.md` would leave the rules where the party bound by them does not read them. `CLAUDE.md` today carries the thresholds and the ownership law but neither the visibility hierarchy nor the §8 protocol; both are to be added when this ADR is accepted.
+Publishing this ADR without landing §4/§5/§8 in `CLAUDE.md` would leave the rules where the party bound by them does not read them. That mirroring is **done**: `CLAUDE.md` now carries the visibility ladder with its two measured limits, the twelve questions with the list of answers that do not close an investigation, and each threshold annotated with the gate that enforces it.
+
+The mirror is operational, not a copy. `CLAUDE.md` states what an agent must do; this ADR states the decision and why. Neither is the other's summary, and the ownership is:
+
+```text
+ADR-061                        durable architectural decision + rationale
+CLAUDE.md                      executable instructions to coding agents
+mechanical gates               machine detection/enforcement
+docs/architecture/components/  target component design
+docs/dev/sealed-owners.md      current implementation state
+```
 
 When this ADR is published, `docs/architecture/README.md` must be retargeted from the draft path to the Discussion URL, or the link breaks on the same commit that removes the draft.
 
@@ -500,7 +584,15 @@ An oversized unit may remain intact only through an explicit architecture except
 
 The coding agent investigating the unit may recommend an exception but SHALL NOT self-grant one for an architectural hotspot.
 
-An exception is recorded once, referenced from the §6.3 allowlist, and re-examined when the unit changes materially. Note what an exception costs: using one where a sensible decomposition exists weakens the rule exactly where it was working.
+An exception is recorded once, referenced from the debt registry entry (§6.4), and re-examined when the unit changes materially. Note what an exception costs: using one where a sensible decomposition exists weakens the rule exactly where it was working.
+
+**The worked example already exists in the tree.** `mcp-re-proxy/src/app.rs::run_validated` carries an `#[allow(clippy::too_many_lines)]` whose comment states all six items: what the function owns after every classification moved out to `startup_plan` and `config_state` ("what remains is the assembly itself — the part whose content IS the order and the ownership"), why the remaining responsibilities cannot be separated, what most recently *did* leave and why, and the three pieces of evidence that compensate for the size — the startup-transcript harness taken from the real binary, `app_startup_characterization_test`, and the plans' own unit tests.
+
+It also gets the placement right, in a sentence worth generalising:
+
+> The allowance is on this function alone rather than on the module, so anything else here that grows past the threshold is still reported.
+
+A module-scoped `allow` is an exception that silently covers code not yet written. Scope every exception to the unit it was granted for.
 
 ## 15. Relationship to prior ADRs
 
@@ -518,7 +610,7 @@ The current refactoring method is described in [`docs/architecture/implementatio
 
 Component-specific work is described under [`docs/architecture/components/`](../../architecture/components/).
 
-Open items requiring an owner ruling before this ADR is complete: **C-4**, **C-5**, and **C-8'** (§6.5).
+One open item requires an owner ruling before this ADR is complete: whether **`clippy::arithmetic_side_effects`** is adopted, and if so at what strictness. It is measured at 124 production sites (§6.5, C-4) and is deliberately not in the gate's lint set until ruled on. Every other conflict ADR-060 raised is dispositioned in §6.5, and the mechanisms behind each `SHALL` in this document are either landed or listed as unenforced in §6.3.
 
 On numbering: ADR-MCPRE-060 was never published, so the Discussions sequence will skip from 059 to 061. `docs/adr/README.md` records the gap and the reason; the number is not reused.
 

@@ -143,6 +143,14 @@ stage_static() {
     && python3 tools/verification/verify --gate \
     && python3 tools/scitt_fetch_service_key.py --selftest \
     && python3 scripts/slo_gate.py --selftest \
+    `# ADR-MCPRE-061 §6.3 — the file-size ratchet. Clippy has no file-length lint at all,` \
+    `# so the one threshold the project states about FILES had no mechanical form until` \
+    `# this gate. Pure text: it belongs in the no-build stage.` \
+    && python3 scripts/module_size_gate.py --selftest \
+    && python3 scripts/module_size_gate.py \
+    `# The ratchet's comparison logic needs no build; the measurement it guards does, and` \
+    `# runs in stage 2 with the probes that prove the lints are actually switched on.` \
+    && python3 scripts/clippy_ratchet_gate.py --selftest \
     && fmt_check \
     || return 1
   if command -v helm >/dev/null 2>&1; then
@@ -233,6 +241,19 @@ clippy_check() {
   for m in "${MANIFESTS[@]}"; do
     cargo clippy --manifest-path "$m" --all-targets -- -D warnings || return 1
   done
+  # ADR-MCPRE-061 §6. The five adopted lints are allow-by-default and are NOT in
+  # `[workspace.lints.clippy]`, because every line above runs `--all-targets -- -D warnings`
+  # and would turn thousands of exempt test-code sites into errors on one commit. The
+  # ratchet switches them on itself over production targets and holds the per-crate count.
+  #
+  # The probes run FIRST and are the reason this is enforcement rather than configuration:
+  # `.clippy.toml` alone is inert, and an 80-line function once produced no warning at all
+  # under `-D warnings`. `--activation-probe` fails if that returns; `--nesting-probe`
+  # pins both sides of the "deeper than two levels" boundary.
+  python3 scripts/clippy_ratchet_gate.py --activation-probe \
+    && python3 scripts/clippy_ratchet_gate.py --nesting-probe \
+    && python3 scripts/clippy_ratchet_gate.py \
+    || return 1
 }
 
 # --- stage 3: Bazel parity ------------------------------------------------------

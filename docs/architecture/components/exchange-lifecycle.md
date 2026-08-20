@@ -156,14 +156,14 @@ Measured by the ADR-061 §5.1 rule on `main` @ `527b1ac`.
 
 | file | prod | current role | target role |
 |---|---:|---|---|
-| `mcp-re-proxy/src/exchange_state.rs` | 815 | the transition relation and its projections — 17 pub fns, 4 private fns | unchanged. Long and **deep**; the census verdict is *nothing to do here* |
+| `mcp-re-proxy/src/exchange_state.rs` | 789 | the transition relation and its projections — 17 pub fns, 4 private fns | unchanged. Long and **deep**; the census verdict is *nothing to do here* |
 | `mcp-re-proxy/src/request_stages.rs` | 159 | stage vocabulary + a prose ordering table | vocabulary only; the prose table is deleted, not corrected (§11) |
-| `mcp-re-proxy/src/http_profile_serve.rs` | 2119 | serving assembly **plus** six other authorities (§11) | the assembly only, consuming stage-returned transitions |
-| `mcp-re-proxy/src/async_serve.rs` | 897 | async serving runtime | subordinate to the same machine |
+| `mcp-re-proxy/src/http_profile_serve.rs` | 2127 | serving assembly **plus** six other authorities (§11) | the assembly only, consuming stage-returned transitions |
+| `mcp-re-proxy/src/async_serve.rs` | 898 | async serving runtime | subordinate to the same machine |
 | `mcp-re-proxy/src/stage_timers.rs` | 275 | per-stage timing | subordinate |
 | `mcp-re-proxy/src/http_profile_dispatch.rs` | 188 | dispatch | subordinate |
 
-`http_profile_serve.rs` at 2119 production lines is the only ADR-061 §5.3 band-4 unit (>2,000): *exceptional review surface; strong presumption that multiple hidden authorities or harnesses exist.* The presumption holds — see §11.
+`http_profile_serve.rs` at 2127 production lines is the only ADR-061 §5.3 band-4 unit (>2,000): *exceptional review surface; strong presumption that multiple hidden authorities or harnesses exist.* The presumption holds — see §11.
 
 ## 10. What `http_profile_serve.rs` actually contains
 
