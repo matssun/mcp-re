@@ -22,7 +22,7 @@
 // Deferred: the authorization EVALUATOR (`evaluator`), the authorization-object
 // PROFILE (`profile`), and the REFERENCE grant profile (`reference`) are not yet
 // built on the RFC 9421 carrier (files retained); they are rebuilt on the RFC 9421
-// request evidence (`VerifiedHttpRequestEvidence.request_block.artifact_bindings`)
+// request evidence (`VerifiedMcpRequest.request_block.artifact_bindings`)
 // in a follow-up.
 // The profile-agnostic pieces below — the decision/error taxonomy, the
 // authorization-block wire types, revocation, and the JSON-RPC error surface —

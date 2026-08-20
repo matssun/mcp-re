@@ -407,7 +407,7 @@ fn build_fixtures() -> Vec<Fixture> {
     )
     .expect("signing succeeds");
     let verified = verify_request(&req, &resolver(), NOW).expect("fixture verifies");
-    assert_eq!(evidence, verified.evidence, "writer sanity");
+    assert_eq!(&evidence, verified.evidence(), "writer sanity");
     // Reconstruct the exact base the verifier accepted, for the oracle.
     let base = {
         use mcp_re_http_profile::sigbase::signature_base;
@@ -2126,7 +2126,7 @@ fn frozen_http_profile_corpus_verifies() {
                         if let Some(oracle) = &fixture.oracle {
                             // Oracle byte-equality (S8: assert bytes, not prints).
                             assert_eq!(
-                                verified.evidence.digest_value,
+                                verified.evidence().digest_value,
                                 oracle.request_evidence_digest_value,
                                 "{name}: evidence handle drifted from frozen oracle"
                             );

@@ -80,22 +80,16 @@ pub struct ExVerificationKey(mcp_re_core::VerificationKey);
 /// those fields cannot state the property at all.
 #[verifier::external_type_specification]
 pub struct ExAdmissionStatus(AdmissionStatus);
-
 #[verifier::external_type_specification]
 pub struct ExBindingType(BindingType);
-
 #[verifier::external_type_specification]
 pub struct ExAudience(Audience);
-
 #[verifier::external_type_specification]
 pub struct ExAdmissionClaims(AdmissionClaims);
-
 #[verifier::external_type_specification]
 pub struct ExAdmissionBinding(AdmissionBinding);
-
 #[verifier::external_type_specification]
 pub struct ExAuthoritativeAdmission(AuthoritativeAdmission);
-
 #[verifier::external_type_specification]
 pub struct ExVerifiedAdmission(VerifiedAdmission);
 
@@ -120,7 +114,6 @@ pub struct ExAdmissionPolicy(AdmissionPolicy);
 /// about which `artifact_type`/`binding_type` pair can leave the verifier as `Ok`.
 #[verifier::external_type_specification]
 pub struct ExArtifactType(crate::block::ArtifactType);
-
 #[verifier::external_type_specification]
 pub struct ExArtifactBinding(crate::block::ArtifactBinding);
 
@@ -149,37 +142,28 @@ pub assume_specification[ <BindingType as core::cmp::PartialEq>::eq ](
 /// introduces an assumption. That is the measurement the experiment was run to take.
 #[verifier::external_type_specification]
 pub struct ExSignerSlot(crate::block::SignerSlot);
-
 #[verifier::external_type_specification]
 pub struct ExActorIdentity(crate::block::ActorIdentity);
-
 #[verifier::external_type_specification]
 pub struct ExResolvedActor(crate::block::ResolvedActor);
-
 #[verifier::external_type_specification]
 pub struct ExAudienceTuple(crate::block::AudienceTuple);
-
 #[verifier::external_type_specification]
 pub struct ExRequestEvidenceDigest(crate::block::RequestEvidenceDigest);
-
 #[verifier::external_type_specification]
 pub struct ExHttpContinuation(crate::block::HttpContinuation);
-
 #[verifier::external_type_specification]
 pub struct ExHttpRequestEvidenceBlock(crate::block::HttpRequestEvidenceBlock);
-
 #[verifier::external_type_specification]
 pub struct ExRequestEvidence(crate::evidence::RequestEvidence);
-
 #[verifier::external_type_specification]
-pub struct ExVerifiedHttpRequestEvidence(crate::verify::VerifiedHttpRequestEvidence);
-
+pub struct ExFloorVerifiedRequest(crate::verified_request::CryptographicFloorVerifiedRequest);
+#[verifier::external_type_specification]
+pub struct ExVerifiedMcpRequest(crate::verified_request::VerifiedMcpRequest);
 #[verifier::external_type_specification]
 pub struct ExHttpReplayKey(crate::replay::HttpReplayKey);
-
 #[verifier::external_type_specification]
 pub struct ExDispatchError(crate::dispatch::DispatchError);
-
 #[verifier::external_type_specification]
 pub struct ExRetainedContinuation<'a>(crate::dispatch::RetainedContinuation<'a>);
 

@@ -218,6 +218,41 @@ in the assurance graph rather than to field privacy.
 With the seal reverted, `verify-verus` reports PASS over 6 units. **Do not re-seal this type
 without a plan for the four theorems.**
 
+### The same trade, measured a second time
+
+`CryptographicFloorVerifiedRequest` and `VerifiedMcpRequest`
+(`mcp-re-http-profile/src/verified_request.rs`) were written with `pub(crate)` fields and a
+crate-boundary seal — every consumer of these products lives in another crate, so unlike
+the proxy's owners the boundary would have been real. `verify-verus` returned the same
+error, twice, and then a second one when only the outer type was opened:
+
+```
+error: cannot use function `…VerifiedMcpRequest::profile_id` which is ignored because it
+       is either declared outside the verus! macro or it is marked as `external`.
+```
+
+Verus cannot call the accessors from verified code either, so the verified body must read
+fields — which requires BOTH products transparent, not just the one the postcondition
+mentions. Both are now `pub`, and `prepare_http_dispatch` reads `verified.floor.nonce`
+rather than `verified.nonce()` for that reason.
+
+What the split still buys is not a seal and does not depend on one: the floor and full
+propositions are different TYPES, so a consumer requiring the full one cannot be handed the
+floor one. That is enforced by the compiler on every path, which is more than the runtime
+`audience_hash` check it replaced ever gave.
+
+The proof got stronger in the exchange. THM-0009's postcondition used to read
+
+```
+verified.request_block matches Some(block) ==> (block.continuation is Some ==> …)
+```
+
+— vacuously true for any product whose block was absent, which is exactly a floor-verified
+request. The parameter type now excludes those, so the obligation is stated
+unconditionally. `verify-verus` reports PASS over 6 units with the same 15 verified
+obligations in `mcp-re-http-profile` as before, so the strengthening is not paid for by a
+weaker proof somewhere else.
+
 ## Sealing the next owner
 
 1. Make the representation private: `pub struct X { kind: XKind }`, `enum XKind` private.

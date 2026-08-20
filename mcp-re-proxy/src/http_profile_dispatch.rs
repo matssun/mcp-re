@@ -39,7 +39,7 @@ use mcp_re_http_profile::DispatchConfig;
 use mcp_re_http_profile::DispatchError;
 use mcp_re_http_profile::DispatchOutcome;
 use mcp_re_http_profile::RetainedContinuation;
-use mcp_re_http_profile::VerifiedHttpRequestEvidence;
+use mcp_re_http_profile::VerifiedMcpRequest;
 
 use crate::async_replay::AsyncReplayTier;
 use crate::replay_tier::ReplayDurabilityTier;
@@ -98,7 +98,7 @@ impl ProxyDispatchError {
 /// [`mcp_re_http_profile::verify_request_full`]; `continuation_ctx` is `Some` iff
 /// the caller holds a retained MRTR correlation for this request.
 pub fn dispatch_request_with_tier_gate(
-    verified: &VerifiedHttpRequestEvidence,
+    verified: &VerifiedMcpRequest,
     replay: &dyn ReplayCache,
     continuation_ctx: Option<RetainedContinuation<'_>>,
     config: &ProxyDispatchConfig,
@@ -139,7 +139,7 @@ pub fn dispatch_request_with_tier_gate(
 /// binding, then the awaited atomic admission LAST. `verified` MUST come from
 /// [`mcp_re_http_profile::verify_request_full`].
 pub async fn dispatch_request_with_async_tier(
-    verified: &VerifiedHttpRequestEvidence,
+    verified: &VerifiedMcpRequest,
     tier: &AsyncReplayTier,
     continuation_ctx: Option<RetainedContinuation<'_>>,
     config: &ProxyDispatchConfig,
@@ -171,7 +171,7 @@ pub async fn dispatch_request_with_async_tier(
     // 4. Awaited atomic admission LAST — the only side-effecting step. A store
     //    failure fails closed (`replay_cache_unavailable`), never an admit.
     let decision = tier
-        .check_and_insert(&replay_key.to_core_replay_key(verified.expires), now_unix)
+        .check_and_insert(&replay_key.to_core_replay_key(verified.expires()), now_unix)
         .await
         .map_err(|_| ProxyDispatchError::Dispatch(DispatchError::ReplayCacheUnavailable))?;
     match decision {

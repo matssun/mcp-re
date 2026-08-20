@@ -63,7 +63,7 @@ use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
-use mcp_re_http_profile::VerifiedHttpRequestEvidence;
+use mcp_re_http_profile::VerifiedMcpRequest;
 use mcp_re_http_profile::PROFILE_TAG;
 use mcp_re_proxy::AwsKmsConfig;
 use mcp_re_proxy::AwsKmsEd25519Backend;
@@ -194,7 +194,7 @@ fn resolver(
     }
 }
 
-fn signed_request() -> (HttpRequest, RequestEvidence, VerifiedHttpRequestEvidence) {
+fn signed_request() -> (HttpRequest, RequestEvidence, VerifiedMcpRequest) {
     let mut req = base_request();
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),

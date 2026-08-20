@@ -64,7 +64,7 @@ use mcp_re_http_profile::RetainedContinuation;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedContext;
 use mcp_re_http_profile::VerifiedContextPolicy;
-use mcp_re_http_profile::VerifiedHttpRequestEvidence;
+use mcp_re_http_profile::VerifiedMcpRequest;
 use mcp_re_http_profile::VerifierPolicy;
 
 use crate::admission_source::AsyncAdmissionSource;
@@ -196,7 +196,7 @@ impl Refusal {
 /// a key valid at ANSWERABLE is still valid at RESPONSE-SIGNED.
 struct Exchange<'a> {
     http_req: &'a HttpRequest,
-    verified: &'a VerifiedHttpRequestEvidence,
+    verified: &'a VerifiedMcpRequest,
     actor_id: &'a str,
     now: i64,
     /// The delegated key snapshotted at ANSWERABLE, once the exchange has one.
@@ -591,7 +591,7 @@ impl HttpProfileProxy {
             return Ok(admitted);
         };
         let verified = ex.verified;
-        let block = verified.request_block.as_ref();
+        let block = Some(verified.request_block());
         let binding = block.and_then(|b| b.admission.as_ref());
         let assertion = block.and_then(|b| b.admission_assertion.as_deref());
 
@@ -681,7 +681,7 @@ impl HttpProfileProxy {
             // An unverified request has no trustworthy hash to bind to and no resolved actor
             // to attribute the denial to.
             RefusalPosture::Preflight => (None, None),
-            _ => (Some(&ex.verified.evidence), Some(ex.actor_id.to_owned())),
+            _ => (Some(ex.verified.evidence()), Some(ex.actor_id.to_owned())),
         };
         if refusal.posture == RefusalPosture::AfterAdmission {
             return self.response_rejection(
@@ -730,7 +730,7 @@ impl HttpProfileProxy {
         a: &Arc<mcp_re_http_profile::ActiveDelegatedKey>,
         now: i64,
         expires: i64,
-        verified: &mcp_re_http_profile::VerifiedHttpRequestEvidence,
+        verified: &mcp_re_http_profile::VerifiedMcpRequest,
         actor_id: String,
         retention: &RetentionDisposition,
         execution: ExecutionDisposition,
@@ -753,7 +753,7 @@ impl HttpProfileProxy {
                         http_req,
                         &ack,
                         now,
-                        Some(&verified.evidence),
+                        Some(verified.evidence()),
                         actor_id.clone(),
                         retention,
                         execution,
@@ -779,7 +779,7 @@ impl HttpProfileProxy {
                 e.wire_code(),
                 500,
                 now,
-                Some(&verified.evidence),
+                Some(verified.evidence()),
                 Some(actor_id),
                 execution,
                 Some(Arc::clone(a)),
@@ -843,7 +843,7 @@ impl HttpProfileProxy {
         &self,
         http_req: &HttpRequest,
         now: i64,
-    ) -> Result<Established<VerifiedHttpRequestEvidence>, Refusal> {
+    ) -> Result<Established<VerifiedMcpRequest>, Refusal> {
         let no_material = |_b: &ArtifactBinding| None;
         // Scoped so the timer covers the verification and nothing after it.
         let verify_result = {
@@ -945,12 +945,7 @@ impl HttpProfileProxy {
         &self,
         ex: &Exchange<'_>,
     ) -> Result<Established<ContinuationPrep>, Refusal> {
-        let has_continuation = ex
-            .verified
-            .request_block
-            .as_ref()
-            .and_then(|b| b.continuation.as_ref())
-            .is_some();
+        let has_continuation = ex.verified.request_block().continuation.is_some();
         let answer_state = if has_continuation {
             extract_request_state(&ex.http_req.body)
         } else {
@@ -1386,7 +1381,7 @@ impl HttpProfileProxy {
             sign_delegated_response_full(
                 response,
                 ex.http_req,
-                &ex.verified.evidence,
+                ex.verified.evidence(),
                 &a.server_signer,
                 &a.credential,
                 a.key.as_ref(),
@@ -1435,7 +1430,7 @@ impl HttpProfileProxy {
             ));
         };
         let bases = RetainedBases {
-            previous_request_base: ex.verified.request_signature_base.clone(),
+            previous_request_base: ex.verified.request_signature_base().to_vec(),
             input_required_response_base: response_base,
         };
         let key = continuation_key(
@@ -1507,7 +1502,7 @@ impl HttpProfileProxy {
         // The verifier-resolved actor, carried into every audit record from here on: a
         // denial after resolution knows who was denied, and dropping that is dropping the
         // attribution this surface exists to provide.
-        let actor_id = verified.resolved_actor.actor_id();
+        let actor_id = verified.resolved_actor().actor_id();
         let mut ex = Exchange {
             http_req: &http_req,
             verified: &verified,
@@ -1738,7 +1733,7 @@ impl HttpProfileProxy {
                 &http_req,
                 &response,
                 now,
-                Some(&verified.evidence),
+                Some(verified.evidence()),
                 actor_id.clone(),
                 &retention,
                 Self::disposition(&progress),
@@ -2041,7 +2036,7 @@ pub fn extract_request_state(body: &[u8]) -> Option<String> {
 /// closed instead.
 fn forwarded_body(
     body: &[u8],
-    verified: &VerifiedHttpRequestEvidence,
+    verified: &VerifiedMcpRequest,
     policy: VerifiedContextPolicy,
     now: i64,
 ) -> Result<Forwarded, HttpProfileError> {

@@ -128,10 +128,12 @@ Registry: [`verification/policy/theorems.toml`](../../../verification/policy/the
 | No untyped artifact binding leaves the verifier as verified | full profile | THM-0008 · `unit://http_profile.artifact_typing` | in registry |
 | A presented continuation cannot bypass verification | full profile | THM-0009 · `unit://http_profile.continuation_unbypassability` | in registry |
 | Continuation handles match their presented inputs in role | full profile | THM-0010 · `unit://http_profile.continuation_binding` | in registry |
-| **Floor result theorem** — possession of the floor product implies digest agreement, RFC 9421 verification under an allowed algorithm, and trust resolution in the correct signer slot | floor (composition of the above) | **none — no registry entry** | **gap** |
-| **Full result theorem** — possession of the full product implies the floor proposition *and* audience equality, artifact binding, and (for responses) request binding | full profile (composition) | **none — no registry entry** | **gap** |
+| **Floor result theorem** — possession of the floor product implies digest agreement, RFC 9421 verification under an allowed algorithm, and trust resolution in the correct signer slot | floor (composition of the above) | **none — no registry entry** | **gap, now expressible** |
+| **Full result theorem** — possession of the full product implies the floor proposition *and* audience equality, artifact binding, and (for responses) request binding | full profile (composition) | **none — no registry entry** | **gap, now expressible** |
 
-The two gaps are the point of §2. Today no theorem distinguishes the two products, because there is only one product type to state a theorem about. The type split is a precondition for stating them, not a consequence of it.
+The two gaps are the point of §2. They were not merely unwritten — they were **unstatable**, because there was one product type to state a theorem about. The request-side type split (#570) removes that obstacle; writing the two theorems is #572.
+
+The split also removed a hole in an existing theorem. THM-0009's Verus postcondition read `verified.request_block matches Some(block) ==> (block.continuation is Some ==> continuation_verified)`, which is **vacuously true whenever the block is absent** — that is, for exactly a floor-verified request. `prepare_http_dispatch` now takes `VerifiedMcpRequest`, so the antecedent is gone and the obligation is unconditional. `verify-verus` reports PASS over 6 units with the same 15 verified obligations in this crate as before the change.
 
 ## 9. Test/evidence inventory
 
@@ -147,7 +149,7 @@ The two gaps are the point of §2. Today no theorem distinguishes the two produc
 | Trust seam is caller-supplied (see §11) | `tests/signer_seam_test.rs` | default | — |
 | Proof-path coverage | `tests/proof_path_test.rs` | default | — |
 | Serving path consumes the full product, not the floor | `mcp-re-proxy/tests/integration_async/rfc9421_round_trip_test.rs` | `--features async_serve`; `//mcp-re-proxy:integration_async_test` | — |
-| **Floor product is not accepted where the full product is required** | **none** | — | **gap — not expressible until §2 lands** |
+| **Floor product is not accepted where the full product is required** | `compile_fail` doctest on `VerifiedMcpRequest` | `cargo test -p mcp-re-http-profile --doc` — **cargo only**, the Bazel lane runs no doctests | **the control was probed**: rewriting the example to pass a `&VerifiedMcpRequest` makes the test FAIL, so it is not passing on a typo |
 
 Lane identity is part of each property (ADR-061 §12). `mcp-re-http-profile` tests run under the crate's default features; the serving-path rows require `async_serve` and are only non-vacuous in the Bazel lane or an explicit `--features` cargo run.
 
@@ -157,7 +159,8 @@ Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_g
 
 | file | prod | current role | target role |
 |---|---:|---|---|
-| `mcp-re-http-profile/src/verify.rs` | 1640 | the whole verifier: floor, full profile, response, bound response, delegated response, unbound variants — 17 public items | facade only; floor and full-profile stages become private subordinate modules with distinct products |
+| `mcp-re-http-profile/src/verified_request.rs` | 195 | **the two request products** — `CryptographicFloorVerifiedRequest` and `VerifiedMcpRequest` | unchanged; the value owns its own module rather than living beside the procedure that builds it |
+| `mcp-re-http-profile/src/verify.rs` | 1598 | the verifier: floor, full profile, response, bound response, delegated response, unbound variants | facade only; floor and full-profile stages become private subordinate modules |
 | `mcp-re-http-profile/src/sigbase.rs` | 306 | signature-base reconstruction | private subordinate of the floor |
 | `mcp-re-http-profile/src/digest.rs` | 65 | content-digest | private subordinate of the floor |
 | `mcp-re-http-profile/src/block.rs` | 647 | evidence blocks, `ResolvedActor` | shared: `ResolvedActor` is a seam value (§14), blocks are a full-profile subordinate |
@@ -191,7 +194,15 @@ Four axes are multiplied into a flat function list: floor vs full, request vs re
 
 ## 11. Known deviations
 
-1. **One product type, two propositions.** `verify_request` (floor) and `verify_request_full` both return `VerifiedHttpRequestEvidence`. The assurance difference is carried in `Option` fields whose doc comments read "`None` on the minimal proof path; `Some` after `verify_request_full`" — `audience`, `audience_hash`, `request_block`. `VerifiedHttpResponseEvidence` has the same shape in `bound_request_evidence`, `body_request_evidence`, and `server_signer` ("`None` on the seam-only path"). This is ADR-061 §2 class 9, and it is the blocking item: the theorem gaps in §8 and the missing negative control in §9 both follow from it.
+1. **~~One product type, two propositions~~ — closed on the REQUEST side (#570), open on the response side (#571).** `verify_request` now returns `CryptographicFloorVerifiedRequest` and `verify_request_full` returns `VerifiedMcpRequest`; the three `Option` fields that carried the assurance difference are gone, and a full-profile consumer cannot be handed a floor value.
+
+   `VerifiedHttpResponseEvidence` still has the shape, in `bound_request_evidence`, `body_request_evidence`, and `server_signer` ("`None` on the seam-only path"). That is #571.
+
+   What the request split deleted rather than moved: `prepare_http_dispatch` carried a runtime guard failing closed on a missing `audience_hash`, commented *"its absence means minimal-path evidence reached the dispatcher"*. Its case is now unconstructible, so the check is gone — the ADR-061 §11 operational test applied to a real check.
+
+5. **The two products are deliberately NOT sealed.** Both carry `pub` fields. Verus rejects private fields on a transparent datatype and cannot call accessors from verified code, and THM-0009's postcondition is stated over `VerifiedMcpRequest::request_block` — so sealing would cost the theorem. This is the second measurement of a rule this project already had: a proved postcondition outranks a seal ([`docs/dev/sealed-owners.md`](../../dev/sealed-owners.md)). The assurance split does not depend on the seal; it is carried by the type distinction.
+
+6. **`sigbase` is still a public module.** `digest`, `keyid`, and `policy` are now private to the crate with their intended items re-exported at the root, but `sigbase`'s module path is a real consumer contract — the conformance KAT oracle reconstructs the exact signature base through it. It becomes properly subordinate when #571 gives the floor stage its own module; narrowing it now would have meant trading module privacy for two lines in an over-threshold `lib.rs`.
 
 2. **`ResolvedActor` is deliberately unsealed and must stay that way.** It looks like a verdict — *the trust layer authorized this actor for this slot* — but the trust seam is a caller-supplied resolver, so every in-process and test resolver is a legitimate producer. `sealed-owners.md` records the measurement and the rule: sealing it would relocate ceremony without moving authority. Any decomposition here must not "fix" it.
 

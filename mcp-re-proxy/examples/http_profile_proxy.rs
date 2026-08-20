@@ -258,14 +258,14 @@ async fn handle(
     // The key is derived from the actor the VERIFIER resolved, never from anything the
     // request asserts, so one peer cannot name another's continuation at all.
     let answer_state = verified
-        .request_block
+        .request_block()
+        .continuation
         .as_ref()
-        .and_then(|b| b.continuation.as_ref())
         .and_then(|_| extract_request_state(&http_req.body));
     let answer_key = answer_state.as_ref().map(|state| {
         continuation_key(
             &expected_audience.audience_id,
-            &verified.resolved_actor.actor_id(),
+            &verified.resolved_actor().actor_id(),
             state.as_bytes(),
         )
     });
@@ -297,7 +297,7 @@ async fn handle(
         // Verified, then refused by replay admission: bind the receipt to its evidence.
         return Ok(to_hyper(rejection(
             Some(&http_req),
-            Some(&verified.evidence),
+            Some(verified.evidence()),
             e.wire_code(),
             409,
         )));
@@ -312,7 +312,7 @@ async fn handle(
         if !matches!(state.continuations.consume(key).await, Ok(true)) {
             return Ok(to_hyper(rejection(
                 Some(&http_req),
-                Some(&verified.evidence),
+                Some(verified.evidence()),
                 "mcp-re.continuation_binding_failed",
                 409,
             )));
@@ -352,7 +352,7 @@ async fn handle(
                 Ok(ack) => to_hyper(ack),
                 Err(e) => to_hyper(rejection(
                     Some(&http_req),
-                    Some(&verified.evidence),
+                    Some(verified.evidence()),
                     e.wire_code(),
                     500,
                 )),
@@ -372,7 +372,7 @@ async fn handle(
     match sign_delegated_response_full(
         &mut response,
         &http_req,
-        &verified.evidence,
+        verified.evidence(),
         &hpp_common::delegated_server_identity(),
         &hpp_common::delegation_credential(now),
         &hpp_common::delegated_key(),
@@ -392,7 +392,7 @@ async fn handle(
                 Err(e) => {
                     return Ok(to_hyper(rejection(
                         Some(&http_req),
-                        Some(&verified.evidence),
+                        Some(verified.evidence()),
                         e.wire_code(),
                         502,
                     )))
@@ -400,12 +400,12 @@ async fn handle(
             };
             if let Some(request_state) = open_leg_state {
                 let bases = RetainedBases {
-                    previous_request_base: verified.request_signature_base.clone(),
+                    previous_request_base: verified.request_signature_base().to_vec(),
                     input_required_response_base: response_base,
                 };
                 let key = continuation_key(
                     &expected_audience.audience_id,
-                    &verified.resolved_actor.actor_id(),
+                    &verified.resolved_actor().actor_id(),
                     request_state.as_bytes(),
                 );
                 if state
@@ -416,7 +416,7 @@ async fn handle(
                 {
                     return Ok(to_hyper(rejection(
                         Some(&http_req),
-                        Some(&verified.evidence),
+                        Some(verified.evidence()),
                         "mcp-re.replay_cache_unavailable",
                         503,
                     )));
@@ -426,7 +426,7 @@ async fn handle(
         }
         Err(e) => Ok(to_hyper(rejection(
             Some(&http_req),
-            Some(&verified.evidence),
+            Some(verified.evidence()),
             e.wire_code(),
             500,
         ))),

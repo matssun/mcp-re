@@ -428,7 +428,7 @@ fn missing_middle_hop_is_incomplete_not_a_complete_terminal() {
         mcp_re_http_profile::verify_delegated_response_bound_full(
             &h.response,
             &h.request,
-            &v.evidence,
+            v.evidence(),
             &resolver(),
             &expectations(),
             &nothing_revoked,
@@ -511,7 +511,7 @@ fn front_truncated_chain_is_incomplete_not_a_complete_record() {
         mcp_re_http_profile::verify_delegated_response_bound_full(
             &h.response,
             &h.request,
-            &v.evidence,
+            v.evidence(),
             &resolver(),
             &expectations(),
             &nothing_revoked,

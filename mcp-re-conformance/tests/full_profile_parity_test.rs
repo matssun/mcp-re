@@ -221,14 +221,10 @@ fn full_exchange_activates_all_blocks() {
     // Request body block is active: audience + block surfaced by verification.
     let verified = verify_request_full(&req, &audience(), &rar_material(), &resolver(), NOW)
         .expect("full request verifies");
-    assert!(
-        verified.request_block.is_some(),
-        "request body block must be active"
-    );
-    assert_eq!(
-        verified.audience_hash.as_deref(),
-        Some(audience().audience_hash()).as_deref()
-    );
+    // "the body block must be active" is carried by `VerifiedMcpRequest` itself; the
+    // parity claim that remains is that the block agrees with the verified profile tag.
+    assert_eq!(verified.request_block().profile, verified.profile_id());
+    assert_eq!(verified.audience_hash(), audience().audience_hash());
 
     // Dispatcher drives replay + continuation over the verified evidence.
     let cache = strict_cache();
@@ -335,7 +331,7 @@ fn response_evidence_mismatch_emits_request_binding_mismatch() {
     // A different request's evidence handle, advertised by a response whose ;req
     // is still bound to req_a: the crypto floor passes, the body comparison trips.
     let (_req_b, ev_b) = signed_request(&block, "nonce-b");
-    assert_ne!(ev_b.digest_value, verified_a.evidence.digest_value);
+    assert_ne!(ev_b.digest_value, verified_a.evidence().digest_value);
 
     let mut rsp = HttpResponse {
         status: 200,

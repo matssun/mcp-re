@@ -177,7 +177,7 @@ fn authorization_artifact_binding_is_bound_and_verified() {
     let (req, _) = signed("n-authz", CALL);
     let verified =
         verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW).expect("verifies");
-    let bindings = &verified.request_block.expect("block").artifact_bindings;
+    let bindings = &verified.request_block().artifact_bindings;
     assert!(
         !bindings.is_empty(),
         "the request carries a bound authorization artifact"
@@ -350,7 +350,8 @@ fn transport_identity_binds_to_the_request_actor() {
     let verified =
         verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW).expect("verifies");
     assert_eq!(
-        verified.resolved_actor.identity.keyid, CLIENT_KEY_ID,
+        verified.resolved_actor().identity.keyid,
+        CLIENT_KEY_ID,
         "the verified request actor is the identity a transport binding checks the channel against"
     );
 }
@@ -374,7 +375,7 @@ fn response_bound_to_the_wrong_request_is_rejected() {
     sign_response_full(
         &mut resp,
         &req_b,
-        &verified_b.evidence,
+        verified_b.evidence(),
         &server_identity(),
         &server_key(),
         SERVER_KEY_ID,

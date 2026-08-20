@@ -138,13 +138,12 @@ fn full_request_roundtrip_exposes_audience_and_block() {
     let (req, _ev) = signed_full_request(&block);
     let v = verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW)
         .expect("full request verifies");
-    assert_eq!(v.audience.as_ref().unwrap().audience_id, "verifier-1");
-    assert_eq!(
-        v.audience_hash.as_deref(),
-        Some(audience().audience_hash()).as_deref()
-    );
-    assert!(v.request_block.is_some());
-    assert_eq!(v.resolved_actor.identity.role, "client");
+    assert_eq!(v.audience().audience_id, "verifier-1");
+    assert_eq!(v.audience_hash(), audience().audience_hash());
+    // The claim "the full path populated the block" is now the return type, so what is
+    // left to assert is the block's agreement with the signature it was protected by.
+    assert_eq!(v.request_block().profile, v.profile_id());
+    assert_eq!(v.resolved_actor().identity.role, "client");
 }
 
 #[test]
@@ -283,7 +282,7 @@ fn response_request_evidence_mismatch_emits_request_binding_mismatch() {
         "nonce-DIFFERENT",
     )
     .expect("sign b");
-    assert_ne!(ev_b.digest_value, verified_a.evidence.digest_value);
+    assert_ne!(ev_b.digest_value, verified_a.evidence().digest_value);
 
     let mut rsp = HttpResponse {
         status: 200,

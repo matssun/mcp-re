@@ -40,7 +40,7 @@ use mcp_re_core::ReplayDecision;
 
 use crate::error::HttpProfileError;
 use crate::replay::HttpReplayKey;
-use crate::verify::VerifiedHttpRequestEvidence;
+use crate::verified_request::VerifiedMcpRequest;
 #[cfg(feature = "verify")]
 use verus_builtin_macros::verus_spec;
 #[cfg(feature = "verify")]
@@ -138,7 +138,7 @@ pub struct DispatchOutcome {
 /// continuation binding → replay `check_and_insert` LAST. The nonce is only ever
 /// burned once every other check has passed.
 pub fn dispatch_request(
-    verified: &VerifiedHttpRequestEvidence,
+    verified: &VerifiedMcpRequest,
     replay: &dyn ReplayCache,
     continuation_ctx: Option<RetainedContinuation<'_>>,
     config: &DispatchConfig,
@@ -152,7 +152,7 @@ pub fn dispatch_request(
     let (replay_key, continuation_verified) = prepare_http_dispatch(verified, continuation_ctx)?;
 
     // 4. Replay admission LAST — the only side-effecting step.
-    match replay_key.check_and_insert(replay, verified.expires)? {
+    match replay_key.check_and_insert(replay, verified.floor.expires)? {
         ReplayDecision::Fresh => {}
         ReplayDecision::Replay => return Err(DispatchError::ReplayDetected),
     }
@@ -185,31 +185,29 @@ pub fn dispatch_request(
 // bases. The pair (continuation present, continuation_verified == false) is not a state
 // any successful preparation can produce, which is the invariant ADR-MCPRE-056/057/058
 // eliminate dynamically, stated here over every input rather than over the fixtures.
+//
+// The obligation is stated unconditionally. It used to be guarded by
+// `request_block matches Some(block)`, which made it VACUOUS for any product whose block
+// was absent — that is, for exactly the floor-verified requests this parameter type now
+// excludes. An assurance ambiguity in the product had become a hole in the theorem.
+// `request_block` is read as a field rather than through its accessor so the prover can
+// relate the obligation to the value; both are in this crate.
 #[cfg_attr(feature = "verify", verus_spec(out =>
     ensures
         out matches Ok((_key, continuation_verified)) ==>
-            (verified.request_block matches Some(block) ==>
-                (block.continuation is Some ==> continuation_verified)),
+            (verified.request_block.continuation is Some ==> continuation_verified),
 ))]
 #[allow(clippy::redundant_closure)]
 pub fn prepare_http_dispatch(
-    verified: &VerifiedHttpRequestEvidence,
+    verified: &VerifiedMcpRequest,
     continuation_ctx: Option<RetainedContinuation<'_>>,
 ) -> Result<(HttpReplayKey, bool), DispatchError> {
-    // The full profile carries audience_hash; its absence means minimal-path
-    // evidence reached the dispatcher — fail closed rather than form a degenerate key.
-    let audience_hash = verified
-        .audience_hash
-        .clone()
-        .ok_or(DispatchError::Profile(HttpProfileError::MissingEvidence(
-            "audience_hash",
-        )))?;
     let replay_key = HttpReplayKey {
-        profile_id: verified.profile_id.clone(),
-        signature_label: verified.signature_label.clone(),
-        actor_id: verified.resolved_actor.actor_id(),
-        audience_hash,
-        nonce: verified.nonce.clone(),
+        profile_id: verified.floor.profile_id.clone(),
+        signature_label: verified.floor.signature_label.clone(),
+        actor_id: verified.floor.resolved_actor.actor_id(),
+        audience_hash: verified.audience_hash.clone(),
+        nonce: verified.floor.nonce.clone(),
     };
 
     // MRTR continuation binding (if the block carries one).
@@ -218,10 +216,7 @@ pub fn prepare_http_dispatch(
     // which is precisely the link the unbypassability theorem needs. The two forms are the
     // same expression — this is `and_then`'s own definition — and the choice is recorded as
     // mechanical proof-enablement, not as an architectural preference.
-    let continuation = match &verified.request_block {
-        Some(b) => b.continuation.as_ref(),
-        None => None,
-    };
+    let continuation = verified.request_block.continuation.as_ref();
     let continuation_verified = match (continuation, continuation_ctx) {
         (Some(c), Some(ctx)) => {
             c.verify(
