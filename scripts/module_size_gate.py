@@ -176,7 +176,17 @@ def check(root: Path, registry: dict[str, dict]) -> tuple[list[str], int]:
     return problems, len(sources)
 
 
-def validate_registry(registry: dict[str, dict]) -> list[str]:
+def referenced_documents(exception_ref: str) -> list[str]:
+    """The repo-relative document paths an `exception_ref` names.
+
+    Free text with a path in it, so a record can be cited as "EX-001 in
+    docs/architecture/exceptions.md" rather than as a bare filename that says nothing
+    about which record.
+    """
+    return re.findall(r"\S+\.md", exception_ref)
+
+
+def validate_registry(registry: dict[str, dict], root: Path | None = None) -> list[str]:
     problems = []
     for rel, entry in registry.items():
         for field in ("path", "baseline_prod_loc", "baseline_sha", "status"):
@@ -192,6 +202,23 @@ def validate_registry(registry: dict[str, dict]) -> list[str]:
                 f"{rel}: status is `reviewed-exception` but no `exception_ref` names the "
                 f"ADR-MCPRE-061 §14 record"
             )
+        # A reference to a record that is not there is the same defect as a stale entry:
+        # the registry claims the review exists and nothing can be read to check it. The
+        # point of `reviewed-exception` is that it points at evidence.
+        ref = entry.get("exception_ref")
+        if ref and root is not None:
+            named = referenced_documents(ref)
+            if not named:
+                problems.append(
+                    f"{rel}: `exception_ref` names no document — cite the record's file so "
+                    f"the claim can be read"
+                )
+            for doc in named:
+                if not (root / doc).exists():
+                    problems.append(
+                        f"{rel}: `exception_ref` names {doc}, which does not exist — a "
+                        f"reviewed exception must point at a record, not at a memory of one"
+                    )
     return problems
 
 
@@ -316,6 +343,37 @@ def selftest() -> int:
             print(f"selftest FAIL: stale registry entry passed: {problems}")
             return 1
 
+        # `unreviewed` -> `reviewed-exception` is the ADR-MCPRE-061 §14 transition, and it
+        # changes what the entry CLAIMS, never what the ratchet ALLOWS.
+        record = root / "record.md"
+        record.write_text("# a §14 record\n")
+        big.write_text("\n".join(f"fn f{i}() {{}}" for i in range(THRESHOLD + 2)) + "\n")
+        reviewed = {rel_big: {"path": rel_big,
+                              "baseline_prod_loc": THRESHOLD + 2,
+                              "baseline_sha": "0" * 7,
+                              "status": "reviewed-exception",
+                              "exception_ref": "EX-000 in record.md"}}
+        if validate_registry(reviewed, root):
+            print("selftest FAIL: a reviewed exception citing a real record was rejected")
+            return 1
+        problems, _ = check(root, reviewed)
+        if problems:
+            print(f"selftest FAIL: a reviewed exception at its baseline failed: {problems}")
+            return 1
+
+        # An exception is not a licence to grow.
+        big.write_text(big.read_text() + "fn extra() {}\n")
+        problems, _ = check(root, reviewed)
+        if not any("the ratchet only turns one way" in p for p in problems):
+            print(f"selftest FAIL: a reviewed exception was allowed to grow: {problems}")
+            return 1
+
+        # A record that is not there is the same defect as a stale entry.
+        record.unlink()
+        if not any("does not exist" in p for p in validate_registry(reviewed, root)):
+            print("selftest FAIL: an exception_ref naming a missing record was accepted")
+            return 1
+
     # Registry schema validation.
     bad = {"a.rs": {"path": "a.rs", "baseline_prod_loc": 1, "baseline_sha": "x",
                     "status": "reviewed-exception"}}
@@ -329,7 +387,8 @@ def selftest() -> int:
         return 1
 
     print("module-size gate selftest: PASS (7 counter cases, ratchet in both directions, "
-          "empty scope, stale + malformed registry entries)")
+          "empty scope, stale + malformed registry entries, the §14 reviewed-exception "
+          "transition and its two failure modes)")
     return 0
 
 
@@ -375,7 +434,7 @@ def main() -> int:
         return emit_registry()
 
     registry = load_registry(REGISTRY)
-    schema_problems = validate_registry(registry)
+    schema_problems = validate_registry(registry, REPO)
     problems, examined = check(REPO, registry)
     problems = schema_problems + problems
 

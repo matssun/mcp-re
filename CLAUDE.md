@@ -227,9 +227,19 @@ be created. Two registries carry that debt:
 
 An entry means **"over the threshold and not yet investigated"** — it is a debt register,
 not an exception mechanism. A unit that has been investigated and deliberately kept intact
-gets `status = "reviewed-exception"` plus an `exception_ref` naming the B-case record. A
-registry may only shrink: a file that grows fails, and a file that drops to the threshold
-fails until its entry is removed.
+gets `status = "reviewed-exception"` plus an `exception_ref` naming the B-case record in
+[`docs/architecture/exceptions.md`](docs/architecture/exceptions.md); the gate fails if the
+named document does not exist, because a reviewed exception must point at a record rather
+than at a memory of one. A registry may only shrink: a file that grows fails — whatever its
+status, an exception is not a licence to grow — and a file that drops to the threshold fails
+until its entry is removed.
+
+**Review granularity equals exception granularity.** A function-level exception does not
+make its file a reviewed exception. `parse_args` is a reviewed exception; `cli.rs` is not.
+`run_validated` is a reviewed exception; `app.rs` is not — its file-level census is
+complete and *declined* to grant one, because the audit-drain teardown authority is
+separable and has an owner next door. §14 records a decision to keep something whole; it is
+not a place to park work.
 
 ### Testing Requirements
 
