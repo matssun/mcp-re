@@ -6,9 +6,10 @@ ADR-MCPRE-061 §6.4, implementing the §6.5 rulings on C-4 and C-5.
 
 # What this gate is, and why it is a gate
 
-Four of the five adopted lints cannot be flipped to `deny` in one step: they have 60, 69,
-27 and 164 production sites. So the gate switches them on itself, over production targets
-only, and holds the per-crate count against `config/clippy-debt.toml`:
+Six lints are adopted (ADR-MCPRE-061 §6.5). Five of them cannot be flipped to `deny` in one
+step — they have 60, 69, 27, 164 and 124 production sites — so the gate switches them on
+itself, over production targets only, and holds the per-crate count against
+`config/clippy-debt.toml`:
 
     baseline 0 for a crate/lint -> any occurrence FAILS (this is `deny` with a better message)
     count above baseline        -> FAIL
@@ -438,15 +439,19 @@ def activation_probe() -> int:
         ]
         if missing:
             print(
-                "activation probe: FAIL — an 80-line function with triple nesting did not "
-                f"trigger {missing}. `.clippy.toml` sets thresholds but does not switch on "
-                "allow-by-default lints; the lint must be listed in "
-                "[workspace.lints.clippy] (ADR-MCPRE-061 §6.1)."
+                "activation probe: FAIL — a file violating the size, nesting and arithmetic "
+                f"rules did not trigger {missing}. `.clippy.toml` sets thresholds but does "
+                "not switch on allow-by-default lints. These lints are enabled by this "
+                "gate's ADOPTED list, which becomes the `-W` flags in LINT_FLAGS — NOT by "
+                "`[workspace.lints.clippy]`, which ADR-MCPRE-061 §6.2 rejects because every "
+                "clippy lane here runs `--all-targets -- -D warnings` and a workspace entry "
+                "would turn the exempt test-code sites into hard errors. Check ADOPTED, and "
+                "check the thresholds in config/clippy-strict/.clippy.toml."
             )
             return 1
         # The exclusions matter as much as the hits: if the lint ever started reporting
-        # saturating or float arithmetic, the 124-site baseline would stop meaning what
-        # §6.5 says it means.
+        # saturating, wrapping, `Wrapping`, float or const arithmetic, the 124-site baseline
+        # would stop meaning what ADR-MCPRE-061 §6.6 says it means.
         arith_spans = sum(
             1 for ln in arithmetic_lines if ln is not None
         )

@@ -244,7 +244,14 @@ The current mandatory review thresholds are:
 - function: more than 60 production lines;
 - Rust source file/module: more than 200 production lines, excluding unit tests.
 
-**Production lines** are the lines of a file before its first test module. The test module is located with the pattern `^#\[cfg\((all\()?test`, **not** `^#\[cfg\(test\)\]`. This is not pedantry: a first census pass matching only the narrow form reported `mcp-re-proxy/src/app.rs` as 1680 production lines with no tests at all, because its module is `#[cfg(all(test, unix))]`. Its real production half is 1038.
+**Production lines** are every line of a file that is **not inside a test region**. A test region opens at an attribute matching `^#\[cfg\((all\()?test` and closes at the end of the module that attribute introduces, tracked by brace depth; a file may contain several, and lines between and after them are production.
+
+Two details are load-bearing, and each corresponds to a count this project actually got wrong:
+
+- **The attribute pattern is the wide one**, not `^#\[cfg\(test\)\]`. A census pass matching only the narrow form reported `mcp-re-proxy/src/app.rs` as 1680 production lines with no tests at all, because its module is `#[cfg(all(test, unix))]`. Its real production half is 1037.
+- **Counting resumes after a test region closes.** "Lines before the first test module" is a *different and wrong* rule: it stops at the first `#[cfg(test)]` and silently discards every production item below. Under it, `mcp-re-proxy/src/trust_plane.rs` measures 134 lines. It is **690** — a band-2 unit reduced to a rounding error by the definition alone.
+
+`scripts/module_size_gate.py::production_lines` is the definition; this prose describes it, and the gate prints the rule it applied on every run so the two cannot drift silently.
 
 A threshold whose measurement is unspecified is the "green that measured nothing" failure applied to the census itself. Any tool, script, or manual count claiming to apply these thresholds SHALL state the rule it used. `scripts/module_size_gate.py` is that tool for files: it prints the rule and the number of files examined on every run, and its `--selftest` pins the counter against the cases that have actually broken hand-rolled counts here (§6.4).
 
@@ -395,7 +402,7 @@ The asymmetry on "shrinks" is deliberate. A file's exact line count changes cons
 
 An entry means **"over the threshold and not yet investigated"**. The registry is a debt register, not an exception mechanism — that distinction is what stops it rotting into a permanent allowlist, and it is why an entry that no longer describes reality is an error rather than a shrug.
 
-**Measurement integrity.** `module_size_gate.py` counts production lines by the §5.1 rule, prints the rule it applied, prints how many files it examined, and **fails on an empty scope** — a `tests/` glob once silently exempted an entire crate from `scripts/bazel_srcs_gate.py` for a whole campaign while it printed OK. Its `--selftest` pins seven counter cases including `#[cfg(all(test, unix))]`, production code appearing *after* a test region, and multiple test regions in one file. That is not hypothetical precision: a hand-rolled counter that stopped at the first `#[cfg(test)]` reported `trust_plane.rs` as 134 production lines when it is 690, turning a band-2 unit into a rounding error.
+**Measurement integrity.** `module_size_gate.py` counts production lines by the §5.1 rule, prints the rule it applied, prints how many files it examined, and **fails on an empty scope** — a `tests/` glob once silently exempted an entire crate from `scripts/bazel_srcs_gate.py` for a whole campaign while it printed OK. Its `--selftest` pins seven counter cases including `#[cfg(all(test, unix))]`, production code appearing *after* a test region, and multiple test regions in one file. That is not hypothetical precision: a hand-rolled counter that stopped at the first `#[cfg(test)]` — rather than resuming after the region closed — reported `trust_plane.rs` as 134 production lines when it is 690, turning a band-2 unit into a rounding error.
 
 ### 6.5 Disposition of ADR-060's open rulings
 

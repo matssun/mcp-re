@@ -72,7 +72,7 @@ Each component blueprint's **Known deviations** section is the diff between the 
 
 ## Measurements in these documents
 
-Production-line counts quoted in the component blueprints are measured by the ADR-061 §5.1 rule — lines before the first module matching `^#\[cfg\((all\()?test` — on `main` at commit `527b1ac`. They will drift; re-measure before acting on one. A blueprint quoting a number without stating the rule and the commit is quoting nothing.
+Production-line counts quoted in the component blueprints are measured by the ADR-061 §5.1 rule — every line **not inside a test region**, where a region opens at `^#\[cfg\((all\()?test` and closes with its module, counting resuming afterwards — on `main` at commit `527b1ac`. They will drift; re-measure before acting on one. A blueprint quoting a number without stating the rule and the commit is quoting nothing.
 
 Re-measure with the gate's counter, not by hand:
 

@@ -12,8 +12,10 @@
 # crosses the threshold, if a listed file drops to or below the threshold without its entry
 # being removed, or if an entry names a file that no longer exists.
 #
-# `baseline_prod_loc` is measured by the ADR-MCPRE-061 §5.1 rule: lines before the first
-# module matching `^#[cfg((all()?test`. Re-measure with
+# `baseline_prod_loc` is measured by the ADR-MCPRE-061 §5.1 rule: every line NOT inside a
+# test region, where a region opens at `^#[cfg((all()?test` and closes with the module it
+# introduces — counting resumes after it, so production code below the tests still counts.
+# Re-measure with
 # `python3 scripts/module_size_gate.py --emit-registry`; never hand-edit a count upward.
 
 [[debt]]

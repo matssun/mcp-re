@@ -13,7 +13,11 @@
    drive a file split; never create arbitrary files merely to get under the number.
    **Mechanically enforced** by `scripts/module_size_gate.py` as a ratchet: a new file over
    the threshold fails, and a file already in `config/module-size-debt.toml` may not grow.
-   Production lines are the lines before the first module matching `^#[cfg((all()?test`.
+   Production lines are every line **not inside a test region** — a region opens at an
+   attribute matching `^#[cfg((all()?test` and closes with the module it introduces, and
+   counting resumes afterwards. Not "lines before the first test module": that rule
+   discards production code below the tests and measured `trust_plane.rs` at 134 lines
+   when it is 690.
 3. **Module Re-exports**: Use `mod.rs` to encapsulate module internals and re-export public interfaces using `pub use`.
 
 ### Function Boundaries & Security

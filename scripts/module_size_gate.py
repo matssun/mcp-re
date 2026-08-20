@@ -24,13 +24,22 @@ no longer describes reality is an error, not a shrug.
 
 # Measuring production lines
 
-`prod` is the lines before the first test module. The test module is found with
-`^#\\[cfg\\((all\\()?test` and NOT the narrow `^#[cfg(test)]`: a first census pass matching
-only the narrow form reported `mcp-re-proxy/src/app.rs` as 1680 production lines with no
-tests at all, because its module is `#[cfg(all(test, unix))]`. Its real production half is
-1038. A counter that silently undercounts is worse than no counter, so both forms are
-matched, production code appearing AFTER a test region is counted, and the arithmetic is
-exercised by `--selftest`.
+`prod` is every line NOT inside a test region. A test region opens at an attribute matching
+`^#\\[cfg\\((all\\()?test` and closes at the end of the module that attribute introduces,
+tracked by brace depth; a file may contain several, and counting resumes after each one.
+
+Two details are load-bearing because each is a count this project got wrong:
+
+- **The wide attribute pattern**, not `^#[cfg(test)]`. A census pass matching only the
+  narrow form reported `mcp-re-proxy/src/app.rs` as 1680 production lines with no tests at
+  all, because its module is `#[cfg(all(test, unix))]`. Its real production half is 1037.
+- **Counting RESUMES after a region closes.** "Lines before the first test module" is a
+  different and wrong rule: it discards every production item below the tests. Under it
+  `mcp-re-proxy/src/trust_plane.rs` measures 134 lines; it is 690.
+
+A counter that silently undercounts is worse than no counter, so both details are exercised
+by `--selftest`, and the rule is PRINTED on every run so prose describing it cannot drift
+from it unnoticed.
 
 # The two blindness failures this gate refuses to repeat
 
@@ -67,11 +76,15 @@ STATUSES = {"unreviewed", "reviewed-exception"}
 
 
 def production_lines(text: str) -> int:
-    """Lines of a Rust source before its first test region.
+    """Every line of a Rust source that is NOT inside a test region.
 
-    A test region runs from its `#[cfg(test)]`-family attribute to the end of the module
-    it introduces, tracked by brace depth. Production code after that region is counted:
-    a file that puts a helper module below its tests is not thereby exempt.
+    A test region runs from its `#[cfg(test)]`-family attribute to the end of the module it
+    introduces, tracked by brace depth. Counting resumes afterwards, and a file may contain
+    several regions: a file that puts a helper module below its tests is not thereby exempt.
+
+    This is deliberately NOT "lines before the first test module" — that rule discards every
+    production item below the tests, and measured `trust_plane.rs` at 134 lines when it is
+    690. This function is the definition; the prose in ADR-MCPRE-061 §5.1 describes it.
     """
     lines = text.splitlines()
     count = 0
@@ -376,8 +389,7 @@ def main() -> int:
         for p in problems:
             print(f"  - {p}")
         print(
-            f"\nMeasurement: production lines = lines before the first module matching "
-            f"^#[cfg((all()?test ; threshold {THRESHOLD} (ADR-MCPRE-061 §5.1)."
+            f"\nMeasurement: production lines = every line not inside a test region (a region opens at ^#[cfg((all()?test and closes with its module; counting resumes after it); threshold {THRESHOLD} (ADR-MCPRE-061 §5.1)."
         )
         return 1
 
@@ -385,10 +397,9 @@ def main() -> int:
     excepted = len(registry) - unreviewed
     print(
         f"module-size gate: OK — {examined} production Rust files examined against a "
-        f"{THRESHOLD}-line threshold (production lines = lines before the first module "
-        f"matching ^#[cfg((all()?test ; ADR-MCPRE-061 §5.1). Debt registry: {len(registry)} "
-        f"file(s) — {unreviewed} unreviewed, {excepted} with a §14 exception. No new "
-        f"oversized file, no registered file grew."
+        f"{THRESHOLD}-line threshold (production lines = every line not inside a test region (a region opens at ^#[cfg((all()?test and closes with its module; counting resumes after it); ADR-MCPRE-061 §5.1). Debt registry: "
+        f"{len(registry)} file(s) — {unreviewed} unreviewed, {excepted} with a §14 "
+        f"exception. No new oversized file, no registered file grew."
     )
     return 0
 
