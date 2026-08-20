@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# ADR-MCPRE-061 §6 thresholds. Applied ONLY by `scripts/clippy_ratchet_gate.py`, which
+# points `CLIPPY_CONF_DIR` here and runs over production targets (`--lib --bins`).
+#
+# Separate from the repository's `/.clippy.toml` because the two lanes have different jobs.
+# The default lane runs `--all-targets -- -D warnings` and must stay green; this lane runs
+# the stricter thresholds and reports a COUNT that a ratchet holds. Merging them would make
+# every threshold tightening an immediate build break against test code the ruling exempts.
+
+# ADR-MCPRE-061 §5.1 function threshold.
+too-many-lines-threshold = 60
+
+# The mechanical form of CLAUDE.md's "no nesting deeper than two levels". The threshold
+# names the depth that is REJECTED, so "deeper than 2" is 3, not 2 — pinned on both sides
+# by `scripts/clippy_ratchet_gate.py --nesting-probe`.
+excessive-nesting-threshold = 3

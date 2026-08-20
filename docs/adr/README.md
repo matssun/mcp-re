@@ -70,6 +70,7 @@ Every ADR discussion carries the `adr` label plus one status label. Filter:
 | [ADR-MCPRE-053](https://github.com/matssun/mcp-re/discussions/437) | Admission Assertion + §7 Admission-State Binding | 🟡 Proposed |
 | [ADR-MCPRE-054](https://github.com/matssun/mcp-re/discussions/438) | Portable Audit Receipts on SCITT (RFC 9943) + COSE Receipts (RFC 9942) | 🟡 Proposed |
 | [ADR-MCPRE-055](https://github.com/matssun/mcp-re/discussions/521) | Epoch-Bound TLS Session Resumption | ✅ Accepted |
+| [ADR-MCPRE-061](https://github.com/matssun/mcp-re/discussions/567) | Hierarchical Authority Architecture, Reviewable Security Design, and Modular Engineering | ✅ Accepted |
 
 > ADR-MCPRE-053 and -054 are **Proposed** with their implementation on
 > [PR #436](https://github.com/matssun/mcp-re/pull/436); they move to Implemented
@@ -81,6 +82,22 @@ The current MCP-RE worldview is frozen in [`docs/design/active-profile-and-legac
 
 - **Active production evidence profile:** ADR-MCPRE-050 (RFC 9421 + RFC 9530 HTTP profile — the one carrier), ADR-MCPRE-051 (serving architecture), ADR-MCPRE-052 (delegated signing via a JOSE/JWS credential in the HTTP evidence), and later `ADR-MCPRE-*` records.
 - **Deprecated:** the Native JCS / object profile — ADR-MCPS-004 (Ed25519-over-JCS), ADR-MCPS-005 (JCS canonicalization), and the draft-01/02 native-envelope material (`status:deprecated`). These are **historical**: not a security mechanism, not an alternative carrier, not a fallback. They MUST NOT be the foundation for new evidence, delegated signing, runtime profiles, SEP/IG proposals, or production design.
+
+## Unpublished drafts and the gap at 060
+
+One draft body lives in [`docs/adr/drafts/`](drafts/) and is **not** published as a
+Discussion:
+
+- **ADR-MCPRE-060** — *Modular Decomposition, Mechanical Enforcement, and the Real-Time
+  Verification Loop.* Captured, never ratified, **superseded before ratification** by
+  ADR-MCPRE-061. Retained as provenance for the modular-refactoring discussion; not
+  current implementation guidance.
+ADR-MCPRE-061 was published from this directory on 2026-08-20 and its draft body removed;
+it now lives at [Discussion #567](https://github.com/matssun/mcp-re/discussions/567).
+
+Because 060 was never published, the Discussions sequence skips from 059 to 061. **The
+number 060 is not reused.** The disposition of every conflict 060 raised for owner ruling
+is recorded in ADR-MCPRE-061 §6.5.
 
 ## Conventions
 

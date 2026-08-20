@@ -4,6 +4,14 @@ The rules this implements are in [`CLAUDE.md`](../../CLAUDE.md) — **R-SEAL** a
 **R-COMPOSE**. This file records which owners are sealed, what each one projects, and how
 to seal the next one.
 
+> **Scope.** This document owns the **current** sealed state: which owners are sealed
+> today, what each projects, which are deliberately unsealed and why, and the procedure for
+> the next one. The **target** design for each authority domain — intended hierarchy,
+> visibility, theorem and test inventory, implementation map — lives in
+> [`docs/architecture/components/`](../architecture/components/). Each blueprint's *Known
+> deviations* section is the diff between the two. Neither document restates the other's
+> tables (ADR-MCPRE-061 §13.1).
+
 ## The failure mode being removed
 
 > The invariant is enforced at a construction site, but the constructed value does not own
