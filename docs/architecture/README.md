@@ -29,7 +29,7 @@ flowchart TD
 
 ## Top-level documents
 
-- [`ADR-MCPRE-061-hierarchical-authority-architecture.md`](../adr/drafts/ADR-MCPRE-061-hierarchical-authority-architecture.md) — proposed durable architectural decision. **Draft path.** When the ADR is published as a Discussion, this link is retargeted to the Discussion URL on the same commit that removes the draft (ADR-061 §13.2).
+- [**ADR-MCPRE-061**](https://github.com/matssun/mcp-re/discussions/567) — the durable architectural decision. ✅ Accepted 2026-08-20; the Discussion is the source of truth (`docs/adr/README.md`).
 - [`implementation-blueprint.md`](implementation-blueprint.md) — current execution method for the refactoring campaign.
 - [`component-blueprint-template.md`](component-blueprint-template.md) — standard anatomy for subordinate component design documents.
 

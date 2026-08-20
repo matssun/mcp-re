@@ -16,7 +16,7 @@ repeat transmission the same day — the repeat carried substantial new material
 
 > **SUPERSEDED BEFORE RATIFICATION.** This draft is retained as historical capture of
 > the modular-refactoring discussion that led to
-> [ADR-MCPRE-061](ADR-MCPRE-061-hierarchical-authority-architecture.md). It was never
+> [ADR-MCPRE-061](https://github.com/matssun/mcp-re/discussions/567), accepted 2026-08-20. This draft was never
 > published or accepted as an ADR and is not current implementation guidance. Current
 > architectural policy lives in ADR-MCPRE-061 and `docs/architecture/`; current agent
 > execution rules remain in `CLAUDE.md` and `docs/AGENT_INSTRUCTIONS.md`. The

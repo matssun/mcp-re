@@ -70,6 +70,7 @@ Every ADR discussion carries the `adr` label plus one status label. Filter:
 | [ADR-MCPRE-053](https://github.com/matssun/mcp-re/discussions/437) | Admission Assertion + §7 Admission-State Binding | 🟡 Proposed |
 | [ADR-MCPRE-054](https://github.com/matssun/mcp-re/discussions/438) | Portable Audit Receipts on SCITT (RFC 9943) + COSE Receipts (RFC 9942) | 🟡 Proposed |
 | [ADR-MCPRE-055](https://github.com/matssun/mcp-re/discussions/521) | Epoch-Bound TLS Session Resumption | ✅ Accepted |
+| [ADR-MCPRE-061](https://github.com/matssun/mcp-re/discussions/567) | Hierarchical Authority Architecture, Reviewable Security Design, and Modular Engineering | ✅ Accepted |
 
 > ADR-MCPRE-053 and -054 are **Proposed** with their implementation on
 > [PR #436](https://github.com/matssun/mcp-re/pull/436); they move to Implemented
@@ -84,15 +85,15 @@ The current MCP-RE worldview is frozen in [`docs/design/active-profile-and-legac
 
 ## Unpublished drafts and the gap at 060
 
-Two draft bodies live in [`docs/adr/drafts/`](drafts/) and are **not** published as
-Discussions:
+One draft body lives in [`docs/adr/drafts/`](drafts/) and is **not** published as a
+Discussion:
 
 - **ADR-MCPRE-060** — *Modular Decomposition, Mechanical Enforcement, and the Real-Time
   Verification Loop.* Captured, never ratified, **superseded before ratification** by
   ADR-MCPRE-061. Retained as provenance for the modular-refactoring discussion; not
   current implementation guidance.
-- **ADR-MCPRE-061** — *Hierarchical Authority Architecture, Reviewable Security Design,
-  and Modular Engineering.* Draft, pending owner review before publication.
+ADR-MCPRE-061 was published from this directory on 2026-08-20 and its draft body removed;
+it now lives at [Discussion #567](https://github.com/matssun/mcp-re/discussions/567).
 
 Because 060 was never published, the Discussions sequence skips from 059 to 061. **The
 number 060 is not reused.** The disposition of every conflict 060 raised for owner ruling
