@@ -138,7 +138,8 @@ Three of five are real properties with no registry entry. That is the honest sta
 | property | test/evidence | lane | negative control |
 |---|---|---|---|
 | mTLS handshake, client-cert verification, rejection | `mcp-re-proxy/tests/integration/tls_test.rs` | `//mcp-re-proxy:integration_test` | unverified client rejected |
-| Epoch-bound resumption (ADR-055) | `tests/integration/tls_epoch_resumption_test.rs` | `//mcp-re-proxy:integration_test` | resumption refused after epoch change |
+| Store-level epoch binding (ADR-055 threat, retained by ADR-062) | `src/tls_listener_state/resumption_acceptance.rs` | `//mcp-re-proxy:proxy_unit_test` | resumption refused after epoch change — a claim about the STORE |
+| Listener-scoped resumption (ADR-062) | `src/tls_listener_state/mod.rs` tests, probes T01–T04 | `//mcp-re-proxy:proxy_unit_test`; `tools/verification/verify-mutations` | a different anchor set gets its own empty store; each probe turns a declared control red |
 | Channel binding to transport identity | `tests/integration/mtls_transport_binding_test.rs` | `//mcp-re-proxy:integration_test` (uses the `test-fixtures` dev feature) | binding mismatch refused |
 | Client leg end to end | `tests/integration_async/mtls_client_leg_e2e_test.rs` | `async_serve`; `//mcp-re-proxy:integration_async_test` | — |
 | Per-request revocation | `tests/integration_async/per_request_revocation_test.rs` | `async_serve` | revoked client refused |
@@ -164,21 +165,32 @@ Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_g
 | `mcp-re-proxy/src/client_revocation.rs` | 263 | CRL plan consumption | private subordinate |
 | `mcp-re-proxy/src/ocsp.rs` | 1271 | full RFC 6960 responder + client | separate authority behind `online_ocsp`; band-3 hotspot |
 
-`tls.rs` at 1797 production lines (1907 before MCPRE-137 moved the resumption authority out) is an ADR-061 §5.3 band-3 hotspot (>1,000): authority census required before substantial new functionality. `transport.rs` and `ocsp.rs` are the same band and are *not* covered by this blueprint's target; each needs its own.
+`tls.rs` at 1565 production lines (1907 before MCPRE-137 moved the resumption authority out) is an ADR-061 §5.3 band-3 hotspot (>1,000): authority census required before substantial new functionality. `transport.rs` and `ocsp.rs` are the same band and are *not* covered by this blueprint's target; each needs its own.
 
 ## 13. Known deviations
 
-1. ~~**The listener-lifetime authority is implicit.**~~ **CLOSED by MCPRE-137.** `TlsListenerSecurityState` owns the anchors, the epoch they digest to, the epoch-tagged session cache and the handshake-signature budget; `tls.rs` retains only `pub(crate)` resumption-free assembly, so no public path installs a session store on a config. The census record is EX-004 in [`../review-dispositions.md`](../review-dispositions.md); the owner and its projections are in [`../../dev/sealed-owners.md`](../../dev/sealed-owners.md).
+1. ~~**The listener-lifetime authority is implicit.**~~ **CLOSED by MCPRE-137.** `TlsListenerSecurityState` owns the anchors, the epoch they digest to, the epoch-tagged session cache and the handshake-signature budget. The seal is a module TREE — `assembly`, `auth_epoch`, `client_verifier`, `resumption_binding` and the handshake acceptance all live BENEATH the owner as `pub(super)`, because `pub(crate)` seals against nobody when every consumer is in the crate. The census record is EX-004 in [`../review-dispositions.md`](../review-dispositions.md); the owner, its projections and the one residual are in [`../../dev/sealed-owners.md`](../../dev/sealed-owners.md).
+
+   The guarantee is about CONSTRUCTION: no MCP-RE path can build a config whose cache is unrelated to the anchors its verifier was built from. `rustls::ServerConfig::session_storage` is a public field of a foreign type, so a holder of a config can still overwrite it — that lies outside the guarantee and is recorded rather than papered over.
 
    **What the census found that this section did not say.** Within a production listener the anchor set is IMMUTABLE, so the authentication epoch is a construction-time constant and `republish`'s change branch never fires outside a test. What protects an anchor-set change is that new anchors make a new listener with a new, empty store — cache non-continuity, not epoch advance. Three propositions must therefore be kept apart, and only the first two have evidence today:
 
    | | proposition | established by |
    |---|---|---|
-   | 1 | if the current epoch changes, sessions tagged with the old one are not returned | `tls_auth_epoch`, and the real-handshake acceptance in `tests/integration/tls_epoch_resumption_test.rs` |
+   | 1 | if the current epoch changes, sessions tagged with the old one are not returned | `tls_listener_state::auth_epoch`, and the real-handshake acceptance in `tls_listener_state::resumption_acceptance` — moved INSIDE the seal, because keeping it an integration test would have kept the subordinates `pub` |
    | 2 | replacing the anchor set replaces the listener and therefore the store | `tls_listener_state::tests` |
    | 3 | a production listener's epoch ADVANCES when its anchors change | **nothing — no anchor-reload path exists** |
 
-   Proposition 1 is a claim about the store and must never be read as evidence for proposition 3. ADR-055's text anticipates a live-epoch lifecycle; whether MCP-RE promises that or promises listener replacement is under separate adjudication, and MCPRE-137 deliberately exposed no epoch mutation rather than inventing an operational capability so an existing mechanism could exercise its change branch.
+   Proposition 1 is a claim about the store and must never be read as evidence for proposition 3.
+
+   **The lifecycle is now RULED.** [ADR-MCPRE-062](https://github.com/matssun/mcp-re/discussions/599) supersedes ADR-055 and selects **immutable listener / store replacement**: a resumption store is scoped to exactly one immutable client-trust-anchor set, and changing that set establishes a new listener security state with a new store. Three states must stay distinct in every later document:
+
+   ```text
+   ADR-062 DECISION      A is accepted
+   MCPRE-137 (#573)      conforms to A structurally; exposes no epoch mutation
+                         does NOT retire ADR-055's dormant live-epoch machinery
+   #598 REMAINING        retire/re-scope that machinery, and its theorem consequences
+   ```
 
 2. **The blocking harness is inside the security authority** — §8.
 
@@ -193,5 +205,5 @@ Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_g
 - blocking harness is outside the TLS authority if retained;
 - no test-only consumer forces a misleading production export;
 - TLS authority has a narrow facade and private subordinate implementation tree;
-- the ADR-055 resumption property and the credential-window relation are stated in the theorem registry with correct scope;
+- the resumption property and the credential-window relation are stated in the theorem registry with correct scope — under ADR-062 the resumption row is listener/store NON-CONTINUITY, not live epoch advancement (see the #581 note);
 - exact cargo/Bazel feature lanes cover exported-key, delegated-key, revocation, resumption, and async serving paths, each named per §11.

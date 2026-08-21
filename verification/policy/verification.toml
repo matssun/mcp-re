@@ -327,7 +327,21 @@ tested_symbols = [
 # ---------------------------------------------------------------------------
 #
 # One authority: the anchors, the epoch they digest to, the session cache tagged with it,
-# and the handshake-signature budget belong to ONE listener and were established together.
+# and the handshake-signature budget belong to ONE listener and are established together.
+#
+# THE CLAIM IS ABOUT THE CONSTRUCTION PATH, and the qualification is not hedging — it is
+# what the evidence supports:
+#
+#   Every MCP-RE production construction/rebuild path obtains the anchors, the epoch-bound
+#   session store and the signing budget through one `TlsListenerSecurityState`, and those
+#   terms cannot be independently supplied to that path. A caller that subsequently mutates
+#   a public field of the foreign `rustls::ServerConfig` — `session_storage` is one — lies
+#   OUTSIDE this guarantee.
+#
+# An unqualified "unsplittable" would overclaim by exactly that residual. MCP-RE owns the
+# construction path; it does not own the mutability semantics of a foreign Rust type. #581
+# will attach theorem language to this evidence, and the scope is easier to state correctly
+# now than to rediscover during theorem review.
 #
 # The unit exists because the EX-004 census found the relationship held only through call
 # ordering — a rebuild passed the anchors and the store as two arguments that had to agree,
@@ -348,7 +362,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.tls_listener_state"
 class = "V0"
-description = "The listener-lifetime TLS security state: anchors, the epoch they digest to, the session cache tagged with it, and the signing budget, established together and unsplittable."
+description = "Every MCP-RE construction path obtains a listener's anchors, epoch-bound session store and signing budget through one TlsListenerSecurityState; those terms cannot be supplied to it independently."
 # The COMPLETE implementation closure of the proposition, not the files whose names read
 # like it. The first version named the owner and the epoch module only — and `T03` mutates
 # `tls.rs`, so an edit there could weaken the resumption binding while this unit's

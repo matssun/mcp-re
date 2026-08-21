@@ -11,13 +11,12 @@
 //!
 //! Four facts that must survive a `ServerConfig` rebuild TOGETHER. The anchors are the
 //! epoch's only input, the epoch tags the cache, and the budget bounds a rate rather than a
-//! window — so a per-build cache empties on every reload cadence and a per-build bucket
-//! refills on it.
+//! window — a per-build cache empties on every reload cadence, a per-build bucket refills.
 //!
-//! A build is a method ON the state. The anchors and the store are never separately
-//! passable, so the forbidden combination — a fresh cache beside an unrelated epoch — is
-//! unconstructible rather than detectable. The census that found it is `EX-004` in
-//! `docs/architecture/review-dispositions.md`.
+//! A build is a method ON the state: the anchors and the store are never separately
+//! passable, so no MCP-RE construction path can produce the forbidden combination — a fresh
+//! cache beside an unrelated epoch. The claim is about CONSTRUCTION and stops there (see
+//! the seal note). The census is `EX-004` in `docs/architecture/review-dispositions.md`.
 //!
 //! # What this owner does NOT claim
 //!
@@ -34,10 +33,11 @@
 //! anchors do not change, so the epoch does not advance; what protects an anchor-set change
 //! is that no cache crosses it.
 //!
-//! ADR-MCPRE-055's text anticipates a live-epoch lifecycle. Which lifecycle MCP-RE promises
-//! is under separate adjudication, so this type exposes NO epoch mutation: adding a seam
-//! would invent an operational capability so an existing mechanism could exercise its
-//! change branch.
+//! ADR-MCPRE-062 supersedes ADR-MCPRE-055 and rules that lifecycle: **immutable listener,
+//! store replacement**. This type conforms structurally and exposes NO epoch mutation. It
+//! does not yet RETIRE ADR-055's dormant store-level machinery — `republish` still exists
+//! underneath, an invariant-preserving no-op here — which is tracked separately so the
+//! retirement gets its own reviewable diff.
 //!
 //! # Sealing
 //!

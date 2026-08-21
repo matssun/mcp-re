@@ -352,8 +352,8 @@ cache wholesale rather than moving the epoch. The mechanism that actually preven
 resumption across an anchor change is store replacement, not epoch advance.
 
 The epoch-mismatch eviction is still exercised, but only by
-`tests/integration/tls_epoch_resumption_test.rs`, which drives `SharedTlsAuthEpoch::store`
-directly. **That is a claim about the store, not about the plane**, and #573 must not
+`tls_listener_state::resumption_acceptance` (an integration test at census time; moved
+inside the owner's seal by #573), which drives `SharedTlsAuthEpoch::store` directly. **That is a claim about the store, not about the plane**, and #573 must not
 quietly convert it into a claim about the plane.
 
 This is recorded, not acted on. Deciding whether the epoch should become a live
@@ -398,9 +398,8 @@ those land and this census is re-run.
 
 ### What #573 changed, measured
 
-`tls.rs` **1907 → 1565** production lines; `tls_plane.rs` 679 → 623. The owner's tree:
-`mod.rs` 223 (a §14 exception, EX-005), `auth_epoch.rs` 270 (pre-existing debt, carried
-across the rename), `assembly.rs` 155, `client_verifier.rs` 90, `resumption_binding.rs` 84.
+`tls.rs` **1907 → 1565** production lines; `tls_plane.rs` 679 → 623. The owner's tree is
+measured in EX-005, which is the record that owns those numbers.
 
 Authority A left the file entirely, into a module TREE under the owner
 (`assembly`, `auth_epoch`, `client_verifier`, `resumption_binding`,
@@ -455,9 +454,17 @@ owner's tree. The first version named the owner and the epoch module only — an
 stood still. Same false-freshness class as the one #596 closed.
 
 The eviction property itself did not move. It is a claim about the STORE, asserted by
-`tls_auth_epoch`'s unit tests and by `tests/integration/tls_epoch_resumption_test.rs`
-driving real rustls handshakes; `tls.rs`'s `epoch_binding_tests` had been asserting the same
+`tls_listener_state::auth_epoch`'s unit tests and by
+`tls_listener_state::resumption_acceptance` driving real rustls handshakes — both now
+inside the owner's privacy boundary, because keeping the acceptance test outside would have
+kept the subordinates `pub`. `tls.rs`'s `epoch_binding_tests` had been asserting the same
 thing a third time through the builder, and that duplicate is gone rather than relocated.
+
+**The lifecycle question this census raised is now ruled.**
+[ADR-MCPRE-062](https://github.com/matssun/mcp-re/discussions/599) supersedes ADR-055 and
+selects immutable listener / store replacement. #573 conforms to it structurally and does
+not retire the dormant machinery; that is #598, deliberately a separate diff. Question 9
+above stands as the census finding that produced the ruling.
 
 ---
 
@@ -473,12 +480,17 @@ The unit is what is LEFT after five extractions, not a unit that was never exami
 listener-state authority was decomposed into siblings first, and each of them is under the
 threshold:
 
+Measured by `scripts/module_size_gate.py::production_lines` on this head — re-rendered from
+the counter rather than carried forward, because a stale number in a durable review record
+is how a census stops being reliable:
+
 | module | prod | what it decides |
 |---|---:|---|
-| `assembly.rs` | 155 | what the serving config IS |
+| `assembly.rs` | 112 | what the serving config IS |
 | `auth_epoch.rs` | 270 | the epoch value, and the store tagged with it (pre-existing debt, carried across the rename) |
-| `client_verifier.rs` | 90 | what a valid client certificate is |
-| `resumption_binding.rs` | 84 | whether a stored session is still a shortcut |
+| `client_verifier.rs` | 60 | what a valid client certificate is |
+| `resumption_binding.rs` | 111 | whether a stored session is still a shortcut |
+| `resumption_acceptance.rs` | 29 | (test-only; the handshake controls are inside a `#[cfg(test)]` region) |
 | `mod.rs` | **223** | that all four facts belong to one listener |
 
 ### What invariant requires locality

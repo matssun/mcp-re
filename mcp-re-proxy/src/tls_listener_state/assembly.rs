@@ -39,12 +39,13 @@ use super::client_verifier::build_client_verifier;
 /// An empty `crls` behaves exactly like the no-CRL path: `.with_crls([])` adds nothing and
 /// rustls performs no revocation checks.
 ///
-/// `pub(crate)` and RESUMPTION-FREE. It assembles the verifier and the credential and
-/// stops there: binding the config to a listener's epoch-tagged session cache belongs to
-/// [`TlsListenerSecurityState`](crate::tls_listener_state::TlsListenerSecurityState), which
-/// is the only thing that can pair a cache with the anchors it was established from. A
-/// public builder here is what used to hand callers a fresh epoch beside a fresh empty
-/// cache.
+/// `pub(super)` and RESUMPTION-FREE. It assembles the verifier and the credential and stops
+/// there: binding the config to a listener's epoch-tagged session cache belongs to
+/// [`TlsListenerSecurityState`](super::TlsListenerSecurityState), which is the only thing
+/// that can pair a cache with the anchors it was established from.
+///
+/// The visibility is the boundary, so it is stated exactly: `pub(crate)` — what this was —
+/// would not have prevented the mispairing, because every consumer lives in this crate.
 pub(super) fn assemble_exported_key_config(
     server_chain: Vec<CertificateDer<'static>>,
     server_key: PrivateKeyDer<'static>,
