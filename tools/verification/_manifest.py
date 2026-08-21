@@ -103,6 +103,16 @@ def _unit_packages(unit: dict) -> list[str]:
     return sorted(heads)
 
 
+def claims_mutation_evidence(unit: dict) -> bool:
+    """Whether a `mutation://` URI claims this unit's probe battery.
+
+    Declaring it is what puts the probes inside the ATTESTATION closure: `required_lanes`
+    reads every scheme, so the unit refuses attestation without a mutation record at its
+    exact fingerprint.
+    """
+    return any(str(entry).startswith("mutation://") for entry in unit.get("evidence", []))
+
+
 def claims_test_evidence(unit: dict) -> bool:
     """Whether any `test://` URI claims this unit's battery.
 
@@ -429,6 +439,16 @@ def load_verification() -> dict:
             )
         _validate_test_package(uwhere, unit)
         _validate_in_crate_selectors(uwhere, unit)
+        # `mutation://` is a claim about a NEGATIVE battery, which only exists on top of a
+        # positive one: the probes' `expect_red` names members of `tested_symbols`. A unit
+        # claiming mutation evidence without test evidence would declare controls that are
+        # not evidence for anything.
+        if claims_mutation_evidence(unit) and not claims_test_evidence(unit):
+            raise ManifestError(
+                f"{uwhere}: declares mutation:// evidence without test:// evidence. A "
+                f"mutation probe asserts that a DECLARED control goes red; with no "
+                f"declared battery there is nothing for it to name."
+            )
         contracts.update(unit.get("exported_contracts", []))
 
     for index, edge in enumerate(doc.get("edge", [])):

@@ -25,6 +25,16 @@
 # `expect_red` resolve into `verification.toml` and `theorems.toml`; nothing here restates
 # what those own.
 #
+# IT IS, HOWEVER, REQUIRED EVIDENCE
+# ---------------------------------
+#
+# `http_profile.verifier_results` declares `mutation://http_profile/verifier/result_propositions`
+# beside its `test://` URI, so `attest` REFUSES it without a mutation PASS measured at its
+# exact ReviewFingerprint. Each probe entry below is itself a fingerprint input (encoding
+# v5), which is what stops the suite from being shrunk under a standing attestation:
+# deleting a probe, softening its weakening or widening its `expect_red` all move the
+# fingerprint and invalidate the PASS.
+#
 # FIELDS
 # ------
 #
@@ -37,9 +47,19 @@
 #                are both STALE, because a probe that cannot identify its site is not
 #                testing what it claims to.
 #   weakening    the replacement — the check deleted, or made non-load-bearing
-#   expect_red   declared `tested_symbols` members, at least one of which MUST fail under
-#                the weakening. Members are named without their target prefix, because the
-#                lane reads libtest's reported names.
+#   expect_red   declared `tested_symbols` members, VERBATIM — `tests/<target>#<symbol>` or
+#                `lib#<symbol>`. Test identity is TARGET plus symbol, never the symbol
+#                alone: two targets may hold a test of the same name, and a probe that
+#                matched on the bare name could be satisfied by a failure in a target it
+#                never intended to touch.
+#
+#                Every named control must be OBSERVED EXECUTING, and at least one must
+#                FAIL. A control that never reported is a MEASUREMENT FAILURE, not a red
+#                one — the lane cannot say the weakening did anything if the test it names
+#                did not run — and it fails the probe with its own message.
+#
+#                A `doc#` member may not appear here: those are compile-fail controls and
+#                no runtime weakening can move them.
 #   note         optional; used where a probe is deliberately coarse
 
 schema_version = 1
@@ -71,8 +91,8 @@ weakening = """
     );
 """
 expect_red = [
-  "authorization_header_is_covered_when_present",
-  "keyid_swap_to_another_trusted_key_fails_the_signature",
+  "tests/proof_path_test#authorization_header_is_covered_when_present",
+  "tests/proof_path_test#keyid_swap_to_another_trusted_key_fails_the_signature",
 ]
 
 [[probe]]
@@ -90,8 +110,8 @@ weakening = """
     let _ = verify_content_digest_sha256(digest_header, &request.body);
 """
 expect_red = [
-  "body_tamper_fails_closed",
-  "wrong_content_digest_fails_closed",
+  "tests/proof_path_test#body_tamper_fails_closed",
+  "tests/proof_path_test#wrong_content_digest_fails_closed",
 ]
 
 [[probe]]
@@ -108,8 +128,8 @@ weakening = """
         .or_else(|_| resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Response))?;
 """
 expect_red = [
-  "request_signed_by_response_only_actor_fails_actor_binding",
-  "resolver_returning_wrong_slot_is_rejected",
+  "tests/proof_path_test#request_signed_by_response_only_actor_fails_actor_binding",
+  "tests/proof_path_test#resolver_returning_wrong_slot_is_rejected",
 ]
 
 [[probe]]
@@ -133,7 +153,7 @@ weakening = """
         .unwrap_or(ProfileAlgorithm::Ed25519);
 """
 expect_red = [
-  "an_ed25519_signature_declaring_ml_dsa_is_rejected",
+  "tests/algorithm_confusion_test#an_ed25519_signature_declaring_ml_dsa_is_rejected",
 ]
 
 [[probe]]
@@ -149,7 +169,7 @@ weakening = """
     let _ = block.validate(floor.profile_id());
 """
 expect_red = [
-  "wrong_profile_in_block_fails",
+  "tests/full_profile_test#wrong_profile_in_block_fails",
 ]
 
 [[probe]]
@@ -165,7 +185,7 @@ weakening = """
     if expected_audience.target_uri != request.target_uri {
 """
 expect_red = [
-  "audience_mismatch_fails",
+  "tests/full_profile_test#audience_mismatch_fails",
 ]
 
 [[probe]]
@@ -181,7 +201,7 @@ weakening = """
     if block.audience != *expected_audience {
 """
 expect_red = [
-  "a_target_uri_disagreeing_with_the_audience_tuple_fails",
+  "tests/full_profile_test#a_target_uri_disagreeing_with_the_audience_tuple_fails",
 ]
 
 [[probe]]
@@ -219,7 +239,7 @@ weakening = """
     )?;
 """
 expect_red = [
-  "rejection::tests::tampered_message_does_not_change_the_trusted_wire_code",
+  "lib#rejection::tests::tampered_message_does_not_change_the_trusted_wire_code",
 ]
 
 [[probe]]
@@ -251,7 +271,7 @@ weakening = """
     Ok(CryptographicFloorVerifiedBoundResponse {
 """
 expect_red = [
-  "rejection::tests::spliced_rejection_onto_a_different_request_fails",
+  "lib#rejection::tests::spliced_rejection_onto_a_different_request_fails",
 ]
 
 [[probe]]
@@ -273,7 +293,7 @@ weakening = """
         .or_else(|_| resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Request))?;
 """
 expect_red = [
-  "response_signed_by_request_only_actor_fails_actor_binding",
+  "tests/proof_path_test#response_signed_by_request_only_actor_fails_actor_binding",
 ]
 
 [[probe]]
@@ -321,7 +341,7 @@ weakening = """
     let resolved_server_actor =
 """
 expect_red = [
-  "the_unbound_floor_content_digest_check_is_load_bearing",
+  "tests/proof_path_test#the_unbound_floor_content_digest_check_is_load_bearing",
 ]
 
 [[probe]]
@@ -350,7 +370,7 @@ weakening = """
     let resolved_server_actor =
 """
 expect_red = [
-  "a_req_component_is_refused_on_the_unbound_floor",
+  "tests/proof_path_test#a_req_component_is_refused_on_the_unbound_floor",
 ]
 
 [[probe]]
@@ -382,7 +402,7 @@ weakening = """
     Ok(CryptographicFloorVerifiedUnboundResponse {
 """
 expect_red = [
-  "the_unbound_floor_signature_check_is_load_bearing",
+  "tests/proof_path_test#the_unbound_floor_signature_check_is_load_bearing",
 ]
 
 [[probe]]
@@ -402,7 +422,7 @@ weakening = """
     }
 """
 expect_red = [
-  "a_block_declaring_a_signer_it_did_not_sign_as_fails",
+  "tests/full_profile_test#a_block_declaring_a_signer_it_did_not_sign_as_fails",
 ]
 
 [[probe]]
@@ -428,7 +448,7 @@ weakening = """
     Ok(VerifiedMcpResponse::from_block(
 """
 expect_red = [
-  "response_request_evidence_mismatch_emits_request_binding_mismatch",
+  "tests/full_profile_test#response_request_evidence_mismatch_emits_request_binding_mismatch",
 ]
 
 [[probe]]
@@ -444,17 +464,17 @@ weakening = """
         |issuer_kid| match resolve_actor_for_slot(resolve_actor, issuer_kid, SignerSlot::Request) {
 """
 expect_red = [
-  "a_block_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch",
-  "a_delegated_preflight_receipt_verifies_without_request_binding",
-  "a_delegated_response_advertising_another_requests_evidence_is_refused",
-  "an_unbound_receipt_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch",
-  "an_unbound_receipt_signed_by_a_key_other_than_cnf_is_key_mismatch",
-  "an_unbound_receipt_whose_wire_keyid_is_not_the_delegated_kid_is_key_mismatch",
-  "response_keyid_not_delegated_kid_is_key_mismatch",
-  "response_signed_by_key_other_than_cnf_is_key_mismatch",
-  "revoked_delegated_key_rejected_end_to_end",
-  "stale_epoch_rejected_end_to_end",
-  "valid_delegated_response_verifies_under_cnf_key",
+  "tests/delegation_e2e_test#a_block_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch",
+  "tests/delegation_e2e_test#a_delegated_preflight_receipt_verifies_without_request_binding",
+  "tests/delegation_e2e_test#a_delegated_response_advertising_another_requests_evidence_is_refused",
+  "tests/delegation_e2e_test#an_unbound_receipt_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch",
+  "tests/delegation_e2e_test#an_unbound_receipt_signed_by_a_key_other_than_cnf_is_key_mismatch",
+  "tests/delegation_e2e_test#an_unbound_receipt_whose_wire_keyid_is_not_the_delegated_kid_is_key_mismatch",
+  "tests/delegation_e2e_test#response_keyid_not_delegated_kid_is_key_mismatch",
+  "tests/delegation_e2e_test#response_signed_by_key_other_than_cnf_is_key_mismatch",
+  "tests/delegation_e2e_test#revoked_delegated_key_rejected_end_to_end",
+  "tests/delegation_e2e_test#stale_epoch_rejected_end_to_end",
+  "tests/delegation_e2e_test#valid_delegated_response_verifies_under_cnf_key",
 ]
 note = """
 Deliberately coarse. `chain_to_root` is shared by both delegated paths, so
@@ -491,7 +511,7 @@ weakening = """
     )?;
 """
 expect_red = [
-  "response_keyid_not_delegated_kid_is_key_mismatch",
+  "tests/delegation_e2e_test#response_keyid_not_delegated_kid_is_key_mismatch",
 ]
 
 [[probe]]
@@ -521,7 +541,7 @@ weakening = """
     )?;
 """
 expect_red = [
-  "a_block_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch",
+  "tests/delegation_e2e_test#a_block_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch",
 ]
 
 [[probe]]
@@ -554,7 +574,7 @@ weakening = """
     // Request-evidence binding (explicit MCP defense-in-depth, as verify_response_full).
 """
 expect_red = [
-  "response_signed_by_key_other_than_cnf_is_key_mismatch",
+  "tests/delegation_e2e_test#response_signed_by_key_other_than_cnf_is_key_mismatch",
 ]
 
 [[probe]]
@@ -578,7 +598,7 @@ weakening = """
     }
 """
 expect_red = [
-  "a_delegated_response_advertising_another_requests_evidence_is_refused",
+  "tests/delegation_e2e_test#a_delegated_response_advertising_another_requests_evidence_is_refused",
 ]
 
 [[probe]]
@@ -598,7 +618,7 @@ weakening = """
     // Response-only signature parse: required response components, and NO `;req`.
 """
 expect_red = [
-  "an_unbound_receipt_body_tamper_is_caught_by_content_digest",
+  "tests/delegation_e2e_test#an_unbound_receipt_body_tamper_is_caught_by_content_digest",
 ]
 
 [[probe]]
@@ -627,7 +647,7 @@ weakening = """
     // Response evidence block (protected by content-digest).
 """
 expect_red = [
-  "a_req_component_is_refused_on_the_delegated_unbound_path",
+  "tests/delegation_e2e_test#a_req_component_is_refused_on_the_delegated_unbound_path",
 ]
 
 [[probe]]
@@ -650,7 +670,7 @@ weakening = """
     let credential = block.server_delegation.as_deref().unwrap_or("");
 """
 expect_red = [
-  "an_unbound_receipt_without_a_credential_is_refused",
+  "tests/delegation_e2e_test#an_unbound_receipt_without_a_credential_is_refused",
 ]
 
 [[probe]]
@@ -683,7 +703,7 @@ weakening = """
     // Credential-authorized, exactly as on the bound path: the shared unbound facts, not
 """
 expect_red = [
-  "an_unbound_receipt_signed_by_a_key_other_than_cnf_is_key_mismatch",
+  "tests/delegation_e2e_test#an_unbound_receipt_signed_by_a_key_other_than_cnf_is_key_mismatch",
 ]
 
 [[probe]]
@@ -713,7 +733,7 @@ weakening = """
     )?;
 """
 expect_red = [
-  "an_unbound_receipt_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch",
+  "tests/delegation_e2e_test#an_unbound_receipt_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch",
 ]
 
 [[probe]]
@@ -743,5 +763,5 @@ weakening = """
     )?;
 """
 expect_red = [
-  "an_unbound_receipt_whose_wire_keyid_is_not_the_delegated_kid_is_key_mismatch",
+  "tests/delegation_e2e_test#an_unbound_receipt_whose_wire_keyid_is_not_the_delegated_kid_is_key_mismatch",
 ]

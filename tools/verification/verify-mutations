@@ -47,12 +47,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _evidence import EvidenceRecord, write_record  # noqa: E402
+from _fingerprint import fingerprint_unit  # noqa: E402
 from _manifest import (  # noqa: E402
     REPO_ROOT,
     ManifestError,
+    load_assumptions,
+    load_toolchains,
     load_verification,
     test_package_for,
 )
+
+EVIDENCE_STORE = REPO_ROOT / ".verification" / "evidence"
 
 REGISTRY = REPO_ROOT / "verification" / "policy" / "mutation-probes.toml"
 
@@ -100,11 +106,26 @@ def load_probes() -> list[dict]:
     return probes
 
 
+def claims_mutation_evidence(unit: dict) -> bool:
+    """Whether a `mutation://` URI claims this unit's probe battery.
+
+    The declaration is what puts the lane inside the ATTESTATION closure:
+    `_evidence.required_lanes` reads every scheme a unit declares, so a unit carrying this
+    URI cannot be attested without a mutation record measured at its exact fingerprint. A
+    probe suite CI could quietly delete would otherwise be a comment.
+    """
+    return any(str(e).startswith("mutation://") for e in unit.get("evidence", []))
+
+
 def declared_battery(units: dict, probe: dict, where: str) -> tuple[str, dict[str, list[str]]]:
     """The unit's package and its declared members, grouped by cargo target.
 
     Read from `verification.toml` rather than restated here: the probe names controls, and
     a control the unit does not declare is not evidence for its theorem however red it goes.
+
+    `expect_red` is compared against the unit's `tested_symbols` VERBATIM — target and
+    symbol — because that is what test identity is here. Matching on the bare symbol would
+    let a probe be satisfied by a same-named test in a target it never meant to touch.
     """
     unit = units.get(probe["unit"])
     if unit is None:
@@ -116,18 +137,44 @@ def declared_battery(units: dict, probe: dict, where: str) -> tuple[str, dict[st
     declared: set[str] = set()
     for symbol in unit.get("tested_symbols", []):
         target, _, path = str(symbol).partition("#")
+        declared.add(str(symbol))
         if target == "doc":
             # Doctests are compile-fail controls; a runtime weakening cannot move them.
             continue
         grouped.setdefault(target, []).append(path)
-        declared.add(path)
     unknown = [name for name in probe["expect_red"] if name not in declared]
     if unknown:
         raise ManifestError(
             f"{where}: expect_red names {unknown}, which unit {probe['unit']!r} does not "
-            f"declare as tested_symbols. A control outside the battery is not evidence."
+            f"declare as tested_symbols. A control outside the battery is not evidence. "
+            f"Members are named verbatim, as `tests/<target>#<symbol>` or `lib#<symbol>`."
+        )
+    doctests = [name for name in probe["expect_red"] if name.startswith("doc#")]
+    if doctests:
+        raise ManifestError(
+            f"{where}: expect_red names doctest control(s) {doctests}. Those are "
+            f"compile-fail controls; no runtime weakening can turn one red, so a probe "
+            f"expecting it could never be satisfied honestly."
         )
     return package, grouped
+
+
+def adjudicate(probe: dict, observed: dict[str, str]) -> tuple[list[str], list[str]]:
+    """(never reported, actually failed) among the probe's expected controls.
+
+    The distinction the first version of this lane did not make. It read
+    `results.get(name, "never ran") != "ok"`, so an ABSENT result satisfied the probe —
+    a control that never executed counted as evidence that the weakening broke it. That is
+    the same false green as a filter selecting nothing and exiting 0, one layer up: the
+    lane cannot conclude anything about a check from a test it did not watch run.
+
+    So absence is a MEASUREMENT FAILURE reported on its own terms, and only an observed
+    `FAILED` is red. `ok` and `ignored` are both "not red": an ignored test did not execute
+    either, and must never be read as one that ran and objected.
+    """
+    missing = [name for name in probe["expect_red"] if name not in observed]
+    red = [name for name in probe["expect_red"] if observed.get(name) == "FAILED"]
+    return missing, red
 
 
 def target_argv(target: str) -> list[str]:
@@ -187,7 +234,10 @@ def run_battery(tree: Path, package: str, grouped: dict[str, list[str]], target_
             body = line[5:]
             name, _, outcome = body.partition(" ... ")
             if outcome:
-                results[name.strip()] = outcome.strip()
+                # Keyed by TARGET plus symbol. libtest reports the symbol alone, and two
+                # targets may hold a test of the same name — flattening them here would let
+                # one target's failure answer for another's.
+                results[f"{target}#{name.strip()}"] = outcome.strip()
     return True, results
 
 
@@ -259,9 +309,28 @@ def main() -> int:
 
     try:
         probes = load_probes()
-        units = {unit["id"]: unit for unit in load_verification().get("unit", [])}
+        doc = load_verification()
+        toolchains = load_toolchains()
+        assumptions = load_assumptions()
+        units = {unit["id"]: unit for unit in doc.get("unit", [])}
     except ManifestError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
+        print("VERDICT: FAIL")
+        return 1
+
+    orphaned = sorted(
+        unit_id
+        for unit_id, unit in units.items()
+        if claims_mutation_evidence(unit)
+        and not any(probe["unit"] == unit_id for probe in probes)
+    )
+    if orphaned:
+        print(
+            f"FAIL: unit(s) {orphaned} declare mutation:// evidence but no probe is "
+            f"registered for them. A declared evidence class nothing measures is "
+            f"unmeasured evidence.",
+            file=sys.stderr,
+        )
         print("VERDICT: FAIL")
         return 1
 
@@ -289,6 +358,7 @@ def main() -> int:
         return 1
 
     failures: list[str] = []
+    probed_units = sorted({probe["unit"] for probe in probes})
     try:
         for index, probe in enumerate(probes):
             where = f"probe {probe['id']}"
@@ -311,11 +381,18 @@ def main() -> int:
                 )
                 failures.append(probe["id"])
                 continue
-            red = sorted(
-                name
-                for name in probe["expect_red"]
-                if results.get(name, "never ran") != "ok"
-            )
+            missing, red = adjudicate(probe, results)
+            if missing:
+                print(
+                    f"  FAIL {probe['id']}: MEASUREMENT FAILURE — expected control(s) "
+                    f"{sorted(missing)} were never reported by the run. The lane cannot "
+                    f"say the weakening broke a test it did not watch execute; absence is "
+                    f"not a red result.",
+                    file=sys.stderr,
+                )
+                failures.append(probe["id"])
+                continue
+            red = sorted(red)
             if not red:
                 print(
                     f"  FAIL {probe['id']}: {probe['theorem']} claims \"{probe['conjunct']}\", "
@@ -332,6 +409,39 @@ def main() -> int:
             print(f"  scratch tree kept at {scratch}")
         else:
             shutil.rmtree(scratch, ignore_errors=True)
+
+    # Phase 3 of the evidence pipeline, exactly as the other lanes do it: the result
+    # becomes a machine record BOUND TO THE FINGERPRINT it was measured at, and `attest`
+    # refuses a unit whose mutation record does not match the tree it is stamping.
+    #
+    # Written only for a complete run. A `--probe` subset measured part of the battery, and
+    # a record from it would let "three probes passed" stand in for "the suite passed" —
+    # the same shape as a filter that selects nothing.
+    if not args.probe:
+        for unit_id in probed_units:
+            unit = units.get(unit_id)
+            if unit is None or not claims_mutation_evidence(unit):
+                continue
+            unit_failures = [
+                p["id"] for p in probes if p["unit"] == unit_id and p["id"] in failures
+            ]
+            count = sum(1 for p in probes if p["unit"] == unit_id)
+            write_record(
+                EVIDENCE_STORE,
+                EvidenceRecord(
+                    unit_id=unit_id,
+                    lane="mutation",
+                    result="fail" if unit_failures else "pass",
+                    fingerprint=fingerprint_unit(unit, doc, toolchains, assumptions)[
+                        "fingerprint"
+                    ],
+                    detail=(
+                        f"{count} probe(s); failed: {', '.join(unit_failures)}"
+                        if unit_failures
+                        else f"{count} probe(s), each turning a declared control red"
+                    ),
+                ),
+            )
 
     if failures:
         print(

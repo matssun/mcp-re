@@ -8,6 +8,10 @@ that without having proved it is a case below:
     to have broken;
   * a probe expecting a control the unit does not DECLARE would prove something about a
     test that is not evidence for the theorem;
+  * a control that NEVER RAN counted as red in the first version of this lane, so a
+    weakening that stopped a test from being reported at all satisfied the probe;
+  * a control matched by bare symbol could be satisfied by a same-named test in a target
+    the probe never intended to touch;
   * a probe with no expectations at all asserts nothing;
   * a weakened tree that does not compile has measured nothing, and must not read as
     "the controls held".
@@ -164,6 +168,136 @@ def test_a_tree_that_did_not_compile_is_not_a_result():
 
     assert "did not COMPILE" in inspect.getsource(lane.main)
     assert "return False, results" in inspect.getsource(lane.run_battery)
+
+
+# --- "never ran" is a measurement failure, not a red result --------------------
+
+
+def test_a_control_that_never_reported_is_not_red():
+    """The defect this lane shipped with. `results.get(name, "never ran") != "ok"` made an
+    ABSENT result satisfy the probe, so a weakening that stopped a test from being reported
+    at all read as "the control caught it". The lane cannot conclude anything about a check
+    from a test it did not watch run."""
+    probe = _probe(expect_red=["tests/t#a", "tests/t#b"])
+    missing, red = lane.adjudicate(probe, {})
+    assert missing == ["tests/t#a", "tests/t#b"]
+    assert red == []
+
+
+def test_a_partially_reported_expectation_is_still_a_measurement_failure():
+    """One control failing does not excuse another never executing: the probe named both,
+    and the lane must say it could not measure one of them."""
+    probe = _probe(expect_red=["tests/t#a", "tests/t#b"])
+    missing, red = lane.adjudicate(probe, {"tests/t#a": "FAILED"})
+    assert missing == ["tests/t#b"]
+    assert red == ["tests/t#a"]
+
+
+def test_an_ignored_control_is_not_a_red_one():
+    """An `#[ignore]`d test printed a line but did not execute. Reading it as red is the
+    same false green one level down — the case `verify-tests` already catches."""
+    probe = _probe(expect_red=["tests/t#a"])
+    missing, red = lane.adjudicate(probe, {"tests/t#a": "ignored"})
+    assert missing == []
+    assert red == []
+
+
+def test_a_passing_control_is_not_red():
+    probe = _probe(expect_red=["tests/t#a"])
+    assert lane.adjudicate(probe, {"tests/t#a": "ok"}) == ([], [])
+
+
+def test_main_reports_absence_as_measurement_failure_and_not_as_success():
+    import inspect
+
+    body = inspect.getsource(lane.main)
+    assert "MEASUREMENT FAILURE" in body
+    assert "missing, red = adjudicate(probe, results)" in body
+
+
+# --- test identity is TARGET plus symbol ---------------------------------------
+
+
+def test_a_same_named_test_in_another_target_does_not_satisfy_a_probe():
+    """Test identity here is target + symbol, and this is exactly where flattening bites:
+    two integration targets may each hold `body_tamper_fails_closed`, and a probe about the
+    request floor must not be satisfied by the response one going red."""
+    probe = _probe(expect_red=["tests/proof_path_test#body_tamper_fails_closed"])
+    observed = {"tests/other_test#body_tamper_fails_closed": "FAILED"}
+    missing, red = lane.adjudicate(probe, observed)
+    assert red == []
+    assert missing == ["tests/proof_path_test#body_tamper_fails_closed"]
+
+
+def test_run_battery_keys_results_by_target_and_symbol():
+    import inspect
+
+    assert 'results[f"{target}#{name.strip()}"]' in inspect.getsource(lane.run_battery)
+
+
+def test_every_registered_expectation_carries_its_target():
+    """A bare symbol in the registry would be unmatchable against the target-qualified
+    results, so this is both an identity rule and a liveness one."""
+    for probe in lane.load_probes():
+        for name in probe["expect_red"]:
+            assert name.startswith(("lib#", "tests/")), (probe["id"], name)
+            assert "#" in name, (probe["id"], name)
+
+
+def test_a_doctest_control_may_not_be_expected_to_go_red():
+    """`doc#` members are compile-fail controls; no runtime weakening moves one, so a probe
+    naming it could never be satisfied honestly."""
+    _expect_manifest_error(
+        lambda: lane.declared_battery(
+            UNITS,
+            _probe(expect_red=["doc#verified_response::bound::VerifiedMcpResponse"]),
+            "p",
+        ),
+        "a doctest control must be refused",
+    )
+
+
+# --- the lane is inside the attestation closure --------------------------------
+
+
+def test_the_unit_declares_mutation_evidence_so_attestation_depends_on_it():
+    """Without the `mutation://` URI the probe suite is decoration: `attest` would issue
+    `http_profile.verifier_results` from the ordinary test evidence alone, and the CI job
+    could be deleted with no unit ever deriving DIRTY."""
+    from _evidence import required_lanes
+
+    unit = UNITS["http_profile.verifier_results"]
+    assert lane.claims_mutation_evidence(unit)
+    assert "mutation" in required_lanes(unit)
+
+
+def test_attest_reads_the_mutation_lane():
+    """A lane `attest` does not load refuses forever — a refusal no measurement can
+    satisfy, which reads as a defect in the unit rather than an absent reader."""
+    text = (lane.REPO_ROOT / "tools/verification/attest").read_text()
+    assert '"test", "verus", "lean", "mutation"' in text
+
+
+def test_a_partial_run_writes_no_evidence_record():
+    """`--probe` measures part of the battery. A record from it would let "three probes
+    passed" stand in for "the suite passed"."""
+    import inspect
+
+    assert "if not args.probe:" in inspect.getsource(lane.main)
+
+
+def test_the_probe_set_participates_in_the_units_fingerprint():
+    """A closure over a suite that can silently shrink proves as little as the v3 test
+    component did: deleting a probe must invalidate the standing mutation PASS."""
+    from _fingerprint import fingerprint_unit
+    from _manifest import load_assumptions, load_toolchains, load_verification
+
+    doc = load_verification()
+    toolchains, assumptions = load_toolchains(), load_assumptions()
+    unit = UNITS["http_profile.verifier_results"]
+    components = fingerprint_unit(unit, doc, toolchains, assumptions)["components"]
+    assert len(components["mutation_probes"]) == len(lane.load_probes())
+    assert components["mutation_lane_identity"], "the lane binary must be measured"
 
 
 def test_the_documented_matrix_count_is_checked_against_the_registry():

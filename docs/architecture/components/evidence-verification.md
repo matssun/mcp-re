@@ -245,6 +245,46 @@ one, are themselves probed in `tools/verification/test_mutation_lane.py`.
 The lane checks the count stated in this section against the registry, so the table below
 and the executable set cannot drift.
 
+**A probe passes only on an OBSERVED failure of a control it names exactly.** `expect_red`
+carries the canonical `tests/<target>#<symbol>` / `lib#<symbol>` identity, because test
+identity here is target plus symbol: two targets may hold a test of the same name, and a
+bare-symbol match could be satisfied by a failure in a target the probe never meant to
+touch. A named control that is **never reported** is a MEASUREMENT FAILURE with its own
+message, not a red result — the lane cannot conclude anything about a check from a test it
+did not watch run — and an `ignored` control is not red either. The first version of this
+lane got exactly that wrong, reading "anything other than ok" as red, so absence satisfied
+a probe.
+
+### 9.2 Mutation evidence is part of the attestation closure
+
+A lane that runs is not the same thing as a lane that is REQUIRED. The unit therefore
+declares two evidence classes, and `_evidence.required_lanes` reads every scheme:
+
+```text
+evidence = [ "test://…/result_propositions",        did every declared control pass?
+             "mutation://…/result_propositions" ]   would any of them NOTICE the check
+                                                    its theorem names being deleted?
+
+verify-mutations  ──▶  machine PASS record, bound to the ReviewFingerprint
+                            │
+                            ▼
+                        attest  ──▶  no mutation PASS at the exact fingerprint
+                                     = REFUSE ATTESTATION
+```
+
+Without the declaration the probe suite would be decoration: the CI job could be deleted,
+or quietly shrink, and `http_profile.verifier_results` would keep re-attesting from the
+ordinary test evidence alone. With it, `attest` refuses — observed, not asserted:
+
+> `REFUSED  http_profile.verifier_results   the unit claims mutation evidence but no
+> mutation record exists for it; absence of measurement is not measurement`
+
+Closing the loop needed **encoding v5**: the probe ENTRIES (each digested whole, so
+softening a weakening or widening an `expect_red` moves the fingerprint) and the lane
+binary are fingerprint inputs. A closure over a suite that can silently shrink would prove
+as little as the v3 test component did. `scripts/verification_trigger_gate.py` derives both
+from the manifest, so the workflow filters cannot narrow below them.
+
 | claim | production check removed | declared control that goes red |
 |---|---|---|
 | THM-0014 | `floor_request` — RFC 9421 signature verification | `authorization_header_is_covered_when_present` **+1 more** |

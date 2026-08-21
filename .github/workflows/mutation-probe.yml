@@ -21,6 +21,12 @@
 # to RE-ADJUDICATE the probe against the new implementation — never to restore the old
 # code. Refactoring `verify.rs` is expected; losing a claimed conjunct's control silently
 # is not.
+#
+# `tools/verification/verify` ALSO runs this lane, and the duplication is deliberate. There
+# it is one step of the run whose records `attest` consumes, so the attestation closure can
+# be produced in a single invocation; here it is a fast, narrowly-filtered signal on the
+# pull requests that can actually invalidate it. Neither makes the other redundant: the
+# umbrella run is not path-filtered, and this job writes no attestation.
 
 name: mutation probe
 

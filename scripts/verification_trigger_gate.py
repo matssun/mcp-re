@@ -42,6 +42,7 @@ MANIFEST = REPO / "verification" / "policy" / "verification.toml"
 
 sys.path.insert(0, str(REPO / "tools" / "verification"))
 from _fingerprint import (  # noqa: E402
+    MUTATION_LANE_INPUTS,
     TEST_LANE_INPUTS,
     WORKSPACE_BUILD_INPUTS,
     test_source_patterns,
@@ -128,6 +129,14 @@ def fingerprint_inputs(manifest: Path) -> list[str]:
         for pattern in test_source_patterns(unit):
             required.append(pattern.replace("/**/*.rs", "/x.rs"))
         required.extend(TEST_LANE_INPUTS)
+        # Encoding v5: a unit declaring `mutation://` fingerprints the probe entries and
+        # the lane that applies them. Both are already inside `verification/**` and
+        # `tools/verification/**`, and both are listed here anyway — the gate's job is to
+        # DERIVE the requirement from the fingerprint, not to be right by coincidence about
+        # a filter someone could narrow later.
+        if any(str(e).startswith("mutation://") for e in unit.get("evidence", [])):
+            required.append("verification/policy/mutation-probes.toml")
+            required.extend(MUTATION_LANE_INPUTS)
     return sorted(set(required))
 
 

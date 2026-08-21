@@ -157,7 +157,21 @@ exported_contracts = []
 # The closure spans two Cargo packages, so the battery's package is named rather than
 # derived — and the loader refuses any name that is not one of the packages above.
 test_package = "mcp-re-http-profile"
-evidence = ["test://http_profile/verifier/result_propositions"]
+# TWO evidence classes, because a V0 claim needs two different questions answered.
+#
+#   test://      did every declared control pass?
+#   mutation://  would any of them NOTICE the check its theorem names being deleted?
+#
+# The second is not implied by the first, and the registry it names
+# (`verification/policy/mutation-probes.toml`) would be deletable decoration if it were
+# not declared here: `_evidence.required_lanes` reads every scheme, so this URI is what
+# makes `attest` REFUSE a unit with no mutation PASS at its exact fingerprint. The probe
+# entries and the lane binary are themselves fingerprint inputs (encoding v5), so a
+# shrunken suite cannot satisfy a standing attestation either.
+evidence = [
+  "test://http_profile/verifier/result_propositions",
+  "mutation://http_profile/verifier/result_propositions",
+]
 # The battery is a NEGATIVE battery with positives attached, not the other way round.
 #
 # These are V0 claims, so a conjunct nobody can break is a conjunct the evidence does not

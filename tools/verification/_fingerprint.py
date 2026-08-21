@@ -5,7 +5,7 @@
         source_inputs, generated_inputs, build_configuration, enabled_features,
         exported_contracts, consumed_contracts, proof_dependencies,
         test_evidence_definition, test_selection, test_sources, test_lane_identity,
-        trusted_assumptions, toolchain_identity,
+        mutation_probes, mutation_lane_identity, trusted_assumptions, toolchain_identity,
         formal_model_revision, threat_model_revision, review_policy_revision
     )
 
@@ -46,6 +46,21 @@ lane actually measure":
                                 `test_package`, is decided by that code; if the measuring
                                 instrument changes, what the measurement MEANS changed.
 
+Encoding v5 extends the same rule to the MUTATION evidence. A `mutation://` URI puts the
+probe suite inside the attestation closure — `attest` refuses a unit with no mutation PASS
+at its exact fingerprint — but a closure over a suite that can silently SHRINK proves as
+little as the v3 test component did. So:
+
+  * `mutation_probes`        each in-scope probe's id mapped to a digest of its whole
+                             registry entry. Deleting a probe, widening its `expect_red`,
+                             or softening its weakening all move the fingerprint, which
+                             invalidates the standing mutation PASS.
+  * `mutation_lane_identity` `verify-mutations`, for the reason `test_lane_identity`
+                             carries `verify-tests`: this lane decides what "the control
+                             went red" MEANS, and it has already been wrong about it once —
+                             the first version counted a control that never executed as
+                             red.
+
 An integration-test target is digested as a whole file (plus any module directory beside
 it), not as the subset of it the selectors name. That over-approximates — an unrelated test
 in the same file invalidates the unit — and over-approximation is the safe direction: it
@@ -74,12 +89,17 @@ import hashlib
 import json
 import tomllib
 
-from _manifest import claims_test_evidence, test_package_for, REPO_ROOT
+from _manifest import (
+    claims_mutation_evidence,
+    claims_test_evidence,
+    test_package_for,
+    REPO_ROOT,
+)
 
 # Every attestation carrying an earlier version is UNKNOWN from the moment this moves, which
 # is the intended cost: an attestation computed over a narrower set of inputs cannot answer
 # whether one of the inputs it never saw has since changed.
-ENCODING_VERSION = 4
+ENCODING_VERSION = 5
 
 #: The classes whose evidence comes from a whole-crate prover run.
 FORMAL_CLASSES = {"V1", "V3"}
@@ -280,6 +300,36 @@ def _test_lane_identity(unit: dict) -> dict[str, str]:
     return _digest_paths(list(TEST_LANE_INPUTS))
 
 
+def _mutation_probes(unit_id: str) -> dict[str, str]:
+    """Each probe scoped to this unit, mapped to a digest of WHAT IT PROVES.
+
+    Ids alone would let a probe be hollowed out — its weakening softened, its `expect_red`
+    widened to a control that fails for another reason — with no unit deriving DIRTY. The
+    registry entry is the claim, so the entry's content is what participates. Same argument,
+    and same shape, as `_trusted_assumptions`.
+    """
+    registry = REPO_ROOT / "verification" / "policy" / "mutation-probes.toml"
+    if not registry.is_file():
+        return {}
+    with registry.open("rb") as handle:
+        doc = tomllib.load(handle)
+    return {
+        probe["id"]: canonical_digest(probe)
+        for probe in doc.get("probe", [])
+        if probe.get("unit") == unit_id
+    }
+
+
+#: The lane that decides what "a declared control went red" means.
+MUTATION_LANE_INPUTS = ("tools/verification/verify-mutations",)
+
+
+def _mutation_lane_identity(unit: dict) -> dict[str, str]:
+    if not claims_mutation_evidence(unit):
+        return {}
+    return _digest_paths(list(MUTATION_LANE_INPUTS))
+
+
 def fingerprint_unit(unit: dict, doc: dict, toolchains: dict, assumptions: dict) -> dict:
     crates = _unit_crates(unit)
     formal = unit["class"] in FORMAL_CLASSES
@@ -318,6 +368,10 @@ def fingerprint_unit(unit: dict, doc: dict, toolchains: dict, assumptions: dict)
         "test_selection": _test_selection(unit),
         "test_sources": _test_sources(unit),
         "test_lane_identity": _test_lane_identity(unit),
+        "mutation_probes": (
+            _mutation_probes(unit["id"]) if claims_mutation_evidence(unit) else {}
+        ),
+        "mutation_lane_identity": _mutation_lane_identity(unit),
         "trusted_assumptions": _trusted_assumptions(unit["id"], assumptions),
         "toolchain_identity": _toolchain_identity(toolchains),
         "formal_model_revision": doc.get("formal_model_revision"),

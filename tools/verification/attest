@@ -78,8 +78,15 @@ def main() -> int:
     # A lane missing from this tuple loads no records, so every unit claiming it refuses
     # forever — a refusal no measurement can ever satisfy, which reads as a permanent
     # defect in the units rather than an absent reader.
+    #
+    # `mutation` is here because a V0 claim's negative battery is not self-validating: the
+    # ordinary test lane says the declared controls passed, and says nothing about whether
+    # any of them would notice the check being deleted. A unit declaring `mutation://`
+    # cannot be attested from `test` alone — no mutation PASS at the exact fingerprint is a
+    # REFUSAL, which is what stops the probe suite from being deletable decoration.
     records = {
-        lane: load_records(args.evidence, lane) for lane in ("test", "verus", "lean")
+        lane: load_records(args.evidence, lane)
+        for lane in ("test", "verus", "lean", "mutation")
     }
 
     # The aggregate verdict is READ, never computed here. This command must never be able

@@ -190,6 +190,26 @@ def test_the_test_lane_instrument_is_part_of_the_evidence_identity():
     assert all(digest.startswith("sha256:") for digest in lane.values())
 
 
+def test_the_probe_set_is_measured_so_the_suite_cannot_silently_shrink():
+    """`mutation://` puts the probe suite inside the attestation closure, but a closure
+    over a suite that can shrink proves as little as the v3 test component did. Each probe
+    entry is digested WHOLE, so softening a weakening or widening an `expect_red` moves the
+    fingerprint and invalidates the standing mutation PASS."""
+    probes = components("http_profile.verifier_results")["mutation_probes"]
+    assert len(probes) > 20
+    assert all(digest.startswith("sha256:") for digest in probes.values())
+    lane = components("http_profile.verifier_results")["mutation_lane_identity"]
+    assert set(lane) == {"tools/verification/verify-mutations"}
+
+
+def test_a_unit_without_mutation_evidence_measures_no_mutation_components():
+    """Empty, and measured as empty: a unit with no probe suite must not be dirtied by
+    another unit's probes, and the component must not become a sentinel."""
+    c = components("http_profile.keyid")
+    assert c["mutation_probes"] == {}
+    assert c["mutation_lane_identity"] == {}
+
+
 def test_a_unit_without_test_evidence_measures_no_test_components():
     """Empty, and measured as empty — a Verus-only unit must not be dirtied by test-lane
     churn, and the component must not silently become a sentinel either."""
