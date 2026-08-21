@@ -15,8 +15,6 @@
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::verify_delegated_response_full;
-use mcp_re_http_profile::verify_request_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -33,6 +31,8 @@ use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_proxy::async_replay::AsyncReplayTier;
@@ -156,7 +156,6 @@ fn build_proxy() -> HttpProfileProxy {
 
 fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
     DelegationExpectations {
-        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &[VERIFIER_AUD],
         expected_audience_hash: VERIFIER_AUD,
         accepted_epochs: epochs,
@@ -200,14 +199,9 @@ fn signed_request(nonce: &str) -> (HttpRequest, RequestEvidence, VerifiedMcpRequ
     .expect("client signs RFC 9421 request");
     let no_material = |_b: &ArtifactBinding| None;
     let r = resolver();
-    let verified = verify_request_full(
-        &req,
-        &audience(),
-        &no_material,
-        &move |k: &str, s| r(k, s),
-        NOW,
-    )
-    .expect("client's own request verifies (for response binding)");
+    let verified = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+        .verify_request(&req, &audience(), &no_material, NOW)
+        .expect("client's own request verifies (for response binding)");
     (req, evidence, verified)
 }
 
@@ -274,11 +268,14 @@ async fn rfc9421_round_trip_zero_object_evidence() {
         body: response.body.clone(),
     };
     let r = resolver();
-    let verified = verify_delegated_response_full(
+    let verified = Verifier::new(
+        &VerifierPolicy::default(),
+        &move |kid: &str, slot: SignerSlot| r(kid, slot),
+    )
+    .verify_delegated_bound_response(
         &http_response,
         &req,
-        &verified_req,
-        &move |kid: &str, slot: SignerSlot| r(kid, slot),
+        verified_req.evidence(),
         &expectations(&["epoch-1"]),
         &|_| false,
         NOW,
@@ -288,8 +285,7 @@ async fn rfc9421_round_trip_zero_object_evidence() {
     // just established; the kid is an RFC 7638 thumbprint (#415 rev 2 §1.5), so what
     // it asserts here is that a delegated key — not the root — signed.
     assert_ne!(
-        verified.server_signer.as_ref().unwrap().keyid,
-        ROOT_KID,
+        verified.response.server_signer.keyid, ROOT_KID,
         "response signed by the delegated key (chaining to the trusted root)"
     );
 }

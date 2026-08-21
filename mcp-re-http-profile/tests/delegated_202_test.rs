@@ -13,6 +13,7 @@
 //! set is the point of the whole design.
 
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::Verifier;
 
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::sign_delegated_accepted_202;
@@ -93,7 +94,6 @@ fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> {
 
 fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
     DelegationExpectations {
-        policy: VerifierPolicy::default(),
         verifier_audiences: &[VERIFIER_AUD],
         expected_audience_hash: AUD_SCOPE,
         accepted_epochs: epochs,
@@ -205,7 +205,7 @@ fn a_delegated_202_verifies_via_the_credential_chain() {
     let actor = verify_delegated_accepted_202(
         &ack,
         &note,
-        &resolver(),
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(&[EPOCH]),
         &no_revocation(),
         NOW,
@@ -232,7 +232,7 @@ fn a_credential_header_not_covered_is_rejected() {
         verify_delegated_accepted_202(
             &ack,
             &note,
-            &resolver(),
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
             &expectations(&[EPOCH]),
             &no_revocation(),
             NOW
@@ -253,7 +253,7 @@ fn a_missing_credential_header_is_rejected() {
         verify_delegated_accepted_202(
             &ack,
             &note,
-            &resolver(),
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
             &expectations(&[EPOCH]),
             &no_revocation(),
             NOW
@@ -281,7 +281,7 @@ fn a_duplicated_credential_header_is_rejected() {
         verify_delegated_accepted_202(
             &ack,
             &note,
-            &resolver(),
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
             &expectations(&[EPOCH]),
             &no_revocation(),
             NOW
@@ -306,7 +306,7 @@ fn an_oversized_credential_header_is_rejected() {
         verify_delegated_accepted_202(
             &ack,
             &note,
-            &resolver(),
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
             &expectations(&[EPOCH]),
             &no_revocation(),
             NOW
@@ -326,7 +326,7 @@ fn a_revoked_delegated_key_is_rejected() {
         verify_delegated_accepted_202(
             &ack,
             &note,
-            &resolver(),
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
             &expectations(&[EPOCH]),
             &revoked,
             NOW
@@ -352,7 +352,7 @@ fn a_delegated_202_refuses_a_content_distinct_notification() {
     verify_delegated_accepted_202(
         &ack_a,
         &note_a,
-        &resolver(),
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(&[EPOCH]),
         &no_revocation(),
         NOW,
@@ -362,7 +362,7 @@ fn a_delegated_202_refuses_a_content_distinct_notification() {
         verify_delegated_accepted_202(
             &ack_a,
             &note_b,
-            &resolver(),
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
             &expectations(&[EPOCH]),
             &no_revocation(),
             NOW
@@ -391,7 +391,7 @@ fn a_delegated_202_refuses_a_retransmission_of_the_same_notification() {
     verify_delegated_accepted_202(
         &ack_a,
         &a,
-        &resolver(),
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(&[EPOCH]),
         &no_revocation(),
         NOW,
@@ -401,7 +401,7 @@ fn a_delegated_202_refuses_a_retransmission_of_the_same_notification() {
         verify_delegated_accepted_202(
             &ack_a,
             &a_prime,
-            &resolver(),
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
             &expectations(&[EPOCH]),
             &no_revocation(),
             NOW
@@ -421,7 +421,7 @@ fn a_stale_trust_epoch_is_rejected() {
         verify_delegated_accepted_202(
             &ack,
             &note,
-            &resolver(),
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
             &expectations(&["epoch-2"]),
             &no_revocation(),
             NOW

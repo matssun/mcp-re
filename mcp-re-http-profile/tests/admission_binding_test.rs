@@ -17,7 +17,6 @@ use sha2::Sha256;
 use mcp_re_http_profile::check_admission;
 use mcp_re_http_profile::issue_admission_assertion;
 use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::verify_request_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::AdmissionBinding;
 use mcp_re_http_profile::AdmissionClaims;
@@ -32,6 +31,8 @@ use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
 const NOW: i64 = 1_700_000_100;
@@ -160,11 +161,10 @@ fn verify_and_check(
     authoritative: Option<&AuthoritativeAdmission>,
     policy: &AdmissionPolicy,
 ) -> Result<(), HttpProfileError> {
-    let verified = verify_request_full(
+    let verified = Verifier::new(&VerifierPolicy::default(), &resolver()).verify_request(
         req,
         &audience(),
         &|_b: &ArtifactBinding| None,
-        &resolver(),
         NOW,
     )?;
     // The binding is inside the protected block the verifier just parsed.
@@ -239,14 +239,9 @@ fn tampering_the_admission_binding_breaks_the_signature() {
         .replace("\"generation\":5", "\"generation\":6")
         .into_bytes();
     assert!(
-        verify_request_full(
-            &req,
-            &audience(),
-            &|_b: &ArtifactBinding| None,
-            &resolver(),
-            NOW
-        )
-        .is_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request(&req, &audience(), &|_b: &ArtifactBinding| None, NOW)
+            .is_err(),
         "a tampered admission binding must fail the content-digest"
     );
 }
@@ -256,13 +251,8 @@ fn tampering_the_admission_binding_breaks_the_signature() {
 #[test]
 fn no_binding_verifies_when_admission_is_not_enforced() {
     let req = signed_request_with_admission(None);
-    let verified = verify_request_full(
-        &req,
-        &audience(),
-        &|_b: &ArtifactBinding| None,
-        &resolver(),
-        NOW,
-    )
-    .expect("verifies");
+    let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &|_b: &ArtifactBinding| None, NOW)
+        .expect("verifies");
     assert!(verified.request_block().admission.is_none());
 }

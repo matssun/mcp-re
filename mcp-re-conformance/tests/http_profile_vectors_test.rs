@@ -31,8 +31,6 @@ use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_response;
 use mcp_re_http_profile::verify_accepted_202;
 use mcp_re_http_profile::verify_artifact_binding;
-use mcp_re_http_profile::verify_request;
-use mcp_re_http_profile::verify_response;
 use mcp_re_http_profile::verify_signed_rejection;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
@@ -49,6 +47,7 @@ use mcp_re_http_profile::RequestEvidenceDigest;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::RetainedHop;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 
 /// Credentials in artifact fixtures are base64url-no-pad (reusing the core
@@ -406,7 +405,9 @@ fn build_fixtures() -> Vec<Fixture> {
         "vec-nonce-1",
     )
     .expect("signing succeeds");
-    let verified = verify_request(&req, &resolver(), NOW).expect("fixture verifies");
+    let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .expect("fixture verifies");
     assert_eq!(&evidence, verified.evidence(), "writer sanity");
     // Reconstruct the exact base the verifier accepted, for the oracle.
     let base = {
@@ -623,7 +624,9 @@ fn build_fixtures() -> Vec<Fixture> {
         EXPIRES,
     )
     .expect("response signing succeeds");
-    verify_response(&rsp, &req, &resolver(), NOW).expect("fixture verifies");
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response_floor(&rsp, &req, NOW)
+        .expect("fixture verifies");
     fixtures.push(Fixture {
         schema: "mcp-re-http-profile-conformance/v1".into(),
         name: "h07_response_valid".into(),
@@ -1274,8 +1277,13 @@ fn build_fixtures() -> Vec<Fixture> {
         EXPIRES,
     )
     .expect("bound rejection builds");
-    verify_signed_rejection(&bound, Some(&req), &resolver(), NOW)
-        .expect("bound rejection verifies");
+    verify_signed_rejection(
+        &bound,
+        Some(&req),
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
+        NOW,
+    )
+    .expect("bound rejection verifies");
     fixtures.push(Fixture {
         schema: "mcp-re-http-profile-conformance/v1".into(),
         name: "h18_rejection_bound_valid".into(),
@@ -1490,17 +1498,19 @@ fn chain_hop(
         EXPIRES,
     )
     .expect("response signs");
-    let rsp_evidence = mcp_re_http_profile::verify_delegated_response_bound_full(
-        &response,
-        &request,
-        &req_evidence,
-        &resolver(),
-        &chain_expectations(),
-        &chain_nothing_revoked,
-        NOW,
-    )
-    .expect("response verifies")
-    .response_signature_base_digest;
+    let rsp_evidence = mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_bound_response(
+            &response,
+            &request,
+            &req_evidence,
+            &chain_expectations(),
+            &chain_nothing_revoked,
+            NOW,
+        )
+        .expect("response verifies")
+        .response
+        .floor
+        .response_signature_base_digest;
     (
         RetainedHop { request, response },
         req_evidence,
@@ -1551,7 +1561,6 @@ fn chain_credential() -> String {
 
 fn chain_expectations() -> mcp_re_http_profile::DelegationExpectations<'static> {
     mcp_re_http_profile::DelegationExpectations {
-        policy: VerifierPolicy::default(),
         verifier_audiences: &["did:example:server"],
         expected_audience_hash: "aud-scope-1",
         accepted_epochs: &["epoch-1"],
@@ -2121,7 +2130,9 @@ fn frozen_http_profile_corpus_verifies() {
         let observed = match fixture.kind.as_str() {
             "request" => {
                 let request = from_wire_request(fixture.request.as_ref().expect("request"));
-                match verify_request(&request, &resolver(), manifest.verify_at_unix) {
+                match Verifier::new(&VerifierPolicy::default(), &resolver())
+                    .verify_request_floor(&request, manifest.verify_at_unix)
+                {
                     Ok(verified) => {
                         if let Some(oracle) = &fixture.oracle {
                             // Oracle byte-equality (S8: assert bytes, not prints).
@@ -2161,7 +2172,9 @@ fn frozen_http_profile_corpus_verifies() {
             "response" => {
                 let request = from_wire_request(fixture.request.as_ref().expect("request"));
                 let response = from_wire_response(fixture.response.as_ref().expect("response"));
-                match verify_response(&response, &request, &resolver(), manifest.verify_at_unix) {
+                match Verifier::new(&VerifierPolicy::default(), &resolver())
+                    .verify_bound_response_floor(&response, &request, manifest.verify_at_unix)
+                {
                     Ok(_) => "verify_ok".to_owned(),
                     Err(e) => e.wire_code().to_owned(),
                 }
@@ -2199,8 +2212,7 @@ fn frozen_http_profile_corpus_verifies() {
                 match verify_accepted_202(
                     &response,
                     &request,
-                    &resolver(),
-                    &VerifierPolicy::default(),
+                    &Verifier::new(&VerifierPolicy::default(), &resolver()),
                     manifest.verify_at_unix,
                 ) {
                     Ok(_) => "verify_ok".to_owned(),
@@ -2233,7 +2245,6 @@ fn frozen_http_profile_corpus_verifies() {
                 let auds = [check.verifier_audience.as_str()];
                 let epochs = [check.epoch.as_str()];
                 let expect = mcp_re_http_profile::DelegationExpectations {
-                    policy: VerifierPolicy::default(),
                     verifier_audiences: &auds,
                     expected_audience_hash: &check.audience_hash,
                     accepted_epochs: &epochs,
@@ -2244,7 +2255,7 @@ fn frozen_http_profile_corpus_verifies() {
                 match mcp_re_http_profile::verify_delegated_accepted_202(
                     &response,
                     &request,
-                    &resolve,
+                    &Verifier::new(&VerifierPolicy::default(), &resolve),
                     &expect,
                     &is_revoked,
                     manifest.verify_at_unix,
@@ -2299,12 +2310,9 @@ fn frozen_http_profile_corpus_verifies() {
                 let policy = VerifierPolicy::default().with_mcp_transport(
                     mcp_re_http_profile::McpTransportPolicy::mcp_2026_07_28(&["2026-07-28"]),
                 );
-                match mcp_re_http_profile::verify_request_with_policy(
-                    &request,
-                    &resolver(),
-                    &policy,
-                    manifest.verify_at_unix,
-                ) {
+                match mcp_re_http_profile::Verifier::new(&policy, &resolver())
+                    .verify_request_floor(&request, manifest.verify_at_unix)
+                {
                     Ok(_) => "verify_ok".to_owned(),
                     Err(e) => e.wire_code().to_owned(),
                 }
@@ -2326,7 +2334,7 @@ fn frozen_http_profile_corpus_verifies() {
                 let material_fn = |_: &mcp_re_http_profile::ArtifactBinding| material.clone();
                 let out = reconstruct_chain(
                     &hops,
-                    &resolver(),
+                    &Verifier::new(&VerifierPolicy::default(), &resolver()),
                     &chain_expectations(),
                     &mcp_re_http_profile::ChainAudit {
                         expected_audience: &check.expected_audience,
@@ -2351,7 +2359,7 @@ fn frozen_http_profile_corpus_verifies() {
                 match verify_signed_rejection(
                     &response,
                     request.as_ref(),
-                    &resolver(),
+                    &Verifier::new(&VerifierPolicy::default(), &resolver()),
                     manifest.verify_at_unix,
                 ) {
                     // On success the observed verdict IS the trusted wire code

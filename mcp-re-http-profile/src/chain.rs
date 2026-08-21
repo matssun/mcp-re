@@ -54,7 +54,6 @@ use crate::block::ArtifactBinding;
 use crate::block::AudienceTuple;
 use crate::block::HttpRequestEvidenceBlock;
 use crate::block::ResolverOutcome;
-use crate::block::SignerSlot;
 use crate::body::extract_meta_block;
 use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
@@ -64,9 +63,8 @@ use crate::ids::RESPONSE_LABEL;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 use crate::policy::VerifierPolicy;
+use crate::verifier::Verifier;
 use crate::verify::parse_signature_input_for;
-use crate::verify::verify_delegated_response_bound_full;
-use crate::verify::verify_request_with_policy;
 use crate::verify::DelegationExpectations;
 
 /// The retained evidence for ONE hop (§9.2): the complete request and response
@@ -328,13 +326,12 @@ fn classify_verified_response(body: &[u8]) -> HopOutcome {
 /// record established without any delegation chain ever being checked.
 pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
     hops: &[RetainedHop],
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
+    verifier: &Verifier<'_, R>,
     expect: &DelegationExpectations<'_>,
     audit: &ChainAudit<'_>,
     is_revoked: &dyn Fn(&str) -> bool,
     now: i64,
 ) -> ChainReconstruction {
-    let policy = &expect.policy;
     let mut hop_evidence: Vec<HopEvidence> = Vec::with_capacity(hops.len());
     // Taken over what was handed in, before any of it is judged, so the record has an
     // identity on every path out of this function including the ones that verify nothing.
@@ -359,7 +356,7 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
             &hop.request.headers,
             REQUEST_LABEL,
             "request signature-input",
-            policy,
+            verifier.policy(),
             now,
         ) {
             Ok(t) => t,
@@ -384,7 +381,7 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
             &hop.response.headers,
             RESPONSE_LABEL,
             "response signature-input",
-            policy,
+            verifier.policy(),
             now,
         ) {
             Ok(t) => t,
@@ -407,18 +404,17 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
         };
 
         // 1. The hop's request must verify on its own.
-        let verified_req =
-            match verify_request_with_policy(&hop.request, resolve_actor, policy, request_at) {
-                Ok(v) => v,
-                Err(e) => {
-                    return incomplete(
-                        hop_evidence,
-                        i,
-                        IncompleteReason::RequestUnverifiable(e),
-                        submitted,
-                    )
-                }
-            };
+        let verified_req = match verifier.verify_request_floor(&hop.request, request_at) {
+            Ok(v) => v,
+            Err(e) => {
+                return incomplete(
+                    hop_evidence,
+                    i,
+                    IncompleteReason::RequestUnverifiable(e),
+                    submitted,
+                )
+            }
+        };
 
         // 1b. The request evidence block itself, not merely the signature over it.
         //
@@ -473,11 +469,10 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
         }
 
         // 2. The hop's response must verify AND be bound to that request.
-        let verified_rsp = match verify_delegated_response_bound_full(
+        let verified_rsp = match verifier.verify_delegated_bound_response(
             &hop.response,
             &hop.request,
             &verified_req.evidence,
-            resolve_actor,
             expect,
             is_revoked,
             response_at,
@@ -583,7 +578,11 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
 
         hop_evidence.push(HopEvidence {
             request_evidence: verified_req.evidence.clone(),
-            response_evidence: verified_rsp.response_signature_base_digest.clone(),
+            response_evidence: verified_rsp
+                .response
+                .floor
+                .response_signature_base_digest
+                .clone(),
         });
     }
 

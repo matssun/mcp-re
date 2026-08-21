@@ -21,8 +21,6 @@ use mcp_re_core::SigningKey;
 
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_response_full;
-use mcp_re_http_profile::verify_request_full;
-use mcp_re_http_profile::verify_response_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -34,6 +32,8 @@ use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_proxy::http_profile_dispatch::dispatch_request_with_tier_gate;
@@ -141,7 +141,8 @@ fn signed_and_verified(nonce: &str) -> (HttpRequest, VerifiedMcpRequest) {
         nonce,
     )
     .expect("full sign");
-    let verified = verify_request_full(&req, &block.audience, &no_material(), &resolver(), NOW)
+    let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &block.audience, &no_material(), NOW)
         .expect("full verify");
     (req, verified)
 }
@@ -303,9 +304,9 @@ fn http_profile_request_flows_verify_dispatch_serve_end_to_end() {
         "nonce-e2e",
     )
     .expect("sign request");
-    let verified_request =
-        verify_request_full(&req, &block.audience, &no_material(), &resolver(), NOW)
-            .expect("verify request");
+    let verified_request = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &block.audience, &no_material(), NOW)
+        .expect("verify request");
 
     // 2. Dispatch through the ADAPTER under fleet-strict with an acceptable tier and
     //    a durable cache — the replay key is admitted (Fresh).
@@ -357,13 +358,8 @@ fn http_profile_request_flows_verify_dispatch_serve_end_to_end() {
         EXPIRES,
     )
     .expect("sign response");
-    let verified_response = verify_response_full(&resp, &req, &verified_request, &resolver(), NOW)
+    let verified_response = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response(&resp, &req, verified_request.evidence(), NOW)
         .expect("verify response e2e");
-    assert_eq!(
-        verified_response
-            .server_signer
-            .expect("server_signer present")
-            .keyid,
-        SERVER_KEY_ID
-    );
+    assert_eq!(verified_response.server_signer.keyid, SERVER_KEY_ID);
 }

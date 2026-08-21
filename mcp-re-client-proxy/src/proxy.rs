@@ -329,7 +329,6 @@ impl ClientProxy {
             // signed receipt to a plain JSON-RPC error for the local client and report
             // the classification (fail closed — never returned as a success result).
             DelegatedOutcome::Rejection {
-                bound,
                 wire_code,
                 execution,
             } => Ok(ProxyResponse {
@@ -340,7 +339,7 @@ impl ClientProxy {
                 ),
                 kind: ResponseKind::VerifiedRejection {
                     wire_code,
-                    bound,
+                    bound: verified.verified.is_bound(),
                     execution,
                 },
             }),

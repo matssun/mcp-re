@@ -11,12 +11,12 @@
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::sign_request;
-use mcp_re_http_profile::verify_request;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::Verifier;
 
 const CREATED: i64 = 1_700_000_000;
 const EXPIRES: i64 = 1_700_000_300;
@@ -93,7 +93,9 @@ fn mcp_transport_headers_are_covered_when_present() {
             "the signer must cover {expected} when it is present: {input}"
         );
     }
-    verify_request(&r, &resolver(), NOW).expect("covered-and-matching verifies");
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&r, NOW)
+        .expect("covered-and-matching verifies");
 }
 
 /// A deployment whose protocol version does not define these headers never sends
@@ -104,7 +106,9 @@ fn absent_headers_are_not_covered_and_still_verify() {
     let r = signed(&[]);
     let input = signature_input(&r);
     assert!(!input.contains("mcp-method"), "nothing to cover: {input}");
-    verify_request(&r, &resolver(), NOW).expect("a request without MCP headers verifies");
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&r, NOW)
+        .expect("a request without MCP headers verifies");
 }
 
 // --- negative: present but uncovered ----------------------------------------
@@ -123,7 +127,9 @@ fn present_but_uncovered_mcp_method_is_rejected() {
         }
     }
     assert_eq!(
-        verify_request(&r, &resolver(), NOW).unwrap_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request_floor(&r, NOW)
+            .unwrap_err(),
         HttpProfileError::MissingCoveredComponent("mcp-method"),
     );
 }
@@ -137,7 +143,9 @@ fn present_but_uncovered_mcp_name_is_rejected() {
         }
     }
     assert_eq!(
-        verify_request(&r, &resolver(), NOW).unwrap_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request_floor(&r, NOW)
+            .unwrap_err(),
         HttpProfileError::MissingCoveredComponent("mcp-name"),
     );
 }
@@ -169,7 +177,9 @@ fn header_body_method_divergence_is_rejected() {
     )
     .expect("the client really does sign the contradiction");
 
-    let err = verify_request(&r, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&r, NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::McpMethodDivergence);
     assert_eq!(err.wire_code(), "mcp-re.malformed_envelope");
 }
@@ -180,7 +190,8 @@ fn header_body_method_divergence_is_rejected() {
 #[test]
 fn the_divergent_request_is_otherwise_valid() {
     let r = signed(&[("Mcp-Method", "tools/call")]);
-    verify_request(&r, &resolver(), NOW)
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&r, NOW)
         .expect("the same request with an agreeing header verifies");
 }
 
@@ -212,7 +223,9 @@ fn an_mcp_method_header_with_no_body_method_is_rejected() {
         "n-nom",
     )
     .expect("signing succeeds");
-    let err = verify_request(&r, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&r, NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::McpMethodDivergence);
     assert_eq!(err.wire_code(), "mcp-re.malformed_envelope");
 }
@@ -236,7 +249,9 @@ fn a_result_shaped_body_without_the_header_verifies() {
         "n-nom2",
     )
     .expect("signing succeeds");
-    verify_request(&r, &resolver(), NOW).expect("no header, nothing to constrain");
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&r, NOW)
+        .expect("no header, nothing to constrain");
 }
 
 // --- session-id is scoped out ------------------------------------------------
@@ -259,7 +274,9 @@ fn mcp_session_id_is_not_a_coverable_component() {
         }
     }
     assert_eq!(
-        verify_request(&r, &resolver(), NOW).unwrap_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request_floor(&r, NOW)
+            .unwrap_err(),
         HttpProfileError::MalformedEvidence("unknown covered component"),
     );
 }
@@ -276,7 +293,9 @@ fn the_component_allowlist_is_still_closed() {
         }
     }
     assert_eq!(
-        verify_request(&r, &resolver(), NOW).unwrap_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request_floor(&r, NOW)
+            .unwrap_err(),
         HttpProfileError::MalformedEvidence("unknown covered component"),
     );
 }
@@ -287,7 +306,6 @@ fn the_component_allowlist_is_still_closed() {
 // presence, the supported-version set, protocol-version/body agreement, and
 // mcp-name agreement — all enforced AFTER the signature, against protected bytes.
 
-use mcp_re_http_profile::verify_request_with_policy;
 use mcp_re_http_profile::McpTransportPolicy;
 use mcp_re_http_profile::VerifierPolicy;
 
@@ -320,7 +338,8 @@ fn conforming_2026_request_verifies_under_the_transport_contract() {
         "n-ok",
     )
     .expect("signs");
-    verify_request_with_policy(&r, &resolver(), &strict_transport(), NOW)
+    Verifier::new(&strict_transport(), &resolver())
+        .verify_request_floor(&r, NOW)
         .expect("a conforming request verifies");
 }
 
@@ -347,7 +366,9 @@ fn a_required_header_absent_is_rejected_through_verify() {
         "n-miss",
     )
     .expect("signs");
-    let err = verify_request_with_policy(&r, &resolver(), &strict_transport(), NOW).unwrap_err();
+    let err = Verifier::new(&strict_transport(), &resolver())
+        .verify_request_floor(&r, NOW)
+        .unwrap_err();
     assert_eq!(
         err,
         HttpProfileError::McpTransportHeaderMissing("mcp-method")
@@ -377,7 +398,9 @@ fn an_unsupported_protocol_version_is_rejected_through_verify() {
         "n-ver",
     )
     .expect("signs");
-    let err = verify_request_with_policy(&r, &resolver(), &strict_transport(), NOW).unwrap_err();
+    let err = Verifier::new(&strict_transport(), &resolver())
+        .verify_request_floor(&r, NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::McpProtocolVersionUnsupported);
     assert_eq!(err.wire_code(), "mcp-re.unsupported_version");
 }
@@ -405,7 +428,9 @@ fn protocol_version_header_body_divergence_is_rejected_through_verify() {
         "n-vd",
     )
     .expect("signs");
-    let err = verify_request_with_policy(&r, &resolver(), &strict_transport(), NOW).unwrap_err();
+    let err = Verifier::new(&strict_transport(), &resolver())
+        .verify_request_floor(&r, NOW)
+        .unwrap_err();
     assert_eq!(
         err,
         HttpProfileError::McpTransportDivergence("mcp-protocol-version")
@@ -437,7 +462,9 @@ fn mcp_name_body_divergence_is_rejected_through_verify() {
         "n-nd",
     )
     .expect("signs");
-    let err = verify_request_with_policy(&r, &resolver(), &strict_transport(), NOW).unwrap_err();
+    let err = Verifier::new(&strict_transport(), &resolver())
+        .verify_request_floor(&r, NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::McpTransportDivergence("mcp-name"));
 }
 
@@ -462,7 +489,8 @@ fn absent_headers_verify_when_no_transport_policy_is_attached() {
         "n-none",
     )
     .expect("signs");
-    verify_request_with_policy(&r, &resolver(), &VerifierPolicy::default(), NOW)
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&r, NOW)
         .expect("no transport policy: present-header integrity only, absence allowed");
 }
 
@@ -489,6 +517,7 @@ fn legacy_omission_serves_bare_client_but_rejects_a_lie_through_verify() {
         "n-leg",
     )
     .expect("signs");
-    verify_request_with_policy(&bare, &resolver(), &policy, NOW)
+    Verifier::new(&policy, &resolver())
+        .verify_request_floor(&bare, NOW)
         .expect("a legacy client omitting the headers is served");
 }

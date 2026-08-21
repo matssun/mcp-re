@@ -20,6 +20,7 @@ use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::STATUS_ACCEPTED;
 
@@ -99,7 +100,7 @@ fn signed_202_verifies_against_its_notification() {
         "a bodyless response has no content-type: there is no content to describe"
     );
 
-    let actor = verify_accepted_202(&ack, &note, &resolver(), &policy(), NOW)
+    let actor = verify_accepted_202(&ack, &note, &Verifier::new(&policy(), &resolver()), NOW)
         .expect("the client verifies the acknowledgement");
     assert_eq!(actor.identity.keyid, SERVER_KEY_ID);
 }
@@ -131,9 +132,11 @@ fn an_acknowledgement_binds_to_one_transmission_not_to_content() {
     let ack_a =
         sign_accepted_202(&note_a, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES).expect("signs");
 
-    verify_accepted_202(&ack_a, &note_a, &resolver(), &policy(), NOW).expect("binds to A");
+    verify_accepted_202(&ack_a, &note_a, &Verifier::new(&policy(), &resolver()), NOW)
+        .expect("binds to A");
     assert_eq!(
-        verify_accepted_202(&ack_a, &note_b, &resolver(), &policy(), NOW).unwrap_err(),
+        verify_accepted_202(&ack_a, &note_b, &Verifier::new(&policy(), &resolver()), NOW)
+            .unwrap_err(),
         HttpProfileError::ResponseBindingMismatch,
         "A's acknowledgement must not acknowledge a DIFFERENT notification B"
     );
@@ -151,7 +154,13 @@ fn an_acknowledgement_binds_to_one_transmission_not_to_content() {
         "the two transmissions must genuinely be distinct request instances"
     );
     assert_eq!(
-        verify_accepted_202(&ack_a, &note_a_again, &resolver(), &policy(), NOW).unwrap_err(),
+        verify_accepted_202(
+            &ack_a,
+            &note_a_again,
+            &Verifier::new(&policy(), &resolver()),
+            NOW
+        )
+        .unwrap_err(),
         HttpProfileError::ResponseBindingMismatch,
         "an acknowledgement for transmission A must NOT verify for a distinct \
          transmission A', even with identical method, target and body content"
@@ -172,7 +181,7 @@ fn a_forged_request_evidence_header_is_refused() {
         }
     }
     assert!(
-        verify_accepted_202(&ack, &note_a, &resolver(), &policy(), NOW).is_err(),
+        verify_accepted_202(&ack, &note_a, &Verifier::new(&policy(), &resolver()), NOW).is_err(),
         "a request-evidence value the verifier cannot re-derive must fail closed"
     );
 }
@@ -187,7 +196,8 @@ fn a_missing_request_evidence_header_is_refused() {
     ack.headers
         .retain(|(name, _)| !name.eq_ignore_ascii_case("mcp-re-request-evidence"));
     assert_eq!(
-        verify_accepted_202(&ack, &note_a, &resolver(), &policy(), NOW).unwrap_err(),
+        verify_accepted_202(&ack, &note_a, &Verifier::new(&policy(), &resolver()), NOW)
+            .unwrap_err(),
         HttpProfileError::MissingEvidence("response request-evidence"),
         "there is no weaker content-level mode to fall back to"
     );
@@ -214,7 +224,7 @@ fn content_injected_into_a_signed_202_is_caught() {
         sign_accepted_202(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES).expect("signs");
     ack.body = br#"{"cancelled":true}"#.to_vec();
     assert_eq!(
-        verify_accepted_202(&ack, &note, &resolver(), &policy(), NOW).unwrap_err(),
+        verify_accepted_202(&ack, &note, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
         HttpProfileError::MalformedEvidence("content on a bodyless message"),
     );
 }
@@ -230,7 +240,7 @@ fn content_type_on_a_bodyless_202_is_rejected() {
     ack.headers
         .push(("Content-Type".into(), "application/json".into()));
     assert_eq!(
-        verify_accepted_202(&ack, &note, &resolver(), &policy(), NOW).unwrap_err(),
+        verify_accepted_202(&ack, &note, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
         HttpProfileError::MalformedEvidence("content-type on a bodyless message"),
     );
 }
@@ -248,7 +258,7 @@ fn a_202_without_its_req_binding_is_rejected() {
         }
     }
     assert_eq!(
-        verify_accepted_202(&ack, &note, &resolver(), &policy(), NOW).unwrap_err(),
+        verify_accepted_202(&ack, &note, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
         HttpProfileError::MissingCoveredComponent("@target-uri"),
     );
 }
@@ -262,7 +272,7 @@ fn a_bodyless_response_that_is_not_202_is_rejected() {
         sign_accepted_202(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES).expect("signs");
     ack.status = 200;
     assert_eq!(
-        verify_accepted_202(&ack, &note, &resolver(), &policy(), NOW).unwrap_err(),
+        verify_accepted_202(&ack, &note, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
         HttpProfileError::MalformedEvidence("bodyless acknowledgement status"),
     );
 }
@@ -275,7 +285,7 @@ fn a_202_signed_by_a_request_key_fails_the_response_slot() {
     let ack =
         sign_accepted_202(&note, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES).expect("signs");
     assert_eq!(
-        verify_accepted_202(&ack, &note, &resolver(), &policy(), NOW).unwrap_err(),
+        verify_accepted_202(&ack, &note, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
         HttpProfileError::UnresolvedKeyId,
     );
 }
@@ -370,7 +380,9 @@ fn the_bodied_request_set_still_requires_content_type() {
     // The bodied verifier still demands it — a body without a media type is not
     // suddenly acceptable because a bodyless set exists.
     assert!(
-        mcp_re_http_profile::verify_request(&stripped, &resolver(), NOW).is_err(),
+        mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request_floor(&stripped, NOW)
+            .is_err(),
         "the bodied set is unchanged"
     );
 }

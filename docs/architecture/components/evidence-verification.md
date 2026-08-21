@@ -159,8 +159,10 @@ Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_g
 
 | file | prod | current role | target role |
 |---|---:|---|---|
-| `mcp-re-http-profile/src/verified_request.rs` | 195 | **the two request products** — `CryptographicFloorVerifiedRequest` and `VerifiedMcpRequest` | unchanged; the value owns its own module rather than living beside the procedure that builds it |
-| `mcp-re-http-profile/src/verify.rs` | 1598 | the verifier: floor, full profile, response, bound response, delegated response, unbound variants | facade only; floor and full-profile stages become private subordinate modules |
+| `mcp-re-http-profile/src/verified_request.rs` | 195 | the two request products | unchanged; the value owns its own module rather than living beside the procedure that builds it |
+| `mcp-re-http-profile/src/verified_response.rs` | 173 | the five response products | unchanged |
+| `mcp-re-http-profile/src/verifier.rs` | 138 | `Verifier` — one policy authority, one operation per proposition | unchanged |
+| `mcp-re-http-profile/src/verify.rs` | 1388 | the stage implementations, now `pub(crate)` behind the facade | floor and full-profile stages become private subordinate modules |
 | `mcp-re-http-profile/src/sigbase.rs` | 306 | signature-base reconstruction | private subordinate of the floor |
 | `mcp-re-http-profile/src/digest.rs` | 65 | content-digest | private subordinate of the floor |
 | `mcp-re-http-profile/src/block.rs` | 647 | evidence blocks, `ResolvedActor` | shared: `ResolvedActor` is a seam value (§14), blocks are a full-profile subordinate |
@@ -190,13 +192,29 @@ verify_delegated_response_bound_full
 verify_delegated_response_unbound
 ```
 
-Four axes are multiplied into a flat function list: floor vs full, request vs response, bound vs unbound, default policy vs explicit policy, plus a delegated variant of three of them. That is ADR-061 §8 question 2 answered by the interface itself.
+Four axes were multiplied into a flat function list: floor vs full, request vs response, bound vs unbound, default policy vs explicit policy, plus a delegated variant of three of them. That is ADR-061 §8 question 2 answered by the interface itself.
+
+**Resolved (#570, #571), each axis by its own kind of thing rather than by one mechanism:**
+
+| axis | where it lives now |
+|---|---|
+| floor vs full | the product type |
+| bound vs unbound | the product type |
+| delegated, where the assurance differs | the product type |
+| default vs explicit policy | `Verifier` configuration — the axis is gone from the API |
+| whole verified request vs evidence handle | an input. `verify_response_full` was an adapter around the bound form and is deleted; the caller supplies the handle it has |
+
+`Verifier` is the whole public surface: `verify_request_floor`, `verify_request`, `verify_bound_response_floor`, `verify_bound_response`, `verify_unbound_response_floor`, `verify_delegated_bound_response`, `verify_delegated_unbound_response`. A method name may still say `bound`; the requirement is that the distinction must not exist **only** there, and it does not.
 
 ## 11. Known deviations
 
 1. **~~One product type, two propositions~~ — closed on the REQUEST side (#570), open on the response side (#571).** `verify_request` now returns `CryptographicFloorVerifiedRequest` and `verify_request_full` returns `VerifiedMcpRequest`; the three `Option` fields that carried the assurance difference are gone, and a full-profile consumer cannot be handed a floor value.
 
-   `VerifiedHttpResponseEvidence` still has the shape, in `bound_request_evidence`, `body_request_evidence`, and `server_signer` ("`None` on the seam-only path"). That is #571.
+   **Closed on the response side too (#571).** `VerifiedHttpResponseEvidence` no longer exists. Five products replace it — `CryptographicFloorVerifiedBoundResponse`, `CryptographicFloorVerifiedUnboundResponse`, `VerifiedMcpResponse`, `VerifiedDelegatedMcpResponse`, `VerifiedDelegatedUnboundResponse` — and no `Option` among them stands for "this path proved less". There is deliberately **no Cartesian product**: only the combinations the system actually has.
+
+   Bound vs unbound is a security proposition, not an API convenience: the bound path verifies `;req` against a concrete request and compares the block's `request_evidence`; the unbound path forbids `;req` and treats the block's handle as diagnostic. Two types, so a consumer cannot conflate them.
+
+   The client's `bound: bool` went with it. Boundness was stated twice — once by that flag, once by which path produced the evidence — and is now stated once, by `DelegatedResponseEvidence`.
 
    What the request split deleted rather than moved: `prepare_http_dispatch` carried a runtime guard failing closed on a missing `audience_hash`, commented *"its absence means minimal-path evidence reached the dispatcher"*. Its case is now unconstructible, so the check is gone — the ADR-061 §11 operational test applied to a real check.
 
@@ -210,11 +228,11 @@ Four axes are multiplied into a flat function list: floor vs full, request vs re
 
 ## 12. Completion criteria
 
-- floor and full assurance products are distinct types;
-- full-profile consumers cannot accept a floor-only value, and a test proves it;
+- ✅ floor and full assurance products are distinct types, on both request and response;
+- ✅ full-profile consumers cannot accept a floor-only value, and three probed `compile_fail` controls prove it;
 - the two composition theorems in §8 exist in `verification/policy/theorems.toml` with correct scope sentences;
-- public API names/types state assurance level accurately;
+- ✅ public API names/types state assurance level accurately;
 - floor functions are public only when intentionally supported;
 - verification parsing/crypto/binding subcomponents are privately hierarchical;
-- the `_with_policy` / bound / unbound / delegated axes are no longer multiplied into a flat public function list;
+- ✅ the `_with_policy` / bound / unbound / delegated axes are no longer multiplied into a flat public function list;
 - current conformance, profile, live-KMS, and serving lanes prove the intended stages non-vacuously, each lane named per §9.

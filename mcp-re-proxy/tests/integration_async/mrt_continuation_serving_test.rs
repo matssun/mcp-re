@@ -24,8 +24,6 @@ use std::sync::Arc;
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::verify_delegated_response_full;
-use mcp_re_http_profile::verify_request_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -43,6 +41,8 @@ use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::RequestEvidenceDigest;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_proxy::async_inner::AsyncInnerServer;
@@ -269,7 +269,6 @@ fn as_digest(ev: &RequestEvidence) -> RequestEvidenceDigest {
 
 fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
     DelegationExpectations {
-        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &[VERIFIER_AUD],
         expected_audience_hash: AUD_SCOPE,
         accepted_epochs: epochs,
@@ -371,14 +370,9 @@ async fn open_on(
     // The client keeps its own request for response binding.
     let no_material = |_b: &ArtifactBinding| None;
     let r = resolver();
-    let verified_req = verify_request_full(
-        &req,
-        &audience(),
-        &no_material,
-        &move |k: &str, s| r(k, s),
-        NOW,
-    )
-    .expect("client's own open request verifies");
+    let verified_req = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+        .verify_request(&req, &audience(), &no_material, NOW)
+        .expect("client's own open request verifies");
 
     let served = proxy.handle(served_of(&req), NOW).await;
     assert_eq!(served.status, 200, "open leg served an InputRequiredResult");
@@ -386,16 +380,16 @@ async fn open_on(
 
     // The client verifies the delegated response and reads its evidence handle (D_irr).
     let r = resolver();
-    let verified = verify_delegated_response_full(
-        &resp,
-        &req,
-        &verified_req,
-        &move |k: &str, s| r(k, s),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .expect("open-leg InputRequiredResult verifies");
+    let verified = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+        .verify_delegated_bound_response(
+            &resp,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .expect("open-leg InputRequiredResult verifies");
 
     // The reply carries the opaque requestState the answer leg re-presents.
     let body: serde_json::Value = serde_json::from_slice(&resp.body).unwrap();
@@ -407,7 +401,7 @@ async fn open_on(
 
     (
         as_digest(&open_ev), // D_prev (client request handle)
-        as_digest(&verified.response_signature_base_digest), // D_irr (verified response handle)
+        as_digest(&verified.response.floor.response_signature_base_digest), // D_irr (verified response handle)
         seen_state.to_owned(),
     )
 }
@@ -442,14 +436,9 @@ async fn continuation_opened_on_a_is_honoured_on_b() {
     let verified_answer = {
         let no_material = |_b: &ArtifactBinding| None;
         let r = resolver();
-        verify_request_full(
-            &answer_req,
-            &audience(),
-            &no_material,
-            &move |k: &str, s| r(k, s),
-            NOW,
-        )
-        .expect("answer request verifies (for response binding)")
+        Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+            .verify_request(&answer_req, &audience(), &no_material, NOW)
+            .expect("answer request verifies (for response binding)")
     };
 
     let served = b.handle(served_of(&answer_req), NOW).await;
@@ -462,16 +451,16 @@ async fn continuation_opened_on_a_is_honoured_on_b() {
     let resp = http_response(served);
     // The terminal reply is a delegated-signed success bound to the answer request.
     let r = resolver();
-    verify_delegated_response_full(
-        &resp,
-        &answer_req,
-        &verified_answer,
-        &move |k: &str, s| r(k, s),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .expect("terminal answer verifies via the delegated chain");
+    Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+        .verify_delegated_bound_response(
+            &resp,
+            &answer_req,
+            verified_answer.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .expect("terminal answer verifies via the delegated chain");
     assert!(String::from_utf8_lossy(&resp.body).contains("\"confirmed\":true"));
 
     // One-shot: a second answer for the same requestState finds no store entry (the
@@ -1282,25 +1271,20 @@ fn write_sdk_fixture(nonce: &str, reply_body: &[u8], comment: &str, file_name: &
     // reason and the test would prove nothing.
     let r = resolver();
     let no_material = |_b: &ArtifactBinding| None;
-    let verified_req = verify_request_full(
-        &request,
-        &audience(),
-        &no_material,
-        &move |k: &str, s| r(k, s),
-        NOW,
-    )
-    .expect("the fixture request verifies");
+    let verified_req = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+        .verify_request(&request, &audience(), &no_material, NOW)
+        .expect("the fixture request verifies");
     let r = resolver();
-    verify_delegated_response_full(
-        &response,
-        &request,
-        &verified_req,
-        &move |k: &str, s| r(k, s),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .expect("the fixture response is genuine evidence — only its RESULT is unreadable");
+    Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+        .verify_delegated_bound_response(
+            &response,
+            &request,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .expect("the fixture response is genuine evidence — only its RESULT is unreadable");
 
     let fixture = serde_json::json!({
         "_comment": comment,
@@ -1591,31 +1575,26 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
     assert_eq!(served1.status, 200, "leg 1 opened");
     let resp1 = http_response(served1);
     let r = resolver();
-    let verified_req1 = verify_request_full(
-        &req1,
-        &audience(),
-        &|_b: &ArtifactBinding| None,
-        &move |k: &str, s| r(k, s),
-        NOW,
-    )
-    .expect("the client's own round-1 request verifies");
+    let verified_req1 = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+        .verify_request(&req1, &audience(), &|_b: &ArtifactBinding| None, NOW)
+        .expect("the client's own round-1 request verifies");
     let r = resolver();
-    let verified1 = verify_delegated_response_full(
-        &resp1,
-        &req1,
-        &verified_req1,
-        &move |k: &str, s| r(k, s),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .expect("the round-1 reply verifies");
+    let verified1 = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+        .verify_delegated_bound_response(
+            &resp1,
+            &req1,
+            verified_req1.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .expect("the round-1 reply verifies");
 
     // Round 2 — answering leg 1 CONSUMES it, and the reply opens leg 2. Served on B, which
     // never saw round 1.
     let cont1 = HttpContinuation::from_handles(
         as_digest(&ev1),
-        as_digest(&verified1.response_signature_base_digest),
+        as_digest(&verified1.response.floor.response_signature_base_digest),
         FIRST.as_bytes(),
     );
     let (req2, ev2) = signed_request("nonce-r2", &answer_body(FIRST), Some(cont1));
@@ -1634,31 +1613,26 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
         "the answer's own reply carries a NEW requestState"
     );
     let r = resolver();
-    let verified_req2 = verify_request_full(
-        &req2,
-        &audience(),
-        &|_b: &ArtifactBinding| None,
-        &move |k: &str, s| r(k, s),
-        NOW,
-    )
-    .expect("the client's own round-2 request verifies");
+    let verified_req2 = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+        .verify_request(&req2, &audience(), &|_b: &ArtifactBinding| None, NOW)
+        .expect("the client's own round-2 request verifies");
     let r = resolver();
-    let verified2 = verify_delegated_response_full(
-        &resp2,
-        &req2,
-        &verified_req2,
-        &move |k: &str, s| r(k, s),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .expect("the round-2 reply verifies");
+    let verified2 = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+        .verify_delegated_bound_response(
+            &resp2,
+            &req2,
+            verified_req2.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .expect("the round-2 reply verifies");
 
     // Round 3 — the load-bearing assertion. Leg 2 was recorded by an exchange that had
     // ALREADY consumed leg 1. If the latch had discarded the new leg, this fails closed.
     let cont2 = HttpContinuation::from_handles(
         as_digest(&ev2),
-        as_digest(&verified2.response_signature_base_digest),
+        as_digest(&verified2.response.floor.response_signature_base_digest),
         SECOND.as_bytes(),
     );
     let (req3, _ev3) = signed_request("nonce-r3", &answer_body(SECOND), Some(cont2));
@@ -1677,7 +1651,7 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
     // this, the test above could pass on a store that never consumes anything.
     let cont1_again = HttpContinuation::from_handles(
         as_digest(&ev1),
-        as_digest(&verified1.response_signature_base_digest),
+        as_digest(&verified1.response.floor.response_signature_base_digest),
         FIRST.as_bytes(),
     );
     let (replay_req, _e) = signed_request("nonce-r2-again", &answer_body(FIRST), Some(cont1_again));
@@ -2016,14 +1990,9 @@ async fn a_configured_transport_binding_refuses_a_request_that_presents_no_peer_
     // requires is actually presented. Without this the test would pass against a proxy that
     // refuses everything.
     let r = resolver();
-    let verified = verify_request_full(
-        &req,
-        &audience(),
-        &|_b: &ArtifactBinding| None,
-        &move |k: &str, s| r(k, s),
-        NOW,
-    )
-    .expect("the client's own request verifies");
+    let verified = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+        .verify_request(&req, &audience(), &|_b: &ArtifactBinding| None, NOW)
+        .expect("the client's own request verifies");
     let mut with_identity = served_of(&req);
     with_identity.identity = Some(mcp_re_proxy::transport::TransportIdentity::new(
         verified.resolved_actor().actor_id(),

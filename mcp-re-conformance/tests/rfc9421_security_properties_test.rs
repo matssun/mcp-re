@@ -13,8 +13,6 @@
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_response_full;
-use mcp_re_http_profile::verify_request_full;
-use mcp_re_http_profile::verify_response_bound_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -24,6 +22,8 @@ use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
@@ -132,13 +132,16 @@ fn signed(nonce: &str, body: &[u8]) -> (HttpRequest, mcp_re_http_profile::Reques
 fn tampered_request_body_is_rejected() {
     let (mut req, _) = signed("n-auth", CALL);
     // Control: the untampered request verifies.
-    verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW)
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &no_material(), NOW)
         .expect("control verifies");
     // Tamper the body AFTER signing → Content-Digest / signature must reject.
     req.body =
         br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"WRITE"}}"#.to_vec();
     assert!(
-        verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW).is_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request(&req, &audience(), &no_material(), NOW)
+            .is_err(),
         "a tampered request body must be rejected"
     );
 }
@@ -151,7 +154,9 @@ fn mutated_payload_is_rejected() {
     req.body =
         br#"{"jsonrpc":"2.0","id":999,"method":"tools/call","params":{"name":"read"}}"#.to_vec();
     assert!(
-        verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW).is_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request(&req, &audience(), &no_material(), NOW)
+            .is_err(),
         "a mutated JSON-RPC id in the signed payload must be rejected"
     );
 }
@@ -166,7 +171,9 @@ fn wrong_audience_is_rejected() {
         route: Some("a".into()),
     };
     assert!(
-        verify_request_full(&req, &wrong, &no_material(), &resolver(), NOW).is_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request(&req, &wrong, &no_material(), NOW)
+            .is_err(),
         "a request bound to a different audience must be rejected"
     );
 }
@@ -175,8 +182,9 @@ fn wrong_audience_is_rejected() {
 #[test]
 fn authorization_artifact_binding_is_bound_and_verified() {
     let (req, _) = signed("n-authz", CALL);
-    let verified =
-        verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW).expect("verifies");
+    let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &no_material(), NOW)
+        .expect("verifies");
     let bindings = &verified.request_block().artifact_bindings;
     assert!(
         !bindings.is_empty(),
@@ -196,14 +204,9 @@ fn expired_request_is_rejected() {
     let (req, _) = signed("n-fresh", CALL);
     // Verify past `expires` AND past the tolerated skew → stale-window rejection.
     assert!(
-        verify_request_full(
-            &req,
-            &audience(),
-            &no_material(),
-            &resolver(),
-            EXPIRES + SKEW + 10
-        )
-        .is_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request(&req, &audience(), &no_material(), EXPIRES + SKEW + 10)
+            .is_err(),
         "a request beyond its freshness window plus the skew bound must be rejected"
     );
 }
@@ -215,25 +218,15 @@ fn expired_request_is_rejected() {
 fn request_within_the_skew_bound_is_accepted_but_beyond_it_is_not() {
     let (req, _) = signed("n-skew", CALL);
     assert!(
-        verify_request_full(
-            &req,
-            &audience(),
-            &no_material(),
-            &resolver(),
-            EXPIRES + SKEW - 1
-        )
-        .is_ok(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request(&req, &audience(), &no_material(), EXPIRES + SKEW - 1)
+            .is_ok(),
         "within the declared skew bound, a just-expired request is honest clock drift"
     );
     assert!(
-        verify_request_full(
-            &req,
-            &audience(),
-            &no_material(),
-            &resolver(),
-            EXPIRES + SKEW + 1
-        )
-        .is_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request(&req, &audience(), &no_material(), EXPIRES + SKEW + 1)
+            .is_err(),
         "one second past the bound, the tolerance is exhausted and it fails closed"
     );
 }
@@ -244,25 +237,15 @@ fn request_within_the_skew_bound_is_accepted_but_beyond_it_is_not() {
 fn future_dated_request_within_the_skew_bound_is_accepted() {
     let (req, _) = signed("n-future", CALL);
     assert!(
-        verify_request_full(
-            &req,
-            &audience(),
-            &no_material(),
-            &resolver(),
-            CREATED - SKEW + 1
-        )
-        .is_ok(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request(&req, &audience(), &no_material(), CREATED - SKEW + 1)
+            .is_ok(),
         "a slightly future-dated request is tolerated within the bound"
     );
     assert!(
-        verify_request_full(
-            &req,
-            &audience(),
-            &no_material(),
-            &resolver(),
-            CREATED - SKEW - 1
-        )
-        .is_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request(&req, &audience(), &no_material(), CREATED - SKEW - 1)
+            .is_err(),
         "beyond the bound, a future-dated request fails closed"
     );
 }
@@ -271,16 +254,19 @@ fn future_dated_request_within_the_skew_bound_is_accepted() {
 /// the same seam — the policy is the only thing that moved.
 #[test]
 fn strict_tier_policy_restores_exact_freshness() {
-    use mcp_re_http_profile::verify_request_with_policy;
     use mcp_re_http_profile::VerifierPolicy;
     let (req, _) = signed("n-strict", CALL);
     let strict = VerifierPolicy::new(&["ed25519"], 0).expect("strict tier is a valid bound");
     assert!(
-        verify_request_with_policy(&req, &resolver(), &strict, EXPIRES).is_err(),
+        Verifier::new(&strict, &resolver())
+            .verify_request_floor(&req, EXPIRES)
+            .is_err(),
         "at skew 0 the window closes exactly at `expires`"
     );
     assert!(
-        verify_request_with_policy(&req, &resolver(), &strict, EXPIRES - 1).is_ok(),
+        Verifier::new(&strict, &resolver())
+            .verify_request_floor(&req, EXPIRES - 1)
+            .is_ok(),
         "and remains open right up to it"
     );
 }
@@ -291,8 +277,9 @@ fn replayed_request_is_rejected_by_the_replay_tier() {
     use mcp_re_core::InMemoryReplayCache;
     use mcp_re_core::ReplayDecision;
     let (req, _) = signed("n-replay", CALL);
-    let verified =
-        verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW).expect("verifies");
+    let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &no_material(), NOW)
+        .expect("verifies");
     let key = mcp_re_http_profile::prepare_http_dispatch(&verified, None)
         .expect("dispatch prep")
         .0;
@@ -315,7 +302,9 @@ fn untrusted_signer_key_is_rejected() {
     let empty = |_k: &str, _s: SignerSlot| None;
     let (req, _) = signed("n-revoke", CALL);
     assert!(
-        verify_request_full(&req, &audience(), &no_material(), &empty, NOW).is_err(),
+        Verifier::new(&VerifierPolicy::default(), &empty)
+            .verify_request(&req, &audience(), &no_material(), NOW)
+            .is_err(),
         "a signer key not in the authorized set must fail closed"
     );
 }
@@ -336,7 +325,9 @@ fn unauthorized_key_id_is_rejected() {
     )
     .expect("sign");
     assert!(
-        verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW).is_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request(&req, &audience(), &no_material(), NOW)
+            .is_err(),
         "a keyid outside the admitted set must be rejected"
     );
 }
@@ -347,8 +338,9 @@ fn transport_identity_binds_to_the_request_actor() {
     // The verified request actor id is the stable identity a transport binding ties
     // the channel identity to (proxy Mode-A ExactMatch binds `resolved_actor.actor_id()`).
     let (req, _) = signed("n-ingress", CALL);
-    let verified =
-        verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW).expect("verifies");
+    let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &no_material(), NOW)
+        .expect("verifies");
     assert_eq!(
         verified.resolved_actor().identity.keyid,
         CLIENT_KEY_ID,
@@ -364,7 +356,8 @@ fn response_bound_to_the_wrong_request_is_rejected() {
         "n-respB",
         br#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list"}}"#,
     );
-    let verified_b = verify_request_full(&req_b, &audience(), &no_material(), &resolver(), NOW)
+    let verified_b = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req_b, &audience(), &no_material(), NOW)
         .expect("verifies B");
     // Sign a response bound to request B.
     let mut resp = HttpResponse {
@@ -385,7 +378,9 @@ fn response_bound_to_the_wrong_request_is_rejected() {
     .expect("sign response for B");
     // The client that sent request A must NOT accept a response bound to B.
     assert!(
-        verify_response_bound_full(&resp, &req_a, &ev_a, &resolver(), NOW).is_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_bound_response(&resp, &req_a, &ev_a, NOW)
+            .is_err(),
         "a response bound to the WRONG request must be rejected"
     );
 }
@@ -400,7 +395,9 @@ fn caller_supplied_proxy_meta_is_not_the_signed_authority() {
     // Inject a forged top-level _meta AFTER signing → digest mismatch, rejected.
     req.body = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"},"_meta":{"forged":true}}"#.to_vec();
     assert!(
-        verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW).is_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request(&req, &audience(), &no_material(), NOW)
+            .is_err(),
         "a caller-injected _meta not covered by the signature must be rejected"
     );
 }

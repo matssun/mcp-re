@@ -15,8 +15,6 @@ use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::sign_delegated_response_full;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_response_full;
-use mcp_re_http_profile::verify_delegated_response_full;
-use mcp_re_http_profile::verify_request_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -37,6 +35,8 @@ use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::DELEGATION_ALG;
 use mcp_re_http_profile::DELEGATION_TYP;
 use mcp_re_http_profile::JWK_CRV_ED25519;
@@ -152,7 +152,8 @@ fn signed_request() -> (HttpRequest, RequestEvidence, VerifiedMcpRequest) {
         "nonce-1",
     )
     .expect("sign request");
-    let verified = verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW)
+    let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &no_material(), NOW)
         .expect("verify request");
     (req, ev, verified)
 }
@@ -193,7 +194,6 @@ fn valid_credential() -> String {
 
 fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
     DelegationExpectations {
-        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &[VERIFIER_AUD],
         expected_audience_hash: AUD_SCOPE,
         accepted_epochs: epochs,
@@ -228,21 +228,25 @@ fn valid_delegated_response_verifies_under_cnf_key() {
     )
     .expect("sign delegated response");
 
-    let rv = verify_delegated_response_full(
-        &rsp,
-        &req,
-        &verified_req,
-        &resolver(),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .expect("delegated response verifies");
+    let rv = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_bound_response(
+            &rsp,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .expect("delegated response verifies");
     // The verified server actor is the delegated identity, authorized via the
     // credential chain (its verification key is the delegated key).
-    assert_eq!(rv.server_signer.as_ref().unwrap().keyid, DELEGATED_KID);
+    assert_eq!(rv.response.server_signer.keyid, DELEGATED_KID);
     assert_eq!(
-        rv.resolved_server_actor.verification_key.to_bytes(),
+        rv.response
+            .floor
+            .resolved_server_actor
+            .verification_key
+            .to_bytes(),
         delegated_key().public_key().to_bytes()
     );
 }
@@ -278,16 +282,16 @@ fn direct_root_signed_response_is_rejected_credential_missing() {
     )
     .expect("sign direct-root response");
 
-    let err = verify_delegated_response_full(
-        &rsp,
-        &req,
-        &verified_req,
-        &resolver(),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_bound_response(
+            &rsp,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::DelegationCredentialMissing);
 }
 
@@ -315,16 +319,16 @@ fn response_keyid_not_delegated_kid_is_key_mismatch() {
         EXPIRES,
     )
     .expect("sign");
-    let err = verify_delegated_response_full(
-        &rsp,
-        &req,
-        &verified_req,
-        &resolver(),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_bound_response(
+            &rsp,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::DelegationKeyMismatch);
 }
 
@@ -351,16 +355,16 @@ fn response_signed_by_key_other_than_cnf_is_key_mismatch() {
         EXPIRES,
     )
     .expect("sign");
-    let err = verify_delegated_response_full(
-        &rsp,
-        &req,
-        &verified_req,
-        &resolver(),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_bound_response(
+            &rsp,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::DelegationKeyMismatch);
 }
 
@@ -389,16 +393,16 @@ fn body_tamper_is_caught_by_content_digest() {
     // Flip a byte in the covered body.
     let last = rsp.body.len() - 2;
     rsp.body[last] ^= 0x01;
-    let err = verify_delegated_response_full(
-        &rsp,
-        &req,
-        &verified_req,
-        &resolver(),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_bound_response(
+            &rsp,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::ContentDigestMismatch);
 }
 
@@ -425,16 +429,16 @@ fn stale_epoch_rejected_end_to_end() {
     )
     .expect("sign");
     // Verifier's accepted set has advanced past the credential's epoch.
-    let err = verify_delegated_response_full(
-        &rsp,
-        &req,
-        &verified_req,
-        &resolver(),
-        &expectations(&["epoch-2"]),
-        &|_| false,
-        NOW,
-    )
-    .unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_bound_response(
+            &rsp,
+            &req,
+            verified_req.evidence(),
+            &expectations(&["epoch-2"]),
+            &|_| false,
+            NOW,
+        )
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::DelegationTrustEpochStale);
 }
 
@@ -482,23 +486,23 @@ fn custody_signed_response_verifies_via_attestation_chain() {
         .sign_response(NOW, &mut rsp, &req, &ev)
         .expect("custody signs");
 
-    let rv = verify_delegated_response_full(
-        &rsp,
-        &req,
-        &verified_req,
-        &resolver(),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .expect("custody-signed response verifies");
+    let rv = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_bound_response(
+            &rsp,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .expect("custody-signed response verifies");
     // A custody-issued key is profile-issued, so its kid is the RFC 7638 JWK
     // thumbprint of the key itself (#415 rev 2 §1.5). The key factory above hands
     // out seed [101; 32] first, so the kid is that key's thumbprint — derived from
     // the key material, not from an issuance counter.
     let first_issued = SigningKey::from_seed_bytes(&[101u8; 32]);
     assert_eq!(
-        rv.server_signer.as_ref().unwrap().keyid,
+        rv.response.server_signer.keyid,
         mcp_re_http_profile::jwk_thumbprint_ed25519(&first_issued.public_key().to_b64url()),
     );
     assert_eq!(
@@ -530,15 +534,15 @@ fn revoked_delegated_key_rejected_end_to_end() {
         EXPIRES,
     )
     .expect("sign");
-    let err = verify_delegated_response_full(
-        &rsp,
-        &req,
-        &verified_req,
-        &resolver(),
-        &expectations(&[EPOCH]),
-        &|kid| kid == DELEGATED_KID,
-        NOW,
-    )
-    .unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_bound_response(
+            &rsp,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|kid| kid == DELEGATED_KID,
+            NOW,
+        )
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::DelegationRevoked);
 }

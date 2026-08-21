@@ -836,7 +836,7 @@ impl std::error::Error for AttestError {}
 pub fn attest_chain<R: Into<mcp_re_http_profile::ResolverOutcome>>(
     retention: &EvidenceRetention,
     hops: &[EvidenceDigest],
-    resolve_actor: &dyn Fn(&str, mcp_re_http_profile::SignerSlot) -> R,
+    verifier: &mcp_re_http_profile::Verifier<'_, R>,
     expect: &mcp_re_http_profile::DelegationExpectations<'_>,
     audit: &mcp_re_http_profile::ChainAudit<'_>,
     is_revoked: &dyn Fn(&str) -> bool,
@@ -847,14 +847,8 @@ pub fn attest_chain<R: Into<mcp_re_http_profile::ResolverOutcome>>(
     sign: impl FnOnce(&[u8]) -> Result<Vec<u8>, mcp_re_http_profile::HttpProfileError>,
 ) -> Result<Attestation, AttestError> {
     let retained = retention.load_chain(hops).map_err(AttestError::Retention)?;
-    let reconstruction = mcp_re_http_profile::reconstruct_chain(
-        &retained,
-        resolve_actor,
-        expect,
-        audit,
-        is_revoked,
-        now,
-    );
+    let reconstruction =
+        mcp_re_http_profile::reconstruct_chain(&retained, verifier, expect, audit, is_revoked, now);
     let commitment = mcp_re_http_profile::scitt::EvidenceCommitment::from_reconstruction(
         &reconstruction,
         bindings_commitment.clone(),

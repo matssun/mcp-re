@@ -51,12 +51,13 @@ use mcp_re_http_profile::build_delegated_rejection;
 use mcp_re_http_profile::build_delegated_rejection_preflight;
 use mcp_re_http_profile::sign_delegated_accepted_202;
 use mcp_re_http_profile::sign_delegated_response_full;
-use mcp_re_http_profile::verify_request_full;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RejectionReason;
 use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 
 use mcp_re_http_profile::result_class::input_required_state;
 use mcp_re_http_profile::RetainedContinuation;
@@ -233,20 +234,24 @@ async fn handle(
     let no_material = |_b: &ArtifactBinding| None;
 
     // Step 2 — verify (RFC 9421 + 9530 + evidence block).
-    let verified =
-        match verify_request_full(&http_req, &expected_audience, &no_material, &resolver, now) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("reject: verify_request_full -> {}", e.wire_code());
-                // The request never verified: nothing to bind the receipt to.
-                return Ok(to_hyper(rejection(
-                    Some(&http_req),
-                    None,
-                    e.wire_code(),
-                    403,
-                )));
-            }
-        };
+    let verified = match Verifier::new(&VerifierPolicy::default(), &resolver).verify_request(
+        &http_req,
+        &expected_audience,
+        &no_material,
+        now,
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("reject: verify_request_full -> {}", e.wire_code());
+            // The request never verified: nothing to bind the receipt to.
+            return Ok(to_hyper(rejection(
+                Some(&http_req),
+                None,
+                e.wire_code(),
+                403,
+            )));
+        }
+    };
 
     // Step 3a — MRTR continuation prep (ADR-MCPS-047). A verified request carrying a
     // continuation is an ANSWER leg: recover the open leg's retained signature bases from

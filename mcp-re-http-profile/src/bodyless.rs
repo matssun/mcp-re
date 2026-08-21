@@ -259,8 +259,7 @@ pub fn sign_accepted_202(
 pub fn verify_accepted_202<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
-    policy: &VerifierPolicy,
+    verifier: &crate::verifier::Verifier<'_, R>,
     now: i64,
 ) -> Result<ResolvedActor, HttpProfileError> {
     reject_content_encoding(&response.headers)?;
@@ -304,9 +303,9 @@ pub fn verify_accepted_202<R: Into<ResolverOutcome>>(
         ));
     }
     let (_c, _e, _n, key_id, algorithm) =
-        crate::verify::check_params_for(&parsed.params, policy, now, false)?;
-    let actor =
-        crate::verify::resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Response)?;
+        crate::verify::check_params_for(&parsed.params, verifier.policy(), now, false)?;
+    let seam = verifier.resolve_actor();
+    let actor = crate::verify::resolve_actor_for_slot(seam, &key_id, SignerSlot::Response)?;
 
     let base = signature_base(
         &parsed.components,
@@ -414,7 +413,7 @@ pub fn sign_delegated_accepted_202(
 pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
+    verifier: &crate::verifier::Verifier<'_, R>,
     expect: &crate::verify::DelegationExpectations<'_>,
     is_revoked: &dyn Fn(&str) -> bool,
     now: i64,
@@ -467,7 +466,7 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
         ));
     }
     let (_c, _e, _n, key_id, algorithm) =
-        crate::verify::check_params_for(&parsed.params, &expect.policy, now, false)?;
+        crate::verify::check_params_for(&parsed.params, verifier.policy(), now, false)?;
 
     // There is no body block here to declare a server signer, so the credential's own
     // `mcp_re_server_signer` is the only value available — and feeding it back in as
@@ -496,7 +495,7 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
         &params,
         |issuer_kid| {
             match crate::verify::resolve_actor_for_slot(
-                resolve_actor,
+                verifier.resolve_actor(),
                 issuer_kid,
                 SignerSlot::Response,
             ) {

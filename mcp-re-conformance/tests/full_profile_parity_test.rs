@@ -41,8 +41,6 @@ use mcp_re_core::SigningKey;
 use mcp_re_http_profile::dispatch_request;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_response_full;
-use mcp_re_http_profile::verify_request_full;
-use mcp_re_http_profile::verify_response_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -58,6 +56,8 @@ use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::RetainedContinuation;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
@@ -219,7 +219,8 @@ fn full_exchange_activates_all_blocks() {
     let (req, ev) = signed_request(&block, "nonce-1");
 
     // Request body block is active: audience + block surfaced by verification.
-    let verified = verify_request_full(&req, &audience(), &rar_material(), &resolver(), NOW)
+    let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &rar_material(), NOW)
         .expect("full request verifies");
     // "the body block must be active" is carried by `VerifiedMcpRequest` itself; the
     // parity claim that remains is that the block agrees with the verified profile tag.
@@ -249,13 +250,14 @@ fn full_exchange_activates_all_blocks() {
         EXPIRES,
     )
     .expect("full response sign");
-    let rv = verify_response_full(&rsp, &req, &verified, &resolver(), NOW)
+    let rv = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response(&rsp, &req, verified.evidence(), NOW)
         .expect("full response verifies");
     assert_eq!(
         rv.bound_request_evidence, rv.body_request_evidence,
         "response binds request evidence"
     );
-    assert_eq!(rv.server_signer.as_ref().unwrap().keyid, "server-key-1");
+    assert_eq!(rv.server_signer.keyid, "server-key-1");
 }
 
 // ---------- #1 request body tamper -----------------------------------------
@@ -267,8 +269,9 @@ fn body_tamper_fails_in_integrated_path() {
     // Flip a byte of the covered content after signing.
     let last = req.body.len() - 1;
     req.body[last] ^= 0x01;
-    let err =
-        verify_request_full(&req, &audience(), &rar_material(), &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &rar_material(), NOW)
+        .unwrap_err();
     assert_eq!(err.wire_code(), "mcp-re.digest_mismatch");
 }
 
@@ -278,7 +281,8 @@ fn body_tamper_fails_in_integrated_path() {
 fn response_splice_fails_in_integrated_path() {
     let block = full_block();
     let (req_a, _ev_a) = signed_request(&block, "nonce-a");
-    let verified_a = verify_request_full(&req_a, &audience(), &rar_material(), &resolver(), NOW)
+    let verified_a = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req_a, &audience(), &rar_material(), NOW)
         .expect("req_a verifies");
 
     // An independent exchange B with a DISTINCT body, so its ;req binding base
@@ -315,7 +319,9 @@ fn response_splice_fails_in_integrated_path() {
     .expect("sign resp b");
 
     // Splice rsp_b onto req_a: the ;req cryptographic floor rejects.
-    let err = verify_response_full(&rsp_b, &req_a, &verified_a, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response(&rsp_b, &req_a, verified_a.evidence(), NOW)
+        .unwrap_err();
     assert_eq!(err.wire_code(), "mcp-re.response_sig_invalid");
 }
 
@@ -325,7 +331,8 @@ fn response_splice_fails_in_integrated_path() {
 fn response_evidence_mismatch_emits_request_binding_mismatch() {
     let block = full_block();
     let (req_a, _ev_a) = signed_request(&block, "nonce-a");
-    let verified_a = verify_request_full(&req_a, &audience(), &rar_material(), &resolver(), NOW)
+    let verified_a = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req_a, &audience(), &rar_material(), NOW)
         .expect("req_a verifies");
 
     // A different request's evidence handle, advertised by a response whose ;req
@@ -349,7 +356,9 @@ fn response_evidence_mismatch_emits_request_binding_mismatch() {
         EXPIRES,
     )
     .expect("sign");
-    let err = verify_response_full(&rsp, &req_a, &verified_a, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response(&rsp, &req_a, verified_a.evidence(), NOW)
+        .unwrap_err();
     assert_eq!(err.wire_code(), "mcp-re.request_binding_mismatch");
 }
 
@@ -365,7 +374,9 @@ fn artifact_mismatch_fails_in_integrated_path() {
         ArtifactType::OauthRar => Some(b"a-different-rar-detail".to_vec()),
         _ => None,
     };
-    let err = verify_request_full(&req, &audience(), &wrong_rar, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &wrong_rar, NOW)
+        .unwrap_err();
     assert_eq!(err.wire_code(), "mcp-re.artifact_binding_failed");
 }
 
@@ -375,7 +386,8 @@ fn artifact_mismatch_fails_in_integrated_path() {
 fn replay_fails_in_integrated_path() {
     let block = full_block();
     let (req, _ev) = signed_request(&block, "nonce-1");
-    let verified = verify_request_full(&req, &audience(), &rar_material(), &resolver(), NOW)
+    let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &rar_material(), NOW)
         .expect("verifies");
     let cache = strict_cache();
 
@@ -391,7 +403,8 @@ fn replay_fails_in_integrated_path() {
 fn continuation_mismatch_fails_in_integrated_path() {
     let block = full_block();
     let (req, _ev) = signed_request(&block, "nonce-1");
-    let verified = verify_request_full(&req, &audience(), &rar_material(), &resolver(), NOW)
+    let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &rar_material(), NOW)
         .expect("verifies");
     let cache = strict_cache();
 

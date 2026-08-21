@@ -14,14 +14,14 @@
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::sign_response;
-use mcp_re_http_profile::verify_request;
-use mcp_re_http_profile::verify_response;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 
 const CREATED: i64 = 1_700_000_000;
 const EXPIRES: i64 = 1_700_000_300;
@@ -101,7 +101,9 @@ fn signed_sse_response() -> (HttpRequest, HttpResponse) {
 #[test]
 fn sse_response_on_a_covered_exchange_is_rejected() {
     let (req, rsp) = signed_sse_response();
-    let err = verify_response(&rsp, &req, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response_floor(&rsp, &req, NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::NonJsonMediaType);
     assert_eq!(err.wire_code(), "mcp-re.serialization_failed");
 }
@@ -121,7 +123,9 @@ fn the_rejected_sse_response_was_genuinely_signed() {
             h.1 = "application/json".into();
         }
     }
-    let err = verify_response(&rsp, &req, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response_floor(&rsp, &req, NOW)
+        .unwrap_err();
     assert_ne!(
         err,
         HttpProfileError::NonJsonMediaType,
@@ -132,7 +136,9 @@ fn the_rejected_sse_response_was_genuinely_signed() {
 #[test]
 fn sse_request_on_a_covered_exchange_is_rejected() {
     let req = request_with("text/event-stream");
-    let err = verify_request(&req, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::NonJsonMediaType);
 }
 
@@ -144,7 +150,9 @@ fn other_non_json_media_types_are_rejected_too() {
     for ct in ["text/html", "application/octet-stream", "text/plain"] {
         let req = request_with(ct);
         assert_eq!(
-            verify_request(&req, &resolver(), NOW).unwrap_err(),
+            Verifier::new(&VerifierPolicy::default(), &resolver())
+                .verify_request_floor(&req, NOW)
+                .unwrap_err(),
             HttpProfileError::NonJsonMediaType,
             "{ct} is not JSON mode"
         );
@@ -156,7 +164,9 @@ fn other_non_json_media_types_are_rejected_too() {
 #[test]
 fn json_with_parameters_is_still_json_mode() {
     let req = request_with("application/json; charset=utf-8");
-    verify_request(&req, &resolver(), NOW).expect("a charset parameter is still JSON mode");
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .expect("a charset parameter is still JSON mode");
 }
 
 /// Media types are case-insensitive (RFC 9110 §8.3.1); a verifier that only
@@ -164,7 +174,9 @@ fn json_with_parameters_is_still_json_mode() {
 #[test]
 fn media_type_comparison_is_case_insensitive() {
     let req = request_with("Application/JSON");
-    verify_request(&req, &resolver(), NOW).expect("media types are case-insensitive");
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .expect("media types are case-insensitive");
 }
 
 /// A `+json` structured suffix is NOT `application/json`. The profile carries
@@ -174,7 +186,9 @@ fn media_type_comparison_is_case_insensitive() {
 fn json_structured_suffix_types_are_not_json_mode() {
     let req = request_with("application/problem+json");
     assert_eq!(
-        verify_request(&req, &resolver(), NOW).unwrap_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request_floor(&req, NOW)
+            .unwrap_err(),
         HttpProfileError::NonJsonMediaType,
     );
 }

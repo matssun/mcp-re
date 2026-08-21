@@ -10,8 +10,6 @@
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_response_full;
-use mcp_re_http_profile::verify_request_full;
-use mcp_re_http_profile::verify_response_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -22,6 +20,8 @@ use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
@@ -136,7 +136,8 @@ fn no_material() -> impl Fn(&ArtifactBinding) -> Option<Vec<u8>> {
 fn full_request_roundtrip_exposes_audience_and_block() {
     let block = request_block(vec![dpop_over(ACCESS_TOKEN.as_bytes())]);
     let (req, _ev) = signed_full_request(&block);
-    let v = verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW)
+    let v = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &no_material(), NOW)
         .expect("full request verifies");
     assert_eq!(v.audience().audience_id, "verifier-1");
     assert_eq!(v.audience_hash(), audience().audience_hash());
@@ -150,7 +151,8 @@ fn full_request_roundtrip_exposes_audience_and_block() {
 fn full_response_roundtrip_binds_request_evidence() {
     let block = request_block(vec![dpop_over(ACCESS_TOKEN.as_bytes())]);
     let (req, ev) = signed_full_request(&block);
-    let verified = verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW)
+    let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &no_material(), NOW)
         .expect("request verifies");
 
     let mut rsp = HttpResponse {
@@ -170,10 +172,11 @@ fn full_response_roundtrip_binds_request_evidence() {
     )
     .expect("full response sign");
 
-    let rv = verify_response_full(&rsp, &req, &verified, &resolver(), NOW)
+    let rv = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response(&rsp, &req, verified.evidence(), NOW)
         .expect("full response verifies");
     assert_eq!(rv.bound_request_evidence, rv.body_request_evidence);
-    assert_eq!(rv.server_signer.as_ref().unwrap().keyid, "server-key-1");
+    assert_eq!(rv.server_signer.keyid, "server-key-1");
 }
 
 // ---------- request-side negatives -----------------------------------------
@@ -192,7 +195,9 @@ fn missing_request_block_fails_in_full_profile() {
         "n",
     )
     .expect("minimal sign");
-    let err = verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &no_material(), NOW)
+        .unwrap_err();
     assert_eq!(
         err,
         HttpProfileError::MissingEvidence("request evidence block")
@@ -205,7 +210,9 @@ fn wrong_profile_in_block_fails() {
     let mut block = request_block(vec![dpop_over(ACCESS_TOKEN.as_bytes())]);
     block.profile = "someone-elses-profile".into();
     let (req, _ev) = signed_full_request(&block);
-    let err = verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &no_material(), NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::UnknownProfileTag);
 }
 
@@ -215,7 +222,9 @@ fn audience_mismatch_fails() {
     let (req, _ev) = signed_full_request(&block);
     let mut wrong = audience();
     wrong.audience_id = "some-other-verifier".into();
-    let err = verify_request_full(&req, &wrong, &no_material(), &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &wrong, &no_material(), NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::AudienceMismatch);
     assert_eq!(err.wire_code(), "mcp-re.invalid_audience");
 }
@@ -226,7 +235,9 @@ fn artifact_binding_mismatch_fails() {
     // header actually presented.
     let block = request_block(vec![dpop_over(b"a-different-token")]);
     let (req, _ev) = signed_full_request(&block);
-    let err = verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &no_material(), NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::ArtifactBindingFailed);
     assert_eq!(err.wire_code(), "mcp-re.artifact_binding_failed");
 }
@@ -238,7 +249,9 @@ fn unverifiable_binding_without_material_fails_closed() {
     let mtls = ArtifactBinding::opaque_digest(ArtifactType::OauthMtls, b"\x30\x82der");
     let block = request_block(vec![mtls]);
     let (req, _ev) = signed_full_request(&block);
-    let err = verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &no_material(), NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::ArtifactBindingFailed);
 }
 
@@ -252,7 +265,8 @@ fn caller_supplied_material_verifies_non_header_binding() {
         ArtifactType::OauthMtls => Some(cert.to_vec()),
         _ => None,
     };
-    verify_request_full(&req, &audience(), &material, &resolver(), NOW)
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &material, NOW)
         .expect("caller-supplied mTLS material verifies");
 }
 
@@ -266,7 +280,8 @@ fn response_request_evidence_mismatch_emits_request_binding_mismatch() {
     // produces the precise request_binding_mismatch code.
     let block = request_block(vec![dpop_over(ACCESS_TOKEN.as_bytes())]);
     let (req_a, _ev_a) = signed_full_request(&block);
-    let verified_a = verify_request_full(&req_a, &audience(), &no_material(), &resolver(), NOW)
+    let verified_a = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req_a, &audience(), &no_material(), NOW)
         .expect("req_a verifies");
 
     // A genuinely different request (distinct nonce) → a different evidence
@@ -302,7 +317,9 @@ fn response_request_evidence_mismatch_emits_request_binding_mismatch() {
     )
     .expect("sign");
 
-    let err = verify_response_full(&rsp, &req_a, &verified_a, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response(&rsp, &req_a, verified_a.evidence(), NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
     assert_eq!(err.wire_code(), "mcp-re.request_binding_mismatch");
 }
@@ -313,7 +330,8 @@ fn cryptographic_req_splice_still_fails_at_the_floor() {
     // ;req signature floor rejects BEFORE any body comparison is reached.
     let block = request_block(vec![dpop_over(ACCESS_TOKEN.as_bytes())]);
     let (req_a, _ev_a) = signed_full_request(&block);
-    let verified_a = verify_request_full(&req_a, &audience(), &no_material(), &resolver(), NOW)
+    let verified_a = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req_a, &audience(), &no_material(), NOW)
         .expect("req_a verifies");
 
     let mut req_b = base_request();
@@ -348,6 +366,8 @@ fn cryptographic_req_splice_still_fails_at_the_floor() {
     .expect("sign resp b");
 
     // Present rsp_b as the answer to req_a: ;req base uses req_a, signature fails.
-    let err = verify_response_full(&rsp_b, &req_a, &verified_a, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response(&rsp_b, &req_a, verified_a.evidence(), NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::ResponseSignatureInvalid);
 }

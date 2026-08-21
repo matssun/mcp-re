@@ -27,7 +27,6 @@ use mcp_re_core::SigningKey;
 
 use crate::block::ActorIdentity;
 use crate::block::ResolverOutcome;
-use crate::block::SignerSlot;
 use crate::digest::content_digest_sha256;
 use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
@@ -37,8 +36,6 @@ use crate::sign::sign_delegated_response_full;
 use crate::sign::sign_delegated_response_unbound;
 use crate::sign::sign_response;
 use crate::sign::sign_response_unbound;
-use crate::verify::verify_response;
-use crate::verify::verify_response_unbound;
 
 /// The JSON-RPC error code MCP-RE rejections carry. The wire code in `data`,
 /// not this integer, is the stable signal.
@@ -341,16 +338,18 @@ pub fn build_delegated_rejection_preflight(
 pub fn verify_signed_rejection<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: Option<&HttpRequest>,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
+    verifier: &crate::verifier::Verifier<'_, R>,
     now: i64,
 ) -> Result<SignedRejection, HttpProfileError> {
-    // A rejection is a server-signed response: resolve for the RESPONSE slot.
+    // A rejection is a server-signed response: resolve for the RESPONSE slot. Which floor
+    // applies is decided by whether a trustworthy request context EXISTS, and the two
+    // produce different types.
     match request {
         Some(req) => {
-            verify_response(response, req, resolve_actor, now)?;
+            verifier.verify_bound_response_floor(response, req, now)?;
         }
         None => {
-            verify_response_unbound(response, resolve_actor, now)?;
+            verifier.verify_unbound_response_floor(response, now)?;
         }
     }
     // Only AFTER the signature verifies do we read the body for the wire code.
@@ -377,6 +376,9 @@ fn extract_wire_code(body: &[u8]) -> Result<String, HttpProfileError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::block::SignerSlot;
+    use crate::policy::VerifierPolicy;
+    use crate::verifier::Verifier;
 
     /// The indeterminate token must carry its retry contract explicitly.
     ///
@@ -484,8 +486,13 @@ mod tests {
             EXPIRES,
         )
         .expect("build");
-        let verdict =
-            verify_signed_rejection(&rejection, Some(&req), &resolver(), NOW).expect("verify");
+        let verdict = verify_signed_rejection(
+            &rejection,
+            Some(&req),
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
+            NOW,
+        )
+        .expect("verify");
         assert_eq!(verdict.wire_code, "mcp-re.invalid_audience");
         assert_eq!(verdict.status, 403);
         // The body must carry Content-Digest + Signature (label mcp-re-response).
@@ -513,7 +520,13 @@ mod tests {
             EXPIRES,
         )
         .expect("build");
-        let verdict = verify_signed_rejection(&rejection, None, &resolver(), NOW).expect("verify");
+        let verdict = verify_signed_rejection(
+            &rejection,
+            None,
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
+            NOW,
+        )
+        .expect("verify");
         assert_eq!(verdict.wire_code, "mcp-re.invalid_audience");
         assert_eq!(verdict.status, 400);
     }
@@ -534,7 +547,13 @@ mod tests {
         )
         .expect("build");
         // Bound to req_a; presenting it as the answer to req_b must fail.
-        let err = verify_signed_rejection(&rejection, Some(&req_b), &resolver(), NOW).unwrap_err();
+        let err = verify_signed_rejection(
+            &rejection,
+            Some(&req_b),
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
+            NOW,
+        )
+        .unwrap_err();
         assert_eq!(err, HttpProfileError::ResponseSignatureInvalid);
     }
 
@@ -555,7 +574,13 @@ mod tests {
         )
         .expect("build");
         rejection.body = br#"{"jsonrpc":"2.0","id":7,"error":{"code":-31000,"message":"LIES","data":{"mcp_re_error":{"wire_code":"mcp-re.expired_request"}}}}"#.to_vec();
-        let err = verify_signed_rejection(&rejection, Some(&req), &resolver(), NOW).unwrap_err();
+        let err = verify_signed_rejection(
+            &rejection,
+            Some(&req),
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
+            NOW,
+        )
+        .unwrap_err();
         assert_eq!(err, HttpProfileError::ContentDigestMismatch);
     }
 
@@ -568,7 +593,13 @@ mod tests {
             headers: vec![("Content-Type".into(), "application/json".into())],
             body: rejection_body(json!(7), &reason()),
         };
-        assert!(verify_signed_rejection(&unsigned, Some(&request()), &resolver(), NOW).is_err());
+        assert!(verify_signed_rejection(
+            &unsigned,
+            Some(&request()),
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
+            NOW
+        )
+        .is_err());
     }
 
     #[test]
@@ -586,7 +617,13 @@ mod tests {
             EXPIRES,
         )
         .expect("build");
-        let err = verify_signed_rejection(&rejection, Some(&req), &resolver(), NOW).unwrap_err();
+        let err = verify_signed_rejection(
+            &rejection,
+            Some(&req),
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
+            NOW,
+        )
+        .unwrap_err();
         assert_eq!(err, HttpProfileError::UnresolvedKeyId);
     }
 }
