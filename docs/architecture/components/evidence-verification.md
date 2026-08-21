@@ -130,32 +130,73 @@ Registry: [`verification/policy/theorems.toml`](../../../verification/policy/the
 | Continuation handles match their presented inputs in role | full profile | THM-0010 · `unit://http_profile.continuation_binding` | in registry |
 | **Request floor** — a successful `verify_request_floor` establishes digest, signature, freshness and Request-slot trust resolution | floor | THM-0014 · `unit://http_profile.verifier_results` | in registry |
 | **Full request** — the floor, plus block validation, audience/target equality and declared artifact enforcement | full profile | THM-0015 | in registry |
-| **Bound response floor** — the response floor, plus `;req` resolved against the supplied request | floor | THM-0016 | in registry |
-| **Unbound response floor** — response-only coverage, with `;req` refused as malformed | floor | THM-0017 | in registry |
-| **Full bound response** — the bound floor, plus signer correspondence and equality with the expected handle | full profile | THM-0018 | in registry |
-| **Delegated bound response** — the full bound response, plus an accepted credential chain | full profile | THM-0019 | in registry |
-| **Delegated unbound response** — the unbound floor, plus an accepted credential chain, and never a binding | full profile | THM-0020 | in registry |
+| **Bound response facts** — digest, current parameters, and a signature over a base whose `;req` resolved against the supplied request, under the accepted signer's key | floor (shared) | THM-0021 | in registry |
+| **Unbound response facts** — the same, over response components only, with `;req` refused as malformed | floor (shared) | THM-0022 | in registry |
+| **Bound response floor** — the bound facts, plus **trust-seam** authorization of the signer in the Response slot | floor | THM-0016 | in registry |
+| **Unbound response floor** — the unbound facts, plus trust-seam authorization | floor | THM-0017 | in registry |
+| **Full bound response** — the seam-authorized bound floor, plus signer correspondence and equality with the expected handle | full profile | THM-0018 | in registry |
+| **Delegated bound response** — the bound facts, plus **credential-chain** authorization and the block agreement | full profile | THM-0019 | in registry |
+| **Delegated unbound response** — the unbound facts, plus credential-chain authorization, and never a binding | full profile | THM-0020 | in registry |
 
-Seven claims over one review unit, one per public operation, arranged as the type graph:
+Nine claims over one review unit: seven public operations, plus the two propositions two
+operations each genuinely share.
 
 ```text
-request floor ────────────────> full request
-bound response floor ─────────> full bound response ──> delegated bound response
-unbound response floor ───────────────────────────────> delegated unbound response
+request floor (0014) ─────────> full request (0015)
+
+                  ┌──> seam-authorized bound floor (0016) ──> full bound response (0018)
+bound facts (0021)┤
+                  └──> delegation-authorized bound response (0019)
+
+                    ┌──> seam-authorized unbound floor (0017)
+unbound facts (0022)┤
+                    └──> delegation-authorized unbound response (0020)
 ```
 
-Two properties hold of all seven. They are claims about a **successful return**, not about
-possession of a Rust value — the products keep `pub` fields so a Verus postcondition can be
-stated over them, so nothing prevents a caller assembling one by hand, and every `scope`
-says so. And they rest on a **test battery**, not on an `ensures`: the prover reaches
-`check_params`, not the operations that call it, so the unit is class V0 and no statement
-above it may imply otherwise.
+### Why the delegated claims do not inherit the direct ones
+
+The first version of this family had THM-0019 depend on THM-0018 and THM-0020 on THM-0017,
+because `VerifiedDelegatedMcpResponse` contained a `VerifiedMcpResponse`. **That inheritance
+was false**, and the containment was the reason it looked true.
+
+THM-0016 says *the presented keyid was resolved through the trust seam for the Response
+slot*. On the delegated path it was not. The seam is queried for the credential's **root
+issuer kid**; the signing key is a delegated key that appears in no trust map, and what
+authorizes it is the credential chain (ADR-MCPRE-052 §3). Nesting the seam-authorized
+product inside the delegated one made the delegated product carry a value whose documented
+meaning is false of it — a defect in the types, not only in the dependency edge.
+
+So the response products were rebuilt around what the two paths actually share:
+
+| type | what it carries |
+|---|---|
+| `AcceptedResponseSigner` | the identity and key the signature was accepted under — **WHO, never WHY** |
+| `BoundResponseSignatureFacts` | that signer, plus the response signature-base handle, for a `;req`-bound signature |
+| `UnboundResponseSignatureFacts` | the same, for a response-only signature |
+| `BoundRequestEvidenceAgreement` | the caller's expected handle and the block's, compared equal |
+
+`CryptographicFloorVerifiedBoundResponse` keeps its `ResolvedActor` and projects the shared
+facts; the delegated products carry the shared facts and their issuer kid, and there is no
+field, projection or conversion from a delegated product back to a seam-authorized one — a
+`compile_fail` control in `http_profile.verifier_result_separation` pins that.
+
+### What holds of all nine
+
+They are claims about a **successful return**, not about possession of a Rust value — the
+products keep `pub` fields so a Verus postcondition can be stated over them, so nothing
+prevents a caller assembling one by hand, and every `scope` says so.
+
+They rest on a **test battery**, not on an `ensures`: the prover reaches `check_params`, not
+the operations that call it, so the unit is class V0 and no statement above it may imply
+otherwise. Because they are V0, every conjunct carries a negative control that has been
+mutation-probed — see §9.1.
 
 Three TCB premises were unregistered before this and are now named, because every one of
-the seven is false without them: ASM-0027 (Ed25519 unforgeability), ASM-0028 (SHA-256
+the nine is false without them: ASM-0027 (Ed25519 unforgeability), ASM-0028 (SHA-256
 second-preimage resistance, which is what makes a digest comparison a claim about bytes),
-and ASM-0029 (the caller-supplied trust seam answers correctly for a slot — the assumption
-`ResolvedActor` being deliberately unsealed makes unavoidable).
+and ASM-0029 (the trust seam answers its **selector** correctly — for a queried
+`(keyid, slot)` the returned identity and key are the deployment-authorized binding; the
+assumption `ResolvedActor` being deliberately unsealed makes unavoidable).
 
 The split also removed a hole in an existing theorem. THM-0009's Verus postcondition read `verified.request_block matches Some(block) ==> (block.continuation is Some ==> continuation_verified)`, which is **vacuously true whenever the block is absent** — that is, for exactly a floor-verified request. `prepare_http_dispatch` now takes `VerifiedMcpRequest`, so the antecedent is gone and the obligation is unconditional. `verify-verus` reports PASS over 6 units with the same 15 verified obligations in this crate as before the change.
 
@@ -174,8 +215,70 @@ The split also removed a hole in an existing theorem. THM-0009's Verus postcondi
 | Proof-path coverage | `tests/proof_path_test.rs` | default | — |
 | Serving path consumes the full product, not the floor | `mcp-re-proxy/tests/integration_async/rfc9421_round_trip_test.rs` | `--features async_serve`; `//mcp-re-proxy:integration_async_test` | — |
 | **Floor product is not accepted where the full product is required** | `compile_fail` doctest on `VerifiedMcpRequest` | `cargo test -p mcp-re-http-profile --doc` — **cargo only**, the Bazel lane runs no doctests | **the control was probed**: rewriting the example to pass a `&VerifiedMcpRequest` makes the test FAIL, so it is not passing on a typo |
+| **A delegation-authorized response is not a trust-seam-authorized one** | `compile_fail` doctest on `VerifiedDelegatedMcpResponse` | as above | **probed**: rewritten to take a `&VerifiedDelegatedMcpResponse`, the doctest FAILS with *"compiled successfully, but it's marked `compile_fail`"* |
 
 Lane identity is part of each property (ADR-061 §12). `mcp-re-http-profile` tests run under the crate's default features; the serving-path rows require `async_serve` and are only non-vacuous in the Bazel lane or an explicit `--features` cargo run.
+
+### 9.1 The V0 mutation probe
+
+`unit://http_profile.verifier_results` is class **V0**: nothing above it may read as more
+than "a test battery passed". A passing battery is not, on its own, evidence that a
+production check is load-bearing — so every conjunct THM-0014 … THM-0022 names was probed
+by deleting or defanging exactly that check, re-running the declared battery, and observing
+which declared member goes red. **26 mutations, each turning at least one declared member
+red.** The harness is a scratch script, not a lane: what is durable is the matrix and the
+controls it forced into existence.
+
+| claim | production check removed | declared control that goes red |
+|---|---|---|
+| THM-0014 | `floor_request` — RFC 9421 signature verification | `authorization_header_is_covered_when_present` **+1 more** |
+| THM-0014 | `floor_request` — content-digest agreement | `body_tamper_fails_closed` **+1 more** |
+| THM-0014 | `floor_request` — Request-slot trust resolution | `request_signed_by_response_only_actor_fails_actor_binding` **+1 more** |
+| THM-0014/21/22 | `check_params` — the algorithm allowlist | `an_ed25519_signature_declaring_ml_dsa_is_rejected` |
+| THM-0015 | `full_request` — block validation under the profile tag | `wrong_profile_in_block_fails` |
+| THM-0015 | `enforce_full_profile_bindings` — audience-tuple equality | `audience_mismatch_fails` |
+| THM-0015 | `enforce_full_profile_bindings` — tuple/`@target-uri` consistency | `a_target_uri_disagreeing_with_the_audience_tuple_fails` |
+| THM-0021 | `floor_bound_response` — content-digest agreement | `rejection::tests::tampered_message_does_not_change_the_trusted_wire_code` |
+| THM-0021 | `floor_bound_response` — signature over the `;req` base | `rejection::tests::spliced_rejection_onto_a_different_request_fails` |
+| THM-0016 | `floor_bound_response` — Response-slot trust resolution | `response_signed_by_request_only_actor_fails_actor_binding` |
+| THM-0022 | `floor_unbound_response` — content-digest agreement | `the_unbound_floor_content_digest_check_is_load_bearing` |
+| THM-0022 | `floor_unbound_response` — `;req` refused as malformed | `a_req_component_is_refused_on_the_unbound_floor` |
+| THM-0022 | `floor_unbound_response` — signature over the response-only base | `the_unbound_floor_signature_check_is_load_bearing` |
+| THM-0018 | `full_bound_response` — block `server_signer` keyid == accepted keyid | `a_block_declaring_a_signer_it_did_not_sign_as_fails` |
+| THM-0018 | `full_bound_response` — block handle == the caller's handle | `response_request_evidence_mismatch_emits_request_binding_mismatch` |
+| THM-0019/20 | `chain_to_root` — the root issuer is resolved for the **Response** slot | `a_block_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch` **+11 more** |
+| THM-0019 | `delegated_bound_response` — wire keyid == the credential's delegated kid | `response_keyid_not_delegated_kid_is_key_mismatch` |
+| THM-0019 | `delegated_bound_response` — block keyid == the credential's delegated kid | `a_block_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch` |
+| THM-0019 | `delegated_bound_response` — signature under `cnf.jwk` | `response_signed_by_key_other_than_cnf_is_key_mismatch` |
+| THM-0019 | `delegated_bound_response` — block handle == the caller's handle | `a_delegated_response_advertising_another_requests_evidence_is_refused` |
+| THM-0022 | `delegated_unbound_response` — content-digest agreement | `an_unbound_receipt_body_tamper_is_caught_by_content_digest` |
+| THM-0022 | `delegated_unbound_response` — `;req` refused as malformed | `a_req_component_is_refused_on_the_delegated_unbound_path` |
+| THM-0020 | `delegated_unbound_response` — an inline credential is required | `an_unbound_receipt_without_a_credential_is_refused` |
+| THM-0020 | `delegated_unbound_response` — signature under `cnf.jwk` | `an_unbound_receipt_signed_by_a_key_other_than_cnf_is_key_mismatch` |
+| THM-0020 | `delegated_unbound_response` — block keyid == the credential's delegated kid | `an_unbound_receipt_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch` |
+| THM-0020 | `delegated_unbound_response` — wire keyid == the credential's delegated kid | `an_unbound_receipt_whose_wire_keyid_is_not_the_delegated_kid_is_key_mismatch` |
+
+The probe found **three conjuncts nothing reached**, and each got a control rather than a
+softened statement:
+
+1. **The audience-tuple/`@target-uri` consistency conjunct.** `audience_mismatch_fails`
+   moves `audience_id`, so it fails on the equality conjunct and survives deleting the
+   consistency one. `a_target_uri_disagreeing_with_the_audience_tuple_fails` keeps the
+   tuples equal and moves only the request's target.
+2. **The `server_signer` correspondence check, on both authorization paths.** The existing
+   response negatives move the request evidence or the `;req` base instead. On the delegated
+   path the control needs a credential whose SUBJECT BINDING and CONFIRMED KEY name different
+   kids — reachable only from a misbehaving issuer, which is precisely who the check defends
+   against.
+3. **The delegated wire-keyid comparison on the unbound path.** Without it a receipt could
+   advertise an unconfirmed keyid — the coordinate a peer caches and pins — while presenting
+   a credential for a different one.
+
+One mutation is deliberately coarse and is recorded as such: swapping `chain_to_root`'s
+root-issuer resolution to the **Request** slot breaks the whole delegated battery (12
+members), because every delegated test then fails to resolve a root. That is a coverage
+fact, not an isolation one.
+
 
 ## 10. Implementation map
 
@@ -183,10 +286,13 @@ Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_g
 
 | file | prod | current role | target role |
 |---|---:|---|---|
-| `mcp-re-http-profile/src/verified_request.rs` | 195 | the two request products | unchanged; the value owns its own module rather than living beside the procedure that builds it |
-| `mcp-re-http-profile/src/verified_response.rs` | 173 | the five response products | unchanged |
-| `mcp-re-http-profile/src/verifier.rs` | 138 | `Verifier` — one policy authority, one operation per proposition | unchanged |
-| `mcp-re-http-profile/src/verify.rs` | 1388 | the stage implementations, now `pub(crate)` behind the facade | floor and full-profile stages become private subordinate modules |
+| `mcp-re-http-profile/src/verified_request.rs` | 198 | the two request products | unchanged; the value owns its own module rather than living beside the procedure that builds it |
+| `mcp-re-http-profile/src/verified_response/mod.rs` | 71 | the response-product surface and the two-authorization-propositions argument | unchanged |
+| `mcp-re-http-profile/src/verified_response/facts.rs` | 90 | the authorization-INDEPENDENT facts shared by both paths | unchanged |
+| `mcp-re-http-profile/src/verified_response/bound.rs` | 177 | the three request-bound products | unchanged |
+| `mcp-re-http-profile/src/verified_response/unbound.rs` | 71 | the two unbound products | unchanged |
+| `mcp-re-http-profile/src/verifier.rs` | 185 | `Verifier` — one policy authority, one operation per proposition | unchanged |
+| `mcp-re-http-profile/src/verify.rs` | 1360 | the stage implementations, now `pub(crate)` behind the facade | floor and full-profile stages become private subordinate modules |
 | `mcp-re-http-profile/src/sigbase.rs` | 306 | signature-base reconstruction | private subordinate of the floor |
 | `mcp-re-http-profile/src/digest.rs` | 65 | content-digest | private subordinate of the floor |
 | `mcp-re-http-profile/src/block.rs` | 647 | evidence blocks, `ResolvedActor` | shared: `ResolvedActor` is a seam value (§14), blocks are a full-profile subordinate |
@@ -197,7 +303,7 @@ Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_g
 | `mcp-re-http-profile/src/keyid.rs` | 45 | keyid parsing | private subordinate of the floor |
 | `mcp-re-http-profile/src/policy.rs` | 240 | `VerifierPolicy` (algorithm allowlist, skew) | floor input; unchanged |
 
-`verify.rs` at 1640 production lines is a §5.3 band-3 hotspot (>1,000): authority census required before substantial new functionality.
+`verify.rs` at 1360 production lines is a §5.3 band-3 hotspot (>1,000): authority census required before substantial new functionality. Its census is EX-003.
 
 The seventeen public items in `verify.rs` today:
 

@@ -330,7 +330,7 @@ async fn delegated_success_response_verifies_and_root_touched_once() {
         // Profile-issued kids are RFC 7638 JWK thumbprints (#415 rev 2 §1.5); the
         // property under test is that a DELEGATED key signed, never the root.
         assert_ne!(
-            verified.response.server_signer.keyid, ROOT_KID,
+            verified.signature_facts.accepted_signer.identity.keyid, ROOT_KID,
             "signed by the delegated key, not the root"
         );
     }

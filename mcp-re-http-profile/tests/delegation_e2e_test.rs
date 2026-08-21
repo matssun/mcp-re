@@ -239,13 +239,15 @@ fn valid_delegated_response_verifies_under_cnf_key() {
             NOW,
         )
         .expect("delegated response verifies");
-    // The verified server actor is the delegated identity, authorized via the
-    // credential chain (its verification key is the delegated key).
-    assert_eq!(rv.response.server_signer.keyid, DELEGATED_KID);
+    // The accepted signer is the delegated identity, authorized via the credential
+    // chain (its verification key is the delegated key).
     assert_eq!(
-        rv.response
-            .floor
-            .resolved_server_actor
+        rv.signature_facts.accepted_signer.identity.keyid,
+        DELEGATED_KID
+    );
+    assert_eq!(
+        rv.signature_facts
+            .accepted_signer
             .verification_key
             .to_bytes(),
         delegated_key().public_key().to_bytes()
@@ -503,7 +505,7 @@ fn custody_signed_response_verifies_via_attestation_chain() {
     // the key material, not from an issuance counter.
     let first_issued = SigningKey::from_seed_bytes(&[101u8; 32]);
     assert_eq!(
-        rv.response.server_signer.keyid,
+        rv.signature_facts.accepted_signer.identity.keyid,
         mcp_re_http_profile::jwk_thumbprint_ed25519(&first_issued.public_key().to_b64url()),
     );
     assert_eq!(
@@ -577,7 +579,10 @@ fn a_delegated_preflight_receipt_verifies_without_request_binding() {
     let rv = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_delegated_unbound_response(&rsp, &expectations(&[EPOCH]), &|_| false, NOW)
         .expect("the preflight receipt verifies unbound");
-    assert_eq!(rv.server_signer.keyid, DELEGATED_KID);
+    assert_eq!(
+        rv.signature_facts.accepted_signer.identity.keyid,
+        DELEGATED_KID
+    );
     assert_eq!(rv.delegation_issuer_kid, ROOT_KID);
 }
 
@@ -629,4 +634,360 @@ fn an_unbound_receipt_without_a_credential_is_refused() {
         .verify_delegated_unbound_response(&plain, &expectations(&[EPOCH]), &|_| false, NOW)
         .expect_err("a directly root-signed unbound receipt is refused");
     assert_eq!(err, HttpProfileError::DelegationCredentialMissing);
+}
+
+// --- the delegated conjuncts that had no control of their own ---------------
+
+/// The delegated BOUND path makes the same explicit `request_evidence` comparison the
+/// direct full path makes, and it is load-bearing there too. The `;req` floor cannot
+/// substitute for it: here the `;req` binding is to `req_a` and verifies, while the block
+/// advertises a different exchange's handle.
+#[test]
+fn a_delegated_response_advertising_another_requests_evidence_is_refused() {
+    let (req_a, _ev_a, verified_a) = signed_request();
+
+    // A second, genuinely different request → a different evidence handle.
+    let mut req_b = base_request();
+    let block_b = HttpRequestEvidenceBlock {
+        profile: PROFILE_TAG.into(),
+        audience: audience(),
+        artifact_bindings: vec![ArtifactBinding::opaque_digest(
+            ArtifactType::OauthDpop,
+            ACCESS_TOKEN.as_bytes(),
+        )],
+        continuation: None,
+        admission: None,
+        admission_assertion: None,
+    };
+    let ev_b = sign_request_full(
+        &mut req_b,
+        &block_b,
+        &client_key(),
+        "client-key-1",
+        CREATED,
+        EXPIRES,
+        "nonce-DIFFERENT",
+    )
+    .expect("sign b");
+    assert_ne!(ev_b.digest_value, verified_a.evidence().digest_value);
+
+    let mut rsp = HttpResponse {
+        status: 200,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: response_body(),
+    };
+    // ;req is bound to req_a; the block advertises req_b's handle.
+    sign_delegated_response_full(
+        &mut rsp,
+        &req_a,
+        &ev_b,
+        &server_signer(),
+        &valid_credential(),
+        &delegated_key(),
+        DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign");
+
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_bound_response(
+            &rsp,
+            &req_a,
+            verified_a.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
+}
+
+/// The cnf.jwk signature check on the UNBOUND delegated path. `an_unbound_receipt_without_a_credential_is_refused`
+/// fails at step 1 and says nothing about whether the signature is ever checked; this
+/// presents a complete, valid credential and signs under an attacker key.
+#[test]
+fn an_unbound_receipt_signed_by_a_key_other_than_cnf_is_key_mismatch() {
+    let (_req, ev, _verified_req) = signed_request();
+    let attacker = SigningKey::from_seed_bytes(&[98u8; 32]);
+    let mut rsp = HttpResponse {
+        status: 400,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: response_body(),
+    };
+    sign_delegated_response_unbound(
+        &mut rsp,
+        &server_signer(),
+        &valid_credential(),
+        &ev,
+        &attacker,
+        DELEGATED_KID, // keyid matches the credential; the key does not
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign unbound receipt under the wrong key");
+
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_unbound_response(&rsp, &expectations(&[EPOCH]), &|_| false, NOW)
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::DelegationKeyMismatch);
+}
+
+/// A `;req` component is refused on the delegated unbound path for the same reason it is
+/// refused on the seam-authorized one: a verified credential chain does not conjure a
+/// request to resolve the reference against.
+#[test]
+fn a_req_component_is_refused_on_the_delegated_unbound_path() {
+    let (req, ev, _verified_req) = signed_request();
+    let mut rsp = HttpResponse {
+        status: 200,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: response_body(),
+    };
+    sign_delegated_response_full(
+        &mut rsp,
+        &req,
+        &ev,
+        &server_signer(),
+        &valid_credential(),
+        &delegated_key(),
+        DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign a request-bound delegated response");
+
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_unbound_response(&rsp, &expectations(&[EPOCH]), &|_| false, NOW)
+        .unwrap_err();
+    assert_eq!(
+        err,
+        HttpProfileError::MalformedEvidence("req component without request context")
+    );
+}
+
+/// Content-digest verification stays load-bearing on the unbound delegated path — the
+/// credential is carried INSIDE the covered body, so a digest check that stopped
+/// mattering would let the credential itself be swapped.
+#[test]
+fn an_unbound_receipt_body_tamper_is_caught_by_content_digest() {
+    let (_req, ev, _verified_req) = signed_request();
+    let mut rsp = HttpResponse {
+        status: 400,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: response_body(),
+    };
+    sign_delegated_response_unbound(
+        &mut rsp,
+        &server_signer(),
+        &valid_credential(),
+        &ev,
+        &delegated_key(),
+        DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign unbound delegated receipt");
+    let last = rsp.body.len() - 2;
+    rsp.body[last] ^= 0x01;
+
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_unbound_response(&rsp, &expectations(&[EPOCH]), &|_| false, NOW)
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::ContentDigestMismatch);
+}
+
+/// The unbound delegated path resolves the credential's ROOT ISSUER through the same
+/// trust seam every other path uses, and a root nobody vouches for is refused. This is
+/// the unbound counterpart of the chain's trust anchor: without it a self-issued
+/// credential would authorize its own signer.
+#[test]
+fn an_unbound_receipt_whose_root_is_unknown_to_the_seam_is_untrusted() {
+    let (_req, ev, _verified_req) = signed_request();
+    let mut rsp = HttpResponse {
+        status: 400,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: response_body(),
+    };
+    sign_delegated_response_unbound(
+        &mut rsp,
+        &server_signer(),
+        &valid_credential(),
+        &ev,
+        &delegated_key(),
+        DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign unbound delegated receipt");
+
+    // A seam that knows the client but has never heard of this root.
+    let seam = |key_id: &str, slot: SignerSlot| -> Option<ResolvedActor> {
+        match (key_id, slot) {
+            ("client-key-1", SignerSlot::Request) => Some(ResolvedActor {
+                identity: ActorIdentity {
+                    role: "client".into(),
+                    trust_domain: "example.com".into(),
+                    subject: "did:example:client".into(),
+                    keyid: key_id.into(),
+                },
+                verification_key: client_key().public_key(),
+                slot,
+            }),
+            _ => None,
+        }
+    };
+    let err = Verifier::new(&VerifierPolicy::default(), &seam)
+        .verify_delegated_unbound_response(&rsp, &expectations(&[EPOCH]), &|_| false, NOW)
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::DelegationIssuerUntrusted);
+}
+
+/// A credential whose SUBJECT BINDING and CONFIRMED KEY name different key ids.
+///
+/// `mcp_re_server_signer` scopes the credential to `disowned-kid`, so a block declaring
+/// that signer passes the credential's scope check; `cnf.jwk`/`delegated_kid` confirm
+/// `DELEGATED_KID`, and the response is signed by that key under that wire keyid. Every
+/// other conjunct is satisfied — the chain verifies, the wire keyid equals the credential's
+/// delegated kid, the signature verifies under `cnf.jwk` — so only the comparison of the
+/// BLOCK's declared keyid against the credential's delegated kid refuses it.
+///
+/// Without it the product's accepted-signer identity would carry `disowned-kid` while the
+/// signature verified under the key confirmed for `DELEGATED_KID`: the identity a consumer
+/// attributes the response to would not be the identity the signature was accepted under,
+/// which is exactly what the correspondence conjunct claims.
+fn credential_scoped_to_another_keyid() -> (String, ActorIdentity) {
+    let mut disowned = server_signer();
+    disowned.keyid = "disowned-kid".into();
+    let d = delegated_key();
+    let header = DelegationHeader {
+        typ: DELEGATION_TYP.into(),
+        alg: DELEGATION_ALG.into(),
+        kid: ROOT_KID.into(),
+    };
+    let claims = DelegationClaims {
+        iss: "did:example:server".into(),
+        iat: CREATED,
+        nbf: CREATED,
+        exp: EXPIRES,
+        jti: "evt-disowned".into(),
+        aud: Audience::One(VERIFIER_AUD.into()),
+        mcp_re_profile: PROFILE_TAG.into(),
+        mcp_re_audience_hash: AUD_SCOPE.into(),
+        mcp_re_server_signer: disowned.actor_id(),
+        mcp_re_key_use: KEY_USE_RESPONSE_SIGNING.into(),
+        delegated_kid: DELEGATED_KID.into(),
+        issuer_kid: ROOT_KID.into(),
+        trust_epoch: EPOCH.into(),
+        cnf: Cnf {
+            jwk: DelegatedJwk {
+                kty: JWK_KTY_OKP.into(),
+                crv: JWK_CRV_ED25519.into(),
+                kid: DELEGATED_KID.into(),
+                x: d.public_key().to_b64url(),
+            },
+        },
+    };
+    (
+        issue_delegation_credential(&root_key(), &header, &claims),
+        disowned,
+    )
+}
+
+#[test]
+fn a_block_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch() {
+    let (req, ev, verified_req) = signed_request();
+    let (credential, disowned) = credential_scoped_to_another_keyid();
+    let mut rsp = HttpResponse {
+        status: 200,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: response_body(),
+    };
+    sign_delegated_response_full(
+        &mut rsp,
+        &req,
+        &ev,
+        &disowned, // block keyid == the credential's subject binding, not its cnf kid
+        &credential,
+        &delegated_key(),
+        DELEGATED_KID, // wire keyid == the credential's delegated kid
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign");
+
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_bound_response(
+            &rsp,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::DelegationKeyMismatch);
+}
+
+/// The same correspondence conjunct on the unbound path, where there is no request
+/// evidence to cross-check the attribution against either.
+#[test]
+fn an_unbound_receipt_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch() {
+    let (_req, ev, _verified_req) = signed_request();
+    let (credential, disowned) = credential_scoped_to_another_keyid();
+    let mut rsp = HttpResponse {
+        status: 400,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: response_body(),
+    };
+    sign_delegated_response_unbound(
+        &mut rsp,
+        &disowned,
+        &credential,
+        &ev,
+        &delegated_key(),
+        DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign");
+
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_unbound_response(&rsp, &expectations(&[EPOCH]), &|_| false, NOW)
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::DelegationKeyMismatch);
+}
+
+/// The unbound analogue of `response_keyid_not_delegated_kid_is_key_mismatch`: the RFC 9421
+/// wire keyid must be the credential's delegated kid, not merely a keyid whose signature
+/// happens to verify under `cnf.jwk`.
+///
+/// The block names the confirmed kid and the signature verifies under the confirmed key,
+/// so nothing else objects; only the wire-keyid comparison refuses it. Without it a
+/// receipt could advertise an unconfirmed keyid on the wire — the coordinate a peer
+/// caches, pins and reports — while presenting a credential for a different one.
+#[test]
+fn an_unbound_receipt_whose_wire_keyid_is_not_the_delegated_kid_is_key_mismatch() {
+    let (_req, ev, _verified_req) = signed_request();
+    let mut rsp = HttpResponse {
+        status: 400,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: response_body(),
+    };
+    sign_delegated_response_unbound(
+        &mut rsp,
+        &server_signer(), // block keyid == the credential's delegated kid
+        &valid_credential(),
+        &ev,
+        &delegated_key(), // signed by the confirmed key
+        "some-other-kid", // but advertised under a keyid the credential never confirmed
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign");
+
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_unbound_response(&rsp, &expectations(&[EPOCH]), &|_| false, NOW)
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::DelegationKeyMismatch);
 }

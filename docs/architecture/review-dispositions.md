@@ -191,10 +191,11 @@ unit: **size ordered this investigation; it did not decide it.**
 ## EX-003 — `mcp-re-http-profile/src/verify.rs` — **census complete, disposition: decompose first**
 
 **Status:** `reviewed-action-required` pending owner security-specification review of the
-seven theorems. **Remediation:** ~~#571~~ and ~~#572~~ implemented (THM-0014 … THM-0020);
+theorem family. **Remediation:** ~~#571~~ and ~~#572~~ implemented (THM-0014 … THM-0022);
 the disposition may move to `reviewed-exception` only once that review lands and this
-census is re-run. **Measured:** 1388 production lines after #571; 1598
-after #570; 1640 before either. **Component blueprint:**
+census is re-run. **Measured:** 1360 production lines after the #572 review round (the two
+delegated paths had verbatim copies of the credential-chain resolution, now one
+`chain_to_root`); 1388 after #571; 1598 after #570; 1640 before any of them. **Component blueprint:**
 [`components/evidence-verification.md`](components/evidence-verification.md).
 
 Required by ADR-061 §5.3 before the work in [#570](https://github.com/matssun/mcp-re/issues/570):
@@ -241,9 +242,17 @@ ADR-061 §11 operational test applied to a real check.
 
 The request half is done in #570 and the response half, with the `_with_policy` axis, in
 #571 — `verify.rs` fell from 1640 to 1388 production lines and its public surface is now
-one `Verifier`. The two composition theorems the split makes expressible are #572.
+one `Verifier`. The composition theorems the split makes expressible are #572.
 `verify.rs` stays `reviewed-action-required` until that closes and this census is re-run:
 the disposition records that work remains, not that nobody looked.
+
+The #572 review round removed one more §8 question-10 duplicate: `delegated_bound_response`
+and `delegated_unbound_response` carried **verbatim copies** of the credential-chain
+resolution — the same `DelegationVerifyParams`, the same root-issuer closure, the same
+outage/wrong-slot capture, and the same 10-line comment explaining it. Two copies of a
+trust-resolution rule are two places for it to drift, and the mutation probe made that
+concrete: a single slot mutation in the shared `chain_to_root` now breaks all 12 delegated
+controls at once, where before it took two mutations to reach the same set.
 
 ### What the census found that the issue did not anticipate
 

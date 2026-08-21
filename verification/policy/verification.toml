@@ -98,6 +98,28 @@ pilot = "lean-candidate"
 # `check_params` (`http_profile.freshness_window`), not the operations that call it — so
 # every claim resting here is supported by a test battery and nothing above it may say
 # otherwise.
+#
+# `paths` is the COMPLETE security-relevant implementation closure of the seven operations,
+# not the files whose names read like the claims. The first version named seven files and
+# omitted `delegation.rs` — which implements the root signature check, credential
+# freshness, audience/profile/scope, key-use, epoch, revocation and `cnf.jwk` consistency,
+# i.e. most of what the two delegated claims actually assert. An edit there could
+# materially weaken credential verification while this unit's fingerprint stayed put and
+# the delegated claims still derived FRESH. That is the false-freshness defect the
+# fingerprint exists to prevent, so the closure is now derived from what the operations
+# CALL: the module closure of `verifier.rs`/`verify.rs`/`rejection.rs` inside the crate,
+# plus the `mcp-re-core` files carrying the primitives (`crypto.rs` — `verify_ed25519_with`
+# and the key types — with `error.rs` and `encoding.rs`).
+#
+# It is deliberately wider than any single claim needs. A narrower closure is legitimate
+# only through a SEALED contract-consumption edge, and no unit here exports a contract yet;
+# until one does, "this file is not really part of the claim" is a reviewer's belief and
+# not a checked fact. Manufacturing fine-grained units to shrink fingerprints would trade a
+# measured over-approximation for an unmeasured under-approximation.
+#
+# `artifact.rs` and `block.rs` also belong to `http_profile.artifact_typing`, and `verify.rs`,
+# `policy.rs` and `ids.rs` also to `http_profile.freshness_window`. Overlap is not
+# duplication: two units measuring the same file answer two different questions about it.
 
 [[unit]]
 id = "http_profile.verifier_results"
@@ -107,46 +129,135 @@ paths = [
   "mcp-re-http-profile/src/verifier.rs",
   "mcp-re-http-profile/src/verify.rs",
   "mcp-re-http-profile/src/verified_request.rs",
-  "mcp-re-http-profile/src/verified_response.rs",
+  "mcp-re-http-profile/src/verified_response/mod.rs",
+  "mcp-re-http-profile/src/verified_response/facts.rs",
+  "mcp-re-http-profile/src/verified_response/bound.rs",
+  "mcp-re-http-profile/src/verified_response/unbound.rs",
   "mcp-re-http-profile/src/sigbase.rs",
   "mcp-re-http-profile/src/digest.rs",
   "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/delegation.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/body.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/artifact.rs",
+  "mcp-re-http-profile/src/mcp_transport.rs",
+  "mcp-re-http-profile/src/sign.rs",
+  "mcp-re-http-profile/src/rejection.rs",
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/error.rs",
+  "mcp-re-core/src/encoding.rs",
 ]
 exported_contracts = []
+# The closure spans two Cargo packages, so the battery's package is named rather than
+# derived — and the loader refuses any name that is not one of the packages above.
+test_package = "mcp-re-http-profile"
 evidence = ["test://http_profile/verifier/result_propositions"]
-# The battery spans five targets and says so. `rejection.rs` carries the only in-crate
-# exercise of the unbound response floor, through `verify_signed_rejection`; the two
-# delegated-unbound members were written for this claim, because that operation previously
-# had evidence only in a proxy integration test — a different unit, so nothing resolvable.
+# The battery is a NEGATIVE battery with positives attached, not the other way round.
+#
+# These are V0 claims, so a conjunct nobody can break is a conjunct the evidence does not
+# establish, however many tests pass. Every member below was mutation-probed: the
+# production check the theorem names was deleted or defanged, the battery re-run, and the
+# named control observed to go red. The matrix — 27 mutations, each turning at least one
+# declared member red — is recorded in
+# `docs/architecture/components/evidence-verification.md` §9.1.
+#
+# The probe found three conjuncts that nothing here reached, and each got a control rather
+# than a softened statement:
+#
+#   * the audience-tuple/`@target-uri` CONSISTENCY conjunct — `audience_mismatch_fails`
+#     moves `audience_id`, so it fails on the equality conjunct and survives deleting the
+#     other one;
+#   * the response `server_signer` correspondence check, on both the seam-authorized and
+#     the delegated path — the existing response negatives move the request evidence or the
+#     `;req` base instead;
+#   * the delegated wire-keyid comparison on the UNBOUND path.
+#
+# Five targets carry the battery. `rejection.rs` holds the only in-crate exercise of the
+# seam-authorized unbound floor through `verify_signed_rejection`; `delegation.rs`'s module
+# tests are the credential-layer negatives the two delegated claims rest on and are listed
+# here because those claims assert what they check; the delegated-unbound members were
+# written for this claim, because that operation previously had evidence only in a proxy
+# integration test — a different unit, so nothing resolvable.
 tested_symbols = [
+  # --- request floor (THM-0014) ---
   "tests/proof_path_test#request_roundtrip_verifies_and_yields_split_form_evidence",
   "tests/proof_path_test#body_tamper_fails_closed",
   "tests/proof_path_test#wrong_content_digest_fails_closed",
   "tests/proof_path_test#missing_covered_component_fails_closed",
   "tests/proof_path_test#stale_window_fails_closed",
   "tests/proof_path_test#wrong_keyid_fails_closed",
+  "tests/proof_path_test#authorization_header_is_covered_when_present",
+  "tests/proof_path_test#keyid_swap_to_another_trusted_key_fails_the_signature",
   "tests/proof_path_test#request_signed_by_response_only_actor_fails_actor_binding",
   "tests/proof_path_test#resolver_returning_wrong_slot_is_rejected",
+  "tests/algorithm_confusion_test#an_ed25519_signature_declaring_ml_dsa_is_rejected",
+  # --- full request (THM-0015) ---
+  "tests/full_profile_test#full_request_roundtrip_exposes_audience_and_block",
+  "tests/full_profile_test#missing_request_block_fails_in_full_profile",
+  "tests/full_profile_test#wrong_profile_in_block_fails",
+  "tests/full_profile_test#audience_mismatch_fails",
+  "tests/full_profile_test#a_target_uri_disagreeing_with_the_audience_tuple_fails",
+  "tests/full_profile_test#artifact_binding_mismatch_fails",
+  "tests/full_profile_test#unverifiable_binding_without_material_fails_closed",
+  # --- bound response floor (THM-0016) ---
   "tests/proof_path_test#response_roundtrip_bound_to_request_verifies",
   "tests/proof_path_test#response_splice_fails_closed",
   "tests/proof_path_test#response_signed_by_request_only_actor_fails_actor_binding",
-  "tests/full_profile_test#full_request_roundtrip_exposes_audience_and_block",
-  "tests/full_profile_test#audience_mismatch_fails",
-  "tests/full_profile_test#missing_request_block_fails_in_full_profile",
-  "tests/full_profile_test#artifact_binding_mismatch_fails",
-  "tests/full_profile_test#unverifiable_binding_without_material_fails_closed",
+  "lib#rejection::tests::tampered_message_does_not_change_the_trusted_wire_code",
+  "lib#rejection::tests::spliced_rejection_onto_a_different_request_fails",
+  # --- unbound response floor (THM-0017) ---
+  "tests/proof_path_test#unbound_response_floor_verifies_a_receipt_with_no_request",
+  "tests/proof_path_test#a_req_component_is_refused_on_the_unbound_floor",
+  "tests/proof_path_test#the_unbound_floor_signature_check_is_load_bearing",
+  "tests/proof_path_test#the_unbound_floor_content_digest_check_is_load_bearing",
+  "lib#rejection::tests::unbound_rejection_verifies_without_request_context",
+  # --- full bound response (THM-0018) ---
   "tests/full_profile_test#full_response_roundtrip_binds_request_evidence",
+  "tests/full_profile_test#a_block_declaring_a_signer_it_did_not_sign_as_fails",
   "tests/full_profile_test#response_request_evidence_mismatch_emits_request_binding_mismatch",
   "tests/full_profile_test#cryptographic_req_splice_still_fails_at_the_floor",
-  "tests/algorithm_confusion_test#an_ed25519_signature_declaring_ml_dsa_is_rejected",
+  # --- delegated bound response (THM-0019) ---
   "tests/delegation_e2e_test#valid_delegated_response_verifies_under_cnf_key",
   "tests/delegation_e2e_test#direct_root_signed_response_is_rejected_credential_missing",
   "tests/delegation_e2e_test#response_keyid_not_delegated_kid_is_key_mismatch",
+  "tests/delegation_e2e_test#response_signed_by_key_other_than_cnf_is_key_mismatch",
+  "tests/delegation_e2e_test#a_block_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch",
+  "tests/delegation_e2e_test#a_delegated_response_advertising_another_requests_evidence_is_refused",
+  "tests/delegation_e2e_test#body_tamper_is_caught_by_content_digest",
   "tests/delegation_e2e_test#stale_epoch_rejected_end_to_end",
+  "tests/delegation_e2e_test#revoked_delegated_key_rejected_end_to_end",
+  # --- delegated unbound response (THM-0020) ---
   "tests/delegation_e2e_test#a_delegated_preflight_receipt_verifies_without_request_binding",
   "tests/delegation_e2e_test#an_unbound_receipt_without_a_credential_is_refused",
-  "lib#rejection::tests::unbound_rejection_verifies_without_request_context",
-  "lib#rejection::tests::spliced_rejection_onto_a_different_request_fails",
+  "tests/delegation_e2e_test#an_unbound_receipt_signed_by_a_key_other_than_cnf_is_key_mismatch",
+  "tests/delegation_e2e_test#an_unbound_receipt_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch",
+  "tests/delegation_e2e_test#an_unbound_receipt_whose_wire_keyid_is_not_the_delegated_kid_is_key_mismatch",
+  "tests/delegation_e2e_test#an_unbound_receipt_whose_root_is_unknown_to_the_seam_is_untrusted",
+  "tests/delegation_e2e_test#a_req_component_is_refused_on_the_delegated_unbound_path",
+  "tests/delegation_e2e_test#an_unbound_receipt_body_tamper_is_caught_by_content_digest",
+  # --- the credential layer both delegated claims assert (THM-0019, THM-0020) ---
+  "lib#delegation::tests::valid_credential_accepts_and_yields_delegated_key",
+  "lib#delegation::tests::wrong_alg_is_credential_invalid",
+  "lib#delegation::tests::wrong_typ_is_credential_invalid",
+  "lib#delegation::tests::bad_root_signature_is_credential_invalid",
+  "lib#delegation::tests::unknown_issuer_is_untrusted",
+  "lib#delegation::tests::expired_and_not_yet_valid",
+  "lib#delegation::tests::configured_skew_above_the_hard_cap_does_not_widen_the_credential_window",
+  "lib#delegation::tests::negative_configured_skew_is_treated_as_zero",
+  "lib#delegation::tests::verifier_not_in_aud_is_audience_mismatch",
+  "lib#delegation::tests::wrong_audience_hash_or_server_signer_is_audience_mismatch",
+  "lib#delegation::tests::wrong_profile_is_profile_mismatch",
+  "lib#delegation::tests::wrong_key_use_is_key_use_invalid",
+  "lib#delegation::tests::stale_trust_epoch_is_rejected_without_revocation",
+  "lib#delegation::tests::bounded_rollout_window_accepts_previous_epoch",
+  "lib#delegation::tests::revoked_delegated_or_issuer_is_revoked",
+  "lib#delegation::tests::revoked_by_jti_is_revoked",
+  "lib#delegation::tests::cnf_kid_not_delegated_kid_is_credential_invalid",
+  "lib#delegation::tests::not_three_segments_is_credential_invalid",
 ]
 assumptions = ["ASM-0027", "ASM-0028", "ASM-0029"]
 
@@ -154,6 +265,13 @@ assumptions = ["ASM-0027", "ASM-0028", "ASM-0029"]
 # compiler rather than asserted in prose. The controls were landed and PROBED in #570/#571
 # — each was rewritten so it SHOULD compile and the test then failed — so this unit records
 # them where they are, rather than growing a second copy.
+#
+# A FOURTH control was added when the delegated products stopped nesting the seam-authorized
+# ones: there is now no field, projection or conversion from a `VerifiedDelegatedMcpResponse`
+# to a `VerifiedMcpResponse`, so a consumer whose reasoning needs a trust-store entry for the
+# SIGNING key cannot be handed a credential-authorized value. It sits on the same item as
+# the bound/unbound control, which the lane matches as a battery, and it was probed the same
+# way: rewritten so it should compile, and the doctest then failed.
 #
 # Their lane is `cargo test --doc`. Bazel runs no doctests, and this manifest does not
 # pretend otherwise.
@@ -164,14 +282,21 @@ class = "V0"
 description = "The verifier's assurance products are not substitutable: a weaker product cannot be passed where a stronger one is required."
 paths = [
   "mcp-re-http-profile/src/verified_request.rs",
-  "mcp-re-http-profile/src/verified_response.rs",
+  "mcp-re-http-profile/src/verified_response/mod.rs",
+  "mcp-re-http-profile/src/verified_response/facts.rs",
+  "mcp-re-http-profile/src/verified_response/bound.rs",
+  "mcp-re-http-profile/src/verified_response/unbound.rs",
 ]
 exported_contracts = []
 evidence = ["test://http_profile/verifier/assurance_type_separation"]
+# The symbols follow the ITEM, so the module split moved them: the response products live in
+# `verified_response::bound` now. Their reported names would have changed silently and the
+# lane would have reported "no doctest for this item" — which is the declaration doing its
+# job, not churn.
 tested_symbols = [
   "doc#verified_request::VerifiedMcpRequest",
-  "doc#verified_response::VerifiedMcpResponse",
-  "doc#verified_response::VerifiedDelegatedMcpResponse",
+  "doc#verified_response::bound::VerifiedMcpResponse",
+  "doc#verified_response::bound::VerifiedDelegatedMcpResponse",
 ]
 
 # ---------------------------------------------------------------------------

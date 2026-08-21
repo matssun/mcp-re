@@ -310,9 +310,16 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
         // Profile-issued kids are RFC 7638 JWK thumbprints (#415 rev 2 §1.5), so
         // the property asserted here is the one that matters — the signer is a
         // delegated key, NOT the root — rather than a kid literal.
-        first_delegated_kid = Some(verified.response.server_signer.keyid.clone());
+        first_delegated_kid = Some(
+            verified
+                .signature_facts
+                .accepted_signer
+                .identity
+                .keyid
+                .clone(),
+        );
         assert_ne!(
-            verified.response.server_signer.keyid, ROOT_KID,
+            verified.signature_facts.accepted_signer.identity.keyid, ROOT_KID,
             "signed by the delegated key, not the root"
         );
     }
@@ -379,11 +386,11 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
     // distinct RFC 7638 thumbprint, so the kid changing is itself the proof that
     // rotation minted a new key rather than re-serving the old one.
     assert_ne!(
-        verified.response.server_signer.keyid, first_delegated_kid,
+        verified.signature_facts.accepted_signer.identity.keyid, first_delegated_kid,
         "signed by the SUCCESSOR delegated key, not the predecessor"
     );
     assert_ne!(
-        verified.response.server_signer.keyid, ROOT_KID,
+        verified.signature_facts.accepted_signer.identity.keyid, ROOT_KID,
         "and still not the root"
     );
 

@@ -85,8 +85,61 @@ _UNIT_KEYS = {
     "pilot",
     "proved_symbols",
     "tested_symbols",
+    "test_package",
 }
 _EDGE_KEYS = {"kind", "from", "to", "contract", "sealed", "sealed_by", "rationale"}
+
+def _unit_packages(unit: dict) -> list[str]:
+    """The Cargo packages the unit's declared paths live in, sorted.
+
+    Shared by the schema check and by `verify-tests`, because "which packages does this
+    unit name" must not have two answers.
+    """
+    heads = {
+        path.split("/", 1)[0]
+        for path in unit["paths"]
+        if "/" in path and (REPO_ROOT / path.split("/", 1)[0] / "Cargo.toml").is_file()
+    }
+    return sorted(heads)
+
+
+def _validate_test_package(uwhere: str, unit: dict) -> None:
+    """`test_package` is required exactly when the source closure spans several packages.
+
+    The test lane derives the package to run from the declared paths so that a unit whose
+    source moves cannot keep testing the package it left. A unit whose SOURCE CLOSURE
+    legitimately spans packages — the verifier's results reach `mcp-re-core`'s Ed25519
+    primitive — has no single answer, and the lane refused to run at all.
+
+    Naming the package is the fix, and it is constrained rather than free: it must be one
+    of the packages the unit already declares, so it can select a package inside the
+    measured closure and nothing else. Where the paths name ONE package the field is
+    REFUSED, not merely unnecessary — an optional restatement of a derived fact is a second
+    place for it to be wrong.
+    """
+    packages = _unit_packages(unit)
+    declared = unit.get("test_package")
+    if declared is None:
+        if len(packages) > 1 and unit.get("tested_symbols"):
+            raise ManifestError(
+                f"{uwhere}: paths span {len(packages)} Cargo packages "
+                f"({', '.join(packages)}) and the unit declares a test battery, so the "
+                f"lane cannot derive which package to run it in. Name it in "
+                f"`test_package`."
+            )
+        return
+    if len(packages) <= 1:
+        raise ManifestError(
+            f"{uwhere}: `test_package` is set but the paths name a single package; the "
+            f"lane derives it, and a restatement is a second place for it to be wrong."
+        )
+    if declared not in packages:
+        raise ManifestError(
+            f"{uwhere}: test_package {declared!r} is not one of the packages this unit's "
+            f"paths name ({', '.join(packages)}). The battery must run inside the "
+            f"measured source closure."
+        )
+
 
 _ASSUMPTION_KEYS = {
     "id",
@@ -298,6 +351,7 @@ def load_verification() -> dict:
                 f"{uwhere}: declares `tested_symbols` but no test:// evidence entry "
                 f"claims them, so nothing consumes what the lane would measure."
             )
+        _validate_test_package(uwhere, unit)
         contracts.update(unit.get("exported_contracts", []))
 
     for index, edge in enumerate(doc.get("edge", [])):

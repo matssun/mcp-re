@@ -33,6 +33,7 @@ use crate::body::authorization_bearer_bytes;
 use crate::body::extract_meta_block;
 use crate::delegation::verify_delegation_credential;
 use crate::delegation::DelegationVerifyParams;
+use crate::delegation::VerifiedDelegation;
 use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
@@ -62,8 +63,12 @@ use crate::sigbase::SourceMessage;
 use crate::sign::base64_standard_decode;
 use crate::verified_request::CryptographicFloorVerifiedRequest;
 use crate::verified_request::VerifiedMcpRequest;
+use crate::verified_response::block_agreement;
+use crate::verified_response::AcceptedResponseSigner;
+use crate::verified_response::BoundResponseSignatureFacts;
 use crate::verified_response::CryptographicFloorVerifiedBoundResponse;
 use crate::verified_response::CryptographicFloorVerifiedUnboundResponse;
+use crate::verified_response::UnboundResponseSignatureFacts;
 use crate::verified_response::VerifiedDelegatedMcpResponse;
 use crate::verified_response::VerifiedDelegatedUnboundResponse;
 use crate::verified_response::VerifiedMcpResponse;
@@ -1046,6 +1051,60 @@ pub struct DelegationExpectations<'a> {
     pub max_clock_skew: i64,
 }
 
+/// Verify the inline delegation credential a response block carries (ADR-MCPRE-052 §3
+/// steps 2–7), resolving its ROOT issuer through the SAME trust seam every other path uses.
+///
+/// One function rather than a copy per delegated operation: the bound and unbound paths
+/// differ in what the signature covers, not in how a credential chains to a root, and two
+/// copies of a trust-resolution rule are two places for it to drift.
+///
+/// `verify_delegation_credential`'s resolver returns `Option`, which cannot express the
+/// difference between "not trusted" and "the store could not answer" — so resolving inline
+/// collapsed a trust-store OUTAGE into `mcp-re.delegation_issuer_untrusted`, sending an
+/// operator to look at the caller's credentials instead of at their own store (the exact
+/// confusion the C079 fix removed everywhere else), and it dropped the `actor.slot != slot`
+/// assertion, so a resolver handing back a Request-slot actor would have had its key
+/// accepted as a delegation root. The failure is captured here and re-reported as itself.
+fn chain_to_root<R: Into<ResolverOutcome>>(
+    credential: &str,
+    block: &HttpResponseEvidenceBlock,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
+    expect: &DelegationExpectations<'_>,
+    is_revoked: &dyn Fn(&str) -> bool,
+    now: i64,
+) -> Result<VerifiedDelegation, HttpProfileError> {
+    let expected_server_signer = block.server_signer.actor_id();
+    let params = DelegationVerifyParams {
+        now,
+        max_clock_skew: expect.max_clock_skew,
+        verifier_audiences: expect.verifier_audiences,
+        expected_profile: PROFILE_TAG,
+        expected_audience_hash: expect.expected_audience_hash,
+        expected_server_signer: &expected_server_signer,
+        accepted_epochs: expect.accepted_epochs,
+    };
+    let resolve_failure: std::cell::RefCell<Option<HttpProfileError>> =
+        std::cell::RefCell::new(None);
+    let verified = verify_delegation_credential(
+        credential,
+        &params,
+        |issuer_kid| match resolve_actor_for_slot(resolve_actor, issuer_kid, SignerSlot::Response) {
+            Ok(actor) => Some(actor.verification_key),
+            // A definitive "not trusted" stays the credential layer's own verdict
+            // (`mcp-re.delegation_issuer_untrusted`) — that IS the right token for an
+            // issuer nobody vouches for. Only an OUTAGE and a wrong-slot actor are
+            // propagated, because those are not statements about the credential.
+            Err(HttpProfileError::UnresolvedKeyId) => None,
+            Err(e) => {
+                *resolve_failure.borrow_mut() = Some(e);
+                None
+            }
+        },
+        |kid| is_revoked(kid),
+    );
+    verified.map_err(|e| resolve_failure.into_inner().unwrap_or(e))
+}
+
 /// Delegated-response verification bound to a request evidence HANDLE
 /// ([`RequestEvidence`]) rather than the whole [`VerifiedMcpRequest`] — the
 /// CLIENT-side entry point (the delegated analogue of [`verify_response_bound_full`]).
@@ -1103,52 +1162,9 @@ pub(crate) fn delegated_bound_response<R: Into<ResolverOutcome>>(
         .as_deref()
         .ok_or(HttpProfileError::DelegationCredentialMissing)?;
 
-    // Steps 2–7: verify the credential chain to the root. The credential is scoped
-    // to the resolved server signer the block declares; a lifted credential fails
-    // the scope check (§3 step 5).
-    let expected_server_signer = block.server_signer.actor_id();
-    let params = DelegationVerifyParams {
-        now,
-        max_clock_skew: expect.max_clock_skew,
-        verifier_audiences: expect.verifier_audiences,
-        expected_profile: PROFILE_TAG,
-        expected_audience_hash: expect.expected_audience_hash,
-        expected_server_signer: &expected_server_signer,
-        accepted_epochs: expect.accepted_epochs,
-    };
-    // The credential's ROOT issuer key, through the SAME seam every other path uses.
-    //
-    // `verify_delegation_credential`'s resolver returns `Option`, which cannot express
-    // the difference between "not trusted" and "the store could not answer" — so
-    // resolving inline collapsed a trust-store OUTAGE into
-    // `mcp-re.delegation_issuer_untrusted`, sending an operator to look at the
-    // caller's credentials instead of at their own store (the exact confusion the C079
-    // fix removed everywhere else), and it dropped the `actor.slot != slot` assertion,
-    // so a resolver handing back a Request-slot actor would have had its key accepted
-    // as a delegation root. The failure is captured here and re-reported as itself.
-    let resolve_failure: std::cell::RefCell<Option<HttpProfileError>> =
-        std::cell::RefCell::new(None);
-    let verified = verify_delegation_credential(
-        credential,
-        &params,
-        |issuer_kid| match resolve_actor_for_slot(resolve_actor, issuer_kid, SignerSlot::Response) {
-            Ok(actor) => Some(actor.verification_key),
-            // A definitive "not trusted" stays the credential layer's own verdict
-            // (`mcp-re.delegation_issuer_untrusted`) — that IS the right token for an
-            // issuer nobody vouches for. Only an OUTAGE and a wrong-slot actor are
-            // propagated, because those are not statements about the credential.
-            Err(HttpProfileError::UnresolvedKeyId) => None,
-            Err(e) => {
-                *resolve_failure.borrow_mut() = Some(e);
-                None
-            }
-        },
-        |kid| is_revoked(kid),
-    );
-    let verified = match verified {
-        Ok(v) => v,
-        Err(e) => return Err(resolve_failure.into_inner().unwrap_or(e)),
-    };
+    // Steps 2–7: the credential chain to the root, scoped to the block's declared server
+    // signer — a lifted credential fails the scope check (§3 step 5).
+    let verified = chain_to_root(credential, &block, resolve_actor, expect, is_revoked, now)?;
 
     // Step 8: the response keyid is the delegated key, the block names it, and the
     // response signature verifies under cnf.jwk.
@@ -1178,20 +1194,20 @@ pub(crate) fn delegated_bound_response<R: Into<ResolverOutcome>>(
         return Err(HttpProfileError::ResponseBindingMismatch);
     }
 
-    // The resolved server actor is authorized by the CREDENTIAL, not the trust
-    // map: its verification key is the delegated key, its identity is the block's
-    // server_signer, vouched for the Response slot through the credential chain.
-    let server_signer = block.server_signer.clone();
-    let floor = CryptographicFloorVerifiedBoundResponse {
-        resolved_server_actor: ResolvedActor {
-            identity: server_signer,
-            verification_key: verified.delegated_key,
-            slot: SignerSlot::Response,
-        },
-        response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
-    };
+    // The accepted signer is authorized by the CREDENTIAL, not by the trust map: its key
+    // is the delegated key, which no trust store vouches for, and its identity is the
+    // block's `server_signer`. That is why this path assembles the SHARED facts rather
+    // than a `CryptographicFloorVerifiedBoundResponse`, whose meaning is "the presented
+    // keyid was resolved through the trust seam" — false of every value here.
     Ok(VerifiedDelegatedMcpResponse {
-        response: VerifiedMcpResponse::from_block(floor, bound.clone(), &block),
+        signature_facts: BoundResponseSignatureFacts {
+            accepted_signer: AcceptedResponseSigner {
+                identity: block.server_signer.clone(),
+                verification_key: verified.delegated_key,
+            },
+            response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
+        },
+        request_evidence_agreement: block_agreement(bound.clone(), &block),
         // C004b: the ROOT anchor the credential chained to — the stable coordinate,
         // unlike the ephemeral delegated kid. Not an `Option`: this product is only
         // reachable through a verified chain.
@@ -1255,51 +1271,9 @@ pub(crate) fn delegated_unbound_response<R: Into<ResolverOutcome>>(
         .as_deref()
         .ok_or(HttpProfileError::DelegationCredentialMissing)?;
 
-    // Steps 2–7: verify the credential chain to the root, scoped to the block's
-    // declared server signer (a lifted credential fails the scope check).
-    let expected_server_signer = block.server_signer.actor_id();
-    let params = DelegationVerifyParams {
-        now,
-        max_clock_skew: expect.max_clock_skew,
-        verifier_audiences: expect.verifier_audiences,
-        expected_profile: PROFILE_TAG,
-        expected_audience_hash: expect.expected_audience_hash,
-        expected_server_signer: &expected_server_signer,
-        accepted_epochs: expect.accepted_epochs,
-    };
-    // The credential's ROOT issuer key, through the SAME seam every other path uses.
-    //
-    // `verify_delegation_credential`'s resolver returns `Option`, which cannot express
-    // the difference between "not trusted" and "the store could not answer" — so
-    // resolving inline collapsed a trust-store OUTAGE into
-    // `mcp-re.delegation_issuer_untrusted`, sending an operator to look at the
-    // caller's credentials instead of at their own store (the exact confusion the C079
-    // fix removed everywhere else), and it dropped the `actor.slot != slot` assertion,
-    // so a resolver handing back a Request-slot actor would have had its key accepted
-    // as a delegation root. The failure is captured here and re-reported as itself.
-    let resolve_failure: std::cell::RefCell<Option<HttpProfileError>> =
-        std::cell::RefCell::new(None);
-    let verified = verify_delegation_credential(
-        credential,
-        &params,
-        |issuer_kid| match resolve_actor_for_slot(resolve_actor, issuer_kid, SignerSlot::Response) {
-            Ok(actor) => Some(actor.verification_key),
-            // A definitive "not trusted" stays the credential layer's own verdict
-            // (`mcp-re.delegation_issuer_untrusted`) — that IS the right token for an
-            // issuer nobody vouches for. Only an OUTAGE and a wrong-slot actor are
-            // propagated, because those are not statements about the credential.
-            Err(HttpProfileError::UnresolvedKeyId) => None,
-            Err(e) => {
-                *resolve_failure.borrow_mut() = Some(e);
-                None
-            }
-        },
-        |kid| is_revoked(kid),
-    );
-    let verified = match verified {
-        Ok(v) => v,
-        Err(e) => return Err(resolve_failure.into_inner().unwrap_or(e)),
-    };
+    // Steps 2–7: the credential chain to the root, scoped to the block's declared server
+    // signer — a lifted credential fails the scope check (§3 step 5).
+    let verified = chain_to_root(credential, &block, resolve_actor, expect, is_revoked, now)?;
 
     // Step 8: the response keyid is the delegated key, the block names it, and the
     // response-only signature verifies under cnf.jwk.
@@ -1321,18 +1295,16 @@ pub(crate) fn delegated_unbound_response<R: Into<ResolverOutcome>>(
     )
     .map_err(|_| HttpProfileError::DelegationKeyMismatch)?;
 
-    let server_signer = block.server_signer.clone();
-    let floor = CryptographicFloorVerifiedUnboundResponse {
-        resolved_server_actor: ResolvedActor {
-            identity: server_signer.clone(),
-            verification_key: verified.delegated_key,
-            slot: SignerSlot::Response,
-        },
-        response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
-    };
+    // Credential-authorized, exactly as on the bound path: the shared unbound facts, not
+    // a seam-resolved `CryptographicFloorVerifiedUnboundResponse`.
     Ok(VerifiedDelegatedUnboundResponse {
-        floor,
-        server_signer,
+        signature_facts: UnboundResponseSignatureFacts {
+            accepted_signer: AcceptedResponseSigner {
+                identity: block.server_signer.clone(),
+                verification_key: verified.delegated_key,
+            },
+            response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
+        },
         delegation_issuer_kid: verified.issuer_kid.clone(),
     })
 }

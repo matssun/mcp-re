@@ -571,17 +571,30 @@ tool_specific_mechanism = "none:trusted-primitive"
 
 [[assumption]]
 id = "ASM-0029"
-description = "The caller-supplied trust seam answers correctly: a `ResolvedActor` it returns for a signer slot really is an actor this deployment trusts in that slot."
+description = "The trust seam answers its SELECTOR correctly: for a queried (keyid, slot), the `ResolvedActor` it returns carries the identity and verification key this deployment has authorized to sign under that keyid in that slot."
 justification = """
+The premise is about the SELECTOR, not about the seam being well-behaved in general, because
+that is what the conjuncts need. `resolve_actor_for_slot` checks the returned actor's
+`slot` against the slot it asked for, and the battery exercises a resolver that answers for
+the wrong one; nothing in this unit can check the other two coordinates. Whether the
+returned VERIFICATION KEY is the key the deployment authorized for that keyid, and whether
+the returned IDENTITY is the identity that keyid denotes, are answers this unit consumes and
+cannot audit — and a seam that returned an attacker's key for a legitimate keyid would
+satisfy every check here.
+
 `resolve_actor` is an injected closure and `ResolvedActor` is deliberately NOT sealed —
 every in-process and test resolver is a legitimate producer, which
-`docs/dev/sealed-owners.md` records as measured rather than assumed. The verifier's
-defense-in-depth cross-check catches a resolver that answers for the WRONG slot, and the
-battery exercises that; nothing in this unit can check whether the deployment should have
-trusted the actor at all. Every "trust resolution in the correct signer slot" conjunct is
-therefore a claim about what the seam said, under this premise. It stops being acceptable
-if a deployment installs a resolver whose answers are not its trust decision — which is
-what the trust plane exists to prevent, one layer out.
+`docs/dev/sealed-owners.md` records as measured rather than assumed. So "the presented
+keyid was resolved through the trust seam for the Response slot" is a claim about what the
+seam answered for that selector, under this premise, and never a claim that the deployment
+was right to trust the actor. It stops being acceptable if a deployment installs a resolver
+whose answers are not its trust decision — which is what the trust plane exists to prevent,
+one layer out.
+
+The delegated claims consume it at a DIFFERENT selector: there the seam is queried for the
+credential's root issuer kid, and the signing key is authorized by the credential chain
+rather than by any seam answer. The premise is the same one; the keyid it is applied to is
+not.
 """
 scope = ["unit://http_profile.verifier_results"]
 owner = "mats@sundvall.name"

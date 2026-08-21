@@ -307,8 +307,7 @@ fn hop_at(
         )
         .expect("response verifies");
     let rsp_evidence = verified_rsp
-        .response
-        .floor
+        .signature_facts
         .response_signature_base_digest
         .clone();
 

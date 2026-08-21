@@ -81,6 +81,12 @@ def unit_crate(unit: dict) -> str | None:
 
     Derived from the declared paths, never configured beside them: a unit whose source
     moves to another crate must not keep testing the crate it left.
+
+    A unit whose SOURCE CLOSURE spans several packages has no derivable answer — the
+    verifier's results reach `mcp-re-core`'s Ed25519 primitive while every test lives in
+    `mcp-re-http-profile` — so that case, and only that case, reads `test_package`. The
+    manifest loader has already checked the field names one of the unit's own packages, so
+    this can select a package inside the measured closure and nothing else.
     """
     crates = set()
     for path in unit["paths"]:
@@ -88,7 +94,10 @@ def unit_crate(unit: dict) -> str | None:
         if not (REPO_ROOT / head / "Cargo.toml").is_file():
             return None
         crates.add(head)
-    return crates.pop() if len(crates) == 1 else None
+    if len(crates) == 1:
+        return crates.pop()
+    declared = unit.get("test_package")
+    return declared if declared in crates else None
 
 
 def target_argv(target: str) -> list[str] | None:

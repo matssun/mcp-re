@@ -78,13 +78,14 @@ mod verified_response;
 pub mod verifier;
 pub mod verify;
 
+// A CURATED surface, not a mirror: every module above is `pub`, so a root re-export is a
+// SECOND path to an item, kept only where the root path is the one consumers are meant to use.
 pub use admission::check_admission;
 // ADR-MCPRE-059 Phase 2: the registered assumptions the Verus lane needs. Not a
 // production module — it exists only while `--features verify` is on.
 #[cfg(feature = "verify")]
 mod verus_std_specs;
 pub use admission::issue_admission_assertion;
-pub use admission::verify_admission_assertion;
 pub use admission::AdmissionBinding;
 pub use admission::AdmissionClaims;
 pub use admission::AdmissionHeader;
@@ -94,9 +95,7 @@ pub use admission::AuthoritativeAdmission;
 pub use admission::VerifiedAdmission;
 pub use artifact::bearer_token;
 pub use artifact::verify_artifact_binding;
-pub use artifact::verify_dpop_ath;
 pub use artifact::verify_mtls_x5t_s256;
-pub use artifact::verify_rar_details;
 pub use block::ActorIdentity;
 pub use block::ArtifactBinding;
 pub use block::ArtifactType;
@@ -111,8 +110,6 @@ pub use block::ResolverOutcome;
 pub use block::SignerSlot;
 pub use block::CONTINUATION_TYPE_MCP_MRT;
 pub use body::authorization_bearer_bytes;
-pub use body::extract_meta_block;
-pub use body::insert_meta_block;
 pub use body::reject_unrepresentable_json;
 pub use bodyless::sign_accepted_202;
 pub use bodyless::sign_bodyless_request;
@@ -202,7 +199,6 @@ pub use rejection::SignedRejection;
 pub use rejection::JSON_RPC_ERROR_CODE;
 pub use replay::HttpReplayKey;
 pub use result_class::input_required_state;
-pub use result_class::is_input_required;
 pub use result_class::INPUT_REQUIRED_RESULT_TYPE;
 pub use scitt::issue_signed_statement;
 pub use scitt::verify_receipt_offline;
@@ -228,8 +224,12 @@ pub use sign::sign_response_full;
 pub use sign::sign_response_with_signer;
 pub use verified_request::CryptographicFloorVerifiedRequest;
 pub use verified_request::VerifiedMcpRequest;
+pub use verified_response::AcceptedResponseSigner;
+pub use verified_response::BoundRequestEvidenceAgreement;
+pub use verified_response::BoundResponseSignatureFacts;
 pub use verified_response::CryptographicFloorVerifiedBoundResponse;
 pub use verified_response::CryptographicFloorVerifiedUnboundResponse;
+pub use verified_response::UnboundResponseSignatureFacts;
 pub use verified_response::VerifiedDelegatedMcpResponse;
 pub use verified_response::VerifiedDelegatedUnboundResponse;
 pub use verified_response::VerifiedMcpResponse;

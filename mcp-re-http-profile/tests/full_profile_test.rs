@@ -175,7 +175,10 @@ fn full_response_roundtrip_binds_request_evidence() {
     let rv = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_bound_response(&rsp, &req, verified.evidence(), NOW)
         .expect("full response verifies");
-    assert_eq!(rv.bound_request_evidence, rv.body_request_evidence);
+    assert_eq!(
+        rv.request_evidence_agreement.bound_request_evidence,
+        rv.request_evidence_agreement.body_request_evidence
+    );
     assert_eq!(rv.server_signer.keyid, "server-key-1");
 }
 
@@ -370,4 +373,85 @@ fn cryptographic_req_splice_still_fails_at_the_floor() {
         .verify_bound_response(&rsp_b, &req_a, verified_a.evidence(), NOW)
         .unwrap_err();
     assert_eq!(err, HttpProfileError::ResponseSignatureInvalid);
+}
+
+// ---------- one conjunct at a time ------------------------------------------
+//
+// The negatives above each move MORE than one thing, so none of them is evidence that a
+// particular production check is load-bearing. These two isolate the conjuncts that
+// otherwise had no control of their own.
+
+/// The audience rule is a CONJUNCTION: the block's tuple equals the verifier's own, AND
+/// that tuple's `target_uri` agrees with the request's `@target-uri`. `audience_mismatch_fails`
+/// moves `audience_id`, so it fails on the first conjunct and would still fail if the
+/// second were deleted.
+///
+/// Here the tuples are EQUAL — the block carries the verifier's own audience — and only
+/// the request's target differs, which a routed or reverse-proxied deployment can produce
+/// without the client noticing. The signature covers `@target-uri`, so the request is
+/// signed at its real target and the floor is satisfied: only the consistency conjunct
+/// refuses it.
+#[test]
+fn a_target_uri_disagreeing_with_the_audience_tuple_fails() {
+    let block = request_block(vec![dpop_over(ACCESS_TOKEN.as_bytes())]);
+    let mut req = base_request();
+    req.target_uri = "https://mcp.example.com/mcp?route=b".into();
+    sign_request_full(
+        &mut req,
+        &block,
+        &client_key(),
+        "client-key-1",
+        CREATED,
+        EXPIRES,
+        "nonce-1",
+    )
+    .expect("full sign at a different target");
+
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &no_material(), NOW)
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::AudienceMismatch);
+    assert_eq!(err.wire_code(), "mcp-re.invalid_audience");
+}
+
+/// The `server_signer` correspondence check, isolated.
+///
+/// The block declares a signer keyid the response was NOT signed under, while everything
+/// else agrees: the signature verifies, the seam resolves the signing keyid for the
+/// `Response` slot, and the `request_evidence` handle is the caller's own. Only the
+/// correspondence comparison refuses it — which is what makes this the control for that
+/// conjunct. The existing response negatives move the request evidence or the `;req`
+/// base instead, and both would still fail with the correspondence check deleted.
+#[test]
+fn a_block_declaring_a_signer_it_did_not_sign_as_fails() {
+    let block = request_block(vec![dpop_over(ACCESS_TOKEN.as_bytes())]);
+    let (req, _ev) = signed_full_request(&block);
+    let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &no_material(), NOW)
+        .expect("request verifies");
+
+    let mut lying = server_identity();
+    lying.keyid = "server-key-NOT-THE-SIGNER".into();
+
+    let mut rsp = HttpResponse {
+        status: 200,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
+    };
+    sign_response_full(
+        &mut rsp,
+        &req,
+        verified.evidence(),
+        &lying,
+        &server_key(),
+        "server-key-1",
+        CREATED,
+        EXPIRES,
+    )
+    .expect("full response sign");
+
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response(&rsp, &req, verified.evidence(), NOW)
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
 }

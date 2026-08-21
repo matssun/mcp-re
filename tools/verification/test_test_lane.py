@@ -163,6 +163,78 @@ def test_a_battery_spanning_two_targets_is_two_selections():
     assert set(grouped) == {"lib", "tests/proof_path_test"}
 
 
+def test_a_multi_package_unit_without_test_package_has_no_derivable_crate():
+    """The lane must not GUESS. Before `test_package` existed a unit whose source closure
+    reached a second crate simply refused to run, which is the safe half; the danger is a
+    lane that picks one and reports a pass for a battery it never located."""
+    unit = {
+        "paths": [
+            "mcp-re-http-profile/src/verify.rs",
+            "mcp-re-core/src/crypto.rs",
+        ]
+    }
+    assert lane.unit_crate(unit) is None
+    unit["test_package"] = "mcp-re-http-profile"
+    assert lane.unit_crate(unit) == "mcp-re-http-profile"
+
+
+def test_test_package_naming_a_crate_outside_the_closure_selects_nothing():
+    """A package the unit does not measure would run a battery outside the fingerprinted
+    source, so the lane refuses rather than running it. The manifest loader rejects this
+    shape first; the lane does not rely on that."""
+    unit = {
+        "paths": ["mcp-re-http-profile/src/verify.rs", "mcp-re-core/src/crypto.rs"],
+        "test_package": "mcp-re-proxy",
+    }
+    assert lane.unit_crate(unit) is None
+
+
+def test_test_package_is_refused_where_the_lane_can_derive_it():
+    """A restatement of a derived fact is a second place for it to be wrong: the loader
+    refuses `test_package` on a single-package unit rather than ignoring it."""
+    from _manifest import ManifestError, _validate_test_package
+
+    single = {
+        "paths": ["mcp-re-http-profile/src/verify.rs"],
+        "test_package": "mcp-re-http-profile",
+        "tested_symbols": ["lib#a::b"],
+    }
+    try:
+        _validate_test_package("unit[0]", single)
+    except ManifestError:
+        pass
+    else:
+        raise AssertionError("a single-package unit must not carry `test_package`")
+
+
+def test_a_multi_package_battery_must_name_its_package():
+    """The loader fails the manifest rather than leaving the lane to fail later: an
+    unrunnable battery is a manifest defect, not a test result."""
+    from _manifest import ManifestError, _validate_test_package
+
+    spanning = {
+        "paths": ["mcp-re-http-profile/src/verify.rs", "mcp-re-core/src/crypto.rs"],
+        "tested_symbols": ["lib#a::b"],
+    }
+    try:
+        _validate_test_package("unit[0]", spanning)
+    except ManifestError:
+        pass
+    else:
+        raise AssertionError("a multi-package battery must name `test_package`")
+
+    spanning["test_package"] = "mcp-re-proxy"
+    try:
+        _validate_test_package("unit[0]", spanning)
+    except ManifestError:
+        pass
+    else:
+        raise AssertionError("`test_package` outside the closure must be refused")
+
+    spanning["test_package"] = "mcp-re-core"
+    _validate_test_package("unit[0]", spanning)
+
+
 def test_only_units_claiming_test_evidence_are_in_scope():
     assert lane.claims_test_evidence({"evidence": ["test://a/b/c"]})
     assert lane.claims_test_evidence({"evidence": ["verus://x", "test://a/b/c"]})

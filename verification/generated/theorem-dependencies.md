@@ -22,21 +22,25 @@ graph BT
     THM_0008["THM-0008<br/>No untyped artifact binding leaves the verifier as verified"]
     THM_0014["THM-0014<br/>A successful request-floor verification establishes the cryptographic floor"]
     THM_0015["THM-0015<br/>A successful full-profile request verification establishes audience and artifact binding"]
-    THM_0016["THM-0016<br/>A successful bound response-floor verification establishes binding to the supplied request"]
-    THM_0017["THM-0017<br/>A successful unbound response-floor verification establishes no request binding at all"]
+    THM_0016["THM-0016<br/>A successful bound response-floor verification establishes trust-seam authorization of the signer"]
+    THM_0017["THM-0017<br/>A successful unbound response-floor verification establishes trust-seam authorization and no request binding"]
     THM_0018["THM-0018<br/>A successful full bound response verification establishes block agreement with the expected handle"]
     THM_0019["THM-0019<br/>A successful delegated bound response verification establishes an accepted credential chain"]
     THM_0020["THM-0020<br/>A successful delegated unbound response verification establishes a chain and never a binding"]
+    THM_0021["THM-0021<br/>A successful bound-response verification establishes the shared cryptographic and request-binding facts"]
+    THM_0022["THM-0022<br/>A successful unbound-response verification establishes the shared facts and no request binding at all"]
     THM_0007 --> THM_0008
     THM_0001 --> THM_0014
     THM_0007 --> THM_0015
     THM_0008 --> THM_0015
     THM_0014 --> THM_0015
-    THM_0001 --> THM_0016
-    THM_0001 --> THM_0017
+    THM_0021 --> THM_0016
+    THM_0022 --> THM_0017
     THM_0016 --> THM_0018
-    THM_0018 --> THM_0019
-    THM_0017 --> THM_0020
+    THM_0021 --> THM_0019
+    THM_0022 --> THM_0020
+    THM_0001 --> THM_0021
+    THM_0001 --> THM_0022
 ```
 
 ## Component 2

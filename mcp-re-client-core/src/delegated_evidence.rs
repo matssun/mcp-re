@@ -31,28 +31,38 @@ impl DelegatedResponseEvidence {
         matches!(self, DelegatedResponseEvidence::Bound(_))
     }
 
-    /// The resolved server/response actor — the DELEGATED key on both shapes.
-    pub fn resolved_server_actor(&self) -> &mcp_re_http_profile::ResolvedActor {
+    /// The signer the response signature was accepted under — the DELEGATED key on both
+    /// shapes.
+    ///
+    /// Not a `ResolvedActor`: nothing resolved this key through the trust seam. The seam
+    /// answered for the ROOT issuer ([`Self::delegation_issuer_kid`]) and the credential
+    /// chain authorized the key that actually signed.
+    pub fn accepted_signer(&self) -> &mcp_re_http_profile::AcceptedResponseSigner {
         match self {
-            DelegatedResponseEvidence::Bound(v) => &v.response.floor.resolved_server_actor,
-            DelegatedResponseEvidence::Unbound(v) => &v.floor.resolved_server_actor,
+            DelegatedResponseEvidence::Bound(v) => &v.signature_facts.accepted_signer,
+            DelegatedResponseEvidence::Unbound(v) => &v.signature_facts.accepted_signer,
         }
     }
 
     /// The response signature-base handle — the answer leg of an MRT exchange binds to it.
     pub fn response_signature_base_digest(&self) -> &mcp_re_http_profile::RequestEvidence {
         match self {
-            DelegatedResponseEvidence::Bound(v) => &v.response.floor.response_signature_base_digest,
-            DelegatedResponseEvidence::Unbound(v) => &v.floor.response_signature_base_digest,
+            DelegatedResponseEvidence::Bound(v) => {
+                &v.signature_facts.response_signature_base_digest
+            }
+            DelegatedResponseEvidence::Unbound(v) => {
+                &v.signature_facts.response_signature_base_digest
+            }
         }
     }
 
     /// The server signer identity the block declared — available on both shapes.
+    ///
+    /// On both, the block's `server_signer` IS the accepted signer's identity: the
+    /// delegated path checks the block's keyid against the credential's delegated kid
+    /// before accepting the signature, so there is one identity here, not two.
     pub fn server_signer(&self) -> &ActorIdentity {
-        match self {
-            DelegatedResponseEvidence::Bound(v) => &v.response.server_signer,
-            DelegatedResponseEvidence::Unbound(v) => &v.server_signer,
-        }
+        &self.accepted_signer().identity
     }
 
     /// The ROOT issuer kid the credential chained to, available on both shapes.
