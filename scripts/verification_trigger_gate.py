@@ -41,7 +41,11 @@ WORKFLOW = REPO / ".github" / "workflows" / "verification.yml"
 MANIFEST = REPO / "verification" / "policy" / "verification.toml"
 
 sys.path.insert(0, str(REPO / "tools" / "verification"))
-from _fingerprint import WORKSPACE_BUILD_INPUTS  # noqa: E402
+from _fingerprint import (  # noqa: E402
+    TEST_LANE_INPUTS,
+    WORKSPACE_BUILD_INPUTS,
+    test_source_patterns,
+)
 
 
 def glob_matches(pattern: str, path: str) -> bool:
@@ -117,6 +121,13 @@ def fingerprint_inputs(manifest: Path) -> list[str]:
             head = str(path).split("/", 1)[0]
             # `_build_configuration` digests each unit crate's own manifest.
             required.append(f"{head}/Cargo.toml")
+        # Encoding v4: the integration-test SOURCES a unit's selectors run, and the lane
+        # code that decides what a selector means, are both fingerprint inputs. A trigger
+        # set blind to them would leave a rewritten control, or a changed selector
+        # mechanism, un-re-measured.
+        for pattern in test_source_patterns(unit):
+            required.append(pattern.replace("/**/*.rs", "/x.rs"))
+        required.extend(TEST_LANE_INPUTS)
     return sorted(set(required))
 
 

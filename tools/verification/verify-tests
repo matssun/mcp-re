@@ -52,9 +52,11 @@ from _fingerprint import fingerprint_unit  # noqa: E402
 from _manifest import (  # noqa: E402
     REPO_ROOT,
     ManifestError,
+    claims_test_evidence,
     load_assumptions,
     load_toolchains,
     load_verification,
+    test_package_for,
 )
 
 EVIDENCE_STORE = REPO_ROOT / ".verification" / "evidence"
@@ -72,32 +74,14 @@ DOC_RESULT_LINE = re.compile(r"^test (.+?) \.\.\. (\w+)$", re.MULTILINE)
 TARGET_SEP = "#"
 
 
-def claims_test_evidence(unit: dict) -> bool:
-    return any(str(entry).startswith("test://") for entry in unit.get("evidence", []))
-
-
 def unit_crate(unit: dict) -> str | None:
     """The Cargo package whose targets carry this unit's tests, or None.
 
-    Derived from the declared paths, never configured beside them: a unit whose source
-    moves to another crate must not keep testing the crate it left.
-
-    A unit whose SOURCE CLOSURE spans several packages has no derivable answer — the
-    verifier's results reach `mcp-re-core`'s Ed25519 primitive while every test lives in
-    `mcp-re-http-profile` — so that case, and only that case, reads `test_package`. The
-    manifest loader has already checked the field names one of the unit's own packages, so
-    this can select a package inside the measured closure and nothing else.
+    Delegates to the manifest's `test_package_for`, which is the ONE answer: the lane runs
+    the battery in this package and the ReviewFingerprint records this package as what was
+    measured, so a second implementation here could let the two disagree.
     """
-    crates = set()
-    for path in unit["paths"]:
-        head = path.split("/", 1)[0]
-        if not (REPO_ROOT / head / "Cargo.toml").is_file():
-            return None
-        crates.add(head)
-    if len(crates) == 1:
-        return crates.pop()
-    declared = unit.get("test_package")
-    return declared if declared in crates else None
+    return test_package_for(unit)
 
 
 def target_argv(target: str) -> list[str] | None:

@@ -525,9 +525,10 @@ tool_specific_mechanism = "verus:uninterp"
 # what the prover cannot see but what NO amount of testing could establish: the primitives
 # and the seam the claims quantify over.
 #
-# They were unregistered before this entry. Every one of the seven verifier-result claims
-# is false without them, and a claim whose premises are unnamed reads as stronger than it
-# is.
+# They were unregistered before this entry. Every one of the NINE verifier-result claims —
+# THM-0014 … THM-0022, the seven operation propositions plus the two shared response-fact
+# propositions — is false without them, and a claim whose premises are unnamed reads as
+# stronger than it is.
 
 [[assumption]]
 id = "ASM-0027"

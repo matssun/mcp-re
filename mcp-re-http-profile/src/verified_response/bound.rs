@@ -21,7 +21,8 @@ use super::facts::BoundResponseSignatureFacts;
 /// A response whose cryptographic floor holds, **bound to a concrete request**, with its
 /// signer authorized by the **trust seam**.
 ///
-/// Possession means [`BoundResponseSignatureFacts`] holds, and in addition that the
+/// A successful `verify_bound_response_floor` establishes [`BoundResponseSignatureFacts`],
+/// and in addition that the
 /// presented keyid was resolved through the trust seam in the `Response` slot — the
 /// resolved actor IS the accepted signer.
 ///
@@ -56,7 +57,8 @@ impl CryptographicFloorVerifiedBoundResponse {
 /// A response verified under the **full MCP-RE profile**, bound to a request, with its
 /// signer authorized by the **trust seam**.
 ///
-/// Possession means everything [`CryptographicFloorVerifiedBoundResponse`] means, and in
+/// A successful `verify_bound_response` establishes everything
+/// [`CryptographicFloorVerifiedBoundResponse`] does, and in
 /// addition that the response evidence block parsed and validated, that its `server_signer`
 /// is the identity the signature was actually accepted under, and that its
 /// `request_evidence` equals the handle the caller expected.

@@ -103,6 +103,82 @@ def _unit_packages(unit: dict) -> list[str]:
     return sorted(heads)
 
 
+def claims_test_evidence(unit: dict) -> bool:
+    """Whether any `test://` URI claims this unit's battery.
+
+    Defined once here rather than in the lane, because the FINGERPRINT and the lane must
+    agree about which units have test evidence: a unit the fingerprint treats as untested
+    and the lane runs would have its battery measured by nobody.
+    """
+    return any(str(entry).startswith("test://") for entry in unit.get("evidence", []))
+
+
+def test_package_for(unit: dict) -> str | None:
+    """The single Cargo package this unit's battery runs in, or None if there is none.
+
+    One answer, shared by the lane (which runs the battery) and the fingerprint (which
+    records which package was measured). Two implementations of "where do these tests live"
+    would let the recorded package and the executed package disagree.
+
+    Fail-closed on a path outside every Cargo package: such a unit has no package the lane
+    could run, and answering with one of the others would name a package that does not
+    cover its source.
+    """
+    for path in unit["paths"]:
+        head = path.split("/", 1)[0]
+        if "/" not in path or not (REPO_ROOT / head / "Cargo.toml").is_file():
+            return None
+    packages = _unit_packages(unit)
+    if len(packages) == 1:
+        return packages[0]
+    declared = unit.get("test_package")
+    return declared if declared in packages else None
+
+
+def _module_candidates(package: str, symbol_path: str) -> list[str]:
+    """The source files a `lib#`/`doc#` selector's module path could name, longest first.
+
+    `lib#rejection::tests::x` can only execute code in `<pkg>/src/rejection.rs`;
+    `doc#verified_response::bound::X` in `<pkg>/src/verified_response/bound.rs`. Every
+    prefix is offered because the selector names an item, not a file, and the file boundary
+    can be anywhere above it.
+    """
+    segments = [s for s in symbol_path.split("::") if s]
+    out: list[str] = []
+    for depth in range(len(segments), 0, -1):
+        stem = "/".join(segments[:depth])
+        out.append(f"{package}/src/{stem}.rs")
+        out.append(f"{package}/src/{stem}/mod.rs")
+    return out
+
+
+def _validate_in_crate_selectors(uwhere: str, unit: dict) -> None:
+    """A `lib#`/`doc#` selector must execute code the unit's own `paths` measure.
+
+    Integration-test sources enter the fingerprint as their own component; in-crate tests
+    do not, because they live inside the source files the unit already declares. That is
+    only true if it IS true, so it is checked rather than assumed: a `lib#` selector whose
+    module is not in `paths` would be a battery member whose body could be rewritten with
+    no fingerprint moving — the same false-freshness shape as an unmeasured implementation.
+    """
+    package = test_package_for(unit)
+    if package is None:
+        return
+    declared = set(unit["paths"])
+    for symbol in unit.get("tested_symbols", []):
+        target, _, path = str(symbol).partition("#")
+        if target not in ("lib", "doc"):
+            continue
+        candidates = _module_candidates(package, path)
+        if not any(c in declared for c in candidates):
+            raise ManifestError(
+                f"{uwhere}: tested_symbol {symbol!r} executes code in {package}/src, but no "
+                f"prefix of its module path is among this unit's `paths`. An in-crate test "
+                f"whose source the unit does not measure can be rewritten under the same "
+                f"name without moving the fingerprint. Declare the module's file."
+            )
+
+
 def _validate_test_package(uwhere: str, unit: dict) -> None:
     """`test_package` is required exactly when the source closure spans several packages.
 
@@ -352,6 +428,7 @@ def load_verification() -> dict:
                 f"claims them, so nothing consumes what the lane would measure."
             )
         _validate_test_package(uwhere, unit)
+        _validate_in_crate_selectors(uwhere, unit)
         contracts.update(unit.get("exported_contracts", []))
 
     for index, edge in enumerate(doc.get("edge", [])):

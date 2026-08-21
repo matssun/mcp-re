@@ -226,8 +226,24 @@ than "a test battery passed". A passing battery is not, on its own, evidence tha
 production check is load-bearing — so every conjunct THM-0014 … THM-0022 names was probed
 by deleting or defanging exactly that check, re-running the declared battery, and observing
 which declared member goes red. **26 mutations, each turning at least one declared member
-red.** The harness is a scratch script, not a lane: what is durable is the matrix and the
-controls it forced into existence.
+red.**
+
+The probes are **registered and executable**, not remembered:
+[`verification/policy/mutation-probes.toml`](../../../verification/policy/mutation-probes.toml)
+names each weakening and the declared control(s) it must turn red, and
+`tools/verification/verify-mutations` re-applies them all — to a **copy** of the tree,
+never the working tree — on every change to this unit, its test evidence or the probe
+definitions ([`.github/workflows/mutation-probe.yml`](../../../.github/workflows/mutation-probe.yml)).
+
+It is deliberately **not** a freeze on `verify.rs`. A probe whose anchor no longer matches
+exactly one site is reported **STALE**, which is a demand to re-adjudicate the probe against
+the new implementation, never to restore the old code. Two matches fails for the same
+reason as none: the lane could not say which check it broke, so whatever went red proves
+nothing about the conjunct named. Both failure modes, and the "weakening changed nothing"
+one, are themselves probed in `tools/verification/test_mutation_lane.py`.
+
+The lane checks the count stated in this section against the registry, so the table below
+and the executable set cannot drift.
 
 | claim | production check removed | declared control that goes red |
 |---|---|---|

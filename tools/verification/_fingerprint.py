@@ -4,7 +4,8 @@
     ReviewFingerprint(U) = H(
         source_inputs, generated_inputs, build_configuration, enabled_features,
         exported_contracts, consumed_contracts, proof_dependencies,
-        test_evidence_definition, trusted_assumptions, toolchain_identity,
+        test_evidence_definition, test_selection, test_sources, test_lane_identity,
+        trusted_assumptions, toolchain_identity,
         formal_model_revision, threat_model_revision, review_policy_revision
     )
 
@@ -25,6 +26,36 @@ and the freshness derivation silently establishes nothing over it. A component w
 matching inputs is an empty mapping — measured, and empty — which is a different claim from
 "not accounted for" and the only one this encoding can make.
 
+Encoding v4 measures the EFFECTIVE TEST EVIDENCE, not merely its label. Until v3 the only
+test component was `test_evidence_definition` — the sorted `test://` URIs — so a battery
+could fall from 67 declared controls to 5, or move to a different Cargo package, with the
+URI and therefore the fingerprint unchanged. Four components now answer "what did the test
+lane actually measure":
+
+  * `test_evidence_definition`  the `test://` URIs, as before — WHAT is claimed
+  * `test_selection`            the resolved package and the exact sorted symbols — WHICH
+                                tests were selected
+  * `test_sources`              the bytes of the integration-test targets those selectors
+                                run. In-crate (`lib#`, `doc#`) selectors are NOT here: they
+                                execute code inside the unit's declared `paths`, which
+                                `source_inputs` already digests, and the manifest loader
+                                REFUSES a `lib#`/`doc#` selector whose module is not
+                                declared, so that is a checked fact rather than a hope.
+  * `test_lane_identity`        the selector mechanism itself — `verify-tests` and the
+                                manifest logic it reads. The meaning of `doc#…`, and of
+                                `test_package`, is decided by that code; if the measuring
+                                instrument changes, what the measurement MEANS changed.
+
+An integration-test target is digested as a whole file (plus any module directory beside
+it), not as the subset of it the selectors name. That over-approximates — an unrelated test
+in the same file invalidates the unit — and over-approximation is the safe direction: it
+causes extra review, never false freshness. It narrows once there is an executable
+dependency boundary to narrow to.
+
+`_fingerprint.py` is deliberately NOT in `test_lane_identity`. Its identity is carried by
+`ENCODING_VERSION`, which is what a change of MEANING here must move; hashing the file
+would additionally invalidate every unit for a comment.
+
 The measured cone is the cone the LANE measures, not the paths the unit lists. `cargo verus
 verify -p <crate>` verifies the whole crate and compiles its `verify`-feature dependency
 closure, so a formal unit's `source_inputs` covers every `.rs` file in the crate its paths
@@ -43,12 +74,12 @@ import hashlib
 import json
 import tomllib
 
-from _manifest import REPO_ROOT
+from _manifest import claims_test_evidence, test_package_for, REPO_ROOT
 
 # Every attestation carrying an earlier version is UNKNOWN from the moment this moves, which
 # is the intended cost: an attestation computed over a narrower set of inputs cannot answer
 # whether one of the inputs it never saw has since changed.
-ENCODING_VERSION = 3
+ENCODING_VERSION = 4
 
 #: The classes whose evidence comes from a whole-crate prover run.
 FORMAL_CLASSES = {"V1", "V3"}
@@ -185,6 +216,70 @@ def _trusted_assumptions(unit_id: str, assumptions: dict) -> dict[str, str]:
     return out
 
 
+def _test_selection(unit: dict) -> dict:
+    """WHICH tests were selected: the resolved package and the exact symbols.
+
+    Empty for a unit with no `test://` evidence — measured, and empty, which is a different
+    claim from "not accounted for".
+    """
+    if not claims_test_evidence(unit):
+        return {}
+    return {
+        "package": test_package_for(unit),
+        "symbols": sorted(str(s) for s in unit.get("tested_symbols", [])),
+    }
+
+
+def test_source_patterns(unit: dict) -> list[str]:
+    """The globs naming the integration-test targets this unit's selectors run.
+
+    Exposed because two things read it: this module, which digests them, and
+    `scripts/verification_trigger_gate.py`, which checks the workflow re-runs the lane when
+    one of them changes. A path-filtered workflow and a content-addressed fingerprint are
+    one dependency set stated twice, and they drift in the direction that produces a false
+    green — so they are derived from one function.
+    """
+    if not claims_test_evidence(unit):
+        return []
+    package = test_package_for(unit)
+    if package is None:
+        return []
+    patterns: set[str] = set()
+    for symbol in unit.get("tested_symbols", []):
+        target, _, _ = str(symbol).partition("#")
+        if not target.startswith("tests/") or not target[6:]:
+            continue
+        name = target[6:]
+        patterns.add(f"{package}/tests/{name}.rs")
+        patterns.add(f"{package}/tests/{name}/**/*.rs")
+    return sorted(patterns)
+
+
+def _test_sources(unit: dict) -> dict[str, str]:
+    """The bytes of the integration-test targets this unit's selectors run.
+
+    Without this, a control could keep its declared name and lose its body: the selector
+    still resolves, the lane still reports a pass, and the fingerprint never moves. The
+    name is the label; the file is the evidence.
+    """
+    return _digest_paths(test_source_patterns(unit))
+
+
+#: The code that decides WHICH tests a selector names and WHERE they run. Not a build
+#: input — a measurement instrument, and evidence whose instrument changed is evidence
+#: whose meaning changed.
+TEST_LANE_INPUTS = (
+    "tools/verification/verify-tests",
+    "tools/verification/_manifest.py",
+)
+
+
+def _test_lane_identity(unit: dict) -> dict[str, str]:
+    if not claims_test_evidence(unit):
+        return {}
+    return _digest_paths(list(TEST_LANE_INPUTS))
+
+
 def fingerprint_unit(unit: dict, doc: dict, toolchains: dict, assumptions: dict) -> dict:
     crates = _unit_crates(unit)
     formal = unit["class"] in FORMAL_CLASSES
@@ -220,6 +315,9 @@ def fingerprint_unit(unit: dict, doc: dict, toolchains: dict, assumptions: dict)
         "consumed_contracts": sorted(unit.get("consumed_contracts", [])),
         "proof_dependencies": proof_dependencies,
         "test_evidence_definition": sorted(unit.get("evidence", [])),
+        "test_selection": _test_selection(unit),
+        "test_sources": _test_sources(unit),
+        "test_lane_identity": _test_lane_identity(unit),
         "trusted_assumptions": _trusted_assumptions(unit["id"], assumptions),
         "toolchain_identity": _toolchain_identity(toolchains),
         "formal_model_revision": doc.get("formal_model_revision"),

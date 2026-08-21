@@ -85,12 +85,14 @@ pilot = "lean-candidate"
 # The verifier's results — ADR-MCPRE-061 §2 class 9, closed by #570/#571
 # ---------------------------------------------------------------------------
 #
-# Seven public operations produce seven deliberately different propositions. One review
-# unit carries them, and the theorem layer allocates one claim per proposition: the
-# attacker stories differ, the evidence is shared, and `admission_currency` already sets
-# the precedent for several claims over one unit.
+# Seven public operations produce seven deliberately different propositions, and two of
+# those propositions have a genuinely shared half — the authorization-independent
+# cryptographic facts, which the trust-seam and delegation-chain paths both establish. One
+# review unit carries all of it, and the theorem layer allocates one claim per proposition,
+# nine in total: the attacker stories differ, the evidence is shared, and
+# `admission_currency` already sets the precedent for several claims over one unit.
 #
-# One unit rather than seven is the honest granularity. The propositions are separated by
+# One unit rather than nine is the honest granularity. The propositions are separated by
 # TYPE, but the source is not: they share `verify.rs`, so a fingerprint per operation would
 # make the graph look more precise than the measurement is.
 #
@@ -99,7 +101,7 @@ pilot = "lean-candidate"
 # every claim resting here is supported by a test battery and nothing above it may say
 # otherwise.
 #
-# `paths` is the COMPLETE security-relevant implementation closure of the seven operations,
+# `paths` is the COMPLETE security-relevant implementation closure of those operations,
 # not the files whose names read like the claims. The first version named seven files and
 # omitted `delegation.rs` — which implements the root signature check, credential
 # freshness, audience/profile/scope, key-use, epoch, revocation and `cnf.jwk` consistency,
@@ -124,7 +126,7 @@ pilot = "lean-candidate"
 [[unit]]
 id = "http_profile.verifier_results"
 class = "V0"
-description = "The seven public verifier operations and the seven products they return: what a SUCCESSFUL return of each establishes."
+description = "The seven public verifier operations and the products they return, including the facts two authorization paths share: what a SUCCESSFUL return of each establishes."
 paths = [
   "mcp-re-http-profile/src/verifier.rs",
   "mcp-re-http-profile/src/verify.rs",
@@ -161,9 +163,16 @@ evidence = ["test://http_profile/verifier/result_propositions"]
 # These are V0 claims, so a conjunct nobody can break is a conjunct the evidence does not
 # establish, however many tests pass. Every member below was mutation-probed: the
 # production check the theorem names was deleted or defanged, the battery re-run, and the
-# named control observed to go red. The matrix — 27 mutations, each turning at least one
-# declared member red — is recorded in
-# `docs/architecture/components/evidence-verification.md` §9.1.
+# named control observed to go red.
+#
+# The probes are REGISTERED, not remembered: `verification/policy/mutation-probes.toml`
+# names each weakening and the control(s) it must turn red, and
+# `tools/verification/verify-mutations` re-applies them to a COPY of the tree on every run
+# that touches this unit. A probe whose anchor no longer matches exactly once is STALE and
+# fails the lane — a demand to re-adjudicate the probe against the new implementation,
+# never to restore the old code. The matrix a reviewer reads is
+# `docs/architecture/components/evidence-verification.md` §9.1, and the lane checks its
+# stated count against the registry so the two cannot drift.
 #
 # The probe found three conjuncts that nothing here reached, and each got a control rather
 # than a softened statement:

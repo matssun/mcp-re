@@ -9,7 +9,7 @@
 //! These are the legal products, and only the legal ones — there is deliberately no
 //! Cartesian product of floor × bound × delegated:
 //!
-//! | product | what possession means |
+//! | product | what a SUCCESSFUL VERIFIER RETURN of it establishes |
 //! |---|---|
 //! | [`CryptographicFloorVerifiedBoundResponse`] | the bound signature facts, with the signer authorized by the TRUST SEAM |
 //! | [`CryptographicFloorVerifiedUnboundResponse`] | the unbound signature facts, with the signer authorized by the TRUST SEAM |
@@ -50,9 +50,18 @@
 //! why the shared facts are also two types, one per binding kind, rather than one type
 //! with the coverage difference left to prose.
 //!
+//! # These types state propositions; they do not prove provenance
+//!
 //! Fields are `pub` for the reason recorded in `docs/dev/sealed-owners.md`: a proved
 //! postcondition outranks a seal, and Verus rejects private fields on a transparent
-//! datatype. The assurance separation is carried by the types, which needs no seal.
+//! datatype. Nothing therefore prevents a caller from assembling one of these values by
+//! hand, so the table above — and every product below — is deliberately phrased over what a
+//! SUCCESSFUL RETURN from the verifier establishes, never over what holding a value means.
+//! "Possession implies" would claim an origin the types do not give.
+//!
+//! What the type split DOES give is non-substitutability: no consumer requiring one
+//! proposition can be handed a value of another, by the compiler rather than a runtime
+//! check. The registered claims are THM-0016 … THM-0022 and their scopes say the same.
 
 mod bound;
 mod facts;
