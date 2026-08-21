@@ -31,6 +31,7 @@ attestations this view cannot see.
 | unit://http_profile.verifier_results | source, contracts or evidence | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022 | _no consumer_ |
 | unit://proxy.online_ocsp_reachability | source, contracts or evidence | THM-0013 | _no consumer_ |
 | unit://proxy.runtime_lifecycle | source, contracts or evidence | THM-0012 | _no consumer_ |
+| unit://proxy.tls_listener_state | source, contracts or evidence | _no theorem_ | _no consumer_ |
 
 ## Theorems
 

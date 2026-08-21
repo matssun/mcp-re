@@ -33,7 +33,7 @@ use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 
-use mcp_re_proxy::RustlsDirectProvider;
+use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 
 use mcp_re_transport::ClientLimits;
 use mcp_re_transport::ClientTlsConfig;
@@ -126,12 +126,9 @@ fn server_config(
     server_key: PrivateKeyDer<'static>,
     client_ca: &Ca,
 ) -> Arc<rustls::ServerConfig> {
-    let config = RustlsDirectProvider::build_server_config(
-        server_chain,
-        server_key,
-        vec![client_ca.cert.der().clone()],
-    )
-    .expect("server config");
+    let config = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
+        .build_exported_key_config(server_chain, server_key, Vec::new())
+        .expect("server config");
     Arc::new(config)
 }
 

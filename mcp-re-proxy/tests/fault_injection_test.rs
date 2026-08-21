@@ -41,7 +41,7 @@ use std::sync::Arc;
 use std::thread;
 
 use mcp_re_proxy::serve_once;
-use mcp_re_proxy::RustlsDirectProvider;
+use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::ServerOptions;
 
 use rcgen::BasicConstraints;
@@ -233,12 +233,9 @@ fn server_config_for(client_ca: &Ca) -> Arc<rustls::ServerConfig> {
     let server_ca = make_ca();
     let (server_cert, server_key) =
         make_leaf(&server_ca, vec![dns("localhost")], Some("localhost"), false);
-    let config = RustlsDirectProvider::build_server_config(
-        vec![server_cert],
-        server_key,
-        vec![client_ca.cert.der().clone()],
-    )
-    .expect("server config");
+    let config = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
+        .build_exported_key_config(vec![server_cert], server_key, Vec::new())
+        .expect("server config");
     Arc::new(config)
 }
 

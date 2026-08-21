@@ -44,10 +44,28 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
+path = "mcp-re-proxy/src/tls_listener_state/mod.rs"
+baseline_prod_loc = 223
+baseline_sha = "70e6bf7"
+status = "reviewed-exception"
+review_ref = "EX-005 in docs/architecture/review-dispositions.md"
+
+# Renamed by MCPRE-137: `src/tls_auth_epoch.rs` became a private subordinate of the
+# listener-state owner. The debt moves WITH the file — deleting the entry because the path
+# changed would launder 270 lines of registered debt as progress — so the baseline and the
+# baseline SHA are the ones it carried before the move.
+[[debt]]
+path = "mcp-re-proxy/src/tls_listener_state/auth_epoch.rs"
+baseline_prod_loc = 270
+baseline_sha = "d1fc5fa"
+status = "unreviewed"
+
+[[debt]]
 path = "mcp-re-proxy/src/tls.rs"
 baseline_prod_loc = 1907
 baseline_sha = "d1fc5fa"
-status = "unreviewed"
+status = "reviewed-action-required"
+review_ref = "EX-004 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-http-profile/src/verify.rs"
@@ -498,12 +516,6 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/kms_endpoint_policy.rs"
-baseline_prod_loc = 270
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/tls_auth_epoch.rs"
 baseline_prod_loc = 270
 baseline_sha = "d1fc5fa"
 status = "unreviewed"

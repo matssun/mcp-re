@@ -20,7 +20,7 @@ use mcp_re_demo::DemoFixtureSpec;
 use mcp_re_demo::DemoFixtures;
 
 use mcp_re_proxy::serve_once;
-use mcp_re_proxy::RustlsDirectProvider;
+use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::ServerOptions;
 
 use mcp_re_transport::ClientTlsConfig;
@@ -46,9 +46,9 @@ fn server_config(fx: &DemoFixtures) -> Arc<rustls::ServerConfig> {
         rustls_pki_types::PrivateKeyDer::from_pem_slice(fx.server_key_pem().as_bytes())
             .expect("server key");
     let client_ca = cert_der(fx.client_ca_pem());
-    let config =
-        RustlsDirectProvider::build_server_config(vec![server_cert], server_key, vec![client_ca])
-            .expect("server config from fixture material");
+    let config = TlsListenerSecurityState::new(vec![client_ca])
+        .build_exported_key_config(vec![server_cert], server_key, Vec::new())
+        .expect("server config from fixture material");
     Arc::new(config)
 }
 

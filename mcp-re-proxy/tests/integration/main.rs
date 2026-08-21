@@ -40,5 +40,4 @@ mod http_profile_dispatch_test;
 mod mtls_transport_binding_test;
 mod plane_config_reachback_test;
 mod revocation_serving_wiring_test;
-mod tls_epoch_resumption_test;
 mod tls_test;

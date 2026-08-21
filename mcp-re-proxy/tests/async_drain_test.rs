@@ -25,7 +25,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use mcp_re_proxy::async_serve;
-use mcp_re_proxy::tls::RustlsDirectProvider;
+use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::transport::TransportIdentity;
 use mcp_re_proxy::ServerLimits;
 use mcp_re_proxy::ServerOptions;
@@ -112,12 +112,9 @@ fn server_config_for(client_ca: &Ca) -> Arc<rustls::ServerConfig> {
     let (server_cert, server_key) = make_leaf(&server_ca, vec![dns("localhost")], false);
     let server_der = server_cert.der().clone();
     let server_key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(server_key.serialize_der()));
-    let config = RustlsDirectProvider::build_server_config(
-        vec![server_der],
-        server_key_der,
-        vec![client_ca.cert.der().clone()],
-    )
-    .expect("server config");
+    let config = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
+        .build_exported_key_config(vec![server_der], server_key_der, Vec::new())
+        .expect("server config");
     Arc::new(config)
 }
 

@@ -62,6 +62,8 @@ EVIDENCE_STORE = REPO_ROOT / ".verification" / "evidence"
 
 REGISTRY = REPO_ROOT / "verification" / "policy" / "mutation-probes.toml"
 
+_OPTIONAL_PROBE_KEYS = {"note", "theorem"}
+
 _PROBE_KEYS = {
     "id",
     "unit",
@@ -92,7 +94,7 @@ def load_probes() -> list[dict]:
         unknown = set(probe) - _PROBE_KEYS
         if unknown:
             raise ManifestError(f"{where}: unknown key(s) {sorted(unknown)}")
-        missing = _PROBE_KEYS - {"note"} - set(probe)
+        missing = _PROBE_KEYS - _OPTIONAL_PROBE_KEYS - set(probe)
         if missing:
             raise ManifestError(f"{where}: missing required key(s) {sorted(missing)}")
         if probe["id"] in seen:
@@ -190,9 +192,14 @@ def copy_tree(destination: Path) -> None:
     including edits not yet committed, which is what a developer running this locally means
     — while excluding `target/` and `.git`, whose size would make the copy the slowest part
     of the run.
+
+    `--others --exclude-standard` is why a NEW, not-yet-added source file is copied too. It
+    was not, at first, and the lane reported the probe STALE because its file "does not
+    exist" — a true statement about the copy and a false one about the tree, which is
+    exactly the kind of measurement error a probe lane must not make.
     """
     listing = subprocess.run(
-        ["git", "ls-files", "-z"],
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -274,8 +281,13 @@ MATRIX_DOC = REPO_ROOT / "docs" / "architecture" / "components" / "evidence-veri
 _MATRIX_COUNT = re.compile(r"\*\*(\d+) mutations, each turning at least one declared member")
 
 
+#: The unit whose probe suite MATRIX_DOC reproduces. Other units' probes are registered
+#: here too and are not part of that section's count.
+MATRIX_UNIT = "http_profile.verifier_results"
+
+
 def check_matrix_count(probes: list[dict]) -> str | None:
-    """The blueprint's stated probe count must equal the registry's.
+    """The blueprint's stated probe count must equal the registry's, FOR THE UNIT IT DOCUMENTS.
 
     Prose is a CLAIM, not evidence. The count drifted from 26 to 27 the first time this
     matrix was written by hand, and a reviewer reading "27 mutations" has no way to notice.
@@ -291,10 +303,11 @@ def check_matrix_count(probes: list[dict]) -> str | None:
             f"registry's count can no longer be checked against the document."
         )
     stated = int(match.group(1))
-    if stated != len(probes):
+    documented = sum(1 for probe in probes if probe.get("unit") == MATRIX_UNIT)
+    if stated != documented:
         return (
-            f"{MATRIX_DOC.name} states {stated} mutations, the registry holds "
-            f"{len(probes)}. The registry is the authority."
+            f"{MATRIX_DOC.name} states {stated} mutations for {MATRIX_UNIT}, the registry "
+            f"holds {documented}. The registry is the authority."
         )
     return None
 
@@ -395,7 +408,8 @@ def main() -> int:
             red = sorted(red)
             if not red:
                 print(
-                    f"  FAIL {probe['id']}: {probe['theorem']} claims \"{probe['conjunct']}\", "
+                    f"  FAIL {probe['id']}: {probe.get('theorem', probe['unit'])} claims "
+                    f"\"{probe['conjunct']}\", "
                     f"but removing the check left every expected control green. The conjunct "
                     f"is NOT load-bearing in the declared battery — write a control, do not "
                     f"soften the statement.",
@@ -403,7 +417,7 @@ def main() -> int:
                 )
                 failures.append(probe["id"])
                 continue
-            print(f"  ok   {probe['id']}  {probe['theorem']}  red: {', '.join(red)}")
+            print(f"  ok   {probe['id']}  {probe.get('theorem', probe['unit'])}  red: {', '.join(red)}")
     finally:
         if args.keep_tree:
             print(f"  scratch tree kept at {scratch}")

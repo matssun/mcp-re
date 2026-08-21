@@ -266,3 +266,270 @@ controls at once, where before it took two mutations to reach the same set.
   datatype and cannot call accessors from verified code. Recorded in
   [`docs/dev/sealed-owners.md`](../dev/sealed-owners.md) as the second measurement of a
   rule that already existed — a proved postcondition outranks a seal.
+
+---
+
+## EX-004 — `mcp-re-proxy/src/tls.rs` — **census complete, disposition: decompose first**
+
+**Status:** `reviewed-action-required`. **Remediation:** [#573](https://github.com/matssun/mcp-re/issues/573)
+(the listener-lifetime security-state owner) then
+[#574](https://github.com/matssun/mcp-re/issues/574) (the blocking HTTP/1 harness).
+**Measured:** 1907 production lines on `063a0f8`, re-measured rather than carried over from
+the issue text — an ADR-061 §5.3 **band-3** unit (>1,000), so this census is required before
+the work, not after it. **Component blueprint:**
+[`components/tls-and-transport-identity.md`](components/tls-and-transport-identity.md).
+
+### §8 question 1 — what single security fact does it own?
+
+There is no single answer, and the shortest honest one needs six "and"s: *the file owns the
+serving TLS configuration **and** the client-verifier posture **and** the resumption-epoch
+binding **and** offline CRL evidence **and** identity extraction from a leaf certificate
+**and** the classification of why a connection was refused **and** a blocking HTTP/1
+harness.* ADR-061 §8 names an answer needing an "and" as evidence of a shallow authority
+boundary; this one needs six.
+
+### §8 question 2 — how many independently describable authorities?
+
+Eight. Size ordered the investigation; this count decides the outcome.
+
+| # | authority | what it decides | ~prod lines |
+|---|---|---|---:|
+| A | **Listener security state** — `new_resumption_state`, `epoch_bound_resumption`, `NoStatelessTickets`, the four builders and their `_resuming` twins | whether a stored session is still a shortcut under current trust | ~230 |
+| B | Client-verifier construction (`build_client_verifier`, the `fault_accept_any_client` bypass) | what a valid client certificate is | ~40 |
+| C | Offline CRL evidence and freshness posture (`CrlFreshness`, `crl_freshness`, `CrlPosture`, `load_client_crls`) | whether revocation evidence may be relied on | ~230 |
+| D | Identity extraction (`extract_identity`, `resolve_identity*`, `leaf_facts`) | which certificate field IS the peer's identity | ~180 |
+| E | Connection-rejection classification (`connection_rejection*`, `cert_lifetime_rejection*`, `chain_issuers_*`, `ocsp_rejection`, `routing_header_rejection`, `assertion_header`) | the refusal token a peer is told | ~330 |
+| F | Serving limits and options vocabulary (`ServerLimits`, `ServerOptions`, `IdentityStrategy`) | the DoS ceilings and the identity strategy | ~230 |
+| G | **The blocking HTTP/1 harness** (`serve*`, `serve_connection`, `DeadlineStream`, `read_http_request`, `write_http_response`, framing helpers) | nothing security-relevant — it is a test harness | ~420 |
+| H | Wall clock (`wall_clock_unix`) | the instant every validity check reads | ~28 |
+
+A and G are the two the campaign already ruled on, and they are the two with the clearest
+seams. This record closes the census; #573 and #574 are the work it identifies.
+
+### §8 question 7 — security relationships existing only through call ordering
+
+**This is the defect #573 exists to remove, and the code states it against itself.**
+
+`tls_plane.rs` calls `tls::new_resumption_state(&client_ca)` once and holds the result
+across every rebuild, so *the listener lifetime is the resumption authority*. Nothing says
+so at a type. Meanwhile `RustlsDirectProvider::build_server_config_with_crls` — and both
+delegated one-shot builders — call `new_resumption_state` **internally**, and
+`new_resumption_state`'s own doc comment admits the consequence:
+
+> A state created per build pairs a fresh epoch with a fresh empty cache, which discards
+> every resumable session on each rebuild and leaves the epoch unable to move.
+
+Two builders whose names differ by the suffix `_resuming` differ in whether ADR-055's epoch
+is a live lever or a constant. The relationship holds today only because `tls_plane.rs`
+happens to call the right one.
+
+There is a second ordering relationship inside the surviving path. A rebuild passes
+`state.client_ca.clone()` **and** `&state.resumption` as separate arguments, which must
+agree — the anchors are the epoch's only input. Nothing but the call site relates them.
+
+### §8 question 8 — public interface that exists only because tests need it
+
+**The entire one-shot builder family.** No production code calls
+`RustlsDirectProvider::build_server_config`, `build_server_config_with_crls`,
+`build_server_config_delegated_with_crls` or `build_server_config_delegated_validated`.
+Every caller is a test, including cross-crate ones in `mcp-re-transport/tests/`. Production
+reaches TLS only through `tls_plane.rs` → the `_resuming` variants.
+
+So the API surface that carries the degenerate epoch behaviour is also the surface with no
+production consumer. That is what makes #573's ambiguity removable rather than a
+compatibility problem: there is one production capability, not two.
+
+Authority G is the same finding at file scale — `serve_once`'s own doc says *"the shipped
+proxy does not use it"*.
+
+### §8 question 9 — branches unreachable under the current legality model
+
+`epoch_bound_resumption`'s `if let Some(previous) = resumption.republish(epoch)` branch, and
+the operator log line inside it, are **unreachable in production today**. Within a listener
+the anchor set is fixed at `TlsRebuildState::new`, and every rebuild republishes the same
+digest; a trust-anchor change produces a new plane with a new store, which discards the
+cache wholesale rather than moving the epoch. The mechanism that actually prevents stale
+resumption across an anchor change is store replacement, not epoch advance.
+
+The epoch-mismatch eviction is still exercised, but only by
+`tls_listener_state::resumption_acceptance` (an integration test at census time; moved
+inside the owner's seal by #573), which drives `SharedTlsAuthEpoch::store` directly. **That is a claim about the store, not about the plane**, and #573 must not
+quietly convert it into a claim about the plane.
+
+This is recorded, not acted on. Deciding whether the epoch should become a live
+listener-lifetime lever (an anchor-reload path) or an acknowledged construction-time
+constant is an ADR-055 question and needs owner review; #573's scope is ownership, not
+epoch lifecycle.
+
+### §8 question 10 — facts represented more than once
+
+The trusted client-CA set is held by `TlsRebuildState.client_ca` **and** digested into the
+epoch the store publishes, with only the call site relating them. Both `_resuming` builders
+recompute `TlsAuthEpoch::compute(&client_ca)` from the anchors they were handed rather than
+reading the epoch the store already holds.
+
+### §8 question 11 — inconsistent values a caller can construct
+
+`TlsAuthEpoch`, `SharedTlsAuthEpoch` and `EpochBoundSessionStore` are `pub` with `pub`
+constructors, so a caller can assemble a store under any epoch and hand it to any build.
+`new_resumption_state` is `pub(crate)`, which binds nothing inside this crate. The forbidden
+combination — a fresh cache paired with an epoch unrelated to the verifier installed beside
+it — is constructible today, and is what #573 must make unconstructible rather than
+detectable.
+
+### §8 questions 3–6, 12
+
+It **decides** the resumption gate, the verifier posture, the identity field, and the
+refusal token. It **executes** rustls configuration and socket I/O. It **transports** the
+extracted identity to the handler. It **reconstructs** nothing another owner already
+decided, except the epoch, which it recomputes per build from anchors the store's owner
+already holds (question 6, and the question-10 duplicate above). The lanes that establish
+its properties are `cargo test -p mcp-re-proxy` for the unit tests,
+`//mcp-re-proxy:integration_test` for the epoch-resumption control, and
+`//mcp-re-proxy:fault_injection_test` for the deliberately-broken client-auth control
+(question 12).
+
+### Disposition
+
+`reviewed-action-required`. Eight authorities, two with identified owners next door: the
+listener-lifetime security state (#573) and the blocking harness (#574). A §14 exception is
+declined — this record does not grant one, and the file stays in the debt registry until
+those land and this census is re-run.
+
+### What #573 changed, measured
+
+`tls.rs` **1907 → 1565** production lines; `tls_plane.rs` 679 → 623. The owner's tree is
+measured in EX-005, which is the record that owns those numbers.
+
+Authority A left the file entirely, into a module TREE under the owner
+(`assembly`, `auth_epoch`, `client_verifier`, `resumption_binding`,
+`resumption_acceptance`), every member `pub(super)`. Authority B — the client verifier —
+went with it, since after the move its only callers were there.
+
+The first attempt left those as `pub(crate)` in `tls.rs` and kept `tls_auth_epoch` a `pub`
+sibling, while claiming the pairing was unconstructible. Review caught it: `pub(crate)`
+seals against nobody when every consumer lives in the crate, so any module could assemble a
+verifier over anchors A, build a store over epoch B, and pair them. The subordinates moved
+INTO the owner rather than being described as subordinate. The residual limit is foreign
+and is now stated rather than papered over — `rustls::ServerConfig::session_storage` is a
+public field of a type this project does not own.
+
+Each question above, answered by the change:
+
+- **Q7 (both instances).** A build is now a method on `TlsListenerSecurityState`. The
+  anchors and the store are never separately passable, so neither ordering relationship
+  survives.
+- **Q8.** The one-shot family is deleted, along with the `RustlsDirectProvider` marker it
+  hung off, which held nothing else. Nineteen call sites across five crates migrated to
+  the owner; every one was a test, which is the census finding confirming itself.
+- **Q9.** Untouched, deliberately. `republish` stays under the owner and is now called with
+  the epoch the store already holds, so it is a visible no-op rather than a recomputation
+  that might look like a live lever. Whether the epoch SHOULD be one is an ADR-055
+  lifecycle question, recorded separately.
+- **Q10.** The anchors are held once; the epoch is derived once, in the constructor. The
+  mutation probe found this mattered: while `bind_resumption` recomputed the digest, a
+  corrupted constructor epoch was silently CORRECTED by the first build, so the constructor
+  looked load-bearing only until a config was built through it.
+- **Q11.** `EpochBoundSessionStore` is still publicly constructible — the real-handshake
+  acceptance test builds one, and a store in isolation is not an illegal value. What is now
+  unconstructible is the illegal value: *a serving config whose cache is unrelated to the
+  anchors its verifier was built from*. No public path installs a store on a config.
+
+The ownership is measured rather than asserted. `proxy.tls_listener_state` is a class-V0
+review unit carrying `test://` and `mutation://` evidence, so it cannot be attested without
+a mutation PASS at its exact fingerprint, and FOUR registered probes each turn a declared
+control red: a store created per build (T01), an epoch derived from anything but the owner's
+anchors (T02), an enabled stateless ticketer that would resume outside the store at all
+(T03), and a signing budget created per delegated rebuild (T04).
+
+T04 exists because review found the budget named among the four things "established
+together" while nothing asked what breaks if a rebuild recreates it — a conjunct asserted in
+prose on a V0 unit. Making it load-bearing needed the delegated seam to return the CONCRETE
+resolver, since `DelegatedCertResolver::budget()` is the only handle on which budget a build
+actually used.
+
+The unit's `paths` reach `tls.rs`, `tls_plane.rs` and `delegated_tls.rs` as well as the
+owner's tree. The first version named the owner and the epoch module only — and T03 mutates
+`tls.rs`, so an edit there could have weakened the resumption binding while the fingerprint
+stood still. Same false-freshness class as the one #596 closed.
+
+The eviction property itself did not move. It is a claim about the STORE, asserted by
+`tls_listener_state::auth_epoch`'s unit tests and by
+`tls_listener_state::resumption_acceptance` driving real rustls handshakes — both now
+inside the owner's privacy boundary, because keeping the acceptance test outside would have
+kept the subordinates `pub`. `tls.rs`'s `epoch_binding_tests` had been asserting the same
+thing a third time through the builder, and that duplicate is gone rather than relocated.
+
+**The lifecycle question this census raised is now ruled.**
+[ADR-MCPRE-062](https://github.com/matssun/mcp-re/discussions/599) supersedes ADR-055 and
+selects immutable listener / store replacement. #573 conforms to it structurally and does
+not retire the dormant machinery; that is #598, deliberately a separate diff. Question 9
+above stands as the census finding that produced the ruling.
+
+---
+
+## EX-005 — `mcp-re-proxy/src/tls_listener_state/mod.rs` — **reviewed exception**
+
+**Status:** `reviewed-exception`. **Measured:** 223 production lines, of which **85 are
+code**; the remaining 138 are the module note and the item documentation. Created by
+MCPRE-137 / #573; the parent census is EX-004.
+
+### Why this is a B-case and not a shave
+
+The unit is what is LEFT after five extractions, not a unit that was never examined. The
+listener-state authority was decomposed into independently reviewable subordinates first.
+All newly extracted responsibilities are below the threshold except `auth_epoch.rs`, whose
+pre-existing 270-line debt remains independently registered and unreviewed:
+
+Measured by `scripts/module_size_gate.py::production_lines` on this head — re-rendered from
+the counter rather than carried forward, because a stale number in a durable review record
+is how a census stops being reliable:
+
+| module | prod | what it decides |
+|---|---:|---|
+| `assembly.rs` | 112 | what the serving config IS |
+| `auth_epoch.rs` | 270 | the epoch value, and the store tagged with it (pre-existing debt, carried across the rename) |
+| `client_verifier.rs` | 60 | what a valid client certificate is |
+| `resumption_binding.rs` | 111 | whether a stored session is still a shortcut |
+| `resumption_acceptance.rs` | 29 | (test-only; the handshake controls are inside a `#[cfg(test)]` region) |
+| `mod.rs` | **223** | that all four facts belong to one listener |
+
+### What invariant requires locality
+
+The owner's whole claim is a FOUR-WAY RELATION: anchors, the epoch they digest to, the
+cache tagged with it, and the signing budget, established together and unsplittable. The
+things that make it unsplittable are the build methods — `docs/dev/sealed-owners.md` records
+that for this owner **the projections ARE the operations**, because a fact projection would
+hand the terms of the relation back as independently passable arguments.
+
+So the field declarations and the only code permitted to read them must be readable
+together. A reviewer's question is *"can a caller obtain these separately?"*, and the answer
+is only checkable by seeing the private fields and every method that touches them on one
+screen. Moving the build methods to a child module would keep them compiling — a child sees
+its parent's privates — while splitting the question across two files. That is the reasoning
+the decomposition would damage.
+
+### Why the subordinate responsibilities cannot be separated further
+
+They already have been. What remains is a constructor, one read projection, three build
+methods, and two private seams; there is no second authority inside it. §8 question 2 gives
+the answer **one**, with no "and".
+
+### What compensates for the size
+
+`proxy.tls_listener_state` is a class-V0 review unit carrying **both** `test://` and
+`mutation://` evidence, so `attest` refuses it without a mutation PASS at its exact
+fingerprint. Four registered probes each turn a declared control red:
+
+| probe | weakening | control |
+|---|---|---|
+| T01 | a session store created per build | `a_rebuild_keeps_the_cache_and_the_epoch_of_the_state_it_was_built_through` |
+| T02 | the epoch derived from anything but the owner's anchors | `the_epoch_digests_the_anchors_this_state_owns`, `a_different_anchor_set_is_a_different_state_with_its_own_empty_cache` |
+| T03 | an enabled stateless ticketer, resuming outside the store | `no_config_this_owner_builds_can_resume_outside_the_store` |
+| T04 | a signing budget created per delegated build | `a_delegated_rebuild_reuses_the_listeners_signing_budget` |
+
+### What this record does not close
+
+It is an exception for **this file at this size**, not for the subtree and not for
+`tls.rs` — EX-004 stays `reviewed-action-required` until #574 lands and its census is
+re-run. Review granularity equals exception granularity.

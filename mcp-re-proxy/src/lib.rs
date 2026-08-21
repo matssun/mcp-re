@@ -183,7 +183,7 @@ pub mod reloading_trust;
 /// Per-stage wall-clock timers for the async serving path.
 pub mod stage_timers;
 /// ADR-MCPRE-055: the trust epoch that gates TLS session resumption.
-pub mod tls_auth_epoch;
+pub mod tls_listener_state;
 // ADR-MCPS-021 Tier 3: push-invalidation trust cache — bounded-`T` caching plus an
 // injected invalidation channel that evicts revoked entries immediately, with a
 // bounded-`T` fallback when the channel is unhealthy (never a zero-window claim).
@@ -373,14 +373,11 @@ pub use shared_replay::AtomicReplayStore;
 pub use shared_replay::InMemoryAtomicReplayStore;
 pub use shared_replay::ReplayStoreError;
 pub use shared_replay::SharedReplayCache;
-pub use tls::build_server_config_delegated_validated;
-pub use tls::build_server_config_delegated_with_crls;
 pub use tls::extract_identity;
 pub use tls::serve;
 pub use tls::serve_once;
 pub use tls::serve_once_with_assertion;
 pub use tls::IdentityStrategy;
-pub use tls::RustlsDirectProvider;
 pub use tls::ServerLimits;
 pub use tls::ServerOptions;
 pub use tls::TlsError;
