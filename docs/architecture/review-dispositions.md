@@ -477,8 +477,9 @@ MCPRE-137 / #573; the parent census is EX-004.
 ### Why this is a B-case and not a shave
 
 The unit is what is LEFT after five extractions, not a unit that was never examined. The
-listener-state authority was decomposed into siblings first, and each of them is under the
-threshold:
+listener-state authority was decomposed into independently reviewable subordinates first.
+All newly extracted responsibilities are below the threshold except `auth_epoch.rs`, whose
+pre-existing 270-line debt remains independently registered and unreviewed:
 
 Measured by `scripts/module_size_gate.py::production_lines` on this head — re-rendered from
 the counter rather than carried forward, because a stale number in a durable review record

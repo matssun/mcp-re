@@ -346,15 +346,15 @@ tested_symbols = [
 # The unit exists because the EX-004 census found the relationship held only through call
 # ordering — a rebuild passed the anchors and the store as two arguments that had to agree,
 # and a second builder family created its own state per build. The claim worth measuring is
-# not "the code compiles" but "the pairing is unconstructible", and the probe below is what
-# distinguishes those.
+# not "the code compiles" but "the construction path does not permit the pairing terms to be
+# supplied independently", and the probe below is what distinguishes those.
 #
 # Class V0: there is no `ensures` here. The battery is what the claim rests on, so it
 # carries `mutation://` for the same reason `http_profile.verifier_results` does.
 #
 # NOT claimed by this unit, and the distinction is the whole point of the census: the STORE
-# refuses a session whose epoch no longer matches (`tls_auth_epoch`, and the real-handshake
-# acceptance in `tests/integration/tls_epoch_resumption_test.rs`), while a production
+# refuses a session whose epoch no longer matches (`tls_listener_state::auth_epoch`, and the
+# real-handshake acceptance in `tls_listener_state::resumption_acceptance`), while a production
 # listener's anchors are immutable, so its epoch does not advance. What protects an
 # anchor-set change is that a new anchor set is a new listener with a new empty store. Two
 # propositions, two batteries; neither is evidence for the other.
