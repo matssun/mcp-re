@@ -1,5 +1,4 @@
-//! `RustlsDirectProvider` — Rust-native TLS termination + mTLS (MCPS-025,
-//! ADR-MCPS-014).
+//! Rust-native TLS termination + mTLS (MCPS-025, ADR-MCPS-014).
 //!
 //! The proxy terminates TLS itself with `rustls` (the `ring` provider), requires
 //! and verifies a client certificate against a configured client-CA
@@ -293,132 +292,96 @@ pub enum TlsError {
     DelegatedKeyMismatch(String),
 }
 
-/// Marker for the production direct-TLS transport-binding provider. The verified
-/// identity is produced per connection by the serve loop (see [`serve_once`] /
-/// [`serve`]); the binding policy (MCPS-026) consumes it.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct RustlsDirectProvider;
+/// Assemble a serving `ServerConfig` under EXPORTED key custody: requires and verifies a
+/// client certificate against `client_ca`, presenting `server_chain` + `server_key`, using
+/// the `ring` provider explicitly (no process-global default install).
+///
+/// Offline CRL revocation only — the CRLs are loaded from disk at startup and never
+/// refreshed over the network. ONLINE OCSP / CRL-distribution-point fetching is
+/// intentionally not implemented (it would require an HTTP client and a live responder,
+/// expanding the firewalled supply chain).
+///
+/// Fail-closed posture (the rustls 0.23 builder defaults, made explicit):
+///   * a client cert listed as revoked by any CRL → handshake REJECTED;
+///   * the FULL chain to the trust anchor has revocation checked
+///     (`RevocationCheckDepth::Chain`, the default);
+///   * a cert whose revocation status cannot be determined from the CRLs is REJECTED
+///     (`UnknownStatusPolicy::Deny`). Unconditional — see [`build_client_verifier`], which
+///     takes no policy input that could relax it.
+///
+/// An empty `crls` behaves exactly like the no-CRL path: `.with_crls([])` adds nothing and
+/// rustls performs no revocation checks.
+///
+/// `pub(crate)` and RESUMPTION-FREE. It assembles the verifier and the credential and
+/// stops there: binding the config to a listener's epoch-tagged session cache belongs to
+/// [`TlsListenerSecurityState`](crate::tls_listener_state::TlsListenerSecurityState), which
+/// is the only thing that can pair a cache with the anchors it was established from. A
+/// public builder here is what used to hand callers a fresh epoch beside a fresh empty
+/// cache.
+pub(crate) fn assemble_exported_key_config(
+    server_chain: Vec<CertificateDer<'static>>,
+    server_key: PrivateKeyDer<'static>,
+    client_ca: Vec<CertificateDer<'static>>,
+    crls: Vec<CertificateRevocationListDer<'static>>,
+) -> Result<ServerConfig, TlsError> {
+    let provider = Arc::new(ring::default_provider());
+    let verifier = build_client_verifier(client_ca, crls, provider.clone())?;
 
-impl RustlsDirectProvider {
-    /// Build a `rustls` server config that REQUIRES and verifies a client
-    /// certificate against `client_ca`, presenting `server_chain` + `server_key`.
-    /// Uses the `ring` provider explicitly (no process-global default install).
-    ///
-    /// Equivalent to [`build_server_config_with_crls`](Self::build_server_config_with_crls)
-    /// with no CRLs — preserved byte-for-byte for callers that do not configure
-    /// offline revocation.
-    pub fn build_server_config(
-        server_chain: Vec<CertificateDer<'static>>,
-        server_key: PrivateKeyDer<'static>,
-        client_ca: Vec<CertificateDer<'static>>,
-    ) -> Result<ServerConfig, TlsError> {
-        Self::build_server_config_with_crls(server_chain, server_key, client_ca, Vec::new())
-    }
-
-    /// As [`build_server_config`](Self::build_server_config), additionally checking
-    /// each presented client certificate against the supplied OFFLINE certificate
-    /// revocation lists (#3839). This is OFFLINE CRL revocation only: the CRLs are
-    /// loaded from disk at startup and never refreshed over the network. ONLINE
-    /// OCSP / CRL-distribution-point fetching is intentionally NOT implemented here
-    /// (it would require an HTTP client + a live responder, expanding the
-    /// firewalled supply chain) and is deferred to a follow-up.
-    ///
-    /// Fail-closed posture (the rustls 0.23 builder defaults, made explicit):
-    ///   * a client cert listed as revoked by any CRL → handshake REJECTED;
-    ///   * the FULL chain to the trust anchor has revocation checked
-    ///     (`RevocationCheckDepth::Chain`, the default);
-    ///   * a cert whose revocation status cannot be determined from the CRLs is
-    ///     REJECTED (`UnknownStatusPolicy::Deny`). This is unconditional — see
-    ///     [`build_client_verifier`], which takes no policy input that could relax it.
-    ///
-    /// When `crls` is empty this behaves exactly like the no-CRL path:
-    /// `.with_crls([])` adds nothing and rustls performs no revocation checks.
-    pub fn build_server_config_with_crls(
-        server_chain: Vec<CertificateDer<'static>>,
-        server_key: PrivateKeyDer<'static>,
-        client_ca: Vec<CertificateDer<'static>>,
-        crls: Vec<CertificateRevocationListDer<'static>>,
-    ) -> Result<ServerConfig, TlsError> {
-        let resumption = new_resumption_state(&client_ca);
-        Self::build_server_config_with_crls_resuming(
-            server_chain,
-            server_key,
-            client_ca,
-            crls,
-            &resumption,
-        )
-    }
-
-    /// As [`build_server_config_with_crls`](Self::build_server_config_with_crls), reusing
-    /// a resumption state that OUTLIVES this config.
-    ///
-    /// The reload path builds through here so the session cache survives the rebuild and
-    /// the epoch is republished from the anchors this build was given — the only way the
-    /// epoch is a live trust lever rather than a constant fixed at construction.
-    pub(crate) fn build_server_config_with_crls_resuming(
-        server_chain: Vec<CertificateDer<'static>>,
-        server_key: PrivateKeyDer<'static>,
-        client_ca: Vec<CertificateDer<'static>>,
-        crls: Vec<CertificateRevocationListDer<'static>>,
-        resumption: &Arc<crate::tls_auth_epoch::EpochBoundSessionStore>,
-    ) -> Result<ServerConfig, TlsError> {
-        // Computed BEFORE `client_ca` is moved into the verifier: the anchors are the
-        // epoch's only input (ADR-MCPRE-055).
-        let epoch = crate::tls_auth_epoch::TlsAuthEpoch::compute(&client_ca);
-        let provider = Arc::new(ring::default_provider());
-        let verifier = build_client_verifier(client_ca, crls, provider.clone())?;
-
-        // MCPS-079 fault injection ("test of the tests"), the symmetric mirror of
-        // mcp-re-transport's `fault_accept_any_server`. When — and ONLY when — the
-        // `fault_accept_any_client` feature is compiled in (off by default, never
-        // in production or the default `bazel test //...`), the verifying
-        // `WebPkiClientVerifier` above is DISCARDED and replaced by an accept-any
-        // CLIENT verifier. This is the deliberately-broken client-auth control: it
-        // lets the periodic fault-injection harness demonstrate that the proxy's
-        // client-cert-rejection guards are load-bearing (with the fault active, a
-        // missing OR untrusted client cert is NO LONGER rejected). The verifying
-        // build never constructs this; the byte-for-byte default path is the
-        // WebPkiClientVerifier branch below.
-        #[cfg(feature = "fault_accept_any_client")]
-        let server_config = {
-            let _ = verifier; // the verifying path is intentionally bypassed
-            ServerConfig::builder_with_provider(provider.clone())
-                .with_safe_default_protocol_versions()
-                .map_err(|e| TlsError::Config(e.to_string()))?
-                .with_client_cert_verifier(Arc::new(
-                    fault_accept_any::AcceptAnyClientVerifier::new(provider),
-                ))
-                .with_single_cert(server_chain, server_key)
-                .map_err(|e| TlsError::Config(e.to_string()))
-        };
-
-        #[cfg(not(feature = "fault_accept_any_client"))]
-        let server_config = ServerConfig::builder_with_provider(provider)
+    // MCPS-079 fault injection ("test of the tests"), the symmetric mirror of
+    // mcp-re-transport's `fault_accept_any_server`. When — and ONLY when — the
+    // `fault_accept_any_client` feature is compiled in (off by default, never in
+    // production or the default `bazel test //...`), the verifying `WebPkiClientVerifier`
+    // above is DISCARDED and replaced by an accept-any CLIENT verifier. This is the
+    // deliberately-broken client-auth control: it lets the periodic fault-injection
+    // harness demonstrate that the proxy's client-cert-rejection guards are load-bearing
+    // (with the fault active, a missing OR untrusted client cert is NO LONGER rejected).
+    // The verifying build never constructs this; the byte-for-byte default path is the
+    // WebPkiClientVerifier branch below.
+    #[cfg(feature = "fault_accept_any_client")]
+    {
+        let _ = verifier; // the verifying path is intentionally bypassed
+        return ServerConfig::builder_with_provider(provider.clone())
             .with_safe_default_protocol_versions()
             .map_err(|e| TlsError::Config(e.to_string()))?
-            .with_client_cert_verifier(verifier)
+            .with_client_cert_verifier(Arc::new(fault_accept_any::AcceptAnyClientVerifier::new(
+                provider,
+            )))
             .with_single_cert(server_chain, server_key)
             .map_err(|e| TlsError::Config(e.to_string()));
-
-        server_config.map(|config| epoch_bound_resumption(config, resumption, epoch))
     }
+
+    #[cfg(not(feature = "fault_accept_any_client"))]
+    ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| TlsError::Config(e.to_string()))?
+        .with_client_cert_verifier(verifier)
+        .with_single_cert(server_chain, server_key)
+        .map_err(|e| TlsError::Config(e.to_string()))
 }
 
-/// The resumption state one listener is built around: the epoch in force and the session
-/// cache tagged with it.
+/// Assemble a serving `ServerConfig` around a certificate RESOLVER — the delegated-custody
+/// shape (ADR-MCPS-028 §G, issue #58), where the server's TLS private key never leaves the
+/// device/KMS and rustls drives the handshake signature through the resolver's
+/// [`SigningKey`](rustls::sign::SigningKey).
 ///
-/// Created ONCE per listener and handed to every `ServerConfig` build for it. A state
-/// created per build pairs a fresh epoch with a fresh empty cache, which discards every
-/// resumable session on each rebuild and leaves the epoch unable to move.
-pub(crate) fn new_resumption_state(
-    client_ca: &[CertificateDer<'_>],
-) -> Arc<crate::tls_auth_epoch::EpochBoundSessionStore> {
-    Arc::new(
-        crate::tls_auth_epoch::EpochBoundSessionStore::memory_backed(
-            crate::tls_auth_epoch::TlsAuthEpoch::compute(client_ca),
-            TLS_SESSION_CACHE_ENTRIES,
-        ),
-    )
+/// The client-cert verifier posture is IDENTICAL to the exported-key path (shared
+/// [`build_client_verifier`]). The `fault_accept_any_client` bypass is NOT wired here: it
+/// exercises the standard exported-key serving path, and weakening client auth is
+/// orthogonal to — and must not be conflated with — server-key delegation.
+///
+/// Resumption-free, for the reason [`assemble_exported_key_config`] states.
+pub(crate) fn assemble_delegated_config(
+    cert_resolver: Arc<dyn rustls::server::ResolvesServerCert>,
+    client_ca: Vec<CertificateDer<'static>>,
+    crls: Vec<CertificateRevocationListDer<'static>>,
+) -> Result<ServerConfig, TlsError> {
+    let provider = Arc::new(ring::default_provider());
+    let verifier = build_client_verifier(client_ca, crls, provider.clone())?;
+    Ok(ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| TlsError::Config(e.to_string()))?
+        .with_client_cert_verifier(verifier)
+        .with_cert_resolver(cert_resolver))
 }
 
 /// Bind TLS session resumption to the trust epoch (ADR-MCPRE-055).
@@ -448,10 +411,16 @@ pub(crate) fn new_resumption_state(
 /// different worker still finds the session. It is also shared with every LATER build of
 /// the same listener's config, so a CRL reload keeps the cache instead of emptying it.
 ///
-/// Each build republishes the epoch its own trust inputs digest to. Republishing an
-/// unchanged epoch is the common case and changes nothing; a change is announced, and
-/// from that moment every session stored under the old digest is evicted the next time
-/// it is looked up.
+/// Each build republishes the epoch its own trust inputs digest to. Called through
+/// [`TlsListenerSecurityState`](crate::tls_listener_state::TlsListenerSecurityState) — the
+/// only caller — that digest is the state's own, over anchors immutable for the listener's
+/// lifetime, so republishing is an invariant-preserving no-op there.
+///
+/// The eviction below is therefore a property of the STORE, not a description of what a
+/// production listener does. See the owner's module note: within a listener the epoch does
+/// not advance, and what protects an anchor-set CHANGE is that the new anchors make a new
+/// listener with a new, empty store. Do not read the store's capability as evidence that
+/// production exercises it.
 ///
 /// Early data stays disabled (rustls' default): a 0-RTT payload would be replayable and
 /// is accepted before the handshake completes.
@@ -463,7 +432,7 @@ pub(crate) fn new_resumption_state(
 /// client-supplied ticket and the session store is never consulted — so the epoch tag,
 /// the mismatch eviction, and every claim made above would be bypassed silently. The
 /// store is the ONLY resumption path only while [`NoStatelessTickets`] is the ticketer.
-fn epoch_bound_resumption(
+pub(crate) fn epoch_bound_resumption(
     mut config: ServerConfig,
     resumption: &Arc<crate::tls_auth_epoch::EpochBoundSessionStore>,
     epoch: crate::tls_auth_epoch::TlsAuthEpoch,
@@ -512,17 +481,9 @@ impl rustls::server::ProducesTickets for NoStatelessTickets {
     }
 }
 
-/// How many resumable sessions one `ServerConfig` retains.
-///
-/// Matched to `ServerLimits::max_concurrent_connections` (256) times a small factor, so
-/// a peer set that fills the connection cap can still resume after briefly disconnecting
-/// rather than evicting itself. Each entry is a few hundred bytes; the cache is bounded,
-/// so this cannot grow with peer count.
-const TLS_SESSION_CACHE_ENTRIES: usize = 4096;
-
 /// Build the fail-closed WebPKI client-certificate verifier shared by the
-/// exported-key ([`RustlsDirectProvider::build_server_config_with_crls`]) and delegated-key
-/// ([`build_server_config_delegated_with_crls`]) server-config paths. Sharing it
+/// exported-key ([`assemble_exported_key_config`]) and delegated-key
+/// ([`assemble_delegated_config`]) server-config paths. Sharing it
 /// keeps the security-critical verifier posture identical across both: unconditional
 /// unknown-status rejection with no operator opt-out, full-chain revocation, and a
 /// malformed CRL → startup `TlsError::Verifier` (fail closed).
@@ -683,48 +644,6 @@ pub fn crl_posture(crl_der: &[u8]) -> Result<CrlPosture, TlsError> {
         next_update_unix,
     })
 }
-
-/// Build a mutual-TLS [`ServerConfig`] whose server certificate is signed by a
-/// non-exporting device/KMS via a [`ResolvesServerCert`] (ADR-MCPS-028 §G), rather
-/// than from an exported private key. The TLS server private key never leaves the
-/// device; rustls drives the handshake signature through the resolver's
-/// [`SigningKey`](rustls::sign::SigningKey).
-///
-/// The client-cert verifier posture is IDENTICAL to the exported-key path (shared
-/// [`build_client_verifier`]). The `fault_accept_any_client` test bypass is NOT
-/// wired here: it exercises the standard exported-key serving path, and weakening
-/// client auth is orthogonal to (and must not be conflated with) server-key
-/// delegation — the delegated path always uses the real verifier.
-pub fn build_server_config_delegated_with_crls(
-    cert_resolver: Arc<dyn rustls::server::ResolvesServerCert>,
-    client_ca: Vec<CertificateDer<'static>>,
-    crls: Vec<CertificateRevocationListDer<'static>>,
-) -> Result<ServerConfig, TlsError> {
-    let resumption = new_resumption_state(&client_ca);
-    build_server_config_delegated_with_crls_resuming(cert_resolver, client_ca, crls, &resumption)
-}
-
-/// As [`build_server_config_delegated_with_crls`], reusing a resumption state that
-/// outlives this config. See
-/// [`RustlsDirectProvider::build_server_config_with_crls_resuming`].
-pub(crate) fn build_server_config_delegated_with_crls_resuming(
-    cert_resolver: Arc<dyn rustls::server::ResolvesServerCert>,
-    client_ca: Vec<CertificateDer<'static>>,
-    crls: Vec<CertificateRevocationListDer<'static>>,
-    resumption: &Arc<crate::tls_auth_epoch::EpochBoundSessionStore>,
-) -> Result<ServerConfig, TlsError> {
-    // Computed BEFORE `client_ca` is moved into the verifier (ADR-MCPRE-055).
-    let epoch = crate::tls_auth_epoch::TlsAuthEpoch::compute(&client_ca);
-    let provider = Arc::new(ring::default_provider());
-    let verifier = build_client_verifier(client_ca, crls, provider.clone())?;
-    let server_config = ServerConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .map_err(|e| TlsError::Config(e.to_string()))?
-        .with_client_cert_verifier(verifier)
-        .with_cert_resolver(cert_resolver);
-    Ok(epoch_bound_resumption(server_config, resumption, epoch))
-}
-
 /// Extract the 32 raw Ed25519 public-key bytes from a leaf certificate's
 /// `SubjectPublicKeyInfo` (issue #58, ADR-MCPS-028 §G). Reuses the RFC 8410 SPKI
 /// parser shared with the KMS public-key path ([`ed25519_raw_point_from_spki`]),
@@ -744,54 +663,26 @@ fn leaf_ed25519_raw_point(leaf_der: &[u8]) -> Result<[u8; 32], TlsError> {
     })
 }
 
-/// Build a delegated mTLS [`ServerConfig`] (ADR-MCPS-028 §G, issue #58) with the
-/// security preconditions VALIDATED at config construction — a wrapper around the
-/// FROZEN [`build_server_config_delegated_with_crls`] that fails closed BEFORE any
-/// server starts when the credential is unsafe:
+/// Validate a delegated TLS credential and produce the certificate resolver for it
+/// (ADR-MCPS-028 §G, issue #58), failing closed BEFORE any server starts when the
+/// credential is unsafe:
 ///
-///   * **Ed25519-only** — the leaf certificate's `SubjectPublicKeyInfo` MUST be an
-///     RFC 8410 Ed25519 key (the only scheme the delegated signer can produce).
-///   * **cert ↔ signer key match** — the delegated signer's Ed25519 public key MUST
-///     equal the leaf certificate's public key, so the handshake the signer signs
-///     verifies against the cert it presents. A mismatch is rejected here rather
-///     than surfacing as an opaque handshake failure at runtime.
+///   * **Ed25519-only** — the leaf certificate's `SubjectPublicKeyInfo` MUST be an RFC 8410
+///     Ed25519 key (the only scheme the delegated signer can produce).
+///   * **cert ↔ signer key match** — the delegated signer's Ed25519 public key MUST equal
+///     the leaf certificate's public key, so the handshake the signer signs verifies
+///     against the cert it presents. A mismatch is rejected here rather than surfacing as
+///     an opaque handshake failure at runtime.
 ///
-/// The client-cert verifier posture is identical to every other path (shared
-/// [`build_client_verifier`], via the wrapped frozen builder). The server's TLS
-/// private key never leaves the device/KMS.
-pub fn build_server_config_delegated_validated(
-    server_chain: Vec<CertificateDer<'static>>,
-    signer: Arc<dyn crate::delegated_tls::RawEd25519TlsSigner>,
-    client_ca: Vec<CertificateDer<'static>>,
-    crls: Vec<CertificateRevocationListDer<'static>>,
-) -> Result<ServerConfig, TlsError> {
-    let resumption = new_resumption_state(&client_ca);
-    let budget = Arc::new(crate::delegated_tls::TlsHandshakeSignBudget::default());
-    build_server_config_delegated_validated_resuming(
-        server_chain,
-        signer,
-        client_ca,
-        crls,
-        &resumption,
-        &budget,
-    )
-}
-
-/// As [`build_server_config_delegated_validated`], reusing a resumption state AND a
-/// handshake-signature budget that both outlive this config.
-///
-/// The budget is carried across rebuilds for the same reason the resumption cache is: it
+/// The budget is supplied by the listener's security state rather than created here: it
 /// bounds how fast unauthenticated peers can drive a remote, billed, account-throttled
-/// signer, and a bucket refilled to full on every reload cadence bounds a window rather
-/// than a rate.
-pub(crate) fn build_server_config_delegated_validated_resuming(
+/// signer, and a bucket created per build is refilled on every reload — bounding a window
+/// rather than a rate.
+pub(crate) fn validated_delegated_resolver(
     server_chain: Vec<CertificateDer<'static>>,
     signer: Arc<dyn crate::delegated_tls::RawEd25519TlsSigner>,
-    client_ca: Vec<CertificateDer<'static>>,
-    crls: Vec<CertificateRevocationListDer<'static>>,
-    resumption: &Arc<crate::tls_auth_epoch::EpochBoundSessionStore>,
-    budget: &Arc<crate::delegated_tls::TlsHandshakeSignBudget>,
-) -> Result<ServerConfig, TlsError> {
+    budget: Arc<crate::delegated_tls::TlsHandshakeSignBudget>,
+) -> Result<Arc<dyn rustls::server::ResolvesServerCert>, TlsError> {
     let leaf = server_chain.first().ok_or_else(|| {
         TlsError::DelegatedKeyMismatch(
             "delegated TLS server certificate chain is empty".to_string(),
@@ -815,8 +706,8 @@ pub(crate) fn build_server_config_delegated_validated_resuming(
         })?;
 
     // cert ↔ signer key match (fail closed). Without this, rustls would present a
-    // certificate the signer cannot match, and the handshake would fail with an
-    // opaque error every time — reject at construction instead.
+    // certificate the signer cannot match, and the handshake would fail with an opaque
+    // error every time — reject at construction instead.
     if signer_point != leaf_point {
         return Err(TlsError::DelegatedKeyMismatch(
             "the delegated TLS signer's Ed25519 public key does not match the leaf \
@@ -826,12 +717,11 @@ pub(crate) fn build_server_config_delegated_validated_resuming(
         ));
     }
 
-    let resolver = crate::delegated_tls::DelegatedCertResolver::with_budget(
+    Ok(crate::delegated_tls::DelegatedCertResolver::with_budget(
         server_chain,
         signer,
-        Arc::clone(budget),
-    );
-    build_server_config_delegated_with_crls_resuming(resolver, client_ca, crls, resumption)
+        budget,
+    ))
 }
 
 /// Extract the verified client identity from a leaf certificate (DER) using the
@@ -2327,147 +2217,34 @@ mod fault_accept_any {
 
 #[cfg(test)]
 mod resumption_state_tests {
-    //! ADR-MCPRE-055: the TLS session cache and the trust epoch belong to the LISTENER,
-    //! not to one `ServerConfig`.
+    //! What survives here after the listener-lifetime owner landed.
     //!
-    //! Both properties below are invisible from outside a rebuild, which is why they are
-    //! asserted here over real `ServerConfig`s rather than over the store's synthetic
-    //! contract (`tls_auth_epoch`'s own tests do that): the defect they catch is a
-    //! resumption state constructed INSIDE the builder, which reads correctly in
-    //! isolation and empties the cache — and freezes the epoch — on every CRL reload.
+    //! This module used to assert the cache-survives-a-rebuild and epoch-advance
+    //! properties by calling the builder twice with different anchors against one store.
+    //! Both were duplicates in the ADR-061 §8 question-10 sense, and the second is now
+    //! UNCONSTRUCTIBLE through the API: a build takes its anchors from the state that owns
+    //! the store, so no caller can hand one store two anchor sets.
+    //!
+    //!   * the store-level propositions — a withdrawn anchor advances the epoch, a stale
+    //!     session is evicted by `get` rather than re-rejected — live with the store, in
+    //!     `tls_auth_epoch::tests`, where they were already asserted;
+    //!   * the listener-level propositions — a rebuild keeps the cache, a different anchor
+    //!     set gets its own empty one — live with the owner, in
+    //!     `tls_listener_state::tests`.
+    //!
+    //! What is left is the ticketer, which belongs to `epoch_bound_resumption` and is the
+    //! reason the store is the ONLY resumption path.
 
     use super::*;
-    use rcgen::CertificateParams;
-    use rcgen::KeyPair;
     use rustls::server::ProducesTickets;
-
-    fn ca_der() -> CertificateDer<'static> {
-        let key = KeyPair::generate().expect("ca key");
-        let mut params = CertificateParams::new(Vec::new()).expect("ca params");
-        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-        params.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign];
-        params
-            .distinguished_name
-            .push(rcgen::DnType::CommonName, "resumption-test-ca");
-        params.self_signed(&key).expect("ca").der().clone()
-    }
-
-    fn server_credential() -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>) {
-        let key = KeyPair::generate().expect("server key");
-        let params = CertificateParams::new(vec!["localhost".to_string()]).expect("params");
-        let cert = params.self_signed(&key).expect("server cert");
-        (
-            vec![cert.der().clone()],
-            PrivateKeyDer::Pkcs8(rustls_pki_types::PrivatePkcs8KeyDer::from(
-                key.serialize_der(),
-            )),
-        )
-    }
-
-    fn build(
-        client_ca: Vec<CertificateDer<'static>>,
-        resumption: &Arc<crate::tls_auth_epoch::EpochBoundSessionStore>,
-    ) -> ServerConfig {
-        let (chain, key) = server_credential();
-        RustlsDirectProvider::build_server_config_with_crls_resuming(
-            chain,
-            key,
-            client_ca,
-            Vec::new(),
-            resumption,
-        )
-        .expect("server config")
-    }
-
-    /// A rebuild with unchanged trust keeps every resumable session.
-    ///
-    /// The broken implementation this catches: `epoch_bound_resumption` installing a
-    /// fresh `ServerSessionMemoryCache` per build, so `--client-crl-reload-secs` throws
-    /// the whole fleet's resumption state away on its cadence and every peer pays a full
-    /// handshake — the cost ADR-MCPRE-055 exists to avoid.
-    #[test]
-    fn a_crl_reload_does_not_empty_the_session_cache() {
-        let ca = ca_der();
-        let resumption = new_resumption_state(std::slice::from_ref(&ca));
-        let before = build(vec![ca.clone()], &resumption);
-        assert!(before
-            .session_storage
-            .put(b"ticket".to_vec(), b"session".to_vec()));
-        // Exactly what `TlsKeyMaterial::rebuild` does on the reload cadence: same
-        // anchors, same resumption state, a brand-new ServerConfig.
-        let after = build(vec![ca], &resumption);
-        assert_eq!(
-            after.session_storage.take(b"ticket"),
-            Some(b"session".to_vec()),
-            "a reload must not discard the sessions the fleet already established"
-        );
-    }
-
-    /// A rebuild whose trusted client CAs CHANGED advances the epoch, and the sessions
-    /// stored under the withdrawn trust stop being shortcuts.
-    ///
-    /// The broken implementation this catches: an epoch constructed inside the builder
-    /// and never republished, which leaves `SharedTlsAuthEpoch::store` with no production
-    /// caller at all — the epoch becomes a constant tag and TB-06's mismatch eviction can
-    /// never fire.
-    #[test]
-    fn a_rebuild_with_a_withdrawn_client_ca_advances_the_epoch() {
-        let original = ca_der();
-        let replacement = ca_der();
-        let resumption = new_resumption_state(std::slice::from_ref(&original));
-        let original_again = original.clone();
-        let before = build(vec![original], &resumption);
-        let epoch_before = *resumption.epoch();
-        assert!(before
-            .session_storage
-            .put(b"ticket".to_vec(), b"session".to_vec()));
-
-        let after = build(vec![replacement], &resumption);
-        assert_ne!(
-            epoch_before,
-            *resumption.epoch(),
-            "withdrawing the trusted client CA must move the epoch"
-        );
-        // `None` here only means something because the cache SURVIVES a rebuild: the
-        // companion test proves an unchanged rebuild still returns this ticket, so the
-        // absence below is the epoch mismatch and not an emptied cache.
-        assert_eq!(
-            after.session_storage.get(b"ticket"),
-            None,
-            "a session stored under withdrawn trust must stop resuming"
-        );
-        // And it was EVICTED, not merely refused: restoring the original trust must not
-        // resurrect it.
-        build(vec![original_again], &resumption);
-        assert_eq!(
-            after.session_storage.get(b"ticket"),
-            None,
-            "the stale entry was not evicted"
-        );
-    }
-
-    /// A built config resumes ONLY through the epoch-tagged session store.
-    ///
-    /// rustls has a second, independent resumption mechanism: an enabled ticketer makes
-    /// the server resume straight out of the client's encrypted ticket and never consult
-    /// `session_storage` at all (`attempt_tls13_ticket_decryption`), which bypasses the
-    /// epoch tag, the mismatch eviction, and both properties asserted above — while the
-    /// startup line still reports epoch-bound resumption.
-    #[test]
-    fn a_built_config_issues_no_stateless_session_tickets() {
-        let ca = ca_der();
-        let resumption = new_resumption_state(std::slice::from_ref(&ca));
-        let config = build(vec![ca], &resumption);
-        assert!(
-            !config.ticketer.enabled(),
-            "an enabled ticketer resumes without consulting the epoch-tagged store"
-        );
-        assert_eq!(config.ticketer.encrypt(b"session"), None);
-        assert_eq!(config.ticketer.decrypt(b"ticket"), None);
-    }
 
     /// The installed ticketer refuses through every method, not only the flag rustls
     /// reads, so a caller driving it directly cannot mint or accept a ticket either.
+    ///
+    /// rustls has a second, independent resumption mechanism: an enabled ticketer makes
+    /// the server resume straight out of the client's encrypted ticket and never consult
+    /// `session_storage` at all, which would bypass the epoch tag and the mismatch
+    /// eviction while the startup line still reported epoch-bound resumption.
     #[test]
     fn the_installed_ticketer_refuses_through_every_method() {
         let ticketer = NoStatelessTickets;

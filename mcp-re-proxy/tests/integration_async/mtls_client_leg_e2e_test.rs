@@ -45,7 +45,7 @@ use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
-use mcp_re_proxy::tls::RustlsDirectProvider;
+use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::ActorResolver;
 use mcp_re_proxy::HttpProfileProxy;
 use mcp_re_proxy::ServerOptions;
@@ -297,12 +297,9 @@ impl Drop for RunningServer {
 fn spawn_server(server_ca: &Ca, client_ca: &Ca) -> RunningServer {
     let (server_cert, server_key) =
         make_leaf(server_ca, vec![dns(SERVER_NAME)], Some(SERVER_NAME), false);
-    let tls = RustlsDirectProvider::build_server_config(
-        vec![server_cert],
-        server_key,
-        vec![client_ca.cert.der().clone()],
-    )
-    .expect("server tls config");
+    let tls = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
+        .build_exported_key_config(vec![server_cert], server_key, Vec::new())
+        .expect("server tls config");
 
     let options = ServerOptions {
         target_uri: TARGET.to_string(),

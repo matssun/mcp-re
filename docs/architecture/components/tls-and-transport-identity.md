@@ -71,7 +71,7 @@ flowchart TD
 
 The listener lifetime, not an individual `ServerConfig` build, is the natural authority for session-resumption state and any other security mechanism that must survive config rebuilds.
 
-A one-shot builder that creates a fresh empty resumption state is conservative but has weaker lifecycle semantics. The API should make this distinction explicit rather than allowing an obvious builder name to obscure it.
+**Resolved in MCPRE-137 by removal rather than by distinction.** This section previously said a one-shot builder had "weaker lifecycle semantics" and that the API should make the distinction explicit. The EX-004 census found there was no second capability to distinguish: *no production code called any of the four one-shot builders* — every caller was a test, some cross-crate. So the ambiguity is gone because the second family is gone. `TlsListenerSecurityState::new(anchors)` establishes a listener's state and every config is built through it; a caller wanting a single config creates a state and builds once, which is unmistakable because it is the only shape there is.
 
 Candidate target shape:
 
@@ -164,11 +164,21 @@ Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_g
 | `mcp-re-proxy/src/client_revocation.rs` | 263 | CRL plan consumption | private subordinate |
 | `mcp-re-proxy/src/ocsp.rs` | 1271 | full RFC 6960 responder + client | separate authority behind `online_ocsp`; band-3 hotspot |
 
-`tls.rs` at 1907 production lines is an ADR-061 §5.3 band-3 hotspot (>1,000): authority census required before substantial new functionality. `transport.rs` and `ocsp.rs` are the same band and are *not* covered by this blueprint's target; each needs its own.
+`tls.rs` at 1797 production lines (1907 before MCPRE-137 moved the resumption authority out) is an ADR-061 §5.3 band-3 hotspot (>1,000): authority census required before substantial new functionality. `transport.rs` and `ocsp.rs` are the same band and are *not* covered by this blueprint's target; each needs its own.
 
 ## 13. Known deviations
 
-1. **The listener-lifetime authority is implicit.** `tls_plane.rs:108` calls `tls::new_resumption_state(&client_ca)` and holds the result across rebuilds — so the listener lifetime *is* the resumption authority in practice, but no type says so. Meanwhile `RustlsDirectProvider::build_server_config` creates its **own** fresh state internally, and the function that does it carries a doc comment admitting the consequence: a state created per build "pairs a fresh epoch with a fresh empty cache, which discards every resumable session on each rebuild and leaves the epoch unable to move." Two builders with near-identical names differ in whether ADR-055's epoch is a live lever or a constant. That is §5, stated by the code against itself.
+1. ~~**The listener-lifetime authority is implicit.**~~ **CLOSED by MCPRE-137.** `TlsListenerSecurityState` owns the anchors, the epoch they digest to, the epoch-tagged session cache and the handshake-signature budget; `tls.rs` retains only `pub(crate)` resumption-free assembly, so no public path installs a session store on a config. The census record is EX-004 in [`../review-dispositions.md`](../review-dispositions.md); the owner and its projections are in [`../../dev/sealed-owners.md`](../../dev/sealed-owners.md).
+
+   **What the census found that this section did not say.** Within a production listener the anchor set is IMMUTABLE, so the authentication epoch is a construction-time constant and `republish`'s change branch never fires outside a test. What protects an anchor-set change is that new anchors make a new listener with a new, empty store — cache non-continuity, not epoch advance. Three propositions must therefore be kept apart, and only the first two have evidence today:
+
+   | | proposition | established by |
+   |---|---|---|
+   | 1 | if the current epoch changes, sessions tagged with the old one are not returned | `tls_auth_epoch`, and the real-handshake acceptance in `tests/integration/tls_epoch_resumption_test.rs` |
+   | 2 | replacing the anchor set replaces the listener and therefore the store | `tls_listener_state::tests` |
+   | 3 | a production listener's epoch ADVANCES when its anchors change | **nothing — no anchor-reload path exists** |
+
+   Proposition 1 is a claim about the store and must never be read as evidence for proposition 3. ADR-055's text anticipates a live-epoch lifecycle; whether MCP-RE promises that or promises listener replacement is under separate adjudication, and MCPRE-137 deliberately exposed no epoch mutation rather than inventing an operational capability so an existing mechanism could exercise its change branch.
 
 2. **The blocking harness is inside the security authority** — §8.
 
@@ -178,8 +188,8 @@ Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_g
 
 ## 14. Completion criteria
 
-- listener-lifetime security state is explicitly owned by a type, not by whichever caller happens to hold the `Arc`;
-- one-shot vs rebuildable semantics are impossible to confuse in the API;
+- ~~listener-lifetime security state is explicitly owned by a type~~ — done, `TlsListenerSecurityState` (MCPRE-137);
+- ~~one-shot vs rebuildable semantics are impossible to confuse in the API~~ — done, by removing the one-shot family the census found had no production caller (MCPRE-137);
 - blocking harness is outside the TLS authority if retained;
 - no test-only consumer forces a misleading production export;
 - TLS authority has a narrow facade and private subordinate implementation tree;

@@ -43,6 +43,9 @@ on:
       - "mcp-re-http-profile/src/**"
       - "mcp-re-http-profile/tests/**"
       - "mcp-re-core/src/**"
+      - "mcp-re-proxy/src/tls_listener_state.rs"
+      - "mcp-re-proxy/src/tls_auth_epoch.rs"
+      - "mcp-re-proxy/src/tls.rs"
   push:
     branches: [main]
     paths:
@@ -56,6 +59,9 @@ on:
       - "mcp-re-http-profile/src/**"
       - "mcp-re-http-profile/tests/**"
       - "mcp-re-core/src/**"
+      - "mcp-re-proxy/src/tls_listener_state.rs"
+      - "mcp-re-proxy/src/tls_auth_epoch.rs"
+      - "mcp-re-proxy/src/tls.rs"
 
 concurrency:
   group: mutation-probe-${{ github.ref }}

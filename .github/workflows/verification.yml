@@ -42,6 +42,9 @@ on:
       # filter covers it.
       - "mcp-re-http-profile/tests/**"
       - "mcp-re-proxy/src/runtime_state.rs"
+      # MCPRE-137: the listener-lifetime TLS security state and the epoch/store it owns.
+      - "mcp-re-proxy/src/tls_listener_state.rs"
+      - "mcp-re-proxy/src/tls_auth_epoch.rs"
       # THM-0013 reads the boundary's OCSP clauses, so the lane must re-measure when
       # they move: the theorem is that no validated deployment enables online OCSP.
       - "mcp-re-proxy/src/config_state/validation/residue.rs"
@@ -71,6 +74,9 @@ on:
       # filter covers it.
       - "mcp-re-http-profile/tests/**"
       - "mcp-re-proxy/src/runtime_state.rs"
+      # MCPRE-137: the listener-lifetime TLS security state and the epoch/store it owns.
+      - "mcp-re-proxy/src/tls_listener_state.rs"
+      - "mcp-re-proxy/src/tls_auth_epoch.rs"
       # THM-0013 reads the boundary's OCSP clauses, so the lane must re-measure when
       # they move: the theorem is that no validated deployment enables online OCSP.
       - "mcp-re-proxy/src/config_state/validation/residue.rs"

@@ -42,8 +42,8 @@ use std::net::TcpStream;
 use std::sync::Arc;
 use std::thread;
 
-use mcp_re_proxy::build_server_config_delegated_validated;
 use mcp_re_proxy::serve_once;
+use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::transport::IdentitySource;
 use mcp_re_proxy::AwsKmsConfig;
 use mcp_re_proxy::AwsKmsEd25519Backend;
@@ -311,13 +311,9 @@ fn aws_kms_delegated_tls_handshake_round_trip() {
     // fail closed. A successful build PROVES the leaf binds the cloud key.
     let signer: Arc<dyn RawEd25519TlsSigner> = tls_backend.clone();
     let config = Arc::new(
-        build_server_config_delegated_validated(
-            vec![server_leaf],
-            signer,
-            vec![client_ca.cert.der().clone()],
-            Vec::new(),
-        )
-        .expect("validated delegated server config (leaf must bind the KMS public key)"),
+        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
+            .build_delegated_config(vec![server_leaf], signer, Vec::new())
+            .expect("validated delegated server config (leaf must bind the KMS public key)"),
     );
 
     let (client_chain, client_key) = make_client_leaf(&client_ca, "spiffe://example.org/agent-1");
@@ -382,10 +378,9 @@ fn aws_kms_delegated_tls_wrong_key_binding_fails_closed() {
         .clone();
 
     let signer: Arc<dyn RawEd25519TlsSigner> = tls_backend;
-    match build_server_config_delegated_validated(
+    match TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()]).build_delegated_config(
         vec![foreign_leaf],
         signer,
-        vec![client_ca.cert.der().clone()],
         Vec::new(),
     ) {
         Ok(_) => panic!(
@@ -417,13 +412,9 @@ fn aws_kms_delegated_tls_untrusted_client_rejected() {
     let server_leaf = make_server_leaf_for_aws_key(&server_ca, tls_backend.clone(), raw_public);
     let signer: Arc<dyn RawEd25519TlsSigner> = tls_backend.clone();
     let config = Arc::new(
-        build_server_config_delegated_validated(
-            vec![server_leaf],
-            signer,
-            vec![client_ca.cert.der().clone()],
-            Vec::new(),
-        )
-        .expect("validated delegated server config"),
+        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
+            .build_delegated_config(vec![server_leaf], signer, Vec::new())
+            .expect("validated delegated server config"),
     );
 
     let (rogue_chain, rogue_key) = make_client_leaf(&rogue_ca, "spiffe://example.org/rogue");

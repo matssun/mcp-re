@@ -218,6 +218,7 @@ _PROXY_LIB_SRCS = [
     "src/client_revocation.rs",
     "src/stage_timers.rs",
     "src/tls_auth_epoch.rs",
+    "src/tls_listener_state.rs",
     # ADR-MCPS-021 Tier 3: push-invalidation trust cache (bounded-T cache + injected
     # invalidation channel; bounded-T fallback when the channel is unhealthy).
     "src/push_trust.rs",

@@ -395,3 +395,46 @@ its properties are `cargo test -p mcp-re-proxy` for the unit tests,
 listener-lifetime security state (#573) and the blocking harness (#574). A §14 exception is
 declined — this record does not grant one, and the file stays in the debt registry until
 those land and this census is re-run.
+
+### What #573 changed, measured
+
+`tls.rs` **1907 → 1797** production lines; `tls_plane.rs` 679 → 623; the new owner
+`tls_listener_state.rs` at 190, under the threshold.
+
+Authority A left the file. What remains of it in `tls.rs` is `pub(crate)` and
+**resumption-free** — `assemble_exported_key_config` and `assemble_delegated_config` return
+a config with no session store installed at all — plus `epoch_bound_resumption` and
+`NoStatelessTickets`, whose only caller is the owner's private `bind_resumption`.
+
+Each question above, answered by the change:
+
+- **Q7 (both instances).** A build is now a method on `TlsListenerSecurityState`. The
+  anchors and the store are never separately passable, so neither ordering relationship
+  survives.
+- **Q8.** The one-shot family is deleted, along with the `RustlsDirectProvider` marker it
+  hung off, which held nothing else. Nineteen call sites across five crates migrated to
+  the owner; every one was a test, which is the census finding confirming itself.
+- **Q9.** Untouched, deliberately. `republish` stays under the owner and is now called with
+  the epoch the store already holds, so it is a visible no-op rather than a recomputation
+  that might look like a live lever. Whether the epoch SHOULD be one is an ADR-055
+  lifecycle question, recorded separately.
+- **Q10.** The anchors are held once; the epoch is derived once, in the constructor. The
+  mutation probe found this mattered: while `bind_resumption` recomputed the digest, a
+  corrupted constructor epoch was silently CORRECTED by the first build, so the constructor
+  looked load-bearing only until a config was built through it.
+- **Q11.** `EpochBoundSessionStore` is still publicly constructible — the real-handshake
+  acceptance test builds one, and a store in isolation is not an illegal value. What is now
+  unconstructible is the illegal value: *a serving config whose cache is unrelated to the
+  anchors its verifier was built from*. No public path installs a store on a config.
+
+The ownership is measured rather than asserted. `proxy.tls_listener_state` is a class-V0
+review unit carrying `test://` and `mutation://` evidence, so it cannot be attested without
+a mutation PASS at its exact fingerprint, and three registered probes each turn a declared
+control red: a store created per build (T01), an epoch derived from anything but the owner's
+anchors (T02), and an enabled stateless ticketer that would resume outside the store at all
+(T03).
+
+The eviction property itself did not move. It is a claim about the STORE, asserted by
+`tls_auth_epoch`'s unit tests and by `tests/integration/tls_epoch_resumption_test.rs`
+driving real rustls handshakes; `tls.rs`'s `epoch_binding_tests` had been asserting the same
+thing a third time through the builder, and that duplicate is gone rather than relocated.

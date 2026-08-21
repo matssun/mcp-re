@@ -323,6 +323,56 @@ tested_symbols = [
 ]
 
 # ---------------------------------------------------------------------------
+# The TLS listener's security state — ADR-MCPRE-061 §2, MCPRE-137, census EX-004
+# ---------------------------------------------------------------------------
+#
+# One authority: the anchors, the epoch they digest to, the session cache tagged with it,
+# and the handshake-signature budget belong to ONE listener and were established together.
+#
+# The unit exists because the EX-004 census found the relationship held only through call
+# ordering — a rebuild passed the anchors and the store as two arguments that had to agree,
+# and a second builder family created its own state per build. The claim worth measuring is
+# not "the code compiles" but "the pairing is unconstructible", and the probe below is what
+# distinguishes those.
+#
+# Class V0: there is no `ensures` here. The battery is what the claim rests on, so it
+# carries `mutation://` for the same reason `http_profile.verifier_results` does.
+#
+# NOT claimed by this unit, and the distinction is the whole point of the census: the STORE
+# refuses a session whose epoch no longer matches (`tls_auth_epoch`, and the real-handshake
+# acceptance in `tests/integration/tls_epoch_resumption_test.rs`), while a production
+# listener's anchors are immutable, so its epoch does not advance. What protects an
+# anchor-set change is that a new anchor set is a new listener with a new empty store. Two
+# propositions, two batteries; neither is evidence for the other.
+
+[[unit]]
+id = "proxy.tls_listener_state"
+class = "V0"
+description = "The listener-lifetime TLS security state: anchors, the epoch they digest to, the session cache tagged with it, and the signing budget, established together and unsplittable."
+paths = [
+  "mcp-re-proxy/src/tls_listener_state.rs",
+  "mcp-re-proxy/src/tls_auth_epoch.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/tls/listener_security_state",
+  "mutation://proxy/tls/listener_security_state",
+]
+tested_symbols = [
+  "lib#tls_listener_state::tests::the_epoch_digests_the_anchors_this_state_owns",
+  "lib#tls_listener_state::tests::a_rebuild_keeps_the_cache_and_the_epoch_of_the_state_it_was_built_through",
+  "lib#tls_listener_state::tests::a_different_anchor_set_is_a_different_state_with_its_own_empty_cache",
+  "lib#tls_listener_state::tests::no_config_this_owner_builds_can_resume_outside_the_store",
+  "lib#tls_auth_epoch::tests::a_session_stored_under_the_current_epoch_resumes",
+  "lib#tls_auth_epoch::tests::a_session_stored_under_a_withdrawn_anchor_does_not_resume",
+  "lib#tls_auth_epoch::tests::a_stale_session_is_evicted_by_get_not_left_to_be_re_rejected",
+  "lib#tls_auth_epoch::tests::a_rebuild_that_republishes_the_same_trust_keeps_the_cache",
+  "lib#tls_auth_epoch::tests::a_rebuild_with_withdrawn_trust_advances_the_epoch_and_stops_resumption",
+  "lib#tls_auth_epoch::tests::withdrawing_an_anchor_changes_the_epoch",
+  "lib#tls_auth_epoch::tests::the_anchor_set_alone_determines_the_epoch",
+]
+
+# ---------------------------------------------------------------------------
 # Contract-consumption edges
 # ---------------------------------------------------------------------------
 #

@@ -66,10 +66,57 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `ClientCredentialWindow` | `config_state/client_credential_window.rs` | `cert_lifetime()`, `connection_age()`, `exposure_window()` |
 | `ShardTopologyRequest` | `config_state/topology.rs` | `shards()`, `workers_per_shard()`, `shards_or_auto()`, `workers_per_shard_or_auto()` |
 | `TrustPlan` | `startup_plan.rs` | `revocation()`, `document_path()`, `response_kid()`, `reload()`, `epoch()` |
+| `TlsListenerSecurityState` | `tls_listener_state.rs` | `epoch()`, `build_exported_key_config()`, `build_delegated_config()`, `build_delegated_resolver_config()` |
 
 A plan produced by an owner lives **with that owner**, not in `startup_plan.rs`.
 `startup_plan` re-exports it. The plan is the owner's projection of its own validated
 state, so building it in the planner was the planner restating the owner's semantics.
+
+### `TlsListenerSecurityState` — the projections ARE the operations (MCPRE-137)
+
+Every other owner above projects FACTS. This one mostly projects OPERATIONS, and the
+difference is the point.
+
+The invariant is a relation between four things — the trusted client CAs, the
+authentication epoch they digest to, the session cache tagged with that epoch, and the
+handshake-signature budget — all of which must belong to one listener and survive its
+`ServerConfig` rebuilds together. A fact projection (`client_ca()`, `session_store()`) would
+hand a caller the terms of the relation back as independently passable arguments, which is
+exactly [the split this document forbids](#a-relation-that-is-validated-must-not-be-split-back-into-its-terms).
+That is not hypothetical: it is what the code did. A rebuild read
+
+```rust
+builder(state.client_ca.clone(), …, &state.resumption)
+```
+
+— two arguments carrying one relationship, related by nothing but the call site.
+
+So the build is a **method on the state**. The anchors and the store are never separately
+obtainable, and `mcp-re-proxy/src/tls.rs` retains only `pub(crate)` **resumption-free**
+assembly (`assemble_exported_key_config`, `assemble_delegated_config`): a config it returns
+has no session cache installed at all, and the only thing that installs one is the owner's
+private `bind_resumption`.
+
+**What the seal covers, precisely.** `EpochBoundSessionStore` is still publicly
+constructible — `tests/integration/tls_epoch_resumption_test.rs` builds one to drive real
+rustls handshakes, which is the store's own acceptance evidence and worth keeping. A store
+in isolation is not an illegal value. The illegal value was *a serving config whose cache is
+unrelated to the anchors its verifier was built from*, and that is what is now
+unconstructible: no public path installs a store on a config.
+
+**The operational test.** Delete the pairing check — there is none to delete, which is the
+answer. The census (EX-004) found the check was a naming convention: builders whose names
+differed by a `_resuming` suffix differed in whether the epoch was a live lever. Both
+one-shot builders are gone; there is one way to build, and it goes through the state.
+
+`tools/verification/verify-mutations` probes it: creating a store per build, or deriving the
+epoch from anything but the owner's anchors, each turns a declared control red
+(`T01`, `T02` in `verification/policy/mutation-probes.toml`).
+
+**What it deliberately does not project.** No epoch setter. Within a listener the anchors
+are immutable, so the epoch is a construction-time constant; a mutation seam would advertise
+a lifecycle production does not implement. See the module note for the three propositions
+this owner keeps apart.
 
 ## A composition may combine owned facts; it may not make them replaceable again
 

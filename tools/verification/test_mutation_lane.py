@@ -80,7 +80,10 @@ def test_the_registry_parses_and_every_probe_names_a_real_unit_and_theorem():
     }
     for probe in probes:
         assert probe["unit"] in UNITS, probe["id"]
-        assert probe["theorem"] in theorems, probe["id"]
+        # `theorem` is optional — a unit may have a probe before it has a registered
+        # claim — but a theorem that IS named must resolve.
+        if "theorem" in probe:
+            assert probe["theorem"] in theorems, probe["id"]
 
 
 def test_every_registered_anchor_matches_exactly_one_site_today():
@@ -296,15 +299,30 @@ def test_the_probe_set_participates_in_the_units_fingerprint():
     toolchains, assumptions = load_toolchains(), load_assumptions()
     unit = UNITS["http_profile.verifier_results"]
     components = fingerprint_unit(unit, doc, toolchains, assumptions)["components"]
-    assert len(components["mutation_probes"]) == len(lane.load_probes())
+    scoped = [p for p in lane.load_probes() if p["unit"] == unit["id"]]
+    assert len(components["mutation_probes"]) == len(scoped)
     assert components["mutation_lane_identity"], "the lane binary must be measured"
+
+    # And SCOPED: another unit's probes must not enter this unit's fingerprint, or every
+    # unit would be dirtied by every other unit's probe edits.
+    other = UNITS["proxy.tls_listener_state"]
+    other_probes = fingerprint_unit(other, doc, toolchains, assumptions)["components"][
+        "mutation_probes"
+    ]
+    assert set(other_probes).isdisjoint(components["mutation_probes"])
+    assert other_probes
 
 
 def test_the_documented_matrix_count_is_checked_against_the_registry():
     """Prose is a claim. The blueprint's count drifted from 26 to 27 the first time this
     matrix was written by hand."""
-    assert lane.check_matrix_count(lane.load_probes()) is None
-    assert lane.check_matrix_count(lane.load_probes()[:3]) is not None
+    probes = lane.load_probes()
+    assert lane.check_matrix_count(probes) is None
+    documented = [p for p in probes if p["unit"] == lane.MATRIX_UNIT]
+    assert lane.check_matrix_count(documented[:3]) is not None
+    # Another unit's probes are not part of that section's count, so adding one must not
+    # make the document look stale.
+    assert lane.check_matrix_count(probes + [{"unit": "proxy.tls_listener_state"}]) is None
 
 
 if __name__ == "__main__":

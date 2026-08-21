@@ -43,8 +43,9 @@ use std::thread;
 
 use mcp_re_core::verify_ed25519_with;
 use mcp_re_core::McpReError;
-use mcp_re_proxy::build_server_config_delegated_validated;
+
 use mcp_re_proxy::serve_once;
+use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::KeySource;
 use mcp_re_proxy::Pkcs11KeySource;
 use mcp_re_proxy::ResponseSigner;
@@ -493,13 +494,9 @@ fn pkcs11_tls_delegated_signer_none_then_some() {
     let server_key = remote_subject_key_from_spki(&spki);
     let ca = make_ca();
     let server_cert = make_server_leaf_for(&ca, &server_key);
-    build_server_config_delegated_validated(
-        vec![server_cert],
-        signer,
-        vec![ca.cert.der().clone()],
-        Vec::new(),
-    )
-    .expect("matching cert must build the validated delegated config");
+    TlsListenerSecurityState::new(vec![ca.cert.der().clone()])
+        .build_delegated_config(vec![server_cert], signer, Vec::new())
+        .expect("matching cert must build the validated delegated config");
 }
 
 /// (b) The validated build path (#58) FAILS CLOSED for the PKCS#11 signer when the
@@ -531,10 +528,9 @@ fn pkcs11_tls_cert_signer_mismatch_fails_closed() {
     let other = gen_ed25519();
     let ca = make_ca();
     let mismatching_cert = make_server_leaf_for(&ca, &other);
-    let result = build_server_config_delegated_validated(
+    let result = TlsListenerSecurityState::new(vec![ca.cert.der().clone()]).build_delegated_config(
         vec![mismatching_cert],
         signer,
-        vec![ca.cert.der().clone()],
         Vec::new(),
     );
     assert!(
@@ -649,13 +645,9 @@ fn pkcs11_tls_full_mtls_handshake_token_resident_no_disk_read() {
     let server_key = remote_subject_key_from_spki(&spki);
     let server_cert = make_server_leaf_for(&server_ca, &server_key);
     let server_config = Arc::new(
-        build_server_config_delegated_validated(
-            vec![server_cert],
-            signer,
-            vec![client_ca.cert.der().clone()],
-            Vec::new(),
-        )
-        .expect("validated delegated server config (cert matches token key)"),
+        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
+            .build_delegated_config(vec![server_cert], signer, Vec::new())
+            .expect("validated delegated server config (cert matches token key)"),
     );
 
     let (client_chain, client_key) = make_client_leaf(&client_ca, "spiffe://example.org/agent-1");

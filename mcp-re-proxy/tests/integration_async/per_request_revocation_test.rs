@@ -27,7 +27,7 @@ use mcp_re_proxy::async_serve;
 use mcp_re_proxy::client_revocation::ClientRevocationIndex;
 use mcp_re_proxy::client_revocation::SharedClientRevocation;
 use mcp_re_proxy::config_snapshot::ServerConfigSnapshot;
-use mcp_re_proxy::tls::RustlsDirectProvider;
+use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::ServerLimits;
 use mcp_re_proxy::ServerOptions;
 
@@ -151,12 +151,9 @@ fn server_config_trusting(client_ca: &Ca) -> Arc<rustls::ServerConfig> {
         // NO CRLs on the handshake verifier: the peer is admitted at the handshake, so
         // what the second request observes is the per-request check alone and not a
         // handshake that would have refused it anyway.
-        RustlsDirectProvider::build_server_config(
-            vec![server_cert.der().clone()],
-            server_key_der,
-            vec![client_ca.cert.der().clone()],
-        )
-        .expect("server config"),
+        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
+            .build_exported_key_config(vec![server_cert.der().clone()], server_key_der, Vec::new())
+            .expect("server config"),
     )
 }
 

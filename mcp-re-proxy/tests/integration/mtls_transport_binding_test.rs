@@ -53,7 +53,7 @@ use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
-use mcp_re_proxy::tls::RustlsDirectProvider;
+use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_transport::ClientTlsConfig;
 
 const SERVER_NAME: &str = "proxy.internal";
@@ -129,12 +129,13 @@ impl Pki {
     /// A server that REQUIRES + verifies a client cert chaining to `client_ca`.
     fn new(server_ca: &Ca, client_ca: &Ca) -> Self {
         let (server_leaf, server_key) = make_leaf(server_ca, vec![dns_san(SERVER_NAME)], false);
-        let server_config = RustlsDirectProvider::build_server_config(
-            vec![server_leaf.der().clone()],
-            key_der(&server_key),
-            vec![client_ca.cert.der().clone()],
-        )
-        .expect("server config");
+        let server_config = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
+            .build_exported_key_config(
+                vec![server_leaf.der().clone()],
+                key_der(&server_key),
+                Vec::new(),
+            )
+            .expect("server config");
         Pki { server_config }
     }
 }

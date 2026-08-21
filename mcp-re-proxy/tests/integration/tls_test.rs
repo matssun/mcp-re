@@ -18,9 +18,9 @@ use std::time::Duration;
 
 use mcp_re_proxy::extract_identity;
 use mcp_re_proxy::serve_once;
+use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::transport::IdentityPolicy;
 use mcp_re_proxy::transport::IdentitySource;
-use mcp_re_proxy::RustlsDirectProvider;
 use mcp_re_proxy::ServerOptions;
 
 use rcgen::BasicConstraints;
@@ -582,12 +582,9 @@ fn server_config_for(ca: &Ca) -> Arc<rustls::ServerConfig> {
     let server_ca = make_ca();
     let (server_cert, server_key) =
         make_leaf(&server_ca, vec![dns("localhost")], Some("localhost"), false);
-    let config = RustlsDirectProvider::build_server_config(
-        vec![server_cert],
-        server_key,
-        vec![ca.cert.der().clone()],
-    )
-    .expect("server config");
+    let config = TlsListenerSecurityState::new(vec![ca.cert.der().clone()])
+        .build_exported_key_config(vec![server_cert], server_key, Vec::new())
+        .expect("server config");
     Arc::new(config)
 }
 
@@ -601,13 +598,9 @@ fn server_config_with_crls_for(
     let server_ca = make_ca();
     let (server_cert, server_key) =
         make_leaf(&server_ca, vec![dns("localhost")], Some("localhost"), false);
-    let config = RustlsDirectProvider::build_server_config_with_crls(
-        vec![server_cert],
-        server_key,
-        vec![ca.cert.der().clone()],
-        crls,
-    )
-    .expect("server config with crls");
+    let config = TlsListenerSecurityState::new(vec![ca.cert.der().clone()])
+        .build_exported_key_config(vec![server_cert], server_key, crls)
+        .expect("server config with crls");
     Arc::new(config)
 }
 
@@ -745,12 +738,9 @@ fn delegated_ed25519_tls_handshake_round_trip() {
         std::sync::Arc::new(delegated_signer),
     );
     let config = std::sync::Arc::new(
-        mcp_re_proxy::build_server_config_delegated_with_crls(
-            resolver,
-            vec![client_ca.cert.der().clone()],
-            Vec::new(),
-        )
-        .expect("delegated server config"),
+        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
+            .build_delegated_resolver_config(resolver, Vec::new())
+            .expect("delegated server config"),
     );
 
     let (client_cert, client_key) = make_leaf(
@@ -846,13 +836,13 @@ fn validated_delegated_build_round_trip_and_corrupted_sig_fails() {
     let (server_cert, delegated_signer) = make_ed25519_server_leaf(&server_ca);
 
     let config = std::sync::Arc::new(
-        mcp_re_proxy::build_server_config_delegated_validated(
-            vec![server_cert],
-            std::sync::Arc::new(delegated_signer),
-            vec![client_ca.cert.der().clone()],
-            Vec::new(),
-        )
-        .expect("validated delegated server config (matching key) must build"),
+        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
+            .build_delegated_config(
+                vec![server_cert],
+                std::sync::Arc::new(delegated_signer),
+                Vec::new(),
+            )
+            .expect("validated delegated server config (matching key) must build"),
     );
 
     let (client_cert, client_key) = make_leaf(
@@ -911,13 +901,13 @@ fn validated_delegated_build_round_trip_and_corrupted_sig_fails() {
     let (server_cert2, honest_signer) = make_ed25519_server_leaf(&server_ca2);
     let corrupting = CorruptingEd25519Tls(honest_signer);
     let config2 = std::sync::Arc::new(
-        mcp_re_proxy::build_server_config_delegated_validated(
-            vec![server_cert2],
-            std::sync::Arc::new(corrupting),
-            vec![client_ca2.cert.der().clone()],
-            Vec::new(),
-        )
-        .expect("build still succeeds: the public key matches; the BREAK is the bad signature"),
+        TlsListenerSecurityState::new(vec![client_ca2.cert.der().clone()])
+            .build_delegated_config(
+                vec![server_cert2],
+                std::sync::Arc::new(corrupting),
+                Vec::new(),
+            )
+            .expect("build still succeeds: the public key matches; the BREAK is the bad signature"),
     );
 
     let (client_cert2, client_key2) = make_leaf(
@@ -962,13 +952,13 @@ fn validated_delegated_build_rejects_cert_signer_key_mismatch() {
     // leaf's.
     let mismatched = MismatchedEd25519Tls(mcp_re_core::SigningKey::from_seed_bytes(&[0xAAu8; 32]));
 
-    let err = mcp_re_proxy::build_server_config_delegated_validated(
-        vec![server_cert],
-        std::sync::Arc::new(mismatched),
-        vec![client_ca.cert.der().clone()],
-        Vec::new(),
-    )
-    .expect_err("a cert↔signer key mismatch must fail closed at config construction");
+    let err = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
+        .build_delegated_config(
+            vec![server_cert],
+            std::sync::Arc::new(mismatched),
+            Vec::new(),
+        )
+        .expect_err("a cert↔signer key mismatch must fail closed at config construction");
     assert!(
         matches!(err, mcp_re_proxy::TlsError::DelegatedKeyMismatch(_)),
         "expected DelegatedKeyMismatch, got {err:?}"
@@ -985,13 +975,9 @@ fn validated_delegated_build_rejects_non_ed25519_leaf() {
     let ecdsa_leaf = make_ecdsa_server_leaf(&server_ca);
     let signer = LocalEd25519Tls(mcp_re_core::SigningKey::from_seed_bytes(&[3u8; 32]));
 
-    let err = mcp_re_proxy::build_server_config_delegated_validated(
-        vec![ecdsa_leaf],
-        std::sync::Arc::new(signer),
-        vec![client_ca.cert.der().clone()],
-        Vec::new(),
-    )
-    .expect_err("a non-Ed25519 leaf must fail closed under delegated mode");
+    let err = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
+        .build_delegated_config(vec![ecdsa_leaf], std::sync::Arc::new(signer), Vec::new())
+        .expect_err("a non-Ed25519 leaf must fail closed under delegated mode");
     assert!(
         matches!(err, mcp_re_proxy::TlsError::DelegatedKeyMismatch(_)),
         "expected DelegatedKeyMismatch (Ed25519-only), got {err:?}"
@@ -1056,13 +1042,9 @@ fn aws_kms_delegated_tls_handshake_round_trip_and_corruption_fails() {
             .expect("aws kms backend over fake transport");
 
     let config = std::sync::Arc::new(
-        mcp_re_proxy::build_server_config_delegated_validated(
-            vec![server_cert],
-            std::sync::Arc::new(backend),
-            vec![client_ca.cert.der().clone()],
-            Vec::new(),
-        )
-        .expect("validated delegated config with the matching KMS TLS key must build"),
+        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
+            .build_delegated_config(vec![server_cert], std::sync::Arc::new(backend), Vec::new())
+            .expect("validated delegated config with the matching KMS TLS key must build"),
     );
 
     let (client_cert, client_key) = make_leaf(
@@ -1119,13 +1101,13 @@ fn aws_kms_delegated_tls_handshake_round_trip_and_corruption_fails() {
         mcp_re_proxy::AwsKmsEd25519Backend::for_test_with_local_seed(&seed2, "alias/mcp-re-tls")
             .expect("aws kms backend 2");
     let config2 = std::sync::Arc::new(
-        mcp_re_proxy::build_server_config_delegated_validated(
-            vec![server_cert2],
-            std::sync::Arc::new(CorruptingAwsKms(backend2)),
-            vec![client_ca2.cert.der().clone()],
-            Vec::new(),
-        )
-        .expect("build succeeds: public key matches; the BREAK is the corrupted signature"),
+        TlsListenerSecurityState::new(vec![client_ca2.cert.der().clone()])
+            .build_delegated_config(
+                vec![server_cert2],
+                std::sync::Arc::new(CorruptingAwsKms(backend2)),
+                Vec::new(),
+            )
+            .expect("build succeeds: public key matches; the BREAK is the corrupted signature"),
     );
     let (client_cert2, client_key2) = make_leaf(
         &client_ca2,
@@ -1174,13 +1156,9 @@ fn aws_kms_delegated_build_rejects_mismatch_and_non_ed25519_leaf() {
         "alias/mcp-re-tls",
     )
     .expect("aws kms backend");
-    let err = mcp_re_proxy::build_server_config_delegated_validated(
-        vec![leaf],
-        std::sync::Arc::new(mismatched),
-        vec![client_ca.cert.der().clone()],
-        Vec::new(),
-    )
-    .expect_err("a cert↔KMS-key mismatch must fail closed at config construction");
+    let err = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
+        .build_delegated_config(vec![leaf], std::sync::Arc::new(mismatched), Vec::new())
+        .expect_err("a cert↔KMS-key mismatch must fail closed at config construction");
     assert!(
         matches!(err, mcp_re_proxy::TlsError::DelegatedKeyMismatch(_)),
         "expected DelegatedKeyMismatch, got {err:?}"
@@ -1193,13 +1171,9 @@ fn aws_kms_delegated_build_rejects_mismatch_and_non_ed25519_leaf() {
         "alias/mcp-re-tls",
     )
     .expect("aws kms backend");
-    let err = mcp_re_proxy::build_server_config_delegated_validated(
-        vec![ecdsa_leaf],
-        std::sync::Arc::new(backend),
-        vec![client_ca.cert.der().clone()],
-        Vec::new(),
-    )
-    .expect_err("a non-Ed25519 leaf must fail closed under AWS-delegated mode");
+    let err = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
+        .build_delegated_config(vec![ecdsa_leaf], std::sync::Arc::new(backend), Vec::new())
+        .expect_err("a non-Ed25519 leaf must fail closed under AWS-delegated mode");
     assert!(
         matches!(err, mcp_re_proxy::TlsError::DelegatedKeyMismatch(_)),
         "expected DelegatedKeyMismatch (Ed25519-only), got {err:?}"
@@ -1233,13 +1207,9 @@ fn gcp_kms_delegated_tls_handshake_round_trip_and_corruption_fails() {
         .expect("gcp kms backend over fake transport");
 
     let config = std::sync::Arc::new(
-        mcp_re_proxy::build_server_config_delegated_validated(
-            vec![server_cert],
-            std::sync::Arc::new(backend),
-            vec![client_ca.cert.der().clone()],
-            Vec::new(),
-        )
-        .expect("validated delegated config with the matching KMS TLS key must build"),
+        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
+            .build_delegated_config(vec![server_cert], std::sync::Arc::new(backend), Vec::new())
+            .expect("validated delegated config with the matching KMS TLS key must build"),
     );
 
     let (client_cert, client_key) = make_leaf(
@@ -1295,13 +1265,13 @@ fn gcp_kms_delegated_tls_handshake_round_trip_and_corruption_fails() {
     let backend2 = mcp_re_proxy::GcpKmsEd25519Backend::for_test_with_local_seed(&seed2)
         .expect("gcp kms backend 2");
     let config2 = std::sync::Arc::new(
-        mcp_re_proxy::build_server_config_delegated_validated(
-            vec![server_cert2],
-            std::sync::Arc::new(CorruptingGcpKms(backend2)),
-            vec![client_ca2.cert.der().clone()],
-            Vec::new(),
-        )
-        .expect("build succeeds: public key matches; the BREAK is the corrupted signature"),
+        TlsListenerSecurityState::new(vec![client_ca2.cert.der().clone()])
+            .build_delegated_config(
+                vec![server_cert2],
+                std::sync::Arc::new(CorruptingGcpKms(backend2)),
+                Vec::new(),
+            )
+            .expect("build succeeds: public key matches; the BREAK is the corrupted signature"),
     );
     let (client_cert2, client_key2) = make_leaf(
         &client_ca2,
@@ -1347,13 +1317,9 @@ fn gcp_kms_delegated_build_rejects_mismatch_and_non_ed25519_leaf() {
     let leaf = make_ed25519_server_leaf_from_seed(&server_ca, &[0x11u8; 32]);
     let mismatched = mcp_re_proxy::GcpKmsEd25519Backend::for_test_with_local_seed(&[0x22u8; 32])
         .expect("gcp kms backend");
-    let err = mcp_re_proxy::build_server_config_delegated_validated(
-        vec![leaf],
-        std::sync::Arc::new(mismatched),
-        vec![client_ca.cert.der().clone()],
-        Vec::new(),
-    )
-    .expect_err("a cert↔KMS-key mismatch must fail closed at config construction");
+    let err = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
+        .build_delegated_config(vec![leaf], std::sync::Arc::new(mismatched), Vec::new())
+        .expect_err("a cert↔KMS-key mismatch must fail closed at config construction");
     assert!(
         matches!(err, mcp_re_proxy::TlsError::DelegatedKeyMismatch(_)),
         "expected DelegatedKeyMismatch, got {err:?}"
@@ -1363,13 +1329,9 @@ fn gcp_kms_delegated_build_rejects_mismatch_and_non_ed25519_leaf() {
     let ecdsa_leaf = make_ecdsa_server_leaf(&server_ca);
     let backend = mcp_re_proxy::GcpKmsEd25519Backend::for_test_with_local_seed(&[0x33u8; 32])
         .expect("gcp kms backend");
-    let err = mcp_re_proxy::build_server_config_delegated_validated(
-        vec![ecdsa_leaf],
-        std::sync::Arc::new(backend),
-        vec![client_ca.cert.der().clone()],
-        Vec::new(),
-    )
-    .expect_err("a non-Ed25519 leaf must fail closed under GCP-delegated mode");
+    let err = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
+        .build_delegated_config(vec![ecdsa_leaf], std::sync::Arc::new(backend), Vec::new())
+        .expect_err("a non-Ed25519 leaf must fail closed under GCP-delegated mode");
     assert!(
         matches!(err, mcp_re_proxy::TlsError::DelegatedKeyMismatch(_)),
         "expected DelegatedKeyMismatch (Ed25519-only), got {err:?}"
