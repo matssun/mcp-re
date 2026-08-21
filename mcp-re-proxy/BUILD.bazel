@@ -217,6 +217,10 @@ _PROXY_LIB_SRCS = [
     # consults on every request, since rustls consults the CRLs at the handshake alone.
     "src/client_revocation.rs",
     "src/stage_timers.rs",
+    "src/blocking_mtls_harness/connection.rs",
+    "src/blocking_mtls_harness/deadline_stream.rs",
+    "src/blocking_mtls_harness/http1.rs",
+    "src/blocking_mtls_harness/mod.rs",
     "src/tls_listener_state/assembly.rs",
     "src/tls_listener_state/auth_epoch.rs",
     "src/tls_listener_state/client_verifier.rs",

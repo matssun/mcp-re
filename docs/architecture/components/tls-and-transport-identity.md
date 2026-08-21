@@ -27,7 +27,7 @@ Establish authenticated transport channels, verified client-certificate identity
 - application dispatch;
 - replay/admission decisions unrelated to TLS;
 - request identity from arbitrary forwarded headers;
-- a blocking test harness merely because it uses TLS.
+- a blocking test harness merely because it uses TLS (`blocking_mtls_harness`, §8).
 
 ## 3. Position in the system
 
@@ -105,11 +105,13 @@ The TLS authority must preserve the established relation that a connection canno
 
 ## 8. Blocking harness boundary
 
-The legacy blocking mTLS + hand-rolled HTTP/1 harness is not the shipped MCP-RE serving path. If retained for cross-crate tests or embedding, it belongs in a semantically named harness/compatibility component rather than inside the TLS security authority.
+The blocking mTLS + hand-rolled HTTP/1 harness is not the shipped MCP-RE serving path. It lives in `mcp-re-proxy/src/blocking_mtls_harness/`, outside the TLS security authority — **done, MCPRE-138 (#574)**.
 
-Relocation is justified by ownership, not by LOC reduction. Measured on `main` @ `527b1ac`: `serve`, `serve_once`, and `serve_once_with_assertion` are re-exported from `lib.rs` and have **no in-crate production caller** — every caller is a test or an external embedder. That is what makes them a harness rather than a serving path; it is not on its own a reason to delete them (ADR-061 §2 class 4 — zero production callers is not a deletion argument).
+Relocation was justified by ownership, not by LOC reduction. `serve`, `serve_once` and `serve_once_with_assertion` have no in-crate production caller — every caller is a test or an external embedder — which is what makes them a harness rather than a serving path. It is not on its own a reason to delete them (ADR-061 §2 class 4 — zero production callers is not a deletion argument), so they are retained and still exported from the crate root, with `blocking_mtls_harness` as their provenance.
 
-This is step 3 of the ruled campaign order.
+What moved is the capability, whole: the entry points, the accept loop, the per-connection sequence, the deadline wrapper and the HTTP/1 framing. What did **not** move is any authentication policy. The harness holds the live `ServerConnection`, so it is the only code that can produce a peer chain from one, but every decision taken from that chain is called here: `resolve_identity_from_leaf`, `cert_lifetime_rejection_for_chain`, `ocsp_rejection_for_chain`, `routing_header_rejection`, `assertion_header`. `ocsp_rejection` was reshaped to its chain form rather than moved, precisely so the online-OCSP fail-closed policy stayed in the authority.
+
+Every per-request decision in this component now takes the chain as an argument, so the blocking and async paths reach the same verdict from the same input, and who holds the connection is not part of the decision. The measurement is EX-004's post-#574 re-census.
 
 ## 9. Assurance hierarchy
 
@@ -152,20 +154,21 @@ The last row is ADR-061 §2 class 8 in this component: the harness is not `#[ign
 
 ## 12. Implementation map
 
-Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_gate.py::production_lines`).
+Re-measured by the ADR-061 §5.1 rule after MCPRE-138 (`scripts/module_size_gate.py::production_lines`), not carried forward.
 
 | file | prod | current role | target role |
 |---|---:|---|---|
-| `mcp-re-proxy/src/tls.rs` | 1907 | everything below, in one module — 18 public items | TLS authority facade over a private subtree |
-| `mcp-re-proxy/src/tls_auth_epoch.rs` | 270 | `TlsAuthEpoch`, `SharedTlsAuthEpoch`, `EpochBoundSessionStore` | private subordinate of the listener-lifetime state |
-| `mcp-re-proxy/src/tls_plane.rs` | 679 | holds the resumption state across rebuilds — the de facto listener lifetime | the explicit `TlsListenerSecurityState` owner of §5 |
+| `mcp-re-proxy/src/tls.rs` | 1068 | the six authorities EX-004's re-census names | TLS authority facade over a private subtree |
+| `mcp-re-proxy/src/blocking_mtls_harness/` | 554 | the blocking mTLS + HTTP/1 harness, four modules, all under the threshold | as-is — a consumer of the authority, not part of it |
+| `mcp-re-proxy/src/tls_listener_state/auth_epoch.rs` | 270 | `TlsAuthEpoch`, `SharedTlsAuthEpoch`, `EpochBoundSessionStore` | private subordinate of the listener-lifetime state — pre-existing debt, still unreviewed |
+| `mcp-re-proxy/src/tls_plane.rs` | 623 | seeds and rebuilds through `TlsListenerSecurityState` | as-is |
 | `mcp-re-proxy/src/delegated_tls.rs` | 313 | delegated server-credential resolver | private subordinate |
 | `mcp-re-proxy/src/transport.rs` | 1305 | transport binding and identity | separate authority; band-3 hotspot in its own right |
 | `mcp-re-proxy/src/handshake_quota.rs` | 178 | handshake admission quota | private subordinate |
 | `mcp-re-proxy/src/client_revocation.rs` | 263 | CRL plan consumption | private subordinate |
 | `mcp-re-proxy/src/ocsp.rs` | 1271 | full RFC 6960 responder + client | separate authority behind `online_ocsp`; band-3 hotspot |
 
-`tls.rs` at 1565 production lines (1907 before MCPRE-137 moved the resumption authority out) is an ADR-061 §5.3 band-3 hotspot (>1,000): authority census required before substantial new functionality. `transport.rs` and `ocsp.rs` are the same band and are *not* covered by this blueprint's target; each needs its own.
+`tls.rs` at 1068 production lines (1907 before MCPRE-137, 1565 before MCPRE-138) is still an ADR-061 §5.3 band-3 hotspot (>1,000): authority census required before substantial new functionality, and EX-004's re-census is that census. `transport.rs` and `ocsp.rs` are the same band and are *not* covered by this blueprint's target; each needs its own.
 
 ## 13. Known deviations
 
@@ -192,18 +195,16 @@ Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_g
    #598 REMAINING        retire/re-scope that machinery, and its theorem consequences
    ```
 
-2. **The blocking harness is inside the security authority** — §8.
+2. **`transport.rs` (1305) and `ocsp.rs` (1271) are band-3 units with no blueprint.** They are named here so their absence is a recorded gap rather than an implied claim of coverage.
 
-3. **`transport.rs` (1305) and `ocsp.rs` (1271) are band-3 units with no blueprint.** They are named here so their absence is a recorded gap rather than an implied claim of coverage.
-
-4. **Three properties in §10 have no theorem.** Structural and tested is not the same as stated.
+3. **Three properties in §10 have no theorem.** Structural and tested is not the same as stated.
 
 ## 14. Completion criteria
 
 - ~~listener-lifetime security state is explicitly owned by a type~~ — done, `TlsListenerSecurityState` (MCPRE-137);
 - ~~one-shot vs rebuildable semantics are impossible to confuse in the API~~ — done, by removing the one-shot family the census found had no production caller (MCPRE-137);
-- blocking harness is outside the TLS authority if retained;
-- no test-only consumer forces a misleading production export;
+- ~~blocking harness is outside the TLS authority if retained~~ — done, `blocking_mtls_harness` (MCPRE-138);
+- ~~no test-only consumer forces a misleading production export~~ — done, the harness entry points are exported from their own module (MCPRE-138);
 - TLS authority has a narrow facade and private subordinate implementation tree;
 - the resumption property and the credential-window relation are stated in the theorem registry with correct scope — under ADR-062 the resumption row is listener/store NON-CONTINUITY, not live epoch advancement (see the #581 note);
 - exact cargo/Bazel feature lanes cover exported-key, delegated-key, revocation, resumption, and async serving paths, each named per §11.
