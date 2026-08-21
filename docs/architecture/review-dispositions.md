@@ -266,3 +266,132 @@ controls at once, where before it took two mutations to reach the same set.
   datatype and cannot call accessors from verified code. Recorded in
   [`docs/dev/sealed-owners.md`](../dev/sealed-owners.md) as the second measurement of a
   rule that already existed — a proved postcondition outranks a seal.
+
+---
+
+## EX-004 — `mcp-re-proxy/src/tls.rs` — **census complete, disposition: decompose first**
+
+**Status:** `reviewed-action-required`. **Remediation:** [#573](https://github.com/matssun/mcp-re/issues/573)
+(the listener-lifetime security-state owner) then
+[#574](https://github.com/matssun/mcp-re/issues/574) (the blocking HTTP/1 harness).
+**Measured:** 1907 production lines on `063a0f8`, re-measured rather than carried over from
+the issue text — an ADR-061 §5.3 **band-3** unit (>1,000), so this census is required before
+the work, not after it. **Component blueprint:**
+[`components/tls-and-transport-identity.md`](components/tls-and-transport-identity.md).
+
+### §8 question 1 — what single security fact does it own?
+
+There is no single answer, and the shortest honest one needs six "and"s: *the file owns the
+serving TLS configuration **and** the client-verifier posture **and** the resumption-epoch
+binding **and** offline CRL evidence **and** identity extraction from a leaf certificate
+**and** the classification of why a connection was refused **and** a blocking HTTP/1
+harness.* ADR-061 §8 names an answer needing an "and" as evidence of a shallow authority
+boundary; this one needs six.
+
+### §8 question 2 — how many independently describable authorities?
+
+Eight. Size ordered the investigation; this count decides the outcome.
+
+| # | authority | what it decides | ~prod lines |
+|---|---|---|---:|
+| A | **Listener security state** — `new_resumption_state`, `epoch_bound_resumption`, `NoStatelessTickets`, the four builders and their `_resuming` twins | whether a stored session is still a shortcut under current trust | ~230 |
+| B | Client-verifier construction (`build_client_verifier`, the `fault_accept_any_client` bypass) | what a valid client certificate is | ~40 |
+| C | Offline CRL evidence and freshness posture (`CrlFreshness`, `crl_freshness`, `CrlPosture`, `load_client_crls`) | whether revocation evidence may be relied on | ~230 |
+| D | Identity extraction (`extract_identity`, `resolve_identity*`, `leaf_facts`) | which certificate field IS the peer's identity | ~180 |
+| E | Connection-rejection classification (`connection_rejection*`, `cert_lifetime_rejection*`, `chain_issuers_*`, `ocsp_rejection`, `routing_header_rejection`, `assertion_header`) | the refusal token a peer is told | ~330 |
+| F | Serving limits and options vocabulary (`ServerLimits`, `ServerOptions`, `IdentityStrategy`) | the DoS ceilings and the identity strategy | ~230 |
+| G | **The blocking HTTP/1 harness** (`serve*`, `serve_connection`, `DeadlineStream`, `read_http_request`, `write_http_response`, framing helpers) | nothing security-relevant — it is a test harness | ~420 |
+| H | Wall clock (`wall_clock_unix`) | the instant every validity check reads | ~28 |
+
+A and G are the two the campaign already ruled on, and they are the two with the clearest
+seams. This record closes the census; #573 and #574 are the work it identifies.
+
+### §8 question 7 — security relationships existing only through call ordering
+
+**This is the defect #573 exists to remove, and the code states it against itself.**
+
+`tls_plane.rs` calls `tls::new_resumption_state(&client_ca)` once and holds the result
+across every rebuild, so *the listener lifetime is the resumption authority*. Nothing says
+so at a type. Meanwhile `RustlsDirectProvider::build_server_config_with_crls` — and both
+delegated one-shot builders — call `new_resumption_state` **internally**, and
+`new_resumption_state`'s own doc comment admits the consequence:
+
+> A state created per build pairs a fresh epoch with a fresh empty cache, which discards
+> every resumable session on each rebuild and leaves the epoch unable to move.
+
+Two builders whose names differ by the suffix `_resuming` differ in whether ADR-055's epoch
+is a live lever or a constant. The relationship holds today only because `tls_plane.rs`
+happens to call the right one.
+
+There is a second ordering relationship inside the surviving path. A rebuild passes
+`state.client_ca.clone()` **and** `&state.resumption` as separate arguments, which must
+agree — the anchors are the epoch's only input. Nothing but the call site relates them.
+
+### §8 question 8 — public interface that exists only because tests need it
+
+**The entire one-shot builder family.** No production code calls
+`RustlsDirectProvider::build_server_config`, `build_server_config_with_crls`,
+`build_server_config_delegated_with_crls` or `build_server_config_delegated_validated`.
+Every caller is a test, including cross-crate ones in `mcp-re-transport/tests/`. Production
+reaches TLS only through `tls_plane.rs` → the `_resuming` variants.
+
+So the API surface that carries the degenerate epoch behaviour is also the surface with no
+production consumer. That is what makes #573's ambiguity removable rather than a
+compatibility problem: there is one production capability, not two.
+
+Authority G is the same finding at file scale — `serve_once`'s own doc says *"the shipped
+proxy does not use it"*.
+
+### §8 question 9 — branches unreachable under the current legality model
+
+`epoch_bound_resumption`'s `if let Some(previous) = resumption.republish(epoch)` branch, and
+the operator log line inside it, are **unreachable in production today**. Within a listener
+the anchor set is fixed at `TlsRebuildState::new`, and every rebuild republishes the same
+digest; a trust-anchor change produces a new plane with a new store, which discards the
+cache wholesale rather than moving the epoch. The mechanism that actually prevents stale
+resumption across an anchor change is store replacement, not epoch advance.
+
+The epoch-mismatch eviction is still exercised, but only by
+`tests/integration/tls_epoch_resumption_test.rs`, which drives `SharedTlsAuthEpoch::store`
+directly. **That is a claim about the store, not about the plane**, and #573 must not
+quietly convert it into a claim about the plane.
+
+This is recorded, not acted on. Deciding whether the epoch should become a live
+listener-lifetime lever (an anchor-reload path) or an acknowledged construction-time
+constant is an ADR-055 question and needs owner review; #573's scope is ownership, not
+epoch lifecycle.
+
+### §8 question 10 — facts represented more than once
+
+The trusted client-CA set is held by `TlsRebuildState.client_ca` **and** digested into the
+epoch the store publishes, with only the call site relating them. Both `_resuming` builders
+recompute `TlsAuthEpoch::compute(&client_ca)` from the anchors they were handed rather than
+reading the epoch the store already holds.
+
+### §8 question 11 — inconsistent values a caller can construct
+
+`TlsAuthEpoch`, `SharedTlsAuthEpoch` and `EpochBoundSessionStore` are `pub` with `pub`
+constructors, so a caller can assemble a store under any epoch and hand it to any build.
+`new_resumption_state` is `pub(crate)`, which binds nothing inside this crate. The forbidden
+combination — a fresh cache paired with an epoch unrelated to the verifier installed beside
+it — is constructible today, and is what #573 must make unconstructible rather than
+detectable.
+
+### §8 questions 3–6, 12
+
+It **decides** the resumption gate, the verifier posture, the identity field, and the
+refusal token. It **executes** rustls configuration and socket I/O. It **transports** the
+extracted identity to the handler. It **reconstructs** nothing another owner already
+decided, except the epoch, which it recomputes per build from anchors the store's owner
+already holds (question 6, and the question-10 duplicate above). The lanes that establish
+its properties are `cargo test -p mcp-re-proxy` for the unit tests,
+`//mcp-re-proxy:integration_test` for the epoch-resumption control, and
+`//mcp-re-proxy:fault_injection_test` for the deliberately-broken client-auth control
+(question 12).
+
+### Disposition
+
+`reviewed-action-required`. Eight authorities, two with identified owners next door: the
+listener-lifetime security state (#573) and the blocking harness (#574). A §14 exception is
+declined — this record does not grant one, and the file stays in the debt registry until
+those land and this census is re-run.
