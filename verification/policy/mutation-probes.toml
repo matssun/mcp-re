@@ -780,10 +780,10 @@ expect_red = [
 id = "T01-per-build-session-store"
 unit = "proxy.tls_listener_state"
 conjunct = "a rebuild binds the config to the store this state was established with, not to a new one"
-path = "mcp-re-proxy/src/tls_listener_state.rs"
+path = "mcp-re-proxy/src/tls_listener_state/mod.rs"
 anchor = """
         let epoch = *self.resumption.epoch();
-        crate::tls::epoch_bound_resumption(config, &self.resumption, epoch)
+        resumption_binding::epoch_bound_resumption(config, &self.resumption, epoch)
 """
 weakening = """
         let epoch = *self.resumption.epoch();
@@ -791,7 +791,7 @@ weakening = """
             epoch,
             TLS_SESSION_CACHE_ENTRIES,
         ));
-        crate::tls::epoch_bound_resumption(config, &fresh, epoch)
+        resumption_binding::epoch_bound_resumption(config, &fresh, epoch)
 """
 expect_red = [
   "lib#tls_listener_state::tests::a_rebuild_keeps_the_cache_and_the_epoch_of_the_state_it_was_built_through",
@@ -801,7 +801,7 @@ expect_red = [
 id = "T02-epoch-not-from-the-owners-anchors"
 unit = "proxy.tls_listener_state"
 conjunct = "the epoch a config is bound under digests the anchors this state owns"
-path = "mcp-re-proxy/src/tls_listener_state.rs"
+path = "mcp-re-proxy/src/tls_listener_state/mod.rs"
 anchor = """
     pub fn new(client_ca: Vec<CertificateDer<'static>>) -> Self {
         let resumption = Arc::new(EpochBoundSessionStore::memory_backed(
@@ -825,7 +825,7 @@ expect_red = [
 id = "T03-stateless-tickets-bypass-the-store"
 unit = "proxy.tls_listener_state"
 conjunct = "no config this owner builds can resume outside the epoch-tagged store"
-path = "mcp-re-proxy/src/tls.rs"
+path = "mcp-re-proxy/src/tls_listener_state/resumption_binding.rs"
 anchor = """
     config.ticketer = Arc::new(NoStatelessTickets);
 """
@@ -835,3 +835,34 @@ weakening = """
 expect_red = [
   "lib#tls_listener_state::tests::no_config_this_owner_builds_can_resume_outside_the_store",
 ]
+
+[[probe]]
+id = "T04-per-build-signing-budget"
+unit = "proxy.tls_listener_state"
+conjunct = "a delegated rebuild reuses the listener's handshake-signature budget rather than creating one"
+path = "mcp-re-proxy/src/tls_listener_state/mod.rs"
+anchor = """
+        crate::tls::validated_delegated_resolver(
+            server_chain,
+            signer,
+            Arc::clone(&self.sign_budget),
+        )
+"""
+weakening = """
+        crate::tls::validated_delegated_resolver(
+            server_chain,
+            signer,
+            Arc::new(TlsHandshakeSignBudget::default()),
+        )
+"""
+expect_red = [
+  "lib#tls_listener_state::tests::a_delegated_rebuild_reuses_the_listeners_signing_budget",
+]
+note = """
+The FOURTH conjunct. The owner's docs list the signing budget among the things established
+together, and until this probe nothing asked what breaks if a rebuild creates a fresh one —
+the answer was "no declared control", which is a conjunct asserted in prose on a V0 unit.
+
+A per-build bucket is refilled on every reload cadence, so it bounds a WINDOW rather than a
+rate against a remote, billed, account-throttled signer.
+"""

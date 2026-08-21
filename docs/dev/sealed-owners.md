@@ -66,7 +66,7 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `ClientCredentialWindow` | `config_state/client_credential_window.rs` | `cert_lifetime()`, `connection_age()`, `exposure_window()` |
 | `ShardTopologyRequest` | `config_state/topology.rs` | `shards()`, `workers_per_shard()`, `shards_or_auto()`, `workers_per_shard_or_auto()` |
 | `TrustPlan` | `startup_plan.rs` | `revocation()`, `document_path()`, `response_kid()`, `reload()`, `epoch()` |
-| `TlsListenerSecurityState` | `tls_listener_state.rs` | `epoch()`, `build_exported_key_config()`, `build_delegated_config()`, `build_delegated_resolver_config()` |
+| `TlsListenerSecurityState` | `tls_listener_state/` (a module TREE) | `epoch()`, `build_exported_key_config()`, `build_delegated_config()`, `build_delegated_resolver_config()` |
 
 A plan produced by an owner lives **with that owner**, not in `startup_plan.rs`.
 `startup_plan` re-exports it. The plan is the owner's projection of its own validated
@@ -91,27 +91,51 @@ builder(state.client_ca.clone(), …, &state.resumption)
 
 — two arguments carrying one relationship, related by nothing but the call site.
 
-So the build is a **method on the state**. The anchors and the store are never separately
-obtainable, and `mcp-re-proxy/src/tls.rs` retains only `pub(crate)` **resumption-free**
-assembly (`assemble_exported_key_config`, `assemble_delegated_config`): a config it returns
-has no session cache installed at all, and the only thing that installs one is the owner's
-private `bind_resumption`.
+So the build is a **method on the state**, and — the part the first attempt got wrong — the
+seal is the module TREE, not one file:
 
-**What the seal covers, precisely.** `EpochBoundSessionStore` is still publicly
-constructible — `tests/integration/tls_epoch_resumption_test.rs` builds one to drive real
-rustls handshakes, which is the store's own acceptance evidence and worth keeping. A store
-in isolation is not an illegal value. The illegal value was *a serving config whose cache is
-unrelated to the anchors its verifier was built from*, and that is what is now
-unconstructible: no public path installs a store on a config.
+```text
+tls_listener_state            the only construction authority (pub)
+  ├── assembly                what the serving config IS
+  ├── auth_epoch              the epoch VALUE is pub; the store and the mutable
+  │                           wrapper are pub(super)
+  ├── client_verifier         what a valid client certificate is
+  ├── resumption_binding      whether a stored session is still a shortcut
+  └── resumption_acceptance   the real-handshake controls, inside the boundary
+```
+
+The first version left `assemble_*` and `epoch_bound_resumption` `pub(crate)` in `tls.rs`
+and `tls_auth_epoch` a `pub` sibling module, then claimed the pairing was unconstructible.
+It was not: any module in the crate could assemble a verifier over anchors A, build a store
+over epoch B, and pair them. **`pub(crate)` seals against nobody when every consumer lives
+in the crate** — the rule this document already states, applied to itself. The subordinates
+moved INTO the owner rather than being described as subordinate.
+
+**What the seal covers, precisely.** No path outside the tree can build a store, install
+one, or assemble a config to install it on. The residual limit is foreign:
+`rustls::ServerConfig::session_storage` is a public field of a type this project does not
+own, so code holding a config can overwrite it. What is unconstructible is BUILDING a
+mispaired config — and construction is where the owner is the sole legitimate producer,
+which is the test this document sets for whether privacy is worth adding.
+
+**The acceptance test moved rather than the interface widening.** The real-handshake
+ADR-055 controls used to be an integration test reaching the store through the crate's
+public surface, which would have forced the subordinates to stay `pub`. That is §8
+question 8 — a production interface widened by a test — so the TEST moved inside the
+boundary, to `tls_listener_state/resumption_acceptance.rs`.
 
 **The operational test.** Delete the pairing check — there is none to delete, which is the
 answer. The census (EX-004) found the check was a naming convention: builders whose names
 differed by a `_resuming` suffix differed in whether the epoch was a live lever. Both
 one-shot builders are gone; there is one way to build, and it goes through the state.
 
-`tools/verification/verify-mutations` probes it: creating a store per build, or deriving the
-epoch from anything but the owner's anchors, each turns a declared control red
-(`T01`, `T02` in `verification/policy/mutation-probes.toml`).
+`tools/verification/verify-mutations` probes all four conjuncts, each turning a declared
+control red (`T01`–`T04` in `verification/policy/mutation-probes.toml`): a session store
+created per build, an epoch derived from anything but the owner's anchors, an enabled
+stateless ticketer that would resume outside the store entirely, and a signing budget
+created per delegated rebuild. The fourth exists because the budget was named among the
+things "established together" while nothing asked what breaks if a rebuild recreates it —
+a conjunct asserted in prose on a V0 unit.
 
 **What it deliberately does not project.** No epoch setter. Within a listener the anchors
 are immutable, so the epoch is a construction-time constant; a mutation seam would advertise

@@ -183,7 +183,6 @@ pub mod reloading_trust;
 /// Per-stage wall-clock timers for the async serving path.
 pub mod stage_timers;
 /// ADR-MCPRE-055: the trust epoch that gates TLS session resumption.
-pub mod tls_auth_epoch;
 pub mod tls_listener_state;
 // ADR-MCPS-021 Tier 3: push-invalidation trust cache — bounded-`T` caching plus an
 // injected invalidation channel that evicts revoked entries immediately, with a

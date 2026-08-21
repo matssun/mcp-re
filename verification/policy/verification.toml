@@ -349,9 +349,28 @@ tested_symbols = [
 id = "proxy.tls_listener_state"
 class = "V0"
 description = "The listener-lifetime TLS security state: anchors, the epoch they digest to, the session cache tagged with it, and the signing budget, established together and unsplittable."
+# The COMPLETE implementation closure of the proposition, not the files whose names read
+# like it. The first version named the owner and the epoch module only — and `T03` mutates
+# `tls.rs`, so an edit there could weaken the resumption binding while this unit's
+# fingerprint stood still. Same false-freshness class as the one #596 closed.
+#
+# The claim is about a PRODUCTION LISTENER's lifetime, so the closure reaches the wiring
+# that gives a listener one: `tls_plane.rs` seeds the state and rebuilds through it,
+# `delegated_tls.rs` carries the signing-budget semantics the fourth conjunct is about, and
+# `tls.rs` holds the credential validation and error vocabulary the builds go through. A
+# narrower unit proving only the owner-local relationship would be defensible, but then the
+# description would have to stop saying "production listener" and `TlsPlane` would need a
+# composition obligation of its own.
 paths = [
-  "mcp-re-proxy/src/tls_listener_state.rs",
-  "mcp-re-proxy/src/tls_auth_epoch.rs",
+  "mcp-re-proxy/src/tls_listener_state/mod.rs",
+  "mcp-re-proxy/src/tls_listener_state/auth_epoch.rs",
+  "mcp-re-proxy/src/tls_listener_state/assembly.rs",
+  "mcp-re-proxy/src/tls_listener_state/client_verifier.rs",
+  "mcp-re-proxy/src/tls_listener_state/resumption_binding.rs",
+  "mcp-re-proxy/src/tls_listener_state/resumption_acceptance.rs",
+  "mcp-re-proxy/src/tls.rs",
+  "mcp-re-proxy/src/delegated_tls.rs",
+  "mcp-re-proxy/src/tls_plane.rs",
 ]
 exported_contracts = []
 evidence = [
@@ -363,13 +382,18 @@ tested_symbols = [
   "lib#tls_listener_state::tests::a_rebuild_keeps_the_cache_and_the_epoch_of_the_state_it_was_built_through",
   "lib#tls_listener_state::tests::a_different_anchor_set_is_a_different_state_with_its_own_empty_cache",
   "lib#tls_listener_state::tests::no_config_this_owner_builds_can_resume_outside_the_store",
-  "lib#tls_auth_epoch::tests::a_session_stored_under_the_current_epoch_resumes",
-  "lib#tls_auth_epoch::tests::a_session_stored_under_a_withdrawn_anchor_does_not_resume",
-  "lib#tls_auth_epoch::tests::a_stale_session_is_evicted_by_get_not_left_to_be_re_rejected",
-  "lib#tls_auth_epoch::tests::a_rebuild_that_republishes_the_same_trust_keeps_the_cache",
-  "lib#tls_auth_epoch::tests::a_rebuild_with_withdrawn_trust_advances_the_epoch_and_stops_resumption",
-  "lib#tls_auth_epoch::tests::withdrawing_an_anchor_changes_the_epoch",
-  "lib#tls_auth_epoch::tests::the_anchor_set_alone_determines_the_epoch",
+  "lib#tls_listener_state::tests::a_delegated_rebuild_reuses_the_listeners_signing_budget",
+  "lib#tls_listener_state::resumption_acceptance::handshakes::a_second_connection_resumes_while_the_trust_epoch_holds",
+  "lib#tls_listener_state::resumption_acceptance::handshakes::withdrawing_a_trusted_ca_stops_resumption_and_forces_a_full_handshake",
+  "lib#tls_listener_state::resumption_acceptance::handshakes::republishing_the_epoch_of_an_unchanged_ca_set_does_not_stop_resumption",
+  "lib#tls_listener_state::resumption_acceptance::handshakes::resumption_returns_once_the_original_trust_is_restored",
+  "lib#tls_listener_state::auth_epoch::tests::a_session_stored_under_the_current_epoch_resumes",
+  "lib#tls_listener_state::auth_epoch::tests::a_session_stored_under_a_withdrawn_anchor_does_not_resume",
+  "lib#tls_listener_state::auth_epoch::tests::a_stale_session_is_evicted_by_get_not_left_to_be_re_rejected",
+  "lib#tls_listener_state::auth_epoch::tests::a_rebuild_that_republishes_the_same_trust_keeps_the_cache",
+  "lib#tls_listener_state::auth_epoch::tests::a_rebuild_with_withdrawn_trust_advances_the_epoch_and_stops_resumption",
+  "lib#tls_listener_state::auth_epoch::tests::withdrawing_an_anchor_changes_the_epoch",
+  "lib#tls_listener_state::auth_epoch::tests::the_anchor_set_alone_determines_the_epoch",
 ]
 
 # ---------------------------------------------------------------------------

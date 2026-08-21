@@ -2,59 +2,63 @@
 //! [`TlsListenerSecurityState`] — the security state ONE listener is built around, for the
 //! whole of its lifetime (ADR-MCPRE-061 §2, ADR-MCPRE-055).
 //!
-//! # The relationship this type exists to make unsplittable
-//!
-//! A serving `ServerConfig` is rebuilt on the CRL reload cadence, and three facts have to
-//! survive that rebuild together:
+//! # The relationship this type makes unsplittable
 //!
 //! ```text
 //!   trusted client CAs ──digest──> authentication epoch ──tags──> session cache
 //!                                                                 signing budget
 //! ```
 //!
-//! The anchors are the epoch's ONLY input, the epoch tags the cache, and the budget bounds
-//! a rate rather than a window. Before this owner existed the relationship held only
-//! through call ordering: a rebuild passed `state.client_ca.clone()` **and**
-//! `&state.resumption` as two separate arguments that had to agree, and a second family of
-//! builders created its own state internally — pairing a fresh epoch with a fresh empty
-//! cache, which discards every resumable session and leaves the epoch unable to move.
+//! Four facts that must survive a `ServerConfig` rebuild TOGETHER. The anchors are the
+//! epoch's only input, the epoch tags the cache, and the budget bounds a rate rather than a
+//! window — so a per-build cache empties on every reload cadence and a per-build bucket
+//! refills on it.
 //!
-//! Here the pairing is not a rule anyone remembers. A build is a method ON the state, the
-//! anchors and the store are never separately passable, and there is no other way to
-//! obtain an [`EpochBoundSessionStore`](crate::tls_auth_epoch::EpochBoundSessionStore) that
-//! a build would accept — so the forbidden combination is unconstructible rather than
-//! detectable.
+//! A build is a method ON the state. The anchors and the store are never separately
+//! passable, so the forbidden combination — a fresh cache beside an unrelated epoch — is
+//! unconstructible rather than detectable. The census that found it is `EX-004` in
+//! `docs/architecture/review-dispositions.md`.
 //!
 //! # What this owner does NOT claim
 //!
-//! Three propositions are easy to run together and are deliberately kept apart, because
-//! only the first is a property of the store and only the third is what production
-//! currently relies on:
+//! Three propositions are easy to run together and are kept apart, because only the first
+//! is a property of the store and only the third is what production relies on:
 //!
 //! | | proposition | established by |
 //! |---|---|---|
-//! | 1 | if the current epoch changes, sessions tagged with the old one are not returned | `EpochBoundSessionStore`, and `tests/integration/tls_epoch_resumption_test.rs` |
+//! | 1 | if the current epoch changes, sessions tagged with the old one are not returned | [`auth_epoch`], and the real-handshake controls in [`resumption_acceptance`] |
 //! | 2 | a production listener's epoch advances when its anchors change | **nothing — the anchor set is immutable for this owner's lifetime** |
-//! | 3 | replacing the anchor set replaces the listener, and therefore the store | this type: a new anchor set means a new `TlsListenerSecurityState` |
+//! | 3 | replacing the anchor set replaces the listener, and therefore the store | this type |
 //!
-//! Proposition 1 is a claim about the STORE. It must never be read as evidence for
-//! proposition 2. Within one listener the anchors do not change, so the epoch does not
-//! advance; what protects an anchor-set change is that no cache crosses it.
+//! Proposition 1 must never be read as evidence for proposition 2. Within one listener the
+//! anchors do not change, so the epoch does not advance; what protects an anchor-set change
+//! is that no cache crosses it.
 //!
-//! ADR-MCPRE-055's text anticipates a live-epoch lifecycle. Whether MCP-RE promises that,
-//! or promises listener replacement, is a lifecycle question under separate adjudication —
-//! so this type exposes NO epoch mutation. The existing republish machinery stays where it
-//! is, underneath, and with anchors fixed here its change branch is an invariant-preserving
-//! no-op. Adding a mutation seam would be inventing an operational capability so that an
-//! existing mechanism could exercise its change branch.
+//! ADR-MCPRE-055's text anticipates a live-epoch lifecycle. Which lifecycle MCP-RE promises
+//! is under separate adjudication, so this type exposes NO epoch mutation: adding a seam
+//! would invent an operational capability so an existing mechanism could exercise its
+//! change branch.
 //!
 //! # Sealing
 //!
-//! Sealed by MODULE PRIVACY, which is the only lever that binds inside one crate
-//! (`docs/dev/sealed-owners.md`): every field is private to this module and every consumer
-//! — `tls_plane.rs`, the integration tests, the transport crate's harness — reaches the
-//! state only through the named projections below. `pub(crate)` and `#[non_exhaustive]`
-//! would seal against nobody here.
+//! By MODULE PRIVACY — the only lever that binds inside one crate — and the seal is the
+//! module TREE, not this file:
+//!
+//! ```text
+//! tls_listener_state            the only construction authority (pub)
+//!   ├── assembly                what the serving config IS
+//!   ├── auth_epoch              the epoch VALUE is pub; the store and the mutable
+//!   │                           wrapper are pub(super)
+//!   ├── client_verifier         what a valid client certificate is
+//!   ├── resumption_binding      whether a stored session is still a shortcut
+//!   └── resumption_acceptance   the real-handshake controls, inside the boundary
+//! ```
+//!
+//! These were `pub(crate)` in `tls.rs` and a `pub` sibling module, which sealed against
+//! nobody: every consumer lives in this crate. `docs/dev/sealed-owners.md` records what the
+//! seal covers and its one residual limit — `rustls::ServerConfig::session_storage` is a
+//! public field of a foreign type, so what is unconstructible is BUILDING a mispaired
+//! config, not overwriting one that exists.
 
 use std::sync::Arc;
 
@@ -63,11 +67,25 @@ use rustls_pki_types::CertificateDer;
 use rustls_pki_types::CertificateRevocationListDer;
 use rustls_pki_types::PrivateKeyDer;
 
+use crate::delegated_tls::DelegatedCertResolver;
 use crate::delegated_tls::RawEd25519TlsSigner;
 use crate::delegated_tls::TlsHandshakeSignBudget;
 use crate::tls::TlsError;
-use crate::tls_auth_epoch::EpochBoundSessionStore;
-use crate::tls_auth_epoch::TlsAuthEpoch;
+
+mod assembly;
+mod auth_epoch;
+mod client_verifier;
+mod resumption_acceptance;
+mod resumption_binding;
+
+use auth_epoch::EpochBoundSessionStore;
+
+/// The trust-anchor digest an epoch-bound store is tagged with.
+///
+/// Re-exported because it is a VALUE — computing one confers no authority — and the
+/// startup posture line and the plane's own tests name it. The capabilities that could
+/// pair a store with the wrong one stay private to this subtree.
+pub use auth_epoch::TlsAuthEpoch;
 
 /// Entries the per-listener TLS session cache retains.
 const TLS_SESSION_CACHE_ENTRIES: usize = 4096;
@@ -126,7 +144,7 @@ impl TlsListenerSecurityState {
         server_key: PrivateKeyDer<'static>,
         crls: Vec<CertificateRevocationListDer<'static>>,
     ) -> Result<ServerConfig, TlsError> {
-        let config = crate::tls::assemble_exported_key_config(
+        let config = assembly::assemble_exported_key_config(
             server_chain,
             server_key,
             self.client_ca.clone(),
@@ -147,11 +165,7 @@ impl TlsListenerSecurityState {
         signer: Arc<dyn RawEd25519TlsSigner>,
         crls: Vec<CertificateRevocationListDer<'static>>,
     ) -> Result<ServerConfig, TlsError> {
-        let resolver = crate::tls::validated_delegated_resolver(
-            server_chain,
-            signer,
-            Arc::clone(&self.sign_budget),
-        )?;
+        let resolver = self.delegated_resolver(server_chain, signer)?;
         self.build_delegated_resolver_config(resolver, crls)
     }
 
@@ -166,8 +180,27 @@ impl TlsListenerSecurityState {
         crls: Vec<CertificateRevocationListDer<'static>>,
     ) -> Result<ServerConfig, TlsError> {
         let config =
-            crate::tls::assemble_delegated_config(cert_resolver, self.client_ca.clone(), crls)?;
+            assembly::assemble_delegated_config(cert_resolver, self.client_ca.clone(), crls)?;
         Ok(self.bind_resumption(config))
+    }
+
+    /// Validate a delegated credential and pair it with THIS listener's signing budget.
+    ///
+    /// The seam `build_delegated_config` goes through, and the reason it returns the
+    /// concrete resolver: the budget is the fourth thing that must survive a rebuild, and
+    /// `DelegatedCertResolver::budget()` is the only handle on which budget a build
+    /// actually used. A `dyn ResolvesServerCert` would erase it, leaving the conjunct
+    /// asserted in prose and probed by nothing.
+    fn delegated_resolver(
+        &self,
+        server_chain: Vec<CertificateDer<'static>>,
+        signer: Arc<dyn RawEd25519TlsSigner>,
+    ) -> Result<Arc<DelegatedCertResolver>, TlsError> {
+        crate::tls::validated_delegated_resolver(
+            server_chain,
+            signer,
+            Arc::clone(&self.sign_budget),
+        )
     }
 
     /// Install this listener's epoch-tagged store on a freshly assembled config.
@@ -184,7 +217,7 @@ impl TlsListenerSecurityState {
     /// config was built through it.
     fn bind_resumption(&self, config: ServerConfig) -> ServerConfig {
         let epoch = *self.resumption.epoch();
-        crate::tls::epoch_bound_resumption(config, &self.resumption, epoch)
+        resumption_binding::epoch_bound_resumption(config, &self.resumption, epoch)
     }
 }
 
@@ -286,6 +319,72 @@ mod tests {
             second.session_storage.take(b"ticket"),
             None,
             "a cache governed by another anchor set must not hold the first listener's session"
+        );
+    }
+
+    /// A local-key delegated signer standing in for the device/KMS, so a delegated build
+    /// can be exercised without one.
+    struct LocalSigner(mcp_re_core::SigningKey);
+
+    impl RawEd25519TlsSigner for LocalSigner {
+        fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, crate::KeyError> {
+            Ok(mcp_re_core::b64url_decode(&self.0.sign(message)).expect("valid b64url"))
+        }
+        fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, crate::KeyError> {
+            let mut der = crate::kms_keysource::ED25519_SPKI_PREFIX.to_vec();
+            der.extend_from_slice(&self.0.public_key().to_bytes());
+            Ok(der)
+        }
+    }
+
+    /// A delegated credential whose leaf certificate carries the SIGNER's own key, which
+    /// is what `validated_delegated_resolver` insists on.
+    ///
+    /// The seed is lifted out of rcgen's PKCS#8: RFC 8410 Ed25519 puts the 32-byte seed at
+    /// bytes `[16..48]`, immediately after a fixed 16-byte prefix ending `04 22 04 20`.
+    fn delegated_credential() -> (Vec<CertificateDer<'static>>, Arc<dyn RawEd25519TlsSigner>) {
+        let pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519).expect("ed25519 key");
+        let pkcs8 = pair.serialize_der();
+        assert_eq!(
+            &pkcs8[12..16],
+            &[0x04, 0x22, 0x04, 0x20],
+            "rcgen's Ed25519 PKCS#8 prefix moved; the seed offset below is no longer right"
+        );
+        let seed: [u8; 32] = pkcs8[16..48].try_into().expect("ed25519 pkcs8 seed");
+        let params = rcgen::CertificateParams::new(vec!["localhost".to_string()]).expect("params");
+        let cert = params.self_signed(&pair).expect("delegated leaf");
+        (
+            vec![cert.der().clone()],
+            Arc::new(LocalSigner(mcp_re_core::SigningKey::from_seed_bytes(&seed))),
+        )
+    }
+
+    /// The FOURTH thing the owner establishes together: the handshake-signature budget.
+    ///
+    /// It bounds how fast unauthenticated peers can drive a remote, billed,
+    /// account-throttled signer. A budget created per build is refilled on every reload
+    /// cadence, so it bounds a WINDOW rather than a rate — the census's phrasing, and the
+    /// reason this conjunct is not decoration.
+    ///
+    /// The observable is the budget the BUILD used, not the field this state holds: a
+    /// mutation that creates a fresh bucket inside the build would leave the field
+    /// untouched and this control green. `delegated_resolver` is the seam
+    /// `build_delegated_config` goes through, and it returns the concrete resolver so
+    /// `budget()` is reachable.
+    #[test]
+    fn a_delegated_rebuild_reuses_the_listeners_signing_budget() {
+        let (chain, signer) = delegated_credential();
+        let state = TlsListenerSecurityState::new(vec![ca()]);
+
+        let first = state
+            .delegated_resolver(chain.clone(), Arc::clone(&signer))
+            .expect("initial delegated build");
+        let second = state.delegated_resolver(chain, signer).expect("rebuild");
+
+        assert!(
+            Arc::ptr_eq(first.budget(), second.budget()),
+            "a rebuild must reuse the listener's budget; a fresh bucket bounds a reload \
+             window rather than a rate"
         );
     }
 

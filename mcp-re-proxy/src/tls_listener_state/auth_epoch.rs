@@ -128,19 +128,19 @@ impl TlsAuthEpoch {
 /// clones the `Arc` under a short read lock, so an in-flight handshake never blocks on a
 /// reload and a reload never waits on the request path.
 #[derive(Debug)]
-pub struct SharedTlsAuthEpoch {
+pub(super) struct SharedTlsAuthEpoch {
     current: RwLock<Arc<TlsAuthEpoch>>,
 }
 
 impl SharedTlsAuthEpoch {
-    pub fn new(epoch: TlsAuthEpoch) -> Self {
+    pub(super) fn new(epoch: TlsAuthEpoch) -> Self {
         Self {
             current: RwLock::new(Arc::new(epoch)),
         }
     }
 
     /// The epoch in force right now.
-    pub fn load(&self) -> Arc<TlsAuthEpoch> {
+    pub(super) fn load(&self) -> Arc<TlsAuthEpoch> {
         Arc::clone(
             &self
                 .current
@@ -152,7 +152,7 @@ impl SharedTlsAuthEpoch {
     /// Publish a new epoch. Returns the previous value when it CHANGED, so the caller
     /// can emit the audit event; `None` when a reload produced identical trust, which
     /// is the common case and is not worth a log line.
-    pub fn store(&self, epoch: TlsAuthEpoch) -> Option<TlsAuthEpoch> {
+    pub(super) fn store(&self, epoch: TlsAuthEpoch) -> Option<TlsAuthEpoch> {
         let mut guard = self
             .current
             .write()
@@ -179,13 +179,13 @@ impl SharedTlsAuthEpoch {
 /// fleet filled survives the reload and the epoch is a live value rather than a constant
 /// fixed at construction.
 #[derive(Debug)]
-pub struct EpochBoundSessionStore {
+pub(super) struct EpochBoundSessionStore {
     epoch: Arc<SharedTlsAuthEpoch>,
     inner: Arc<dyn StoresServerSessions + Send + Sync>,
 }
 
 impl EpochBoundSessionStore {
-    pub fn new(
+    pub(super) fn new(
         epoch: Arc<SharedTlsAuthEpoch>,
         inner: Arc<dyn StoresServerSessions + Send + Sync>,
     ) -> Self {
@@ -198,7 +198,7 @@ impl EpochBoundSessionStore {
     /// listener. Constructing one per build would pair a brand-new epoch with a
     /// brand-new empty cache, which discards every resumable session on each rebuild
     /// and leaves the epoch with no way to move.
-    pub fn memory_backed(epoch: TlsAuthEpoch, entries: usize) -> Self {
+    pub(super) fn memory_backed(epoch: TlsAuthEpoch, entries: usize) -> Self {
         EpochBoundSessionStore::new(
             Arc::new(SharedTlsAuthEpoch::new(epoch)),
             rustls::server::ServerSessionMemoryCache::new(entries),
@@ -208,12 +208,12 @@ impl EpochBoundSessionStore {
     /// Publish the epoch a freshly built `ServerConfig` computed from its trust inputs.
     /// Returns the previous epoch when it CHANGED, so the caller can tell the operator
     /// that every stored session has just stopped being a shortcut.
-    pub fn republish(&self, epoch: TlsAuthEpoch) -> Option<TlsAuthEpoch> {
+    pub(super) fn republish(&self, epoch: TlsAuthEpoch) -> Option<TlsAuthEpoch> {
         self.epoch.store(epoch)
     }
 
     /// The epoch in force, for diagnostics and for the tests that pin the transition.
-    pub fn epoch(&self) -> Arc<TlsAuthEpoch> {
+    pub(super) fn epoch(&self) -> Arc<TlsAuthEpoch> {
         self.epoch.load()
     }
 

@@ -217,8 +217,12 @@ _PROXY_LIB_SRCS = [
     # consults on every request, since rustls consults the CRLs at the handshake alone.
     "src/client_revocation.rs",
     "src/stage_timers.rs",
-    "src/tls_auth_epoch.rs",
-    "src/tls_listener_state.rs",
+    "src/tls_listener_state/assembly.rs",
+    "src/tls_listener_state/auth_epoch.rs",
+    "src/tls_listener_state/client_verifier.rs",
+    "src/tls_listener_state/mod.rs",
+    "src/tls_listener_state/resumption_acceptance.rs",
+    "src/tls_listener_state/resumption_binding.rs",
     # ADR-MCPS-021 Tier 3: push-invalidation trust cache (bounded-T cache + injected
     # invalidation channel; bounded-T fallback when the channel is unhealthy).
     "src/push_trust.rs",
@@ -577,10 +581,10 @@ nt_rust_test(
 # comes from its plan must not read configuration to re-decide it. The signature proves no
 # `Config` is PASSED; this proves none is NAMED, which is the form a future reach-back
 # actually takes (a fully-qualified path, no import, no signature change).
-# `tls_epoch_resumption_test`
-# ADR-MCPRE-055: resumption is a shortcut only while the trust that authorised it
-# stands. Drives real rustls handshakes, because the property is whether rustls actually
-# resumed — a store that silently never resumed would pass the unit tests.
+# The ADR-MCPRE-055 real-handshake acceptance moved INTO the owner's module tree in
+# MCPRE-137 (`src/tls_listener_state/resumption_acceptance.rs`). Keeping it here would have
+# meant keeping the session store and the mutable epoch wrapper `pub` — a production
+# interface widened by a test. It runs under `proxy_unit_test` now.
 # `tls_test`
 # MCPS-025: RustlsDirectProvider — identity extraction (URI/DNS/CN priority) +
 # a full blocking mTLS round-trip (certs minted in-process via rcgen).

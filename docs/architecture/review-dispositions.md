@@ -398,13 +398,22 @@ those land and this census is re-run.
 
 ### What #573 changed, measured
 
-`tls.rs` **1907 → 1797** production lines; `tls_plane.rs` 679 → 623; the new owner
-`tls_listener_state.rs` at 190, under the threshold.
+`tls.rs` **1907 → 1565** production lines; `tls_plane.rs` 679 → 623. The owner's tree:
+`mod.rs` 223 (a §14 exception, EX-005), `auth_epoch.rs` 270 (pre-existing debt, carried
+across the rename), `assembly.rs` 155, `client_verifier.rs` 90, `resumption_binding.rs` 84.
 
-Authority A left the file. What remains of it in `tls.rs` is `pub(crate)` and
-**resumption-free** — `assemble_exported_key_config` and `assemble_delegated_config` return
-a config with no session store installed at all — plus `epoch_bound_resumption` and
-`NoStatelessTickets`, whose only caller is the owner's private `bind_resumption`.
+Authority A left the file entirely, into a module TREE under the owner
+(`assembly`, `auth_epoch`, `client_verifier`, `resumption_binding`,
+`resumption_acceptance`), every member `pub(super)`. Authority B — the client verifier —
+went with it, since after the move its only callers were there.
+
+The first attempt left those as `pub(crate)` in `tls.rs` and kept `tls_auth_epoch` a `pub`
+sibling, while claiming the pairing was unconstructible. Review caught it: `pub(crate)`
+seals against nobody when every consumer lives in the crate, so any module could assemble a
+verifier over anchors A, build a store over epoch B, and pair them. The subordinates moved
+INTO the owner rather than being described as subordinate. The residual limit is foreign
+and is now stated rather than papered over — `rustls::ServerConfig::session_storage` is a
+public field of a type this project does not own.
 
 Each question above, answered by the change:
 
@@ -429,12 +438,85 @@ Each question above, answered by the change:
 
 The ownership is measured rather than asserted. `proxy.tls_listener_state` is a class-V0
 review unit carrying `test://` and `mutation://` evidence, so it cannot be attested without
-a mutation PASS at its exact fingerprint, and three registered probes each turn a declared
+a mutation PASS at its exact fingerprint, and FOUR registered probes each turn a declared
 control red: a store created per build (T01), an epoch derived from anything but the owner's
-anchors (T02), and an enabled stateless ticketer that would resume outside the store at all
-(T03).
+anchors (T02), an enabled stateless ticketer that would resume outside the store at all
+(T03), and a signing budget created per delegated rebuild (T04).
+
+T04 exists because review found the budget named among the four things "established
+together" while nothing asked what breaks if a rebuild recreates it — a conjunct asserted in
+prose on a V0 unit. Making it load-bearing needed the delegated seam to return the CONCRETE
+resolver, since `DelegatedCertResolver::budget()` is the only handle on which budget a build
+actually used.
+
+The unit's `paths` reach `tls.rs`, `tls_plane.rs` and `delegated_tls.rs` as well as the
+owner's tree. The first version named the owner and the epoch module only — and T03 mutates
+`tls.rs`, so an edit there could have weakened the resumption binding while the fingerprint
+stood still. Same false-freshness class as the one #596 closed.
 
 The eviction property itself did not move. It is a claim about the STORE, asserted by
 `tls_auth_epoch`'s unit tests and by `tests/integration/tls_epoch_resumption_test.rs`
 driving real rustls handshakes; `tls.rs`'s `epoch_binding_tests` had been asserting the same
 thing a third time through the builder, and that duplicate is gone rather than relocated.
+
+---
+
+## EX-005 — `mcp-re-proxy/src/tls_listener_state/mod.rs` — **reviewed exception**
+
+**Status:** `reviewed-exception`. **Measured:** 223 production lines, of which **85 are
+code**; the remaining 138 are the module note and the item documentation. Created by
+MCPRE-137 / #573; the parent census is EX-004.
+
+### Why this is a B-case and not a shave
+
+The unit is what is LEFT after five extractions, not a unit that was never examined. The
+listener-state authority was decomposed into siblings first, and each of them is under the
+threshold:
+
+| module | prod | what it decides |
+|---|---:|---|
+| `assembly.rs` | 155 | what the serving config IS |
+| `auth_epoch.rs` | 270 | the epoch value, and the store tagged with it (pre-existing debt, carried across the rename) |
+| `client_verifier.rs` | 90 | what a valid client certificate is |
+| `resumption_binding.rs` | 84 | whether a stored session is still a shortcut |
+| `mod.rs` | **223** | that all four facts belong to one listener |
+
+### What invariant requires locality
+
+The owner's whole claim is a FOUR-WAY RELATION: anchors, the epoch they digest to, the
+cache tagged with it, and the signing budget, established together and unsplittable. The
+things that make it unsplittable are the build methods — `docs/dev/sealed-owners.md` records
+that for this owner **the projections ARE the operations**, because a fact projection would
+hand the terms of the relation back as independently passable arguments.
+
+So the field declarations and the only code permitted to read them must be readable
+together. A reviewer's question is *"can a caller obtain these separately?"*, and the answer
+is only checkable by seeing the private fields and every method that touches them on one
+screen. Moving the build methods to a child module would keep them compiling — a child sees
+its parent's privates — while splitting the question across two files. That is the reasoning
+the decomposition would damage.
+
+### Why the subordinate responsibilities cannot be separated further
+
+They already have been. What remains is a constructor, one read projection, three build
+methods, and two private seams; there is no second authority inside it. §8 question 2 gives
+the answer **one**, with no "and".
+
+### What compensates for the size
+
+`proxy.tls_listener_state` is a class-V0 review unit carrying **both** `test://` and
+`mutation://` evidence, so `attest` refuses it without a mutation PASS at its exact
+fingerprint. Four registered probes each turn a declared control red:
+
+| probe | weakening | control |
+|---|---|---|
+| T01 | a session store created per build | `a_rebuild_keeps_the_cache_and_the_epoch_of_the_state_it_was_built_through` |
+| T02 | the epoch derived from anything but the owner's anchors | `the_epoch_digests_the_anchors_this_state_owns`, `a_different_anchor_set_is_a_different_state_with_its_own_empty_cache` |
+| T03 | an enabled stateless ticketer, resuming outside the store | `no_config_this_owner_builds_can_resume_outside_the_store` |
+| T04 | a signing budget created per delegated build | `a_delegated_rebuild_reuses_the_listeners_signing_budget` |
+
+### What this record does not close
+
+It is an exception for **this file at this size**, not for the subtree and not for
+`tls.rs` — EX-004 stays `reviewed-action-required` until #574 lands and its census is
+re-run. Review granularity equals exception granularity.

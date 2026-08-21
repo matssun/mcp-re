@@ -905,7 +905,7 @@ mod custody_agreement_tests {
 #[cfg(test)]
 mod trust_epoch_binding_tests {
     use super::*;
-    use crate::tls_auth_epoch::TlsAuthEpoch;
+    use crate::tls_listener_state::TlsAuthEpoch;
     use rustls_pki_types::CertificateDer;
 
     fn ca_der() -> CertificateDer<'static> {
