@@ -33,8 +33,6 @@ use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::sign_delegated_response_full;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_response_full;
-use mcp_re_http_profile::verify_delegated_response_full;
-use mcp_re_http_profile::verify_request_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -52,6 +50,8 @@ use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::DELEGATION_ALG;
 use mcp_re_http_profile::DELEGATION_TYP;
 use mcp_re_http_profile::JWK_CRV_ED25519;
@@ -294,7 +294,8 @@ fn signed_request() -> (HttpRequest, RequestEvidence) {
 }
 
 fn recompute_verified_request(req: &HttpRequest) -> VerifiedMcpRequest {
-    verify_request_full(req, &audience(), &no_material(), &resolver(), NOW)
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(req, &audience(), &no_material(), NOW)
         .expect("frozen request re-verifies")
 }
 
@@ -963,7 +964,6 @@ fn run_fixture(fixture: &Fixture, verify_at: i64) -> String {
         .map(String::as_str)
         .collect();
     let expect = DelegationExpectations {
-        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &auds,
         expected_audience_hash: &fixture.check.expected_audience_hash,
         accepted_epochs: &epochs,
@@ -971,11 +971,10 @@ fn run_fixture(fixture: &Fixture, verify_at: i64) -> String {
     };
     let is_revoked = |kid: &str| fixture.check.revoked_kids.iter().any(|r| r == kid);
 
-    match verify_delegated_response_full(
+    match Verifier::new(&VerifierPolicy::default(), &resolver()).verify_delegated_bound_response(
         &response,
         &request,
-        &verified_req,
-        &resolver(),
+        verified_req.evidence(),
         &expect,
         &is_revoked,
         verify_at,

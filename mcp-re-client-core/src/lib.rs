@@ -20,10 +20,12 @@
 //! **deferred** from the build (files retained) and rebuilt on RFC 9421 evidence in
 //! a follow-up slice; the request/response evidence seam below is the working core.
 
+mod delegated_evidence;
 pub mod request;
 pub mod response;
 pub mod trust_manifest;
 
+pub use delegated_evidence::DelegatedResponseEvidence;
 pub use request::build_signed_notification;
 pub use request::build_signed_notification_with_signer;
 pub use request::build_signed_request;
@@ -81,5 +83,5 @@ pub use mcp_re_http_profile::RequestEvidenceDigest;
 pub use mcp_re_http_profile::ResolvedActor;
 pub use mcp_re_http_profile::ResolverOutcome;
 pub use mcp_re_http_profile::SignerSlot;
-pub use mcp_re_http_profile::VerifiedHttpResponseEvidence;
+pub use mcp_re_http_profile::VerifiedMcpResponse;
 pub use mcp_re_http_profile::PROFILE_TAG;

@@ -190,10 +190,10 @@ unit: **size ordered this investigation; it did not decide it.**
 
 ## EX-003 — `mcp-re-http-profile/src/verify.rs` — **census complete, disposition: decompose first**
 
-**Status:** `reviewed-action-required`. **Remediation:** [#571](https://github.com/matssun/mcp-re/issues/571)
-(response split, `_with_policy` axis) and [#572](https://github.com/matssun/mcp-re/issues/572)
-(composition theorems). **Measured:** 1598 production lines on the branch that split the
-request product; 1640 before it. **Component blueprint:**
+**Status:** `reviewed-action-required`. **Remediation:** ~~#571~~ (done — response split and
+the `_with_policy` axis) and [#572](https://github.com/matssun/mcp-re/issues/572)
+(composition theorems, still open). **Measured:** 1388 production lines after #571; 1598
+after #570; 1640 before either. **Component blueprint:**
 [`components/evidence-verification.md`](components/evidence-verification.md).
 
 Required by ADR-061 §5.3 before the work in [#570](https://github.com/matssun/mcp-re/issues/570):
@@ -238,9 +238,11 @@ ADR-061 §11 operational test applied to a real check.
 
 ### Disposition
 
-The request half is done in #570. The response half and the `_with_policy` axis are #571;
-the two composition theorems the split makes expressible are #572. `verify.rs` stays
-`reviewed-action-required` until those close and this census is re-run.
+The request half is done in #570 and the response half, with the `_with_policy` axis, in
+#571 — `verify.rs` fell from 1640 to 1388 production lines and its public surface is now
+one `Verifier`. The two composition theorems the split makes expressible are #572.
+`verify.rs` stays `reviewed-action-required` until that closes and this census is re-run:
+the disposition records that work remains, not that nobody looked.
 
 ### What the census found that the issue did not anticipate
 

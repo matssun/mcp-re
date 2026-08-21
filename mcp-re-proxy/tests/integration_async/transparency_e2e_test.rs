@@ -23,6 +23,7 @@
 //! reconstruction and the statement are about the retained bytes, and that the receipt
 //! verifies offline.
 
+use mcp_re_http_profile::Verifier;
 use std::sync::Arc;
 
 use mcp_re_core::SigningKey;
@@ -339,7 +340,6 @@ fn serve_one(proxy: &HttpProfileProxy, nonce: &str) -> u16 {
 
 fn expectations<'a>(audiences: &'a [&'a str], epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
     DelegationExpectations {
-        policy: VerifierPolicy::default(),
         verifier_audiences: audiences,
         expected_audience_hash: AUD,
         accepted_epochs: epochs,
@@ -468,7 +468,7 @@ fn a_served_call_becomes_an_offline_verifiable_receipt() {
     let attestation = attest_chain(
         &retention,
         &[digest],
-        &resolver(),
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(&audiences, &epochs),
         &attest_audit(),
         &|_kid: &str| false,
@@ -536,7 +536,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
     let attestation = attest_chain(
         &retention,
         std::slice::from_ref(&digest),
-        &resolver(),
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(&audiences, &epochs),
         &attest_audit(),
         &|_kid: &str| false,
@@ -553,7 +553,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
     let hops = retention.load_chain(&[digest]).expect("load the chain");
     let reconstruction = mcp_re_http_profile::reconstruct_chain(
         &hops,
-        &resolver(),
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(&audiences, &epochs),
         &attest_audit(),
         &|_kid: &str| false,
@@ -582,7 +582,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
     let other_hops = retention.load_chain(&[other_digest]).expect("load");
     let other_reconstruction = mcp_re_http_profile::reconstruct_chain(
         &other_hops,
-        &resolver(),
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(&audiences, &epochs),
         &attest_audit(),
         &|_kid: &str| false,
@@ -767,7 +767,7 @@ fn a_chain_with_no_verified_hop_is_still_attested() {
     let attestation = attest_chain(
         &retention,
         std::slice::from_ref(&digest),
-        &nobody,
+        &Verifier::new(&VerifierPolicy::default(), &nobody),
         &expectations(&audiences, &epochs),
         &attest_audit(),
         &|_kid: &str| false,
@@ -807,7 +807,7 @@ fn a_chain_with_no_verified_hop_is_still_attested() {
     let empty = attest_chain(
         &retention,
         &[],
-        &nobody,
+        &Verifier::new(&VerifierPolicy::default(), &nobody),
         &expectations(&audiences, &epochs),
         &attest_audit(),
         &|_kid: &str| false,
@@ -825,7 +825,7 @@ fn a_chain_with_no_verified_hop_is_still_attested() {
     let complete = attest_chain(
         &retention,
         std::slice::from_ref(&digest),
-        &resolver(),
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(&audiences, &epochs),
         &attest_audit(),
         &|_kid: &str| false,

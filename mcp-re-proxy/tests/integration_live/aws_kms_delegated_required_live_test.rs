@@ -59,8 +59,6 @@ use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::issue_delegation_credential_with_signer;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_response_with_signer;
-use mcp_re_http_profile::verify_delegated_response_full;
-use mcp_re_http_profile::verify_request_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -79,6 +77,8 @@ use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_proxy::async_replay::AsyncReplayTier;
@@ -208,7 +208,6 @@ fn resolver(
 
 fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
     DelegationExpectations {
-        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &[VERIFIER_AUD],
         expected_audience_hash: VERIFIER_AUD,
         accepted_epochs: epochs,
@@ -317,7 +316,8 @@ fn signed_request(nonce: &str, at: i64) -> (HttpRequest, RequestEvidence, Verifi
     .expect("client signs RFC 9421 request");
     let no_material = |_b: &ArtifactBinding| None;
     let r = resolver_client_only();
-    let verified = verify_request_full(&req, &audience(), &no_material, &r, at)
+    let verified = Verifier::new(&VerifierPolicy::default(), &r)
+        .verify_request(&req, &audience(), &no_material, at)
         .expect("client's own request verifies (for response binding)");
     (req, evidence, verified)
 }
@@ -446,19 +446,18 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
         let served = proxy.handle(served_of(&req), NOW).await;
         assert_eq!(served.status, 200, "delegated-required request served");
         let resp = http_response(served);
-        let verified = verify_delegated_response_full(
-            &resp,
-            &req,
-            &verified_req,
-            &resolver(root_pub.clone()),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            NOW,
-        )
-        .expect("served response verifies via the KMS-rooted attestation chain");
+        let verified = Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
+            .verify_delegated_bound_response(
+                &resp,
+                &req,
+                verified_req.evidence(),
+                &expectations(&[EPOCH]),
+                &|_| false,
+                NOW,
+            )
+            .expect("served response verifies via the KMS-rooted attestation chain");
         assert_eq!(
-            verified.server_signer.as_ref().unwrap().keyid,
-            first_kid,
+            verified.response.server_signer.keyid, first_kid,
             "signed by the delegated key, not the KMS root"
         );
     }
@@ -476,32 +475,32 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
     let (req, _ev, verified_req) = signed_request("nonce-revoke", NOW);
     let resp = http_response(proxy.handle(served_of(&req), NOW).await);
     let revoked_kid = first_kid.clone();
-    let deny = verify_delegated_response_full(
-        &resp,
-        &req,
-        &verified_req,
-        &resolver(root_pub.clone()),
-        &expectations(&[EPOCH]),
-        &|id: &str| id == revoked_kid,
-        NOW,
-    )
-    .unwrap_err();
+    let deny = Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
+        .verify_delegated_bound_response(
+            &resp,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|id: &str| id == revoked_kid,
+            NOW,
+        )
+        .unwrap_err();
     assert_eq!(
         deny,
         HttpProfileError::DelegationRevoked,
         "revoked delegated kid fails closed"
     );
     // Revocation seam (allow): a non-empty denylist that does NOT name this kid still verifies.
-    verify_delegated_response_full(
-        &resp,
-        &req,
-        &verified_req,
-        &resolver(root_pub.clone()),
-        &expectations(&[EPOCH]),
-        &|id: &str| id == "some-other/delegated/9",
-        NOW,
-    )
-    .expect("a non-matching denylist does not blanket-deny");
+    Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
+        .verify_delegated_bound_response(
+            &resp,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|id: &str| id == "some-other/delegated/9",
+            NOW,
+        )
+        .expect("a non-matching denylist does not blanket-deny");
 
     // Rotation: cross into the overlap window → the KMS signs the SUCCESSOR
     // credential (one more KMS op), and the new response verifies under it.
@@ -526,19 +525,18 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
 
     let (req2, _ev2, verified_req2) = signed_request("nonce-after-rotation", after);
     let resp2 = http_response(proxy.handle(served_of(&req2), after).await);
-    let verified2 = verify_delegated_response_full(
-        &resp2,
-        &req2,
-        &verified_req2,
-        &resolver(root_pub.clone()),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        after,
-    )
-    .expect("post-rotation response verifies");
+    let verified2 = Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
+        .verify_delegated_bound_response(
+            &resp2,
+            &req2,
+            verified_req2.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            after,
+        )
+        .expect("post-rotation response verifies");
     assert_eq!(
-        verified2.server_signer.as_ref().unwrap().keyid,
-        second_kid,
+        verified2.response.server_signer.keyid, second_kid,
         "post-rotation responses are signed by the successor delegated key"
     );
 }
@@ -598,16 +596,16 @@ fn run_kms_authority_flip(root: KmsResponseSigner) {
         NOW + 200,
     )
     .expect("the KMS signs a direct-root RFC 9421 response");
-    let downgrade = verify_delegated_response_full(
-        &direct,
-        &req,
-        &verified_req,
-        &resolver(root_pub.clone()),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .unwrap_err();
+    let downgrade = Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
+        .verify_delegated_bound_response(
+            &direct,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .unwrap_err();
     // A genuine pre-052 direct-root response carries NO delegation evidence block at
     // all (unlike a delegation block with the credential stripped), so it fails
     // closed here. Fail-closed rejection is the property; the exact code is
@@ -632,45 +630,45 @@ fn run_kms_authority_flip(root: KmsResponseSigner) {
         1,
         "the KMS issued exactly one credential"
     );
-    verify_delegated_response_full(
-        &delegated,
-        &req,
-        &verified_req,
-        &resolver(root_pub.clone()),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .expect("the delegated (post-052) authority is accepted");
+    Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
+        .verify_delegated_bound_response(
+            &delegated,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .expect("the delegated (post-052) authority is accepted");
 
     // --- Flip 3: TRUST-EPOCH flip. The credential is bound to EPOCH. Advancing the
     // accepted set to NEW_EPOCH alone rejects it; a bounded-rollout {new, old}
     // window accepts it (ADR-MCPRE-052 §7).
-    let stale = verify_delegated_response_full(
-        &delegated,
-        &req,
-        &verified_req,
-        &resolver(root_pub.clone()),
-        &expectations(&[NEW_EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .unwrap_err();
+    let stale = Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
+        .verify_delegated_bound_response(
+            &delegated,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[NEW_EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .unwrap_err();
     assert_eq!(
         stale,
         HttpProfileError::DelegationTrustEpochStale,
         "advancing the trust epoch rejects a credential minted under the old authority epoch"
     );
-    verify_delegated_response_full(
-        &delegated,
-        &req,
-        &verified_req,
-        &resolver(root_pub.clone()),
-        &expectations(&[NEW_EPOCH, EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .expect("a bounded-rollout {new, old} epoch window accepts the old-epoch credential");
+    Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
+        .verify_delegated_bound_response(
+            &delegated,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[NEW_EPOCH, EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .expect("a bounded-rollout {new, old} epoch window accepts the old-epoch credential");
 
     // --- Flip 4: KEY-authority rotation + revocation. The KMS issues a successor;
     // revoking the predecessor kid fails its responses closed while the successor's
@@ -700,26 +698,26 @@ fn run_kms_authority_flip(root: KmsResponseSigner) {
     // Revoke the PREDECESSOR authority. The successor still verifies; the predecessor
     // fails closed — a revoked authority cannot serve even during the overlap.
     let revoke_first = |id: &str| id == first_kid;
-    verify_delegated_response_full(
-        &successor,
-        &req,
-        &verified_req,
-        &resolver(root_pub.clone()),
-        &expectations(&[EPOCH]),
-        &revoke_first,
-        after,
-    )
-    .expect("the successor (new authority) still verifies while the predecessor is revoked");
-    let revoked = verify_delegated_response_full(
-        &predecessor,
-        &req,
-        &verified_req,
-        &resolver(root_pub.clone()),
-        &expectations(&[EPOCH]),
-        &revoke_first,
-        after,
-    )
-    .unwrap_err();
+    Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
+        .verify_delegated_bound_response(
+            &successor,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &revoke_first,
+            after,
+        )
+        .expect("the successor (new authority) still verifies while the predecessor is revoked");
+    let revoked = Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
+        .verify_delegated_bound_response(
+            &predecessor,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &revoke_first,
+            after,
+        )
+        .unwrap_err();
     assert_eq!(
         revoked,
         HttpProfileError::DelegationRevoked,

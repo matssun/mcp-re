@@ -39,7 +39,7 @@
 
 [[debt]]
 path = "mcp-re-proxy/src/http_profile_serve.rs"
-baseline_prod_loc = 2127
+baseline_prod_loc = 2120
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -51,7 +51,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-http-profile/src/verify.rs"
-baseline_prod_loc = 1598
+baseline_prod_loc = 1388
 baseline_sha = "d1fc5fa"
 status = "reviewed-action-required"
 review_ref = "EX-003 in docs/architecture/review-dispositions.md"
@@ -88,7 +88,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-client-core/src/response.rs"
-baseline_prod_loc = 1114
+baseline_prod_loc = 1108
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -119,7 +119,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/transparency.rs"
-baseline_prod_loc = 888
+baseline_prod_loc = 882
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -174,7 +174,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-http-profile/src/bodyless.rs"
-baseline_prod_loc = 713
+baseline_prod_loc = 712
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -240,7 +240,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-client-proxy/src/proxy.rs"
-baseline_prod_loc = 532
+baseline_prod_loc = 531
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -540,7 +540,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-http-profile/src/dispatch.rs"
-baseline_prod_loc = 248
+baseline_prod_loc = 243
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -558,7 +558,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-http-profile/src/lib.rs"
-baseline_prod_loc = 240
+baseline_prod_loc = 237
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 

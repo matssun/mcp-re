@@ -10,14 +10,14 @@ use mcp_re_core::SigningKey;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::sign_request_with_signer;
 use mcp_re_http_profile::sign_response_with_signer;
-use mcp_re_http_profile::verify_request;
-use mcp_re_http_profile::verify_response;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const SERVER_SEED: [u8; 32] = [22u8; 32];
@@ -127,7 +127,9 @@ fn external_signer_request_verifies() {
         "nonce-1",
     )
     .expect("seam sign");
-    verify_request(&req, &resolver(), NOW).expect("seam-signed request verifies");
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .expect("seam-signed request verifies");
 }
 
 /// A seam-signed response verifies, bound to its request via `;req`.
@@ -154,7 +156,9 @@ fn external_signer_response_verifies() {
         EXPIRES,
     )
     .expect("seam sign response");
-    verify_response(&rsp, &req, &resolver(), NOW).expect("seam-signed response verifies");
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response_floor(&rsp, &req, NOW)
+        .expect("seam-signed response verifies");
 }
 
 /// The seam enforces the raw 64-byte Ed25519 return: a signer handing back the
@@ -210,7 +214,9 @@ fn external_signer_wrong_key_does_not_verify() {
     .expect("seam sign with foreign key");
     // Cryptographically valid signature, but not under the key the resolver trusts.
     assert!(
-        verify_request(&req, &resolver(), NOW).is_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request_floor(&req, NOW)
+            .is_err(),
         "foreign-key signature must not verify"
     );
 }

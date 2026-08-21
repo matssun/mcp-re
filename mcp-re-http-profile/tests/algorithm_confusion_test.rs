@@ -16,6 +16,8 @@ use mcp_re_core::SigningKey;
 use mcp_re_http_profile::sigbase::signature_base;
 use mcp_re_http_profile::sigbase::SourceMessage;
 use mcp_re_http_profile::ProfileAlgorithm;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::*;
 
 const CREATED: i64 = 1_700_000_000;
@@ -105,8 +107,9 @@ fn a_policy_enabling_algorithm_confusion_cannot_be_constructed() {
 #[test]
 fn an_ed25519_signature_declaring_ml_dsa_is_rejected() {
     let r = signed_declaring("ml-dsa-65");
-    let err =
-        verify_request_with_policy(&r, &resolver(), &VerifierPolicy::default(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&r, NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::UnsupportedAlgorithm);
     assert_eq!(err.wire_code(), "mcp-re.unsupported_version");
 }
@@ -116,7 +119,8 @@ fn an_ed25519_signature_declaring_ml_dsa_is_rejected() {
 #[test]
 fn the_same_signature_declaring_ed25519_verifies() {
     let r = signed_declaring("ed25519");
-    verify_request_with_policy(&r, &resolver(), &VerifierPolicy::default(), NOW)
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&r, NOW)
         .expect("an honest algorithm claim verifies");
 }
 

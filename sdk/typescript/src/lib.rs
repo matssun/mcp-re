@@ -740,6 +740,7 @@ pub fn verify_response(
     // the outcome so the caller does not read a signed replay/trust rejection as a
     // success. (An unsigned / direct-root / forged answer never reaches here: it fails
     // verify_delegated_response above and is raised as an error.)
+    let ev = &verified.verified;
     let (outcome, wire_code, bound, execution) = match verified.outcome {
         mcp_re_client_core::DelegatedOutcome::Success => (
             "success".to_owned(),
@@ -748,14 +749,13 @@ pub fn verify_response(
             mcp_re_client_core::ExecutionContract::default(),
         ),
         mcp_re_client_core::DelegatedOutcome::Rejection {
-            bound,
             wire_code,
             execution,
-        } => ("rejection".to_owned(), wire_code, bound, execution),
+        } => ("rejection".to_owned(), wire_code, ev.is_bound(), execution),
     };
     // The response evidence handle (D_irr): the answer leg binds to it. Read from the
     // VERIFIED response evidence, never from unverified bytes.
-    let resp_digest = verified.verified.response_signature_base_digest.clone();
+    let resp_digest = ev.response_signature_base_digest().clone();
     // `result.requestState` only if this is an InputRequiredResult — a terminal reply
     // has none. Read after verification: content-digest covered the body. Classified
     // by the audited core, which REFUSES rather than reporting as terminal both a reply
@@ -765,7 +765,7 @@ pub fn verify_response(
         .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
     Ok(VerifyResultJs {
         ok: true,
-        server_keyid: verified.verified.resolved_server_actor.identity.keyid,
+        server_keyid: ev.resolved_server_actor().identity.keyid.clone(),
         outcome,
         wire_code,
         bound,

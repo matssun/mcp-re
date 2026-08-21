@@ -49,7 +49,6 @@ use mcp_re_http_profile::sign_delegated_accepted_202;
 use mcp_re_http_profile::sign_delegated_response_full;
 use mcp_re_http_profile::strip_proxy_owned_meta;
 use mcp_re_http_profile::validate_response_envelope;
-use mcp_re_http_profile::verify_request_full_with_policy;
 use mcp_re_http_profile::AdmissionPolicy;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::AudienceTuple;
@@ -65,6 +64,7 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedContext;
 use mcp_re_http_profile::VerifiedContextPolicy;
 use mcp_re_http_profile::VerifiedMcpRequest;
+use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 
 use crate::admission_source::AsyncAdmissionSource;
@@ -848,12 +848,10 @@ impl HttpProfileProxy {
         // Scoped so the timer covers the verification and nothing after it.
         let verify_result = {
             let _t = crate::stage_timers::Timed::start(crate::stage_timers::Stage::Verify);
-            verify_request_full_with_policy(
+            Verifier::new(&self.verifier_policy, self.resolve_actor.as_ref()).verify_request(
                 http_req,
                 &self.expected_audience,
                 &no_material,
-                self.resolve_actor.as_ref(),
-                &self.verifier_policy,
                 now,
             )
         };

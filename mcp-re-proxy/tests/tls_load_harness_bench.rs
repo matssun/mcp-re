@@ -1330,12 +1330,7 @@ fn load_harness_smoke() {
         // Profile-issued kids are RFC 7638 JWK thumbprints (MCPRE-432); the property
         // under test is that a DELEGATED key signed, not the root directly.
         assert_ne!(
-            verified
-                .verified
-                .server_signer
-                .as_ref()
-                .expect("delegated signer")
-                .keyid,
+            verified.verified.server_signer().keyid,
             SERVER_KEY_ID,
             "signed by the delegated key chaining to the root, not the root directly",
         );

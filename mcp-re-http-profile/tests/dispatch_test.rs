@@ -16,7 +16,6 @@ use mcp_re_core::ReplayDurabilityClass;
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::dispatch_request;
 use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::verify_request_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -31,6 +30,8 @@ use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::RetainedContinuation;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
 const CLIENT_A_SEED: [u8; 32] = [11u8; 32];
@@ -131,7 +132,8 @@ fn verified_request(
 ) -> VerifiedMcpRequest {
     let mut req = base_request();
     sign_request_full(&mut req, block, key, key_id, CREATED, EXPIRES, nonce).expect("full sign");
-    verify_request_full(&req, &block.audience, &no_material(), &resolver(), NOW)
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &block.audience, &no_material(), NOW)
         .expect("full verify")
 }
 

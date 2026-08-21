@@ -40,7 +40,6 @@ use rustls_pki_types::ServerName;
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::verify_request_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -50,6 +49,8 @@ use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_proxy::tls::RustlsDirectProvider;
@@ -287,14 +288,14 @@ fn request_over_its_own_mtls_channel_verifies() {
     );
 
     let request = signed_request_bound_to_cert(&client_leaf_der);
-    verify_request_full(
-        &request,
-        &audience(),
-        &mtls_material(Some(presented)),
-        &resolver(),
-        1_100,
-    )
-    .expect("a request presented over its bound mTLS channel verifies");
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(
+            &request,
+            &audience(),
+            &mtls_material(Some(presented)),
+            1_100,
+        )
+        .expect("a request presented over its bound mTLS channel verifies");
 }
 
 /// Negative — the relayed-request attack: a signed request bound to client A's
@@ -326,14 +327,14 @@ fn request_relayed_onto_a_different_mtls_channel_fails_closed() {
 
     // The request is bound to A's cert but arrives over B's channel.
     let request = signed_request_bound_to_cert(&a_der);
-    let err = verify_request_full(
-        &request,
-        &audience(),
-        &mtls_material(Some(presented_b)),
-        &resolver(),
-        1_100,
-    )
-    .expect_err("a request relayed onto a different mTLS channel must fail closed");
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(
+            &request,
+            &audience(),
+            &mtls_material(Some(presented_b)),
+            1_100,
+        )
+        .expect_err("a request relayed onto a different mTLS channel must fail closed");
     assert_eq!(err, HttpProfileError::ArtifactBindingFailed);
     assert_eq!(err.wire_code(), "mcp-re.artifact_binding_failed");
 }
@@ -351,13 +352,8 @@ fn mtls_bound_request_over_plain_http_fails_closed() {
 
     let request = signed_request_bound_to_cert(&client_leaf_der);
     // No presented cert (plain HTTP): the material resolver yields None.
-    let err = verify_request_full(
-        &request,
-        &audience(),
-        &mtls_material(None),
-        &resolver(),
-        1_100,
-    )
-    .expect_err("an mTLS-bound request with no presented cert must fail closed");
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&request, &audience(), &mtls_material(None), 1_100)
+        .expect_err("an mTLS-bound request with no presented cert must fail closed");
     assert_eq!(err, HttpProfileError::ArtifactBindingFailed);
 }

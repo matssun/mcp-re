@@ -26,8 +26,6 @@ use std::sync::Arc;
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::verify_delegated_response_full;
-use mcp_re_http_profile::verify_request_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -40,6 +38,8 @@ use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_proxy::async_replay::AsyncReplayTier;
@@ -231,14 +231,9 @@ fn signed_request_at(
     .expect("client signs RFC 9421 request");
     let no_material = |_b: &ArtifactBinding| None;
     let r = resolver();
-    let verified = verify_request_full(
-        &req,
-        &audience(),
-        &no_material,
-        &move |k: &str, s| r(k, s),
-        verify_now,
-    )
-    .expect("client's own request verifies (for response binding)");
+    let verified = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+        .verify_request(&req, &audience(), &no_material, verify_now)
+        .expect("client's own request verifies (for response binding)");
     (req, evidence, verified)
 }
 
@@ -268,7 +263,6 @@ fn http_response(served: ServedHttpResponse) -> HttpResponse {
 
 fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
     DelegationExpectations {
-        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &[AUDIENCE],
         expected_audience_hash: AUDIENCE,
         accepted_epochs: epochs,
@@ -303,23 +297,22 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
             "response carries the inline delegation credential"
         );
         let r = resolver();
-        let verified = verify_delegated_response_full(
-            &resp,
-            &req,
-            &verified_req,
-            &move |k: &str, s| r(k, s),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            NOW,
-        )
-        .expect("delegated response verifies via the credential→root chain");
+        let verified = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+            .verify_delegated_bound_response(
+                &resp,
+                &req,
+                verified_req.evidence(),
+                &expectations(&[EPOCH]),
+                &|_| false,
+                NOW,
+            )
+            .expect("delegated response verifies via the credential→root chain");
         // Profile-issued kids are RFC 7638 JWK thumbprints (#415 rev 2 §1.5), so
         // the property asserted here is the one that matters — the signer is a
         // delegated key, NOT the root — rather than a kid literal.
-        first_delegated_kid = Some(verified.server_signer.as_ref().unwrap().keyid.clone());
+        first_delegated_kid = Some(verified.response.server_signer.keyid.clone());
         assert_ne!(
-            verified.server_signer.as_ref().unwrap().keyid,
-            ROOT_KID,
+            verified.response.server_signer.keyid, ROOT_KID,
             "signed by the delegated key, not the root"
         );
     }
@@ -344,16 +337,16 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
         "the rejection carries the inline delegation credential"
     );
     let r = resolver();
-    verify_delegated_response_full(
-        &resp,
-        &req,
-        &verified_req,
-        &move |k: &str, s| r(k, s),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .expect("bound delegated rejection verifies");
+    Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+        .verify_delegated_bound_response(
+            &resp,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .expect("bound delegated rejection verifies");
 
     // --- rotation: a successor minted in the overlap window keeps serving (no gap) --
     // The rotor wakes at key1.exp - overlap; rotate there → key2 (exp = ROT + TTL).
@@ -372,27 +365,25 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
     );
     let resp = http_response(served);
     let r = resolver();
-    let verified = verify_delegated_response_full(
-        &resp,
-        &req,
-        &verified_req,
-        &move |k: &str, s| r(k, s),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        rot,
-    )
-    .expect("successor delegated response verifies");
+    let verified = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+        .verify_delegated_bound_response(
+            &resp,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            rot,
+        )
+        .expect("successor delegated response verifies");
     // The successor is a DIFFERENT delegated key: distinct key material yields a
     // distinct RFC 7638 thumbprint, so the kid changing is itself the proof that
     // rotation minted a new key rather than re-serving the old one.
     assert_ne!(
-        verified.server_signer.as_ref().unwrap().keyid,
-        first_delegated_kid,
+        verified.response.server_signer.keyid, first_delegated_kid,
         "signed by the SUCCESSOR delegated key, not the predecessor"
     );
     assert_ne!(
-        verified.server_signer.as_ref().unwrap().keyid,
-        ROOT_KID,
+        verified.response.server_signer.keyid, ROOT_KID,
         "and still not the root"
     );
 

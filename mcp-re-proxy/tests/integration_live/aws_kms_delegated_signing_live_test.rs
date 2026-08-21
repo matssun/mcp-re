@@ -45,8 +45,6 @@ use mcp_re_core::b64url_decode;
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::issue_delegation_credential_with_signer;
 use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::verify_delegated_response_full;
-use mcp_re_http_profile::verify_request_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -64,6 +62,8 @@ use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 use mcp_re_proxy::AwsKmsConfig;
 use mcp_re_proxy::AwsKmsEd25519Backend;
@@ -217,14 +217,9 @@ fn signed_request() -> (HttpRequest, RequestEvidence, VerifiedMcpRequest) {
         "nonce-1",
     )
     .expect("sign request");
-    let verified = verify_request_full(
-        &req,
-        &audience(),
-        &no_material(),
-        &resolver_client_only(),
-        NOW,
-    )
-    .expect("verify request");
+    let verified = Verifier::new(&VerifierPolicy::default(), &resolver_client_only())
+        .verify_request(&req, &audience(), &no_material(), NOW)
+        .expect("verify request");
     (req, ev, verified)
 }
 
@@ -265,7 +260,6 @@ fn custody_cfg() -> CustodyConfig {
 
 fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
     DelegationExpectations {
-        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &[VERIFIER_AUD],
         expected_audience_hash: AUD_SCOPE,
         accepted_epochs: epochs,
@@ -330,16 +324,16 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
         custody
             .sign_response(NOW, &mut rsp, &req, &ev)
             .expect("custody signs (hot path)");
-        verify_delegated_response_full(
-            &rsp,
-            &req,
-            &verified_req,
-            &resolver(root_pub.clone()),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            NOW,
-        )
-        .expect("delegated response verifies via the KMS-rooted attestation chain");
+        Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
+            .verify_delegated_bound_response(
+                &rsp,
+                &req,
+                verified_req.evidence(),
+                &expectations(&[EPOCH]),
+                &|_| false,
+                NOW,
+            )
+            .expect("delegated response verifies via the KMS-rooted attestation chain");
     }
 
     // The load-bearing assertion: N responses signed, KMS touched exactly ONCE.
@@ -360,16 +354,16 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
     );
 
     // The predecessor response verifies now (before rotation).
-    verify_delegated_response_full(
-        &predecessor_rsp,
-        &req,
-        &verified_req,
-        &resolver(root_pub.clone()),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .expect("predecessor response verifies before rotation");
+    Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
+        .verify_delegated_bound_response(
+            &predecessor_rsp,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .expect("predecessor response verifies before rotation");
 
     // --- Rotation: cross into the overlap window (now >= exp - overlap) --------
     // exp = NOW + TTL; rotation is due at NOW + TTL - OVERLAP. Sign past it.
@@ -396,26 +390,26 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
     // No verification gap: the successor response verifies AND the predecessor —
     // minted under the first key, still within its own TTL — is still accepted at
     // the overlap instant (both keys simultaneously valid).
-    verify_delegated_response_full(
-        &successor_rsp,
-        &req,
-        &verified_req,
-        &resolver(root_pub.clone()),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        after,
-    )
-    .expect("successor response verifies after rotation");
-    verify_delegated_response_full(
-        &predecessor_rsp,
-        &req,
-        &verified_req,
-        &resolver(root_pub.clone()),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        after,
-    )
-    .expect("predecessor response still verifies during the overlap window (no gap)");
+    Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
+        .verify_delegated_bound_response(
+            &successor_rsp,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            after,
+        )
+        .expect("successor response verifies after rotation");
+    Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
+        .verify_delegated_bound_response(
+            &predecessor_rsp,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            after,
+        )
+        .expect("predecessor response still verifies during the overlap window (no gap)");
 
     // --- Audited lifecycle: issue then rotate ---------------------------------
     let audit = custody.audit();
@@ -434,16 +428,16 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
     let last = tampered.body.len() - 2;
     tampered.body[last] ^= 0x01;
     assert_eq!(
-        verify_delegated_response_full(
-            &tampered,
-            &req,
-            &verified_req,
-            &resolver(root_pub.clone()),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            after,
-        )
-        .unwrap_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
+            .verify_delegated_bound_response(
+                &tampered,
+                &req,
+                verified_req.evidence(),
+                &expectations(&[EPOCH]),
+                &|_| false,
+                after
+            )
+            .unwrap_err(),
         HttpProfileError::ContentDigestMismatch,
         "a post-signing body tamper on a delegated response must fail closed"
     );

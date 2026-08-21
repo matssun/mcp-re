@@ -25,9 +25,6 @@ use mcp_re_core::SigningKey;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_response_full;
-use mcp_re_http_profile::verify_delegated_response_full;
-use mcp_re_http_profile::verify_delegated_response_unbound;
-use mcp_re_http_profile::verify_request_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -45,6 +42,8 @@ use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_proxy::async_replay::AsyncReplayTier;
@@ -247,14 +246,9 @@ fn signed_request(nonce: &str) -> (HttpRequest, RequestEvidence, VerifiedMcpRequ
     .expect("client signs RFC 9421 request");
     let no_material = |_b: &ArtifactBinding| None;
     let r = resolver();
-    let verified = verify_request_full(
-        &req,
-        &audience(),
-        &no_material,
-        &move |k: &str, s| r(k, s),
-        NOW,
-    )
-    .expect("client's own request verifies (for response binding)");
+    let verified = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+        .verify_request(&req, &audience(), &no_material, NOW)
+        .expect("client's own request verifies (for response binding)");
     (req, evidence, verified)
 }
 
@@ -279,7 +273,6 @@ fn http_response(served: mcp_re_proxy::async_serve::ServedHttpResponse) -> HttpR
 
 fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
     DelegationExpectations {
-        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &[VERIFIER_AUD],
         expected_audience_hash: AUD_SCOPE,
         accepted_epochs: epochs,
@@ -324,21 +317,20 @@ async fn delegated_success_response_verifies_and_root_touched_once() {
 
         // The client verifies via the credential→root attestation chain.
         let r = resolver();
-        let verified = verify_delegated_response_full(
-            &resp,
-            &req,
-            &verified_req,
-            &move |k: &str, s| r(k, s),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            NOW,
-        )
-        .expect("delegated success response verifies via the attestation chain");
+        let verified = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+            .verify_delegated_bound_response(
+                &resp,
+                &req,
+                verified_req.evidence(),
+                &expectations(&[EPOCH]),
+                &|_| false,
+                NOW,
+            )
+            .expect("delegated success response verifies via the attestation chain");
         // Profile-issued kids are RFC 7638 JWK thumbprints (#415 rev 2 §1.5); the
         // property under test is that a DELEGATED key signed, never the root.
         assert_ne!(
-            verified.server_signer.as_ref().unwrap().keyid,
-            ROOT_KID,
+            verified.response.server_signer.keyid, ROOT_KID,
             "signed by the delegated key, not the root"
         );
     }
@@ -375,16 +367,16 @@ async fn delegated_bound_rejection_verifies() {
 
     // A bound delegated rejection verifies via the request-bound delegated path.
     let r = resolver();
-    verify_delegated_response_full(
-        &resp,
-        &req,
-        &verified_req,
-        &move |k: &str, s| r(k, s),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .expect("bound delegated rejection verifies");
+    Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+        .verify_delegated_bound_response(
+            &resp,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .expect("bound delegated rejection verifies");
     assert_eq!(wire_code_of(&resp.body), "mcp-re.replay_detected");
 }
 
@@ -418,28 +410,23 @@ async fn delegated_preflight_rejection_verifies_unbound() {
     // A preflight rejection is response-only signed: it verifies via the UNBOUND
     // delegated path, and does NOT pretend to be bound to a valid request.
     let r = resolver();
-    verify_delegated_response_unbound(
-        &resp,
-        &move |k: &str, s| r(k, s),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .expect("preflight delegated rejection verifies unbound");
+    Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+        .verify_delegated_unbound_response(&resp, &expectations(&[EPOCH]), &|_| false, NOW)
+        .expect("preflight delegated rejection verifies unbound");
     // And it must NOT verify through the bound path (there is no trusted request).
     let (fresh, _e, verified_fresh) = signed_request("nonce-preflight-probe");
     let r2 = resolver();
     assert!(
-        verify_delegated_response_full(
-            &resp,
-            &fresh,
-            &verified_fresh,
-            &move |k: &str, s| r2(k, s),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            NOW,
-        )
-        .is_err(),
+        Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r2(k, s))
+            .verify_delegated_bound_response(
+                &resp,
+                &fresh,
+                verified_fresh.evidence(),
+                &expectations(&[EPOCH]),
+                &|_| false,
+                NOW
+            )
+            .is_err(),
         "an unbound preflight rejection is not accepted as a request-bound response"
     );
 }
@@ -530,16 +517,16 @@ fn direct_root_response_rejected_in_delegated_required_mode() {
 
     // A delegated-signing verifier rejects it: no inline credential.
     let r = resolver();
-    let err = verify_delegated_response_full(
-        &resp,
-        &req,
-        &verified_req,
-        &move |k: &str, s| r(k, s),
-        &expectations(&[EPOCH]),
-        &|_| false,
-        NOW,
-    )
-    .unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+        .verify_delegated_bound_response(
+            &resp,
+            &req,
+            verified_req.evidence(),
+            &expectations(&[EPOCH]),
+            &|_| false,
+            NOW,
+        )
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::DelegationCredentialMissing);
 }
 
@@ -611,7 +598,7 @@ async fn a_notification_is_served_a_verifiable_delegated_202() {
     let actor = verify_delegated_accepted_202(
         &ack,
         &note,
-        &move |k: &str, s| r(k, s),
+        &Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s)),
         &expectations(&[EPOCH]),
         &|_| false,
         NOW,

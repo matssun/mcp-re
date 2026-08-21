@@ -159,6 +159,9 @@ class = "V1"
 description = "RFC 9421 freshness admission (§5.1): admission implies now lies inside the skew-widened window, the window is non-degenerate, and its width is within policy."
 paths = [
   "mcp-re-http-profile/src/verify.rs",
+  # `check_params` is now reached through the facade, which owns the policy the
+  # postcondition quantifies over.
+  "mcp-re-http-profile/src/verifier.rs",
   "mcp-re-http-profile/src/policy.rs",
   "mcp-re-http-profile/src/ids.rs",
   "mcp-re-http-profile/src/verus_std_specs.rs",

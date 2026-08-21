@@ -32,6 +32,7 @@ use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::RetainedHop;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
@@ -102,7 +103,6 @@ fn credential(created: i64, expires: i64) -> String {
 /// revocation seam is exercised by the delegation suite.
 fn expectations() -> DelegationExpectations<'static> {
     DelegationExpectations {
-        policy: VerifierPolicy::default(),
         verifier_audiences: &[VERIFIER_AUD],
         expected_audience_hash: AUD_SCOPE,
         accepted_epochs: &[EPOCH],
@@ -114,13 +114,13 @@ fn nothing_revoked(_: &str) -> bool {
     false
 }
 
-/// [`expectations`] with a caller-supplied signature policy, for the cases that vary
-/// the RFC 9421 acceptance window.
-fn expectations_with(policy: &VerifierPolicy) -> DelegationExpectations<'static> {
-    DelegationExpectations {
-        policy: policy.clone(),
-        ..expectations()
-    }
+/// [`expectations`] for the cases that vary the RFC 9421 acceptance window.
+///
+/// The window itself is no longer here: the response-signature policy belongs to the
+/// verifier, and these cases pass it to `reconstruct_chain` directly.
+#[allow(dead_code)]
+fn expectations_with(_policy: &VerifierPolicy) -> DelegationExpectations<'static> {
+    DelegationExpectations { ..expectations() }
 }
 
 fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> {
@@ -296,17 +296,21 @@ fn hop_at(
     // digest of this response's signature base — recomputed by verifying, exactly
     // as the reconstruction will. Verified at the hop's own `created`, which is
     // inside its own window whatever that window is.
-    let verified_rsp = mcp_re_http_profile::verify_delegated_response_bound_full(
-        &response,
-        &request,
-        &req_evidence,
-        &resolver(),
-        &expectations(),
-        &nothing_revoked,
-        created,
-    )
-    .expect("response verifies");
-    let rsp_evidence = verified_rsp.response_signature_base_digest.clone();
+    let verified_rsp = mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_bound_response(
+            &response,
+            &request,
+            &req_evidence,
+            &expectations(),
+            &nothing_revoked,
+            created,
+        )
+        .expect("response verifies");
+    let rsp_evidence = verified_rsp
+        .response
+        .floor
+        .response_signature_base_digest
+        .clone();
 
     (
         RetainedHop { request, response },
@@ -353,7 +357,7 @@ fn to_digest(e: &RequestEvidence) -> mcp_re_http_profile::RequestEvidenceDigest 
 fn reconstruct(hops: &[RetainedHop]) -> ChainLabel {
     reconstruct_chain(
         hops,
-        &resolver(),
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(),
         &audit(),
         &nothing_revoked,
@@ -386,7 +390,7 @@ fn complete_chain_reports_every_hops_evidence() {
     let hops = three_hop_chain();
     let out = reconstruct_chain(
         &hops,
-        &resolver(),
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(),
         &audit(),
         &nothing_revoked,
@@ -423,18 +427,19 @@ fn missing_middle_hop_is_incomplete_not_a_complete_terminal() {
     // Precondition: this is not a test about broken messages. Each surviving hop
     // verifies on its own — the record is a set of individually valid evidence.
     for h in &truncated {
-        let v = mcp_re_http_profile::verify_request(&h.request, &resolver(), NOW)
+        let v = mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request_floor(&h.request, NOW)
             .expect("the retained request verifies on its own");
-        mcp_re_http_profile::verify_delegated_response_bound_full(
-            &h.response,
-            &h.request,
-            v.evidence(),
-            &resolver(),
-            &expectations(),
-            &nothing_revoked,
-            NOW,
-        )
-        .expect("the retained response verifies and is bound to its request");
+        mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_delegated_bound_response(
+                &h.response,
+                &h.request,
+                v.evidence(),
+                &expectations(),
+                &nothing_revoked,
+                NOW,
+            )
+            .expect("the retained response verifies and is bound to its request");
     }
 
     let label = reconstruct(&truncated);
@@ -458,7 +463,7 @@ fn per_hop_validity_does_not_imply_a_complete_chain() {
     let truncated = vec![all[0].clone(), all[2].clone()];
     let out = reconstruct_chain(
         &truncated,
-        &resolver(),
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(),
         &audit(),
         &nothing_revoked,
@@ -506,23 +511,24 @@ fn front_truncated_chain_is_incomplete_not_a_complete_record() {
     // Precondition: this is not a test about broken messages. Both submitted hops
     // verify on their own, exactly as they did inside the whole call.
     for h in &front_truncated {
-        let v = mcp_re_http_profile::verify_request(&h.request, &resolver(), NOW)
+        let v = mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request_floor(&h.request, NOW)
             .expect("the retained request verifies on its own");
-        mcp_re_http_profile::verify_delegated_response_bound_full(
-            &h.response,
-            &h.request,
-            v.evidence(),
-            &resolver(),
-            &expectations(),
-            &nothing_revoked,
-            NOW,
-        )
-        .expect("the retained response verifies and is bound to its request");
+        mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_delegated_bound_response(
+                &h.response,
+                &h.request,
+                v.evidence(),
+                &expectations(),
+                &nothing_revoked,
+                NOW,
+            )
+            .expect("the retained response verifies and is bound to its request");
     }
 
     let out = reconstruct_chain(
         &front_truncated,
-        &resolver(),
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(),
         &audit(),
         &nothing_revoked,
@@ -827,7 +833,7 @@ fn an_aged_multi_hop_record_still_reconstructs_complete() {
     let hops = aged_chain();
     let out = reconstruct_chain(
         &hops,
-        &resolver(),
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(),
         &audit(),
         &nothing_revoked,
@@ -847,7 +853,8 @@ fn an_aged_multi_hop_record_still_reconstructs_complete() {
 #[test]
 fn the_aged_chains_hops_really_are_out_of_window_at_audit_time() {
     for (i, h) in aged_chain().iter().enumerate() {
-        let err = mcp_re_http_profile::verify_request(&h.request, &resolver(), AUDIT_LATER)
+        let err = mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request_floor(&h.request, AUDIT_LATER)
             .expect_err("hop {i}'s window is closed at the audit instant");
         assert!(
             matches!(err, mcp_re_http_profile::HttpProfileError::StaleWindow),
@@ -867,7 +874,7 @@ fn a_hop_created_after_the_audit_instant_is_refused() {
     assert_eq!(
         reconstruct_chain(
             &hops,
-            &resolver(),
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
             &expectations(),
             &audit(),
             &nothing_revoked,
@@ -893,7 +900,7 @@ fn the_audit_ceiling_tolerates_the_configured_skew() {
     assert_eq!(
         reconstruct_chain(
             std::slice::from_ref(&h0),
-            &resolver(),
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
             &expectations_with(&policy),
             &audit(),
             &nothing_revoked,
@@ -908,7 +915,7 @@ fn the_audit_ceiling_tolerates_the_configured_skew() {
     assert_eq!(
         reconstruct_chain(
             &[h0],
-            &resolver(),
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
             &expectations_with(&policy),
             &audit(),
             &nothing_revoked,
@@ -937,7 +944,7 @@ fn an_over_wide_window_is_still_refused_in_an_aged_record() {
     );
     match reconstruct_chain(
         &[h0],
-        &resolver(),
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations_with(&policy),
         &audit(),
         &nothing_revoked,
@@ -964,7 +971,7 @@ fn a_degenerate_window_is_still_refused_in_an_aged_record() {
     let h0 = hop_with_bad_window(CREATED, CREATED, "degenerate");
     match reconstruct_chain(
         &[h0],
-        &resolver(),
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(),
         &audit(),
         &nothing_revoked,
@@ -1057,7 +1064,8 @@ fn a_hop_whose_block_names_another_target_is_not_a_verified_hop() {
 
     // Precondition: the hop is not broken. It verifies on the minimal path — the
     // one reconstruction used to run — so nothing about the signature catches this.
-    mcp_re_http_profile::verify_request(&hop.request, &resolver(), NOW)
+    mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&hop.request, NOW)
         .expect("the request is correctly signed; only its block is wrong");
 
     assert_eq!(
@@ -1093,7 +1101,8 @@ fn a_hop_with_no_evidence_block_is_not_a_verified_hop() {
     .expect("request signs");
     let response = signed_answer(&request, &req_evidence, DONE);
 
-    mcp_re_http_profile::verify_request(&request, &resolver(), NOW)
+    mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&request, NOW)
         .expect("the minimal path accepts a blockless request");
 
     let label = reconstruct(&[RetainedHop { request, response }]);
@@ -1162,7 +1171,7 @@ fn a_binding_with_no_obtainable_credential_breaks_the_chain() {
     let hops = [hop_with_block("n-artifact", &block(None), DONE)];
     let out = reconstruct_chain(
         &hops,
-        &resolver(),
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(),
         &starved,
         &nothing_revoked,
@@ -1207,7 +1216,7 @@ fn two_records_that_verified_nothing_are_still_distinguishable() {
     let run = |hops: &[RetainedHop]| {
         reconstruct_chain(
             hops,
-            &resolver(),
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
             &expectations(),
             &audit(),
             &nothing_revoked,
@@ -1235,7 +1244,7 @@ fn the_submitted_identity_is_a_function_of_the_bytes_alone() {
     let run = || {
         reconstruct_chain(
             &hops,
-            &resolver(),
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
             &expectations(),
             &audit(),
             &nothing_revoked,
@@ -1247,7 +1256,7 @@ fn the_submitted_identity_is_a_function_of_the_bytes_alone() {
     // And an empty chain, which verifies nothing and has no hops at all, still gets one.
     let empty = reconstruct_chain(
         &[],
-        &resolver(),
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(),
         &audit(),
         &nothing_revoked,

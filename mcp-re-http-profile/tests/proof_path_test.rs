@@ -9,14 +9,14 @@
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::sign_response;
-use mcp_re_http_profile::verify_request;
-use mcp_re_http_profile::verify_response;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const SERVER_SEED: [u8; 32] = [22u8; 32];
@@ -111,7 +111,9 @@ fn signed_exchange() -> (HttpRequest, HttpResponse) {
 #[test]
 fn request_roundtrip_verifies_and_yields_split_form_evidence() {
     let req = signed_request();
-    let verified = verify_request(&req, &resolver(), NOW).expect("verifies");
+    let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .expect("verifies");
     assert_eq!(verified.evidence().digest_alg, "sha256");
     assert_eq!(verified.nonce(), "nonce-1");
     assert_eq!(verified.key_id(), "client-key-1");
@@ -129,14 +131,18 @@ fn signer_and_verifier_derive_the_same_evidence_handle() {
         "nonce-1",
     )
     .expect("signing succeeds");
-    let verified = verify_request(&req, &resolver(), NOW).expect("verifies");
+    let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .expect("verifies");
     assert_eq!(&signer_evidence, verified.evidence());
 }
 
 #[test]
 fn response_roundtrip_bound_to_request_verifies() {
     let (req, rsp) = signed_exchange();
-    verify_response(&rsp, &req, &resolver(), NOW).expect("response verifies");
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response_floor(&rsp, &req, NOW)
+        .expect("response verifies");
 }
 
 #[test]
@@ -153,7 +159,9 @@ fn authorization_header_is_covered_when_present() {
         "n",
     )
     .expect("signing succeeds");
-    verify_request(&req, &resolver(), NOW).expect("verifies with authorization covered");
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .expect("verifies with authorization covered");
 
     // Tampering with the bearer token after signing must break the signature.
     for h in req.headers.iter_mut() {
@@ -161,7 +169,9 @@ fn authorization_header_is_covered_when_present() {
             h.1 = "Bearer token-EVIL".into();
         }
     }
-    let err = verify_request(&req, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::InvalidSignature);
 }
 
@@ -171,7 +181,9 @@ fn authorization_header_is_covered_when_present() {
 fn body_tamper_fails_closed() {
     let mut req = signed_request();
     req.body = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"rm"}}"#.to_vec();
-    let err = verify_request(&req, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::ContentDigestMismatch);
     // MCPRE-92: a content-digest mismatch is its own precise code now, no
     // longer folded onto invalid_signature.
@@ -209,8 +221,12 @@ fn response_splice_fails_closed() {
     .expect("response signing succeeds");
 
     // rsp_b verifies against its own request but MUST NOT verify against req_a:
-    verify_response(&rsp_b, &req_b, &resolver(), NOW).expect("own request ok");
-    let err = verify_response(&rsp_b, &req_a, &resolver(), NOW).unwrap_err();
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response_floor(&rsp_b, &req_b, NOW)
+        .expect("own request ok");
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response_floor(&rsp_b, &req_a, NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::ResponseSignatureInvalid);
     assert_eq!(err.wire_code(), "mcp-re.response_sig_invalid");
 }
@@ -223,7 +239,9 @@ fn wrong_content_digest_fails_closed() {
             h.1 = "sha-256=:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=:".into();
         }
     }
-    let err = verify_request(&req, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::ContentDigestMismatch);
 }
 
@@ -236,7 +254,9 @@ fn missing_covered_component_fails_closed() {
             h.1 = h.1.replace(" \"content-digest\"", "");
         }
     }
-    let err = verify_request(&req, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .unwrap_err();
     assert_eq!(
         err,
         HttpProfileError::MissingCoveredComponent("content-digest")
@@ -252,12 +272,16 @@ fn stale_window_fails_closed() {
     let skew = mcp_re_http_profile::VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW;
 
     let after_expiry = EXPIRES + skew + 1;
-    let err = verify_request(&req, &resolver(), after_expiry).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, after_expiry)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::StaleWindow);
     assert_eq!(err.wire_code(), "mcp-re.expired_request");
 
     let before_created = CREATED - skew - 1;
-    let err = verify_request(&req, &resolver(), before_created).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, before_created)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::StaleWindow);
 }
 
@@ -275,7 +299,9 @@ fn degenerate_window_fails_closed_regardless_of_skew() {
         "n-degen",
     )
     .expect("signing succeeds");
-    let err = verify_request(&req, &resolver(), CREATED).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, CREATED)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::StaleWindow);
 }
 
@@ -306,7 +332,9 @@ fn the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not() {
     )
     .expect("signs");
     assert_eq!(
-        verify_request(&req, &resolver(), CREATED).unwrap_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request_floor(&req, CREATED)
+            .unwrap_err(),
         HttpProfileError::StaleWindow,
         "a zero-length window is never fresh, however the clocks read"
     );
@@ -314,12 +342,16 @@ fn the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not() {
     // (2) The upper edge is EXCLUSIVE: `expires + skew` itself is already stale.
     let req = signed_request();
     assert_eq!(
-        verify_request(&req, &resolver(), EXPIRES + skew).unwrap_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request_floor(&req, EXPIRES + skew)
+            .unwrap_err(),
         HttpProfileError::StaleWindow,
         "expires + skew is the first stale instant, not the last fresh one"
     );
     // One second earlier is still fresh, so this pins an edge rather than a blanket deny.
-    verify_request(&req, &resolver(), EXPIRES + skew - 1).expect("still inside the window");
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, EXPIRES + skew - 1)
+        .expect("still inside the window");
 
     // (3) Window WIDTH is bounded. Freshness says when a window may be used; it says
     // nothing about how long it may be. Unbounded, a client presents
@@ -338,7 +370,9 @@ fn the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not() {
     )
     .expect("signs");
     assert_eq!(
-        verify_request(&wide, &resolver(), CREATED + 1).unwrap_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request_floor(&wide, CREATED + 1)
+            .unwrap_err(),
         HttpProfileError::StaleWindow,
         "a window wider than the policy ceiling fails closed even while it is 'fresh'"
     );
@@ -353,7 +387,9 @@ fn the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not() {
         "n-bound",
     )
     .expect("signs");
-    verify_request(&at_bound, &resolver(), CREATED + 1).expect("a window AT the ceiling is fine");
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&at_bound, CREATED + 1)
+        .expect("a window AT the ceiling is fine");
 }
 
 #[test]
@@ -370,7 +406,9 @@ fn wrong_keyid_fails_closed() {
         "n",
     )
     .expect("signing succeeds");
-    let err = verify_request(&req, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::UnresolvedKeyId);
     assert_eq!(err.wire_code(), "mcp-re.actor_binding_failed");
 }
@@ -390,7 +428,9 @@ fn keyid_swap_to_another_trusted_key_fails_the_signature() {
         "n",
     )
     .expect("signing succeeds");
-    let err = verify_request(&req, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::InvalidSignature);
 }
 
@@ -403,7 +443,9 @@ fn foreign_tag_fails_closed() {
                 h.1.replace("tag=\"mcp-re-http-v1\"", "tag=\"someone-elses-profile\"");
         }
     }
-    let err = verify_request(&req, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::UnknownProfileTag);
     assert_eq!(err.wire_code(), "mcp-re.unsupported_version");
 }
@@ -412,7 +454,9 @@ fn foreign_tag_fails_closed() {
 fn content_encoding_fails_closed() {
     let mut req = signed_request();
     req.headers.push(("Content-Encoding".into(), "gzip".into()));
-    let err = verify_request(&req, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::ContentEncodingPresent);
     assert_eq!(err.wire_code(), "mcp-re.serialization_failed");
 }
@@ -420,7 +464,9 @@ fn content_encoding_fails_closed() {
 #[test]
 fn unsigned_request_fails_closed() {
     let req = request();
-    let err = verify_request(&req, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .unwrap_err();
     assert!(matches!(err, HttpProfileError::MissingEvidence(_)));
 }
 
@@ -451,7 +497,9 @@ fn duplicate_authorization_fails_closed() {
 #[test]
 fn verified_request_exposes_resolved_actor_identity() {
     let req = signed_request();
-    let v = verify_request(&req, &resolver(), NOW).expect("verifies");
+    let v = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .expect("verifies");
     assert_eq!(v.key_id(), "client-key-1");
     assert_eq!(v.resolved_actor().identity.role, "client");
     assert_eq!(v.resolved_actor().identity.keyid, "client-key-1");
@@ -473,12 +521,15 @@ fn verified_request_exposes_resolved_actor_identity() {
 #[test]
 fn verified_response_exposes_resolved_server_actor() {
     let (req, rsp) = signed_exchange();
-    let v = verify_response(&rsp, &req, &resolver(), NOW).expect("verifies");
+    let v = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response_floor(&rsp, &req, NOW)
+        .expect("verifies");
     assert_eq!(v.resolved_server_actor.identity.role, "server");
     assert_eq!(v.resolved_server_actor.slot, SignerSlot::Response);
     assert!(v.resolved_server_actor.actor_id().starts_with("server:"));
     assert_eq!(v.response_signature_base_digest.digest_alg, "sha256");
-    assert!(v.bound_request_evidence.is_none());
+    // "the floor path carries no request binding" is no longer an assertion about a
+    // field's absence — the floor product has no such field to inspect.
 }
 
 /// (3) A request signed by a response-only actor fails actor_binding_failed:
@@ -495,7 +546,9 @@ fn request_signed_by_response_only_actor_fails_actor_binding() {
         "n",
     )
     .expect("signing succeeds");
-    let err = verify_request(&req, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::UnresolvedKeyId);
     assert_eq!(err.wire_code(), "mcp-re.actor_binding_failed");
 }
@@ -518,7 +571,9 @@ fn response_signed_by_request_only_actor_fails_actor_binding() {
         EXPIRES,
     )
     .expect("response signing succeeds");
-    let err = verify_response(&rsp, &req, &resolver(), NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response_floor(&rsp, &req, NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::UnresolvedKeyId);
     assert_eq!(err.wire_code(), "mcp-re.actor_binding_failed");
 }
@@ -566,7 +621,9 @@ fn resolver_returning_wrong_slot_is_rejected() {
         })
     };
     let req = signed_request();
-    let err = verify_request(&req, &liar, NOW).unwrap_err();
+    let err = Verifier::new(&VerifierPolicy::default(), &liar)
+        .verify_request_floor(&req, NOW)
+        .unwrap_err();
     assert_eq!(err, HttpProfileError::ActorSlotMismatch);
     assert_eq!(err.wire_code(), "mcp-re.actor_binding_failed");
 }

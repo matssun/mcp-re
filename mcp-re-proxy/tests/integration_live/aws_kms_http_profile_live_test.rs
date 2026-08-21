@@ -31,14 +31,14 @@ use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::sign_request_with_signer;
 use mcp_re_http_profile::sign_response_with_signer;
-use mcp_re_http_profile::verify_request;
-use mcp_re_http_profile::verify_response;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_proxy::AwsKmsConfig;
 use mcp_re_proxy::AwsKmsEd25519Backend;
 use mcp_re_proxy::KmsResponseSigner;
@@ -167,7 +167,8 @@ fn run_request_lane(signer: &KmsResponseSigner) {
     )
     .expect("AWS KMS must sign an RFC 9421 request through the profile seam");
 
-    verify_request(&req, &resolver(&pubkey), NOW)
+    Verifier::new(&VerifierPolicy::default(), &resolver(&pubkey))
+        .verify_request_floor(&req, NOW)
         .expect("an AWS KMS-signed HTTP-profile request MUST verify under verify_request");
 
     // Negative — tamper the covered content after signing.
@@ -175,14 +176,18 @@ fn run_request_lane(signer: &KmsResponseSigner) {
     let last = tampered.body.len() - 1;
     tampered.body[last] ^= 0x01;
     assert!(
-        verify_request(&tampered, &resolver(&pubkey), NOW).is_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver(&pubkey))
+            .verify_request_floor(&tampered, NOW)
+            .is_err(),
         "a post-signing body tamper must fail closed"
     );
 
     // Negative — the live signature must not verify under a foreign key.
     let foreign = SigningKey::from_seed_bytes(&[0x09; 32]).public_key();
     assert!(
-        verify_request(&req, &resolver(&foreign), NOW).is_err(),
+        Verifier::new(&VerifierPolicy::default(), &resolver(&foreign))
+            .verify_request_floor(&req, NOW)
+            .is_err(),
         "an AWS KMS HTTP-profile signature must NOT verify under a foreign key"
     );
 }
@@ -226,7 +231,8 @@ fn run_response_lane(signer: &KmsResponseSigner) {
     )
     .expect("AWS KMS must sign an RFC 9421 response through the profile seam");
 
-    verify_response(&rsp, &req, &req_resolver, NOW)
+    Verifier::new(&VerifierPolicy::default(), &req_resolver)
+        .verify_bound_response_floor(&rsp, &req, NOW)
         .expect("an AWS KMS-signed HTTP-profile response MUST verify under verify_response");
 
     // Negative — tamper the response content after signing.
@@ -234,7 +240,9 @@ fn run_response_lane(signer: &KmsResponseSigner) {
     let last = tampered.body.len() - 1;
     tampered.body[last] ^= 0x01;
     assert!(
-        verify_response(&tampered, &req, &req_resolver, NOW).is_err(),
+        Verifier::new(&VerifierPolicy::default(), &req_resolver)
+            .verify_bound_response_floor(&tampered, &req, NOW)
+            .is_err(),
         "a post-signing response tamper must fail closed"
     );
 }

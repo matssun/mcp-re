@@ -17,9 +17,7 @@
 //! injects the live-trust / OCSP-backed resolver and this pure module never reaches
 //! the network.
 
-use mcp_re_http_profile::verify_delegated_response_bound_full;
-use mcp_re_http_profile::verify_delegated_response_unbound;
-use mcp_re_http_profile::verify_response_bound_full;
+use crate::delegated_evidence::DelegatedResponseEvidence;
 use mcp_re_http_profile::DelegationExpectations;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
@@ -28,7 +26,8 @@ use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::SignerSlot;
-use mcp_re_http_profile::VerifiedHttpResponseEvidence;
+use mcp_re_http_profile::VerifiedMcpResponse;
+use mcp_re_http_profile::Verifier;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -88,19 +87,18 @@ impl ResponseExpectation {
 ///
 /// `resolve_actor` is the client's trust seam (injected by the proxy/SDK; live
 /// trust + OCSP live behind it, so this pure module performs no I/O). On success
-/// returns the [`VerifiedHttpResponseEvidence`]; on any failure the precise frozen
+/// returns the [`VerifiedMcpResponse`]; on any failure the precise frozen
 /// [`HttpProfileError`], fail-closed.
 pub fn verify_signed_response<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
+    verifier: &Verifier<'_, R>,
     expectation: &ResponseExpectation,
     now: i64,
-) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
-    let verified = verify_response_bound_full(
+) -> Result<VerifiedMcpResponse, HttpProfileError> {
+    let verified = verifier.verify_bound_response(
         response,
         &expectation.request,
         &expectation.request_evidence,
-        resolve_actor,
         now,
     )?;
 
@@ -117,10 +115,10 @@ pub fn verify_signed_response<R: Into<ResolverOutcome>>(
 /// signer the pin names.
 fn enforce_expected_server_signer(
     expectation: &ResponseExpectation,
-    verified: &VerifiedHttpResponseEvidence,
+    verified: &VerifiedMcpResponse,
 ) -> Result<(), HttpProfileError> {
     if let Some(expected) = &expectation.expected_server_signer_keyid {
-        if &verified.resolved_server_actor.identity.keyid != expected {
+        if &verified.floor.resolved_server_actor.identity.keyid != expected {
             return Err(HttpProfileError::ResponseBindingMismatch);
         }
     }
@@ -140,19 +138,20 @@ fn enforce_expected_server_signer(
 /// configured one learned it was unenforced rather than believing a control that never
 /// ran. That was the correct holding position; it is not a control.
 ///
-/// Fails closed if the verified evidence carries no issuer at all: reaching here means
-/// the delegated path ran, so a missing issuer is a contradiction, and silently
-/// accepting an unpinnable response would restore the very gap this closes.
+/// The "missing issuer is a contradiction" branch this used to carry is gone: the
+/// delegated products hold the issuer kid unconditionally, so an issuer-less delegated
+/// verdict is not a state that can be constructed. What remains is the comparison.
 fn check_expected_server_signer(
     expectation: &ResponseExpectation,
-    verified: &VerifiedHttpResponseEvidence,
+    issuer_kid: &str,
 ) -> Result<(), HttpProfileError> {
     let Some(pinned) = expectation.expected_server_signer_keyid.as_deref() else {
         return Ok(());
     };
-    match verified.delegation_issuer_kid.as_deref() {
-        Some(issuer) if issuer == pinned => Ok(()),
-        _ => Err(HttpProfileError::ResponseBindingMismatch),
+    if issuer_kid == pinned {
+        Ok(())
+    } else {
+        Err(HttpProfileError::ResponseBindingMismatch)
     }
 }
 
@@ -161,7 +160,7 @@ fn check_expected_server_signer(
 #[derive(Debug, Clone)]
 pub struct ClassifiedResponse {
     /// The verification verdict.
-    pub verified: VerifiedHttpResponseEvidence,
+    pub verified: VerifiedMcpResponse,
     /// Terminal vs `InputRequiredResult`.
     pub class: ResultClass,
 }
@@ -177,11 +176,11 @@ pub struct ClassifiedResponse {
 /// bindings call.
 pub fn verify_and_classify_response<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
+    verifier: &Verifier<'_, R>,
     expectation: &ResponseExpectation,
     now: i64,
 ) -> Result<ClassifiedResponse, HttpProfileError> {
-    let verified = verify_signed_response(response, resolve_actor, expectation, now)?;
+    let verified = verify_signed_response(response, verifier, expectation, now)?;
     let body: Value = serde_json::from_slice(&response.body)
         .map_err(|_| HttpProfileError::MalformedEvidence("response body"))?;
     let class = classify_result(body.get("result"));
@@ -684,7 +683,6 @@ pub enum DelegatedOutcome {
     /// carries — the difference between a refusal that ran nothing and one whose
     /// side effect a retry would perform twice.
     Rejection {
-        bound: bool,
         wire_code: Option<String>,
         execution: ExecutionContract,
     },
@@ -693,9 +691,9 @@ pub enum DelegatedOutcome {
 /// A verified delegated response: the verification evidence plus the outcome.
 #[derive(Debug, Clone)]
 pub struct VerifiedDelegatedResponse {
-    /// The verified response evidence (server signer, bound request evidence, …).
-    pub verified: VerifiedHttpResponseEvidence,
-    /// Success vs delegated rejection receipt (bound / preflight).
+    /// The verified response evidence, bound or unbound.
+    pub verified: DelegatedResponseEvidence,
+    /// Success vs delegated rejection receipt.
     pub outcome: DelegatedOutcome,
 }
 
@@ -732,8 +730,8 @@ pub fn verify_delegated_response<R: Into<ResolverOutcome>>(
         .map(String::as_str)
         .collect();
     let epochs: Vec<&str> = policy.accepted_epochs.iter().map(String::as_str).collect();
+    let verifier_policy = policy.verifier_policy();
     let expect = DelegationExpectations {
-        policy: policy.verifier_policy(),
         verifier_audiences: &audiences,
         expected_audience_hash: policy.expected_audience_hash.as_str(),
         accepted_epochs: &epochs,
@@ -747,19 +745,19 @@ pub fn verify_delegated_response<R: Into<ResolverOutcome>>(
     // A SUCCESS must be request-bound. The server only ever signs success responses
     // with the `;req` binding, and a stripped-`;req` "success" changes the signature
     // base so no valid delegated signature can cover it — so this is a hard floor.
+    let verifier = Verifier::new(&verifier_policy, resolve_actor);
     if (200..300).contains(&response.status) {
-        let verified = verify_delegated_response_bound_full(
+        let verified = verifier.verify_delegated_bound_response(
             response,
             &expectation.request,
             &expectation.request_evidence,
-            resolve_actor,
             &expect,
             is_revoked,
             now,
         )?;
-        check_expected_server_signer(expectation, &verified)?;
+        check_expected_server_signer(expectation, &verified.delegation_issuer_kid)?;
         return Ok(VerifiedDelegatedResponse {
-            verified,
+            verified: DelegatedResponseEvidence::Bound(verified),
             outcome: DelegatedOutcome::Success,
         });
     }
@@ -767,55 +765,48 @@ pub fn verify_delegated_response<R: Into<ResolverOutcome>>(
     // A REJECTION receipt: verify request-bound first, then preflight-unbound. Both
     // require the inline credential + a valid delegated signature, so an unsigned or
     // direct-root rejection fails closed here (no downgrade, no unsigned acceptance).
-    match verify_delegated_response_bound_full(
+    match verifier.verify_delegated_bound_response(
         response,
         &expectation.request,
         &expectation.request_evidence,
-        resolve_actor,
         &expect,
         is_revoked,
         now,
     ) {
         Ok(verified) => {
-            check_expected_server_signer(expectation, &verified)?;
+            check_expected_server_signer(expectation, &verified.delegation_issuer_kid)?;
             let (wire_code, execution) = rejection_receipt(&response.body);
             Ok(VerifiedDelegatedResponse {
-                verified,
+                verified: DelegatedResponseEvidence::Bound(verified),
                 outcome: DelegatedOutcome::Rejection {
-                    bound: true,
                     wire_code,
                     execution,
                 },
             })
         }
-        Err(bound_err) => match verify_delegated_response_unbound(
-            response,
-            resolve_actor,
-            &expect,
-            is_revoked,
-            now,
-        ) {
-            Ok(verified) => {
-                check_expected_server_signer(expectation, &verified)?;
-                // The unbound signature binds nothing about the request, so a receipt
-                // that verifies here is not yet an answer to THIS request. Confirm the
-                // server produced it for the bytes this client sent before reporting a
-                // refusal at all.
-                check_unbound_receipt_is_about_this_request(response, &expectation.request)?;
-                let (wire_code, execution) = rejection_receipt(&response.body);
-                Ok(VerifiedDelegatedResponse {
-                    verified,
-                    outcome: DelegatedOutcome::Rejection {
-                        bound: false,
-                        wire_code,
-                        execution,
-                    },
-                })
+        Err(bound_err) => {
+            match verifier.verify_delegated_unbound_response(response, &expect, is_revoked, now) {
+                Ok(verified) => {
+                    check_expected_server_signer(expectation, &verified.delegation_issuer_kid)?;
+                    // The unbound signature binds nothing about the request, so a receipt
+                    // that verifies here is not yet an answer to THIS request. Confirm the
+                    // server produced it for the bytes this client sent before reporting a
+                    // refusal at all.
+                    check_unbound_receipt_is_about_this_request(response, &expectation.request)?;
+                    let (wire_code, execution) = rejection_receipt(&response.body);
+                    Ok(VerifiedDelegatedResponse {
+                        verified: DelegatedResponseEvidence::Unbound(verified),
+                        outcome: DelegatedOutcome::Rejection {
+                            wire_code,
+                            execution,
+                        },
+                    })
+                }
+                // Neither path verified — fail closed. Surface the bound error (the more
+                // specific of the two for a receipt claiming to be about this request).
+                Err(_unbound_err) => Err(bound_err),
             }
-            // Neither path verified — fail closed. Surface the bound error (the more
-            // specific of the two for a receipt claiming to be about this request).
-            Err(_unbound_err) => Err(bound_err),
-        },
+        }
     }
 }
 
@@ -1055,8 +1046,8 @@ pub fn verify_delegated_accepted_202_pinned<R: Into<ResolverOutcome>>(
         .map(String::as_str)
         .collect();
     let epochs: Vec<&str> = policy.accepted_epochs.iter().map(String::as_str).collect();
+    let verifier_policy = policy.verifier_policy();
     let expect = DelegationExpectations {
-        policy: policy.verifier_policy(),
         verifier_audiences: &audiences,
         expected_audience_hash: policy.expected_audience_hash.as_str(),
         accepted_epochs: &epochs,
@@ -1066,7 +1057,7 @@ pub fn verify_delegated_accepted_202_pinned<R: Into<ResolverOutcome>>(
     let actor = mcp_re_http_profile::verify_delegated_accepted_202(
         response,
         request,
-        resolve_actor,
+        &Verifier::new(&verifier_policy, resolve_actor),
         &expect,
         &is_revoked,
         now,
@@ -1278,7 +1269,7 @@ mod delegated_tests {
         // from the key material, not from an issuer-private counter.
         let snap = custody.active_snapshot().expect("a key is active");
         assert_eq!(
-            out.verified.server_signer.as_ref().unwrap().keyid,
+            out.verified.server_signer().keyid,
             mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.key.public_key().to_b64url()),
         );
     }
@@ -1314,7 +1305,7 @@ mod delegated_tests {
         assert_eq!(ok.outcome, DelegatedOutcome::Success);
 
         // The verified evidence reports the anchor the credential chained to.
-        assert_eq!(ok.verified.delegation_issuer_kid.as_deref(), Some(ROOT_KID));
+        assert_eq!(ok.verified.delegation_issuer_kid(), ROOT_KID);
 
         // A pin on the ROOT ISSUER verifies — the coordinate that is stable across
         // delegated-key rotation.
@@ -1343,7 +1334,7 @@ mod delegated_tests {
 
         // And NOT against the accepted signer keyid: that is the ephemeral delegated
         // kid, so pinning it would break on the first rotation.
-        let delegated_kid = ok.verified.server_signer.as_ref().unwrap().keyid.clone();
+        let delegated_kid = ok.verified.server_signer().keyid.clone();
         assert_ne!(delegated_kid, ROOT_KID);
         let err = verify_delegated_response(
             &resp,
@@ -1432,7 +1423,6 @@ mod delegated_tests {
         assert_eq!(
             out.outcome,
             DelegatedOutcome::Rejection {
-                bound: true,
                 wire_code: Some("mcp-re.replay_detected".into()),
                 execution: ExecutionContract::default(),
             }
@@ -1470,7 +1460,6 @@ mod delegated_tests {
         assert_eq!(
             out.outcome,
             DelegatedOutcome::Rejection {
-                bound: false,
                 wire_code: Some("mcp-re.request_signature_invalid".into()),
                 execution: ExecutionContract::default(),
             }
@@ -1566,10 +1555,7 @@ mod delegated_tests {
             NOW,
         )
         .expect("the receipt for this request's bytes still verifies");
-        assert!(matches!(
-            out.outcome,
-            DelegatedOutcome::Rejection { bound: false, .. }
-        ));
+        assert!(matches!(out.outcome, DelegatedOutcome::Rejection { .. }));
     }
 
     /// A receipt with NO received-digest is about no request at all, so it cannot be

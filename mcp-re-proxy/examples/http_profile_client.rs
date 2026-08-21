@@ -23,13 +23,14 @@ use serde_json::json;
 use serde_json::Value;
 
 use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::verify_delegated_response_bound_full;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::DelegationExpectations;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
 // Shared demo material; each example uses a different subset, so allow dead code.
@@ -55,7 +56,6 @@ fn main() {
     let verifier_audiences = [hpp_common::AUDIENCE_ID];
     let accepted_epochs = [hpp_common::EPOCH];
     let expect = DelegationExpectations {
-        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &verifier_audiences,
         expected_audience_hash: hpp_common::AUD_SCOPE,
         accepted_epochs: &accepted_epochs,
@@ -122,11 +122,10 @@ fn main() {
     // stamped by the server when it replies, which is necessarily after the `now` we
     // captured for signing — reusing the stale `now` would spuriously reject a
     // response created "in the future" relative to it.
-    match verify_delegated_response_bound_full(
+    match Verifier::new(&VerifierPolicy::default(), &resolver).verify_delegated_bound_response(
         &resp,
         &request,
         &request_evidence,
-        &resolver,
         &expect,
         &is_revoked,
         hpp_common::now_unix(),
@@ -144,7 +143,12 @@ fn main() {
         Ok(verified) => {
             println!(
                 "leg 1  ACCEPTED  server_signer={}  status={}  fastmcp_result={}",
-                verified.resolved_server_actor.identity.subject,
+                verified
+                    .response
+                    .floor
+                    .resolved_server_actor
+                    .identity
+                    .subject,
                 resp.status,
                 mcp_result(&resp.body)
             );
@@ -171,11 +175,10 @@ fn main() {
     //
     // Verifying only proves the receipt is authentic and bound to THIS request; whether
     // it is an acceptance is then read from the trusted body.
-    match verify_delegated_response_bound_full(
+    match Verifier::new(&VerifierPolicy::default(), &resolver).verify_delegated_bound_response(
         &resp2,
         &request,
         &request_evidence,
-        &resolver,
         &expect,
         &is_revoked,
         hpp_common::now_unix(),

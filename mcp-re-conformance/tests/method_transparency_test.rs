@@ -6,7 +6,6 @@
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::verify_request_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -15,6 +14,8 @@ use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
 const SEED: [u8; 32] = [11u8; 32];
@@ -101,7 +102,12 @@ fn accepted_verdict_is_identical_across_all_methods() {
             &format!("nonce-{i}"),
         )
         .expect("sign");
-        let verdict = verify_request_full(&req, &audience(), &material, &resolver(), NOW);
+        let verdict = Verifier::new(&VerifierPolicy::default(), &resolver()).verify_request(
+            &req,
+            &audience(),
+            &material,
+            NOW,
+        );
         assert!(
             verdict.is_ok(),
             "method {method:?} must produce the SAME accepted verdict — the verdict is \

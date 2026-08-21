@@ -28,12 +28,13 @@
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::sign_request;
-use mcp_re_http_profile::verify_request;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const NOW: i64 = 1_700_000_100;
@@ -90,7 +91,9 @@ fn edit_signature_input(req: &mut HttpRequest, f: impl Fn(&str) -> String) {
 }
 
 fn verify_err(req: &HttpRequest) -> HttpProfileError {
-    verify_request(req, &resolver(), NOW).unwrap_err()
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(req, NOW)
+        .unwrap_err()
 }
 
 #[test]
@@ -246,7 +249,9 @@ fn canonical_order_still_verifies() {
     // Guard against over-tightening: the untouched, canonically-ordered message
     // must still verify.
     let req = signed_request();
-    verify_request(&req, &resolver(), NOW).expect("canonical form verifies");
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .expect("canonical form verifies");
 }
 
 // --- RFC 8941 string parameters (C092) ---------------------------------------
@@ -344,7 +349,8 @@ fn an_escaped_quote_in_a_neighbouring_member_does_not_merge_it() {
     edit_signature_input(&mut req, |v| {
         format!("decoy=(\"@method\");keyid=\"a\\\"b\", {v}")
     });
-    verify_request(&req, &resolver(), NOW)
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
         .expect("this profile's member is found and verified beside a decoy");
 }
 
@@ -360,7 +366,8 @@ fn a_decoy_signature_member_does_not_merge_into_this_profiles_member() {
     edit_signature_input(&mut req, |v| {
         format!("decoy=(\"@method\");keyid=\"a\\\"b\", {v}")
     });
-    verify_request(&req, &resolver(), NOW)
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
         .expect("the signature member is found beside a decoy carrying an escape");
 }
 
@@ -402,5 +409,7 @@ fn ordinary_string_parameters_still_sign_and_verify() {
         "AbCd-_0123456789xyz",
     )
     .expect("a base64url nonce signs");
-    verify_request(&req, &resolver(), NOW).expect("and verifies");
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request_floor(&req, NOW)
+        .expect("and verifies");
 }
