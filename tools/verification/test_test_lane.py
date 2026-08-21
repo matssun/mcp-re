@@ -131,7 +131,22 @@ def test_an_unknown_target_form_is_malformed():
     assert grouped == {}
 
 
+def test_a_doctest_item_matches_its_own_doctests_and_nothing_else():
+    observed = {
+        "src/verified_response.rs - verified_response::VerifiedMcpResponse (line 82) - compile fail": "ok",
+        "src/verified_response.rs - verified_response::VerifiedDelegatedMcpResponse (line 114) - compile fail": "ok",
+        "src/verified_request.rs - verified_request::VerifiedMcpRequest (line 114) - compile fail": "ok",
+    }
+    assert lane.doc_matches(observed, "verified_response::VerifiedMcpResponse") == [
+        "src/verified_response.rs - verified_response::VerifiedMcpResponse (line 82) - compile fail"
+    ]
+    # The line number is deliberately not part of the symbol: an edit above the control
+    # must not break the declaration, and a rename or deletion must.
+    assert lane.doc_matches(observed, "verified_response::Gone") == []
+
+
 def test_targets_are_selected_by_their_own_cargo_flag():
+    assert lane.target_argv("doc") == ["--doc"]
     assert lane.target_argv("lib") == ["--lib"]
     assert lane.target_argv("tests/dispatch_test") == ["--test", "dispatch_test"]
     assert lane.target_argv("tests/a/b") is None

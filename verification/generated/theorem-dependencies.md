@@ -18,6 +18,25 @@ a single global diagram is unreadable at the size where it would matter.
 ```mermaid
 graph BT
     THM_0001["THM-0001<br/>Admitted request parameters imply a current freshness window"]
+    THM_0007["THM-0007<br/>A typed artifact verifier admits only its own type"]
+    THM_0008["THM-0008<br/>No untyped artifact binding leaves the verifier as verified"]
+    THM_0014["THM-0014<br/>A successful request-floor verification establishes the cryptographic floor"]
+    THM_0015["THM-0015<br/>A successful full-profile request verification establishes audience and artifact binding"]
+    THM_0016["THM-0016<br/>A successful bound response-floor verification establishes binding to the supplied request"]
+    THM_0017["THM-0017<br/>A successful unbound response-floor verification establishes no request binding at all"]
+    THM_0018["THM-0018<br/>A successful full bound response verification establishes block agreement with the expected handle"]
+    THM_0019["THM-0019<br/>A successful delegated bound response verification establishes an accepted credential chain"]
+    THM_0020["THM-0020<br/>A successful delegated unbound response verification establishes a chain and never a binding"]
+    THM_0007 --> THM_0008
+    THM_0001 --> THM_0014
+    THM_0007 --> THM_0015
+    THM_0008 --> THM_0015
+    THM_0014 --> THM_0015
+    THM_0001 --> THM_0016
+    THM_0001 --> THM_0017
+    THM_0016 --> THM_0018
+    THM_0018 --> THM_0019
+    THM_0017 --> THM_0020
 ```
 
 ## Component 2
@@ -59,28 +78,19 @@ graph BT
 
 ```mermaid
 graph BT
-    THM_0007["THM-0007<br/>A typed artifact verifier admits only its own type"]
-    THM_0008["THM-0008<br/>No untyped artifact binding leaves the verifier as verified"]
-    THM_0007 --> THM_0008
+    THM_0009["THM-0009<br/>A presented continuation cannot bypass verification"]
+    THM_0010["THM-0010<br/>Continuation handles match their presented inputs in role"]
+    THM_0010 --> THM_0009
 ```
 
 ## Component 8
 
 ```mermaid
 graph BT
-    THM_0009["THM-0009<br/>A presented continuation cannot bypass verification"]
-    THM_0010["THM-0010<br/>Continuation handles match their presented inputs in role"]
-    THM_0010 --> THM_0009
-```
-
-## Component 9
-
-```mermaid
-graph BT
     THM_0012["THM-0012<br/>The lifecycle record cannot claim a shutdown that did not happen"]
 ```
 
-## Component 10
+## Component 9
 
 ```mermaid
 graph BT

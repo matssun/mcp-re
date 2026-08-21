@@ -514,3 +514,78 @@ introduced_by = "ADR-MCPRE-059 WP3"
 review_requirement = "Owner review; any change that makes the bound more than a per-policy constant."
 affected_contracts = ["contract://http_profile/verify/check_params"]
 tool_specific_mechanism = "verus:uninterp"
+
+# ---------------------------------------------------------------------------
+# The verifier's result claims — ADR-MCPRE-061 §12, MCPRE-136
+# ---------------------------------------------------------------------------
+#
+# The three above are `verus:` mechanisms: things the prover is told to treat as opaque.
+# The three below are of a different KIND. `http_profile.verifier_results` is class V0 —
+# its claims rest on a test battery, not on an `ensures` — so what it must declare is not
+# what the prover cannot see but what NO amount of testing could establish: the primitives
+# and the seam the claims quantify over.
+#
+# They were unregistered before this entry. Every one of the seven verifier-result claims
+# is false without them, and a claim whose premises are unnamed reads as stronger than it
+# is.
+
+[[assumption]]
+id = "ASM-0027"
+description = "Ed25519 verification accepts a signature over a message only if it was produced under the private key corresponding to the verification key supplied."
+justification = """
+The security of the signature scheme itself, as implemented by the pinned `ed25519-dalek`
+and reached through `mcp_re_core::verify_ed25519_with`. No test can establish it: a battery
+shows that valid signatures verify and that specific invalid ones do not, which is
+conformance, not unforgeability. Stated so that every "the signature verified" conjunct in
+the verifier-result claims has a named premise instead of an implied one. It stops being
+acceptable if the algorithm is broken, or if the crate is replaced by an implementation
+whose acceptance criterion is not the scheme's.
+"""
+scope = ["unit://http_profile.verifier_results"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-061 MCPRE-136"
+review_requirement = "Owner review; any change of signature backend or pinned version."
+affected_contracts = []
+# Not a prover directive. No tool enforces this, and naming a `verus:` mechanism it does
+# not use would misrepresent where the trust sits.
+tool_specific_mechanism = "none:trusted-primitive"
+
+[[assumption]]
+id = "ASM-0028"
+description = "SHA-256 is second-preimage resistant over the byte strings this profile digests, so digest agreement implies byte agreement."
+justification = """
+Content-digest binding and the evidence handles both reduce a message to a digest and then
+compare digests. Every claim of the form "this response is bound to that request" is a
+claim about digests, and becomes a claim about bytes only under this assumption. ASM-0023
+and ASM-0024 state the LABELLED digest's shape for the prover; this states the property the
+labelling is built on, for the claims the prover does not reach. It stops being acceptable
+if SHA-256 is broken for second preimages, or if a profile revision digests attacker-chosen
+structure without a domain separator.
+"""
+scope = ["unit://http_profile.verifier_results"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-061 MCPRE-136"
+review_requirement = "Owner review; any change to the evidence digest algorithm or its labelling."
+affected_contracts = []
+tool_specific_mechanism = "none:trusted-primitive"
+
+[[assumption]]
+id = "ASM-0029"
+description = "The caller-supplied trust seam answers correctly: a `ResolvedActor` it returns for a signer slot really is an actor this deployment trusts in that slot."
+justification = """
+`resolve_actor` is an injected closure and `ResolvedActor` is deliberately NOT sealed —
+every in-process and test resolver is a legitimate producer, which
+`docs/dev/sealed-owners.md` records as measured rather than assumed. The verifier's
+defense-in-depth cross-check catches a resolver that answers for the WRONG slot, and the
+battery exercises that; nothing in this unit can check whether the deployment should have
+trusted the actor at all. Every "trust resolution in the correct signer slot" conjunct is
+therefore a claim about what the seam said, under this premise. It stops being acceptable
+if a deployment installs a resolver whose answers are not its trust decision — which is
+what the trust plane exists to prevent, one layer out.
+"""
+scope = ["unit://http_profile.verifier_results"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-061 MCPRE-136"
+review_requirement = "Owner review; any change to the seam's contract or to slot enforcement."
+affected_contracts = []
+tool_specific_mechanism = "none:trusted-seam"

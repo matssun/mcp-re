@@ -190,9 +190,10 @@ unit: **size ordered this investigation; it did not decide it.**
 
 ## EX-003 — `mcp-re-http-profile/src/verify.rs` — **census complete, disposition: decompose first**
 
-**Status:** `reviewed-action-required`. **Remediation:** ~~#571~~ (done — response split and
-the `_with_policy` axis) and [#572](https://github.com/matssun/mcp-re/issues/572)
-(composition theorems, still open). **Measured:** 1388 production lines after #571; 1598
+**Status:** `reviewed-action-required` pending owner security-specification review of the
+seven theorems. **Remediation:** ~~#571~~ and ~~#572~~ implemented (THM-0014 … THM-0020);
+the disposition may move to `reviewed-exception` only once that review lands and this
+census is re-run. **Measured:** 1388 production lines after #571; 1598
 after #570; 1640 before either. **Component blueprint:**
 [`components/evidence-verification.md`](components/evidence-verification.md).
 

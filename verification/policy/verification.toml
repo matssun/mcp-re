@@ -82,6 +82,99 @@ tested_symbols = ["lib#keyid::tests::rfc8037_a3_known_answer"]
 pilot = "lean-candidate"
 
 # ---------------------------------------------------------------------------
+# The verifier's results — ADR-MCPRE-061 §2 class 9, closed by #570/#571
+# ---------------------------------------------------------------------------
+#
+# Seven public operations produce seven deliberately different propositions. One review
+# unit carries them, and the theorem layer allocates one claim per proposition: the
+# attacker stories differ, the evidence is shared, and `admission_currency` already sets
+# the precedent for several claims over one unit.
+#
+# One unit rather than seven is the honest granularity. The propositions are separated by
+# TYPE, but the source is not: they share `verify.rs`, so a fingerprint per operation would
+# make the graph look more precise than the measurement is.
+#
+# This is class V0. There is no `ensures` over these operations — the prover reaches
+# `check_params` (`http_profile.freshness_window`), not the operations that call it — so
+# every claim resting here is supported by a test battery and nothing above it may say
+# otherwise.
+
+[[unit]]
+id = "http_profile.verifier_results"
+class = "V0"
+description = "The seven public verifier operations and the seven products they return: what a SUCCESSFUL return of each establishes."
+paths = [
+  "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify.rs",
+  "mcp-re-http-profile/src/verified_request.rs",
+  "mcp-re-http-profile/src/verified_response.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/policy.rs",
+]
+exported_contracts = []
+evidence = ["test://http_profile/verifier/result_propositions"]
+# The battery spans five targets and says so. `rejection.rs` carries the only in-crate
+# exercise of the unbound response floor, through `verify_signed_rejection`; the two
+# delegated-unbound members were written for this claim, because that operation previously
+# had evidence only in a proxy integration test — a different unit, so nothing resolvable.
+tested_symbols = [
+  "tests/proof_path_test#request_roundtrip_verifies_and_yields_split_form_evidence",
+  "tests/proof_path_test#body_tamper_fails_closed",
+  "tests/proof_path_test#wrong_content_digest_fails_closed",
+  "tests/proof_path_test#missing_covered_component_fails_closed",
+  "tests/proof_path_test#stale_window_fails_closed",
+  "tests/proof_path_test#wrong_keyid_fails_closed",
+  "tests/proof_path_test#request_signed_by_response_only_actor_fails_actor_binding",
+  "tests/proof_path_test#resolver_returning_wrong_slot_is_rejected",
+  "tests/proof_path_test#response_roundtrip_bound_to_request_verifies",
+  "tests/proof_path_test#response_splice_fails_closed",
+  "tests/proof_path_test#response_signed_by_request_only_actor_fails_actor_binding",
+  "tests/full_profile_test#full_request_roundtrip_exposes_audience_and_block",
+  "tests/full_profile_test#audience_mismatch_fails",
+  "tests/full_profile_test#missing_request_block_fails_in_full_profile",
+  "tests/full_profile_test#artifact_binding_mismatch_fails",
+  "tests/full_profile_test#unverifiable_binding_without_material_fails_closed",
+  "tests/full_profile_test#full_response_roundtrip_binds_request_evidence",
+  "tests/full_profile_test#response_request_evidence_mismatch_emits_request_binding_mismatch",
+  "tests/full_profile_test#cryptographic_req_splice_still_fails_at_the_floor",
+  "tests/algorithm_confusion_test#an_ed25519_signature_declaring_ml_dsa_is_rejected",
+  "tests/delegation_e2e_test#valid_delegated_response_verifies_under_cnf_key",
+  "tests/delegation_e2e_test#direct_root_signed_response_is_rejected_credential_missing",
+  "tests/delegation_e2e_test#response_keyid_not_delegated_kid_is_key_mismatch",
+  "tests/delegation_e2e_test#stale_epoch_rejected_end_to_end",
+  "tests/delegation_e2e_test#a_delegated_preflight_receipt_verifies_without_request_binding",
+  "tests/delegation_e2e_test#an_unbound_receipt_without_a_credential_is_refused",
+  "lib#rejection::tests::unbound_rejection_verifies_without_request_context",
+  "lib#rejection::tests::spliced_rejection_onto_a_different_request_fails",
+]
+assumptions = ["ASM-0027", "ASM-0028", "ASM-0029"]
+
+# The structural half: the products are not interchangeable, and that is checked by the
+# compiler rather than asserted in prose. The controls were landed and PROBED in #570/#571
+# — each was rewritten so it SHOULD compile and the test then failed — so this unit records
+# them where they are, rather than growing a second copy.
+#
+# Their lane is `cargo test --doc`. Bazel runs no doctests, and this manifest does not
+# pretend otherwise.
+
+[[unit]]
+id = "http_profile.verifier_result_separation"
+class = "V0"
+description = "The verifier's assurance products are not substitutable: a weaker product cannot be passed where a stronger one is required."
+paths = [
+  "mcp-re-http-profile/src/verified_request.rs",
+  "mcp-re-http-profile/src/verified_response.rs",
+]
+exported_contracts = []
+evidence = ["test://http_profile/verifier/assurance_type_separation"]
+tested_symbols = [
+  "doc#verified_request::VerifiedMcpRequest",
+  "doc#verified_response::VerifiedMcpResponse",
+  "doc#verified_response::VerifiedDelegatedMcpResponse",
+]
+
+# ---------------------------------------------------------------------------
 # Contract-consumption edges
 # ---------------------------------------------------------------------------
 #

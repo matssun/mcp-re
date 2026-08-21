@@ -13,6 +13,7 @@
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::sign_delegated_response_full;
+use mcp_re_http_profile::sign_delegated_response_unbound;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_response_full;
 use mcp_re_http_profile::ActorIdentity;
@@ -545,4 +546,87 @@ fn revoked_delegated_key_rejected_end_to_end() {
         )
         .unwrap_err();
     assert_eq!(err, HttpProfileError::DelegationRevoked);
+}
+
+/// A delegated PREFLIGHT receipt verifies with no request context at all, and says so in
+/// its type: `VerifiedDelegatedUnboundResponse` carries no request binding to misread.
+///
+/// The operation had no in-crate test before the theorem registry needed one. Its evidence
+/// lived only in a proxy integration test, which is a different unit — so the claim about
+/// this operation had nothing resolvable behind it.
+#[test]
+fn a_delegated_preflight_receipt_verifies_without_request_binding() {
+    let (_req, ev, _verified_req) = signed_request();
+    let mut rsp = HttpResponse {
+        status: 400,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: response_body(),
+    };
+    sign_delegated_response_unbound(
+        &mut rsp,
+        &server_signer(),
+        &valid_credential(),
+        &ev,
+        &delegated_key(),
+        DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign unbound delegated receipt");
+
+    let rv = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_unbound_response(&rsp, &expectations(&[EPOCH]), &|_| false, NOW)
+        .expect("the preflight receipt verifies unbound");
+    assert_eq!(rv.server_signer.keyid, DELEGATED_KID);
+    assert_eq!(rv.delegation_issuer_kid, ROOT_KID);
+}
+
+/// Delegation stays REQUIRED on the unbound path: a receipt with no inline credential —
+/// including a directly root-signed one — is refused rather than accepted more leniently
+/// because there is no request to bind to.
+#[test]
+fn an_unbound_receipt_without_a_credential_is_refused() {
+    let (_req, ev, _verified_req) = signed_request();
+    let mut rsp = HttpResponse {
+        status: 400,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: response_body(),
+    };
+    sign_delegated_response_unbound(
+        &mut rsp,
+        &server_signer(),
+        &valid_credential(),
+        &ev,
+        &delegated_key(),
+        DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign unbound delegated receipt");
+    // Strip the credential from the covered block: the digest changes with it, so this is
+    // the "no credential presented" case rather than a tamper.
+    let body: serde_json::Value = serde_json::from_slice(&rsp.body).expect("body");
+    let mut stripped = body.clone();
+    stripped["_meta"]["se.syncom/mcp-re.http.response"]
+        .as_object_mut()
+        .expect("response block")
+        .remove("server_delegation");
+    let mut plain = HttpResponse {
+        status: 400,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: serde_json::to_vec(&stripped).expect("re-encode"),
+    };
+    mcp_re_http_profile::sign::sign_response_unbound(
+        &mut plain,
+        &root_key(),
+        ROOT_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign root-signed unbound response");
+
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_unbound_response(&plain, &expectations(&[EPOCH]), &|_| false, NOW)
+        .expect_err("a directly root-signed unbound receipt is refused");
+    assert_eq!(err, HttpProfileError::DelegationCredentialMissing);
 }

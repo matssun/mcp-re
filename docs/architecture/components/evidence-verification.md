@@ -128,10 +128,34 @@ Registry: [`verification/policy/theorems.toml`](../../../verification/policy/the
 | No untyped artifact binding leaves the verifier as verified | full profile | THM-0008 · `unit://http_profile.artifact_typing` | in registry |
 | A presented continuation cannot bypass verification | full profile | THM-0009 · `unit://http_profile.continuation_unbypassability` | in registry |
 | Continuation handles match their presented inputs in role | full profile | THM-0010 · `unit://http_profile.continuation_binding` | in registry |
-| **Floor result theorem** — possession of the floor product implies digest agreement, RFC 9421 verification under an allowed algorithm, and trust resolution in the correct signer slot | floor (composition of the above) | **none — no registry entry** | **gap, now expressible** |
-| **Full result theorem** — possession of the full product implies the floor proposition *and* audience equality, artifact binding, and (for responses) request binding | full profile (composition) | **none — no registry entry** | **gap, now expressible** |
+| **Request floor** — a successful `verify_request_floor` establishes digest, signature, freshness and Request-slot trust resolution | floor | THM-0014 · `unit://http_profile.verifier_results` | in registry |
+| **Full request** — the floor, plus block validation, audience/target equality and declared artifact enforcement | full profile | THM-0015 | in registry |
+| **Bound response floor** — the response floor, plus `;req` resolved against the supplied request | floor | THM-0016 | in registry |
+| **Unbound response floor** — response-only coverage, with `;req` refused as malformed | floor | THM-0017 | in registry |
+| **Full bound response** — the bound floor, plus signer correspondence and equality with the expected handle | full profile | THM-0018 | in registry |
+| **Delegated bound response** — the full bound response, plus an accepted credential chain | full profile | THM-0019 | in registry |
+| **Delegated unbound response** — the unbound floor, plus an accepted credential chain, and never a binding | full profile | THM-0020 | in registry |
 
-The two gaps are the point of §2. They were not merely unwritten — they were **unstatable**, because there was one product type to state a theorem about. The request-side type split (#570) removes that obstacle; writing the two theorems is #572.
+Seven claims over one review unit, one per public operation, arranged as the type graph:
+
+```text
+request floor ────────────────> full request
+bound response floor ─────────> full bound response ──> delegated bound response
+unbound response floor ───────────────────────────────> delegated unbound response
+```
+
+Two properties hold of all seven. They are claims about a **successful return**, not about
+possession of a Rust value — the products keep `pub` fields so a Verus postcondition can be
+stated over them, so nothing prevents a caller assembling one by hand, and every `scope`
+says so. And they rest on a **test battery**, not on an `ensures`: the prover reaches
+`check_params`, not the operations that call it, so the unit is class V0 and no statement
+above it may imply otherwise.
+
+Three TCB premises were unregistered before this and are now named, because every one of
+the seven is false without them: ASM-0027 (Ed25519 unforgeability), ASM-0028 (SHA-256
+second-preimage resistance, which is what makes a digest comparison a claim about bytes),
+and ASM-0029 (the caller-supplied trust seam answers correctly for a slot — the assumption
+`ResolvedActor` being deliberately unsealed makes unavoidable).
 
 The split also removed a hole in an existing theorem. THM-0009's Verus postcondition read `verified.request_block matches Some(block) ==> (block.continuation is Some ==> continuation_verified)`, which is **vacuously true whenever the block is absent** — that is, for exactly a floor-verified request. `prepare_http_dispatch` now takes `VerifiedMcpRequest`, so the antecedent is gone and the obligation is unconditional. `verify-verus` reports PASS over 6 units with the same 15 verified obligations in this crate as before the change.
 

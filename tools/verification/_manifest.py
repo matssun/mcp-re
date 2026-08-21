@@ -278,12 +278,18 @@ def load_verification() -> dict:
                 # The target is required, not defaulted: a defaulted target lets a test
                 # that moved between the lib and an integration target keep reporting under
                 # the one it left.
+                # `doc` names the crate's doctest target. A doctest's reported name
+                # embeds the line it starts on, so the symbol names the ITEM and the lane
+                # matches that item's doctests — an edit above a control must not break the
+                # declaration, a rename or deletion must.
                 if not path or not (
-                    target == "lib" or (target.startswith("tests/") and target[6:])
+                    target in ("lib", "doc")
+                    or (target.startswith("tests/") and target[6:])
                 ):
                     raise ManifestError(
                         f"{uwhere}: tested_symbol {symbol!r} names no runnable target; "
-                        f"expected `lib#path::to::test` or `tests/<name>#path::to::test`"
+                        f"expected `lib#path::to::test`, `doc#module::Item`, or "
+                        f"`tests/<name>#path::to::test`"
                     )
         elif unit.get("tested_symbols"):
             # Declared members with no `test://` URI claiming them would run a battery

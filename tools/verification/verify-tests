@@ -62,6 +62,10 @@ EVIDENCE_STORE = REPO_ROOT / ".verification" / "evidence"
 #: libtest's per-test result line: `test block::tests::round_trips ... ok`.
 RESULT_LINE = re.compile(r"^test (\S+) \.\.\. (\w+)", re.MULTILINE)
 
+#: A DOCTEST's result line, whose name contains spaces and a line number:
+#: `test src/verified_response.rs - verified_response::VerifiedMcpResponse (line 82) - compile fail ... ok`
+DOC_RESULT_LINE = re.compile(r"^test (.+?) \.\.\. (\w+)$", re.MULTILINE)
+
 #: Separates a symbol's target from its path. `#` cannot occur in a Rust path, so the split
 #: is unambiguous and a symbol that omits the target is malformed rather than defaulted —
 #: defaulting it would let a moved test keep reporting under the target it left.
@@ -91,9 +95,23 @@ def target_argv(target: str) -> list[str] | None:
     """Cargo's selector for one test target, or None if the target is not a known form."""
     if target == "lib":
         return ["--lib"]
+    if target == "doc":
+        return ["--doc"]
     if target.startswith("tests/") and target.count("/") == 1 and target[6:]:
         return ["--test", target[6:]]
     return None
+
+
+def doc_matches(observed: dict[str, str], item: str) -> list[str]:
+    """The doctest result names belonging to `item`.
+
+    A doctest's reported name embeds the LINE it starts on, so an exact symbol would break
+    on any edit above it — churn that says nothing about the property. The symbol therefore
+    names the ITEM (`doc#verified_response::VerifiedMcpResponse`) and this matches the
+    item's doctests as a battery, which is what a `test://` URI means everywhere else.
+    Zero matches is still a failure: a renamed or deleted control must break the lane.
+    """
+    return [name for name in observed if f" - {item} (line " in name]
 
 
 def group_by_target(symbols: list[str]) -> tuple[dict[str, list[str]], list[str]]:
@@ -115,7 +133,10 @@ def run_selection(crate: str, target: str, paths: list[str]) -> tuple[bool, str]
     `check=False` and libtest's own status: piping the run through anything replaces its
     exit code with the pipeline's, which is how a failed test reads as a success.
     """
-    argv = ["cargo", "test", "-p", crate, *target_argv(target), "--", "--exact", *paths]
+    # Doctests are filtered by substring, not `--exact`, because their names carry a line
+    # number; the containment check below is what makes the selection precise.
+    selector = [] if target == "doc" else ["--exact"]
+    argv = ["cargo", "test", "-p", crate, *target_argv(target), "--", *selector, *paths]
     proc = subprocess.run(
         argv,
         cwd=REPO_ROOT,
@@ -124,6 +145,27 @@ def run_selection(crate: str, target: str, paths: list[str]) -> tuple[bool, str]
         text=True,
         check=False,
     )
+    if target == "doc":
+        observed = dict(DOC_RESULT_LINE.findall(proc.stdout))
+        missing = []
+        for item in paths:
+            names = doc_matches(observed, item)
+            if not names:
+                missing.append(f"{item} (no doctest reported for this item)")
+            else:
+                missing += [f"{item} ({observed[n]})" for n in names if observed[n] != "ok"]
+        if missing:
+            return False, (
+                f"{target}: {len(missing)} declared doctest(s) did not pass: "
+                + ", ".join(missing)
+            )
+        if proc.returncode != 0:
+            return False, (
+                f"{target}: every declared doctest passed but the run exited "
+                f"{proc.returncode}; the target did not complete"
+            )
+        return True, f"{target}: {len(paths)} item(s) passed"
+
     observed = dict(RESULT_LINE.findall(proc.stdout))
     passed = {name for name, status in observed.items() if status == "ok"}
     missing = sorted(set(paths) - passed)
