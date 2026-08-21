@@ -4,12 +4,11 @@
 //! A cryptographic floor and full MCP-RE semantic verification are different propositions,
 //! and one type carrying both said neither: the single product discriminated them by which
 //! public function had built it, with `Option` fields documented "`None` on the minimal
-//! proof path" — a type admitting it proves two things. Here, possession states what has
-//! been established:
+//! proof path" — a type admitting it proves two things. Here the TYPE states which
+//! proposition a successful verification established:
 //!
 //! - [`CryptographicFloorVerifiedRequest`] — the content digest agreed, the RFC 9421
-//!   signature verified under an allowed algorithm, and trust resolved in the correct
-//!   signer slot.
+//!   signature verified under an allowed algorithm, and trust resolved in the correct slot.
 //! - [`VerifiedMcpRequest`] — all of the above, **and** audience equality and artifact
 //!   binding under the full profile.
 //!
@@ -23,9 +22,11 @@
 //! the postcondition unstatable. **A Verus-proved postcondition outranks a seal**
 //! (`docs/dev/sealed-owners.md`).
 //!
-//! What these types DO establish is the assurance split, and that is not a seal question:
-//! the two propositions are different types, so no consumer requiring the full one can be
-//! handed the floor one — by the compiler, not by a runtime check.
+//! So a caller could assemble either product by hand: every sentence below is therefore
+//! phrased over what a SUCCESSFUL VERIFIER RETURN establishes, never over what holding a
+//! value means — as THM-0014/THM-0015 are. What the types DO establish is the assurance
+//! split, which is not a seal question: the two propositions are different types, so no
+//! consumer requiring the full one can be handed the floor one, by the compiler.
 
 use crate::block::HttpRequestEvidenceBlock;
 use crate::block::ResolvedActor;
@@ -34,10 +35,10 @@ use crate::RequestEvidence;
 
 /// A request whose **cryptographic floor** has been established.
 ///
-/// Possession means: the covered `Content-Digest` agreed with the body, the RFC 9421
-/// signature verified over the reconstructed base under an algorithm the verifier's own
-/// policy allows, the freshness window was current, and the presented keyid resolved
-/// through the trust seam in the `Request` slot.
+/// A successful `verify_request_floor` establishes: the covered `Content-Digest` agreed
+/// with the body, the RFC 9421 signature verified over the reconstructed base under an
+/// algorithm the verifier's own policy allows, the freshness window was current, and the
+/// presented keyid resolved through the trust seam in the `Request` slot.
 ///
 /// It does **not** mean the request is addressed to this deployment, and it does not mean
 /// any artifact binding was checked. Those are [`VerifiedMcpRequest`].
@@ -103,9 +104,10 @@ impl CryptographicFloorVerifiedRequest {
 
 /// A request verified under the **full MCP-RE profile**.
 ///
-/// Possession means everything [`CryptographicFloorVerifiedRequest`] means, and in
-/// addition that the request's audience tuple equalled the verifier's own and agreed with
-/// `@target-uri`, and that every declared artifact binding was resolved and verified.
+/// A successful `verify_request` establishes everything [`CryptographicFloorVerifiedRequest`]
+/// does, and in addition that the request's audience tuple equalled the verifier's own and
+/// agreed with `@target-uri`, and that every declared artifact binding was resolved and
+/// verified.
 ///
 /// There is no conversion from the floor product. A consumer that requires the full
 /// proposition cannot accept a floor value by accident, because it cannot accept one at

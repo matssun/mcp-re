@@ -765,7 +765,7 @@ pub fn verify_response(
         .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
     Ok(VerifyResultJs {
         ok: true,
-        server_keyid: ev.resolved_server_actor().identity.keyid.clone(),
+        server_keyid: ev.accepted_signer().identity.keyid.clone(),
         outcome,
         wire_code,
         bound,

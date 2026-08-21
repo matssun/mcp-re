@@ -131,7 +131,22 @@ def test_an_unknown_target_form_is_malformed():
     assert grouped == {}
 
 
+def test_a_doctest_item_matches_its_own_doctests_and_nothing_else():
+    observed = {
+        "src/verified_response.rs - verified_response::VerifiedMcpResponse (line 82) - compile fail": "ok",
+        "src/verified_response.rs - verified_response::VerifiedDelegatedMcpResponse (line 114) - compile fail": "ok",
+        "src/verified_request.rs - verified_request::VerifiedMcpRequest (line 114) - compile fail": "ok",
+    }
+    assert lane.doc_matches(observed, "verified_response::VerifiedMcpResponse") == [
+        "src/verified_response.rs - verified_response::VerifiedMcpResponse (line 82) - compile fail"
+    ]
+    # The line number is deliberately not part of the symbol: an edit above the control
+    # must not break the declaration, and a rename or deletion must.
+    assert lane.doc_matches(observed, "verified_response::Gone") == []
+
+
 def test_targets_are_selected_by_their_own_cargo_flag():
+    assert lane.target_argv("doc") == ["--doc"]
     assert lane.target_argv("lib") == ["--lib"]
     assert lane.target_argv("tests/dispatch_test") == ["--test", "dispatch_test"]
     assert lane.target_argv("tests/a/b") is None
@@ -146,6 +161,78 @@ def test_a_battery_spanning_two_targets_is_two_selections():
     )
     assert not malformed
     assert set(grouped) == {"lib", "tests/proof_path_test"}
+
+
+def test_a_multi_package_unit_without_test_package_has_no_derivable_crate():
+    """The lane must not GUESS. Before `test_package` existed a unit whose source closure
+    reached a second crate simply refused to run, which is the safe half; the danger is a
+    lane that picks one and reports a pass for a battery it never located."""
+    unit = {
+        "paths": [
+            "mcp-re-http-profile/src/verify.rs",
+            "mcp-re-core/src/crypto.rs",
+        ]
+    }
+    assert lane.unit_crate(unit) is None
+    unit["test_package"] = "mcp-re-http-profile"
+    assert lane.unit_crate(unit) == "mcp-re-http-profile"
+
+
+def test_test_package_naming_a_crate_outside_the_closure_selects_nothing():
+    """A package the unit does not measure would run a battery outside the fingerprinted
+    source, so the lane refuses rather than running it. The manifest loader rejects this
+    shape first; the lane does not rely on that."""
+    unit = {
+        "paths": ["mcp-re-http-profile/src/verify.rs", "mcp-re-core/src/crypto.rs"],
+        "test_package": "mcp-re-proxy",
+    }
+    assert lane.unit_crate(unit) is None
+
+
+def test_test_package_is_refused_where_the_lane_can_derive_it():
+    """A restatement of a derived fact is a second place for it to be wrong: the loader
+    refuses `test_package` on a single-package unit rather than ignoring it."""
+    from _manifest import ManifestError, _validate_test_package
+
+    single = {
+        "paths": ["mcp-re-http-profile/src/verify.rs"],
+        "test_package": "mcp-re-http-profile",
+        "tested_symbols": ["lib#a::b"],
+    }
+    try:
+        _validate_test_package("unit[0]", single)
+    except ManifestError:
+        pass
+    else:
+        raise AssertionError("a single-package unit must not carry `test_package`")
+
+
+def test_a_multi_package_battery_must_name_its_package():
+    """The loader fails the manifest rather than leaving the lane to fail later: an
+    unrunnable battery is a manifest defect, not a test result."""
+    from _manifest import ManifestError, _validate_test_package
+
+    spanning = {
+        "paths": ["mcp-re-http-profile/src/verify.rs", "mcp-re-core/src/crypto.rs"],
+        "tested_symbols": ["lib#a::b"],
+    }
+    try:
+        _validate_test_package("unit[0]", spanning)
+    except ManifestError:
+        pass
+    else:
+        raise AssertionError("a multi-package battery must name `test_package`")
+
+    spanning["test_package"] = "mcp-re-proxy"
+    try:
+        _validate_test_package("unit[0]", spanning)
+    except ManifestError:
+        pass
+    else:
+        raise AssertionError("`test_package` outside the closure must be refused")
+
+    spanning["test_package"] = "mcp-re-core"
+    _validate_test_package("unit[0]", spanning)
 
 
 def test_only_units_claiming_test_evidence_are_in_scope():

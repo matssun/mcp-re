@@ -35,6 +35,12 @@ on:
       - ".github/workflows/verification.yml"
       - "mcp-re-core/src/**"
       - "mcp-re-http-profile/src/**"
+      # Encoding v4 digests the INTEGRATION-TEST SOURCES a unit's selectors run, not only
+      # their names: a control can keep its declared name and lose its body, and the
+      # fingerprint has to see that. `scripts/verification_trigger_gate.py` derives this
+      # requirement from the manifest, so a new selected target fails the build until the
+      # filter covers it.
+      - "mcp-re-http-profile/tests/**"
       - "mcp-re-proxy/src/runtime_state.rs"
       # THM-0013 reads the boundary's OCSP clauses, so the lane must re-measure when
       # they move: the theorem is that no validated deployment enables online OCSP.
@@ -58,6 +64,12 @@ on:
       - ".github/workflows/verification.yml"
       - "mcp-re-core/src/**"
       - "mcp-re-http-profile/src/**"
+      # Encoding v4 digests the INTEGRATION-TEST SOURCES a unit's selectors run, not only
+      # their names: a control can keep its declared name and lose its body, and the
+      # fingerprint has to see that. `scripts/verification_trigger_gate.py` derives this
+      # requirement from the manifest, so a new selected target fails the build until the
+      # filter covers it.
+      - "mcp-re-http-profile/tests/**"
       - "mcp-re-proxy/src/runtime_state.rs"
       # THM-0013 reads the boundary's OCSP clauses, so the lane must re-measure when
       # they move: the theorem is that no validated deployment enables online OCSP.

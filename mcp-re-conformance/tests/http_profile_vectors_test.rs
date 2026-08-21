@@ -1508,8 +1508,7 @@ fn chain_hop(
             NOW,
         )
         .expect("response verifies")
-        .response
-        .floor
+        .signature_facts
         .response_signature_base_digest;
     (
         RetainedHop { request, response },

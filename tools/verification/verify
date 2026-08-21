@@ -8,8 +8,10 @@ Runs the platform's checks in the ADR's order and reports a single verdict:
     2. validate toolchain pins
     3. detect assumption / TCB escape hatches
     4. check generated-model freshness
-    5. full Verus verification
-    6. Lean build and proofs
+    5. the declared test batteries
+    6. the V0 mutation probes — is each battery's claimed check load-bearing?
+    7. full Verus verification
+    8. Lean build and proofs
 
 Report-only by default (Phase 1 deliverable 7): the platform reports its own health
 without blocking unrelated code, because a verification lane that can fail the build
@@ -99,6 +101,10 @@ LANES = [
     ("assumptions", "check-assumptions", False),
     ("generated-model", "check-generated", True),
     ("test", "verify-tests", True),
+    # A V0 claim's negative battery, self-tested: does deleting the check a theorem names
+    # actually turn a declared control red? Formal in the `is_formal` sense — it produces
+    # EVIDENCE about the code, not a precondition for trusting other evidence.
+    ("mutation", "verify-mutations", True),
     ("verus", "verify-verus", True),
     ("lean", "verify-lean", True),
 ]

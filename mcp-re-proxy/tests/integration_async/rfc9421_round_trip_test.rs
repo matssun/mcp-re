@@ -285,7 +285,7 @@ async fn rfc9421_round_trip_zero_object_evidence() {
     // just established; the kid is an RFC 7638 thumbprint (#415 rev 2 §1.5), so what
     // it asserts here is that a delegated key — not the root — signed.
     assert_ne!(
-        verified.response.server_signer.keyid, ROOT_KID,
+        verified.signature_facts.accepted_signer.identity.keyid, ROOT_KID,
         "response signed by the delegated key (chaining to the trusted root)"
     );
 }

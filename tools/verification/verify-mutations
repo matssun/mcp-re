@@ -1,0 +1,460 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""The V0 evidence self-test — ADR-MCPRE-059, `verification/policy/mutation-probes.toml`.
+
+A class-V0 theorem rests on a test battery, and a battery that passes says nothing about
+whether any production check is LOAD-BEARING. This lane answers the question the battery
+cannot answer about itself:
+
+    for each registered probe — apply the intended weakening, and prove that at least one
+    DECLARED negative control becomes red.
+
+Three properties make it evidence rather than a ritual.
+
+**It never edits the working tree.** The tracked tree is copied to a scratch directory once
+per run; every weakening is applied and reverted inside that copy. A crashed run leaves the
+repository untouched, so there is no "restore" step whose failure could be mistaken for a
+result.
+
+**A probe identifies exactly one site, or it is STALE.** Zero matches means the code moved;
+two means the anchor is ambiguous and the lane cannot say which check it broke. Both fail
+the lane, and both are a demand to RE-ADJUDICATE the probe against the current
+implementation — never to restore the old code. This lane does not freeze `verify.rs`.
+
+**A weakening that changes nothing is a failure.** If the mutated tree still passes the
+whole declared battery, the conjunct the probe names is not protected by the evidence the
+theorem rests on. That is the finding; it is reported as FAIL with the probe's theorem and
+conjunct, so the response is a new control rather than a softer statement.
+
+Verdicts follow the platform's five (§"VERDICT"): NOT_REQUIRED when no probe is registered,
+FAIL for a stale anchor or an unprotected conjunct, UNAVAILABLE when the tree cannot be
+copied or cargo cannot run, PASS otherwise.
+
+Usage:
+    tools/verification/verify-mutations [--probe ID]... [--keep-tree]
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _evidence import EvidenceRecord, write_record  # noqa: E402
+from _fingerprint import fingerprint_unit  # noqa: E402
+from _manifest import (  # noqa: E402
+    REPO_ROOT,
+    ManifestError,
+    load_assumptions,
+    load_toolchains,
+    load_verification,
+    test_package_for,
+)
+
+EVIDENCE_STORE = REPO_ROOT / ".verification" / "evidence"
+
+REGISTRY = REPO_ROOT / "verification" / "policy" / "mutation-probes.toml"
+
+_PROBE_KEYS = {
+    "id",
+    "unit",
+    "theorem",
+    "conjunct",
+    "path",
+    "anchor",
+    "weakening",
+    "expect_red",
+    "note",
+}
+
+
+def load_probes() -> list[dict]:
+    """The registry, validated strictly — an unknown key is a failure, not an ignored field.
+
+    Same rule as every other manifest here: a mistyped security declaration must not read
+    as an absent one.
+    """
+    if not REGISTRY.is_file():
+        return []
+    with REGISTRY.open("rb") as handle:
+        doc = tomllib.load(handle)
+    probes = doc.get("probe", [])
+    seen: set[str] = set()
+    for index, probe in enumerate(probes):
+        where = f"mutation-probes.toml [[probe]] #{index + 1}"
+        unknown = set(probe) - _PROBE_KEYS
+        if unknown:
+            raise ManifestError(f"{where}: unknown key(s) {sorted(unknown)}")
+        missing = _PROBE_KEYS - {"note"} - set(probe)
+        if missing:
+            raise ManifestError(f"{where}: missing required key(s) {sorted(missing)}")
+        if probe["id"] in seen:
+            raise ManifestError(f"{where}: duplicate probe id {probe['id']!r}")
+        seen.add(probe["id"])
+        if not probe["expect_red"]:
+            raise ManifestError(
+                f"{where}: `expect_red` is empty. A probe that expects no control to fail "
+                f"asserts nothing; it would pass over an unprotected conjunct."
+            )
+    return probes
+
+
+def claims_mutation_evidence(unit: dict) -> bool:
+    """Whether a `mutation://` URI claims this unit's probe battery.
+
+    The declaration is what puts the lane inside the ATTESTATION closure:
+    `_evidence.required_lanes` reads every scheme a unit declares, so a unit carrying this
+    URI cannot be attested without a mutation record measured at its exact fingerprint. A
+    probe suite CI could quietly delete would otherwise be a comment.
+    """
+    return any(str(e).startswith("mutation://") for e in unit.get("evidence", []))
+
+
+def declared_battery(units: dict, probe: dict, where: str) -> tuple[str, dict[str, list[str]]]:
+    """The unit's package and its declared members, grouped by cargo target.
+
+    Read from `verification.toml` rather than restated here: the probe names controls, and
+    a control the unit does not declare is not evidence for its theorem however red it goes.
+
+    `expect_red` is compared against the unit's `tested_symbols` VERBATIM — target and
+    symbol — because that is what test identity is here. Matching on the bare symbol would
+    let a probe be satisfied by a same-named test in a target it never meant to touch.
+    """
+    unit = units.get(probe["unit"])
+    if unit is None:
+        raise ManifestError(f"{where}: unit {probe['unit']!r} is not in verification.toml")
+    package = test_package_for(unit)
+    if package is None:
+        raise ManifestError(f"{where}: unit {probe['unit']!r} has no runnable test package")
+    grouped: dict[str, list[str]] = {}
+    declared: set[str] = set()
+    for symbol in unit.get("tested_symbols", []):
+        target, _, path = str(symbol).partition("#")
+        declared.add(str(symbol))
+        if target == "doc":
+            # Doctests are compile-fail controls; a runtime weakening cannot move them.
+            continue
+        grouped.setdefault(target, []).append(path)
+    unknown = [name for name in probe["expect_red"] if name not in declared]
+    if unknown:
+        raise ManifestError(
+            f"{where}: expect_red names {unknown}, which unit {probe['unit']!r} does not "
+            f"declare as tested_symbols. A control outside the battery is not evidence. "
+            f"Members are named verbatim, as `tests/<target>#<symbol>` or `lib#<symbol>`."
+        )
+    doctests = [name for name in probe["expect_red"] if name.startswith("doc#")]
+    if doctests:
+        raise ManifestError(
+            f"{where}: expect_red names doctest control(s) {doctests}. Those are "
+            f"compile-fail controls; no runtime weakening can turn one red, so a probe "
+            f"expecting it could never be satisfied honestly."
+        )
+    return package, grouped
+
+
+def adjudicate(probe: dict, observed: dict[str, str]) -> tuple[list[str], list[str]]:
+    """(never reported, actually failed) among the probe's expected controls.
+
+    The distinction the first version of this lane did not make. It read
+    `results.get(name, "never ran") != "ok"`, so an ABSENT result satisfied the probe —
+    a control that never executed counted as evidence that the weakening broke it. That is
+    the same false green as a filter selecting nothing and exiting 0, one layer up: the
+    lane cannot conclude anything about a check from a test it did not watch run.
+
+    So absence is a MEASUREMENT FAILURE reported on its own terms, and only an observed
+    `FAILED` is red. `ok` and `ignored` are both "not red": an ignored test did not execute
+    either, and must never be read as one that ran and objected.
+    """
+    missing = [name for name in probe["expect_red"] if name not in observed]
+    red = [name for name in probe["expect_red"] if observed.get(name) == "FAILED"]
+    return missing, red
+
+
+def target_argv(target: str) -> list[str]:
+    if target == "lib":
+        return ["--lib"]
+    return ["--test", target[6:]]
+
+
+def copy_tree(destination: Path) -> None:
+    """The tracked working tree, copied file by file.
+
+    `git ls-files` rather than a directory copy: it takes the tree as it is ON DISK —
+    including edits not yet committed, which is what a developer running this locally means
+    — while excluding `target/` and `.git`, whose size would make the copy the slowest part
+    of the run.
+    """
+    listing = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    for name in listing.stdout.split("\0"):
+        if not name:
+            continue
+        source = REPO_ROOT / name
+        if not source.is_file():
+            continue
+        out = destination / name
+        out.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, out)
+
+
+def run_battery(tree: Path, package: str, grouped: dict[str, list[str]], target_dir: Path):
+    """Every declared member's reported result, across the unit's targets.
+
+    Returns (ran, results). `ran` is False when a target failed to COMPILE — under a
+    weakening that is expected often enough (a deleted binding, an unused import) and must
+    not be read as "the controls failed": a tree that does not build has not tested
+    anything.
+    """
+    results: dict[str, str] = {}
+    for target in sorted(grouped):
+        proc = subprocess.run(
+            ["cargo", "test", "-p", package, *target_argv(target), "--", "--exact", *grouped[target]],
+            cwd=tree,
+            capture_output=True,
+            text=True,
+            env={**_env(), "CARGO_TARGET_DIR": str(target_dir)},
+        )
+        if "error[E" in proc.stderr or "error: could not compile" in proc.stderr:
+            return False, results
+        for line in proc.stdout.splitlines():
+            if not line.startswith("test "):
+                continue
+            body = line[5:]
+            name, _, outcome = body.partition(" ... ")
+            if outcome:
+                # Keyed by TARGET plus symbol. libtest reports the symbol alone, and two
+                # targets may hold a test of the same name — flattening them here would let
+                # one target's failure answer for another's.
+                results[f"{target}#{name.strip()}"] = outcome.strip()
+    return True, results
+
+
+def _env() -> dict:
+    import os
+
+    return dict(os.environ)
+
+
+def apply(tree: Path, probe: dict, where: str) -> str:
+    """Write the weakened file into the COPY, returning the original text.
+
+    The anchor must identify exactly one site. Two matches is as much a failure as none:
+    the lane could not say which check it broke, so whatever went red proves nothing about
+    the conjunct named.
+    """
+    target = tree / probe["path"]
+    if not target.is_file():
+        raise ManifestError(f"{where}: STALE — {probe['path']} does not exist")
+    text = target.read_text()
+    hits = text.count(probe["anchor"])
+    if hits != 1:
+        raise ManifestError(
+            f"{where}: STALE — the anchor matches {hits} site(s) in {probe['path']}, "
+            f"expected exactly 1. Re-adjudicate this probe against the current "
+            f"implementation; do NOT restore the old code to make it match."
+        )
+    target.write_text(text.replace(probe["anchor"], probe["weakening"], 1))
+    return text
+
+
+#: The blueprint section that reproduces this registry's result for a reviewer.
+MATRIX_DOC = REPO_ROOT / "docs" / "architecture" / "components" / "evidence-verification.md"
+_MATRIX_COUNT = re.compile(r"\*\*(\d+) mutations, each turning at least one declared member")
+
+
+def check_matrix_count(probes: list[dict]) -> str | None:
+    """The blueprint's stated probe count must equal the registry's.
+
+    Prose is a CLAIM, not evidence. The count drifted from 26 to 27 the first time this
+    matrix was written by hand, and a reviewer reading "27 mutations" has no way to notice.
+    Deriving the agreement is cheap; the registry is the authority and the document is
+    checked against it.
+    """
+    if not MATRIX_DOC.is_file():
+        return f"{MATRIX_DOC} is missing — the matrix a reviewer reads must exist"
+    match = _MATRIX_COUNT.search(MATRIX_DOC.read_text())
+    if match is None:
+        return (
+            f"{MATRIX_DOC.name} no longer states a probe count in the expected form; the "
+            f"registry's count can no longer be checked against the document."
+        )
+    stated = int(match.group(1))
+    if stated != len(probes):
+        return (
+            f"{MATRIX_DOC.name} states {stated} mutations, the registry holds "
+            f"{len(probes)}. The registry is the authority."
+        )
+    return None
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--probe", action="append", default=[], help="only these probe ids")
+    parser.add_argument(
+        "--keep-tree", action="store_true", help="leave the scratch copy for inspection"
+    )
+    args = parser.parse_args()
+
+    try:
+        probes = load_probes()
+        doc = load_verification()
+        toolchains = load_toolchains()
+        assumptions = load_assumptions()
+        units = {unit["id"]: unit for unit in doc.get("unit", [])}
+    except ManifestError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        print("VERDICT: FAIL")
+        return 1
+
+    orphaned = sorted(
+        unit_id
+        for unit_id, unit in units.items()
+        if claims_mutation_evidence(unit)
+        and not any(probe["unit"] == unit_id for probe in probes)
+    )
+    if orphaned:
+        print(
+            f"FAIL: unit(s) {orphaned} declare mutation:// evidence but no probe is "
+            f"registered for them. A declared evidence class nothing measures is "
+            f"unmeasured evidence.",
+            file=sys.stderr,
+        )
+        print("VERDICT: FAIL")
+        return 1
+
+    drift = check_matrix_count(probes)
+    if drift is not None:
+        print(f"FAIL: {drift}", file=sys.stderr)
+        print("VERDICT: FAIL")
+        return 1
+
+    if args.probe:
+        probes = [p for p in probes if p["id"] in set(args.probe)]
+    if not probes:
+        print("verify-mutations: NOT_REQUIRED — no probe registered")
+        print("VERDICT: NOT_REQUIRED")
+        return 0
+
+    scratch = Path(tempfile.mkdtemp(prefix="mcp-re-mutation-"))
+    tree = scratch / "tree"
+    target_dir = scratch / "target"
+    try:
+        copy_tree(tree)
+    except (subprocess.CalledProcessError, OSError) as exc:
+        print(f"UNAVAILABLE: could not copy the tree: {exc}", file=sys.stderr)
+        print("VERDICT: UNAVAILABLE")
+        return 1
+
+    failures: list[str] = []
+    probed_units = sorted({probe["unit"] for probe in probes})
+    try:
+        for index, probe in enumerate(probes):
+            where = f"probe {probe['id']}"
+            try:
+                package, grouped = declared_battery(units, probe, where)
+                original = apply(tree, probe, where)
+            except ManifestError as exc:
+                print(f"  FAIL {probe['id']}: {exc}", file=sys.stderr)
+                failures.append(probe["id"])
+                continue
+            try:
+                ran, results = run_battery(tree, package, grouped, target_dir)
+            finally:
+                (tree / probe["path"]).write_text(original)
+            if not ran:
+                print(
+                    f"  FAIL {probe['id']}: the weakened tree did not COMPILE, so nothing "
+                    f"was measured. Re-adjudicate the weakening.",
+                    file=sys.stderr,
+                )
+                failures.append(probe["id"])
+                continue
+            missing, red = adjudicate(probe, results)
+            if missing:
+                print(
+                    f"  FAIL {probe['id']}: MEASUREMENT FAILURE — expected control(s) "
+                    f"{sorted(missing)} were never reported by the run. The lane cannot "
+                    f"say the weakening broke a test it did not watch execute; absence is "
+                    f"not a red result.",
+                    file=sys.stderr,
+                )
+                failures.append(probe["id"])
+                continue
+            red = sorted(red)
+            if not red:
+                print(
+                    f"  FAIL {probe['id']}: {probe['theorem']} claims \"{probe['conjunct']}\", "
+                    f"but removing the check left every expected control green. The conjunct "
+                    f"is NOT load-bearing in the declared battery — write a control, do not "
+                    f"soften the statement.",
+                    file=sys.stderr,
+                )
+                failures.append(probe["id"])
+                continue
+            print(f"  ok   {probe['id']}  {probe['theorem']}  red: {', '.join(red)}")
+    finally:
+        if args.keep_tree:
+            print(f"  scratch tree kept at {scratch}")
+        else:
+            shutil.rmtree(scratch, ignore_errors=True)
+
+    # Phase 3 of the evidence pipeline, exactly as the other lanes do it: the result
+    # becomes a machine record BOUND TO THE FINGERPRINT it was measured at, and `attest`
+    # refuses a unit whose mutation record does not match the tree it is stamping.
+    #
+    # Written only for a complete run. A `--probe` subset measured part of the battery, and
+    # a record from it would let "three probes passed" stand in for "the suite passed" —
+    # the same shape as a filter that selects nothing.
+    if not args.probe:
+        for unit_id in probed_units:
+            unit = units.get(unit_id)
+            if unit is None or not claims_mutation_evidence(unit):
+                continue
+            unit_failures = [
+                p["id"] for p in probes if p["unit"] == unit_id and p["id"] in failures
+            ]
+            count = sum(1 for p in probes if p["unit"] == unit_id)
+            write_record(
+                EVIDENCE_STORE,
+                EvidenceRecord(
+                    unit_id=unit_id,
+                    lane="mutation",
+                    result="fail" if unit_failures else "pass",
+                    fingerprint=fingerprint_unit(unit, doc, toolchains, assumptions)[
+                        "fingerprint"
+                    ],
+                    detail=(
+                        f"{count} probe(s); failed: {', '.join(unit_failures)}"
+                        if unit_failures
+                        else f"{count} probe(s), each turning a declared control red"
+                    ),
+                ),
+            )
+
+    if failures:
+        print(
+            f"\nFAIL: {len(failures)} of {len(probes)} probe(s) did not demonstrate a "
+            f"load-bearing check: {', '.join(failures)}",
+            file=sys.stderr,
+        )
+        print("VERDICT: FAIL")
+        return 1
+    print(f"\nverify-mutations: PASS — {len(probes)} probe(s), each turning a declared control red")
+    print("VERDICT: PASS")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

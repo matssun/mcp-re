@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The V0 evidence self-test — ADR-MCPRE-059,
+# `verification/policy/mutation-probes.toml`.
+#
+# A class-V0 theorem rests on a test battery, and "the battery passed" is not evidence
+# that any production check is LOAD-BEARING. This lane deliberately weakens each check a
+# theorem names and requires a DECLARED negative control to go red. It is the same
+# argument as `clippy_ratchet_gate.py --activation-probe`: a gate claiming a rule is
+# enforced is much stronger when breaking the rule provably turns it red.
+#
+# It is a SELF-TEST of one unit's evidence, not a merge gate on unrelated work, so it is
+# filtered to the things that can invalidate it:
+#
+#   * the implementation the probes weaken;
+#   * the test evidence whose controls must go red;
+#   * the probe definitions and the lane itself;
+#   * the manifest that says which controls the unit declares.
+#
+# A probe whose anchor no longer matches exactly one site fails as STALE. That is a demand
+# to RE-ADJUDICATE the probe against the new implementation — never to restore the old
+# code. Refactoring `verify.rs` is expected; losing a claimed conjunct's control silently
+# is not.
+#
+# `tools/verification/verify` ALSO runs this lane, and the duplication is deliberate. There
+# it is one step of the run whose records `attest` consumes, so the attestation closure can
+# be produced in a single invocation; here it is a fast, narrowly-filtered signal on the
+# pull requests that can actually invalidate it. Neither makes the other redundant: the
+# umbrella run is not path-filtered, and this job writes no attestation.
+
+name: mutation probe
+
+on:
+  pull_request:
+    paths:
+      - "verification/policy/mutation-probes.toml"
+      - "verification/policy/verification.toml"
+      - "tools/verification/verify-mutations"
+      - "tools/verification/test_mutation_lane.py"
+      - "tools/verification/_manifest.py"
+      - ".github/workflows/mutation-probe.yml"
+      - "docs/architecture/components/evidence-verification.md"
+      - "mcp-re-http-profile/src/**"
+      - "mcp-re-http-profile/tests/**"
+      - "mcp-re-core/src/**"
+  push:
+    branches: [main]
+    paths:
+      - "verification/policy/mutation-probes.toml"
+      - "verification/policy/verification.toml"
+      - "tools/verification/verify-mutations"
+      - "tools/verification/test_mutation_lane.py"
+      - "tools/verification/_manifest.py"
+      - ".github/workflows/mutation-probe.yml"
+      - "docs/architecture/components/evidence-verification.md"
+      - "mcp-re-http-profile/src/**"
+      - "mcp-re-http-profile/tests/**"
+      - "mcp-re-core/src/**"
+
+concurrency:
+  group: mutation-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: V0 evidence self-test (mutation probes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install stable --profile minimal
+
+      # The lane's own false-green catalogue, first: it is python-only and fails in
+      # seconds, before ~26 cargo runs discover the same defect slowly.
+      - name: Mutation-lane self-tests
+        run: python3 tools/verification/test_mutation_lane.py
+
+      # Unpiped, and the verdict line is read from the exit status: a gate read through a
+      # pipe reports the pipe's status, which has already turned a failed gate green once
+      # in this repository.
+      - name: Apply every registered probe
+        run: tools/verification/verify-mutations

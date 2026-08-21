@@ -401,7 +401,7 @@ async fn open_on(
 
     (
         as_digest(&open_ev), // D_prev (client request handle)
-        as_digest(&verified.response.floor.response_signature_base_digest), // D_irr (verified response handle)
+        as_digest(&verified.signature_facts.response_signature_base_digest), // D_irr (verified response handle)
         seen_state.to_owned(),
     )
 }
@@ -1594,7 +1594,7 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
     // never saw round 1.
     let cont1 = HttpContinuation::from_handles(
         as_digest(&ev1),
-        as_digest(&verified1.response.floor.response_signature_base_digest),
+        as_digest(&verified1.signature_facts.response_signature_base_digest),
         FIRST.as_bytes(),
     );
     let (req2, ev2) = signed_request("nonce-r2", &answer_body(FIRST), Some(cont1));
@@ -1632,7 +1632,7 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
     // ALREADY consumed leg 1. If the latch had discarded the new leg, this fails closed.
     let cont2 = HttpContinuation::from_handles(
         as_digest(&ev2),
-        as_digest(&verified2.response.floor.response_signature_base_digest),
+        as_digest(&verified2.signature_facts.response_signature_base_digest),
         SECOND.as_bytes(),
     );
     let (req3, _ev3) = signed_request("nonce-r3", &answer_body(SECOND), Some(cont2));
@@ -1651,7 +1651,7 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
     // this, the test above could pass on a store that never consumes anything.
     let cont1_again = HttpContinuation::from_handles(
         as_digest(&ev1),
-        as_digest(&verified1.response.floor.response_signature_base_digest),
+        as_digest(&verified1.signature_facts.response_signature_base_digest),
         FIRST.as_bytes(),
     );
     let (replay_req, _e) = signed_request("nonce-r2-again", &answer_body(FIRST), Some(cont1_again));

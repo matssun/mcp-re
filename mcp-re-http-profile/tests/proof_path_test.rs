@@ -7,6 +7,7 @@
 //! error, not printed diagnostics (S8).
 
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::sign::sign_response_unbound;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::sign_response;
 use mcp_re_http_profile::ActorIdentity;
@@ -626,4 +627,75 @@ fn resolver_returning_wrong_slot_is_rejected() {
         .unwrap_err();
     assert_eq!(err, HttpProfileError::ActorSlotMismatch);
     assert_eq!(err.wire_code(), "mcp-re.actor_binding_failed");
+}
+
+// ---------- the unbound response floor: the conjuncts, one at a time --------
+//
+// THM-0017 says three things beyond "it returned Ok", and a positive unbound
+// verification exercises none of them individually. Each control below removes exactly
+// one and shows the operation refuses: delete the corresponding production check and the
+// named test — and only it — goes red.
+
+fn unbound_signed_response() -> HttpResponse {
+    let mut rsp = HttpResponse {
+        status: 400,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","id":null,"error":{"code":-31000,"message":"no"}}"#.to_vec(),
+    };
+    sign_response_unbound(&mut rsp, &server_key(), "server-key-1", CREATED, EXPIRES)
+        .expect("unbound response signing succeeds");
+    rsp
+}
+
+#[test]
+fn unbound_response_floor_verifies_a_receipt_with_no_request() {
+    let rsp = unbound_signed_response();
+    let v = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_unbound_response_floor(&rsp, NOW)
+        .expect("an unbound receipt verifies with no request context");
+    assert_eq!(v.resolved_server_actor.slot, SignerSlot::Response);
+    assert_eq!(v.resolved_server_actor.identity.keyid, "server-key-1");
+}
+
+/// A `;req` component on the unbound path is MALFORMED, not ignored and not silently
+/// tolerated: there is no request to resolve it against, so a signature claiming one
+/// cannot be evaluated at all. A bound-signed response is exactly such a message.
+#[test]
+fn a_req_component_is_refused_on_the_unbound_floor() {
+    let (_req, bound_rsp) = signed_exchange();
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_unbound_response_floor(&bound_rsp, NOW)
+        .unwrap_err();
+    assert_eq!(
+        err,
+        HttpProfileError::MalformedEvidence("req component without request context")
+    );
+}
+
+/// The signature check is load-bearing on the unbound operation, not only on the bound
+/// one. `@status` is covered, so moving it invalidates the signature while leaving the
+/// body — and therefore the content-digest — untouched: the refusal can only come from
+/// the signature verification.
+#[test]
+fn the_unbound_floor_signature_check_is_load_bearing() {
+    let mut rsp = unbound_signed_response();
+    rsp.status = 200;
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_unbound_response_floor(&rsp, NOW)
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::ResponseSignatureInvalid);
+}
+
+/// Content-digest verification stays load-bearing on the unbound operation. The digest
+/// HEADER is covered by the signature, so a tampered body with an untouched header is
+/// refused by the digest comparison and by nothing else.
+#[test]
+fn the_unbound_floor_content_digest_check_is_load_bearing() {
+    let mut rsp = unbound_signed_response();
+    let last = rsp.body.len() - 2;
+    rsp.body[last] ^= 0x01;
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_unbound_response_floor(&rsp, NOW)
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::ContentDigestMismatch);
 }

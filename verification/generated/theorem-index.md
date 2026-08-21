@@ -29,6 +29,15 @@ derives, and it is not shown here because this view cannot see the attestations.
 | THM-0010 | Continuation handles match their presented inputs in role | http_profile.continuation_binding | unit://http_profile.continuation_binding | live |
 | THM-0012 | The lifecycle record cannot claim a shutdown that did not happen | proxy.runtime_lifecycle | unit://proxy.runtime_lifecycle | live |
 | THM-0013 | No validated deployment enables online OCSP client-certificate revocation | proxy.online_ocsp_reachability | unit://proxy.online_ocsp_reachability | live |
+| THM-0014 | A successful request-floor verification establishes the cryptographic floor | http_profile.verifier_results | unit://http_profile.freshness_window, unit://http_profile.verifier_results | live |
+| THM-0015 | A successful full-profile request verification establishes audience and artifact binding | http_profile.verifier_results | unit://http_profile.artifact_typing, unit://http_profile.verifier_results | live |
+| THM-0016 | A successful bound response-floor verification establishes trust-seam authorization of the signer | http_profile.verifier_results | unit://http_profile.freshness_window, unit://http_profile.verifier_results | live |
+| THM-0017 | A successful unbound response-floor verification establishes trust-seam authorization and no request binding | http_profile.verifier_results | unit://http_profile.freshness_window, unit://http_profile.verifier_results | live |
+| THM-0018 | A successful full bound response verification establishes block agreement with the expected handle | http_profile.verifier_results | unit://http_profile.verifier_results | live |
+| THM-0019 | A successful delegated bound response verification establishes an accepted credential chain | http_profile.verifier_results | unit://http_profile.verifier_results | live |
+| THM-0020 | A successful delegated unbound response verification establishes a chain and never a binding | http_profile.verifier_results | unit://http_profile.verifier_results | live |
+| THM-0021 | A successful bound-response verification establishes the shared cryptographic and request-binding facts | http_profile.verifier_results | unit://http_profile.freshness_window, unit://http_profile.verifier_results | live |
+| THM-0022 | A successful unbound-response verification establishes the shared facts and no request binding at all | http_profile.verifier_results | unit://http_profile.freshness_window, unit://http_profile.verifier_results | live |
 
 ## Claims in full
 
@@ -155,3 +164,111 @@ derives, and it is not shown here because this view cannot see the attestations.
 **Scope — what this does NOT establish.** Establishes reachability and legality only. It does NOT establish the correctness of the retained RFC 6960 implementation in ocsp.rs, of the blocking-path OCSP checker, of responder trust-chain validation, of the endpoint/SSRF network policy, or of any future async OCSP implementation. It says what no deployment can turn on, not that what is turned off would be correct if turned on.
 
 **Review requirement.** Owner security-specification review
+
+### THM-0014 — A successful request-floor verification establishes the cryptographic floor
+
+**Statement.** If `Verifier::verify_request_floor` returns Ok, then for the request supplied: the covered `Content-Digest` agreed with the body, the RFC 9421 signature verified over the reconstructed signature base under an algorithm the verifier's policy accepts, the signature parameters were admitted as current, and the presented keyid was resolved through the trust seam for the Request slot.
+
+**Security consequence.** An attacker cannot obtain a floor-verified request by tampering with the body, by presenting a signature under an algorithm the deployment does not accept, by replaying expired parameters, or by presenting a key the seam vouches for only in the Response slot.
+
+**Scope — what this does NOT establish.** This theorem characterizes values successfully returned by `verify_request_floor`. It does not establish that an arbitrary externally constructed `CryptographicFloorVerifiedRequest` was produced by that operation. It establishes NOTHING about audience or target equality, artifact binding, replay, admission, continuation semantics, or dispatch authorization: those are the full-profile and dispatch claims. It says the seam ANSWERED for the Request slot, not that the deployment was right to trust that actor (ASM-0029). It rests on a test battery, not on a postcondition over this operation.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0001
+
+### THM-0015 — A successful full-profile request verification establishes audience and artifact binding
+
+**Statement.** If `Verifier::verify_request` returns Ok, then the request-floor proposition holds for the same request, and in addition: the request evidence block parsed and validated under the profile tag, its audience tuple equalled the verifier's own and agreed with the request's `@target-uri`, and every artifact binding the block declared was resolved to credential material and verified.
+
+**Security consequence.** A request signed for a different audience, route or target cannot be successfully returned as a full-profile verified request, and a declared artifact binding cannot be skipped by withholding the material it commits to — an unobtainable credential fails closed rather than being ignored.
+
+**Scope — what this does NOT establish.** This theorem characterizes values successfully returned by `verify_request`. It does not establish that an arbitrary externally constructed `VerifiedMcpRequest` was produced by that operation. It establishes nothing about replay admission, admission-assertion currency, continuation binding or dispatch authorization; a full-profile request is not an admitted one — which is why the consequence above is phrased over what this operation returns rather than over what a deployment admits. It does not establish that the artifact material the caller supplied is the credential the peer actually holds — only that the binding verified against what was supplied.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0007, THM-0008, THM-0014
+
+### THM-0016 — A successful bound response-floor verification establishes trust-seam authorization of the signer
+
+**Statement.** If `Verifier::verify_bound_response_floor` returns Ok, then the shared bound-response proposition holds for the same response and request, and in addition: the presented keyid was resolved through the trust seam for the Response slot, and the actor the seam returned IS the accepted signer — the signature verified under the key the seam supplied.
+
+**Security consequence.** A response cannot be attributed to a server signer this deployment's trust store does not vouch for in the Response slot, and a request-signer key presented on a response is refused rather than silently accepted in the wrong role.
+
+**Scope — what this does NOT establish.** This theorem characterizes values successfully returned by `verify_bound_response_floor`. It does not establish that an arbitrary externally constructed `CryptographicFloorVerifiedBoundResponse` was produced by that operation. It says the seam ANSWERED for this keyid in the Response slot, not that the deployment was right to trust that actor, and not that the key the seam returned is the key it should have returned (ASM-0029). It reads no response evidence block, so it establishes no `server_signer` correspondence and no request-evidence comparison. It makes NO delegation claim, and the delegated products do not carry this proposition: on that path the seam is queried for the credential's ROOT ISSUER and the signing key appears in no trust map at all.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0021
+
+### THM-0017 — A successful unbound response-floor verification establishes trust-seam authorization and no request binding
+
+**Statement.** If `Verifier::verify_unbound_response_floor` returns Ok, then the shared unbound-response proposition holds for the same response, and in addition: the presented keyid was resolved through the trust seam for the Response slot, and the actor the seam returned IS the accepted signer.
+
+**Security consequence.** A receipt emitted before a request could be parsed can still be attributed to a trusted server signer — and only to one the seam vouches for in the Response slot.
+
+**Scope — what this does NOT establish.** This theorem characterizes values successfully returned by `verify_unbound_response_floor`. It does not establish that an arbitrary externally constructed `CryptographicFloorVerifiedUnboundResponse` was produced by that operation. It inherits every exclusion of THM-0022 — no request relationship of any kind — and the ASM-0029 boundary of THM-0016. It makes no delegation claim: a delegated receipt is authorized by a credential and never reaches this type.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0022
+
+### THM-0018 — A successful full bound response verification establishes block agreement with the expected handle
+
+**Statement.** If `Verifier::verify_bound_response` returns Ok, then the trust-seam-authorized bound response-floor proposition holds for the same response and request, and in addition: the response evidence block parsed and validated under the profile tag, the `server_signer` identity it declared carries the keyid the signature was accepted under, and the `request_evidence` handle it carried equals the handle supplied by the caller.
+
+**Security consequence.** A response cannot declare a server signer it did not sign as, and cannot claim to answer a request whose evidence handle differs from the one the caller is holding — a semantic check on top of the cryptographic `;req` binding, reported as its own refusal.
+
+**Scope — what this does NOT establish.** This theorem characterizes values successfully returned by `verify_bound_response`. It does not establish that an arbitrary externally constructed `VerifiedMcpResponse` was produced by that operation. **The two request inputs are unrelated by this claim.** The operation receives a concrete request, against which the `;req` components are resolved, and separately a `RequestEvidence` handle, against which the block's handle is compared. Nothing here establishes that the handle was derived from that request. A caller may supply request A and handle B; a successful verification then establishes cryptographic binding to A and semantic equality to B, and NOT that A and B denote the same exchange. Relating them is the caller's obligation — a server passes `verified_request.evidence()` for the request it just verified, a client the handle it kept from signing the request it just sent — and a caller that supplies a handle from the wrong exchange gets a verified response bound to the wrong request. Only the KEYID of the declared `server_signer` was compared. The block's `role`, `trust_domain` and `subject` are its own claim, checked against nothing here. It makes no delegation claim. The signer was resolved through the trust seam, and whether a credential chain authorized one is THM-0019 — a different proposition over a different product, not a strengthening of this one.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0016
+
+### THM-0019 — A successful delegated bound response verification establishes an accepted credential chain
+
+**Statement.** If `Verifier::verify_delegated_bound_response` returns Ok, then the shared bound-response proposition holds for the same response and request, and in addition: the response evidence block parsed and validated under the profile tag; it carried an inline delegation credential; that credential verified as a chain to a root issuer key the trust seam resolved for the Response slot and was accepted under the supplied expectations; the keyid the signature was accepted under is the delegated kid that the credential confirms and the block declares; and the `request_evidence` handle the block carried equals the handle supplied by the caller.
+
+**Security consequence.** A response signed directly by the root, or by a key with no chain to a trusted issuer, cannot be accepted where delegation is required; a credential cannot be lifted onto a response signed by a different key, because the delegated kid must match on three sides; and the response cannot claim to answer a request whose evidence handle differs from the one the caller is holding.
+
+**Scope — what this does NOT establish.** This theorem characterizes values successfully returned by `verify_delegated_bound_response`. It does not establish that an arbitrary externally constructed `VerifiedDelegatedMcpResponse` was produced by that operation. **It does NOT establish THM-0016 or THM-0018, and does not depend on them.** Those claims say the presented signing keyid was resolved through the trust seam; on this path it was not, and no trust map contains it. The seam was queried for the credential's ROOT ISSUER kid, and what authorizes the signing key is the chain. That is why the product carries the shared `BoundResponseSignatureFacts` rather than a `CryptographicFloorVerifiedBoundResponse`: a nested seam-authorized product here would be a value whose documented meaning is false. Reading upward is likewise blocked: `AcceptedResponseSigner` records who signed, not that anyone vouched for the key directly. A consumer whose reasoning needs a trust-store entry for the SIGNING key gets nothing from this claim. The expectations are SUPPLIED, not proved current or sane by this unit: the accepted epoch set, the verifier audiences, the expected audience-scope hash and the credential clock-skew tolerance all come from the caller, and this claim says the credential satisfied them, not that they were the right ones. Revocation is likewise a caller-supplied predicate. The two request inputs are unrelated by this claim in exactly the sense THM-0018 states: the `;req` binding is to the concrete request supplied, the handle comparison is to the handle supplied, and nothing here relates them.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0021
+
+### THM-0020 — A successful delegated unbound response verification establishes a chain and never a binding
+
+**Statement.** If `Verifier::verify_delegated_unbound_response` returns Ok, then the shared unbound-response proposition holds for the same response, and in addition: the response evidence block parsed and validated under the profile tag; it carried an inline delegation credential; that credential verified as a chain to a root issuer key the trust seam resolved for the Response slot and was accepted under the supplied expectations; and the keyid the signature was accepted under is the delegated kid that the credential confirms and the block declares.
+
+**Security consequence.** A preflight or pre-parse rejection receipt cannot be forged by an unsigned or directly root-signed response: delegation stays required on the path where there is no request to bind to, which is the path with the least other evidence.
+
+**Scope — what this does NOT establish.** This theorem characterizes values successfully returned by `verify_delegated_unbound_response`. It does not establish that an arbitrary externally constructed `VerifiedDelegatedUnboundResponse` was produced by that operation. It NEVER implies request binding and must not inherit THM-0018 or THM-0019 by analogy: a receipt that satisfies this claim is not an answer to any particular request, and a consumer that needs one must obtain it elsewhere. The block's `request_evidence`, if present, is diagnostic and outside this claim. **It does NOT establish THM-0017, and does not depend on it**, for the reason THM-0019 does not establish THM-0016: the seam answered for the credential's root issuer, not for the signing key. As in THM-0019 the expectations are supplied rather than proved current.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0022
+
+### THM-0021 — A successful bound-response verification establishes the shared cryptographic and request-binding facts
+
+**Statement.** If any of `Verifier::verify_bound_response_floor`, `Verifier::verify_bound_response` or `Verifier::verify_delegated_bound_response` returns Ok, then for the response supplied: the covered `Content-Digest` agreed with the body, the signature parameters were admitted as current under an algorithm the verifier's policy accepts, and the RFC 9421 signature verified over a base whose `;req` components were resolved against the concrete request supplied to the call, under the verification key of the accepted signer the operation returns.
+
+**Security consequence.** A response signed for a different request cannot be presented as the answer to this one: splicing changes the signature base, so no valid signature covers it. A tampered body breaks the covered digest. Both hold on EITHER authorization path, so a deployment moving from trust-store to delegated response signing does not have to re-establish them.
+
+**Scope — what this does NOT establish.** It says WHO the signature was accepted under and never WHY that signer is acceptable. `AcceptedResponseSigner` deliberately carries no slot resolution and no credential: trust-seam authorization (THM-0016) and delegation-chain authorization (THM-0019) are different propositions, and neither may be inferred from this one. It reads no response evidence block, so it establishes no `server_signer` correspondence and no request-evidence comparison. It says the response is bound to the request the CALLER SUPPLIED; it establishes nothing about that request — not that it was authenticated, not that it was full-profile verified, not that it is the request this peer sent. It characterizes values successfully returned by those three operations. It does not establish that an arbitrary externally constructed `BoundResponseSignatureFacts` was produced by one of them.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0001
+
+### THM-0022 — A successful unbound-response verification establishes the shared facts and no request binding at all
+
+**Statement.** If either `Verifier::verify_unbound_response_floor` or `Verifier::verify_delegated_unbound_response` returns Ok, then for the response supplied: the covered `Content-Digest` agreed with the body, the signature parameters were admitted as current under an algorithm the verifier's policy accepts, and the signature verified over a base covering ONLY response components under the verification key of the accepted signer the operation returns — a `;req` component is refused as malformed, because no request exists to resolve it against.
+
+**Security consequence.** A receipt emitted before a request could be parsed can still be attributed to a signer, and it cannot smuggle in a request binding: a `;req` component makes the message malformed rather than admitting an unresolvable reference.
+
+**Scope — what this does NOT establish.** As with THM-0021, it says WHO the signature was accepted under and never WHY. Trust-seam authorization is THM-0017 and delegation-chain authorization is THM-0020. It establishes NO relationship to any request, and must never be read as a weaker form of THM-0021. A caller that needs an answer to a specific request gets nothing from it. Any `request_evidence` the response body carries is diagnostic and is outside this claim entirely. It reads no response evidence block. It characterizes values successfully returned by those two operations, not arbitrary externally constructed `UnboundResponseSignatureFacts`.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0001

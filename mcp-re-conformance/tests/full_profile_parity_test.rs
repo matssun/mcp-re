@@ -254,7 +254,8 @@ fn full_exchange_activates_all_blocks() {
         .verify_bound_response(&rsp, &req, verified.evidence(), NOW)
         .expect("full response verifies");
     assert_eq!(
-        rv.bound_request_evidence, rv.body_request_evidence,
+        rv.request_evidence_agreement.bound_request_evidence,
+        rv.request_evidence_agreement.body_request_evidence,
         "response binds request evidence"
     );
     assert_eq!(rv.server_signer.keyid, "server-key-1");

@@ -813,7 +813,7 @@ fn verify_response(
     let request_state = mcp_re_client_core::continuation_state(resp_body).map_err(err)?;
     Ok(PyVerifyResult {
         ok: true,
-        server_keyid: ev.resolved_server_actor().identity.keyid.clone(),
+        server_keyid: ev.accepted_signer().identity.keyid.clone(),
         outcome,
         wire_code,
         bound,

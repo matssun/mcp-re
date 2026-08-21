@@ -579,8 +579,7 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
         hop_evidence.push(HopEvidence {
             request_evidence: verified_req.evidence.clone(),
             response_evidence: verified_rsp
-                .response
-                .floor
+                .signature_facts
                 .response_signature_base_digest
                 .clone(),
         });

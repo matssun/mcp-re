@@ -102,6 +102,129 @@ def test_an_ordinary_unit_is_not_given_a_whole_crate_cone():
     assert list(source) == ["mcp-re-proxy/src/runtime_state.rs"]
 
 
+def test_the_effective_test_selection_is_measured_not_only_its_uri():
+    """A `test://` URI is a LABEL. Until encoding v4 it was the only test component, so a
+    battery could fall from 67 declared controls to 5 — or move to another Cargo package —
+    with the URI, and therefore the fingerprint, unchanged."""
+    selection = components("http_profile.verifier_results")["test_selection"]
+    assert selection["package"] == "mcp-re-http-profile"
+    assert len(selection["symbols"]) > 50
+    assert (
+        "tests/full_profile_test#a_target_uri_disagreeing_with_the_audience_tuple_fails"
+        in selection["symbols"]
+    )
+
+
+def test_dropping_a_declared_control_moves_the_fingerprint():
+    """The property the previous encoding did not have. Shrinking the battery must be
+    visible, or a unit can lose its negative controls and stay FRESH."""
+    unit = dict(UNITS["http_profile.verifier_results"])
+    before = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
+    unit["tested_symbols"] = unit["tested_symbols"][:5]
+    after = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
+    assert before != after
+
+
+def test_moving_the_battery_to_another_package_moves_the_fingerprint():
+    """`test_package` selects which package the lane runs in, so it decides what was
+    measured; a fingerprint blind to it would let the measurement move under a standing
+    attestation."""
+    unit = dict(UNITS["http_profile.verifier_results"])
+    before = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
+    unit["test_package"] = "mcp-re-core"
+    after = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
+    assert before != after
+
+
+def test_the_integration_test_sources_are_measured_not_only_their_names():
+    """A control can keep its declared name and lose its body: the selector still resolves,
+    the lane still reports a pass. The name is the label; the file is the evidence."""
+    sources = components("http_profile.verifier_results")["test_sources"]
+    assert "mcp-re-http-profile/tests/delegation_e2e_test.rs" in sources
+    assert "mcp-re-http-profile/tests/proof_path_test.rs" in sources
+    assert "mcp-re-http-profile/tests/full_profile_test.rs" in sources
+    assert "mcp-re-http-profile/tests/algorithm_confusion_test.rs" in sources
+    assert all(digest.startswith("sha256:") for digest in sources.values())
+    # A target the unit does not select is not measured: the component is the unit's
+    # evidence, not the package's test directory.
+    assert "mcp-re-http-profile/tests/rfc9421_kat.rs" not in sources
+
+
+def test_in_crate_selectors_are_covered_by_the_units_own_paths():
+    """`lib#`/`doc#` selectors are deliberately absent from `test_sources` because they
+    execute inside files `source_inputs` already digests. That is only safe because the
+    manifest loader REFUSES a selector whose module the unit does not declare."""
+    from _manifest import ManifestError, _validate_in_crate_selectors
+
+    unit = {
+        "paths": ["mcp-re-http-profile/src/verify.rs"],
+        "tested_symbols": ["lib#rejection::tests::unbound_rejection_verifies"],
+    }
+    try:
+        _validate_in_crate_selectors("unit[0]", unit)
+    except ManifestError:
+        pass
+    else:
+        raise AssertionError("an undeclared in-crate module must be refused")
+
+    unit["paths"].append("mcp-re-http-profile/src/rejection.rs")
+    _validate_in_crate_selectors("unit[0]", unit)
+
+    # A module DIRECTORY resolves through any prefix of the selector's path.
+    nested = {
+        "paths": ["mcp-re-http-profile/src/verified_response/bound.rs"],
+        "tested_symbols": ["doc#verified_response::bound::VerifiedMcpResponse"],
+    }
+    _validate_in_crate_selectors("unit[0]", nested)
+
+
+def test_the_test_lane_instrument_is_part_of_the_evidence_identity():
+    """The meaning of a `doc#` selector, and of `test_package`, is decided by the lane's
+    own code. Evidence whose measuring instrument changed is evidence whose meaning
+    changed — the same argument that puts the toolchain in the fingerprint."""
+    lane = components("http_profile.verifier_results")["test_lane_identity"]
+    assert set(lane) == {
+        "tools/verification/verify-tests",
+        "tools/verification/_manifest.py",
+    }
+    assert all(digest.startswith("sha256:") for digest in lane.values())
+
+
+def test_the_probe_set_is_measured_so_the_suite_cannot_silently_shrink():
+    """`mutation://` puts the probe suite inside the attestation closure, but a closure
+    over a suite that can shrink proves as little as the v3 test component did. Each probe
+    entry is digested WHOLE, so softening a weakening or widening an `expect_red` moves the
+    fingerprint and invalidates the standing mutation PASS."""
+    probes = components("http_profile.verifier_results")["mutation_probes"]
+    assert len(probes) > 20
+    assert all(digest.startswith("sha256:") for digest in probes.values())
+    lane = components("http_profile.verifier_results")["mutation_lane_identity"]
+    assert set(lane) == {"tools/verification/verify-mutations"}
+
+
+def test_a_unit_without_mutation_evidence_measures_no_mutation_components():
+    """Empty, and measured as empty: a unit with no probe suite must not be dirtied by
+    another unit's probes, and the component must not become a sentinel."""
+    c = components("http_profile.keyid")
+    assert c["mutation_probes"] == {}
+    assert c["mutation_lane_identity"] == {}
+
+
+def test_a_unit_without_test_evidence_measures_no_test_components():
+    """Empty, and measured as empty — a Verus-only unit must not be dirtied by test-lane
+    churn, and the component must not silently become a sentinel either."""
+    unit = {
+        "id": "x",
+        "class": "V0",
+        "paths": ["mcp-re-core/src/time.rs"],
+        "evidence": ["verus://core/time/x"],
+    }
+    c = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)["components"]
+    assert c["test_selection"] == {}
+    assert c["test_sources"] == {}
+    assert c["test_lane_identity"] == {}
+
+
 def test_an_assumptions_content_participates_not_only_its_id():
     """Recording ids alone let an assumption be rewritten — its description widened, its
     mechanism swapped — without any unit deriving DIRTY_ASSUMPTION."""

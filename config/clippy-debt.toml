@@ -146,7 +146,7 @@ count = 10
 [[debt]]
 crate = "mcp-re-http-profile"
 lint = "too_many_lines"
-count = 9
+count = 7
 
 [[debt]]
 crate = "mcp-re-proxy"

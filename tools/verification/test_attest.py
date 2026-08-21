@@ -96,6 +96,96 @@ def test_required_lanes_are_read_off_the_declared_evidence():
     assert required_lanes({"evidence": ["review://owner"]}) == {"review"}
 
 
+# --- the mutation lane is inside the closure ----------------------------------
+
+
+def _both(test_fp, mutation_fp=None):
+    """A unit's `test` and `mutation` records, each at a given fingerprint."""
+    records = {
+        "test": {
+            "a": EvidenceRecord(
+                unit_id="a", lane="test", result="pass", fingerprint=test_fp
+            )
+        },
+        "mutation": {},
+    }
+    if mutation_fp is not None:
+        records["mutation"]["a"] = EvidenceRecord(
+            unit_id="a", lane="mutation", result="pass", fingerprint=mutation_fp
+        )
+    return records
+
+
+MUTATION_EVIDENCE = ("test://t", "mutation://m")
+
+
+def test_passing_tests_alone_cannot_attest_a_unit_that_claims_mutation_evidence():
+    """The structural point. A V0 claim's ordinary battery says the declared controls
+    passed; it says NOTHING about whether any of them would notice the check its theorem
+    names being deleted. Without this refusal the probe suite is decoration: the CI job
+    could be removed and `http_profile.verifier_results` would keep re-attesting from
+    `test` alone."""
+    got = decide(
+        units("a", evidence=MUTATION_EVIDENCE),
+        [],
+        current(a="sha256:X"),
+        _both("sha256:X"),
+    )
+    assert got["a"][0] == "REFUSE"
+    assert "mutation" in got["a"][2]
+
+
+def test_a_mutation_record_from_another_fingerprint_is_refused():
+    """A probe suite that passed over different source has not measured this one — the same
+    rule every other lane obeys, and the reason the probe entries and the lane binary are
+    fingerprint inputs at encoding v5."""
+    got = decide(
+        units("a", evidence=MUTATION_EVIDENCE),
+        [],
+        current(a="sha256:X"),
+        _both("sha256:X", mutation_fp="sha256:OLD"),
+    )
+    assert got["a"][0] == "REFUSE"
+
+
+def test_both_lanes_at_the_current_fingerprint_issue():
+    got = decide(
+        units("a", evidence=MUTATION_EVIDENCE),
+        [],
+        current(a="sha256:X"),
+        _both("sha256:X", mutation_fp="sha256:X"),
+    )
+    assert got["a"][0] == "ISSUE_PASS"
+    assert got["a"][1] == {"test": "pass", "mutation": "pass"}
+
+
+def test_a_failed_mutation_run_is_recorded_rather_than_withheld():
+    """A probe that found an unprotected conjunct must propagate as BLOCKED, not vanish
+    into an absent record that reads the same as "not measured yet"."""
+    records = _both("sha256:X", mutation_fp="sha256:X")
+    records["mutation"]["a"] = EvidenceRecord(
+        unit_id="a", lane="mutation", result="fail", fingerprint="sha256:X"
+    )
+    got = decide(
+        units("a", evidence=MUTATION_EVIDENCE), [], current(a="sha256:X"), records
+    )
+    assert got["a"][0] == "ISSUE_FAIL"
+    assert got["a"][1]["mutation"] == "fail"
+
+
+def test_the_real_manifest_puts_the_verifier_unit_inside_the_mutation_closure():
+    """Not a synthetic fixture: the shipped unit must actually claim it, or every test
+    above proves a property nothing uses."""
+    from _manifest import load_verification
+
+    unit = next(
+        u
+        for u in load_verification()["unit"]
+        if u["id"] == "http_profile.verifier_results"
+    )
+    assert required_lanes(unit) == {"test", "mutation"}
+
+
 # --- negative control 0: a declaration nothing measured -----------------------
 
 
