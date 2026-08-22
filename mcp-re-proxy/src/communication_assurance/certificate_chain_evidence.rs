@@ -58,6 +58,16 @@ impl<'a> CertificateChainEvidence<'a> {
         CertificateChainEvidence { leaf_der }
     }
 
+    /// The leaf this evidence carries, if any.
+    ///
+    /// `pub(super)` — for the sibling authorities that interpret this evidence class, and
+    /// no wider. Two authorities already read it (identity, and the credential public
+    /// key), which is what an evidence product is for; a public accessor would instead be
+    /// a way to bypass both of them.
+    pub(super) fn leaf_der(self) -> Option<&'a [u8]> {
+        self.leaf_der
+    }
+
     /// Interpret the leaf's identity fields through the foreign X.509 parser.
     ///
     /// The two representation-level refusals originate here and nowhere else.

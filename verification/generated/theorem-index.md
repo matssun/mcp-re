@@ -40,6 +40,8 @@ derives, and it is not shown here because this view cannot see the attestations.
 | THM-0022 | A successful unbound-response verification establishes the shared facts and no request binding at all | http_profile.verifier_results | unit://http_profile.freshness_window, unit://http_profile.verifier_results | live |
 | THM-0023 | Every peer identity value is well-formed, whatever evidence produced it | proxy.peer_identity_value | unit://proxy.peer_identity_value | live |
 | THM-0024 | Certificate identity interpretation reads the configured field and refuses rather than falling back | proxy.certificate_identity | unit://proxy.certificate_identity | live |
+| THM-0025 | Every canonical Ed25519 public key value is the canonical RFC 8410 encoding of its own point | proxy.ed25519_public_key | unit://proxy.ed25519_public_key | live |
+| THM-0026 | Credential/key correspondence relates two independently interpreted keys and attributes every refusal to the side that failed | proxy.credential_key_correspondence | unit://proxy.credential_key_correspondence | live |
 
 ## Claims in full
 
@@ -296,3 +298,25 @@ derives, and it is not shown here because this view cannot see the attestations.
 **Review requirement.** Owner security-specification review
 
 **Depends on.** THM-0023
+
+### THM-0025 — Every canonical Ed25519 public key value is the canonical RFC 8410 encoding of its own point
+
+**Statement.** Every inhabitant of Ed25519PublicKeyValue was interpreted from bytes that are exactly the canonical RFC 8410 Ed25519 SubjectPublicKeyInfo encoding — the fixed twelve-byte id-Ed25519 header followed by exactly thirty-two key bytes — and its projected point is those thirty-two bytes. Acceptance is decided by that exact match alone. The general SubjectPublicKeyInfo parse runs only after the match has already failed, and only to choose which of three refusals to report, so no parser behaviour can turn a refusal into an acceptance. The encoding direction is the inverse of the interpreting one: interpreting the encoding of a point yields a value whose point is that point.
+
+**Security consequence.** A provider configured with a key of another algorithm — an RSA or NIST P-curve KMS key, a token key of the wrong type — cannot be used as an Ed25519 key anywhere in the proxy, and cannot become one by being re-encoded. Every provider that writes a SubjectPublicKeyInfo and every consumer that reads one is held to a single definition of the encoding, so a mismatch between two providers' idea of it cannot arise.
+
+**Scope — what this does NOT establish.** It is about the ENCODING, not about the key. It does not establish that the thirty-two bytes are a valid curve point, that anyone holds the private half, that the key is trusted, current, or authorized, or that any signature made with it verifies. The refusal taxonomy is a claim about faithful reporting, not about admission: all three refusals refuse. Which one is reported rests on ASM-0031, an assumed foreign parser, and that assumption is contained to reporting precisely because acceptance never consults it. It says nothing about non-canonical encodings other than that they are refused — in particular it does not claim they are invalid keys, only that this system does not accept them.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0026 — Credential/key correspondence relates two independently interpreted keys and attributes every refusal to the side that failed
+
+**Statement.** If establishing credential/key correspondence returns Ok, then: the credential's leaf presented a public key satisfying THM-0025; the signer exported a public key satisfying THM-0025; those two keys are equal; and the returned facts carry that one key. If it returns Err, the refusal names which authority failed — the credential side, the signing-key side, or the relation. The relation itself can refuse only with a mismatch: an absent credential, an unreadable credential, an unreachable signer and a key of the wrong profile are all refused by the adapter that owns them, before the relation is reached, and the relation is never handed a key that failed the profile rule.
+
+**Security consequence.** A delegated TLS listener cannot be built whose signer signs for a key other than the one its certificate presents, and cannot be built on a signer or a credential whose key is of another algorithm — including the algorithm-confusion case where a key of another algorithm carries the credential's public point in its trailing bytes. The failure is refused before any server starts rather than surfacing as an opaque handshake failure, and an operator is told which half of the deployment to look at.
+
+**Scope — what this does NOT establish.** Correspondence only. It does not establish that the credential chain is trusted, valid now, or unrevoked; that the signer may serve; that the signer holds the private half of the key it exported; that a listener has signing budget; or that any channel exists. A signer whose key corresponds to an untrusted, expired, revoked certificate satisfies this theorem. It characterizes a successful return of the named operation, not possession of the facts value. Equality of keys is equality of the thirty-two interpreted bytes. It is not a claim that two equal points are the same KEY MATERIAL in any custody sense, and it establishes nothing about the private halves. Both sides' interpretation rests on ASM-0031 through THM-0025 for which refusal is reported; neither rests on it for acceptance.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0025

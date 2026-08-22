@@ -1047,3 +1047,140 @@ audit trail or later authority can recover the difference. THM-0024's scope says
 many words, and the probe is here because a conjunct nobody can break is a conjunct the
 evidence does not establish.
 """
+
+# ---------------------------------------------------------------------------
+# Communication assurance — ADR-MCPRE-063 Slice 2
+# ---------------------------------------------------------------------------
+#
+# M32 is the probe this slice was worth building for. Applied to the code BEFORE the
+# migration, it left every dedicated profile negative GREEN: a key of another algorithm was
+# still refused, but only because its trailing bytes happened not to match the other side's.
+# Refusal-by-coincidence and refusal-by-rule are indistinguishable to a control that asserts
+# only that something was refused, and every control in the tree asserted only that.
+
+[[probe]]
+id = "M31-correspondence-equality"
+unit = "proxy.credential_key_correspondence"
+theorem = "THM-0026"
+conjunct = "the credential's key and the signer's key are equal"
+path = "mcp-re-proxy/src/communication_assurance/credential_key_correspondence.rs"
+anchor = """
+    if credential.key() != signing_key.key() {
+        return Err(CorrespondenceMismatch);
+    }
+"""
+weakening = """
+    if false && credential.key() != signing_key.key() {
+        return Err(CorrespondenceMismatch);
+    }
+"""
+expect_red = [
+  "lib#tls::delegated_credential_key_correspondence_tests::a_signing_key_that_is_not_the_credential_key_is_refused",
+  "lib#tls::delegated_credential_key_correspondence_tests::the_six_facts_are_six_typed_refusals_and_not_six_sentences",
+]
+
+[[probe]]
+id = "M32-required-key-profile"
+unit = "proxy.ed25519_public_key"
+theorem = "THM-0025"
+conjunct = "acceptance is the exact canonical RFC 8410 encoding, and nothing else"
+# The weakening is the shape the defect really takes: keep the length-ish check, drop the
+# algorithm header, take the trailing thirty-two bytes. That is how an algorithm-confusion
+# bug is written by someone being helpful, not how one is invented for a probe.
+path = "mcp-re-proxy/src/communication_assurance/ed25519_public_key.rs"
+anchor = """
+        if der.len() == CANONICAL_ED25519_SPKI_LEN
+            && der[..CANONICAL_ED25519_SPKI_PREFIX.len()] == CANONICAL_ED25519_SPKI_PREFIX
+        {
+"""
+weakening = """
+        if der.len() >= ED25519_PUBLIC_KEY_LEN {
+            let mut raw_point = [0u8; ED25519_PUBLIC_KEY_LEN];
+            raw_point.copy_from_slice(&der[der.len() - ED25519_PUBLIC_KEY_LEN..]);
+            return Ok(Ed25519PublicKeyValue { raw_point });
+        }
+        if false {
+"""
+expect_red = [
+  "lib#communication_assurance::ed25519_public_key::tests::a_well_formed_key_of_another_algorithm_names_the_algorithm_it_declares",
+  "lib#communication_assurance::ed25519_public_key::tests::unreadable_bytes_are_uninterpretable_not_an_unsupported_algorithm",
+]
+note = """
+The owner's own controls only. The algorithm-confusion control this weakening also turns
+red — a signing key of another algorithm carrying the credential's public point — belongs
+to the correspondence unit and is claimed there, as M35. Same weakening, two units, because
+a control outside a unit's battery is not that unit's evidence however red it goes.
+"""
+
+[[probe]]
+id = "M33-refusal-side-attribution"
+unit = "proxy.credential_key_correspondence"
+theorem = "THM-0026"
+conjunct = "a refusal names which authority failed"
+# Side attribution is the whole point of the hierarchical algebra. Reporting a credential
+# failure as a signing-key failure changes no admission decision — both refuse — and sends
+# an operator to the wrong half of the deployment, which is a real cost that no
+# outcome-shaped control can see.
+path = "mcp-re-proxy/src/communication_assurance/credential_key_correspondence.rs"
+anchor = """
+    let credential = credential
+        .interpret_credential_public_key()
+        .map_err(CredentialKeyCorrespondenceRefusal::Credential)?;
+"""
+weakening = """
+    let credential = credential
+        .interpret_credential_public_key()
+        .map_err(|_| CredentialKeyCorrespondenceRefusal::Mismatch(CorrespondenceMismatch))?;
+"""
+expect_red = [
+  "lib#communication_assurance::credential_key_correspondence::tests::a_credential_side_failure_is_attributed_to_the_credential_side",
+  "lib#communication_assurance::credential_key_correspondence::tests::an_unavailable_signer_is_not_reported_as_a_mismatch",
+  "lib#tls::delegated_credential_key_correspondence_tests::the_six_facts_are_six_typed_refusals_and_not_six_sentences",
+]
+
+[[probe]]
+id = "M34-signing-key-unavailable-vs-unreadable"
+unit = "proxy.credential_key_correspondence"
+theorem = "THM-0026"
+conjunct = "an unreachable signer and a signer exporting an unusable key are different facts"
+path = "mcp-re-proxy/src/communication_assurance/signing_key_evidence.rs"
+anchor = """
+        let spki_der = self
+            .exported_spki_der
+            .ok_or(SigningKeyRefusal::Unavailable)?;
+"""
+weakening = """
+        let spki_der = self.exported_spki_der.unwrap_or(&[]);
+"""
+expect_red = [
+  "lib#communication_assurance::signing_key_evidence::tests::a_signer_that_exported_nothing_is_not_a_signer_that_exported_rubbish",
+  "lib#tls::delegated_credential_key_correspondence_tests::the_six_facts_are_six_typed_refusals_and_not_six_sentences",
+]
+
+[[probe]]
+id = "M35-profile-rule-through-the-relation"
+unit = "proxy.credential_key_correspondence"
+theorem = "THM-0026"
+conjunct = "the relation is never handed a key that failed the profile rule"
+# The same weakening as M32, claimed by the consuming unit. This is the probe whose result
+# justified writing a new control: applied to the pre-migration code it left every existing
+# profile negative green, because a key of the wrong algorithm was still refused — by the
+# equality check, not by the profile rule. Refusal by coincidence is not enforcement.
+path = "mcp-re-proxy/src/communication_assurance/ed25519_public_key.rs"
+anchor = """
+        if der.len() == CANONICAL_ED25519_SPKI_LEN
+            && der[..CANONICAL_ED25519_SPKI_PREFIX.len()] == CANONICAL_ED25519_SPKI_PREFIX
+        {
+"""
+weakening = """
+        if der.len() >= ED25519_PUBLIC_KEY_LEN {
+            let mut raw_point = [0u8; ED25519_PUBLIC_KEY_LEN];
+            raw_point.copy_from_slice(&der[der.len() - ED25519_PUBLIC_KEY_LEN..]);
+            return Ok(Ed25519PublicKeyValue { raw_point });
+        }
+        if false {
+"""
+expect_red = [
+  "lib#tls::delegated_credential_key_correspondence_tests::a_signing_key_of_another_algorithm_carrying_the_credential_point_is_refused",
+  "lib#tls::delegated_credential_key_correspondence_tests::the_six_facts_are_six_typed_refusals_and_not_six_sentences",
+]

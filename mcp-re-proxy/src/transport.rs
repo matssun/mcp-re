@@ -179,9 +179,9 @@ impl TransportBindingProvider for StaticIdentityProvider {
 // facade over the peer-identity value owner (ADR-MCPRE-063 Slice 1) and lives in
 // `asserted_identity_facade`. Re-exported here so this module's own callers, and the
 // crate root, keep their existing paths.
-pub use crate::asserted_identity_facade::validate_asserted_identity_value;
-pub use crate::asserted_identity_facade::AssertedIdentityRejection;
-pub use crate::asserted_identity_facade::MAX_ASSERTED_IDENTITY_LEN;
+pub use crate::facades::asserted_identity::validate_asserted_identity_value;
+pub use crate::facades::asserted_identity::AssertedIdentityRejection;
+pub use crate::facades::asserted_identity::MAX_ASSERTED_IDENTITY_LEN;
 
 /// The SEP-2243 transport routing header naming the JSON-RPC method (ADR-MCPS-025).
 /// Lowercased for case-insensitive [`RequestHeaders`] lookup.

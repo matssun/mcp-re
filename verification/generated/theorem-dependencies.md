@@ -109,3 +109,12 @@ graph BT
     THM_0024["THM-0024<br/>Certificate identity interpretation reads the configured field and refuses rather than falling back"]
     THM_0023 --> THM_0024
 ```
+
+## Component 11
+
+```mermaid
+graph BT
+    THM_0025["THM-0025<br/>Every canonical Ed25519 public key value is the canonical RFC 8410 encoding of its own point"]
+    THM_0026["THM-0026<br/>Credential/key correspondence relates two independently interpreted keys and attributes every refusal to the side that failed"]
+    THM_0025 --> THM_0026
+```

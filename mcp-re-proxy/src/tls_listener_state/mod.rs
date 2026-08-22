@@ -331,8 +331,9 @@ mod tests {
             Ok(mcp_re_core::b64url_decode(&self.0.sign(message)).expect("valid b64url"))
         }
         fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, crate::KeyError> {
-            let mut der = crate::kms_keysource::ED25519_SPKI_PREFIX.to_vec();
-            der.extend_from_slice(&self.0.public_key().to_bytes());
+            let der = crate::communication_assurance::Ed25519PublicKeyValue::spki_der_for_point(
+                self.0.public_key().to_bytes(),
+            );
             Ok(der)
         }
     }

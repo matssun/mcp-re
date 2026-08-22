@@ -872,3 +872,95 @@ kind = "COMPILE_DEPENDENCY"
 from = "proxy.peer_identity_value"
 to = "proxy.certificate_identity"
 rationale = "Certificate identity interpretation establishes its success value BY constructing a PeerIdentityValue. If the invariant weakens, what the interpretation returns weakens with it, and the interpretation's own tests would not necessarily notice."
+
+# ---------------------------------------------------------------------------
+# Communication assurance — ADR-MCPRE-063 Slice 2
+# ---------------------------------------------------------------------------
+#
+# Two units again, and the split is the one the slice exists to make: the key
+# REPRESENTATION invariant is consumed by every provider the proxy has — AWS KMS, GCP KMS,
+# PKCS#11, the generic KMS path and the delegated TLS credential — while the correspondence
+# RELATION is consumed only by the delegated TLS build. Folding them together would make a
+# claim about a KMS key rest on evidence about TLS.
+
+[[unit]]
+id = "proxy.ed25519_public_key"
+class = "V0"
+description = "The canonical RFC 8410 Ed25519 public key: what is accepted, why a refusal happened, and the encoding every provider writes."
+paths = ["mcp-re-proxy/src/communication_assurance/ed25519_public_key.rs"]
+exported_contracts = []
+evidence = [
+  "test://proxy/ed25519_public_key/canonical_encoding",
+  "mutation://proxy/ed25519_public_key/canonical_encoding",
+]
+# The battery has to answer two questions that pull in opposite directions: does the owner
+# REFUSE everything it should, and does adding a parser on the refusal path quietly widen
+# what it ACCEPTS? `classification_never_widens_acceptance` is the second one, and it is
+# listed as a control rather than trusted to the first: a classifier that started returning
+# a repaired key would leave every refusal test green.
+tested_symbols = [
+  "lib#communication_assurance::ed25519_public_key::tests::a_canonical_key_is_accepted_and_projects_its_point",
+  "lib#communication_assurance::ed25519_public_key::tests::unreadable_bytes_are_uninterpretable_not_an_unsupported_algorithm",
+  "lib#communication_assurance::ed25519_public_key::tests::a_well_formed_key_of_another_algorithm_names_the_algorithm_it_declares",
+  "lib#communication_assurance::ed25519_public_key::tests::a_readable_ed25519_key_in_a_non_canonical_encoding_is_refused_as_such",
+  "lib#communication_assurance::ed25519_public_key::tests::classification_never_widens_acceptance",
+  "lib#communication_assurance::ed25519_public_key::tests::the_two_directions_are_inverse",
+  "lib#communication_assurance::ed25519_public_key::tests::two_keys_differing_in_one_byte_are_different_values",
+]
+assumptions = ["ASM-0031"]
+pilot = "verus-candidate"
+
+[[unit]]
+id = "proxy.credential_key_correspondence"
+class = "V0"
+description = "Credential/key correspondence: two independently interpreted public keys, of the required profile, are the same key — with the refusal attributed to the side that failed."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/credential_key_correspondence.rs",
+  "mcp-re-proxy/src/communication_assurance/credential_public_key_evidence.rs",
+  "mcp-re-proxy/src/communication_assurance/signing_key_evidence.rs",
+  "mcp-re-proxy/src/tls.rs",
+]
+exported_contracts = []
+# `tls.rs` is in `paths` because the DER-level battery lives in its test module and the
+# composition it measures is the one `validated_delegated_resolver` performs. The file is
+# measured, so those controls cannot be rewritten under the same names without moving the
+# fingerprint. It is NOT thereby a claim about the rest of `tls.rs`.
+evidence = [
+  "test://proxy/credential_key_correspondence/side_attributed_relation",
+  "mutation://proxy/credential_key_correspondence/side_attributed_relation",
+]
+tested_symbols = [
+  # --- the adapters, each refusing on its own side ---
+  "lib#communication_assurance::credential_public_key_evidence::tests::no_credential_is_absence_not_an_unreadable_one",
+  "lib#communication_assurance::credential_public_key_evidence::tests::an_unreadable_credential_is_not_reported_as_a_key_problem",
+  "lib#communication_assurance::signing_key_evidence::tests::a_signer_that_exported_nothing_is_not_a_signer_that_exported_rubbish",
+  "lib#communication_assurance::signing_key_evidence::tests::an_exported_key_of_another_algorithm_is_refused_on_the_profile_rule",
+  # --- the composition attributes a failure to the side that failed ---
+  "lib#communication_assurance::credential_key_correspondence::tests::a_credential_side_failure_is_attributed_to_the_credential_side",
+  "lib#communication_assurance::credential_key_correspondence::tests::a_signing_side_failure_is_attributed_to_the_signing_side",
+  "lib#communication_assurance::credential_key_correspondence::tests::an_unavailable_signer_is_not_reported_as_a_mismatch",
+  "lib#communication_assurance::credential_key_correspondence::tests::an_export_of_another_algorithm_refuses_on_the_signing_side_profile_rule",
+  "lib#communication_assurance::credential_key_correspondence::tests::a_mismatch_carries_no_key_material",
+  # --- the same law over real certificates and a real signer seam ---
+  "lib#tls::delegated_credential_key_correspondence_tests::matching_credential_and_signing_key_is_accepted",
+  "lib#tls::delegated_credential_key_correspondence_tests::a_signing_key_that_is_not_the_credential_key_is_refused",
+  "lib#tls::delegated_credential_key_correspondence_tests::an_empty_credential_chain_is_refused",
+  "lib#tls::delegated_credential_key_correspondence_tests::an_unparseable_credential_is_refused",
+  "lib#tls::delegated_credential_key_correspondence_tests::a_credential_whose_key_is_a_supported_shape_of_another_algorithm_is_refused",
+  "lib#tls::delegated_credential_key_correspondence_tests::a_signer_that_exports_no_public_key_is_refused",
+  "lib#tls::delegated_credential_key_correspondence_tests::a_signing_key_of_another_algorithm_is_refused",
+  # The control that reaches the profile conjunct rather than a coincidence. Deleting the
+  # profile rule and comparing trailing bytes leaves every other negative here green.
+  "lib#tls::delegated_credential_key_correspondence_tests::a_signing_key_of_another_algorithm_carrying_the_credential_point_is_refused",
+  "lib#tls::delegated_credential_key_correspondence_tests::the_six_facts_are_six_typed_refusals_and_not_six_sentences",
+  "lib#tls::delegated_credential_key_correspondence_tests::the_accepting_case_yields_the_one_key_both_sides_presented",
+]
+pilot = "verus-candidate"
+
+[[edge]]
+# Producer -> consumer. Both sides of the relation are established BY interpreting a key
+# through the representation owner; if that invariant weakens, what corresponds weakens.
+kind = "COMPILE_DEPENDENCY"
+from = "proxy.ed25519_public_key"
+to = "proxy.credential_key_correspondence"
+rationale = "Correspondence compares two Ed25519PublicKeyValue values, and what makes them comparable is that both passed the same representation rule. A weakened rule would let two keys of different algorithms be declared corresponding without the relation's own tests noticing."

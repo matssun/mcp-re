@@ -44,5 +44,6 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0028 | SHA-256 is second-preimage resistant over the byte strings this profile digests, so digest agreement implies byte agreement. | http_profile.verifier_results | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022 |
 | ASM-0029 | The trust seam answers its SELECTOR correctly: for a queried (keyid, slot), the `ResolvedActor` it returns carries the identity and verification key this deployment has authorized to sign under that keyid in that slot. | http_profile.verifier_results | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022 |
 | ASM-0030 | The X.509 parser faithfully reports a leaf's URI SANs, DNS SANs, and subject Common Name, in the order the certificate presents them. | proxy.certificate_identity | THM-0024 |
+| ASM-0031 | The X.509 SubjectPublicKeyInfo parser faithfully reports a key's algorithm OID, and refuses what is not a SubjectPublicKeyInfo. | proxy.ed25519_public_key | THM-0025 |
 
 19 assumption(s) are reached by more than one theorem.
