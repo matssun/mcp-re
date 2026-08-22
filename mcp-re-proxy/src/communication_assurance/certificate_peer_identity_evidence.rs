@@ -20,8 +20,15 @@
 //! field the interpreter actually read. Public fields would let any caller pair a value
 //! with a source naming a different field — a provenance substitution that no downstream
 //! consumer could detect, because the only record of where an identity came from is this
-//! field. Construction is therefore restricted to this module tree, and the only
-//! constructor is the interpreter's.
+//! field.
+//!
+//! Construction is therefore restricted to the communication-assurance authority subtree;
+//! the certificate identity interpreter is its production producer. The seal is stated at
+//! the boundary it actually holds at: `pub(super)` means no code outside the authority can
+//! pair a value with a source, which is the property that matters. Narrowing it further —
+//! so that literally one file could call the constructor — would need a token or typestate
+//! device, and inventing one to tighten a boundary that is already the authority's own is
+//! ceremony, not a theorem.
 
 use super::certificate_identity_policy::CertificateIdentitySource;
 use super::peer_identity_value::PeerIdentityValue;

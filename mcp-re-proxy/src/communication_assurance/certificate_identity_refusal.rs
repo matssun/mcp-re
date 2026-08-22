@@ -2,11 +2,12 @@
 //! Why certificate identity interpretation refused.
 //!
 //! Refusal is part of the contract, not the absence of a result. `Option` would collapse
-//! four security-relevant facts — no certificate was presented, the certificate could not
-//! be read, the configured field was not there, and the configured field held something
-//! that is not an identity — into one `None` that a test, an operator, or an audit trail
-//! cannot tell apart. The first is a client that sent nothing; the last is a client whose
-//! issuer minted a smuggling payload. Those are different incidents.
+//! five security-relevant facts — no certificate was presented, the certificate could not
+//! be read, the configured field's representation could not be interpreted, the configured
+//! field was not there, and the configured field held something that is not an identity —
+//! into one `None` that a test, an operator, or an audit trail cannot tell apart. The first
+//! is a client that sent nothing; the last is a client whose issuer minted a smuggling
+//! payload. Those are different incidents.
 //!
 //! The variants are ordered by the refusal precedence of ADR-MCPRE-063 §9: existence,
 //! then local validity, then the selected field's presence, then its shape. A refusal
@@ -24,6 +25,20 @@ pub enum CertificateIdentityRefusal {
     /// the mechanism adapter; the foreign parser's reason is deliberately not carried,
     /// because nothing in this authority may branch on it.
     MalformedCertificate,
+    /// The certificate parsed, but the representation carrying the configured field could
+    /// not be interpreted: a malformed or (per the parser's contract) duplicated SAN
+    /// extension, or a Common Name whose string encoding cannot be represented.
+    ///
+    /// This is NOT absence and must never be reported as absence. A peer that presented a
+    /// broken field and a peer that presented no field are different incidents, and only
+    /// the first says something about the issuer that minted the certificate. Both refuse,
+    /// so nothing is admitted either way — what is at stake is which fact the refusal
+    /// records, and an authority whose algebra is more precise than its adapter reports
+    /// the wrong one.
+    SelectedFieldUninterpretable {
+        /// The configured field whose representation could not be read.
+        selected: CertificateIdentityPolicy,
+    },
     /// The certificate does not carry the configured identity field. Another field may
     /// well be present — reading it is the fallback this authority disclaims.
     SelectedFieldAbsent {
@@ -59,6 +74,19 @@ mod tests {
             absent, malformed,
             "a client that presented no URI SAN and a client whose URI SAN carried a CR \
              are different incidents and must not report the same refusal"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_field_and_an_absent_one_are_different_refusals() {
+        assert_ne!(
+            CertificateIdentityRefusal::SelectedFieldUninterpretable {
+                selected: CertificateIdentityPolicy::UriSan,
+            },
+            CertificateIdentityRefusal::SelectedFieldAbsent {
+                selected: CertificateIdentityPolicy::UriSan,
+            },
+            "a broken SAN extension is evidence about the issuer; a missing one is not"
         );
     }
 

@@ -884,11 +884,17 @@ unit = "proxy.certificate_identity"
 theorem = "THM-0024"
 conjunct = "no field other than the configured one is read"
 path = "mcp-re-proxy/src/communication_assurance/certificate_identity_interpreter.rs"
+# Re-adjudicated when the seam gained `FieldReadout`: the weakening is the same defect —
+# an absent configured field falls through to a present weaker one — restated in the types
+# the projection now returns. It is not a restoration of any earlier implementation.
 anchor = """
         CertificateIdentityPolicy::UriSan => fields.first_uri_san(),
 """
 weakening = """
-        CertificateIdentityPolicy::UriSan => fields.first_uri_san().or_else(|| fields.first_dns_san()),
+        CertificateIdentityPolicy::UriSan => match fields.first_uri_san() {
+            FieldReadout::Read(None) => fields.first_dns_san(),
+            found => found,
+        },
 """
 expect_red = [
   "lib#communication_assurance::certificate_identity_interpreter::tests::an_absent_selected_field_refuses_while_the_other_fields_are_populated",
@@ -905,19 +911,24 @@ path = "mcp-re-proxy/src/communication_assurance/certificate_identity_fields.rs"
 # defect actually takes in the wild — a projection that helpfully skips values the caller
 # would reject — and the selector has no loop to weaken.
 anchor = """
-    pub(super) fn first_uri_san(&self) -> Option<&str> {
-        self.uri_sans.first().map(String::as_str)
+    pub(super) fn first_uri_san(&self) -> FieldReadout<Option<&str>> {
+        first_of(&self.uri_sans)
     }
 """
 weakening = """
-    pub(super) fn first_uri_san(&self) -> Option<&str> {
-        self.uri_sans
-            .iter()
-            .find(|candidate| {
-                let trimmed = candidate.trim();
-                !trimmed.is_empty() && !trimmed.chars().any(char::is_control)
-            })
-            .map(String::as_str)
+    pub(super) fn first_uri_san(&self) -> FieldReadout<Option<&str>> {
+        match &self.uri_sans {
+            FieldReadout::Read(values) => FieldReadout::Read(
+                values
+                    .iter()
+                    .find(|candidate| {
+                        let trimmed = candidate.trim();
+                        !trimmed.is_empty() && !trimmed.chars().any(char::is_control)
+                    })
+                    .map(String::as_str),
+            ),
+            FieldReadout::Uninterpretable => FieldReadout::Uninterpretable,
+        }
     }
 """
 expect_red = [
@@ -995,4 +1006,44 @@ There is no such site to weaken: `PeerIdentityValue::interpret` is the only way 
 the type, so the certificate authority cannot skip the check and still produce its success
 value. That is a structural fact rather than a tested one, and it is the reason the seal
 was worth adding.
+"""
+
+[[probe]]
+id = "M30-certificate-identity-unreadable-as-absent"
+unit = "proxy.certificate_identity"
+theorem = "THM-0024"
+conjunct = "present-but-uninterpretable is never reported as absent"
+# The defect this probe defends against is the one the slice's own first implementation
+# had: `.ok().flatten()` over the SAN query, which turns every parser error into an empty
+# field list. It is the natural way to write the adapter and it is wrong, so the weakening
+# is a return TO it rather than an invented mistake.
+path = "mcp-re-proxy/src/communication_assurance/certificate_identity_fields.rs"
+anchor = """
+fn first_of(readout: &FieldReadout<Vec<String>>) -> FieldReadout<Option<&str>> {
+    match readout {
+        FieldReadout::Read(values) => FieldReadout::Read(values.first().map(String::as_str)),
+        FieldReadout::Uninterpretable => FieldReadout::Uninterpretable,
+    }
+}
+"""
+weakening = """
+fn first_of(readout: &FieldReadout<Vec<String>>) -> FieldReadout<Option<&str>> {
+    match readout {
+        FieldReadout::Read(values) => FieldReadout::Read(values.first().map(String::as_str)),
+        FieldReadout::Uninterpretable => FieldReadout::Read(None),
+    }
+}
+"""
+expect_red = [
+  "lib#communication_assurance::certificate_identity_fields::tests::an_unreadable_field_never_projects_as_an_absent_one",
+  "lib#communication_assurance::certificate_identity_interpreter::tests::an_unreadable_representation_refuses_as_uninterpretable_never_as_absent",
+  "lib#communication_assurance::certificate_identity_interpreter::tests::refusal_precedence_puts_readability_before_presence_and_presence_before_shape",
+]
+note = """
+Both outcomes refuse, so this probe does not defend an admission decision. It defends
+FAITHFUL REPORTING: with the weakening applied, a peer whose issuer minted a duplicated or
+malformed SAN extension is recorded as a peer that presented no such field, and no operator,
+audit trail or later authority can recover the difference. THM-0024's scope says so in as
+many words, and the probe is here because a conjunct nobody can break is a conjunct the
+evidence does not establish.
 """

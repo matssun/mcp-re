@@ -849,9 +849,12 @@ PeerIdentityValue interpretation of the FIRST value the leaf presents in that fi
 value satisfies THM-0023.
 
 If it returns Err, no other field and no later value of the configured field was read. The
-four refusals are distinguishable: no leaf was presented, the leaf could not be interpreted
-as a certificate, the configured field was absent, or the configured field's first value was
-not a well-formed identity — the last carrying which value rule it broke.
+five refusals are distinguishable: no leaf was presented, the leaf could not be interpreted
+as a certificate, the representation carrying the configured field could not be interpreted,
+the configured field was absent, or the configured field's first value was not a well-formed
+identity — the last carrying which value rule it broke. Present-but-uninterpretable is never
+reported as absent, and the refusal names the first rule that failed under the precedence
+readability -> presence -> identity-value validity.
 
 Interpretation is total and deterministic over the interpreted field set and the policy.
 """
@@ -881,6 +884,12 @@ construction closure is the module boundary rather than a proved postcondition.
 
 "First value" is a property of the presented order. The claim assumes the field set
 preserves that order and does not establish it of any other producer.
+
+The refusals are distinguishable but not equally consequential: every one of them refuses,
+so nothing is admitted on any of them. What the distinction establishes is which fact a
+refusal RECORDS — an operator, an audit trail and a test can tell a peer that presented
+nothing from one whose issuer minted a broken field. It is a claim about faithful reporting,
+not about admission.
 """
 owner = "proxy.certificate_identity"
 review_requirement = "Owner security-specification review"

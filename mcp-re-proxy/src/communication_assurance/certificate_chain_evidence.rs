@@ -6,7 +6,7 @@
 //! it works on [`CertificateIdentityFields`], an ordinary Rust value.
 //!
 //! The parser is a foreign, unverified dependency: it is recorded as an ADR-MCPRE-059
-//! ASSUMED boundary (ASM-0010), not proved. What is claimed here is only the composition —
+//! ASSUMED boundary (ASM-0030), not proved. What is claimed here is only the composition —
 //! bytes that the parser interprets yield the field set it reports, and that field set is
 //! what the selector sees. A theorem about the selector says nothing about the parser, and
 //! this split is the reason it can say anything at all.
@@ -24,6 +24,7 @@ use x509_parser::prelude::FromDer;
 use x509_parser::prelude::X509Certificate;
 
 use super::certificate_identity_fields::CertificateIdentityFields;
+use super::certificate_identity_fields::FieldReadout;
 use super::certificate_identity_interpreter::interpret_certificate_identity;
 use super::certificate_identity_policy::CertificateIdentityPolicy;
 use super::certificate_identity_refusal::CertificateIdentityRefusal;
@@ -65,37 +66,38 @@ impl<'a> CertificateChainEvidence<'a> {
         let (_, certificate) = X509Certificate::from_der(leaf_der)
             .map_err(|_| CertificateIdentityRefusal::MalformedCertificate)?;
 
-        // An unreadable SAN extension is an absent SAN list, not a malformed certificate:
-        // the certificate parsed, and the fields it presents are the fields it presents.
-        let general_names = certificate
-            .subject_alternative_name()
-            .ok()
-            .flatten()
-            .map(|san| san.value.general_names.clone())
-            .unwrap_or_default();
+        // Three outcomes, kept apart. The SAN extension may be absent (no SAN list — an
+        // ordinary certificate), present and readable, or present and NOT readable: the
+        // parser distinguishes `Ok(None)` from an error, and its errors here mean a
+        // malformed extension or one appearing more than once. Only the first is absence.
+        // Mapping the third onto it would tell the authority above that a peer presented
+        // no field when it presented a broken one.
+        let general_names = match certificate.subject_alternative_name() {
+            Ok(Some(san)) => FieldReadout::Read(san.value.general_names.clone()),
+            Ok(None) => FieldReadout::Read(Vec::new()),
+            Err(_) => FieldReadout::Uninterpretable,
+        };
 
         // Presentation order is preserved: the FIRST value of the selected field is the
         // authoritative one, so a reordering here would change which identity a peer has.
-        let uri_sans = general_names
-            .iter()
-            .filter_map(|name| match name {
-                GeneralName::URI(uri) => Some((*uri).to_string()),
-                _ => None,
-            })
-            .collect();
-        let dns_sans = general_names
-            .iter()
-            .filter_map(|name| match name {
-                GeneralName::DNSName(dns) => Some((*dns).to_string()),
-                _ => None,
-            })
-            .collect();
-        let common_name = certificate
-            .subject()
-            .iter_common_name()
-            .next()
-            .and_then(|cn| cn.as_str().ok())
-            .map(str::to_string);
+        let uri_sans = select_names(&general_names, |name| match name {
+            GeneralName::URI(uri) => Some((*uri).to_string()),
+            _ => None,
+        });
+        let dns_sans = select_names(&general_names, |name| match name {
+            GeneralName::DNSName(dns) => Some((*dns).to_string()),
+            _ => None,
+        });
+
+        // The same distinction for the Common Name: no CN attribute is absence, and a CN
+        // whose string encoding the parser cannot represent is not.
+        let common_name = match certificate.subject().iter_common_name().next() {
+            None => FieldReadout::Read(None),
+            Some(cn) => match cn.as_str() {
+                Ok(value) => FieldReadout::Read(Some(value.to_string())),
+                Err(_) => FieldReadout::Uninterpretable,
+            },
+        };
 
         Ok(CertificateIdentityFields::new(
             uri_sans,
@@ -115,6 +117,21 @@ impl<'a> CertificateChainEvidence<'a> {
     ) -> Result<CertificatePeerIdentityEvidence, CertificateIdentityRefusal> {
         let fields = self.identity_fields()?;
         interpret_certificate_identity(&fields, policy)
+    }
+}
+
+/// Project one kind of general name out of a SAN readout, preserving unreadability.
+///
+/// A readout that could not be interpreted yields no list at all — not an empty one. The
+/// URI and DNS lists come from the SAME extension, so an extension the parser refused makes
+/// both unreadable, and neither may be reported as an absent field.
+fn select_names(
+    readout: &FieldReadout<Vec<GeneralName<'_>>>,
+    select: impl Fn(&GeneralName<'_>) -> Option<String>,
+) -> FieldReadout<Vec<String>> {
+    match readout {
+        FieldReadout::Read(names) => FieldReadout::Read(names.iter().filter_map(select).collect()),
+        FieldReadout::Uninterpretable => FieldReadout::Uninterpretable,
     }
 }
 

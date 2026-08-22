@@ -23,6 +23,7 @@
 //! behaviour hard to lose.
 
 use super::certificate_identity_fields::CertificateIdentityFields;
+use super::certificate_identity_fields::FieldReadout;
 use super::certificate_identity_policy::CertificateIdentityPolicy;
 use super::certificate_identity_refusal::CertificateIdentityRefusal;
 use super::certificate_peer_identity_evidence::CertificatePeerIdentityEvidence;
@@ -34,16 +35,23 @@ use super::peer_identity_value::PeerIdentityValue;
 /// Establishes only that the selected field denoted this well-formed identity value. It
 /// does not establish trust, revocation status, freshness, authentication, admission, or
 /// authorization.
-pub fn interpret_certificate_identity(
+pub(super) fn interpret_certificate_identity(
     fields: &CertificateIdentityFields,
     policy: CertificateIdentityPolicy,
 ) -> Result<CertificatePeerIdentityEvidence, CertificateIdentityRefusal> {
     // ONE candidate. The authoritative value of the configured field, or nothing —
     // there is deliberately no iterator here for a later value to be drawn from.
-    let candidate = match policy {
+    let readout = match policy {
         CertificateIdentityPolicy::UriSan => fields.first_uri_san(),
         CertificateIdentityPolicy::DnsSan => fields.first_dns_san(),
         CertificateIdentityPolicy::CommonNameLegacy => fields.common_name(),
+    };
+
+    // Refusal precedence, in order and by construction: a representation must be readable
+    // before it can be called absent, and present before its shape can be judged. Each
+    // step refuses on its own rule and never on a later one.
+    let FieldReadout::Read(candidate) = readout else {
+        return Err(CertificateIdentityRefusal::SelectedFieldUninterpretable { selected: policy });
     };
 
     let candidate =
@@ -70,6 +78,7 @@ mod tests {
     use super::CertificateIdentityFields;
     use super::CertificateIdentityPolicy;
     use super::CertificateIdentityRefusal;
+    use super::FieldReadout;
     use crate::communication_assurance::certificate_identity_policy::CertificateIdentitySource;
     use crate::communication_assurance::peer_identity_value::PeerIdentityValueRefusal;
 
@@ -82,7 +91,7 @@ mod tests {
     /// A field set in which every field carries a distinct well-formed value, so a
     /// selector that reads the wrong one is caught by the VALUE, not only by the source.
     fn all_fields_distinct() -> CertificateIdentityFields {
-        CertificateIdentityFields::new(
+        CertificateIdentityFields::readable(
             vec!["spiffe://example.org/uri-value".to_string()],
             vec!["dns-value.example.org".to_string()],
             Some("cn-value.example.org".to_string()),
@@ -135,7 +144,7 @@ mod tests {
         let cases = [
             (
                 CertificateIdentityPolicy::UriSan,
-                CertificateIdentityFields::new(
+                CertificateIdentityFields::readable(
                     Vec::new(),
                     vec!["dns-value.example.org".to_string()],
                     Some("cn-value.example.org".to_string()),
@@ -143,7 +152,7 @@ mod tests {
             ),
             (
                 CertificateIdentityPolicy::DnsSan,
-                CertificateIdentityFields::new(
+                CertificateIdentityFields::readable(
                     vec!["spiffe://example.org/uri-value".to_string()],
                     Vec::new(),
                     Some("cn-value.example.org".to_string()),
@@ -151,7 +160,7 @@ mod tests {
             ),
             (
                 CertificateIdentityPolicy::CommonNameLegacy,
-                CertificateIdentityFields::new(
+                CertificateIdentityFields::readable(
                     vec!["spiffe://example.org/uri-value".to_string()],
                     vec!["dns-value.example.org".to_string()],
                     None,
@@ -168,8 +177,69 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_first_value_refuses_and_the_later_valid_value_is_not_reached() {
+    fn an_unreadable_representation_refuses_as_uninterpretable_never_as_absent() {
+        // The control for the distinction the adapter must preserve. It is stated over the
+        // FIELD SET rather than over DER because the X.509 encoder cannot readily mint a
+        // duplicated SAN extension or a CN whose encoding the parser refuses — and the
+        // property must not be weakened to whatever a test fixture can express.
         let fields = CertificateIdentityFields::new(
+            FieldReadout::Uninterpretable,
+            FieldReadout::Read(Vec::new()),
+            FieldReadout::Uninterpretable,
+        );
+        for policy in [
+            CertificateIdentityPolicy::UriSan,
+            CertificateIdentityPolicy::CommonNameLegacy,
+        ] {
+            assert_eq!(
+                interpret_certificate_identity(&fields, policy),
+                Err(CertificateIdentityRefusal::SelectedFieldUninterpretable { selected: policy }),
+                "a representation the parser refused must not be reported as a field the \
+                 certificate did not carry"
+            );
+        }
+        assert_eq!(
+            interpret_certificate_identity(&fields, CertificateIdentityPolicy::DnsSan),
+            Err(CertificateIdentityRefusal::SelectedFieldAbsent {
+                selected: CertificateIdentityPolicy::DnsSan
+            }),
+            "and unreadability is per field: the readable-but-empty DNS list is absence"
+        );
+    }
+
+    #[test]
+    fn refusal_precedence_puts_readability_before_presence_and_presence_before_shape() {
+        // Each rule is reported on its own, in order, with the later conditions held
+        // constant — so a refusal never depends on which check happened to run first.
+        let unreadable = CertificateIdentityFields::new(
+            FieldReadout::Uninterpretable,
+            FieldReadout::Read(Vec::new()),
+            FieldReadout::Read(None),
+        );
+        let absent = CertificateIdentityFields::readable(Vec::new(), Vec::new(), None);
+        let malformed =
+            CertificateIdentityFields::readable(vec!["bad\rvalue".to_string()], Vec::new(), None);
+        let policy = CertificateIdentityPolicy::UriSan;
+        assert_eq!(
+            interpret_certificate_identity(&unreadable, policy),
+            Err(CertificateIdentityRefusal::SelectedFieldUninterpretable { selected: policy })
+        );
+        assert_eq!(
+            interpret_certificate_identity(&absent, policy),
+            Err(CertificateIdentityRefusal::SelectedFieldAbsent { selected: policy })
+        );
+        assert_eq!(
+            interpret_certificate_identity(&malformed, policy),
+            Err(CertificateIdentityRefusal::SelectedFieldMalformed {
+                selected: policy,
+                reason: PeerIdentityValueRefusal::ControlCharacter,
+            })
+        );
+    }
+
+    #[test]
+    fn a_malformed_first_value_refuses_and_the_later_valid_value_is_not_reached() {
+        let fields = CertificateIdentityFields::readable(
             vec![
                 "spiffe://example.org/fi\rrst".to_string(),
                 "spiffe://example.org/second".to_string(),
@@ -194,7 +264,7 @@ mod tests {
         // whitespace and disappears. Pinned because it is the one place where "contains a
         // control character" and "is refused" come apart, and a reader checking the
         // no-fallback tests needs to know which of the two the fixtures rely on.
-        let fields = CertificateIdentityFields::new(
+        let fields = CertificateIdentityFields::readable(
             vec!["spiffe://example.org/agent-1\r\n".to_string()],
             Vec::new(),
             None,
@@ -210,7 +280,7 @@ mod tests {
             ("   ", PeerIdentityValueRefusal::Empty),
             ("bad\rvalue", PeerIdentityValueRefusal::ControlCharacter),
         ] {
-            let fields = CertificateIdentityFields::new(
+            let fields = CertificateIdentityFields::readable(
                 vec![first.to_string(), "spiffe://example.org/valid".to_string()],
                 Vec::new(),
                 None,
@@ -242,7 +312,7 @@ mod tests {
 
     #[test]
     fn an_empty_field_set_refuses_under_every_policy_as_absence() {
-        let fields = CertificateIdentityFields::default();
+        let fields = CertificateIdentityFields::readable(Vec::new(), Vec::new(), None);
         for policy in EVERY_POLICY {
             assert_eq!(
                 interpret_certificate_identity(&fields, policy),

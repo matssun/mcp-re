@@ -438,7 +438,7 @@ Recorded here rather than only in the issue, because the deltas are the reusable
 `CertificateIdentityFields` (the representation seam), `CertificateIdentityPolicy` /
 `CertificateIdentitySource` (two types, not one), `PeerIdentityValue` (the sealed generic
 invariant), `CertificatePeerIdentityEvidence` (the product), `CertificateIdentityRefusal`
-(one algebra, four variants). Registered as `unit://proxy.peer_identity_value` and
+(one algebra, five variants). Registered as `unit://proxy.peer_identity_value` and
 `unit://proxy.certificate_identity`; claimed as THM-0023 and THM-0024; the parser is
 ASM-0030.
 
@@ -478,6 +478,35 @@ control written after the migration proves the migration self-consistent, not th
 both debt baselines were ratcheted down. What went is the selector, the value validator's
 second implementation, and `tls.rs`'s reach into `x509_parser::extensions::GeneralName` —
 the mechanism import that made identity extraction look like a TLS responsibility.
+
+### 8.15 Two implementation laws Slice 1 established
+
+**L-1. A pure semantic helper may be independently testable and formally verifiable
+without being a public composition edge. Public visibility is part of the legal authority
+graph, not a testing convenience.**
+
+Slice 1's first implementation exported both the field-set type and the pure selector,
+because both are unit-tested and both are the proof candidates. That made a second entrance
+into the block: a caller could fabricate a field set and interpret it into evidence without
+ever presenting a certificate. The theorem survived it — the theorem is scoped over the
+selector — but the connector did not, and §5 makes the connector the type, not the prose.
+Both are now private to the authority tree, and the one public route is
+`CertificateChainEvidence::interpret_identity`.
+
+**L-2. An adapter may not convert "present but uninterpretable" into "absent".**
+
+The refusal algebra a block declares is a claim about what its adapter can tell apart. Slice
+1's adapter wrote `.ok().flatten()` over the SAN query — the natural spelling — which turns
+every parser error into an empty field list, so a peer whose issuer minted a malformed or
+duplicated SAN extension was reported as a peer that presented no such field. Both refuse,
+so nothing was admitted either way; what was lost was which fact the refusal RECORDS.
+
+The general form: a refusal algebra more precise than the representation beneath it is not
+precision, it is a false claim. Where the mechanism distinguishes `Ok(None)` from `Err`, the
+seam must carry that distinction (`FieldReadout::Read` vs `Uninterpretable`) and the
+authority must name it. And where the foreign encoder cannot mint the vector — no X.509
+encoder here will produce a duplicated SAN extension — the property is pinned at the SEAM,
+over an interpreted representation, rather than weakened to what a fixture can express.
 
 ## 9. Slice 2 selection rule
 

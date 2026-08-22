@@ -17,9 +17,16 @@
 //! expressed as real DER through the mechanism adapter. The value rules the refusals rest
 //! on (non-empty, bounded, no control characters) are the generic peer-identity value
 //! invariant, not an X.509 rule.
+//!
+//! Every assertion goes through `CertificateChainEvidence::interpret_identity` — the
+//! block's one public entrance — and names the EXACT refusal. Asserting `is_none()` on the
+//! legacy facade would pass equally for a certificate that was never parsed, and the whole
+//! point of the refusal algebra is that those are different answers.
 
-use mcp_re_proxy::extract_identity;
-use mcp_re_proxy::transport::IdentityPolicy;
+use mcp_re_proxy::communication_assurance::CertificateChainEvidence;
+use mcp_re_proxy::communication_assurance::CertificateIdentityPolicy;
+use mcp_re_proxy::communication_assurance::CertificateIdentityRefusal;
+use mcp_re_proxy::communication_assurance::PeerIdentityValueRefusal;
 use mcp_re_proxy::transport::MAX_ASSERTED_IDENTITY_LEN;
 
 use rcgen::BasicConstraints;
@@ -95,8 +102,12 @@ fn uri_selected_and_absent_does_not_fall_back_to_a_present_dns_san() {
         Some("agent.example.org"),
     );
 
-    assert!(
-        extract_identity(cert.as_ref(), IdentityPolicy::UriSan).is_none(),
+    assert_eq!(
+        CertificateChainEvidence::from_leaf_der(cert.as_ref())
+            .interpret_identity(CertificateIdentityPolicy::UriSan),
+        Err(CertificateIdentityRefusal::SelectedFieldAbsent {
+            selected: CertificateIdentityPolicy::UriSan
+        }),
         "URI SAN is the configured field and this certificate has none; a DNS SAN and a \
          CN are present as decoys, and reading either is the fallback the policy disclaims"
     );
@@ -111,8 +122,12 @@ fn dns_selected_and_absent_does_not_fall_back_to_a_present_common_name() {
         Some("agent.example.org"),
     );
 
-    assert!(
-        extract_identity(cert.as_ref(), IdentityPolicy::DnsSan).is_none(),
+    assert_eq!(
+        CertificateChainEvidence::from_leaf_der(cert.as_ref())
+            .interpret_identity(CertificateIdentityPolicy::DnsSan),
+        Err(CertificateIdentityRefusal::SelectedFieldAbsent {
+            selected: CertificateIdentityPolicy::DnsSan
+        }),
         "DNS SAN is the configured field and this certificate has none; the CN carries a \
          DNS-shaped value that a falling-back selector would happily return"
     );
@@ -143,8 +158,13 @@ fn malformed_first_uri_san_does_not_fall_back_to_a_valid_later_uri_san() {
         None,
     );
 
-    assert!(
-        extract_identity(cert.as_ref(), IdentityPolicy::UriSan).is_none(),
+    assert_eq!(
+        CertificateChainEvidence::from_leaf_der(cert.as_ref())
+            .interpret_identity(CertificateIdentityPolicy::UriSan),
+        Err(CertificateIdentityRefusal::SelectedFieldMalformed {
+            selected: CertificateIdentityPolicy::UriSan,
+            reason: PeerIdentityValueRefusal::ControlCharacter,
+        }),
         "the first URI SAN is the authoritative one and it is malformed; the second is \
          valid, and returning it would be a fallback within the selected field"
     );
@@ -163,8 +183,13 @@ fn empty_first_uri_san_does_not_fall_back_to_a_valid_later_uri_san() {
         None,
     );
 
-    assert!(
-        extract_identity(cert.as_ref(), IdentityPolicy::UriSan).is_none(),
+    assert_eq!(
+        CertificateChainEvidence::from_leaf_der(cert.as_ref())
+            .interpret_identity(CertificateIdentityPolicy::UriSan),
+        Err(CertificateIdentityRefusal::SelectedFieldMalformed {
+            selected: CertificateIdentityPolicy::UriSan,
+            reason: PeerIdentityValueRefusal::Empty,
+        }),
         "a whitespace-only first URI SAN is not a value; the later valid one must not be \
          promoted in its place"
     );
@@ -181,8 +206,13 @@ fn oversized_first_uri_san_does_not_fall_back_to_a_valid_later_uri_san() {
         None,
     );
 
-    assert!(
-        extract_identity(cert.as_ref(), IdentityPolicy::UriSan).is_none(),
+    assert_eq!(
+        CertificateChainEvidence::from_leaf_der(cert.as_ref())
+            .interpret_identity(CertificateIdentityPolicy::UriSan),
+        Err(CertificateIdentityRefusal::SelectedFieldMalformed {
+            selected: CertificateIdentityPolicy::UriSan,
+            reason: PeerIdentityValueRefusal::TooLong,
+        }),
         "an over-length first URI SAN is refused, and the bounded later value must not be \
          substituted for it"
     );
@@ -197,9 +227,50 @@ fn malformed_first_dns_san_does_not_fall_back_to_a_valid_later_dns_san() {
         None,
     );
 
-    assert!(
-        extract_identity(cert.as_ref(), IdentityPolicy::DnsSan).is_none(),
+    assert_eq!(
+        CertificateChainEvidence::from_leaf_der(cert.as_ref())
+            .interpret_identity(CertificateIdentityPolicy::DnsSan),
+        Err(CertificateIdentityRefusal::SelectedFieldMalformed {
+            selected: CertificateIdentityPolicy::DnsSan,
+            reason: PeerIdentityValueRefusal::ControlCharacter,
+        }),
         "the same law holds for the DNS SAN field: the first value is authoritative, and \
          a later well-formed one is not a repair"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Control 3 — the adapter's absence arm, through real DER.
+//
+// A certificate with no SAN extension at all is a certificate that does not carry
+// the field: the reading SUCCEEDED and found nothing. The adapter's other arm — a
+// SAN extension present but uninterpretable — is not reachable through this
+// encoder, so its property is pinned at the seam instead, over an interpreted
+// field set. A property is not weakened to match what a fixture can express.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_certificate_with_no_san_extension_refuses_as_absent_under_both_san_policies() {
+    let ca = make_ca();
+    let cert = leaf(&ca, Vec::new(), Some("only-a-common-name.example.org"));
+
+    for policy in [
+        CertificateIdentityPolicy::UriSan,
+        CertificateIdentityPolicy::DnsSan,
+    ] {
+        assert_eq!(
+            CertificateChainEvidence::from_leaf_der(cert.as_ref()).interpret_identity(policy),
+            Err(CertificateIdentityRefusal::SelectedFieldAbsent { selected: policy }),
+            "no SAN extension is an absent field, not an unreadable one — and the CN that \
+             IS present is not a fallback"
+        );
+    }
+}
+
+#[test]
+fn a_peer_that_presented_no_certificate_is_not_a_peer_whose_field_is_missing() {
+    assert_eq!(
+        CertificateChainEvidence::absent().interpret_identity(CertificateIdentityPolicy::UriSan),
+        Err(CertificateIdentityRefusal::NoLeaf)
     );
 }

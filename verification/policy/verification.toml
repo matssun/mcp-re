@@ -807,6 +807,10 @@ evidence = [
   "test://proxy/certificate_identity/no_fallback_interpretation",
   "mutation://proxy/certificate_identity/no_fallback_interpretation",
 ]
+# The X.509 parser. Declared on the unit as well as scoped from the assumption, so the
+# dependency is visible from the side a reviewer reads first — "what does this unit trust?"
+# — and so a change to the assumption takes the unit DIRTY by derivation.
+assumptions = ["ASM-0030"]
 # The battery spans two targets on purpose, and the split is the parser boundary.
 #
 # The `lib#` members exercise the PURE selector over an interpreted field set: they are
@@ -826,12 +830,16 @@ tested_symbols = [
   "lib#communication_assurance::certificate_identity_interpreter::tests::an_absent_selected_field_refuses_while_the_other_fields_are_populated",
   "lib#communication_assurance::certificate_identity_interpreter::tests::a_malformed_first_value_refuses_and_the_later_valid_value_is_not_reached",
   "lib#communication_assurance::certificate_identity_interpreter::tests::the_refusal_reason_distinguishes_how_the_first_value_was_malformed",
+  "lib#communication_assurance::certificate_identity_interpreter::tests::an_unreadable_representation_refuses_as_uninterpretable_never_as_absent",
+  "lib#communication_assurance::certificate_identity_interpreter::tests::refusal_precedence_puts_readability_before_presence_and_presence_before_shape",
   "lib#communication_assurance::certificate_identity_interpreter::tests::a_trailing_control_character_is_trimmed_rather_than_refused",
   "lib#communication_assurance::certificate_identity_interpreter::tests::interpretation_is_deterministic_over_the_same_fields_and_policy",
   "lib#communication_assurance::certificate_identity_interpreter::tests::an_empty_field_set_refuses_under_every_policy_as_absence",
   # --- the representation seam: order is semantic ---
   "lib#communication_assurance::certificate_identity_fields::tests::the_first_value_of_each_san_list_is_the_one_projected",
   "lib#communication_assurance::certificate_identity_fields::tests::a_malformed_first_value_is_still_the_projected_one",
+  "lib#communication_assurance::certificate_identity_fields::tests::an_unreadable_field_never_projects_as_an_absent_one",
+  "lib#communication_assurance::certificate_identity_fields::tests::an_absent_field_projects_as_read_nothing_rather_than_as_unreadable",
   # --- the mechanism adapter: the two representation refusals ---
   "lib#communication_assurance::certificate_chain_evidence::tests::absent_evidence_refuses_as_no_leaf_under_every_policy",
   "lib#communication_assurance::certificate_chain_evidence::tests::bytes_that_are_not_a_certificate_refuse_as_malformed_not_as_absent",
@@ -839,6 +847,9 @@ tested_symbols = [
   # --- provenance is part of the fact ---
   "lib#communication_assurance::certificate_peer_identity_evidence::tests::two_evidences_differing_only_in_source_are_not_equal",
   "lib#communication_assurance::certificate_identity_policy::tests::every_policy_selects_exactly_one_source",
+  # --- the refusal algebra keeps its facts apart ---
+  "lib#communication_assurance::certificate_identity_refusal::tests::absent_and_malformed_are_distinguishable_for_the_same_field",
+  "lib#communication_assurance::certificate_identity_refusal::tests::an_unreadable_field_and_an_absent_one_are_different_refusals",
   # --- the same law through real DER ---
   "tests/integration#certificate_identity_no_fallback_test::uri_selected_and_absent_does_not_fall_back_to_a_present_dns_san",
   "tests/integration#certificate_identity_no_fallback_test::dns_selected_and_absent_does_not_fall_back_to_a_present_common_name",
@@ -846,6 +857,8 @@ tested_symbols = [
   "tests/integration#certificate_identity_no_fallback_test::empty_first_uri_san_does_not_fall_back_to_a_valid_later_uri_san",
   "tests/integration#certificate_identity_no_fallback_test::oversized_first_uri_san_does_not_fall_back_to_a_valid_later_uri_san",
   "tests/integration#certificate_identity_no_fallback_test::malformed_first_dns_san_does_not_fall_back_to_a_valid_later_dns_san",
+  "tests/integration#certificate_identity_no_fallback_test::a_certificate_with_no_san_extension_refuses_as_absent_under_both_san_policies",
+  "tests/integration#certificate_identity_no_fallback_test::a_peer_that_presented_no_certificate_is_not_a_peer_whose_field_is_missing",
 ]
 pilot = "verus-candidate"
 
