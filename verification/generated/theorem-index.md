@@ -38,6 +38,8 @@ derives, and it is not shown here because this view cannot see the attestations.
 | THM-0020 | A successful delegated unbound response verification establishes a chain and never a binding | http_profile.verifier_results | unit://http_profile.verifier_results | live |
 | THM-0021 | A successful bound-response verification establishes the shared cryptographic and request-binding facts | http_profile.verifier_results | unit://http_profile.freshness_window, unit://http_profile.verifier_results | live |
 | THM-0022 | A successful unbound-response verification establishes the shared facts and no request binding at all | http_profile.verifier_results | unit://http_profile.freshness_window, unit://http_profile.verifier_results | live |
+| THM-0023 | Every peer identity value is well-formed, whatever evidence produced it | proxy.peer_identity_value | unit://proxy.peer_identity_value | live |
+| THM-0024 | Certificate identity interpretation reads the configured field and refuses rather than falling back | proxy.certificate_identity | unit://proxy.certificate_identity | live |
 
 ## Claims in full
 
@@ -272,3 +274,25 @@ derives, and it is not shown here because this view cannot see the attestations.
 **Review requirement.** Owner security-specification review
 
 **Depends on.** THM-0001
+
+### THM-0023 — Every peer identity value is well-formed, whatever evidence produced it
+
+**Statement.** Every inhabitant of PeerIdentityValue is a non-empty, length-bounded string free of control characters, and equals the trimmed form of the candidate it was interpreted from. The type's representation is private and its only constructor is fallible, so this is a property of the type rather than of any call site: no sequence of operations available to a caller produces an inhabitant that violates it.
+
+**Security consequence.** An issuer that mints a SAN holding a CR/LF or a megabyte of padding, and a downstream that injects the same shape into a trusted-ingress header, are refused by the same rule. Neither can put a log-injection or header-smuggling payload into the value a transport binding compares or an audit record carries, and neither provenance can drift into a weaker definition of well-formed than the other.
+
+**Scope — what this does NOT establish.** Well-formedness only. It says nothing about who the identity denotes, whether the identity was authenticated, trusted, admitted, or authorized, or which evidence produced it — provenance is carried by the evidence product that wraps the value, not by the value. It bounds LENGTH, not content: a well-formed value may be an attacker-chosen string, and the theorem is not a claim that the value is meaningful, resolvable, or issued to anyone. The claim is over inhabitants of the type. Callers that reimplement the rules instead of constructing the type are outside it — which is why the trusted-ingress facade delegating rather than reimplementing is part of this unit's battery.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0024 — Certificate identity interpretation reads the configured field and refuses rather than falling back
+
+**Statement.** If interpreting certificate-chain evidence under an identity-selection policy returns Ok, then: the returned source equals the field the policy configures; the returned value is the PeerIdentityValue interpretation of the FIRST value the leaf presents in that field; and the value satisfies THM-0023. If it returns Err, no other field and no later value of the configured field was read. The five refusals are distinguishable: no leaf was presented, the leaf could not be interpreted as a certificate, the representation carrying the configured field could not be interpreted, the configured field was absent, or the configured field's first value was not a well-formed identity — the last carrying which value rule it broke. Present-but-uninterpretable is never reported as absent, and the refusal names the first rule that failed under the precedence readability -> presence -> identity-value validity. Interpretation is total and deterministic over the interpreted field set and the policy.
+
+**Security consequence.** An issuer or peer cannot choose which identity the proxy binds to by controlling a field the deployment did not configure, and cannot choose it by making the authoritative value unusable: neither a present DNS SAN under a URI-SAN policy nor a valid second URI SAN behind a malformed first one is ever read. A deployment that configured URI SANs cannot be silently downgraded to a legacy Common Name.
+
+**Scope — what this does NOT establish.** It establishes IDENTITY EVIDENCE and nothing above it. It does not establish that the certificate chain is trusted, that it is unrevoked, that it is fresh, that the peer is authenticated, that the relationship is admitted, that any action is authorized, or that a channel to that peer exists. Holding the product is not a weaker form of any of those, and none of them may be inferred from it. The claim divides at the parser boundary. The selector half is over an interpreted field set — an ordinary Rust value — and is what the battery and any future proof reach. That the field set faithfully reports what the DER encodes is ASM-0030, an assumed foreign dependency, NOT part of this claim: a wrong parser yields a faithful interpretation of the wrong fields and this theorem still holds. It characterizes values successfully returned by the interpretation operation. It says nothing about arbitrary possession of a CertificatePeerIdentityEvidence value, whose construction closure is the module boundary rather than a proved postcondition. "First value" is a property of the presented order. The claim assumes the field set preserves that order and does not establish it of any other producer. The refusals are distinguishable but not equally consequential: every one of them refuses, so nothing is admitted on any of them. What the distinction establishes is which fact a refusal RECORDS — an operator, an audit trail and a test can tell a peer that presented nothing from one whose issuer minted a broken field. It is a claim about faithful reporting, not about admission.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0023

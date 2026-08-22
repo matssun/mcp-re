@@ -67,6 +67,8 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `ShardTopologyRequest` | `config_state/topology.rs` | `shards()`, `workers_per_shard()`, `shards_or_auto()`, `workers_per_shard_or_auto()` |
 | `TrustPlan` | `startup_plan.rs` | `revocation()`, `document_path()`, `response_kid()`, `reload()`, `epoch()` |
 | `TlsListenerSecurityState` | `tls_listener_state/` (a module TREE) | `epoch()`, `build_exported_key_config()`, `build_delegated_config()`, `build_delegated_resolver_config()` |
+| `PeerIdentityValue` | `communication_assurance/peer_identity_value.rs` | `as_str()` |
+| `CertificatePeerIdentityEvidence` | `communication_assurance/certificate_peer_identity_evidence.rs` | `value()`, `source()` |
 
 A plan produced by an owner lives **with that owner**, not in `startup_plan.rs`.
 `startup_plan` re-exports it. The plan is the owner's projection of its own validated
@@ -203,6 +205,21 @@ way to READ a state and never a way to assemble one. Holding a `CustodyMaterial`
 let you build a `CustodyState`.
 
 ## What sealing found
+
+- `PeerIdentityValue` (ADR-MCPRE-063 Slice 1) is the first owner here whose invariant was
+  previously held by *two* validating call sites that agreed. `extract_identity` and the
+  trusted-ingress header path both called `validate_asserted_identity_value`, correctly, at
+  every site — and correctness depended on the next provenance remembering to. Deleting
+  either call brought an invalid identity into existence; deleting the check inside the
+  owner now cannot, because there is no other way to obtain the type. This is the R-SEAL
+  quantifier difference in its purest form: two `for this call site` facts became one
+  `for every inhabitant` fact, and no behaviour changed.
+- `CertificatePeerIdentityEvidence` seals PROVENANCE, not the value. Its `source` field was
+  a public field on `TransportIdentity`, so any module could pair an identity read from one
+  certificate field with a source naming another. Nothing downstream could detect it: this
+  field is the only record of where an identity came from. The mutation probe for it
+  (`M27`) turns two controls red — which is what a field that was previously unprotected
+  looks like once it has an owner.
 
 - `ReplayPlan::Redis { url, tier: Linearizable }` was an ordinary expression in any module.
   The startup audit line would have advertised a durability guarantee no store implements.

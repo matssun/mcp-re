@@ -29,7 +29,9 @@ attestations this view cannot see.
 | unit://http_profile.keyid | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.verifier_result_separation | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.verifier_results | source, contracts or evidence | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022 | _no consumer_ |
+| unit://proxy.certificate_identity | source, contracts or evidence | THM-0024 | _no consumer_ |
 | unit://proxy.online_ocsp_reachability | source, contracts or evidence | THM-0013 | _no consumer_ |
+| unit://proxy.peer_identity_value | source, contracts or evidence | THM-0023 | proxy.certificate_identity (COMPILE_DEPENDENCY) |
 | unit://proxy.runtime_lifecycle | source, contracts or evidence | THM-0012 | _no consumer_ |
 | unit://proxy.tls_listener_state | source, contracts or evidence | _no theorem_ | _no consumer_ |
 
@@ -58,6 +60,8 @@ attestations this view cannot see.
 | THM-0020 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0021 | statement, consequence, scope or review requirement | specification review | THM-0016, THM-0019 |
 | THM-0022 | statement, consequence, scope or review requirement | specification review | THM-0017, THM-0020 |
+| THM-0023 | statement, consequence, scope or review requirement | specification review | THM-0024 |
+| THM-0024 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 
 ## Assumptions
 
@@ -90,3 +94,4 @@ attestations this view cannot see.
 | ASM-0027 | description, justification, scope or mechanism | http_profile.verifier_results | assumption review |
 | ASM-0028 | description, justification, scope or mechanism | http_profile.verifier_results | assumption review |
 | ASM-0029 | description, justification, scope or mechanism | http_profile.verifier_results | assumption review |
+| ASM-0030 | description, justification, scope or mechanism | proxy.certificate_identity | assumption review |

@@ -51,6 +51,16 @@ on:
       # THM-0013 reads the boundary's OCSP clauses, so the lane must re-measure when
       # they move: the theorem is that no validated deployment enables online OCSP.
       - "mcp-re-proxy/src/config_state/validation/residue.rs"
+      # ADR-MCPRE-063 Slice 1: the certificate identity authority and the peer-identity
+      # value invariant it constructs. The whole module tree, not the interpreter alone —
+      # the selector's claim rests on the representation seam preserving presented order
+      # and on the adapter producing that representation, so a change to either dirties
+      # the units.
+      - "mcp-re-proxy/src/communication_assurance/**"
+      # The merged plain-library integration binary carries this unit's DER-level
+      # controls, and encoding v4 digests those sources, not only their names.
+      - "mcp-re-proxy/tests/integration/**"
+      - "mcp-re-proxy/tests/integration.rs"
       # The build inputs every ReviewFingerprint reads. A dependency bump moves
       # Cargo.lock, which dirties every declared unit — so a lane that did not
       # re-run on it would leave `main` carrying attestations over a dependency
@@ -86,6 +96,16 @@ on:
       # THM-0013 reads the boundary's OCSP clauses, so the lane must re-measure when
       # they move: the theorem is that no validated deployment enables online OCSP.
       - "mcp-re-proxy/src/config_state/validation/residue.rs"
+      # ADR-MCPRE-063 Slice 1: the certificate identity authority and the peer-identity
+      # value invariant it constructs. The whole module tree, not the interpreter alone —
+      # the selector's claim rests on the representation seam preserving presented order
+      # and on the adapter producing that representation, so a change to either dirties
+      # the units.
+      - "mcp-re-proxy/src/communication_assurance/**"
+      # The merged plain-library integration binary carries this unit's DER-level
+      # controls, and encoding v4 digests those sources, not only their names.
+      - "mcp-re-proxy/tests/integration/**"
+      - "mcp-re-proxy/tests/integration.rs"
       # The build inputs every ReviewFingerprint reads. A dependency bump moves
       # Cargo.lock, which dirties every declared unit — so a lane that did not
       # re-run on it would leave `main` carrying attestations over a dependency

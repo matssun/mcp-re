@@ -41,7 +41,23 @@ _PROXY_LIB_SRCS = [
     # of the default build). No async aws-sdk-kms/tokio (ADR-MCPS-018 lean-sync).
     "src/aws_kms_keysource.rs",
     "src/aws_sigv4.rs",
+    # ADR-MCPRE-063 Slice 1: the compatibility surface of the certificate identity
+    # migration — the historical identity vocabulary, delegating to the authority.
+    "src/asserted_identity_facade.rs",
+    # ADR-MCPRE-063 Slice 1: the compatibility surface of the certificate identity
+    # migration — the historical identity vocabulary, delegating to the authority.
     "src/aws_sts.rs",
+    # ADR-MCPRE-063 Slice 1: the communication-assurance authority — certificate-chain
+    # evidence to peer-identity evidence, and the generic identity-value invariant every
+    # provenance shares. The X.509 parser reaches only the adapter.
+    "src/communication_assurance/mod.rs",
+    "src/communication_assurance/certificate_chain_evidence.rs",
+    "src/communication_assurance/certificate_identity_fields.rs",
+    "src/communication_assurance/certificate_identity_interpreter.rs",
+    "src/communication_assurance/certificate_identity_policy.rs",
+    "src/communication_assurance/certificate_identity_refusal.rs",
+    "src/communication_assurance/certificate_peer_identity_evidence.rs",
+    "src/communication_assurance/peer_identity_value.rs",
     "src/cli.rs",
     # Wall-clock acquisition — the module boundary.clock names, kept small so the
     # declared trust boundary is exactly as wide as the code exercising the authority.

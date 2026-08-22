@@ -603,3 +603,35 @@ introduced_by = "ADR-MCPRE-061 MCPRE-136"
 review_requirement = "Owner review; any change to the seam's contract or to slot enforcement."
 affected_contracts = []
 tool_specific_mechanism = "none:trusted-seam"
+
+[[assumption]]
+id = "ASM-0030"
+description = "The X.509 parser faithfully reports a leaf's URI SANs, DNS SANs, and subject Common Name, in the order the certificate presents them."
+justification = """
+`x509_parser` is a foreign ASN.1/X.509 implementation. It is not verified here and proving
+it is explicitly not attempted: an ASN.1 decoder is a far larger verification target than
+the authority that consumes it, and attempting it would put the slice's proof boundary in
+the wrong place.
+
+The assumption is stated as FAITHFUL REPORTING, including ORDER, because order is
+semantic in the consuming authority — the first value of the configured field is the
+authoritative one, so a parser that reordered SANs would change which identity a peer has
+without making any consumer's property false. A parser that dropped, merged, or synthesised
+a general name is likewise inside this assumption and outside THM-0024.
+
+It bounds the claim rather than weakening it: THM-0024 is a property of the interpreted
+field set, so a wrong parser yields a faithful interpretation of the wrong fields and the
+theorem still holds. The consequence of the assumption failing is therefore a wrong
+identity, not an unsound proof — which is exactly why it must be recorded rather than
+absorbed.
+
+It stops being acceptable if the adapter starts branching on the parser's error kinds
+(today it maps every parse failure to one refusal), or if identity interpretation is ever
+given a second parser whose field sets must agree.
+"""
+scope = ["unit://proxy.certificate_identity"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-063 Slice 1"
+review_requirement = "Owner review; any change to the certificate identity adapter or its parser dependency."
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"

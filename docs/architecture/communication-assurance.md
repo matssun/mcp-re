@@ -430,6 +430,84 @@ Slice 1 is complete when:
 - `tls.rs` no longer owns the selector semantics;
 - no end-to-end migration claim is made.
 
+## 8.14 Slice 1 as built — what the design met, and where it moved
+
+Recorded here rather than only in the issue, because the deltas are the reusable part.
+
+**The products, as they exist.** `CertificateChainEvidence` (the adapter's input),
+`CertificateIdentityFields` (the representation seam), `CertificateIdentityPolicy` /
+`CertificateIdentitySource` (two types, not one), `PeerIdentityValue` (the sealed generic
+invariant), `CertificatePeerIdentityEvidence` (the product), `CertificateIdentityRefusal`
+(one algebra, five variants). Registered as `unit://proxy.peer_identity_value` and
+`unit://proxy.certificate_identity`; claimed as THM-0023 and THM-0024; the parser is
+ASM-0030.
+
+**Three things the design did not anticipate.**
+
+1. **The design said "one algebra"; the code wanted two owners for it.** `NoLeaf` and
+   `MalformedCertificate` can only arise in the adapter, and `SelectedFieldAbsent` /
+   `SelectedFieldMalformed` only in the pure selector. They are kept in ONE enum per §8.4,
+   with each variant documenting which authority produces it. Splitting them would have
+   made the caller compose two refusal types to answer one question. The rule this
+   suggests for later slices: an algebra follows the QUESTION, not the layer that answers
+   each part of it.
+
+2. **`CertificateChainEvidence` carries no intermediates.** §8.3 offered "optional
+   presented intermediates" and the slice consumes none: identity is a property of the
+   leaf. A field nothing reads is a claim about ownership that no code backs, and
+   intermediates are the input of chain verification — an authority that does not exist.
+   They enter the representation when that authority does.
+
+3. **The generic value invariant had THREE consumers, not two.** §8.7 named the
+   certificate path and the asserted-ingress path. `validate_routing_headers` is a third:
+   it applies the identity rules to `Mcp-Method` / `Mcp-Name`, which are not identities at
+   all. It still calls the facade, so there is no second implementation, but a routing
+   header borrowing the peer-identity invariant is a mis-ownership this slice deliberately
+   did not fix. It belongs to ingress hygiene, which §5 already places outside
+   communication evidence.
+
+**The measurement that justified the negative controls.** A selector rewritten to skip an
+unusable first SAN and take the next left all 93 tests of the plain integration binary
+green. The later-value half of the no-fallback law was protected by nothing, because every
+existing negative minted a certificate with no other value to fall back to. Controls were
+therefore written FIRST, against the unmigrated code, and each was verified to go red under
+a deliberate weakening before any ownership moved. That order is the transferable part: a
+control written after the migration proves the migration self-consistent, not the property.
+
+**What the slice deleted.** `tls.rs` lost 26 production lines and `transport.rs` 31, and
+both debt baselines were ratcheted down. What went is the selector, the value validator's
+second implementation, and `tls.rs`'s reach into `x509_parser::extensions::GeneralName` —
+the mechanism import that made identity extraction look like a TLS responsibility.
+
+### 8.15 Two implementation laws Slice 1 established
+
+**L-1. A pure semantic helper may be independently testable and formally verifiable
+without being a public composition edge. Public visibility is part of the legal authority
+graph, not a testing convenience.**
+
+Slice 1's first implementation exported both the field-set type and the pure selector,
+because both are unit-tested and both are the proof candidates. That made a second entrance
+into the block: a caller could fabricate a field set and interpret it into evidence without
+ever presenting a certificate. The theorem survived it — the theorem is scoped over the
+selector — but the connector did not, and §5 makes the connector the type, not the prose.
+Both are now private to the authority tree, and the one public route is
+`CertificateChainEvidence::interpret_identity`.
+
+**L-2. An adapter may not convert "present but uninterpretable" into "absent".**
+
+The refusal algebra a block declares is a claim about what its adapter can tell apart. Slice
+1's adapter wrote `.ok().flatten()` over the SAN query — the natural spelling — which turns
+every parser error into an empty field list, so a peer whose issuer minted a malformed or
+duplicated SAN extension was reported as a peer that presented no such field. Both refuse,
+so nothing was admitted either way; what was lost was which fact the refusal RECORDS.
+
+The general form: a refusal algebra more precise than the representation beneath it is not
+precision, it is a false claim. Where the mechanism distinguishes `Ok(None)` from `Err`, the
+seam must carry that distinction (`FieldReadout::Read` vs `Uninterpretable`) and the
+authority must name it. And where the foreign encoder cannot mint the vector — no X.509
+encoder here will produce a duplicated SAN extension — the property is pinned at the SEAM,
+over an interpreted representation, rather than weakened to what a fixture can express.
+
 ## 9. Slice 2 selection rule
 
 Do not choose slice 2 merely because it is physically adjacent to slice 1 or is the largest remaining block.

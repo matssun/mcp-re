@@ -38,6 +38,8 @@
 // ADR-MCPRE-051 §6 (MCPRE-116): versioned, atomically-swapped serving-config
 // snapshots + the in-process CRL hot-reloader (subsumes MCPS-66). Always compiled;
 // pure std (RwLock<Arc<ServerConfig>>), no new dependency.
+mod asserted_identity_facade;
+pub mod communication_assurance;
 pub mod config_snapshot;
 // ADR-MCPS-028 §B: native AWS KMS Ed25519 response signer over blocking HTTPS
 // (ureq) + a minimal audited SigV4 signer — NO async `aws-sdk-kms`/tokio/Smithy
@@ -385,9 +387,7 @@ pub use tls::ServerLimits;
 pub use tls::ServerOptions;
 pub use tls::TlsError;
 pub use tls::MCP_INGRESS_ASSERTION_HEADER;
-pub use transport::validate_asserted_identity_value;
 pub use transport::validate_routing_headers;
-pub use transport::AssertedIdentityRejection;
 pub use transport::AttestedCertVerification;
 pub use transport::AttestedIngressVerified;
 pub use transport::AttestedRevocation;
