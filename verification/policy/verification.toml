@@ -968,3 +968,50 @@ kind = "COMPILE_DEPENDENCY"
 from = "proxy.ed25519_public_key"
 to = "proxy.credential_key_correspondence"
 rationale = "Correspondence compares two Ed25519PublicKeyValue values, and what makes them comparable is that both passed the same representation rule. A weakened rule would let two keys of different algorithms be declared corresponding without the relation's own tests noticing."
+
+# ---------------------------------------------------------------------------
+# Communication assurance — ADR-MCPRE-063 Slice 3
+# ---------------------------------------------------------------------------
+#
+# The first unit whose claim is about a CONCRETE RUNTIME VALUE rather than a semantic
+# product: what possessing a delegated resolver proves about how it was built. It is a
+# separate unit from the correspondence authority because it claims something that
+# authority cannot — that no other construction path exists.
+
+[[unit]]
+id = "proxy.delegated_resolver_materialization"
+class = "V0"
+description = "Correspondence as a structural precondition of the delegated TLS resolver: no MCP-RE path materializes one from credential and signer material that was not established to correspond."
+paths = [
+  "mcp-re-proxy/src/delegated_tls/resolver.rs",
+  "mcp-re-proxy/src/delegated_tls.rs",
+  "mcp-re-proxy/src/tls.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/delegated_resolver_materialization/construction_closure",
+  "mutation://proxy/delegated_resolver_materialization/construction_closure",
+]
+# The positive control is not decoration here. Slice 3 gates a construction that ALSO
+# carries the listener's signing budget (#597), and correspondence must not swallow budget
+# continuity: `corresponding_material_materializes_and_installs_the_listener_budget`
+# asserts the budget by Arc identity, not by equal capacity, because a fresh bucket of the
+# same size would pass an equality check and break the invariant it protects.
+tested_symbols = [
+  "lib#delegated_tls::resolver::correspondence_gate::a_mismatched_credential_and_signer_cannot_materialize_a_resolver",
+  "lib#delegated_tls::resolver::correspondence_gate::a_credential_that_is_not_a_certificate_cannot_materialize_a_resolver",
+  "lib#delegated_tls::resolver::correspondence_gate::an_absent_credential_cannot_materialize_a_resolver",
+  "lib#delegated_tls::resolver::correspondence_gate::corresponding_material_materializes_and_installs_the_listener_budget",
+  "lib#delegated_tls::resolver::correspondence_gate::tls_facade_cannot_bypass_the_materialization_gate",
+  "lib#delegated_tls::resolver::budget_continuity::resolvers_sharing_a_budget_share_one_bucket",
+]
+assumptions = ["ASM-0032"]
+pilot = "verus-candidate"
+
+[[edge]]
+# Producer -> consumer. Materialization consumes the correspondence fact as its construction
+# witness; it does not re-derive what correspondence means.
+kind = "CONTRACT_CONSUMES"
+from = "proxy.credential_key_correspondence"
+to = "proxy.delegated_resolver_materialization"
+rationale = "The resolver's guarantee is exactly the correspondence authority's fact, carried into a runtime value. If correspondence became vacuous, the resolver would still be constructed — and only this unit's controls would notice, because the correspondence unit's own tests are about the relation rather than about what is built from it."

@@ -73,6 +73,7 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `CredentialPublicKeyEvidence` | `communication_assurance/credential_public_key_evidence.rs` | `key()` |
 | `CryptographicSigningKeyEvidence` | `communication_assurance/signing_key_evidence.rs` | `key()` |
 | `CredentialKeyCorrespondenceFacts` | `communication_assurance/credential_key_correspondence.rs` | `corresponding_key()` |
+| `DelegatedCertResolver` | `delegated_tls/resolver.rs` | `budget()`, `materialize()` (the only constructor) |
 
 A plan produced by an owner lives **with that owner**, not in `startup_plan.rs`.
 `startup_plan` re-exports it. The plan is the owner's projection of its own validated
@@ -218,6 +219,15 @@ let you build a `CustodyState`.
   owner now cannot, because there is no other way to obtain the type. This is the R-SEAL
   quantifier difference in its purest form: two `for this call site` facts became one
   `for every inhabitant` fact, and no behaviour changed.
+- `DelegatedCertResolver` (Slice 3) is the first sealed owner here that is a CONCRETE
+  RUNTIME VALUE rather than a fact. What its private field holds is a construction witness
+  — `CredentialKeyCorrespondenceFacts`, never read and never projected — and what that buys
+  is that possession of the resolver proves its credential and signer corresponded. The
+  assembling constructor is private and demands the witness, so the usual weakening ("skip
+  the check and construct anyway") does not compile. The category worth noticing: where a
+  seal makes invalid construction unrepresentable, the evidence is the visibility boundary
+  plus compilation of the consumer closure — not a mutation probe, and certainly not a
+  bypass seam added so a probe could exist. Mutation moves to the supplying invariant.
 - `CredentialKeyCorrespondenceFacts` (Slice 2) shows what a sealed RELATION result looks
   like. It projects ONE key, not the credential's and the signer's separately — after
   correspondence holds there is only one key, and offering two accessors would invite a

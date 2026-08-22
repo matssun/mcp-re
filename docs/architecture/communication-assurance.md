@@ -573,7 +573,83 @@ module and was reached from the delegated TLS path, AWS KMS, GCP KMS and PKCS#11
 now owns both directions — interpretation and the canonical encoding — so no provider
 assembles the DER header by hand, and the twelve bytes exist once.
 
-## 9. Slice 3 selection rule
+## 8.17 Slice 3 as built — a semantic product gating a runtime capability
+
+The first time the architecture shows a fact gating a concrete **runtime value** rather than
+composing with another fact.
+
+**The defect Slice 2 left behind.** Slice 2 established `CredentialKeyCorrespondenceFacts`,
+and the production path then discarded the fact and called
+`DelegatedCertResolver::with_budget(cert_chain, signer, budget)` — a **public** constructor
+taking the same two operands independently. So the relation was established and its terms
+were immediately split apart again, and an embedder could skip it entirely. The
+characterization test asserted the defect before it was removed: a mismatched credential and
+signer materialized a resolver, and the only consequence was an opaque handshake failure
+later.
+
+**Facts beside the terms would not have fixed it.** Passing the facts as a third parameter
+adds a parameter to the same consistency problem: establish `A ↔ A`, then call with
+`facts(A,A)` and material `B, C`. The operands compared and the materialization consuming
+the result have to stay inside **one construction closure**, which is what
+`DelegatedCertResolver::materialize` is: it establishes correspondence over the very chain
+and signer it then moves in, and the facts are never returned to a caller at all.
+
+**The witness is the shape that makes it structural.** The resolver holds the facts in a
+private, unprojected field, and the assembling constructor is private and demands one. So
+possession of the runtime value proves how it was built — and *skip the check and construct
+anyway* is not something a sibling can express, including a sibling added later by someone
+who has not read the comment.
+
+**L-4. Do not introduce a bypass seam merely to mutation-test a type-enforced invariant.**
+
+When invalid construction is unrepresentable at the consumer boundary, the ENFORCEMENT is
+the compiler-enforced visibility boundary, and the EVIDENCE is that boundary plus successful
+compilation of the consumer closure. Mutation moves to the supplying invariant whose
+weakening could make the sealed product unsound.
+
+The two must not be conflated, and the first draft of this law did conflate them by saying
+that a weakening which cannot be written is stronger *evidence*. It is not evidence at all —
+inability to write a mutation is a fact about the mutation, not about the code. What is
+stronger is the mechanism: an invalid construction the type system refuses to represent
+beats a runtime check every caller must remember. This repository's earlier sealing campaign
+already settled that mechanism/evidence split, and settled that module privacy plus
+whole-crate compilation is the relevant evidence for same-crate sealing, rather than a
+separate-crate `compile_fail` test.
+
+So Slice 3 registers no probe removing the gate from `materialize` — `construct` demands a
+`CredentialKeyCorrespondenceFacts` nothing outside the authority can produce, and adding a
+seam so that a probe could reach it would be building the bypass the slice exists to remove.
+What is probed is the supplying relation: **M36** makes correspondence vacuous and the
+resolver's guarantee collapses with it, which is what the `CONTRACT_CONSUMES` edge between
+the two units asserts, measured rather than declared.
+
+The runtime controls state what runtime controls can state. A test cannot prove *no other
+constructor exists* — that is the visibility boundary's job — so the control that used to
+carry that name now carries the property it actually measures: the historical TLS facade
+delegates through the gate, for matching and for mismatching material alike.
+
+**Budget continuity was the thing not to break.** Slice 3 gates a construction that also
+carries the listener-lifetime signing budget (#597). Correspondence is one relation; budget
+continuity across rebuilds is another, and neither authority may reconstruct the other's
+semantics. The positive control asserts the budget by `Arc` identity rather than by equal
+capacity — a fresh bucket of the same size would pass an equality check and silently turn a
+sustained rate limit into a per-interval window. M37 probes exactly that regression.
+
+**The escape hatch stays, and stays honest.**
+
+```text
+build_delegated_config(chain, signer, crls)         MCP-RE owns correspondence — guaranteed
+build_delegated_resolver_config(resolver, crls)     external mechanism — NOT claimed
+```
+
+`build_delegated_resolver_config` accepts an arbitrary `ResolvesServerCert` for custody
+arrangements MCP-RE does not model, and THM-0027's scope says in as many words that a
+resolver reaching the serving path through it carries no correspondence guarantee. Making
+every resolver wear the same guarantee would have destroyed useful extensibility and
+replaced an honest boundary with a uniform-looking claim that was false for half its
+inhabitants.
+
+## 9. Slice 4 selection rule
 
 Do not choose the next slice merely because it is physically adjacent to a completed one or
 is the largest remaining block. Slice 2 was chosen against adjacency on exactly this rule:
@@ -582,8 +658,11 @@ lifetime, current time, revocation snapshots, resumed-session semantics and even
 ADR-MCPRE-062 — complexity selected by proximity rather than by the graph.
 
 Re-evaluate the authority graph and select a semantic transformation whose predecessor
-products now exist, or whose contract can be built independently. Two now exist that did
-not before: peer-identity evidence, and credential/key correspondence facts.
+products now exist, or whose contract can be built independently. Slice 3 was selected on a
+second, equally good ground: **a completed block exposed a defect in its own successor
+boundary** — correspondence was established and then discarded by the very construction it
+was meant to govern. A missing connector immediately downstream of finished work outranks a
+larger block that is merely still sitting somewhere.
 
 Candidate directions include:
 
@@ -592,7 +671,7 @@ Candidate directions include:
 - verified peer/relationship facts + binding evidence -> relationship binding facts.
 
 The next issue must state why its predecessor products and authority boundary are real.
-**Slice 3 is deliberately unnamed here.** What the first binary composition taught is an
+**Slice 4 is deliberately unnamed here.** What the first binary composition taught is an
 input to that choice, and recording a candidate as a decision would make the graph look
 more settled than it is.
 
@@ -621,9 +700,16 @@ Slice 2  (#605)                                                              COM
   -> credential evidence + signing-key evidence -> credential/key correspondence
   -> the first BINARY composition; taught L-3
 
-Review Slice 2
-  -> what a relation between two independently established facts costs and buys
-  -> select Slice 3 from the predecessor/product graph, never by adjacency
+Slice 3  (#607)                                                              COMPLETE
+  -> correspondence facts gate delegated credential materialization
+  -> the first semantic product gating a RUNTIME CAPABILITY; taught L-4
+  -> selected because Slice 2 exposed a defect in its own successor boundary
+
+Review Slice 3
+  -> select Slice 4 from the predecessor/product graph, never by adjacency
+  -> the likely branch is peer authentication: TransportIdentity claims a verified
+     peer identity and is freely constructible, and the request pipeline claims
+     actor and peer are one principal while returning only Established<()>
 
 Later
   -> map ADR-062/#598 session lifecycle into the mechanism-specific assurance branch

@@ -1184,3 +1184,71 @@ expect_red = [
   "lib#tls::delegated_credential_key_correspondence_tests::a_signing_key_of_another_algorithm_carrying_the_credential_point_is_refused",
   "lib#tls::delegated_credential_key_correspondence_tests::every_characterized_failure_is_a_distinct_typed_refusal",
 ]
+
+# ---------------------------------------------------------------------------
+# Communication assurance — ADR-MCPRE-063 Slice 3
+# ---------------------------------------------------------------------------
+#
+# There is deliberately no probe that removes the gate from `materialize` itself, and the
+# reason is the result: it cannot be written. The assembling constructor is private and
+# demands a `CredentialKeyCorrespondenceFacts` value, which nothing outside the authority
+# can produce — so "skip the check and construct anyway" does not compile. A weakening that
+# cannot be expressed is a stronger statement than one that goes red, and it is the whole
+# point of Slice 3.
+#
+# What CAN be weakened is the relation the gate consults. M36 makes correspondence vacuous
+# and shows the resolver's guarantee collapsing with it — which is what the CONTRACT_CONSUMES
+# edge between the two units asserts, measured rather than declared.
+
+[[probe]]
+id = "M36-materialization-gate-consumes-a-real-relation"
+unit = "proxy.delegated_resolver_materialization"
+theorem = "THM-0027"
+conjunct = "the resolver's existence proves correspondence, not merely that a function was called"
+# Same weakening as M31, claimed by the consuming unit. M31 asks whether the relation is
+# right; this asks whether the runtime value's guarantee actually rests on it. A gate wired
+# to a vacuous authority is a gate in name only, and no control inside the correspondence
+# unit can see that.
+path = "mcp-re-proxy/src/communication_assurance/credential_key_correspondence.rs"
+anchor = """
+    if credential.key() != signing_key.key() {
+        return Err(CorrespondenceMismatch);
+    }
+"""
+weakening = """
+    if false && credential.key() != signing_key.key() {
+        return Err(CorrespondenceMismatch);
+    }
+"""
+expect_red = [
+  "lib#delegated_tls::resolver::correspondence_gate::a_mismatched_credential_and_signer_cannot_materialize_a_resolver",
+  "lib#delegated_tls::resolver::correspondence_gate::tls_facade_cannot_bypass_the_materialization_gate",
+]
+
+[[probe]]
+id = "M37-materialization-installs-the-listeners-budget"
+unit = "proxy.delegated_resolver_materialization"
+theorem = "THM-0027"
+conjunct = "the listener's handshake-signature budget is installed unchanged"
+# Slice 3 gates a construction that also carries #597's budget invariant, and the risk of
+# adding a gate to a constructor is that the constructor's other obligations get rewritten
+# around it. The weakening is the exact regression #597 exists to prevent: a fresh full
+# bucket per build, which turns a sustained rate limit into a per-interval window.
+path = "mcp-re-proxy/src/delegated_tls/resolver.rs"
+anchor = """
+        let key = Arc::new(DelegatedEd25519SigningKey::with_budget(
+            signer,
+            Arc::clone(&budget),
+        ));
+"""
+weakening = """
+        let budget = Arc::new(TlsHandshakeSignBudget::default());
+        let key = Arc::new(DelegatedEd25519SigningKey::with_budget(
+            signer,
+            Arc::clone(&budget),
+        ));
+"""
+expect_red = [
+  "lib#delegated_tls::resolver::correspondence_gate::corresponding_material_materializes_and_installs_the_listener_budget",
+  "lib#delegated_tls::resolver::budget_continuity::resolvers_sharing_a_budget_share_one_bucket",
+]
