@@ -25,16 +25,15 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Instant;
 
-use rustls::server::ClientHello;
-use rustls::server::ResolvesServerCert;
-use rustls::sign::CertifiedKey;
 use rustls::sign::Signer;
 use rustls::sign::SigningKey;
 use rustls::SignatureAlgorithm;
 use rustls::SignatureScheme;
-use rustls_pki_types::CertificateDer;
 
 use crate::key_source::KeyError;
+
+mod resolver;
+pub use resolver::DelegatedCertResolver;
 
 /// The single operation a delegated TLS signer needs: a PureEdDSA (Ed25519, no
 /// pre-hash) signature over the raw `message`, returning the raw 64-byte signature.
@@ -263,64 +262,59 @@ impl Signer for DelegatedEd25519Signer {
 /// certificate chain with a [`DelegatedEd25519SigningKey`]. Used via
 /// `ServerConfig::builder(...).with_cert_resolver(...)` so rustls drives the
 /// handshake signature through the device/KMS.
-#[derive(Debug)]
-pub struct DelegatedCertResolver {
-    certified: Arc<CertifiedKey>,
-    budget: Arc<TlsHandshakeSignBudget>,
-}
-
-impl DelegatedCertResolver {
-    /// Pair the server certificate chain (public; loaded from a file) with the
-    /// delegated signer for its key, guarded by the default handshake-signature budget.
-    pub fn new(
-        cert_chain: Vec<CertificateDer<'static>>,
-        signer: Arc<dyn RawEd25519TlsSigner>,
-    ) -> Arc<Self> {
-        DelegatedCertResolver::with_budget(
-            cert_chain,
-            signer,
-            Arc::new(TlsHandshakeSignBudget::default()),
-        )
-    }
-
-    /// As [`new`](Self::new), with a caller-supplied budget.
-    pub fn with_budget(
-        cert_chain: Vec<CertificateDer<'static>>,
-        signer: Arc<dyn RawEd25519TlsSigner>,
-        budget: Arc<TlsHandshakeSignBudget>,
-    ) -> Arc<Self> {
-        let key = Arc::new(DelegatedEd25519SigningKey::with_budget(
-            signer,
-            Arc::clone(&budget),
-        ));
-        Arc::new(DelegatedCertResolver {
-            certified: Arc::new(CertifiedKey::new(cert_chain, key)),
-            budget,
-        })
-    }
-
-    /// The budget bounding how fast unauthenticated peers can drive the remote signer.
-    pub fn budget(&self) -> &Arc<TlsHandshakeSignBudget> {
-        &self.budget
-    }
-}
-
-impl ResolvesServerCert for DelegatedCertResolver {
-    fn resolve(&self, _client_hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
-        Some(self.certified.clone())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use mcp_re_core::b64url_decode;
     use mcp_re_core::SigningKey as McpReSigningKey;
+    use rustls_pki_types::CertificateDer;
 
     use super::*;
 
+    /// Real corresponding material: an Ed25519 leaf certificate and a delegated signer
+    /// holding exactly the key that certificate presents.
+    ///
+    /// Minted rather than faked, because after ADR-MCPRE-063 Slice 3 a resolver cannot come
+    /// into existence unless its credential and signer correspond — so a test that wants a
+    /// resolver has to present material that does.
+    /// The PKCS#8 v1 wrapper for a raw Ed25519 seed (RFC 5958 / RFC 8410): the fixed
+    /// sixteen-byte header, then the thirty-two seed bytes.
+    const PKCS8_ED25519_PREFIX: [u8; 16] = [
+        0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04,
+        0x20,
+    ];
+
+    /// A self-signed Ed25519 leaf presenting the public key of `seed`.
+    ///
+    /// The certificate and the signer are derived from ONE seed, which is what makes the
+    /// material correspond — after Slice 3 a resolver cannot exist unless it does, so a
+    /// test that wants a resolver has to mint a matching pair rather than a plausible one.
+    pub(super) fn leaf_for_seed(seed: &[u8; 32]) -> CertificateDer<'static> {
+        let mut pkcs8 = PKCS8_ED25519_PREFIX.to_vec();
+        pkcs8.extend_from_slice(seed);
+        let key = rcgen::KeyPair::try_from(pkcs8.as_slice()).expect("ed25519 pkcs8");
+        let params = rcgen::CertificateParams::new(vec!["delegated.example.org".to_string()])
+            .expect("params");
+        params
+            .self_signed(&key)
+            .expect("self-signed leaf")
+            .der()
+            .clone()
+    }
+
+    /// A leaf and a delegated signer for the same key.
+    pub(super) fn corresponding_material(
+    ) -> (Vec<CertificateDer<'static>>, Arc<dyn RawEd25519TlsSigner>) {
+        let seed = [11u8; 32];
+        (
+            vec![leaf_for_seed(&seed)],
+            Arc::new(LocalEd25519(McpReSigningKey::from_seed_bytes(&seed)))
+                as Arc<dyn RawEd25519TlsSigner>,
+        )
+    }
+
     /// A local-key delegated signer (stands in for the device/KMS): signs the raw
     /// message with a local Ed25519 key, exactly as a KMS RAW `Sign` would.
-    struct LocalEd25519(McpReSigningKey);
+    pub(super) struct LocalEd25519(pub McpReSigningKey);
     impl RawEd25519TlsSigner for LocalEd25519 {
         fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, KeyError> {
             Ok(b64url_decode(&self.0.sign(message)).expect("local sig is valid b64url"))
@@ -385,23 +379,30 @@ mod tests {
     /// budget exists to bound — a status-only assertion would pass while every
     /// ClientHello still bought a KMS `Sign`.
     #[derive(Default)]
-    struct CountingSigner {
-        calls: std::sync::atomic::AtomicUsize,
+    pub(super) struct CountingSigner {
+        pub(super) calls: std::sync::atomic::AtomicUsize,
     }
     impl RawEd25519TlsSigner for CountingSigner {
         fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, KeyError> {
             self.calls.fetch_add(1, Ordering::Relaxed);
-            let key = McpReSigningKey::from_seed_bytes(&[7u8; 32]);
+            let key = McpReSigningKey::from_seed_bytes(&COUNTING_SIGNER_SEED);
             Ok(b64url_decode(&key.sign(message)).expect("local sig is valid b64url"))
         }
         fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
+            // The key it actually signs with. A signer exporting one key and signing with
+            // another is precisely what correspondence refuses, so a test fake that did
+            // that could no longer be used to build a resolver at all.
+            let key = McpReSigningKey::from_seed_bytes(&COUNTING_SIGNER_SEED);
             Ok(
                 crate::communication_assurance::Ed25519PublicKeyValue::spki_der_for_point(
-                    [0u8; 32],
+                    key.public_key().to_bytes(),
                 ),
             )
         }
     }
+
+    /// The seed `CountingSigner` signs with, and the seed its certificate presents.
+    pub(super) const COUNTING_SIGNER_SEED: [u8; 32] = [7u8; 32];
 
     /// An unauthenticated handshake flood must not reach the remote signer once the
     /// budget is spent: the refused handshakes cost ZERO signer invocations.
@@ -436,48 +437,6 @@ mod tests {
             "a refused handshake must never reach the remote signer"
         );
         assert_eq!(budget.refused(), refused as u64);
-    }
-
-    /// Two resolvers built around ONE budget draw from one bucket.
-    ///
-    /// This is what makes the budget survive a `ServerConfig` rebuild: the TLS plane
-    /// creates the budget once and hands the same one to every build, including the
-    /// `--client-crl-reload-secs` rebuild. The broken implementation this catches is
-    /// `DelegatedCertResolver::new` on the reload path, which mints a fresh full bucket
-    /// on every cadence — turning a sustained rate limit into a per-interval window.
-    #[test]
-    fn resolvers_sharing_a_budget_share_one_bucket() {
-        let counting = Arc::new(CountingSigner::default());
-        let budget = Arc::new(TlsHandshakeSignBudget::new(1, 2));
-        let first = DelegatedCertResolver::with_budget(
-            vec![CertificateDer::from(vec![1u8; 8])],
-            counting.clone(),
-            Arc::clone(&budget),
-        );
-        let second = DelegatedCertResolver::with_budget(
-            vec![CertificateDer::from(vec![1u8; 8])],
-            counting.clone(),
-            Arc::clone(&budget),
-        );
-        assert!(Arc::ptr_eq(first.budget(), second.budget()));
-        // Spend the whole burst through the first resolver's key.
-        assert!(budget.try_acquire());
-        assert!(budget.try_acquire());
-        // The rebuilt resolver must NOT start from a full bucket.
-        let signer = second
-            .certified
-            .key
-            .choose_scheme(&[SignatureScheme::ED25519])
-            .expect("signer");
-        assert!(
-            signer.sign(b"transcript").is_err(),
-            "a rebuilt resolver must inherit the spent bucket, not a fresh one"
-        );
-        assert_eq!(
-            counting.calls.load(Ordering::Relaxed),
-            0,
-            "a refused handshake must never reach the remote signer"
-        );
     }
 
     /// The budget refills, so a bounded rate is a RATE and not a one-shot quota.
