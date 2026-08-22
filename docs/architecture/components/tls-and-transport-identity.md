@@ -150,6 +150,8 @@ Registry: [`verification/policy/theorems.toml`](../../../verification/policy/the
 | **Transport identity is derived only from the verified client certificate** | composition | none | **gap** |
 | Certificate identity interpretation reads the configured field and refuses rather than falling back | certificate evidence → identity evidence | THM-0024 · `unit://proxy.certificate_identity` · probes M25–M28 | in registry |
 | Every peer identity value is well-formed, whatever evidence produced it | identity value | THM-0023 · `unit://proxy.peer_identity_value` · probe M29 | in registry |
+| Every canonical Ed25519 public key value is the canonical RFC 8410 encoding of its own point | key representation | THM-0025 · `unit://proxy.ed25519_public_key` · probes M32, M35 | in registry |
+| Credential/key correspondence relates two interpreted keys and attributes every refusal to the failing side | delegated credential | THM-0026 · `unit://proxy.credential_key_correspondence` · probes M31, M33, M34 · ASM-0032 (leaf SPKI extraction, on the accepting path) | in registry |
 
 Two of the gaps this table recorded are now closed, and by a claim narrower than the row
 that anticipated them: THM-0024 states that identity interpretation reads the configured
@@ -168,6 +170,7 @@ Three of five original rows are real properties with no registry entry. That is 
 | Store-level epoch binding (ADR-055 threat, retained by ADR-062) | `src/tls_listener_state/resumption_acceptance.rs` | `//mcp-re-proxy:proxy_unit_test` | resumption refused after epoch change — a claim about the STORE |
 | Listener-scoped resumption (ADR-062) | `src/tls_listener_state/mod.rs` tests, probes T01–T04 | `//mcp-re-proxy:proxy_unit_test`; `tools/verification/verify-mutations` | a different anchor set gets its own empty store; each probe turns a declared control red |
 | Certificate identity: the no-fallback law, through real DER | `tests/integration/certificate_identity_no_fallback_test.rs` | `//mcp-re-proxy:integration_test` | **every negative mints a decoy** — the selected field is absent or its first value malformed while another field, or a later value of the same field, is valid and unusable |
+| Delegated credential/key correspondence, over real certificates and a real signer seam | `src/tls.rs` `delegated_credential_key_correspondence_tests` | `//mcp-re-proxy:proxy_unit_test` | **the algorithm-confusion vector** — a signing key declaring another algorithm whose trailing bytes ARE the credential's public point; only the profile rule can refuse it |
 | Certificate identity: the pure selector and its refusal algebra | `src/communication_assurance/` module tests, probes M25–M29 | `//mcp-re-proxy:proxy_unit_test`; `tools/verification/verify-mutations` | four refusals stay distinguishable; each probe turns a declared control red |
 | Channel binding to transport identity | `tests/integration/mtls_transport_binding_test.rs` | `//mcp-re-proxy:integration_test` (uses the `test-fixtures` dev feature) | binding mismatch refused |
 | Client leg end to end | `tests/integration_async/mtls_client_leg_e2e_test.rs` | `async_serve`; `//mcp-re-proxy:integration_async_test` | — |
@@ -177,12 +180,18 @@ Three of five original rows are real properties with no registry entry. That is 
 | Deliberate client-verification break is detected | `tests/fault_injection_test.rs` | `fault_accept_any_client`; `//mcp-re-proxy:fault_injection_test` | **this is the negative control for the whole component** — never enabled in the default `bazel test //...` |
 | Throughput of the real listener | `tests/tls_load_harness_bench.rs` | `#![cfg(feature = "redis_replay")]` — run via `scripts/local_slo_lane.sh` **only** | `scripts/slo_invocation_gate.py` fails the build if the `-- --ignored` form returns |
 
-The certificate-identity rows are the ones to read for what a negative control has to do.
+The certificate-identity and correspondence rows are the ones to read for what a negative
+control has to do, and they found the same defect twice.
 Before this slice the tree had **no** control at all for the later-value half of the
 no-fallback law: a selector rewritten to skip an unusable first SAN and take the next one
 left all 93 tests in the plain integration binary green. The existing negatives minted
 certificates with nothing else in them, so there was nothing for a fallback to fall back
 to. A negative that cannot go red is not evidence.
+
+Slice 2 met it again in the delegated credential path: deleting the required-key-profile
+rule left every profile negative GREEN, because a key of the wrong algorithm was still
+refused — by the equality check, since its bytes happened not to match. **When two rules can
+produce the same outcome, a control that asserts the outcome tests neither.**
 
 The last row is ADR-061 §2 class 8 in this component: the harness is not `#[ignore]`d, so `-- --ignored` selects zero tests and exits 0. Never cite an SLO number that did not come from `scripts/local_slo_lane.sh` on a quiet box.
 
@@ -231,9 +240,11 @@ Re-measured by the ADR-061 §5.1 rule after MCPRE-138 (`scripts/module_size_gate
 
 2. **`transport.rs` (1274) and `ocsp.rs` (1271) are band-3 units with no blueprint.** They are named here so their absence is a recorded gap rather than an implied claim of coverage. `transport.rs` shrank by 31 lines and `tls.rs` by 26 when ADR-063 Slice 1 moved certificate identity interpretation out; both debt entries were ratcheted down rather than left at the old number, because a stale baseline is 31 lines of headroom nobody paid for.
 
-3. **The trusted-ingress facade's delegation is pinned by nothing this graph declares.** `transport::validate_asserted_identity_value` delegates to the `PeerIdentityValue` owner, and its own tests go red when the owner's rules weaken — but they are not evidence for THM-0023, whose claim is over inhabitants of the type. A caller that stopped constructing the type would leave every inhabitant well-formed and the ingress path unprotected. Closing this needs the trusted-ingress authority that ADR-063 Slice 1 deliberately did not build.
+3. **`tls.rs` no longer owns credential/key correspondence.** ADR-MCPRE-063 Slice 2 moved the proposition — that the delegated signer's key and the served leaf's key are the same key, of the required profile — to `communication_assurance`. `validated_delegated_resolver` remains as the composition that obtains the two evidence products and, on success, materializes the resolver and attaches the listener's signing budget. That budget is a listener capability, not a property of the credential, and it is deliberately outside what correspondence establishes.
 
-4. **Three properties in §10 have no theorem.** Structural and tested is not the same as stated.
+4. **The trusted-ingress facade's delegation is pinned by nothing this graph declares.** `transport::validate_asserted_identity_value` delegates to the `PeerIdentityValue` owner, and its own tests go red when the owner's rules weaken — but they are not evidence for THM-0023, whose claim is over inhabitants of the type. A caller that stopped constructing the type would leave every inhabitant well-formed and the ingress path unprotected. Closing this needs the trusted-ingress authority that ADR-063 Slice 1 deliberately did not build.
+
+5. **Three properties in §10 have no theorem.** Structural and tested is not the same as stated.
 
 ## 14. Completion criteria
 

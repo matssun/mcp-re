@@ -614,8 +614,7 @@ fn raw_ed25519_point(ec_point: &[u8]) -> Result<[u8; ED25519_PUBLIC_KEY_LEN], Ke
 /// wrong-length / non-Ed25519 point fails closed via [`raw_ed25519_point`].
 fn ed25519_spki_from_ec_point(ec_point: &[u8]) -> Result<Vec<u8>, KeyError> {
     let raw = raw_ed25519_point(ec_point)?;
-    let mut der = crate::kms_keysource::ED25519_SPKI_PREFIX.to_vec();
-    der.extend_from_slice(&raw);
+    let der = crate::communication_assurance::Ed25519PublicKeyValue::spki_der_for_point(raw);
     Ok(der)
 }
 
@@ -902,10 +901,13 @@ mod tests {
             44,
             "RFC 8410 Ed25519 SPKI is 12 + 32 bytes"
         );
-        assert_eq!(
-            &spki_bare[..super::super::kms_keysource::ED25519_SPKI_PREFIX.len()],
-            &super::super::kms_keysource::ED25519_SPKI_PREFIX,
-            "the 12-byte RFC 8410 prefix is present"
+        assert!(
+            crate::communication_assurance::Ed25519PublicKeyValue::interpret_rfc8410_spki(
+                &spki_bare
+            )
+            .is_ok(),
+            "the exported SPKI is the canonical RFC 8410 encoding — asserted through the \
+             owner of that encoding rather than by comparing bytes to a copy of its header"
         );
 
         // The exported SPKI feeds the SAME parser the #58 validated build path uses;

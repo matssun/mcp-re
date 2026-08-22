@@ -48,7 +48,11 @@ pub mod certificate_chain_evidence;
 pub mod certificate_identity_policy;
 pub mod certificate_identity_refusal;
 pub mod certificate_peer_identity_evidence;
+pub mod credential_key_correspondence;
+pub mod credential_public_key_evidence;
+pub mod ed25519_public_key;
 pub mod peer_identity_value;
+pub mod signing_key_evidence;
 
 // PRIVATE to the authority. These two are the block's internal machinery: the
 // representation seam and the pure selector over it.
@@ -71,6 +75,16 @@ pub use certificate_identity_policy::CertificateIdentityPolicy;
 pub use certificate_identity_policy::CertificateIdentitySource;
 pub use certificate_identity_refusal::CertificateIdentityRefusal;
 pub use certificate_peer_identity_evidence::CertificatePeerIdentityEvidence;
+pub use credential_key_correspondence::establish_credential_key_correspondence;
+pub use credential_key_correspondence::CredentialKeyCorrespondenceFacts;
+pub use credential_key_correspondence::CredentialKeyCorrespondenceRefusal;
+pub use credential_public_key_evidence::CredentialKeyRefusal;
+pub use credential_public_key_evidence::CredentialPublicKeyEvidence;
+pub use ed25519_public_key::Ed25519PublicKeyValue;
+pub use ed25519_public_key::Rfc8410SpkiRefusal;
 pub use peer_identity_value::PeerIdentityValue;
 pub use peer_identity_value::PeerIdentityValueRefusal;
 pub use peer_identity_value::MAX_PEER_IDENTITY_LEN;
+pub use signing_key_evidence::CryptographicSigningKeyEvidence;
+pub use signing_key_evidence::SigningKeyExportEvidence;
+pub use signing_key_evidence::SigningKeyRefusal;

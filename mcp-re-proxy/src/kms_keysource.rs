@@ -38,17 +38,6 @@ const ED25519_SIGNATURE_LEN: usize = 64;
 /// Raw Ed25519 public-key length.
 const ED25519_PUBLIC_KEY_LEN: usize = 32;
 
-/// The fixed 12-byte DER prefix of an RFC 8410 Ed25519 `SubjectPublicKeyInfo`:
-/// `SEQUENCE(42) { SEQUENCE(5) { OID 1.3.101.112 } BIT STRING(33) { 00 <32 raw> } }`.
-/// AWS KMS `GetPublicKey` and GCP Cloud KMS both return the key in this exact form,
-/// so the 32 raw bytes are the tail after this prefix. Anything else (a different
-/// key type — RSA, NIST P-curve — or a malformed blob) is rejected.
-pub(crate) const ED25519_SPKI_PREFIX: [u8; 12] = [
-    0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
-];
-/// Total length of an RFC 8410 Ed25519 SPKI (prefix + raw point).
-const ED25519_SPKI_LEN: usize = ED25519_SPKI_PREFIX.len() + ED25519_PUBLIC_KEY_LEN;
-
 /// The network-facing KMS operations an Ed25519 response signer needs. The
 /// production implementations wrap a cloud SDK (`aws-sdk-kms` under feature
 /// `aws_kms_keysource`; GCP Cloud KMS REST under `gcp_kms_keysource`); tests use a
@@ -73,23 +62,32 @@ pub trait KmsEd25519Backend {
 
 /// Extract the 32 raw Ed25519 public-key bytes from an RFC 8410 `SubjectPublicKeyInfo`.
 ///
-/// Fail-closed: a blob of the wrong length, or one whose algorithm prefix is not
-/// id-Ed25519 (`1.3.101.112`), is rejected — the KMS key MUST be an Ed25519 key.
-/// This prevents silently treating an RSA / NIST-P-curve KMS key (a different,
-/// MCP-RE-incompatible algorithm) as if it were Ed25519.
+/// **Compatibility facade.** The rule is NOT implemented here. What makes a blob a legal
+/// Ed25519 public key is a property of the key representation, not of KMS — the same rule
+/// binds an AWS key, a GCP key, a PKCS#11 token key and the public key inside a served
+/// certificate — and ADR-MCPRE-063 Slice 2 gives it one owner,
+/// [`Ed25519PublicKeyValue`](crate::communication_assurance::Ed25519PublicKeyValue). This
+/// function maps that owner's refusal into the `KeyError` its callers already match on.
+///
+/// The owner distinguishes unreadable bytes from a well-formed key of another algorithm
+/// from a non-canonical Ed25519 encoding. This vocabulary has one variant for all three, so
+/// the distinction is rendered into the message rather than lost: a KMS operator who
+/// configured an RSA key is told the algorithm the key declares. Callers that need to
+/// branch on the difference should consume the owner directly.
 pub(crate) fn ed25519_raw_point_from_spki(
     der: &[u8],
 ) -> Result<[u8; ED25519_PUBLIC_KEY_LEN], KeyError> {
-    if der.len() != ED25519_SPKI_LEN || der[..ED25519_SPKI_PREFIX.len()] != ED25519_SPKI_PREFIX {
-        return Err(KeyError::Malformed(format!(
-            "kms: public key is not an RFC 8410 Ed25519 SubjectPublicKeyInfo (got {} bytes); the \
-             KMS key MUST be an Ed25519 key (AWS ECC_NIST_EDWARDS25519 / GCP EC_SIGN_ED25519)",
-            der.len()
-        )));
-    }
-    let mut raw = [0u8; ED25519_PUBLIC_KEY_LEN];
-    raw.copy_from_slice(&der[ED25519_SPKI_PREFIX.len()..]);
-    Ok(raw)
+    use crate::communication_assurance::Ed25519PublicKeyValue;
+
+    Ed25519PublicKeyValue::interpret_rfc8410_spki(der)
+        .map(|key| key.raw_point())
+        .map_err(|refusal| {
+            KeyError::Malformed(format!(
+                "kms: public key is not an RFC 8410 Ed25519 SubjectPublicKeyInfo — {refusal}; \
+                 the KMS key MUST be an Ed25519 key (AWS ECC_NIST_EDWARDS25519 / GCP \
+                 EC_SIGN_ED25519)"
+            ))
+        })
 }
 
 /// A non-exporting [`ResponseSigner`] that signs Ed25519 inside a cloud KMS.
@@ -247,13 +245,10 @@ mod tests {
     use super::KmsResponseSigner;
     use super::RawEd25519TlsSigner;
     use super::ResponseSigner;
-    use super::ED25519_SPKI_PREFIX;
 
     /// Build an RFC 8410 Ed25519 SPKI from a raw 32-byte point (what AWS/GCP return).
     fn ed25519_spki_from_raw(raw: &[u8; 32]) -> Vec<u8> {
-        let mut der = ED25519_SPKI_PREFIX.to_vec();
-        der.extend_from_slice(raw);
-        der
+        crate::communication_assurance::Ed25519PublicKeyValue::spki_der_for_point(*raw)
     }
 
     /// A fake KMS backed by a LOCAL Ed25519 key — stands in for AWS/GCP KMS so the

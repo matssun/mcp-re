@@ -69,6 +69,10 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `TlsListenerSecurityState` | `tls_listener_state/` (a module TREE) | `epoch()`, `build_exported_key_config()`, `build_delegated_config()`, `build_delegated_resolver_config()` |
 | `PeerIdentityValue` | `communication_assurance/peer_identity_value.rs` | `as_str()` |
 | `CertificatePeerIdentityEvidence` | `communication_assurance/certificate_peer_identity_evidence.rs` | `value()`, `source()` |
+| `Ed25519PublicKeyValue` | `communication_assurance/ed25519_public_key.rs` | `raw_point()`, `spki_der_for_point()` (associated) |
+| `CredentialPublicKeyEvidence` | `communication_assurance/credential_public_key_evidence.rs` | `key()` |
+| `CryptographicSigningKeyEvidence` | `communication_assurance/signing_key_evidence.rs` | `key()` |
+| `CredentialKeyCorrespondenceFacts` | `communication_assurance/credential_key_correspondence.rs` | `corresponding_key()` |
 
 A plan produced by an owner lives **with that owner**, not in `startup_plan.rs`.
 `startup_plan` re-exports it. The plan is the owner's projection of its own validated
@@ -214,6 +218,12 @@ let you build a `CustodyState`.
   owner now cannot, because there is no other way to obtain the type. This is the R-SEAL
   quantifier difference in its purest form: two `for this call site` facts became one
   `for every inhabitant` fact, and no behaviour changed.
+- `CredentialKeyCorrespondenceFacts` (Slice 2) shows what a sealed RELATION result looks
+  like. It projects ONE key, not the credential's and the signer's separately — after
+  correspondence holds there is only one key, and offering two accessors would invite a
+  consumer to compare them again, re-deriving the fact the value already carries. The
+  refusal is likewise a unit struct carrying no key material: naming the expected key in an
+  error invites exactly the comparison the authority exists to own.
 - `CertificatePeerIdentityEvidence` seals PROVENANCE, not the value. Its `source` field was
   a public field on `TransportIdentity`, so any module could pair an identity read from one
   certificate field with a source naming another. Nothing downstream could detect it: this

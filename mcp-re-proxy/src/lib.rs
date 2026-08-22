@@ -38,9 +38,9 @@
 // ADR-MCPRE-051 §6 (MCPRE-116): versioned, atomically-swapped serving-config
 // snapshots + the in-process CRL hot-reloader (subsumes MCPS-66). Always compiled;
 // pure std (RwLock<Arc<ServerConfig>>), no new dependency.
-mod asserted_identity_facade;
 pub mod communication_assurance;
 pub mod config_snapshot;
+mod facades;
 // ADR-MCPS-028 §B: native AWS KMS Ed25519 response signer over blocking HTTPS
 // (ureq) + a minimal audited SigV4 signer — NO async `aws-sdk-kms`/tokio/Smithy
 // (ADR-MCPS-018 lean-sync firewall). Compiled ONLY under the non-default

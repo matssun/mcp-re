@@ -31,12 +31,12 @@ use crate::aws_sts::AwsCredentialSource;
 use crate::aws_sts::EnvCredentialSource;
 use crate::aws_sts::WebIdentityConfig;
 use crate::aws_sts::WebIdentityCredentialSource;
+use crate::communication_assurance::Ed25519PublicKeyValue;
 use crate::delegated_tls::RawEd25519TlsSigner;
 use crate::handshake_quota::HandshakeQuotaWindow;
 use crate::handshake_quota::QuotaGuarded;
 use crate::handshake_quota::QuotaVerdict;
 use crate::key_source::KeyError;
-use crate::kms_keysource::ed25519_raw_point_from_spki;
 use crate::kms_keysource::KmsEd25519Backend;
 use crate::remote_signer_call::is_load_shedding_status;
 use crate::remote_signer_call::json_string_field;
@@ -478,7 +478,7 @@ impl AwsKmsEd25519Backend {
             .post_kms(TARGET_GET_PUBLIC_KEY, &body)
             .map_err(|failure| failure.into_key_error("aws-kms", TARGET_GET_PUBLIC_KEY))?;
         let spki_der = parse_get_public_key_response(&resp)?;
-        let raw = ed25519_raw_point_from_spki(&spki_der)?;
+        let raw = crate::kms_keysource::ed25519_raw_point_from_spki(&spki_der)?;
         let verify_key = VerificationKey::from_bytes(&raw).map_err(|e| {
             KeyError::Malformed(format!("aws-kms: invalid Ed25519 public key: {e}"))
         })?;
@@ -619,8 +619,8 @@ impl KmsHttpClient for LocalKeyKmsTransport {
     fn post_kms(&self, target: &str, body: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure> {
         match target {
             TARGET_GET_PUBLIC_KEY => {
-                let mut der = crate::kms_keysource::ED25519_SPKI_PREFIX.to_vec();
-                der.extend_from_slice(&self.key.public_key().to_bytes());
+                let point = self.key.public_key().to_bytes();
+                let der = Ed25519PublicKeyValue::spki_der_for_point(point);
                 Ok(serde_json::json!({
                     "KeySpec": KEY_SPEC_ED25519,
                     "PublicKey": STANDARD.encode(&der),
@@ -698,12 +698,9 @@ mod tests {
     use mcp_re_core::SigningKey;
 
     use super::*;
-    use crate::kms_keysource::ED25519_SPKI_PREFIX;
 
     fn spki_from_raw(raw: &[u8; 32]) -> Vec<u8> {
-        let mut der = ED25519_SPKI_PREFIX.to_vec();
-        der.extend_from_slice(raw);
-        der
+        Ed25519PublicKeyValue::spki_der_for_point(*raw)
     }
 
     /// GOLDEN: UTC formatting matches well-known timestamps.
@@ -1009,7 +1006,10 @@ mod tests {
         let sig = backend.sign_raw_ed25519(preimage).expect("sign");
         assert_eq!(sig.len(), 64);
         // The advertised SPKI parses to the same verify key.
-        let raw = ed25519_raw_point_from_spki(&backend.public_key_spki_der().unwrap()).unwrap();
+        let raw = crate::kms_keysource::ed25519_raw_point_from_spki(
+            &backend.public_key_spki_der().unwrap(),
+        )
+        .unwrap();
         let key = VerificationKey::from_bytes(&raw).unwrap();
         verify_ed25519(preimage, &b64url_encode(&sig), &key).expect("verifies");
     }
@@ -1191,7 +1191,10 @@ mod tests {
             "delegated TLS signature is a raw 64-byte Ed25519 sig"
         );
         // The reported SPKI is the advertised KMS public key and verifies the sig.
-        let raw = ed25519_raw_point_from_spki(&backend.tls_public_key_spki_der().unwrap()).unwrap();
+        let raw = crate::kms_keysource::ed25519_raw_point_from_spki(
+            &backend.tls_public_key_spki_der().unwrap(),
+        )
+        .unwrap();
         let key = VerificationKey::from_bytes(&raw).unwrap();
         verify_ed25519(transcript, &b64url_encode(&sig), &key).expect("tls sig verifies");
     }

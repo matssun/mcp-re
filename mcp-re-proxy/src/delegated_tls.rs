@@ -326,8 +326,9 @@ mod tests {
             Ok(b64url_decode(&self.0.sign(message)).expect("local sig is valid b64url"))
         }
         fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
-            let mut der = crate::kms_keysource::ED25519_SPKI_PREFIX.to_vec();
-            der.extend_from_slice(&self.0.public_key().to_bytes());
+            let der = crate::communication_assurance::Ed25519PublicKeyValue::spki_der_for_point(
+                self.0.public_key().to_bytes(),
+            );
             Ok(der)
         }
     }
@@ -368,7 +369,11 @@ mod tests {
                 Ok(vec![0u8; 63])
             }
             fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
-                Ok(crate::kms_keysource::ED25519_SPKI_PREFIX.to_vec())
+                Ok(
+                    crate::communication_assurance::Ed25519PublicKeyValue::spki_der_for_point(
+                        [0u8; 32],
+                    ),
+                )
             }
         }
         let key = DelegatedEd25519SigningKey::new(Arc::new(ShortSig));
@@ -390,7 +395,11 @@ mod tests {
             Ok(b64url_decode(&key.sign(message)).expect("local sig is valid b64url"))
         }
         fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
-            Ok(crate::kms_keysource::ED25519_SPKI_PREFIX.to_vec())
+            Ok(
+                crate::communication_assurance::Ed25519PublicKeyValue::spki_der_for_point(
+                    [0u8; 32],
+                ),
+            )
         }
     }
 

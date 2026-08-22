@@ -48,6 +48,7 @@ use mcp_re_core::verify_ed25519;
 use mcp_re_core::VerificationKey;
 use zeroize::Zeroizing;
 
+use crate::communication_assurance::Ed25519PublicKeyValue;
 use crate::delegated_tls::RawEd25519TlsSigner;
 use crate::handshake_quota::HandshakeQuotaWindow;
 use crate::handshake_quota::QuotaGuarded;
@@ -1077,8 +1078,7 @@ struct LocalKeyGcpTransport {
 
 impl GcpKmsTransport for LocalKeyGcpTransport {
     fn get_public_key(&self) -> Result<Vec<u8>, RemoteSignerFailure> {
-        let mut der = crate::kms_keysource::ED25519_SPKI_PREFIX.to_vec();
-        der.extend_from_slice(&self.key.public_key().to_bytes());
+        let der = Ed25519PublicKeyValue::spki_der_for_point(self.key.public_key().to_bytes());
         let b64 = STANDARD.encode(&der);
         let mut pem = String::from("-----BEGIN PUBLIC KEY-----\n");
         for chunk in b64.as_bytes().chunks(64) {
@@ -1156,12 +1156,10 @@ mod tests {
     use mcp_re_core::TrustResolverError;
 
     use super::*;
-    use crate::kms_keysource::ED25519_SPKI_PREFIX;
 
     /// Build a PEM-wrapped RFC 8410 Ed25519 SPKI from a raw point (what GCP returns).
     fn pem_from_raw(raw: &[u8; 32]) -> String {
-        let mut der = ED25519_SPKI_PREFIX.to_vec();
-        der.extend_from_slice(raw);
+        let der = Ed25519PublicKeyValue::spki_der_for_point(*raw);
         let b64 = STANDARD.encode(&der);
         let mut pem = String::from("-----BEGIN PUBLIC KEY-----\n");
         for chunk in b64.as_bytes().chunks(64) {
@@ -1768,8 +1766,7 @@ mod tests {
         let raw = SigningKey::from_seed_bytes(&[5u8; 32])
             .public_key()
             .to_bytes();
-        let mut der = ED25519_SPKI_PREFIX.to_vec();
-        der.extend_from_slice(&raw);
+        let der = Ed25519PublicKeyValue::spki_der_for_point(raw);
         assert_eq!(spki_der_from_pem(&pem_from_raw(&raw)).unwrap(), der);
     }
 
@@ -1793,8 +1790,7 @@ mod tests {
             "pem": pem_from_raw(&raw),
         })
         .to_string();
-        let mut der = ED25519_SPKI_PREFIX.to_vec();
-        der.extend_from_slice(&raw);
+        let der = Ed25519PublicKeyValue::spki_der_for_point(raw);
         assert_eq!(parse_public_key_response(body.as_bytes()).unwrap(), der);
     }
 
