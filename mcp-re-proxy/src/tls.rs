@@ -1872,15 +1872,22 @@ mod delegated_credential_key_correspondence_tests {
     }
 
     #[test]
-    fn the_six_facts_are_six_typed_refusals_and_not_six_sentences() {
+    fn every_characterized_failure_is_a_distinct_typed_refusal() {
         // The replacement for the characterization test this suite opened with.
         //
-        // Before the slice, all six vectors arrived as `TlsError::DelegatedKeyMismatch`
-        // and were distinguishable ONLY as prose. They are now six values of a
-        // hierarchical algebra: two sides, each with its own failures, and one mismatch
-        // that belongs to the relation. The facade still renders a message, because its
-        // callers expect one — but the message is now a rendering of a fact rather than
-        // the only place the fact exists.
+        // Before the slice, every vector arrived as `TlsError::DelegatedKeyMismatch` and
+        // was distinguishable ONLY as prose. They are now values of a hierarchical
+        // algebra: two sides, each with its own failures, and one mismatch belonging to
+        // the relation. The facade still renders a message, because its callers expect
+        // one — but the message is a rendering of a fact rather than the only place the
+        // fact exists.
+        //
+        // The property is deliberately count-free. Characterization found six prose-only
+        // failures and the algebra already distinguishes more than six, because the key
+        // representation alone has three; a later adapter may legitimately add another.
+        // What must hold is that every characterized failure is its own value — a name
+        // pinning a number would have to be renamed the first time the architecture is
+        // right about something new.
         let (leaf, spki) = ed25519_leaf();
         let (_, other_spki) = ed25519_leaf();
         let p256 = p256_leaf();

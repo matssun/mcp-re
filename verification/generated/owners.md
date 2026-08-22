@@ -26,7 +26,7 @@ not an omission to hide.
 | http_profile.verifier_result_separation | V0 | _none_ | 0 |
 | http_profile.verifier_results | V0 | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022 | 3 |
 | proxy.certificate_identity | V0 | THM-0024 | 1 |
-| proxy.credential_key_correspondence | V0 | THM-0026 | 0 |
+| proxy.credential_key_correspondence | V0 | THM-0026 | 1 |
 | proxy.ed25519_public_key | V0 | THM-0025 | 1 |
 | proxy.online_ocsp_reachability | V0 | THM-0013 | 0 |
 | proxy.peer_identity_value | V0 | THM-0023 | 0 |

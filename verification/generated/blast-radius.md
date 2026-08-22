@@ -100,3 +100,4 @@ attestations this view cannot see.
 | ASM-0029 | description, justification, scope or mechanism | http_profile.verifier_results | assumption review |
 | ASM-0030 | description, justification, scope or mechanism | proxy.certificate_identity | assumption review |
 | ASM-0031 | description, justification, scope or mechanism | proxy.ed25519_public_key | assumption review |
+| ASM-0032 | description, justification, scope or mechanism | proxy.credential_key_correspondence | assumption review |

@@ -929,6 +929,10 @@ evidence = [
   "test://proxy/credential_key_correspondence/side_attributed_relation",
   "mutation://proxy/credential_key_correspondence/side_attributed_relation",
 ]
+# The credential side's foreign premise: that the certificate parser reports the leaf's own
+# SubjectPublicKeyInfo. It sits on the ACCEPTING path, which is what distinguishes it from
+# ASM-0031 — that one is contained to refusal classification and cannot affect acceptance.
+assumptions = ["ASM-0032"]
 tested_symbols = [
   # --- the adapters, each refusing on its own side ---
   "lib#communication_assurance::credential_public_key_evidence::tests::no_credential_is_absence_not_an_unreadable_one",
@@ -952,7 +956,7 @@ tested_symbols = [
   # The control that reaches the profile conjunct rather than a coincidence. Deleting the
   # profile rule and comparing trailing bytes leaves every other negative here green.
   "lib#tls::delegated_credential_key_correspondence_tests::a_signing_key_of_another_algorithm_carrying_the_credential_point_is_refused",
-  "lib#tls::delegated_credential_key_correspondence_tests::the_six_facts_are_six_typed_refusals_and_not_six_sentences",
+  "lib#tls::delegated_credential_key_correspondence_tests::every_characterized_failure_is_a_distinct_typed_refusal",
   "lib#tls::delegated_credential_key_correspondence_tests::the_accepting_case_yields_the_one_key_both_sides_presented",
 ]
 pilot = "verus-candidate"

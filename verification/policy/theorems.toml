@@ -972,8 +972,16 @@ Equality of keys is equality of the thirty-two interpreted bytes. It is not a cl
 two equal points are the same KEY MATERIAL in any custody sense, and it establishes nothing
 about the private halves.
 
-Both sides' interpretation rests on ASM-0031 through THM-0025 for which refusal is
-reported; neither rests on it for acceptance.
+The two sides rest on foreign parsing differently, and a reviewer must not read one
+containment onto the other. That the credential's leaf presented THIS SubjectPublicKeyInfo
+is ASM-0032, an assumed premise on the ACCEPTING path: a certificate parser reporting the
+wrong bytes would let correspondence hold against a key the credential does not present.
+Which refusal is reported, on either side, rests on ASM-0031 through THM-0025, and that one
+cannot affect acceptance because acceptance never consults it.
+
+The signing side needs no equivalent assumption, because the claim is deliberately about the
+key the signer EXPORTED. It does not establish that the signer holds the private half, so
+nothing here depends on the export being an honest report of what the device can sign with.
 """
 owner = "proxy.credential_key_correspondence"
 review_requirement = "Owner security-specification review"

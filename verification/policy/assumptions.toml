@@ -665,3 +665,43 @@ introduced_by = "ADR-MCPRE-063 Slice 2"
 review_requirement = "Owner review; any change that lets the accepting path consult the parser."
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0032"
+description = "The X.509 certificate parser faithfully reports the leaf certificate's SubjectPublicKeyInfo bytes."
+justification = """
+The credential adapter parses the leaf with `X509Certificate::from_der` and takes
+`certificate.public_key().raw` as the SubjectPublicKeyInfo the credential presented. Both
+halves are foreign: that the bytes parse as a certificate at all, and that the SPKI slice
+reported is the one the certificate actually carries.
+
+This premise is NOT covered by the two assumptions already registered, and the distinction
+matters because their containments differ:
+
+  * ASM-0030 covers the identity-field reporting of Slice 1 — URI/DNS SANs and the Common
+    Name, and their presentation order. It says nothing about the public key.
+  * ASM-0031 covers the SubjectPublicKeyInfo parser used ONLY after canonical matching has
+    already failed, and only to classify a refusal. It is contained to reporting by
+    construction, and that containment is exactly what does not apply here: this premise
+    sits on the ACCEPTING path, between certificate bytes and the bytes handed to
+    `Ed25519PublicKeyValue::interpret_rfc8410_spki`.
+
+A parser that reported another certificate's SPKI, or a slice that is not the SPKI, would
+let correspondence hold against a key the credential does not present — so unlike ASM-0031
+this assumption can affect acceptance, and it is registered rather than folded into a
+neighbouring one for that reason.
+
+It is not proved here: an X.509 decoder is a far larger verification target than the
+authority consuming it, and attempting it would put the proof boundary in the wrong place.
+
+It stops being acceptable if the credential adapter ever re-encodes the SPKI rather than
+taking the parser's bytes verbatim — a re-encoding would make this code a second opinion on
+what the credential says — or if a second certificate parser is introduced whose reported
+SPKI must agree with this one's.
+"""
+scope = ["unit://proxy.credential_key_correspondence"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-063 Slice 2"
+review_requirement = "Owner review; any change to the credential adapter's certificate parsing or its parser dependency."
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"

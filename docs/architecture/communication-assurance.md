@@ -521,7 +521,14 @@ reached. Registered as `unit://proxy.ed25519_public_key` and
 `unit://proxy.credential_key_correspondence`; claimed as THM-0025 and THM-0026; the SPKI
 parser is ASM-0031; probes M31–M35.
 
-**The refusal algebra is hierarchical because the failures are not a flat list.**
+**Six prose-only failures became a hierarchical typed refusal algebra**, and
+characterization found further distinguishable representation facts on the way — an
+unreadable key and a well-formed key of another algorithm had been one path, and a
+non-canonical Ed25519 encoding was being refused silently. The algebra is deliberately not
+counted anywhere: it is a hierarchy whose leaves a later adapter may legitimately extend,
+and a record that fixes a number ages into a false one.
+
+**It is hierarchical because the failures are not a flat list.**
 `Credential(..) | SigningKey(..) | Mismatch`. Two of the three are a SIDE failing to produce
 evidence; only the third is the relation refusing. A flat enum would have made
 side-attribution a matter of reading which variant name happened to mention a certificate.
@@ -566,20 +573,28 @@ module and was reached from the delegated TLS path, AWS KMS, GCP KMS and PKCS#11
 now owns both directions — interpretation and the canonical encoding — so no provider
 assembles the DER header by hand, and the twelve bytes exist once.
 
-## 9. Slice 2 selection rule
+## 9. Slice 3 selection rule
 
-Do not choose slice 2 merely because it is physically adjacent to slice 1 or is the largest remaining block.
+Do not choose the next slice merely because it is physically adjacent to a completed one or
+is the largest remaining block. Slice 2 was chosen against adjacency on exactly this rule:
+CRL/revocation sits next to Slice 1 in `tls.rs`, and taking it would have dragged in chain
+lifetime, current time, revocation snapshots, resumed-session semantics and eventually
+ADR-MCPRE-062 — complexity selected by proximity rather than by the graph.
 
-After slice 1, re-evaluate the authority graph and select one of the next semantic transformations whose predecessor product now exists or whose contract can be built independently.
+Re-evaluate the authority graph and select a semantic transformation whose predecessor
+products now exist, or whose contract can be built independently. Two now exist that did
+not before: peer-identity evidence, and credential/key correspondence facts.
 
 Candidate directions include:
 
 - certificate-chain evidence -> verified certificate/revocation facts;
-- delegated-credential evidence + cryptographic peer-key evidence -> credential/key correspondence facts;
 - peer-identity evidence + verified evidence -> authenticated peer facts;
 - verified peer/relationship facts + binding evidence -> relationship binding facts.
 
 The next issue must state why its predecessor products and authority boundary are real.
+**Slice 3 is deliberately unnamed here.** What the first binary composition taught is an
+input to that choice, and recording a candidate as a decision would make the graph look
+more settled than it is.
 
 ## 10. Relation to #598 / ADR-062
 
@@ -592,23 +607,23 @@ The #598 retirement/re-scope work should later map the dormant live-epoch machin
 ## 11. Concrete work sequence
 
 ```text
-PR #600 / MCPRE-138
+PR #600 / MCPRE-138                                                          DONE
   -> close historical blocking-harness extraction
 
-ADR-MCPRE-063
-  -> ratify semantic architecture
+ADR-MCPRE-063 + blueprint                                                    ACCEPTED
+  -> ratify semantic architecture, initial graph, migration discipline
 
-Blueprint
-  -> ratify initial graph and migration discipline
-
-Slice 1
+Slice 1  (#602)                                                              COMPLETE
   -> certificate-chain evidence -> peer-identity evidence
+  -> taught L-1, L-2
 
-Review slice 1
-  -> validate products, refusals, proof boundary, compatibility pattern
+Slice 2  (#605)                                                              COMPLETE
+  -> credential evidence + signing-key evidence -> credential/key correspondence
+  -> the first BINARY composition; taught L-3
 
-Slice 2
-  -> choose from architecture, not LOC or file adjacency
+Review Slice 2
+  -> what a relation between two independently established facts costs and buys
+  -> select Slice 3 from the predecessor/product graph, never by adjacency
 
 Later
   -> map ADR-062/#598 session lifecycle into the mechanism-specific assurance branch

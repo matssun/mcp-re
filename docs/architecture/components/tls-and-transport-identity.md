@@ -151,7 +151,7 @@ Registry: [`verification/policy/theorems.toml`](../../../verification/policy/the
 | Certificate identity interpretation reads the configured field and refuses rather than falling back | certificate evidence → identity evidence | THM-0024 · `unit://proxy.certificate_identity` · probes M25–M28 | in registry |
 | Every peer identity value is well-formed, whatever evidence produced it | identity value | THM-0023 · `unit://proxy.peer_identity_value` · probe M29 | in registry |
 | Every canonical Ed25519 public key value is the canonical RFC 8410 encoding of its own point | key representation | THM-0025 · `unit://proxy.ed25519_public_key` · probes M32, M35 | in registry |
-| Credential/key correspondence relates two interpreted keys and attributes every refusal to the failing side | delegated credential | THM-0026 · `unit://proxy.credential_key_correspondence` · probes M31, M33, M34 | in registry |
+| Credential/key correspondence relates two interpreted keys and attributes every refusal to the failing side | delegated credential | THM-0026 · `unit://proxy.credential_key_correspondence` · probes M31, M33, M34 · ASM-0032 (leaf SPKI extraction, on the accepting path) | in registry |
 
 Two of the gaps this table recorded are now closed, and by a claim narrower than the row
 that anticipated them: THM-0024 states that identity interpretation reads the configured
