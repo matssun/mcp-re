@@ -30,6 +30,8 @@ flowchart TD
 ## Top-level documents
 
 - [**ADR-MCPRE-061**](https://github.com/matssun/mcp-re/discussions/567) — the durable architectural decision. ✅ Accepted 2026-08-20; the Discussion is the source of truth (`docs/adr/README.md`).
+- [**ADR-MCPRE-063**](https://github.com/matssun/mcp-re/discussions/601) — communication assurance as composed semantic products. ✅ Accepted 2026-08-22. Specializes ADR-061 for the communication-security surface; does not supersede it.
+- [`communication-assurance.md`](communication-assurance.md) — the ADR-063 companion blueprint: the target authority graph, the migration questions, and the vertical-slice contracts.
 - [`implementation-blueprint.md`](implementation-blueprint.md) — current execution method for the refactoring campaign.
 - [`component-blueprint-template.md`](component-blueprint-template.md) — standard anatomy for subordinate component design documents.
 - [`review-dispositions.md`](review-dispositions.md) — the ADR-061 §14 review dispositions: the records `config/module-size-debt.toml`'s `review_ref` fields point at, granted and declined alike, and the disposition lifecycle they move through.
@@ -56,10 +58,17 @@ is DESIGN-only until it receives its own Go. The backlog that carries it is
    [`components/evidence-verification.md`](components/evidence-verification.md) §2. This is
    the blocking step: the theorem and negative-control gaps in that component all follow
    from one product type carrying two propositions.
-2. **TLS — make the listener-lifetime security state an explicit owner.**
-   [`components/tls-and-transport-identity.md`](components/tls-and-transport-identity.md) §5.
-3. **TLS — relocate the blocking mTLS/HTTP-1 harness out of the security authority.**
-   Same document, §8.
+2. ~~**TLS — make the listener-lifetime security state an explicit owner.**~~ Landed —
+   MCPRE-137, [#597](https://github.com/matssun/mcp-re/pull/597).
+3. ~~**TLS — relocate the blocking mTLS/HTTP-1 harness out of the security authority.**~~
+   Landed — MCPRE-138, [#600](https://github.com/matssun/mcp-re/pull/600).
+
+Steps 2 and 3 closed the historical TLS extractions, and what they found ended the
+file-driven order: `tls.rs` holds several independently describable authorities, most of
+them not TLS-specific. Further communication-security work is selected by
+[ADR-MCPRE-063](https://github.com/matssun/mcp-re/discussions/601) and sequenced as
+vertical semantic slices in [`communication-assurance.md`](communication-assurance.md) —
+never by which file currently contains the code.
 
 Trust & revocation and exchange lifecycle are documented here because their boundaries are
 settled enough to state, not because work on them is scheduled next.
