@@ -1007,11 +1007,17 @@ The listener's handshake-signature budget is installed unchanged and is not deri
 the credential.
 """
 security_consequence = """
-An embedder cannot build a serving resolver whose delegated signer signs for a different
-key than the certificate it presents. Before this, that pairing was enforced only by the
-function MCP-RE happened to call first, while a public constructor took the two operands
-independently — so the unsafe combination was reachable, and its only symptom was an opaque
-handshake failure after the server had already started.
+An embedder cannot construct MCP-RE's correspondence-assured delegated resolver from a
+certificate and a signer whose exported public key differs from the certificate's leaf
+public key. Such a mismatch is refused before the resolver exists, rather than surfacing as
+an opaque handshake failure after the server has already started. Before this, that pairing
+was enforced only by the function MCP-RE happened to call first, while a public constructor
+took the two operands independently — so the unsafe combination was reachable.
+
+This theorem makes NO claim that future signing operations use the private key
+corresponding to that exported public key. A signer that exports one key and later signs
+with another is not excluded by it: correspondence relates two public keys at construction
+time, and nothing here constrains what the device does afterwards.
 """
 scope = """
 It is a claim about CONSTRUCTION, and only about resolvers this crate produces. It does not

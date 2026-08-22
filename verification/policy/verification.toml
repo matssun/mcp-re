@@ -1002,7 +1002,7 @@ tested_symbols = [
   "lib#delegated_tls::resolver::correspondence_gate::a_credential_that_is_not_a_certificate_cannot_materialize_a_resolver",
   "lib#delegated_tls::resolver::correspondence_gate::an_absent_credential_cannot_materialize_a_resolver",
   "lib#delegated_tls::resolver::correspondence_gate::corresponding_material_materializes_and_installs_the_listener_budget",
-  "lib#delegated_tls::resolver::correspondence_gate::the_only_way_to_obtain_a_resolver_is_through_the_gate",
+  "lib#delegated_tls::resolver::correspondence_gate::tls_facade_cannot_bypass_the_materialization_gate",
   "lib#delegated_tls::resolver::budget_continuity::resolvers_sharing_a_budget_share_one_bucket",
 ]
 assumptions = ["ASM-0032"]

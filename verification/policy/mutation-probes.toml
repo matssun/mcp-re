@@ -1222,7 +1222,7 @@ weakening = """
 """
 expect_red = [
   "lib#delegated_tls::resolver::correspondence_gate::a_mismatched_credential_and_signer_cannot_materialize_a_resolver",
-  "lib#delegated_tls::resolver::correspondence_gate::the_only_way_to_obtain_a_resolver_is_through_the_gate",
+  "lib#delegated_tls::resolver::correspondence_gate::tls_facade_cannot_bypass_the_materialization_gate",
 ]
 
 [[probe]]

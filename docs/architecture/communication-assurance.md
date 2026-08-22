@@ -600,18 +600,33 @@ possession of the runtime value proves how it was built — and *skip the check 
 anyway* is not something a sibling can express, including a sibling added later by someone
 who has not read the comment.
 
-**L-4. A weakening that cannot be written is stronger evidence than a probe that goes red.**
+**L-4. Do not introduce a bypass seam merely to mutation-test a type-enforced invariant.**
 
-There is deliberately no mutation probe removing the gate from `materialize`, because one
-cannot be written: `construct` demands a `CredentialKeyCorrespondenceFacts` that nothing
-outside the authority can produce, so the bypass does not compile. What is probed instead is
-the relation the gate consults — M36 makes correspondence vacuous and the resolver's
-guarantee collapses with it, which is what the `CONTRACT_CONSUMES` edge between the two
-units asserts, measured rather than declared.
+When invalid construction is unrepresentable at the consumer boundary, the ENFORCEMENT is
+the compiler-enforced visibility boundary, and the EVIDENCE is that boundary plus successful
+compilation of the consumer closure. Mutation moves to the supplying invariant whose
+weakening could make the sealed product unsound.
 
-The general form: when a security property is carried by a type rather than by a statement,
-the probe moves to the type's *supplier*. A unit whose own probes are all inexpressible is
-not unprobed — it is sealed, and the registry should say which.
+The two must not be conflated, and the first draft of this law did conflate them by saying
+that a weakening which cannot be written is stronger *evidence*. It is not evidence at all —
+inability to write a mutation is a fact about the mutation, not about the code. What is
+stronger is the mechanism: an invalid construction the type system refuses to represent
+beats a runtime check every caller must remember. This repository's earlier sealing campaign
+already settled that mechanism/evidence split, and settled that module privacy plus
+whole-crate compilation is the relevant evidence for same-crate sealing, rather than a
+separate-crate `compile_fail` test.
+
+So Slice 3 registers no probe removing the gate from `materialize` — `construct` demands a
+`CredentialKeyCorrespondenceFacts` nothing outside the authority can produce, and adding a
+seam so that a probe could reach it would be building the bypass the slice exists to remove.
+What is probed is the supplying relation: **M36** makes correspondence vacuous and the
+resolver's guarantee collapses with it, which is what the `CONTRACT_CONSUMES` edge between
+the two units asserts, measured rather than declared.
+
+The runtime controls state what runtime controls can state. A test cannot prove *no other
+constructor exists* — that is the visibility boundary's job — so the control that used to
+carry that name now carries the property it actually measures: the historical TLS facade
+delegates through the gate, for matching and for mismatching material alike.
 
 **Budget continuity was the thing not to break.** Slice 3 gates a construction that also
 carries the listener-lifetime signing budget (#597). Correspondence is one relation; budget

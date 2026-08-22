@@ -224,8 +224,10 @@ let you build a `CustodyState`.
   — `CredentialKeyCorrespondenceFacts`, never read and never projected — and what that buys
   is that possession of the resolver proves its credential and signer corresponded. The
   assembling constructor is private and demands the witness, so the usual weakening ("skip
-  the check and construct anyway") does not compile. That is worth noticing as a category:
-  a seal can make a mutation probe INEXPRESSIBLE, which is stronger than one that goes red.
+  the check and construct anyway") does not compile. The category worth noticing: where a
+  seal makes invalid construction unrepresentable, the evidence is the visibility boundary
+  plus compilation of the consumer closure — not a mutation probe, and certainly not a
+  bypass seam added so a probe could exist. Mutation moves to the supplying invariant.
 - `CredentialKeyCorrespondenceFacts` (Slice 2) shows what a sealed RELATION result looks
   like. It projects ONE key, not the credential's and the signer's separately — after
   correspondence holds there is only one key, and offering two accessors would invite a

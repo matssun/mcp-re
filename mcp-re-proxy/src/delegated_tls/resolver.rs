@@ -289,15 +289,19 @@ mod correspondence_gate {
     }
 
     #[test]
-    fn the_only_way_to_obtain_a_resolver_is_through_the_gate() {
-        // A structural claim, asserted the only way a test can assert one: this module can
-        // see every constructor `DelegatedCertResolver` has, and `materialize` is the sole
-        // one that is reachable — `construct` is private and takes a witness no caller can
-        // produce. If a sibling constructor is ever added that takes the credential and the
-        // signer as independent operands, this comment is the thing that was wrong, and the
-        // compile-time reachability below is what a reviewer should re-check.
+    fn tls_facade_cannot_bypass_the_materialization_gate() {
+        // What this control measures, and what it deliberately does not.
         //
-        // What it CAN measure is that the gate is not optional on the path production uses.
+        // It does NOT prove that no other constructor exists. No runtime test can: that
+        // proposition is carried by the visibility boundary — `construct` is private and
+        // demands a witness nothing outside the authority can produce — and its evidence is
+        // that boundary plus this crate compiling, not an assertion in a test body.
+        //
+        // What it DOES measure is that the historical TLS facade is a rendering of the
+        // gate's refusal rather than a second path around it: the same material that the
+        // gate refuses is refused through the facade, and the same material it accepts is
+        // accepted. A facade that had quietly kept its own constructor would pass every
+        // other control in this module.
         let (chain, signer) = corresponding_material();
         let budget = Arc::new(TlsHandshakeSignBudget::new(1, 1));
         let through_the_facade = crate::tls::validated_delegated_resolver(
