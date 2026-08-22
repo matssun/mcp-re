@@ -192,6 +192,8 @@ pub mod push_trust;
 // replay safety (the backend-agnostic core + the in-memory reference store).
 pub mod shared_replay;
 pub mod tls;
+// ADR-MCPRE-061 §2 class 4 (MCPRE-138): consumes the TLS authority, owns no policy.
+pub mod blocking_mtls_harness;
 pub mod transport;
 // ADR-MCPRE-051 Phase 2 (§1): OPT-IN async serving path (tokio + tokio-rustls +
 // hyper keep-alive/H2). A shared runtime is dev scaffolding only (per-core
@@ -373,10 +375,11 @@ pub use shared_replay::AtomicReplayStore;
 pub use shared_replay::InMemoryAtomicReplayStore;
 pub use shared_replay::ReplayStoreError;
 pub use shared_replay::SharedReplayCache;
+// Kept at the crate root for existing embedders; the provenance is the harness.
+pub use blocking_mtls_harness::serve;
+pub use blocking_mtls_harness::serve_once;
+pub use blocking_mtls_harness::serve_once_with_assertion;
 pub use tls::extract_identity;
-pub use tls::serve;
-pub use tls::serve_once;
-pub use tls::serve_once_with_assertion;
 pub use tls::IdentityStrategy;
 pub use tls::ServerLimits;
 pub use tls::ServerOptions;

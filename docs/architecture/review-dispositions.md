@@ -466,6 +466,71 @@ selects immutable listener / store replacement. #573 conforms to it structurally
 not retire the dormant machinery; that is #598, deliberately a separate diff. Question 9
 above stands as the census finding that produced the ruling.
 
+### What #574 changed, measured
+
+`tls.rs` **1565 → 1068** production lines. Authority G — the blocking mTLS + hand-rolled
+HTTP/1.1 harness — left the file into `blocking_mtls_harness/`, a four-module tree whose
+members are all under the threshold: `mod.rs` 145 (the accept policy and the three entry
+points), `connection.rs` 124 (one served connection, plus the adapters), `http1.rs` 187
+(the framing), `deadline_stream.rs` 98 (the aggregate read deadline).
+
+The relocation is justified by ownership. The harness owns no authentication policy: it
+holds the live `ServerConnection`, so it is the only code that can produce a peer chain
+from one, but every decision made from that chain is called in `tls.rs` and not
+reimplemented. Three connection-shaped functions that used to live in the authority —
+`connection_identity`, `resolve_identity` and `cert_lifetime_rejection` — were adapters
+around the chain-form functions the async fleet already used, and they are gone rather
+than moved: the harness now calls `resolve_identity_from_leaf` and
+`cert_lifetime_rejection_for_chain` directly. `resolve_identity_from_leaf` consequently
+lost its `allow(dead_code)` — the census claim that both paths reach the same verdict from
+the same input is now structural rather than documented.
+
+One function was reshaped instead of moved. `ocsp_rejection` took a `&ServerConnection`,
+so moving it would have taken the online-OCSP fail-closed policy — which verdicts reject,
+and what an unobtainable verdict means — out of the authority with the harness. It is now
+`ocsp_rejection_for_chain`, matched to its sibling guards, and stays. Neither serving
+path's behaviour changes: the async chain form still does not include the OCSP arm, which
+remains the tracked `async_serve` + `online_ocsp` gap.
+
+The per-connection sequence had been written twice, once per entry point (§8 question 10 at
+harness scale): `serve_once_with_assertion` and `serve_connection` differed only in which
+handler arity they called and where the socket came from. They are one
+`connection::serve_one` now, so a guard cannot be present on one blocking path and absent
+from the other. `serve`'s handler ignores the assertion argument, exactly as before.
+
+`serve`, `serve_once` and `serve_once_with_assertion` remain exported from the crate root —
+embedders already import them there — but their provenance is `blocking_mtls_harness`, and
+no test-only consumer forces an export out of `tls`.
+
+### EX-004 re-census after #574
+
+Re-measured on the post-#574 tree, not carried forward. `tls.rs` is 1068 production lines
+across **six** describable authorities plus a shared error vocabulary and one feature-gated
+control:
+
+| authority | prod | what single fact it owns |
+|---|---:|---|
+| serving options record | 225 | the per-connection resource bounds and identity strategy a listener serves under |
+| per-request peer admission | 271 | whether this peer chain may be served this request |
+| CRL file posture | 118 | whether a revocation list is loadable, parseable and fresh enough to rely on |
+| delegated resolver validation | 93 | that a delegated signer's public key is the one in the served leaf |
+| identity extraction | 67 | what verified identity a leaf certificate carries |
+| header hygiene | 72 | which request headers may be trusted and which are illegal |
+| `TlsError` | 31 | the refusal vocabulary (shared, not an authority) |
+| `fault_accept_any` | ~98 | the deliberately-broken client-auth control (feature-gated) |
+
+Two authorities left the file across #573 and #574 and the remaining six did not become one
+authority by their departure — question 2's answer is still greater than one, so **the
+disposition stays `reviewed-action-required`**. This record continues to decline a §14
+exception.
+
+It does **not** schedule further decomposition. The two units that moved were selected
+because they had clear semantic seams and owners next door; nothing measured here
+establishes that any of the remaining six is the next one, and the largest number in the
+table is a documentation-heavy configuration record, not the widest authority. Whether to
+open a third extraction is an owner decision on this evidence, not a consequence of the
+line count.
+
 ---
 
 ## EX-005 — `mcp-re-proxy/src/tls_listener_state/mod.rs` — **reviewed exception**

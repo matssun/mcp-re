@@ -1,31 +1,33 @@
-//! Rust-native TLS termination + mTLS (MCPS-025, ADR-MCPS-014).
+//! The TLS transport-identity authority (MCPS-025, ADR-MCPS-014).
 //!
-//! The proxy terminates TLS itself with `rustls` (the `ring` provider), requires
-//! and verifies a client certificate against a configured client-CA
-//! (`WebPkiClientVerifier`), and extracts the verified client identity from the
-//! leaf certificate (first URI SAN → DNS SAN → CN). It is blocking and uses
-//! `std::net` + threads — NO async runtime — mirroring the Phase-3 std::net HTTP
-//! framing. The extracted identity is handed to the request handler, where the
-//! Phase-6 transport-binding policy (MCPS-026) ties it to the request `signer`.
+//! What a client certificate must satisfy to be served, and what verified identity it
+//! carries. The proxy terminates TLS with `rustls` (the `ring` provider), requires and
+//! verifies a client certificate against a configured client-CA, and extracts the identity
+//! from the leaf (first URI SAN → DNS SAN → CN). The extracted identity is handed to the
+//! request handler, where the transport-binding policy (MCPS-026) ties it to the request
+//! `signer`.
 //!
-//! Streamable HTTP here is single-request-per-connection JSON (one POST in, one
-//! JSON response out) — SSE streaming is intentionally not implemented.
+//! Every per-request decision here takes the peer chain as an ARGUMENT, leaf-first, and
+//! never a connection: `cert_lifetime_rejection_for_chain`, `ocsp_rejection_for_chain`,
+//! `resolve_identity_from_leaf`, `routing_header_rejection`, `assertion_header`. Both
+//! serving shapes therefore reach the same verdict from the same input — the async fleet
+//! captures the chain at handshake because `hyper` owns the stream thereafter, and
+//! [`crate::blocking_mtls_harness`] reads it from the live `ServerConnection` it holds.
+//! Whoever holds the connection is not part of the decision.
+//!
+//! # What this module does NOT own
+//!
+//! The blocking mTLS + HTTP/1.1 harness (ADR-MCPRE-061 §2 class 4, MCPRE-138). Accepting a
+//! socket, framing a request and writing a reply is a capability that merely uses TLS; it
+//! lives in [`crate::blocking_mtls_harness`]. Listener lifetime — anchors, the epoch they
+//! digest to, the session store and the signing budget — belongs to
+//! [`crate::tls_listener_state`] (MCPRE-137, ADR-MCPRE-062).
 
-use std::io;
-use std::io::Read;
-use std::io::Write;
-use std::net::TcpListener;
-use std::net::TcpStream;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
 use mcp_re_core::json_rpc_error_object;
 use mcp_re_core::McpReError;
-use rustls::ServerConfig;
-use rustls::ServerConnection;
-use rustls::StreamOwned;
 use rustls_pki_types::CertificateDer;
 use rustls_pki_types::CertificateRevocationListDer;
 use x509_parser::certificate::X509Certificate;
@@ -237,7 +239,7 @@ pub struct ServerOptions {
     /// offline CRL posture. When `Some`, after the handshake the serve loop asks
     /// the leaf's OCSP responder whether it is revoked, BEFORE the handler, and
     /// fails closed (rejects) on `Revoked`/`Unknown`/error unless the checker is
-    /// in soft-fail mode (see [`ocsp_rejection`]). `None` disables the online
+    /// in soft-fail mode (see [`ocsp_rejection_for_chain`]). `None` disables the online
     /// check (the default). This field — and the entire online check — exists
     /// ONLY in a build with the `online_ocsp` feature; the default build has no
     /// such field and the hook is a compile-time no-op, so it is byte-for-byte
@@ -546,35 +548,6 @@ pub fn extract_identity(leaf_der: &[u8], policy: IdentityPolicy) -> Option<Trans
     Some(TransportIdentity::new(validated, source))
 }
 
-/// The verified client identity for an established server connection (the leaf of
-/// the peer certificate chain) under `policy`, or `None` if no peer certificate
-/// is present or it lacks the selected identity field.
-fn connection_identity(
-    conn: &ServerConnection,
-    policy: IdentityPolicy,
-) -> Option<TransportIdentity> {
-    let certs = conn.peer_certificates()?;
-    let leaf = certs.first()?;
-    extract_identity(leaf.as_ref(), policy)
-}
-
-/// Resolve the verified transport identity for one served request under the
-/// configured [`IdentityStrategy`]. The connection is the ONLY input:
-/// [`IdentityStrategy::DirectTls`] reads the identity from the verified peer
-/// certificate via [`connection_identity`], and no strategy can derive it from a
-/// request header — the signature takes none.
-///
-/// Either way a missing/unparseable identity is `None`, and the downstream
-/// transport-binding policy fails closed.
-fn resolve_identity(conn: &ServerConnection, options: &ServerOptions) -> Option<TransportIdentity> {
-    match &options.identity_strategy {
-        IdentityStrategy::DirectTls => connection_identity(conn, options.identity_policy),
-        // The Tier-3 identity binds the request hash and is resolved AFTER object
-        // verification (inside the proxy), so it is intentionally absent here.
-        IdentityStrategy::LbAssertion => None,
-    }
-}
-
 /// Leaf-DER form of [`resolve_identity`] for the opt-in async serve path
 /// (ADR-MCPRE-051 §1): identical strategy dispatch, but `DirectTls` reads the peer
 /// identity from the leaf DER captured once at handshake (`hyper` owns the TLS
@@ -676,32 +649,6 @@ fn leaf_facts(leaf_der: &[u8]) -> Option<LeafFacts<'_>> {
         issuer_der: cert.tbs_certificate.issuer.as_raw(),
         serial: cert.tbs_certificate.raw_serial(),
     })
-}
-
-/// Enforce the configured maximum client-certificate lifetime (the v1 revocation
-/// posture). Returns `Some(error_bytes)` — a `mcp-re.transport_binding_failed`
-/// JSON-RPC error bound to the request id — when a limit is set and the verified
-/// client cert's validity span exceeds it (or the cert is absent or cannot be
-/// parsed); `None` when the cert is within the limit or no limit is configured.
-/// Emitting the
-/// transport-layer error here is consistent with the proxy being the sole holder
-/// of the connection (see `transport` module docs).
-fn cert_lifetime_rejection(
-    conn: &ServerConnection,
-    options: &ServerOptions,
-    request: &[u8],
-) -> Option<Vec<u8>> {
-    // An absent peer certificate is passed THROUGH as an EMPTY chain rather than
-    // short-circuiting here, so the decision (including the no-leaf case) is made
-    // in one place by the fail-closed core. The WHOLE chain is handed over, because
-    // the handshake verifier checks revocation to the trust anchor
-    // (`RevocationCheckDepth::Chain`) and a per-request check that stopped at the
-    // leaf would keep honouring a revoked intermediate.
-    let chain: Vec<&[u8]> = conn
-        .peer_certificates()
-        .map(|chain| chain.iter().map(|cert| cert.as_ref()).collect())
-        .unwrap_or_default();
-    cert_lifetime_rejection_for_chain(&chain, options, request, wall_clock_unix())
 }
 
 /// Wall-clock Unix seconds for the transport-layer certificate-validity check.
@@ -910,9 +857,14 @@ pub(crate) fn routing_header_rejection(
 /// no chained issuer cannot be checked and is treated as an indeterminate
 /// result (rejected unless soft-fail). The HTTP fetch carries the checker's
 /// mandatory timeout so this can never wedge the blocking serve thread.
+///
+/// The chain is handed in leaf-first, exactly as `ServerConnection::peer_certificates`
+/// orders it, so the decision does not depend on who holds the connection. The
+/// policy — which responder verdicts reject, and what an unobtainable verdict means —
+/// is this module's, not the caller's.
 #[cfg(feature = "online_ocsp")]
-fn ocsp_rejection(
-    conn: &ServerConnection,
+pub(crate) fn ocsp_rejection_for_chain(
+    chain: &[&[u8]],
     options: &ServerOptions,
     request: &[u8],
 ) -> Option<Vec<u8>> {
@@ -928,12 +880,11 @@ fn ocsp_rejection(
         ))
     };
 
-    let certs = conn.peer_certificates()?;
-    let leaf = certs.first()?;
+    let leaf = chain.first()?;
     // The issuer is the next cert in the verified chain. Without it we cannot
     // build a CertID; treat as an indeterminate (Unknown) result and apply the
     // fail-closed policy (reject unless soft-fail).
-    let Some(issuer) = certs.get(1) else {
+    let Some(issuer) = chain.get(1) else {
         return if checker.allows_on_error() {
             None
         } else {
@@ -941,7 +892,7 @@ fn ocsp_rejection(
         };
     };
 
-    match checker.check(leaf.as_ref(), issuer.as_ref()) {
+    match checker.check(leaf, issuer) {
         Ok(status) => {
             if checker.allows(status) {
                 None
@@ -958,451 +909,6 @@ fn ocsp_rejection(
             }
         }
     }
-}
-
-/// The per-connection rejection decision: the lifetime guard then (under the
-/// `online_ocsp` feature) the online OCSP guard, in that order. Returns the
-/// first rejection's error bytes, or `None` if the connection is admitted. In a
-/// default build this is exactly `cert_lifetime_rejection` (the OCSP arm does
-/// not exist), so the path is byte-for-byte unchanged.
-fn connection_rejection(
-    conn: &ServerConnection,
-    options: &ServerOptions,
-    request: &[u8],
-) -> Option<Vec<u8>> {
-    if let Some(error) = cert_lifetime_rejection(conn, options, request) {
-        return Some(error);
-    }
-    #[cfg(feature = "online_ocsp")]
-    if let Some(error) = ocsp_rejection(conn, options, request) {
-        return Some(error);
-    }
-    None
-}
-
-/// Accept ONE TLS connection, complete the handshake (mTLS — a missing or
-/// untrusted client certificate fails here), read one HTTP request body (bounded
-/// by `options.limits`), invoke `handler(request_bytes, identity)`, and write the
-/// response. Returns the verified client identity that was observed (for test
-/// assertions), extracted with `options.identity_policy`.
-///
-/// Blocking; the caller owns the accept loop policy (see [`serve`]).
-///
-/// # NOT an MCP-RE serving path
-///
-/// This loop frames every reply as a literal `HTTP/1.1 200 OK` with a fixed header
-/// set ([`write_http_response`]): the handler signature carries no status and no
-/// headers, so there is nowhere for them to come from. Under ADR-MCPRE-050 the RFC
-/// 9421 `Signature`/`Signature-Input`, the RFC 9530 `Content-Digest` and the STATUS
-/// LINE are the evidence carrier — so a response written here can never be verified,
-/// and a signed 403 rejection receipt would be flattened to a 200.
-///
-/// It exists as an mTLS TERMINATION + identity-extraction harness (the transport
-/// crate's client tests run against it), and the shipped proxy does not use it:
-/// `app.rs` serves on the async fleet, where `HttpProfileProxy` owns the status and
-/// the headers. An integrator wanting a verifiable MCP-RE endpoint wants that path,
-/// not this one.
-pub fn serve_once<H>(
-    listener: &TcpListener,
-    config: Arc<ServerConfig>,
-    options: &ServerOptions,
-    handler: H,
-) -> io::Result<Option<TransportIdentity>>
-where
-    H: FnOnce(&[u8], Option<TransportIdentity>) -> Vec<u8>,
-{
-    // Adapt the 2-arg handler to the assertion-aware form (the assertion header is
-    // ignored — this entry point predates Tier-3 and stays byte-for-byte for its
-    // many callers). The Tier-3 serve path uses [`serve_once_with_assertion`].
-    serve_once_with_assertion(
-        listener,
-        config,
-        options,
-        |request, identity, _assertion| handler(request, identity),
-    )
-}
-
-/// As [`serve_once`], but the handler ALSO receives the raw Tier-3 ingress-assertion
-/// header value (issue #71) when the [`IdentityStrategy::LbAssertion`] strategy is
-/// active. Under any other strategy the third argument is always `None`. This is the
-/// entry point the production serve loop uses so the assertion can reach the proxy's
-/// post-verification LB check (`Proxy::with_lb_assertion`); a duplicated assertion
-/// header yields `None` (fail closed at the proxy's required-header guard).
-pub fn serve_once_with_assertion<H>(
-    listener: &TcpListener,
-    config: Arc<ServerConfig>,
-    options: &ServerOptions,
-    handler: H,
-) -> io::Result<Option<TransportIdentity>>
-where
-    H: FnOnce(&[u8], Option<TransportIdentity>, Option<&str>) -> Vec<u8>,
-{
-    let (tcp, _peer) = listener.accept()?;
-    // MCPS-88: the production serve loop sets the LISTENER non-blocking so it can
-    // poll for a shutdown signal between connections. Accepted connection sockets
-    // inherit O_NONBLOCK on some platforms (BSD/macOS) but not others (Linux), so
-    // force this one back to blocking — the bounded read/write phase below relies
-    // on blocking semantics (plus the socket timeouts applied next). Harmless when
-    // the listener is already blocking.
-    tcp.set_nonblocking(false)?;
-    apply_socket_timeouts(&tcp, &options.limits)?;
-    let conn = ServerConnection::new(config).map_err(|e| io::Error::other(e.to_string()))?;
-    // AGGREGATE wall-clock deadline over the WHOLE read phase (handshake + header/
-    // body), the server-side mirror of mcp-re-transport's `DeadlineStream`
-    // (MCPS-094/093): a peer trickling bytes just under `read_timeout` cannot hold
-    // this serve thread without bound (slow-loris). Reads go through the wrapper;
-    // writes delegate straight to the socket (bounded by `write_timeout`).
-    let mut stream = StreamOwned::new(conn, DeadlineStream::new(tcp, &options.limits));
-
-    // Reading the request drives the handshake to completion; an unauthenticated
-    // or untrusted client certificate surfaces here as an error (fail closed).
-    let request = read_http_request(&mut stream, &options.limits)?;
-    let headers = RequestHeaders::parse(&request.header_block);
-    let identity = resolve_identity(&stream.conn, options);
-    let assertion = assertion_header(options, &headers);
-    // Enforce the per-connection rejection guards (max client-cert lifetime, then
-    // online OCSP revocation under the `online_ocsp` feature) BEFORE the handler
-    // (inner never reached when rejected).
-    let response = match connection_rejection(&stream.conn, options, &request.body)
-        .or_else(|| routing_header_rejection(&headers, &request.body))
-    {
-        Some(error) => error,
-        None => handler(&request.body, identity.clone(), assertion),
-    };
-    write_http_response(&mut stream, &response)?;
-    // Clean TLS shutdown: send close_notify so the peer does not see an
-    // unexpected EOF, then flush it out.
-    stream.conn.send_close_notify();
-    let _ = stream.flush();
-    Ok(identity)
-}
-
-/// Production accept loop: handle each connection on its own thread (blocking,
-/// no async). Each connection runs `handler` once. The number of simultaneously-
-/// served connections is capped at `options.limits.max_concurrent_connections`;
-/// connections beyond the cap are accepted and immediately dropped (fail closed
-/// against connection exhaustion) rather than queued without bound. Runs until
-/// `listener` errors.
-pub fn serve<H>(
-    listener: TcpListener,
-    config: Arc<ServerConfig>,
-    options: ServerOptions,
-    handler: H,
-) where
-    H: Fn(&[u8], Option<TransportIdentity>) -> Vec<u8> + Send + Sync + 'static,
-{
-    let handler = Arc::new(handler);
-    let options = Arc::new(options);
-    let in_flight = Arc::new(AtomicUsize::new(0));
-    for incoming in listener.incoming() {
-        let Ok(tcp) = incoming else { continue };
-        let max = options.limits.max_concurrent_connections;
-        // Reserve a slot; if the server is saturated, drop the connection.
-        if in_flight.fetch_add(1, Ordering::AcqRel) >= max {
-            in_flight.fetch_sub(1, Ordering::AcqRel);
-            drop(tcp); // close immediately — do not serve beyond the cap
-            continue;
-        }
-        let config = Arc::clone(&config);
-        let handler = Arc::clone(&handler);
-        let options = Arc::clone(&options);
-        let in_flight = Arc::clone(&in_flight);
-        std::thread::spawn(move || {
-            let _ = serve_connection(tcp, config, &options, handler.as_ref());
-            in_flight.fetch_sub(1, Ordering::AcqRel);
-        });
-    }
-}
-
-/// Handle a single already-accepted TCP stream: handshake, extract identity, one
-/// request/response, bounded by `options.limits`.
-fn serve_connection<H>(
-    tcp: TcpStream,
-    config: Arc<ServerConfig>,
-    options: &ServerOptions,
-    handler: &H,
-) -> io::Result<()>
-where
-    H: Fn(&[u8], Option<TransportIdentity>) -> Vec<u8>,
-{
-    apply_socket_timeouts(&tcp, &options.limits)?;
-    let conn = ServerConnection::new(config).map_err(|e| io::Error::other(e.to_string()))?;
-    // Aggregate read-phase wall-clock deadline (slow-loris defense); see
-    // [`serve_once_with_assertion`] and [`DeadlineStream`].
-    let mut stream = StreamOwned::new(conn, DeadlineStream::new(tcp, &options.limits));
-    let request = read_http_request(&mut stream, &options.limits)?;
-    let headers = RequestHeaders::parse(&request.header_block);
-    let identity = resolve_identity(&stream.conn, options);
-    let response = match connection_rejection(&stream.conn, options, &request.body)
-        .or_else(|| routing_header_rejection(&headers, &request.body))
-    {
-        Some(error) => error,
-        None => handler(&request.body, identity),
-    };
-    write_http_response(&mut stream, &response)?;
-    stream.conn.send_close_notify();
-    let _ = stream.flush();
-    Ok(())
-}
-
-/// Apply the configured read/write timeouts to a freshly-accepted socket.
-fn apply_socket_timeouts(tcp: &TcpStream, limits: &ServerLimits) -> io::Result<()> {
-    tcp.set_read_timeout(limits.read_timeout)?;
-    tcp.set_write_timeout(limits.write_timeout)?;
-    Ok(())
-}
-
-/// A `Read`/`Write` wrapper that enforces an AGGREGATE wall-clock deadline across
-/// every READ on the inner stream — the server-side mirror of mcp-re-transport's
-/// `DeadlineStream` (MCPS-094, #4081) and bounded response read (MCPS-093).
-///
-/// The per-socket `read_timeout` (`apply_socket_timeouts`) bounds each INDIVIDUAL
-/// read, but a malicious peer trickling one byte just under that timeout resets
-/// the per-read inactivity timer on every byte and can extend a single
-/// connection's total read time without bound — driving the TLS handshake
-/// (reading completes `complete_io`) and the HTTP header/body read forever
-/// (slow-loris below the per-read threshold), holding a serve thread. Routing all
-/// server-side reads through this wrapper caps the TOTAL read wall-clock: once
-/// `deadline` passes, the next read fails closed with `io::ErrorKind::TimedOut`
-/// and the connection is dropped. `None` deadline (the `request_deadline` knob
-/// disabled) preserves the inner stream's own (per-read) semantics.
-///
-/// Writes delegate straight to the inner socket (bounded by the per-socket
-/// `write_timeout`): the aggregate deadline governs the inbound read phase only,
-/// so a legitimate slow response write is never spuriously dropped — symmetric
-/// with mcp-re-transport, where `DeadlineStream` wraps only the handshake read and
-/// the bare socket is reclaimed for the request write.
-struct DeadlineStream<S> {
-    inner: S,
-    deadline: Option<std::time::Instant>,
-    timeout: Option<Duration>,
-}
-
-impl<S> DeadlineStream<S> {
-    /// Build the wrapper from the configured limits: the aggregate deadline is
-    /// `now + request_deadline` (or `None`, disabling the bound). `request_deadline`
-    /// is retained only for the error message.
-    ///
-    /// FAIL CLOSED: if a deadline was requested but `now + t` overflows `Instant`,
-    /// we MUST NOT silently drop the bound — that would disable the slow-loris
-    /// defense. The CLI caps `--request-deadline-secs` at parse time
-    /// (`cli::parse_timeout`) so this overflow is practically unreachable, but as
-    /// defense-in-depth we saturate to the current instant (deadline already
-    /// elapsed → next read fails closed) rather than disable the control. The
-    /// `None` deadline is reserved exclusively for "no deadline was requested".
-    fn new(inner: S, limits: &ServerLimits) -> Self {
-        let now = std::time::Instant::now();
-        let deadline = limits
-            .request_deadline
-            .map(|t| now.checked_add(t).unwrap_or(now));
-        DeadlineStream {
-            inner,
-            deadline,
-            timeout: limits.request_deadline,
-        }
-    }
-
-    /// Fail closed if the aggregate read deadline has elapsed BEFORE delegating the
-    /// read.
-    fn check_deadline(&self) -> io::Result<()> {
-        if let Some(deadline) = self.deadline {
-            if std::time::Instant::now() >= deadline {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    format!(
-                        "aggregate request read deadline exceeded {:?} (slow-loris trickle)",
-                        self.timeout
-                    ),
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
-impl<S: Read> Read for DeadlineStream<S> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.check_deadline()?;
-        self.inner.read(buf)
-    }
-}
-
-impl<S: Write> Write for DeadlineStream<S> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.inner.write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
-    }
-}
-
-/// One parsed HTTP/1.1 request: the request/header block (text up to and
-/// including the `\r\n\r\n` terminator) and the body bytes (the JSON-RPC
-/// payload). The header block is retained for the Tier-3 assertion extractor and
-/// the routing-header hygiene guard; transport identity never comes from it.
-struct HttpRequest {
-    /// The full header block (request line + headers + terminator), lossily
-    /// decoded as UTF-8 (header bytes are ASCII in practice).
-    header_block: String,
-    /// The request body (the JSON-RPC payload).
-    body: Vec<u8>,
-}
-
-/// Read one HTTP/1.1 request and return its header block + body bytes (the
-/// JSON-RPC payload). Reads headers up to `\r\n\r\n`, honours `Content-Length`.
-/// Minimal by design — single request per connection, no chunked encoding, no
-/// SSE. Bounded by `limits`: the header block may not exceed `max_header_bytes`
-/// and the body may not exceed `max_body_bytes` (either overflow fails closed
-/// with an error rather than allocating without bound).
-/// Reject malformed HTTP/1.1 header framing (issue #38) before the header block is
-/// handed to the line-based parser. Enforces strict CRLF and bans obs-fold:
-///   * a bare CR (not immediately followed by LF) — `str::lines()` would embed it
-///     verbatim in a header value;
-///   * a bare LF (not immediately preceded by CR) — `str::lines()` splits on it, so
-///     it would smuggle an extra header line;
-///   * an obs-fold continuation line (a line beginning with SP/HTAB after a CRLF) —
-///     RFC 7230 §3.2.4 requires rejection, and the downstream parser would silently
-///     drop it (a colon-less line) rather than fold it.
-///
-/// Fails closed with `InvalidData` so the connection is dropped, consistent with the
-/// other framing guards here (oversized header / body).
-fn reject_malformed_header_framing(header_bytes: &[u8]) -> io::Result<()> {
-    for (i, &byte) in header_bytes.iter().enumerate() {
-        match byte {
-            b'\r' if header_bytes.get(i + 1) != Some(&b'\n') => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "malformed HTTP header framing: bare CR (not part of a CRLF)",
-                ));
-            }
-            b'\n' if i == 0 || header_bytes[i - 1] != b'\r' => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "malformed HTTP header framing: bare LF (not part of a CRLF)",
-                ));
-            }
-            b'\n' if matches!(header_bytes.get(i + 1), Some(b' ') | Some(b'\t')) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "malformed HTTP header framing: obs-fold continuation line",
-                ));
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
-fn read_http_request<S: Read>(stream: &mut S, limits: &ServerLimits) -> io::Result<HttpRequest> {
-    let mut buf: Vec<u8> = Vec::with_capacity(1024);
-    let mut chunk = [0u8; 1024];
-
-    // Read until end-of-headers, capping total header bytes.
-    let header_end = loop {
-        if let Some(pos) = find_subsequence(&buf, b"\r\n\r\n") {
-            break pos + 4;
-        }
-        if buf.len() > limits.max_header_bytes {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "HTTP header block exceeds max_header_bytes",
-            ));
-        }
-        let n = stream.read(&mut chunk)?;
-        if n == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "connection closed before end of HTTP headers",
-            ));
-        }
-        buf.extend_from_slice(&chunk[..n]);
-    };
-
-    let header_bytes = &buf[..header_end];
-    reject_malformed_header_framing(header_bytes)?;
-    let header_block = String::from_utf8_lossy(header_bytes).into_owned();
-    let content_length = parse_content_length(&header_block)?.unwrap_or(0);
-    if content_length > limits.max_body_bytes {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Content-Length exceeds max_body_bytes",
-        ));
-    }
-
-    let mut body = buf[header_end..].to_vec();
-    while body.len() < content_length {
-        // Defend against a Content-Length that under-states a flood of body bytes.
-        if body.len() > limits.max_body_bytes {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "request body exceeds max_body_bytes",
-            ));
-        }
-        let n = stream.read(&mut chunk)?;
-        if n == 0 {
-            break;
-        }
-        body.extend_from_slice(&chunk[..n]);
-    }
-    body.truncate(content_length);
-    Ok(HttpRequest { header_block, body })
-}
-
-/// Write a minimal HTTP/1.1 JSON response carrying `body`.
-///
-/// Fixed `200 OK` and a fixed header set: this is the mTLS harness path, not an
-/// MCP-RE serving path — see [`serve_once`]. Nothing here can carry RFC 9421
-/// evidence, and no caller on the shipped proxy reaches it.
-fn write_http_response<S: Write>(stream: &mut S, body: &[u8]) -> io::Result<()> {
-    let header = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    );
-    stream.write_all(header.as_bytes())?;
-    stream.write_all(body)?;
-    Ok(())
-}
-
-/// Parse the `Content-Length` header value (case-insensitive) from a header block.
-///
-/// Fails closed with `InvalidData` on a duplicated `Content-Length` header (a
-/// request-smuggling primitive: two lengths disagree on the body boundary) or a
-/// present-but-unparseable value, consistent with the other framing guards here.
-/// An absent header returns `Ok(None)` (the caller treats that as a zero-length
-/// body); only present-but-malformed / conflicting lengths are rejected.
-fn parse_content_length(headers: &str) -> io::Result<Option<usize>> {
-    let mut seen: Option<usize> = None;
-    for line in headers.lines() {
-        if let Some((name, value)) = line.split_once(':') {
-            if name.trim().eq_ignore_ascii_case("content-length") {
-                if seen.is_some() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "malformed HTTP header framing: duplicate Content-Length",
-                    ));
-                }
-                let parsed = value.trim().parse::<usize>().map_err(|_| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "malformed HTTP header framing: unparseable Content-Length",
-                    )
-                })?;
-                seen = Some(parsed);
-            }
-        }
-    }
-    Ok(seen)
-}
-
-/// Index of the first occurrence of `needle` in `haystack`.
-fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() || haystack.len() < needle.len() {
-        return None;
-    }
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
 }
 
 /// Load the configured offline client-certificate revocation lists (#3839) into
@@ -1645,236 +1151,6 @@ mod lifetime_tests {
             leaf_facts(&der).is_none(),
             "a zero-length validity window must yield None (fail closed)"
         );
-    }
-}
-
-#[cfg(test)]
-mod header_framing_tests {
-    //! Issue #38: obs-fold / bare-CR / bare-LF header framing must fail closed.
-    //!
-    //! A request whose header section is not strict CRLF-framed is rejected at
-    //! read time rather than handed on to a line parser that would silently drop
-    //! or re-join the offending bytes.
-
-    fn read_req(bytes: &[u8]) -> std::io::Result<super::HttpRequest> {
-        super::read_http_request(
-            &mut std::io::Cursor::new(bytes.to_vec()),
-            &super::ServerLimits::default(),
-        )
-    }
-
-    #[test]
-    fn obs_fold_continuation_line_is_rejected() {
-        // RFC 7230 §3.2.4: an obs-fold continuation (line starting with SP/HTAB)
-        // must be rejected, not silently dropped by the downstream line parser.
-        let block = b"POST /mcp HTTP/1.1\r\nMcp-Name: good\r\n\tinjected\r\n\r\n";
-        assert!(
-            read_req(block).is_err(),
-            "an obs-fold continuation line must fail closed"
-        );
-    }
-
-    #[test]
-    fn bare_cr_in_header_section_is_rejected() {
-        // A bare CR (not part of a CRLF) must be rejected rather than embedded
-        // verbatim in a header value by `str::lines()`.
-        let block = b"POST /mcp HTTP/1.1\r\nMcp-Name: good\rinjected\r\n\r\n";
-        assert!(read_req(block).is_err(), "a bare CR must fail closed");
-    }
-
-    #[test]
-    fn bare_lf_line_ending_is_rejected() {
-        // A bare LF line ending (not CRLF) must be rejected — `str::lines()` splits
-        // on it, so a bare LF would otherwise smuggle an extra header line.
-        let block = b"POST /mcp HTTP/1.1\nMcp-Name: good\r\n\r\n";
-        assert!(
-            read_req(block).is_err(),
-            "a bare LF line ending must fail closed"
-        );
-    }
-
-    #[test]
-    fn well_formed_strict_crlf_request_is_accepted() {
-        // Regression: a clean CRLF-framed request still parses, and its headers are
-        // intact (the framing guard must not reject well-formed input).
-        let block = b"POST /mcp HTTP/1.1\r\nMcp-Name: good\r\n\r\n";
-        let req = read_req(block).expect("a well-formed CRLF request must be accepted");
-        let headers = crate::transport::RequestHeaders::parse(&req.header_block);
-        assert_eq!(headers.first("mcp-name"), Some("good"));
-    }
-}
-
-#[cfg(test)]
-mod aggregate_deadline_tests {
-    //! Issue #100: the server read path's AGGREGATE wall-clock deadline
-    //! (`DeadlineStream`) must fail closed when a peer trickles bytes just under
-    //! the per-read timeout but past the aggregate budget (slow-loris), the
-    //! server-side mirror of mcp-re-transport's `DeadlineStream` (MCPS-094/093).
-    //!
-    //! Hermetic and fast: a `TricklingReader` always makes per-read progress (so
-    //! the per-socket `read_timeout`/zero-byte-stall guard NEVER fires) but never
-    //! completes the header block, so only the aggregate deadline can stop it.
-
-    use std::io;
-    use std::io::Read;
-    use std::time::Duration;
-    use std::time::Instant;
-
-    use super::DeadlineStream;
-    use super::ServerLimits;
-
-    /// A reader that always returns exactly one byte per `read` (never 0, never an
-    /// error) and never emits the `\r\n\r\n` header terminator — modelling a peer
-    /// that keeps the per-read inactivity timer alive forever while never finishing
-    /// the request. Optionally sleeps per read to model a real trickle rate without
-    /// making the test slow.
-    struct TricklingReader {
-        per_read_sleep: Duration,
-    }
-
-    impl Read for TricklingReader {
-        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            // A zero-length buffer is legal per the `Read` contract; return
-            // `Ok(0)` before touching `buf[0]` so we never panic.
-            if buf.is_empty() {
-                return Ok(0);
-            }
-            if !self.per_read_sleep.is_zero() {
-                std::thread::sleep(self.per_read_sleep);
-            }
-            // A non-terminator byte: progress is always made, so a per-read-only
-            // guard can never cut this off.
-            buf[0] = b'A';
-            Ok(1)
-        }
-    }
-
-    #[test]
-    fn aggregate_deadline_fires_on_sub_per_read_trickle() {
-        // Small aggregate budget; the per-read sleep is well UNDER it, so each
-        // individual read "succeeds" and only the aggregate deadline can stop the
-        // header read. Without the wrapper, `read_http_request` would loop forever.
-        let limits = ServerLimits {
-            // Per-read timeout disabled to prove the AGGREGATE bound (not the
-            // per-socket timeout) is what fails closed.
-            read_timeout: None,
-            request_deadline: Some(Duration::from_millis(150)),
-            ..ServerLimits::default()
-        };
-        let mut stream = DeadlineStream::new(
-            TricklingReader {
-                per_read_sleep: Duration::from_millis(5),
-            },
-            &limits,
-        );
-
-        let start = Instant::now();
-        let result = super::read_http_request(&mut stream, &limits);
-        let elapsed = start.elapsed();
-
-        let err = match result {
-            Ok(_) => panic!("a sub-per-read trickle past the aggregate deadline must fail closed"),
-            Err(e) => e,
-        };
-        assert_eq!(
-            err.kind(),
-            io::ErrorKind::TimedOut,
-            "the aggregate read deadline must surface as TimedOut (fail closed), got: {err}"
-        );
-        // It must be cut off PROMPTLY after the deadline, not hang. Generous upper
-        // bound to stay non-flaky on a loaded CI host.
-        assert!(
-            elapsed < Duration::from_secs(5),
-            "the connection must be dropped promptly at the aggregate deadline, took {elapsed:?}"
-        );
-    }
-
-    #[test]
-    fn disabled_deadline_does_not_cut_off_a_completing_read() {
-        // `request_deadline: None` disables the aggregate bound; a reader that DOES
-        // complete the request must still parse cleanly (the wrapper is transparent
-        // when the deadline is off).
-        let limits = ServerLimits {
-            request_deadline: None,
-            ..ServerLimits::default()
-        };
-        let body = b"POST / HTTP/1.1\r\nContent-Length: 0\r\n\r\n".to_vec();
-        let mut stream = DeadlineStream::new(io::Cursor::new(body), &limits);
-        let req = super::read_http_request(&mut stream, &limits)
-            .expect("a complete request must parse when the aggregate deadline is disabled");
-        assert!(req.body.is_empty());
-    }
-}
-
-#[cfg(test)]
-mod content_length_framing_tests {
-    //! Audit LOW (ledger `84224733b1228db8`): a duplicated or unparseable
-    //! `Content-Length` must fail closed with `InvalidData` rather than silently
-    //! collapsing to a zero-length body. Two disagreeing lengths are a classic
-    //! request-smuggling primitive; every sibling duplicate-header guard here
-    //! already rejects, so this one must too.
-
-    use std::io;
-
-    use super::read_http_request;
-    use super::ServerLimits;
-
-    fn read(raw: &[u8]) -> io::Result<super::HttpRequest> {
-        let mut stream = io::Cursor::new(raw.to_vec());
-        read_http_request(&mut stream, &ServerLimits::default())
-    }
-
-    // `HttpRequest` intentionally has no `Debug`, so assert the error arm by hand
-    // rather than via `expect_err`.
-    fn assert_invalid_data(raw: &[u8], why: &str) {
-        match read(raw) {
-            Ok(_) => panic!("{why}"),
-            Err(e) => assert_eq!(e.kind(), io::ErrorKind::InvalidData, "{why}: {e}"),
-        }
-    }
-
-    #[test]
-    fn duplicate_content_length_is_rejected() {
-        // Two Content-Length lines that disagree on the body boundary: the smuggling
-        // case. Must fail closed rather than pick one (first-wins) silently.
-        let raw = b"POST / HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 0\r\n\r\nhello";
-        assert_invalid_data(raw, "duplicate Content-Length must fail closed");
-    }
-
-    #[test]
-    fn duplicate_content_length_same_value_is_still_rejected() {
-        // Even agreeing duplicates are rejected — the strict, uniform posture (no
-        // "are they equal" special-case that a smuggler could probe).
-        let raw = b"POST / HTTP/1.1\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n";
-        assert_invalid_data(raw, "any duplicate Content-Length must fail closed");
-    }
-
-    #[test]
-    fn unparseable_content_length_is_rejected() {
-        let raw = b"POST / HTTP/1.1\r\nContent-Length: not-a-number\r\n\r\n";
-        assert_invalid_data(raw, "unparseable Content-Length must fail closed");
-    }
-
-    #[test]
-    fn negative_content_length_is_rejected() {
-        // `usize` parse rejects the sign; previously this collapsed to 0.
-        let raw = b"POST / HTTP/1.1\r\nContent-Length: -1\r\n\r\n";
-        assert_invalid_data(raw, "negative Content-Length must fail closed");
-    }
-
-    #[test]
-    fn absent_content_length_is_a_zero_length_body() {
-        // Absent (not present-but-malformed) stays permissive: zero-length body.
-        let raw = b"POST / HTTP/1.1\r\n\r\n";
-        let req = read(raw).expect("absent Content-Length is a well-formed empty body");
-        assert!(req.body.is_empty());
-    }
-
-    #[test]
-    fn single_valid_content_length_parses() {
-        let raw = b"POST / HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello";
-        let req = read(raw).expect("a single valid Content-Length must parse");
-        assert_eq!(req.body, b"hello");
     }
 }
 
