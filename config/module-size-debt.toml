@@ -65,10 +65,13 @@ status = "unreviewed"
 # was ESTABLISHED, and d1fc5fa never contained a 1042-line tls.rs. Leaving it would have
 # claimed provenance for a measurement that commit does not hold — and would also have left
 # 26 lines of headroom nobody paid for.
+# ADR-MCPRE-063 Slice 2 moved credential/key correspondence to its own authority: 1042 ->
+# 1013. The SHA moves with the number, because this field records where a measurement was
+# ESTABLISHED and c81df3e never contained a 1013-line tls.rs.
 [[debt]]
 path = "mcp-re-proxy/src/tls.rs"
-baseline_prod_loc = 1042
-baseline_sha = "c81df3e"
+baseline_prod_loc = 1013
+baseline_sha = "1b31c60"
 status = "reviewed-action-required"
 review_ref = "EX-004 in docs/architecture/review-dispositions.md"
 
@@ -150,8 +153,8 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/pkcs11_keysource.rs"
-baseline_prod_loc = 857
-baseline_sha = "d1fc5fa"
+baseline_prod_loc = 856
+baseline_sha = "1b31c60"
 status = "unreviewed"
 
 [[debt]]
@@ -606,9 +609,11 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
+# The RFC 8410 Ed25519 invariant left for its owner; what remains is the facade rendering
+# that owner's refusal into the KMS key vocabulary.
 path = "mcp-re-proxy/src/kms_keysource.rs"
-baseline_prod_loc = 232
-baseline_sha = "d1fc5fa"
+baseline_prod_loc = 230
+baseline_sha = "1b31c60"
 status = "unreviewed"
 
 [[debt]]
