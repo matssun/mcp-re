@@ -48,6 +48,8 @@ on:
       - "mcp-re-proxy/src/tls.rs"
       - "mcp-re-proxy/src/tls_plane.rs"
       - "mcp-re-proxy/src/delegated_tls.rs"
+      # ADR-MCPRE-063 Slice 3: the correspondence gate on delegated resolver construction.
+      - "mcp-re-proxy/src/delegated_tls/**"
       # THM-0013 reads the boundary's OCSP clauses, so the lane must re-measure when
       # they move: the theorem is that no validated deployment enables online OCSP.
       - "mcp-re-proxy/src/config_state/validation/residue.rs"
@@ -93,6 +95,8 @@ on:
       - "mcp-re-proxy/src/tls.rs"
       - "mcp-re-proxy/src/tls_plane.rs"
       - "mcp-re-proxy/src/delegated_tls.rs"
+      # ADR-MCPRE-063 Slice 3: the correspondence gate on delegated resolver construction.
+      - "mcp-re-proxy/src/delegated_tls/**"
       # THM-0013 reads the boundary's OCSP clauses, so the lane must re-measure when
       # they move: the theorem is that no validated deployment enables online OCSP.
       - "mcp-re-proxy/src/config_state/validation/residue.rs"

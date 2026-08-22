@@ -116,5 +116,7 @@ graph BT
 graph BT
     THM_0025["THM-0025<br/>Every canonical Ed25519 public key value is the canonical RFC 8410 encoding of its own point"]
     THM_0026["THM-0026<br/>Credential/key correspondence relates two independently interpreted keys and attributes every refusal to the side that failed"]
+    THM_0027["THM-0027<br/>A delegated resolver's existence proves its credential and signer corresponded"]
     THM_0025 --> THM_0026
+    THM_0026 --> THM_0027
 ```

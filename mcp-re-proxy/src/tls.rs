@@ -33,8 +33,6 @@ use rustls_pki_types::CertificateRevocationListDer;
 use x509_parser::certificate::X509Certificate;
 use x509_parser::prelude::FromDer;
 
-use crate::communication_assurance::credential_key_correspondence::establish_credential_key_correspondence;
-use crate::communication_assurance::signing_key_evidence::SigningKeyExportEvidence;
 use crate::communication_assurance::CertificateChainEvidence;
 use crate::transport::IdentityPolicy;
 use crate::transport::RequestHeaders;
@@ -414,55 +412,32 @@ pub fn crl_posture(crl_der: &[u8]) -> Result<CrlPosture, TlsError> {
         next_update_unix,
     })
 }
-/// Validate a delegated TLS credential and produce the certificate resolver for it
-/// (ADR-MCPS-028 §G, issue #58), failing closed BEFORE any server starts when the
-/// credential is unsafe.
+/// Produce the delegated TLS certificate resolver for a credential and its signer, in the
+/// historical error vocabulary (ADR-MCPS-028 §G, issue #58).
 ///
-/// **Composition, not authority.** The security proposition — that the signer's public key
-/// and the served leaf's public key are the same key, of the required profile — belongs to
-/// the credential/key correspondence authority (ADR-MCPRE-063 Slice 2). Nothing is checked
-/// here: this function obtains the two evidence products, hands them to that authority, and
-/// on success materializes the resolver. Deleting a check here is impossible because there
-/// is none to delete.
+/// **Compatibility facade.** It performs no check and makes no decision. Correspondence is
+/// a structural precondition of the resolver's existence — [`DelegatedCertResolver::materialize`]
+/// establishes it over the very operands it then moves into the resolver — so there is no
+/// window here in which the credential and the signer are an unpaired pair, and nothing to
+/// delete. All this function does is render a refusal into `TlsError`.
 ///
-/// What remains local is materialization: the concrete resolver, and the listener's signing
-/// budget. The budget is supplied by the listener's security state rather than created here
-/// — it bounds how fast unauthenticated peers can drive a remote, billed, account-throttled
-/// signer, and a bucket created per build is refilled on every reload, bounding a window
-/// rather than a rate. That is a listener capability, not a property of the credential, and
-/// it is deliberately not part of what correspondence establishes.
+/// The budget is supplied by the listener's security state and installed unchanged: it
+/// bounds how fast unauthenticated peers can drive a remote, billed, account-throttled
+/// signer, and a bucket created per build would be refilled on every reload — bounding a
+/// window rather than a rate. That is a listener capability, not a property of the
+/// credential, and it is deliberately not part of what correspondence establishes.
 pub(crate) fn validated_delegated_resolver(
     server_chain: Vec<CertificateDer<'static>>,
     signer: Arc<dyn crate::delegated_tls::RawEd25519TlsSigner>,
     budget: Arc<crate::delegated_tls::TlsHandshakeSignBudget>,
 ) -> Result<Arc<crate::delegated_tls::DelegatedCertResolver>, TlsError> {
-    let credential = server_chain
-        .first()
-        .map_or_else(CertificateChainEvidence::absent, |leaf| {
-            CertificateChainEvidence::from_leaf_der(leaf.as_ref())
-        });
-    // The signer's own failure vocabulary stops here: what the authority needs to know is
-    // that no key was produced, not why the device could not produce one.
-    let exported = signer.tls_public_key_spki_der().ok();
-    let export_evidence = exported.as_deref().map_or_else(
-        SigningKeyExportEvidence::unavailable,
-        SigningKeyExportEvidence::exported,
-    );
-
-    establish_credential_key_correspondence(credential, export_evidence).map_err(|refusal| {
-        TlsError::DelegatedKeyMismatch(
-            crate::facades::delegated_key_correspondence::correspondence_message(&refusal),
-        )
-    })?;
-
-    // The CONCRETE resolver, not `Arc<dyn ResolvesServerCert>`: the owner's tests compare
-    // `budget()` across two builds to prove the listener's budget is not recreated per
-    // rebuild, and a trait object would erase the only handle on that fact.
-    Ok(crate::delegated_tls::DelegatedCertResolver::with_budget(
-        server_chain,
-        signer,
-        budget,
-    ))
+    crate::delegated_tls::DelegatedCertResolver::materialize(server_chain, signer, budget).map_err(
+        |refusal| {
+            TlsError::DelegatedKeyMismatch(
+                crate::facades::delegated_key_correspondence::correspondence_message(&refusal),
+            )
+        },
+    )
 }
 
 /// Extract the verified client identity from a leaf certificate (DER) using the
@@ -1721,10 +1696,12 @@ mod delegated_credential_key_correspondence_tests {
     //! the sentence.
 
     use super::*;
+    use crate::communication_assurance::credential_key_correspondence::establish_credential_key_correspondence;
     use crate::communication_assurance::credential_key_correspondence::CorrespondenceMismatch;
     use crate::communication_assurance::credential_key_correspondence::CredentialKeyCorrespondenceRefusal;
     use crate::communication_assurance::credential_public_key_evidence::CredentialKeyRefusal;
     use crate::communication_assurance::ed25519_public_key::Rfc8410SpkiRefusal;
+    use crate::communication_assurance::signing_key_evidence::SigningKeyExportEvidence;
     use crate::communication_assurance::signing_key_evidence::SigningKeyRefusal;
     use rcgen::CertificateParams;
     use rcgen::KeyPair;

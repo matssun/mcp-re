@@ -152,6 +152,7 @@ Registry: [`verification/policy/theorems.toml`](../../../verification/policy/the
 | Every peer identity value is well-formed, whatever evidence produced it | identity value | THM-0023 · `unit://proxy.peer_identity_value` · probe M29 | in registry |
 | Every canonical Ed25519 public key value is the canonical RFC 8410 encoding of its own point | key representation | THM-0025 · `unit://proxy.ed25519_public_key` · probes M32, M35 | in registry |
 | Credential/key correspondence relates two interpreted keys and attributes every refusal to the failing side | delegated credential | THM-0026 · `unit://proxy.credential_key_correspondence` · probes M31, M33, M34 · ASM-0032 (leaf SPKI extraction, on the accepting path) | in registry |
+| A delegated resolver's existence proves its credential and signer corresponded | construction closure | THM-0027 · `unit://proxy.delegated_resolver_materialization` · probes M36, M37 | in registry |
 
 Two of the gaps this table recorded are now closed, and by a claim narrower than the row
 that anticipated them: THM-0024 states that identity interpretation reads the configured
@@ -171,6 +172,7 @@ Three of five original rows are real properties with no registry entry. That is 
 | Listener-scoped resumption (ADR-062) | `src/tls_listener_state/mod.rs` tests, probes T01–T04 | `//mcp-re-proxy:proxy_unit_test`; `tools/verification/verify-mutations` | a different anchor set gets its own empty store; each probe turns a declared control red |
 | Certificate identity: the no-fallback law, through real DER | `tests/integration/certificate_identity_no_fallback_test.rs` | `//mcp-re-proxy:integration_test` | **every negative mints a decoy** — the selected field is absent or its first value malformed while another field, or a later value of the same field, is valid and unusable |
 | Delegated credential/key correspondence, over real certificates and a real signer seam | `src/tls.rs` `delegated_credential_key_correspondence_tests` | `//mcp-re-proxy:proxy_unit_test` | **the algorithm-confusion vector** — a signing key declaring another algorithm whose trailing bytes ARE the credential's public point; only the profile rule can refuse it |
+| Correspondence gates delegated resolver construction | `src/delegated_tls/resolver.rs` `correspondence_gate` | `//mcp-re-proxy:proxy_unit_test` | **mismatched material cannot produce a resolver at all** — asserted on construction, never on a later handshake failure |
 | Certificate identity: the pure selector and its refusal algebra | `src/communication_assurance/` module tests, probes M25–M29 | `//mcp-re-proxy:proxy_unit_test`; `tools/verification/verify-mutations` | four refusals stay distinguishable; each probe turns a declared control red |
 | Channel binding to transport identity | `tests/integration/mtls_transport_binding_test.rs` | `//mcp-re-proxy:integration_test` (uses the `test-fixtures` dev feature) | binding mismatch refused |
 | Client leg end to end | `tests/integration_async/mtls_client_leg_e2e_test.rs` | `async_serve`; `//mcp-re-proxy:integration_async_test` | — |

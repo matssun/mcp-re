@@ -42,6 +42,7 @@ derives, and it is not shown here because this view cannot see the attestations.
 | THM-0024 | Certificate identity interpretation reads the configured field and refuses rather than falling back | proxy.certificate_identity | unit://proxy.certificate_identity | live |
 | THM-0025 | Every canonical Ed25519 public key value is the canonical RFC 8410 encoding of its own point | proxy.ed25519_public_key | unit://proxy.ed25519_public_key | live |
 | THM-0026 | Credential/key correspondence relates two independently interpreted keys and attributes every refusal to the side that failed | proxy.credential_key_correspondence | unit://proxy.credential_key_correspondence | live |
+| THM-0027 | A delegated resolver's existence proves its credential and signer corresponded | proxy.delegated_resolver_materialization | unit://proxy.delegated_resolver_materialization | live |
 
 ## Claims in full
 
@@ -320,3 +321,15 @@ derives, and it is not shown here because this view cannot see the attestations.
 **Review requirement.** Owner security-specification review
 
 **Depends on.** THM-0025
+
+### THM-0027 — A delegated resolver's existence proves its credential and signer corresponded
+
+**Statement.** Every DelegatedCertResolver produced by MCP-RE was produced by DelegatedCertResolver::materialize, which establishes credential/key correspondence (THM-0026) over the very credential chain and signer it then moves into the resolver, and retains the resulting facts as a private construction witness. The construction closure is what carries the claim. The assembling constructor is private and requires a CredentialKeyCorrespondenceFacts value that no caller can produce, so there is no path from independently supplied credential and signer material to a resolver that skips the relation — and no window in which a caller holds facts about one pair and material from another, because the facts are never returned to a caller at all. The listener's handshake-signature budget is installed unchanged and is not derived from the credential.
+
+**Security consequence.** An embedder cannot build a serving resolver whose delegated signer signs for a different key than the certificate it presents. Before this, that pairing was enforced only by the function MCP-RE happened to call first, while a public constructor took the two operands independently — so the unsafe combination was reachable, and its only symptom was an opaque handshake failure after the server had already started.
+
+**Scope — what this does NOT establish.** It is a claim about CONSTRUCTION, and only about resolvers this crate produces. It does not establish that the certificate is trusted, current or unrevoked, that the signer is authorized or holds the private half of the key it exported, that any handshake will succeed, that the peer is admitted, or that a channel exists. It says nothing whatsoever about an arbitrary `ResolvesServerCert` supplied to `TlsListenerSecurityState::build_delegated_resolver_config`. That escape hatch exists for custody arrangements MCP-RE does not model, validates no credential of its own, and is deliberately outside this claim — a resolver reaching the serving path through it carries no correspondence guarantee, and the two operations must not be read as making the same promise. The witness is not projected, so no consumer can read the facts back out; the claim is that the value could not exist without them, not that it exposes them.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0026

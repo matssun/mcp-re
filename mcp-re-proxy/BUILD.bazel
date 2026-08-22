@@ -129,6 +129,9 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPS-028 §G: delegated TLS handshake signing (rustls SigningKey fronting a
     # non-exporting device/KMS). Generic mechanism, always compiled.
     "src/delegated_tls.rs",
+    # ADR-MCPRE-063 Slice 3: the correspondence gate. Its own file so module privacy can
+    # make "assemble a resolver without consulting the authority" inexpressible.
+    "src/delegated_tls/resolver.rs",
     "src/retained_evidence.rs",
     "src/transparency.rs",
     # Trust-document interpretation: the authoritative rules over the bytes, owned apart
