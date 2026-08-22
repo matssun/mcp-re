@@ -531,6 +531,29 @@ table is a documentation-heavy configuration record, not the widest authority. W
 open a third extraction is an owner decision on this evidence, not a consequence of the
 line count.
 
+### EX-004 re-census after ADR-MCPRE-063 Slice 1 (#602)
+
+`tls.rs` is **1042** production lines. Identity extraction left, and the way it left is the
+point: it was not moved to a neighbouring file, it was migrated into a designed authority
+graph, leaving a facade that owns nothing.
+
+| authority | prod | change |
+|---|---:|---|
+| identity extraction | 67 → ~20 (facade) | **migrated** to `communication_assurance` — parses, selects and validates nothing here |
+
+That is the first entry in this table whose disposition came from a decision about the
+architecture rather than from the file's own census, and it changes what the remaining rows
+mean. This record's closing paragraph said the next extraction was an owner decision "on
+this evidence"; the owner's answer was that the evidence is the wrong instrument. Which
+authority moves next is now selected by [ADR-MCPRE-063](https://github.com/matssun/mcp-re/discussions/601)
+and [`../architecture/communication-assurance.md`](communication-assurance.md) §9, from the
+semantic graph — not from this table's line counts, and not from physical adjacency to what
+just moved.
+
+The disposition **stays `reviewed-action-required`**, and the registry entry was ratcheted
+from 1068 to 1042. Five authorities plus the shared vocabulary remain; question 2's answer
+is still greater than one, and this record still declines a §14 exception.
+
 ---
 
 ## EX-005 — `mcp-re-proxy/src/tls_listener_state/mod.rs` — **reviewed exception**

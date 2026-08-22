@@ -174,45 +174,14 @@ impl TransportBindingProvider for StaticIdentityProvider {
     }
 }
 
-/// Maximum accepted length (bytes) of an asserted trusted-ingress identity value
-/// (ADR-MCPS-023: asserted-identity metadata MUST be length-bounded — oversized
-/// values fail closed). Generous enough for SPIFFE URIs / RFC2253 DNs, small
-/// enough to bound parse/log cost and reject smuggling payloads.
-pub const MAX_ASSERTED_IDENTITY_LEN: usize = 8192;
-
-/// Why a trusted-ingress asserted-identity value was rejected (ADR-MCPS-023).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AssertedIdentityRejection {
-    /// Empty after trimming.
-    Empty,
-    /// Longer than [`MAX_ASSERTED_IDENTITY_LEN`].
-    TooLong,
-    /// Contains a control character (CR / LF / NUL / …) — a header-smuggling and
-    /// log-injection risk; a well-formed identity value has none.
-    Malformed,
-}
-
-/// Validate a single asserted trusted-ingress identity value against the
-/// ADR-MCPS-023 strict rules: **well-formed** (no control characters),
-/// **length-bounded** ([`MAX_ASSERTED_IDENTITY_LEN`]), and non-empty. Returns the
-/// trimmed value on success, or the reason it fails closed.
-///
-/// The **single-valued** rule is enforced by the caller via
-/// [`RequestHeaders::count`] (a duplicated trust header fails closed before the
-/// value is ever read); this function validates the lone value's shape.
-pub fn validate_asserted_identity_value(value: &str) -> Result<&str, AssertedIdentityRejection> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(AssertedIdentityRejection::Empty);
-    }
-    if trimmed.len() > MAX_ASSERTED_IDENTITY_LEN {
-        return Err(AssertedIdentityRejection::TooLong);
-    }
-    if trimmed.chars().any(|c| c.is_control()) {
-        return Err(AssertedIdentityRejection::Malformed);
-    }
-    Ok(trimmed)
-}
+// The trusted-ingress identity vocabulary — `MAX_ASSERTED_IDENTITY_LEN`,
+// `AssertedIdentityRejection`, `validate_asserted_identity_value` — is a compatibility
+// facade over the peer-identity value owner (ADR-MCPRE-063 Slice 1) and lives in
+// `asserted_identity_facade`. Re-exported here so this module's own callers, and the
+// crate root, keep their existing paths.
+pub use crate::asserted_identity_facade::validate_asserted_identity_value;
+pub use crate::asserted_identity_facade::AssertedIdentityRejection;
+pub use crate::asserted_identity_facade::MAX_ASSERTED_IDENTITY_LEN;
 
 /// The SEP-2243 transport routing header naming the JSON-RPC method (ADR-MCPS-025).
 /// Lowercased for case-insensitive [`RequestHeaders`] lookup.

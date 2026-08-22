@@ -866,3 +866,133 @@ the answer was "no declared control", which is a conjunct asserted in prose on a
 A per-build bucket is refilled on every reload cadence, so it bounds a WINDOW rather than a
 rate against a remote, billed, account-throttled signer.
 """
+
+# ---------------------------------------------------------------------------
+# Communication assurance — ADR-MCPRE-063 Slice 1
+# ---------------------------------------------------------------------------
+#
+# THM-0024 has two halves that fail differently, and each gets its own probe. Reading
+# another FIELD silently downgrades a URI-SAN deployment to a DNS or CN one. Reading a
+# later VALUE of the configured field lets an issuer that can mint two SANs choose which
+# identity the proxy binds to, by making the first one unusable. A battery that catches one
+# and not the other is the ordinary outcome — before this slice, the tree caught the first
+# and nothing at all caught the second.
+
+[[probe]]
+id = "M25-certificate-identity-source-fallback"
+unit = "proxy.certificate_identity"
+theorem = "THM-0024"
+conjunct = "no field other than the configured one is read"
+path = "mcp-re-proxy/src/communication_assurance/certificate_identity_interpreter.rs"
+anchor = """
+        CertificateIdentityPolicy::UriSan => fields.first_uri_san(),
+"""
+weakening = """
+        CertificateIdentityPolicy::UriSan => fields.first_uri_san().or_else(|| fields.first_dns_san()),
+"""
+expect_red = [
+  "lib#communication_assurance::certificate_identity_interpreter::tests::an_absent_selected_field_refuses_while_the_other_fields_are_populated",
+  "tests/integration#certificate_identity_no_fallback_test::uri_selected_and_absent_does_not_fall_back_to_a_present_dns_san",
+]
+
+[[probe]]
+id = "M26-certificate-identity-later-value-fallback"
+unit = "proxy.certificate_identity"
+theorem = "THM-0024"
+conjunct = "the value is the FIRST value the leaf presents in the configured field"
+path = "mcp-re-proxy/src/communication_assurance/certificate_identity_fields.rs"
+# Applied at the representation seam rather than in the selector: this is the shape the
+# defect actually takes in the wild — a projection that helpfully skips values the caller
+# would reject — and the selector has no loop to weaken.
+anchor = """
+    pub(super) fn first_uri_san(&self) -> Option<&str> {
+        self.uri_sans.first().map(String::as_str)
+    }
+"""
+weakening = """
+    pub(super) fn first_uri_san(&self) -> Option<&str> {
+        self.uri_sans
+            .iter()
+            .find(|candidate| {
+                let trimmed = candidate.trim();
+                !trimmed.is_empty() && !trimmed.chars().any(char::is_control)
+            })
+            .map(String::as_str)
+    }
+"""
+expect_red = [
+  "lib#communication_assurance::certificate_identity_fields::tests::a_malformed_first_value_is_still_the_projected_one",
+  "lib#communication_assurance::certificate_identity_interpreter::tests::a_malformed_first_value_refuses_and_the_later_valid_value_is_not_reached",
+  "tests/integration#certificate_identity_no_fallback_test::malformed_first_uri_san_does_not_fall_back_to_a_valid_later_uri_san",
+]
+
+[[probe]]
+id = "M27-certificate-identity-source-substitution"
+unit = "proxy.certificate_identity"
+theorem = "THM-0024"
+conjunct = "the returned source equals the field the policy configures"
+path = "mcp-re-proxy/src/communication_assurance/certificate_identity_interpreter.rs"
+anchor = """
+    Ok(CertificatePeerIdentityEvidence::new(
+        value,
+        policy.selects(),
+    ))
+"""
+weakening = """
+    Ok(CertificatePeerIdentityEvidence::new(
+        value,
+        super::certificate_identity_policy::CertificateIdentitySource::CommonName,
+    ))
+"""
+expect_red = [
+  "lib#communication_assurance::certificate_identity_interpreter::tests::a_successful_source_always_equals_the_configured_policy",
+  "lib#communication_assurance::certificate_identity_interpreter::tests::each_policy_reads_its_own_field_and_reports_its_own_source",
+]
+
+[[probe]]
+id = "M28-certificate-identity-policy-substitution"
+unit = "proxy.certificate_identity"
+theorem = "THM-0024"
+conjunct = "the field read is the one the policy names, for every policy"
+# Every field in the positive fixture carries a DISTINCT value, so a selector reading the
+# wrong field is caught by the value and not only by the reported source. A probe that only
+# moved the source label would leave that hole untested.
+path = "mcp-re-proxy/src/communication_assurance/certificate_identity_interpreter.rs"
+anchor = """
+        CertificateIdentityPolicy::DnsSan => fields.first_dns_san(),
+"""
+weakening = """
+        CertificateIdentityPolicy::DnsSan => fields.common_name(),
+"""
+expect_red = [
+  "lib#communication_assurance::certificate_identity_interpreter::tests::each_policy_reads_its_own_field_and_reports_its_own_source",
+  "lib#communication_assurance::certificate_identity_interpreter::tests::an_absent_selected_field_refuses_while_the_other_fields_are_populated",
+  "tests/integration#certificate_identity_no_fallback_test::dns_selected_and_absent_does_not_fall_back_to_a_present_common_name",
+]
+
+[[probe]]
+id = "M29-peer-identity-value-control-characters"
+unit = "proxy.peer_identity_value"
+theorem = "THM-0023"
+conjunct = "every inhabitant is free of control characters"
+path = "mcp-re-proxy/src/communication_assurance/peer_identity_value.rs"
+anchor = """
+        if trimmed.chars().any(char::is_control) {
+            return Err(PeerIdentityValueRefusal::ControlCharacter);
+        }
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#communication_assurance::peer_identity_value::tests::every_control_character_shape_is_refused_for_the_same_reason",
+]
+note = """
+One control, and only the owner's own — a probe may name controls its unit declares, and
+the certificate authority's tests belong to a different unit however red they also go.
+
+There is deliberately no companion probe weakening the invariant at the CONSUMING site.
+There is no such site to weaken: `PeerIdentityValue::interpret` is the only way to obtain
+the type, so the certificate authority cannot skip the check and still produce its success
+value. That is a structural fact rather than a tested one, and it is the reason the seal
+was worth adding.
+"""

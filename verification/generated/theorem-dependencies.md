@@ -100,3 +100,12 @@ graph BT
 graph BT
     THM_0013["THM-0013<br/>No validated deployment enables online OCSP client-certificate revocation"]
 ```
+
+## Component 10
+
+```mermaid
+graph BT
+    THM_0023["THM-0023<br/>Every peer identity value is well-formed, whatever evidence produced it"]
+    THM_0024["THM-0024<br/>Certificate identity interpretation reads the configured field and refuses rather than falling back"]
+    THM_0023 --> THM_0024
+```

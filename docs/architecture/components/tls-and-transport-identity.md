@@ -89,13 +89,29 @@ The exact type/API remains to be designed. This is step 2 of the ruled campaign 
 
 Production transport identity comes from the locally verified client certificate. No supported identity strategy may derive the authenticated transport identity from an arbitrary request header.
 
-Identity extraction and channel binding should remain separate propositions:
+Identity extraction and channel binding are separate propositions, and the first of them
+no longer lives here:
 
 ```text
-TLS certificate verification
-    -> verified transport identity
-        -> signer <-> identity binding
+certificate-chain evidence
+    -> [ certificate identity authority ]  ADR-MCPRE-063 Slice 1
+        -> peer-identity evidence
+            -> ... verification, assurance, binding ...
+                -> signer <-> identity binding
 ```
+
+`extract_identity` is now a compatibility facade in `tls.rs` over
+`communication_assurance::CertificateChainEvidence::interpret_identity`. It parses nothing,
+selects nothing and validates nothing; the historical vocabulary it converts —
+`IdentityPolicy`, `IdentitySource`, `TransportIdentity`, `validate_asserted_identity_value`
+— is named and dated in `asserted_identity_facade.rs` so the migration surface is
+countable and can be deleted whole.
+
+The arrow that used to read `TLS certificate verification -> verified transport identity`
+collapsed two authorities into one name. Identity interpretation does NOT establish that
+the chain was verified, and the type it returns no longer implies it: what the authority
+produces is peer-identity EVIDENCE, and the authority that would turn it into an
+authenticated peer fact does not exist yet.
 
 ## 7. Connection credential window
 
@@ -132,8 +148,17 @@ Registry: [`verification/policy/theorems.toml`](../../../verification/policy/the
 | **Resumption is offered only while the authentication epoch is current** (ADR-055) | listener lifetime | `EpochBoundSessionStore` + `TlsAuthEpoch::compute`; test below | **structural + tested, not stated as a theorem** |
 | **A connection cannot outlive the credential that authenticated it** | relation | `ClientCredentialWindow` projections | **sealed, no registry entry** |
 | **Transport identity is derived only from the verified client certificate** | composition | none | **gap** |
+| Certificate identity interpretation reads the configured field and refuses rather than falling back | certificate evidence → identity evidence | THM-0024 · `unit://proxy.certificate_identity` · probes M25–M28 | in registry |
+| Every peer identity value is well-formed, whatever evidence produced it | identity value | THM-0023 · `unit://proxy.peer_identity_value` · probe M29 | in registry |
 
-Three of five are real properties with no registry entry. That is the honest state, and it is what ADR-061 §12's "attach the theorem to the smallest authority that establishes it" is for — not a reason to weaken the claims, a list of theorems worth writing.
+Two of the gaps this table recorded are now closed, and by a claim narrower than the row
+that anticipated them: THM-0024 states that identity interpretation reads the configured
+field and nothing else, and it deliberately does NOT state that the certificate was
+verified. The composition gap in row five is therefore still open — it always was a
+different proposition, and separating them is what ADR-MCPRE-063 §3.1 requires. The X.509
+parser beneath THM-0024 is ASM-0030, an assumed foreign boundary, not a proved one.
+
+Three of five original rows are real properties with no registry entry. That is the honest state, and it is what ADR-061 §12's "attach the theorem to the smallest authority that establishes it" is for — not a reason to weaken the claims, a list of theorems worth writing.
 
 ## 11. Test/evidence inventory
 
@@ -142,6 +167,8 @@ Three of five are real properties with no registry entry. That is the honest sta
 | mTLS handshake, client-cert verification, rejection | `mcp-re-proxy/tests/integration/tls_test.rs` | `//mcp-re-proxy:integration_test` | unverified client rejected |
 | Store-level epoch binding (ADR-055 threat, retained by ADR-062) | `src/tls_listener_state/resumption_acceptance.rs` | `//mcp-re-proxy:proxy_unit_test` | resumption refused after epoch change — a claim about the STORE |
 | Listener-scoped resumption (ADR-062) | `src/tls_listener_state/mod.rs` tests, probes T01–T04 | `//mcp-re-proxy:proxy_unit_test`; `tools/verification/verify-mutations` | a different anchor set gets its own empty store; each probe turns a declared control red |
+| Certificate identity: the no-fallback law, through real DER | `tests/integration/certificate_identity_no_fallback_test.rs` | `//mcp-re-proxy:integration_test` | **every negative mints a decoy** — the selected field is absent or its first value malformed while another field, or a later value of the same field, is valid and unusable |
+| Certificate identity: the pure selector and its refusal algebra | `src/communication_assurance/` module tests, probes M25–M29 | `//mcp-re-proxy:proxy_unit_test`; `tools/verification/verify-mutations` | four refusals stay distinguishable; each probe turns a declared control red |
 | Channel binding to transport identity | `tests/integration/mtls_transport_binding_test.rs` | `//mcp-re-proxy:integration_test` (uses the `test-fixtures` dev feature) | binding mismatch refused |
 | Client leg end to end | `tests/integration_async/mtls_client_leg_e2e_test.rs` | `async_serve`; `//mcp-re-proxy:integration_async_test` | — |
 | Per-request revocation | `tests/integration_async/per_request_revocation_test.rs` | `async_serve` | revoked client refused |
@@ -149,6 +176,13 @@ Three of five are real properties with no registry entry. That is the honest sta
 | OCSP responder end to end | `tests/integration_ext/ocsp_e2e_test.rs` | `_PROXY_EXT_FEATURES`; `//mcp-re-proxy:integration_ext_test` | — |
 | Deliberate client-verification break is detected | `tests/fault_injection_test.rs` | `fault_accept_any_client`; `//mcp-re-proxy:fault_injection_test` | **this is the negative control for the whole component** — never enabled in the default `bazel test //...` |
 | Throughput of the real listener | `tests/tls_load_harness_bench.rs` | `#![cfg(feature = "redis_replay")]` — run via `scripts/local_slo_lane.sh` **only** | `scripts/slo_invocation_gate.py` fails the build if the `-- --ignored` form returns |
+
+The certificate-identity rows are the ones to read for what a negative control has to do.
+Before this slice the tree had **no** control at all for the later-value half of the
+no-fallback law: a selector rewritten to skip an unusable first SAN and take the next one
+left all 93 tests in the plain integration binary green. The existing negatives minted
+certificates with nothing else in them, so there was nothing for a fallback to fall back
+to. A negative that cannot go red is not evidence.
 
 The last row is ADR-061 §2 class 8 in this component: the harness is not `#[ignore]`d, so `-- --ignored` selects zero tests and exits 0. Never cite an SLO number that did not come from `scripts/local_slo_lane.sh` on a quiet box.
 
@@ -195,9 +229,11 @@ Re-measured by the ADR-061 §5.1 rule after MCPRE-138 (`scripts/module_size_gate
    #598 REMAINING        retire/re-scope that machinery, and its theorem consequences
    ```
 
-2. **`transport.rs` (1305) and `ocsp.rs` (1271) are band-3 units with no blueprint.** They are named here so their absence is a recorded gap rather than an implied claim of coverage.
+2. **`transport.rs` (1274) and `ocsp.rs` (1271) are band-3 units with no blueprint.** They are named here so their absence is a recorded gap rather than an implied claim of coverage. `transport.rs` shrank by 31 lines and `tls.rs` by 26 when ADR-063 Slice 1 moved certificate identity interpretation out; both debt entries were ratcheted down rather than left at the old number, because a stale baseline is 31 lines of headroom nobody paid for.
 
-3. **Three properties in §10 have no theorem.** Structural and tested is not the same as stated.
+3. **The trusted-ingress facade's delegation is pinned by nothing this graph declares.** `transport::validate_asserted_identity_value` delegates to the `PeerIdentityValue` owner, and its own tests go red when the owner's rules weaken — but they are not evidence for THM-0023, whose claim is over inhabitants of the type. A caller that stopped constructing the type would leave every inhabitant well-formed and the ingress path unprotected. Closing this needs the trusted-ingress authority that ADR-063 Slice 1 deliberately did not build.
+
+4. **Three properties in §10 have no theorem.** Structural and tested is not the same as stated.
 
 ## 14. Completion criteria
 

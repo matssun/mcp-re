@@ -746,3 +746,116 @@ tested_symbols = [
   "lib#config_state::validation::residue::tests::no_build_admits_the_online_ocsp_mode",
   "lib#config_state::validation::residue::tests::the_boundary_clause_carries_the_online_ocsp_refusal",
 ]
+
+# ---------------------------------------------------------------------------
+# Communication assurance — ADR-MCPRE-063 Slice 1
+# ---------------------------------------------------------------------------
+#
+# Two units, because the slice establishes two propositions with two different sets of
+# consumers. The value invariant is consumed by every identity provenance the proxy has —
+# certificate evidence and trusted-ingress assertion alike — and the interpretation is
+# consumed only by the certificate path. Folding them into one unit would make a claim
+# about the ingress path rest on evidence about X.509, which is the confusion the slice
+# exists to end.
+
+[[unit]]
+id = "proxy.peer_identity_value"
+class = "V0"
+description = "The generic peer-identity value invariant: every inhabitant is non-empty after trimming, length-bounded, and free of control characters, whatever evidence produced it."
+paths = ["mcp-re-proxy/src/communication_assurance/peer_identity_value.rs"]
+exported_contracts = []
+evidence = [
+  "test://proxy/peer_identity_value/invariant",
+  "mutation://proxy/peer_identity_value/invariant",
+]
+# The battery is over the OWNER and stops there.
+#
+# The trusted-ingress facade (`transport::validate_asserted_identity_value`) delegates to
+# this owner, and its own tests go red when the owner's rules are weakened — but they are
+# NOT listed here. THM-0023 is a claim about inhabitants of the type, and a caller that
+# stopped constructing the type would leave every inhabitant well-formed while leaving the
+# ingress path unprotected. Listing those tests would make this unit's evidence closure
+# wider than its claim, and the manifest gate refuses it for the sharper reason that this
+# unit does not measure `transport.rs`: an in-crate test whose source is not measured can
+# be rewritten under the same name without moving the fingerprint.
+#
+# What pins the delegation is therefore an OPEN item, not a silent one: it belongs to the
+# trusted-ingress authority, which this slice deliberately did not build.
+tested_symbols = [
+  "lib#communication_assurance::peer_identity_value::tests::a_well_formed_value_is_accepted_and_trimmed",
+  "lib#communication_assurance::peer_identity_value::tests::whitespace_only_is_empty_not_a_value",
+  "lib#communication_assurance::peer_identity_value::tests::the_length_bound_is_inclusive_and_refuses_one_byte_past_it",
+  "lib#communication_assurance::peer_identity_value::tests::every_control_character_shape_is_refused_for_the_same_reason",
+  "lib#communication_assurance::peer_identity_value::tests::refusal_precedence_reports_the_first_failing_rule",
+]
+pilot = "verus-candidate"
+
+[[unit]]
+id = "proxy.certificate_identity"
+class = "V0"
+description = "Certificate identity interpretation: under an explicit selection policy, the configured field of the presented leaf denotes this peer-identity evidence with this provenance, or interpretation refuses."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/certificate_identity_interpreter.rs",
+  "mcp-re-proxy/src/communication_assurance/certificate_identity_fields.rs",
+  "mcp-re-proxy/src/communication_assurance/certificate_identity_policy.rs",
+  "mcp-re-proxy/src/communication_assurance/certificate_identity_refusal.rs",
+  "mcp-re-proxy/src/communication_assurance/certificate_peer_identity_evidence.rs",
+  "mcp-re-proxy/src/communication_assurance/certificate_chain_evidence.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/certificate_identity/no_fallback_interpretation",
+  "mutation://proxy/certificate_identity/no_fallback_interpretation",
+]
+# The battery spans two targets on purpose, and the split is the parser boundary.
+#
+# The `lib#` members exercise the PURE selector over an interpreted field set: they are
+# the only way to state a property about a field set the X.509 encoder cannot express, and
+# they are what a future proof would replace. The `tests/integration#` members drive the
+# same law through real DER, so the adapter is measured too — a selector that is right
+# about `CertificateIdentityFields` and an adapter that mis-orders SANs would leave the
+# first group green.
+#
+# The no-fallback law needs the certificate to CARRY a tempting weaker answer, which is
+# why every negative here mints decoys. A negative over a certificate with nothing else in
+# it cannot go red when a fallback is added.
+tested_symbols = [
+  # --- the pure selector ---
+  "lib#communication_assurance::certificate_identity_interpreter::tests::each_policy_reads_its_own_field_and_reports_its_own_source",
+  "lib#communication_assurance::certificate_identity_interpreter::tests::a_successful_source_always_equals_the_configured_policy",
+  "lib#communication_assurance::certificate_identity_interpreter::tests::an_absent_selected_field_refuses_while_the_other_fields_are_populated",
+  "lib#communication_assurance::certificate_identity_interpreter::tests::a_malformed_first_value_refuses_and_the_later_valid_value_is_not_reached",
+  "lib#communication_assurance::certificate_identity_interpreter::tests::the_refusal_reason_distinguishes_how_the_first_value_was_malformed",
+  "lib#communication_assurance::certificate_identity_interpreter::tests::a_trailing_control_character_is_trimmed_rather_than_refused",
+  "lib#communication_assurance::certificate_identity_interpreter::tests::interpretation_is_deterministic_over_the_same_fields_and_policy",
+  "lib#communication_assurance::certificate_identity_interpreter::tests::an_empty_field_set_refuses_under_every_policy_as_absence",
+  # --- the representation seam: order is semantic ---
+  "lib#communication_assurance::certificate_identity_fields::tests::the_first_value_of_each_san_list_is_the_one_projected",
+  "lib#communication_assurance::certificate_identity_fields::tests::a_malformed_first_value_is_still_the_projected_one",
+  # --- the mechanism adapter: the two representation refusals ---
+  "lib#communication_assurance::certificate_chain_evidence::tests::absent_evidence_refuses_as_no_leaf_under_every_policy",
+  "lib#communication_assurance::certificate_chain_evidence::tests::bytes_that_are_not_a_certificate_refuse_as_malformed_not_as_absent",
+  "lib#communication_assurance::certificate_chain_evidence::tests::empty_bytes_are_a_malformed_certificate_rather_than_an_absent_one",
+  # --- provenance is part of the fact ---
+  "lib#communication_assurance::certificate_peer_identity_evidence::tests::two_evidences_differing_only_in_source_are_not_equal",
+  "lib#communication_assurance::certificate_identity_policy::tests::every_policy_selects_exactly_one_source",
+  # --- the same law through real DER ---
+  "tests/integration#certificate_identity_no_fallback_test::uri_selected_and_absent_does_not_fall_back_to_a_present_dns_san",
+  "tests/integration#certificate_identity_no_fallback_test::dns_selected_and_absent_does_not_fall_back_to_a_present_common_name",
+  "tests/integration#certificate_identity_no_fallback_test::malformed_first_uri_san_does_not_fall_back_to_a_valid_later_uri_san",
+  "tests/integration#certificate_identity_no_fallback_test::empty_first_uri_san_does_not_fall_back_to_a_valid_later_uri_san",
+  "tests/integration#certificate_identity_no_fallback_test::oversized_first_uri_san_does_not_fall_back_to_a_valid_later_uri_san",
+  "tests/integration#certificate_identity_no_fallback_test::malformed_first_dns_san_does_not_fall_back_to_a_valid_later_dns_san",
+]
+pilot = "verus-candidate"
+
+[[edge]]
+# Producer -> consumer. The interpretation returns a value the invariant unit owns; the
+# invariant knows nothing about certificates. COMPILE_DEPENDENCY rather than
+# PROOF_DEPENDENCY: the interpreter's source compiles against the owner's constructor, and
+# both claims rest on test evidence — there is no proof for one to consume from the other.
+# The theorem-level composition is THM-0024 `depends_on` THM-0023.
+kind = "COMPILE_DEPENDENCY"
+from = "proxy.peer_identity_value"
+to = "proxy.certificate_identity"
+rationale = "Certificate identity interpretation establishes its success value BY constructing a PeerIdentityValue. If the invariant weakens, what the interpretation returns weakens with it, and the interpretation's own tests would not necessarily notice."

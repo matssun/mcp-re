@@ -31,11 +31,10 @@ use mcp_re_core::McpReError;
 use rustls_pki_types::CertificateDer;
 use rustls_pki_types::CertificateRevocationListDer;
 use x509_parser::certificate::X509Certificate;
-use x509_parser::extensions::GeneralName;
 use x509_parser::prelude::FromDer;
 
+use crate::communication_assurance::CertificateChainEvidence;
 use crate::transport::IdentityPolicy;
-use crate::transport::IdentitySource;
 use crate::transport::RequestHeaders;
 use crate::transport::TransportIdentity;
 
@@ -497,55 +496,30 @@ pub(crate) fn validated_delegated_resolver(
 }
 
 /// Extract the verified client identity from a leaf certificate (DER) using the
-/// authoritative field named by `policy`. There is NO fallback: the configured
-/// field is read and nothing else. Returns `None` if the certificate cannot be
-/// parsed, does not carry the selected field, or carries a value that fails the
-/// strict identity-value rules — the caller (transport binding) then fails closed
-/// rather than accepting a weaker identity.
+/// authoritative field named by `policy`.
 ///
-/// The extracted value is held to the SAME rules as an asserted trusted-ingress
-/// identity ([`validate_asserted_identity_value`]): non-empty, length-bounded, and
-/// free of control characters. A certificate field is not self-validating — an
-/// issuer can mint a SAN or CN holding a CR/LF or a megabyte of padding, and this
-/// value is carried into the transport binding and the logs, so the two identity
-/// provenances must not disagree about what a well-formed identity is. Only the
-/// FIRST matching field is considered, and a malformed first value is a rejection
-/// rather than a reason to look at the next one — searching on would be exactly
-/// the fallback this function disclaims.
+/// **Compatibility facade.** The semantics live in the certificate identity authority
+/// (ADR-MCPRE-063 Slice 1): this function converts the historical vocabulary in and out
+/// and owns nothing. It parses no certificate, selects no field, validates no value, and
+/// decides no fallback — deleting the authority's checks would break it, and no check
+/// deleted here could let an invalid identity through, because there is none here to
+/// delete.
+///
+/// The `Option` return is the historical shape, and it is lossy: the authority
+/// distinguishes an absent peer certificate, an unreadable one, a missing configured
+/// field, and a malformed configured value, and all four arrive here as `None`. Callers
+/// that need the reason should consume
+/// [`CertificateChainEvidence::interpret_identity`](crate::communication_assurance::CertificateChainEvidence::interpret_identity)
+/// directly; this facade exists so the transport-binding consumers can migrate one at a
+/// time rather than in this slice.
 pub fn extract_identity(leaf_der: &[u8], policy: IdentityPolicy) -> Option<TransportIdentity> {
-    let (_, cert) = X509Certificate::from_der(leaf_der).ok()?;
-
-    // Bind to an owned String so the borrow of `cert` ends before return.
-    let (raw, source): (String, IdentitySource) = match policy {
-        IdentityPolicy::UriSan => {
-            let san = cert.subject_alternative_name().ok().flatten()?;
-            let uri = san.value.general_names.iter().find_map(|name| match name {
-                GeneralName::URI(uri) => Some((*uri).to_string()),
-                _ => None,
-            })?;
-            (uri, IdentitySource::UriSan)
-        }
-        IdentityPolicy::DnsSan => {
-            let san = cert.subject_alternative_name().ok().flatten()?;
-            let dns = san.value.general_names.iter().find_map(|name| match name {
-                GeneralName::DNSName(dns) => Some((*dns).to_string()),
-                _ => None,
-            })?;
-            (dns, IdentitySource::DnsSan)
-        }
-        IdentityPolicy::CnLegacy => {
-            let common_name = cert
-                .subject()
-                .iter_common_name()
-                .next()
-                .and_then(|cn| cn.as_str().ok())
-                .map(str::to_string)?;
-            (common_name, IdentitySource::CommonName)
-        }
-    };
-
-    let validated = crate::transport::validate_asserted_identity_value(&raw).ok()?;
-    Some(TransportIdentity::new(validated, source))
+    let evidence = CertificateChainEvidence::from_leaf_der(leaf_der)
+        .interpret_identity(policy.into())
+        .ok()?;
+    Some(TransportIdentity::new(
+        evidence.value().as_str(),
+        evidence.source().into(),
+    ))
 }
 
 /// Leaf-DER form of [`resolve_identity`] for the opt-in async serve path
