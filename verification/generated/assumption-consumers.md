@@ -46,5 +46,6 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0030 | The X.509 parser faithfully reports a leaf's URI SANs, DNS SANs, and subject Common Name, in the order the certificate presents them. | proxy.certificate_identity | THM-0024 |
 | ASM-0031 | The X.509 SubjectPublicKeyInfo parser faithfully reports a key's algorithm OID, and refuses what is not a SubjectPublicKeyInfo. | proxy.ed25519_public_key | THM-0025 |
 | ASM-0032 | The X.509 certificate parser faithfully reports the leaf certificate's SubjectPublicKeyInfo bytes. | proxy.credential_key_correspondence | THM-0026 |
+| ASM-0033 | The TLS establishment mechanism faithfully reports whether a relationship has established, and which peer credential it associated with it. | proxy.channel_associated_credential | THM-0028 |
 
 19 assumption(s) are reached by more than one theorem.

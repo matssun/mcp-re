@@ -120,3 +120,10 @@ graph BT
     THM_0025 --> THM_0026
     THM_0026 --> THM_0027
 ```
+
+## Component 12
+
+```mermaid
+graph BT
+    THM_0028["THM-0028<br/>Channel-associated credential evidence cannot exist beside a relationship"]
+```

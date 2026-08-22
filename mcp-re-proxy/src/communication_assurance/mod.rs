@@ -48,10 +48,12 @@ pub mod certificate_chain_evidence;
 pub mod certificate_identity_policy;
 pub mod certificate_identity_refusal;
 pub mod certificate_peer_identity_evidence;
+pub mod channel_associated_credential;
 pub mod credential_key_correspondence;
 pub mod credential_public_key_evidence;
 pub mod ed25519_public_key;
 pub mod peer_identity_value;
+pub(crate) mod rustls_established_channel;
 pub mod signing_key_evidence;
 
 // PRIVATE to the authority. These two are the block's internal machinery: the
@@ -75,6 +77,9 @@ pub use certificate_identity_policy::CertificateIdentityPolicy;
 pub use certificate_identity_policy::CertificateIdentitySource;
 pub use certificate_identity_refusal::CertificateIdentityRefusal;
 pub use certificate_peer_identity_evidence::CertificatePeerIdentityEvidence;
+pub(crate) use channel_associated_credential::associated_chain_der;
+pub use channel_associated_credential::ChannelAssociatedCertificateCredentialEvidence;
+pub use channel_associated_credential::ChannelCredentialAssociationRefusal;
 pub use credential_key_correspondence::establish_credential_key_correspondence;
 pub use credential_key_correspondence::CredentialKeyCorrespondenceFacts;
 pub use credential_key_correspondence::CredentialKeyCorrespondenceRefusal;

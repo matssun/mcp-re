@@ -1015,3 +1015,43 @@ kind = "CONTRACT_CONSUMES"
 from = "proxy.credential_key_correspondence"
 to = "proxy.delegated_resolver_materialization"
 rationale = "The resolver's guarantee is exactly the correspondence authority's fact, carried into a runtime value. If correspondence became vacuous, the resolver would still be constructed — and only this unit's controls would notice, because the correspondence unit's own tests are about the relation rather than about what is built from it."
+
+# ---------------------------------------------------------------------------
+# Communication assurance — ADR-MCPRE-063 Slice 4
+# ---------------------------------------------------------------------------
+#
+# The first unit whose entire content is a FAITHFUL RELAY of a mechanism report. It decides
+# nothing about the credential and verifies nothing about it; what it owns is that the
+# sentence *this credential belongs to this established relationship* cannot be written by
+# anyone who was not there when the relationship was established.
+
+[[unit]]
+id = "proxy.channel_associated_credential"
+class = "V0"
+description = "The credential a communication-establishment mechanism associated with a successfully established relationship, sealed so it cannot be manufactured beside one — and claiming nothing about the credential's freshness, validity, revocation, trust, or identity."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/channel_associated_credential.rs",
+  "mcp-re-proxy/src/communication_assurance/rustls_established_channel.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/channel_associated_credential/mechanism_association",
+  "mutation://proxy/channel_associated_credential/mechanism_association",
+]
+# The mechanism's report is the whole content of the product; ASM-0033 is that premise, and
+# it is why the controls drive real handshakes rather than synthesising a chain.
+assumptions = ["ASM-0033"]
+# The four handshake controls are the characterization, kept: each names a state a
+# production relationship can actually be in, and one of them —
+# `a_peer_with_no_credential_never_reaches_an_established_relationship` — is what decides
+# that an absent credential is a mechanism-boundary inconsistency rather than a domain
+# state. If client auth ever became optional it goes red at exactly that measurement.
+tested_symbols = [
+  "lib#communication_assurance::channel_associated_credential::tests::an_associated_chain_is_carried_leaf_first",
+  "lib#communication_assurance::channel_associated_credential::tests::an_empty_chain_is_not_a_credential",
+  "lib#communication_assurance::rustls_established_channel::establishment::an_established_relationship_associates_the_credential_the_peer_presented",
+  "lib#communication_assurance::rustls_established_channel::establishment::a_resumed_relationship_associates_the_same_credential_as_the_full_handshake",
+  "lib#communication_assurance::rustls_established_channel::establishment::a_connection_that_has_not_established_associates_nothing",
+  "lib#communication_assurance::rustls_established_channel::establishment::a_peer_with_no_credential_never_reaches_an_established_relationship",
+]
+pilot = "verus-candidate"

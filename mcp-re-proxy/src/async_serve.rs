@@ -56,6 +56,9 @@ use hyper_util::server::conn::auto;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
+use crate::communication_assurance::associated_chain_der;
+use crate::communication_assurance::rustls_established_channel::associated_credential;
+use crate::communication_assurance::ChannelAssociatedCertificateCredentialEvidence;
 use crate::tls::assertion_header;
 use crate::tls::connection_rejection_for_chain;
 use crate::tls::resolve_identity_from_leaf;
@@ -540,22 +543,19 @@ async fn serve_connection<H: AsyncRequestHandler>(
     // progress, and an established connection costs no further device signatures.
     drop(_handshake);
 
-    // Capture the verified peer CHAIN ONCE (connection-constant). hyper takes
-    // ownership of the TLS stream next, so per-request identity/cert-lifetime
-    // decisions read this captured chain via the shared `tls` helpers.
+    // THE ESTABLISHMENT BOUNDARY (ADR-MCPRE-063 Slice 4). `acceptor.accept` has
+    // succeeded, so only now can the mechanism be asked which credential it associated
+    // with the relationship. Captured ONCE — the credential is connection-constant and
+    // hyper takes ownership of the TLS stream next. A refusal becomes an absent
+    // credential and the fail-closed core downstream decides it; both refusals are
+    // mechanism-boundary inconsistencies unreachable from this position.
     //
     // The whole chain, not just the leaf: the handshake verifier checks revocation to
     // the trust anchor (`RevocationCheckDepth::Chain`), so a per-request check that
     // stopped at the leaf would keep honouring a peer whose INTERMEDIATE was revoked
-    // for as long as it held the connection open. An absent peer certificate is an
-    // empty chain rather than a special case, so the fail-closed core decides it.
-    let peer_chain: Arc<Vec<Vec<u8>>> = Arc::new(
-        tls.get_ref()
-            .1
-            .peer_certificates()
-            .map(|chain| chain.iter().map(|cert| cert.as_ref().to_vec()).collect())
-            .unwrap_or_default(),
-    );
+    // for as long as it held the connection open.
+    let peer_credential: Arc<Option<ChannelAssociatedCertificateCredentialEvidence>> =
+        Arc::new(associated_credential(tls.get_ref().1).ok());
 
     // Capture the header-read deadline before `options` moves into the service.
     let header_read_timeout = options
@@ -572,7 +572,7 @@ async fn serve_connection<H: AsyncRequestHandler>(
     let service = service_fn(move |req: Request<Incoming>| {
         let options = Arc::clone(&options);
         let handler = Arc::clone(&handler);
-        let peer_chain = Arc::clone(&peer_chain);
+        let peer_credential = Arc::clone(&peer_credential);
         let in_flight = in_flight.clone();
         let in_flight_requests = Arc::clone(&in_flight_requests);
         let body_budget = Arc::clone(&body_budget);
@@ -581,7 +581,7 @@ async fn serve_connection<H: AsyncRequestHandler>(
                 req,
                 options,
                 handler,
-                peer_chain,
+                peer_credential,
                 in_flight,
                 in_flight_requests,
                 body_budget,
@@ -691,7 +691,7 @@ async fn handle_request<H: AsyncRequestHandler>(
     req: Request<Incoming>,
     options: Arc<ServerOptions>,
     handler: Arc<H>,
-    peer_chain: Arc<Vec<Vec<u8>>>,
+    peer_credential: Arc<Option<ChannelAssociatedCertificateCredentialEvidence>>,
     in_flight: Option<Arc<tokio::sync::Semaphore>>,
     in_flight_requests: Arc<AtomicUsize>,
     body_budget: Arc<BodyByteBudget>,
@@ -792,7 +792,7 @@ async fn handle_request<H: AsyncRequestHandler>(
         },
     };
 
-    let chain: Vec<&[u8]> = peer_chain.iter().map(Vec::as_slice).collect();
+    let chain: Vec<&[u8]> = associated_chain_der(peer_credential.as_ref().as_ref());
     let leaf = chain.first().copied();
     let identity = resolve_identity_from_leaf(leaf, &options);
     let assertion = assertion_header(&options, &headers);

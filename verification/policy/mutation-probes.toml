@@ -1192,9 +1192,11 @@ expect_red = [
 # There is deliberately no probe that removes the gate from `materialize` itself, and the
 # reason is the result: it cannot be written. The assembling constructor is private and
 # demands a `CredentialKeyCorrespondenceFacts` value, which nothing outside the authority
-# can produce — so "skip the check and construct anyway" does not compile. A weakening that
-# cannot be expressed is a stronger statement than one that goes red, and it is the whole
-# point of Slice 3.
+# can produce — so "skip the check and construct anyway" does not compile. Per L-4 that is
+# a statement about the MECHANISM, not evidence: what is stronger is a construction the
+# type system refuses to represent, while the evidence for it is the visibility boundary
+# plus successful compilation of the crate. Being unable to write the mutation is a fact
+# about the mutation.
 #
 # What CAN be weakened is the relation the gate consults. M36 makes correspondence vacuous
 # and shows the resolver's guarantee collapsing with it — which is what the CONTRACT_CONSUMES
@@ -1251,4 +1253,70 @@ weakening = """
 expect_red = [
   "lib#delegated_tls::resolver::correspondence_gate::corresponding_material_materializes_and_installs_the_listener_budget",
   "lib#delegated_tls::resolver::budget_continuity::resolvers_sharing_a_budget_share_one_bucket",
+]
+
+# ---------------------------------------------------------------------------
+# Communication assurance — ADR-MCPRE-063 Slice 4
+# ---------------------------------------------------------------------------
+#
+# There is deliberately no probe for the SEAL — for "construct the evidence beside a
+# relationship". The representation is private to its module and the only constructor is
+# `pub(super)`, so that weakening does not compile, and adding a seam through which a probe
+# could reach it would be building the manufacture route the slice exists to remove (L-4).
+#
+# Per L-4 the mechanism and the evidence are kept apart: the ENFORCEMENT is the
+# compiler-enforced visibility boundary, and the EVIDENCE for it is that boundary plus
+# successful compilation of the crate. Being unable to write the mutation is a fact about
+# the mutation, not about the code.
+#
+# What IS probed is what the adapter reads from the mechanism, because that is where a
+# weakening changes which relationships get to speak.
+
+[[probe]]
+id = "M38-association-requires-a-completed-establishment"
+unit = "proxy.channel_associated_credential"
+theorem = "THM-0028"
+conjunct = "the mechanism reported the connection as no longer handshaking"
+# A `ServerConnection` exists before its handshake, so without this the authority would
+# read a chain out of a relationship that does not exist yet — and, on a handshake the
+# verifier REFUSED, would report the absence of a credential as though a relationship had
+# been established and merely presented none. The two states must not collapse.
+path = "mcp-re-proxy/src/communication_assurance/rustls_established_channel.rs"
+anchor = """
+    if conn.is_handshaking() {
+        return Err(ChannelCredentialAssociationRefusal::EstablishmentIncomplete);
+    }
+"""
+weakening = """
+    if false && conn.is_handshaking() {
+        return Err(ChannelCredentialAssociationRefusal::EstablishmentIncomplete);
+    }
+"""
+expect_red = [
+  "lib#communication_assurance::rustls_established_channel::establishment::a_connection_that_has_not_established_associates_nothing",
+  "lib#communication_assurance::rustls_established_channel::establishment::a_peer_with_no_credential_never_reaches_an_established_relationship",
+]
+
+[[probe]]
+id = "M39-possession-means-a-credential-was-associated"
+unit = "proxy.channel_associated_credential"
+theorem = "THM-0028"
+conjunct = "the carried credential chain is non-empty"
+# The whole content of the product is that a credential was associated. An empty chain
+# admitted here would be evidence of nothing wearing the name of evidence, and every
+# consumer projecting the chain would receive the same empty slice a refusal produces —
+# so the distinction would be invisible downstream rather than loud.
+path = "mcp-re-proxy/src/communication_assurance/channel_associated_credential.rs"
+anchor = """
+        if chain_der.is_empty() {
+            return Err(ChannelCredentialAssociationRefusal::NoCredentialAssociated);
+        }
+"""
+weakening = """
+        if false && chain_der.is_empty() {
+            return Err(ChannelCredentialAssociationRefusal::NoCredentialAssociated);
+        }
+"""
+expect_red = [
+  "lib#communication_assurance::channel_associated_credential::tests::an_empty_chain_is_not_a_credential",
 ]

@@ -649,7 +649,111 @@ every resolver wear the same guarantee would have destroyed useful extensibility
 replaced an honest boundary with a uniform-looking claim that was false for half its
 inhabitants.
 
-## 9. Slice 4 selection rule
+## 8.18 Slice 4 as built — a faithful relay, and the seal that makes it worth having
+
+The first block whose entire content is *a mechanism said so*. It verifies nothing and
+interprets nothing; what it owns is that the sentence cannot be written by anyone who was
+not there when the relationship was established.
+
+**Shape.** `ChannelAssociatedCertificateCredentialEvidence` — sealed, private
+representation, `pub(super)` constructor — produced only by
+`rustls_established_channel::associated_credential`, the one module in the authority that
+knows a TLS connection exists and now the only place in the crate that reads
+`peer_certificates()`. Registered as `unit://proxy.channel_associated_credential`; claimed
+as THM-0028; the establishment mechanism's report is ASM-0033; probes M38–M39.
+
+**The issue was amended in four places before implementation**, and three of the four came
+from the same mistake the earlier slices keep teaching: a contract that looks precise while
+claiming more than the mechanism supports.
+
+1. **Establishment is a predecessor, not a refusal of this authority.** The first draft
+   required the block to distinguish *no credential* from *no established relationship* —
+   but if establishment is a predecessor, the second means the authority never runs, and
+   making it a refusal would have made Slice 4 partly responsible for deciding whether
+   establishment occurred, which is precisely the boundary the slice exists to draw.
+2. **A missing credential is characterized, not assumed legal.** `Option` in the mechanism's
+   signature is representation shape, not legality.
+3. **The product was renamed.** `AuthenticatedPeerCredentialEvidence` reads as proposition
+   B — *the peer identified by this credential has been authenticated* — which is not what
+   this establishes. `certificate` in the name is the evidence class, not a TLS spelling.
+4. **The Slice-5 sketch was corrected**, which is the part with consequences beyond this
+   slice; see below.
+
+**What characterization measured, and what each measurement decided.**
+
+```text
+pre-handshake ServerConnection      is_handshaking() == true
+full handshake                      Some(chain)
+resumption of it                    Some(chain), BYTE-IDENTICAL
+peer presenting no certificate      handshake FAILS: "peer sent no certificates"
+```
+
+The first says the mechanism will answer the establishment question itself, so the adapter
+asks rather than trusting a type that cannot prove it — a `ServerConnection` is constructed
+before its handshake, and on the blocking path it is the request read that drives the
+handshake to completion. The second decided that the product carries NO full-versus-resumed
+provenance: `rustls` can report which path a relationship took, no authority needs the
+distinction to establish a later proposition, and a field nothing reads is a claim no code
+backs. Had they differed, L-2 would have required the seam to carry which — so this control
+is what makes the absence of that field a measurement rather than an omission.
+
+The third is the one that shaped the refusal algebra. *Established with no credential* is
+**unreachable** under every supported production path: every serving config is built with a
+mandatory `WebPkiClientVerifier`, and the peer is refused DURING establishment, so there is
+no established relationship for a credential to be missing from. So the algebra does not
+invent a reachable-looking domain state for it. Both refusals — an incomplete establishment,
+and an established relationship carrying no credential — are named for what they are,
+**mechanism-boundary inconsistencies**, and the control that measured the unreachability is
+kept: if client auth ever became optional it goes red at exactly the state it was measured
+on, which is the point at which the refusal would have to become a domain state. The one
+build that reaches it today is the deliberately-broken `fault_accept_any_client` lane, and
+refusing keeps that lane failing closed here too.
+
+**No test seam was added to manufacture either state**, and none was needed: a fresh
+connection and a refused handshake are both obtainable from real handshakes.
+
+**The seal is the point, and it is not probed.** M38 and M39 weaken what the adapter reads
+from the mechanism. Nothing probes *construct the evidence beside a relationship*, because
+the representation is private to its module and the constructor is `pub(super)`, so that
+weakening does not compile — L-4, with the mechanism and the evidence kept apart: the
+enforcement is the visibility boundary, and the evidence for it is that boundary plus
+successful compilation of the crate.
+
+**What the slice did NOT do.** `TransportIdentity` is untouched and its consumers are
+unmigrated: this slice removes the manufacture route for the CREDENTIAL fact, not for the
+identity fact built on top of it. Both serving paths now obtain the credential through the
+authority and project the chain for the per-request lifetime and revocation gates, which
+still consume a representation. That projection is a compatibility seam and is documented
+as one; each later migration removes a caller, and it goes when the last one does.
+
+### 8.19 The composition rule Slice 5 must obey
+
+The rejected Slice-5 shape, and the reason it is rejected, is the reusable part:
+
+```text
+ChannelAssociatedCertificateCredentialEvidence + CertificatePeerIdentityEvidence
+        -> AuthenticatedPeerIdentityFacts                              # REJECTED
+```
+
+Both operands are valid products of authorities that really established them. It is still
+wrong: identity evidence interpreted from certificate **B** can be paired with relationship
+credential **A**, and the caller does the pairing. That is Slice 3's *facts beside the terms*
+defect, reappearing on the evidence-provenance axis rather than the credential/key axis. So
+Slice 5 derives the identity from the credential the relationship carries, inside one
+construction closure, reusing the Slice-1 interpreter; `CertificatePeerIdentityEvidence` may
+be produced internally on that path, and a caller must not supply an independently obtained
+one.
+
+The candidate law, deliberately unnumbered until Slice 5 measures it:
+
+> Two valid facts cannot be composed to establish a relation about one underlying object
+> unless their provenance establishes that they describe the same object. When that
+> provenance cannot be carried safely, derive the downstream fact inside the predecessor's
+> construction closure.
+
+Two blocks do not legally connect because their types sound compatible.
+
+## 9. Slice selection rule
 
 Do not choose the next slice merely because it is physically adjacent to a completed one or
 is the largest remaining block. Slice 2 was chosen against adjacency on exactly this rule:
@@ -670,10 +774,15 @@ Candidate directions include:
 - peer-identity evidence + verified evidence -> authenticated peer facts;
 - verified peer/relationship facts + binding evidence -> relationship binding facts.
 
-The next issue must state why its predecessor products and authority boundary are real.
-**Slice 4 is deliberately unnamed here.** What the first binary composition taught is an
-input to that choice, and recording a candidate as a decision would make the graph look
-more settled than it is.
+The next issue must state why its predecessor products and authority boundary are real, and
+a candidate is not recorded as a decision until it is selected — that would make the graph
+look more settled than it is.
+
+Slice 4 was selected on the first ground: a semantic authority carried entirely by control
+flow, whose product a public total constructor let anyone manufacture. Slice 5 is named in
+§8.19 and it is named for the opposite reason — not because it is next in a list, but
+because Slice 4's product is the only legal way to reach it, and the shape it must NOT take
+was already measured.
 
 ## 10. Relation to #598 / ADR-062
 
@@ -705,11 +814,16 @@ Slice 3  (#607)                                                              COM
   -> the first semantic product gating a RUNTIME CAPABILITY; taught L-4
   -> selected because Slice 2 exposed a defect in its own successor boundary
 
-Review Slice 3
-  -> select Slice 4 from the predecessor/product graph, never by adjacency
-  -> the likely branch is peer authentication: TransportIdentity claims a verified
-     peer identity and is freely constructible, and the request pipeline claims
-     actor and peer are one principal while returning only Established<()>
+Slice 4  (#609)                                                              COMPLETE
+  -> successful establishment -> channel-associated certificate credential evidence
+  -> the first FAITHFUL RELAY: a sealed product whose whole content is a mechanism
+     report, and which therefore cannot be manufactured beside a relationship
+  -> the contract was amended before implementation; §8.18 records the four changes
+
+Slice 5
+  -> identity interpreted from the credential the relationship carries, in ONE
+     construction closure — never a caller pairing two independently obtained facts
+     (§8.19)
 
 Later
   -> map ADR-062/#598 session lifecycle into the mechanism-specific assurance branch

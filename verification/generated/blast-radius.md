@@ -30,6 +30,7 @@ attestations this view cannot see.
 | unit://http_profile.verifier_result_separation | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.verifier_results | source, contracts or evidence | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022 | _no consumer_ |
 | unit://proxy.certificate_identity | source, contracts or evidence | THM-0024 | _no consumer_ |
+| unit://proxy.channel_associated_credential | source, contracts or evidence | THM-0028 | _no consumer_ |
 | unit://proxy.credential_key_correspondence | source, contracts or evidence | THM-0026 | proxy.delegated_resolver_materialization (CONTRACT_CONSUMES) |
 | unit://proxy.delegated_resolver_materialization | source, contracts or evidence | THM-0027 | _no consumer_ |
 | unit://proxy.ed25519_public_key | source, contracts or evidence | THM-0025 | proxy.credential_key_correspondence (COMPILE_DEPENDENCY) |
@@ -68,6 +69,7 @@ attestations this view cannot see.
 | THM-0025 | statement, consequence, scope or review requirement | specification review | THM-0026 |
 | THM-0026 | statement, consequence, scope or review requirement | specification review | THM-0027 |
 | THM-0027 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0028 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 
 ## Assumptions
 
@@ -103,3 +105,4 @@ attestations this view cannot see.
 | ASM-0030 | description, justification, scope or mechanism | proxy.certificate_identity | assumption review |
 | ASM-0031 | description, justification, scope or mechanism | proxy.ed25519_public_key | assumption review |
 | ASM-0032 | description, justification, scope or mechanism | proxy.credential_key_correspondence | assumption review |
+| ASM-0033 | description, justification, scope or mechanism | proxy.channel_associated_credential | assumption review |
