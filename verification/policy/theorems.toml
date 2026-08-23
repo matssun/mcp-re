@@ -1151,12 +1151,21 @@ credential evidence C and some identity-selection policy P, and its value and so
 exactly what interpreting the FIRST certificate of C's associated chain under P returned.
 Cloning preserves that provenance and cannot introduce a new credential or identity origin.
 
-No other certificate can be the source of that identity. The derivation takes a credential
-and a policy and nothing else: there is no parameter through which a separately obtained
+No other certificate can be the source of that identity. The derivation's whole parameter
+list is a credential and a policy: there is no parameter through which a separately obtained
 certificate, or a separately obtained identity product, could enter, so pairing credential A
 with an identity read from certificate B is unconstructible rather than merely untaken. The
-representation and the constructor are private to the deriving module, and the entrance the
-owning authority exposes is a method on the credential, so the closure is the only producer.
+representation is private to the deriving module, and the owning authority exposes only the
+free interpret_associated_identity operation taking the predecessor credential and
+identity-selection policy, so that operation is the only producer; a sibling authority
+attempting the struct literal fails with E0451.
+
+The deriving module is communication_assurance::channel_associated_identity, a SIBLING of the
+credential authority rather than a module inside it, and that placement is load-bearing in
+the other direction: inside, it would be a descendant of the credential's module and would
+therefore reach the private constructor THM-0028 claims only the mechanism adapter can reach
+— measured, that layout compiled a call to it. It consumes the owner's named `pub(super)`
+leaf projection instead. A consumer's placement is part of its predecessor's seal.
 
 The refusal algebra is the leaf-level one, which has no absence state. The predecessor
 guarantees a non-empty chain, so *no certificate was presented* is not a state this
