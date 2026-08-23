@@ -1048,10 +1048,13 @@ This is a claim about ORIGIN, not about simultaneous lifetime. The value owns it
 bytes and is `Clone`, so it may outlive the relationship it came from; what cannot happen is
 that it came from anywhere else.
 
-Every ChannelAssociatedCertificateCredentialEvidence value was constructed by
+Every ChannelAssociatedCertificateCredentialEvidence inhabitant originates from an inhabitant
+produced by
 communication_assurance::channel_associated_credential::rustls_adapter::associated_credential
-from a connection the establishment mechanism reported as no longer handshaking, and carries
-the non-empty credential chain that mechanism reported for that same connection.
+from a connection the establishment mechanism reported as no longer handshaking. Cloning
+preserves that provenance and cannot introduce a new credential or relationship origin. The
+originating inhabitant carries the non-empty credential chain the mechanism reported for that
+same connection.
 
 The producer boundary is what carries the claim, and it is exact. The representation and the
 constructor are PRIVATE to the owning module, and the mechanism adapter is a CHILD of that
