@@ -26,6 +26,7 @@
 use mcp_re_proxy::communication_assurance::CertificateChainEvidence;
 use mcp_re_proxy::communication_assurance::CertificateIdentityPolicy;
 use mcp_re_proxy::communication_assurance::CertificateIdentityRefusal;
+use mcp_re_proxy::communication_assurance::LeafIdentityRefusal;
 use mcp_re_proxy::communication_assurance::PeerIdentityValueRefusal;
 use mcp_re_proxy::transport::MAX_ASSERTED_IDENTITY_LEN;
 
@@ -105,9 +106,11 @@ fn uri_selected_and_absent_does_not_fall_back_to_a_present_dns_san() {
     assert_eq!(
         CertificateChainEvidence::from_leaf_der(cert.as_ref())
             .interpret_identity(CertificateIdentityPolicy::UriSan),
-        Err(CertificateIdentityRefusal::SelectedFieldAbsent {
-            selected: CertificateIdentityPolicy::UriSan
-        }),
+        Err(CertificateIdentityRefusal::Leaf(
+            LeafIdentityRefusal::SelectedFieldAbsent {
+                selected: CertificateIdentityPolicy::UriSan
+            }
+        )),
         "URI SAN is the configured field and this certificate has none; a DNS SAN and a \
          CN are present as decoys, and reading either is the fallback the policy disclaims"
     );
@@ -125,9 +128,11 @@ fn dns_selected_and_absent_does_not_fall_back_to_a_present_common_name() {
     assert_eq!(
         CertificateChainEvidence::from_leaf_der(cert.as_ref())
             .interpret_identity(CertificateIdentityPolicy::DnsSan),
-        Err(CertificateIdentityRefusal::SelectedFieldAbsent {
-            selected: CertificateIdentityPolicy::DnsSan
-        }),
+        Err(CertificateIdentityRefusal::Leaf(
+            LeafIdentityRefusal::SelectedFieldAbsent {
+                selected: CertificateIdentityPolicy::DnsSan
+            }
+        )),
         "DNS SAN is the configured field and this certificate has none; the CN carries a \
          DNS-shaped value that a falling-back selector would happily return"
     );
@@ -161,10 +166,12 @@ fn malformed_first_uri_san_does_not_fall_back_to_a_valid_later_uri_san() {
     assert_eq!(
         CertificateChainEvidence::from_leaf_der(cert.as_ref())
             .interpret_identity(CertificateIdentityPolicy::UriSan),
-        Err(CertificateIdentityRefusal::SelectedFieldMalformed {
-            selected: CertificateIdentityPolicy::UriSan,
-            reason: PeerIdentityValueRefusal::ControlCharacter,
-        }),
+        Err(CertificateIdentityRefusal::Leaf(
+            LeafIdentityRefusal::SelectedFieldMalformed {
+                selected: CertificateIdentityPolicy::UriSan,
+                reason: PeerIdentityValueRefusal::ControlCharacter,
+            }
+        )),
         "the first URI SAN is the authoritative one and it is malformed; the second is \
          valid, and returning it would be a fallback within the selected field"
     );
@@ -186,10 +193,12 @@ fn empty_first_uri_san_does_not_fall_back_to_a_valid_later_uri_san() {
     assert_eq!(
         CertificateChainEvidence::from_leaf_der(cert.as_ref())
             .interpret_identity(CertificateIdentityPolicy::UriSan),
-        Err(CertificateIdentityRefusal::SelectedFieldMalformed {
-            selected: CertificateIdentityPolicy::UriSan,
-            reason: PeerIdentityValueRefusal::Empty,
-        }),
+        Err(CertificateIdentityRefusal::Leaf(
+            LeafIdentityRefusal::SelectedFieldMalformed {
+                selected: CertificateIdentityPolicy::UriSan,
+                reason: PeerIdentityValueRefusal::Empty,
+            }
+        )),
         "a whitespace-only first URI SAN is not a value; the later valid one must not be \
          promoted in its place"
     );
@@ -209,10 +218,12 @@ fn oversized_first_uri_san_does_not_fall_back_to_a_valid_later_uri_san() {
     assert_eq!(
         CertificateChainEvidence::from_leaf_der(cert.as_ref())
             .interpret_identity(CertificateIdentityPolicy::UriSan),
-        Err(CertificateIdentityRefusal::SelectedFieldMalformed {
-            selected: CertificateIdentityPolicy::UriSan,
-            reason: PeerIdentityValueRefusal::TooLong,
-        }),
+        Err(CertificateIdentityRefusal::Leaf(
+            LeafIdentityRefusal::SelectedFieldMalformed {
+                selected: CertificateIdentityPolicy::UriSan,
+                reason: PeerIdentityValueRefusal::TooLong,
+            }
+        )),
         "an over-length first URI SAN is refused, and the bounded later value must not be \
          substituted for it"
     );
@@ -230,10 +241,12 @@ fn malformed_first_dns_san_does_not_fall_back_to_a_valid_later_dns_san() {
     assert_eq!(
         CertificateChainEvidence::from_leaf_der(cert.as_ref())
             .interpret_identity(CertificateIdentityPolicy::DnsSan),
-        Err(CertificateIdentityRefusal::SelectedFieldMalformed {
-            selected: CertificateIdentityPolicy::DnsSan,
-            reason: PeerIdentityValueRefusal::ControlCharacter,
-        }),
+        Err(CertificateIdentityRefusal::Leaf(
+            LeafIdentityRefusal::SelectedFieldMalformed {
+                selected: CertificateIdentityPolicy::DnsSan,
+                reason: PeerIdentityValueRefusal::ControlCharacter,
+            }
+        )),
         "the same law holds for the DNS SAN field: the first value is authoritative, and \
          a later well-formed one is not a repair"
     );
@@ -260,7 +273,9 @@ fn a_certificate_with_no_san_extension_refuses_as_absent_under_both_san_policies
     ] {
         assert_eq!(
             CertificateChainEvidence::from_leaf_der(cert.as_ref()).interpret_identity(policy),
-            Err(CertificateIdentityRefusal::SelectedFieldAbsent { selected: policy }),
+            Err(CertificateIdentityRefusal::Leaf(
+                LeafIdentityRefusal::SelectedFieldAbsent { selected: policy }
+            )),
             "no SAN extension is an absent field, not an unreadable one — and the CN that \
              IS present is not a fallback"
         );

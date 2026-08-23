@@ -784,14 +784,105 @@ construction closure, reusing the Slice-1 interpreter; `CertificatePeerIdentityE
 be produced internally on that path, and a caller must not supply an independently obtained
 one.
 
-The candidate law, deliberately unnumbered until Slice 5 measures it:
-
-> Two valid facts cannot be composed to establish a relation about one underlying object
-> unless their provenance establishes that they describe the same object. When that
-> provenance cannot be carried safely, derive the downstream fact inside the predecessor's
-> construction closure.
+Slice 5 measured this and the candidate law became **L-5**.
 
 Two blocks do not legally connect because their types sound compatible.
+
+### 8.20 Slice 5 as built — the first provenance linkage
+
+Slice 5 adds no transformation. Both of its inputs were already established facts, and what
+it establishes is that they are about the same object:
+
+```text
+ChannelAssociatedCertificateCredentialEvidence
+        |
+        | the credential's OWN leaf, inside one construction closure
+        v
+   reuse the Slice-1 interpreter, under the caller's policy
+        |
+        v
+ChannelAssociatedCertificatePeerIdentityEvidence
+```
+
+The caller supplies a `CertificateIdentityPolicy` and nothing else. There is no parameter
+through which a second certificate or a separately obtained `CertificatePeerIdentityEvidence`
+could enter, which is what makes the §8.19 substitution unconstructible rather than merely
+untaken.
+
+**Characterization decided two things before any code moved.**
+
+| question | measured |
+|---|---|
+| does the mechanism report intermediates, and in what order? | a real root -> intermediate -> leaf chain is reported **leaf first**, intermediates after, and the Slice-4 projection preserves that order |
+| is a rival identity in the chain a real decoy? | yes — an intermediate's URI SAN is in the reported chain, so *identity from the leaf* and *identity from some certificate in the chain* differ on a relationship that establishes normally |
+
+That is why the controls establish every relationship with leaf identity **A** and
+intermediate identity **B** in the same field. A control that asserted only "interpretation
+succeeded" would stay green while the proxy bound the identity of the CA that signed the
+peer.
+
+**The refusal surface narrowed, and that is what the predecessor invariant bought.** Slice 1
+needs a *no leaf was presented* refusal because arbitrary certificate evidence may carry
+none. A channel-associated credential's chain is non-empty by construction, so the state
+cannot occur — and rather than keep an unreachable variant, the algebra was split at the
+authority it belongs to:
+
+```text
+CertificateIdentityRefusal = NoLeaf | Leaf(LeafIdentityRefusal)      the evidence question
+LeafIdentityRefusal        = MalformedCertificate | SelectedField*    a leaf that EXISTS
+```
+
+Five distinguishable outcomes, as before; each authority now names only the ones it can
+produce. Splitting rather than duplicating matters: two enums stating the same four facts
+would be one algebra written twice, drifting the moment either gained a variant.
+
+**The seal, measured the way Slice 4's was — and the placement mistake it caught.** The
+first layout put the deriving module INSIDE `channel_associated_credential`, next to the
+mechanism adapter. It compiled, and that was the defect: Rust privacy is the defining module
+and its descendants, so a second child reaches the credential's private constructor. Measured
+before the move — the new module compiled a call to `associate` with an arbitrary chain,
+which makes THM-0028 false while every control stays green. This is the Slice-4 producer
+boundary again, from the other side:
+
+> **A consumer's placement is part of its predecessor's seal.** A sole-producer claim is
+> falsified by adding a sibling to the producer just as surely as by widening the
+> constructor. What a consumer needs is a named projection, and a projection lives on the
+> owner's side.
+
+So the authority is a SIBLING of the credential, consuming a `pub(super)` leaf projection.
+Both seals then measure clean — the credential's constructor and the new product's
+representation, each probed from where an attacker of the claim would sit:
+
+```text
+error[E0624]: associated function `associate` is private            # from the identity authority
+error[E0451]: field `identity` of struct                            # from a sibling authority
+              ChannelAssociatedCertificatePeerIdentityEvidence is private
+```
+
+**What it is still not.** Not authentication. THM-0028 establishes no trust, currency,
+revocation status or anchor membership, and THM-0024 establishes only what a representation
+denotes; the composition of two deliberately weak facts is not a strong one. The product is
+named `ChannelAssociatedCertificatePeerIdentityEvidence` for that reason, and
+`AuthenticatedPeerIdentityFacts` stays unbuilt until a trust/authentication premise exists.
+
+**L-5. Two valid facts do not compose into a relation about one underlying object unless
+their provenance establishes that they describe the same object.**
+
+The candidate was recorded unnumbered at the end of Slice 4 and Slice 5 measured it, so it
+is a law now. Where that provenance cannot be carried safely, derive the downstream fact
+inside the predecessor's construction closure: take the predecessor and the policy, reach
+the predecessor's own representation, and let no parameter exist through which a second
+instance of the same kind of fact could enter.
+
+The test for whether a composition needs this is not whether the operands are true. It is
+whether a caller holding two of them could pair the wrong ones and no downstream consumer
+could tell. `ChannelAssociatedCertificateCredentialEvidence(A)` and
+`CertificatePeerIdentityEvidence(B)` are both honest; the pair states something false, and
+the only record of which certificate the identity came from is the pairing itself.
+
+Slice 3 met the same shape on the credential/key axis — facts beside the terms — and answered
+it the same way. Two slices apart, on different axes, is what promoted it from an
+observation to a law.
 
 ## 9. Slice selection rule
 
@@ -860,10 +951,12 @@ Slice 4  (#609)                                                              COM
      report, and which therefore cannot be manufactured beside a relationship
   -> the contract was amended before implementation; §8.18 records the four changes
 
-Slice 5
+Slice 5  (#612)                                                              COMPLETE
   -> identity interpreted from the credential the relationship carries, in ONE
      construction closure — never a caller pairing two independently obtained facts
-     (§8.19)
+  -> the first PROVENANCE LINKAGE: it adds no transformation, only the fact that two
+     established facts are about the same object (§8.19, §8.20)
+  -> taught L-5
 
 Later
   -> map ADR-062/#598 session lifecycle into the mechanism-specific assurance branch

@@ -107,7 +107,11 @@ graph BT
 graph BT
     THM_0023["THM-0023<br/>Every peer identity value is well-formed, whatever evidence produced it"]
     THM_0024["THM-0024<br/>Certificate identity interpretation reads the configured field and refuses rather than falling back"]
+    THM_0028["THM-0028<br/>Channel-associated certificate credential evidence originates only from an established relationship's mechanism report"]
+    THM_0029["THM-0029<br/>A channel-associated peer identity is interpreted from the leaf of that relationship's own credential"]
     THM_0023 --> THM_0024
+    THM_0024 --> THM_0029
+    THM_0028 --> THM_0029
 ```
 
 ## Component 11
@@ -119,11 +123,4 @@ graph BT
     THM_0027["THM-0027<br/>A delegated resolver's existence proves its credential and signer corresponded"]
     THM_0025 --> THM_0026
     THM_0026 --> THM_0027
-```
-
-## Component 12
-
-```mermaid
-graph BT
-    THM_0028["THM-0028<br/>Channel-associated certificate credential evidence originates only from an established relationship's mechanism report"]
 ```
