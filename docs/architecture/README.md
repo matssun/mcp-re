@@ -31,7 +31,8 @@ flowchart TD
 
 - [**ADR-MCPRE-061**](https://github.com/matssun/mcp-re/discussions/567) — the durable architectural decision. ✅ Accepted 2026-08-20; the Discussion is the source of truth (`docs/adr/README.md`).
 - [**ADR-MCPRE-063**](https://github.com/matssun/mcp-re/discussions/601) — communication assurance as composed semantic products. ✅ Accepted 2026-08-22. Specializes ADR-061 for the communication-security surface; does not supersede it.
-- [`communication-assurance.md`](communication-assurance.md) — the ADR-063 companion blueprint: the target authority graph, the migration questions, and the vertical-slice contracts.
+- [**ADR-MCPRE-064**](https://github.com/matssun/mcp-re/discussions/615) — verified relationships and authentication composition. 📄 Proposed 2026-08-23. Extends ADR-063 with the premise the word *authenticated* requires; ADR-063 keeps the laws, this record decides the facts.
+- [`communication-assurance.md`](communication-assurance.md) — the ADR-063/064 companion blueprint: the target authority graph, the migration questions, and the vertical-slice contracts.
 - [`implementation-blueprint.md`](implementation-blueprint.md) — current execution method for the refactoring campaign.
 - [`component-blueprint-template.md`](component-blueprint-template.md) — standard anatomy for subordinate component design documents.
 - [`review-dispositions.md`](review-dispositions.md) — the ADR-061 §14 review dispositions: the records `config/module-size-debt.toml`'s `review_ref` fields point at, granted and declined alike, and the disposition lifecycle they move through.
@@ -68,7 +69,9 @@ file-driven order: `tls.rs` holds several independently describable authorities,
 them not TLS-specific. Further communication-security work is selected by
 [ADR-MCPRE-063](https://github.com/matssun/mcp-re/discussions/601) and sequenced as
 vertical semantic slices in [`communication-assurance.md`](communication-assurance.md) —
-never by which file currently contains the code.
+never by which file currently contains the code. Slices 1-5 are landed; the phase boundary
+and the next phase are §12 of that blueprint, decided by
+[ADR-MCPRE-064](https://github.com/matssun/mcp-re/discussions/615).
 
 Trust & revocation and exchange lifecycle are documented here because their boundaries are
 settled enough to state, not because work on them is scheduled next.
