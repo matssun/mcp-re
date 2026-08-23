@@ -742,3 +742,42 @@ introduced_by = "ADR-MCPRE-063 Slice 4"
 review_requirement = "Owner review; any change that captures a credential anywhere other than the connection whose establishment boundary was just crossed."
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0034"
+description = "rustls::ServerConnection::peer_certificates() reports the peer certificate chain in TLS order: element 0 is the peer/end-entity credential, and later elements certify preceding elements."
+justification = """
+Slice 5 reads the identity from element 0 of the associated chain and calls it *the peer's
+leaf*. That element-0-is-the-peer fact is a property of the mechanism's reporting, and it is
+NOT supplied by ASM-0033: that premise says the mechanism reports the credential it
+associated with the relationship, which is true of any ordering. Ordering is a second,
+narrower thing, and it is load-bearing here in a way it is not one level down.
+
+It is documented rather than guessed. `rustls` 0.23.43 states that `peer_certificates`
+returns the chain in TLS order, the first certificate relating to the peer and each
+successive certificate certifying the one before it. It was also measured: a real
+root -> intermediate -> leaf establishment reports `[leaf, intermediate]`, and the
+projection preserves that order. A documented contract plus a measurement is still a
+premise about foreign code, not a result of this repository's own reasoning.
+
+What its failure costs is exact, and that is why it is registered narrowly. A mechanism
+reporting the chain root-first would put an ISSUER's identity under a sentence that says
+*the peer's*, and the deployment would bind requests to the CA rather than to the workload.
+It cannot make the credential trusted, current, or an authenticated identity — those are
+authorities that do not exist yet.
+
+It is deliberately scoped to the identity authority alone. Broadening ASM-0033 to carry
+ordering would widen the blast radius of a premise THM-0028 does not need: the credential
+authority relays a chain and claims nothing about which element is which.
+
+It stops being acceptable if the identity authority ever selects an element by position
+from the compatibility projection rather than through the owner's named leaf projection, or
+if a second establishment mechanism with a different reporting order is admitted without its
+own premise.
+"""
+scope = ["unit://proxy.channel_associated_identity"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-063 Slice 5"
+review_requirement = "Owner review; any change to which element of the associated chain the identity is read from, or the admission of a second establishment mechanism."
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"

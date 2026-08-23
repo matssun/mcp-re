@@ -1094,11 +1094,15 @@ evidence = [
   "test://proxy/channel_associated_identity/credential_provenance",
   "mutation://proxy/channel_associated_identity/credential_provenance",
 ]
-# No new assumption. The mechanism premise (ASM-0033) sits under the credential authority
-# and the parser premise (ASM-0030) under the identity authority; this unit consumes their
-# semantic products and re-states neither. Duplicating them upward would make the closure
+# ONE new premise, narrowly. The mechanism premise (ASM-0033) and the parser premise
+# (ASM-0030) stay under the authorities that own them: this unit consumes their semantic
+# products and re-states neither, because duplicating them upward would make the closure
 # look like the place those trust decisions are taken.
-assumptions = []
+#
+# ASM-0034 is genuinely this unit's own. Reading element 0 and calling it the peer's leaf
+# needs the mechanism to report the chain in TLS order, and ASM-0033 does not say that — it
+# says the mechanism reports the credential it associated, which holds under any ordering.
+assumptions = ["ASM-0034"]
 # The controls measure PROVENANCE, not a successful identity outcome: every relationship is
 # established with a leaf carrying identity A and an intermediate carrying identity B in the
 # same field, so a derivation reading any certificate other than the peer's leaf returns the

@@ -780,7 +780,7 @@ wrong: identity evidence interpreted from certificate **B** can be paired with r
 credential **A**, and the caller does the pairing. That is Slice 3's *facts beside the terms*
 defect, reappearing on the evidence-provenance axis rather than the credential/key axis. So
 Slice 5 derives the identity from the credential the relationship carries, inside one
-construction closure, reusing the Slice-1 interpreter; `CertificatePeerIdentityEvidence` may
+construction operation, reusing the Slice-1 interpreter; `CertificatePeerIdentityEvidence` may
 be produced internally on that path, and a caller must not supply an independently obtained
 one.
 
@@ -790,13 +790,14 @@ Two blocks do not legally connect because their types sound compatible.
 
 ### 8.20 Slice 5 as built — the first provenance linkage
 
-Slice 5 adds no transformation. Both of its inputs were already established facts, and what
-it establishes is that they are about the same object:
+Slice 5 adds no new identity transformation. Its new semantic content is the provenance
+linkage between Slice 4's credential and the result of the existing Slice-1 interpreter,
+which it invokes on that credential's own leaf:
 
 ```text
 ChannelAssociatedCertificateCredentialEvidence
         |
-        | the credential's OWN leaf, inside one construction closure
+        | the credential's OWN leaf, in one construction operation
         v
    reuse the Slice-1 interpreter, under the caller's policy
         |
@@ -815,6 +816,14 @@ untaken.
 |---|---|
 | does the mechanism report intermediates, and in what order? | a real root -> intermediate -> leaf chain is reported **leaf first**, intermediates after, and the Slice-4 projection preserves that order |
 | is a rival identity in the chain a real decoy? | yes — an intermediate's URI SAN is in the reported chain, so *identity from the leaf* and *identity from some certificate in the chain* differ on a relationship that establishes normally |
+
+**And it produced a premise, not a result.** *Element 0 of the reported chain is the peer's
+own credential* is a property of the mechanism's reporting order, documented by `rustls`
+0.23.43 and measured here — but not something ASM-0033 supplies, because *the mechanism
+reports the credential it associated* holds under any ordering. It is registered as
+**ASM-0034**, scoped to this unit alone: broadening ASM-0033 would widen the blast radius of
+a premise THM-0028 does not need. If the order were ever reversed, an ISSUER's identity
+would sit under a sentence that says *the peer's*.
 
 That is why the controls establish every relationship with leaf identity **A** and
 intermediate identity **B** in the same field. A control that asserted only "interpretation
@@ -868,17 +877,32 @@ named `ChannelAssociatedCertificatePeerIdentityEvidence` for that reason, and
 **L-5. Two valid facts do not compose into a relation about one underlying object unless
 their provenance establishes that they describe the same object.**
 
-The candidate was recorded unnumbered at the end of Slice 4 and Slice 5 measured it, so it
-is a law now. Where that provenance cannot be carried safely, derive the downstream fact
-inside the predecessor's construction closure: take the predecessor and the policy, reach
-the predecessor's own representation, and let no parameter exist through which a second
-instance of the same kind of fact could enter.
+The candidate was recorded unnumbered at the end of Slice 4, and Slice 5 measured it — both
+the law and, unexpectedly, the first draft of its corollary.
 
-The test for whether a composition needs this is not whether the operands are true. It is
-whether a caller holding two of them could pair the wrong ones and no downstream consumer
-could tell. `ChannelAssociatedCertificateCredentialEvidence(A)` and
+**The law stands as written.** The test for whether a composition needs it is not whether
+the operands are true. It is whether a caller holding two of them could pair the wrong ones
+with nothing downstream able to tell. `ChannelAssociatedCertificateCredentialEvidence(A)` and
 `CertificatePeerIdentityEvidence(B)` are both honest; the pair states something false, and
 the only record of which certificate the identity came from is the pairing itself.
+
+**The corollary had to be rewritten, because Slice 5 disproved the first version of it.** It
+said to derive the downstream fact *inside the predecessor's construction closure*, and the
+implementation took that literally: it placed the successor module inside the predecessor's
+Rust privacy tree. That compiled a call to the predecessor's private constructor and
+falsified THM-0028. The corollary now reads:
+
+> Where provenance cannot safely be supplied as a second operand, derive the downstream fact
+> in ONE construction operation that consumes the predecessor product and only the narrow
+> owner projections it needs. A successor must not enter the predecessor's
+> producer-privileged privacy subtree merely to obtain those projections.
+
+The distinction the slice produced is between a **semantic construction closure** — one
+operation, whose parameter list admits no rival instance of the fact being related — and a
+**Rust producer/privacy closure**, the module subtree entitled to construct the predecessor.
+The first is what the law asks for. The second is the predecessor's seal, and a successor
+that moves inside it to reach a projection pays for a convenience with somebody else's
+theorem. Projections travel outward as `pub(super)`; consumers stay siblings.
 
 Slice 3 met the same shape on the credential/key axis — facts beside the terms — and answered
 it the same way. Two slices apart, on different axes, is what promoted it from an
@@ -953,7 +977,7 @@ Slice 4  (#609)                                                              COM
 
 Slice 5  (#612)                                                              COMPLETE
   -> identity interpreted from the credential the relationship carries, in ONE
-     construction closure — never a caller pairing two independently obtained facts
+     construction operation — never a caller pairing two independently obtained facts
   -> the first PROVENANCE LINKAGE: it adds no transformation, only the fact that two
      established facts are about the same object (§8.19, §8.20)
   -> taught L-5

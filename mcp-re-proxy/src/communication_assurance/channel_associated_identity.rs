@@ -39,9 +39,20 @@
 //! composition is still wrong: identity evidence interpreted from certificate **B** can be
 //! paired with relationship credential **A**, and it is the caller that does the pairing.
 //! So the derivation takes the credential and a policy, reaches its OWN leaf, and reuses
-//! the Slice-1 interpreter inside one construction closure. There is no parameter through
+//! the Slice-1 interpreter in one construction operation. There is no parameter through
 //! which another certificate or another identity product could enter, which is what makes
 //! credential substitution unconstructible rather than merely tested against.
+//!
+//! # Which certificate is the peer's — a premise, not a result
+//!
+//! The identity is read from element 0 of the associated chain. That element 0 is the
+//! PEER'S credential rather than an issuer's is a property of the mechanism's reporting
+//! order: `rustls` documents `peer_certificates` as TLS order, first certificate relating
+//! to the peer, and a real root -> intermediate -> leaf establishment was measured
+//! reporting `[leaf, intermediate]`. It is registered as ASM-0034 and scoped here, because
+//! ASM-0033 does not supply it — *the mechanism reports the credential it associated* is
+//! true under any ordering. A reversed order would put an issuer's identity under a
+//! sentence that says the peer's.
 //!
 //! # Why this authority is a SIBLING of the credential, not a child
 //!
@@ -100,7 +111,7 @@ impl ChannelAssociatedCertificatePeerIdentityEvidence {
 
 /// Interpret the identity of the credential this relationship carries, under `policy`.
 ///
-/// THE construction closure. It takes the predecessor product and a deployment policy —
+/// THE construction operation. It takes the predecessor product and a deployment policy —
 /// never a certificate, never an identity — reads that credential's own leaf, and reuses
 /// the Slice-1 interpreter unchanged. Every refusal is the interpreter's, reported for the
 /// leaf this relationship actually presented.

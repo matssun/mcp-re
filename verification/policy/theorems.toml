@@ -1144,11 +1144,12 @@ comes from.
 
 Every ChannelAssociatedCertificatePeerIdentityEvidence inhabitant originates from an
 inhabitant produced by
-communication_assurance::channel_associated_credential::associated_identity::interpret_associated_identity
-from some channel-associated certificate credential evidence C and some identity-selection
-policy P, and its value and source are exactly what interpreting the FIRST certificate of
-C's associated chain under P returned. Cloning preserves that provenance and cannot
-introduce a new credential or identity origin.
+communication_assurance::channel_associated_identity::interpret_associated_identity — a free
+function taking a &ChannelAssociatedCertificateCredentialEvidence and a
+CertificateIdentityPolicy, and nothing else — from some channel-associated certificate
+credential evidence C and some identity-selection policy P, and its value and source are
+exactly what interpreting the FIRST certificate of C's associated chain under P returned.
+Cloning preserves that provenance and cannot introduce a new credential or identity origin.
 
 No other certificate can be the source of that identity. The derivation takes a credential
 and a policy and nothing else: there is no parameter through which a separately obtained
@@ -1186,10 +1187,17 @@ Nor does it say the relationship still exists. The product may be cloned and out
 connection its credential came from — it inherits that limit from THM-0028 rather than
 repairing it.
 
-It says nothing about the mechanism or the X.509 parser. Those premises are ASM-0033 and
-ASM-0030, and they stay under the theorems that own them: this claim consumes semantic
-products, so a wrong parser yields a faithful linkage of the wrong fields and this theorem
-still holds.
+It says nothing about the establishment mechanism or the X.509 parser. Those premises are
+ASM-0033 and ASM-0030, and they stay under the theorems that own them: this claim consumes
+semantic products, so a wrong parser yields a faithful linkage of the wrong fields and this
+theorem still holds.
+
+One premise IS this claim's own. That element 0 of the reported chain is the peer's own
+credential rather than an issuer's is ASM-0034, a documented and measured property of the
+mechanism's reporting order — and not something ASM-0033 supplies, since *the mechanism
+reports the credential it associated* is true under any ordering. Reading the FIRST
+certificate is what this theorem says; that the first certificate is the PEER'S is what
+ASM-0034 assumes.
 """
 owner = "proxy.channel_associated_identity"
 review_requirement = "Owner security-specification review"
