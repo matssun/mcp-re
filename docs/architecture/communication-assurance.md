@@ -686,6 +686,17 @@ Rust privacy is *the defining module and its descendants*, which is precisely th
 claim needs. Both routes were checked to fail from a sibling: the constructor is a private
 associated function (E0624) and the field is private (E0451).
 
+**And privacy alone still does not finish the argument** — a point the theorem's own review
+caught later, after the mechanism was already right. *The defining module and its
+descendants* is a SET, and today it holds three members: the owner, the adapter, and the
+owner's `#[cfg(test)]` module, which constructs synthetic inhabitants directly in order to
+exercise the refusal at construction. Those two test call sites are counterexamples to a
+sentence saying the adapter reaches the constructor and nothing else does. So THM-0028 is
+stated as a call-site fact scoped to the production configuration: privacy bounds who
+*could* call, the call sites say who *does*, and only the conjunction is the claim. The
+general form is the one Slice 1 already used for THM-0024 — quantify over what an operation
+returns, not over every inhabitant a build can construct.
+
 **The issue was amended in four places before implementation**, and three of the four came
 from the same mistake the earlier slices keep teaching: a contract that looks precise while
 claiming more than the mechanism supports.

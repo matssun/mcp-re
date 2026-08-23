@@ -39,12 +39,19 @@
 //! # Where the producer boundary is drawn, and why it is drawn HERE
 //!
 //! The mechanism adapter is a CHILD of this module rather than a sibling next door, and
-//! that placement is the seal. Rust privacy is *the defining module and its descendants*,
-//! so a private constructor here is callable by [`rustls_adapter`] and by nothing else in
-//! the crate. As a sibling it would have needed `pub(super)`, which opens construction to
-//! every module of `communication_assurance` — present and future — and this product's
-//! entire semantic content is provenance. A neighbouring authority able to manufacture it
-//! from an arbitrary chain would make the claim false while every control stayed green.
+//! that placement is half the seal. Rust privacy is *the defining module and its
+//! descendants*, so a private constructor here is reachable from this module and from
+//! [`rustls_adapter`], and from nowhere else in the crate. As a sibling the adapter would
+//! have needed `pub(super)`, which opens construction to every module of
+//! `communication_assurance` — present and future — and this product's entire semantic
+//! content is provenance. A neighbouring authority able to manufacture it from an arbitrary
+//! chain would make the claim false while every control stayed green.
+//!
+//! The other half is the CALL SITES, because what privacy bounds is a set rather than one
+//! caller. In the production configuration that set has exactly one member that constructs:
+//! the adapter. This module's own tests are the set's other member and construct synthetic
+//! inhabitants deliberately, which is why THM-0028 is scoped to the production
+//! configuration instead of quantifying over every inhabitant a build can produce.
 
 pub(crate) mod rustls_adapter;
 
@@ -54,7 +61,7 @@ pub(crate) mod rustls_adapter;
 /// Sealed: the representation is private to this module and there is no public
 /// constructor, so a value of this type cannot be manufactured beside a relationship the
 /// way the historical `TransportIdentity` — public fields, a total constructor — could be.
-/// The only producer is the mechanism adapter next door.
+/// Its one production producer is the subordinate mechanism adapter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelAssociatedCertificateCredentialEvidence {
     /// The associated chain in DER, leaf first, exactly as the mechanism reported it.
@@ -66,10 +73,15 @@ impl ChannelAssociatedCertificateCredentialEvidence {
     /// Associate a mechanism-reported credential chain with the established relationship
     /// it was reported for.
     ///
-    /// PRIVATE to this authority — callable by [`rustls_adapter`], its subordinate, and by
-    /// nothing else in the crate. Not `pub(super)`: that would publish construction to
-    /// every module of `communication_assurance`, and a caller that can say *a mechanism
-    /// associated this* holds evidence of nothing.
+    /// PRIVATE to this authority: reachable by this module and its descendants, and by
+    /// nothing else in the crate. That is a set, not a single caller — [`rustls_adapter`],
+    /// the subordinate that is its one PRODUCTION call site, and this module's own tests,
+    /// which construct synthetic inhabitants to exercise the refusal below. THM-0028 is
+    /// scoped to the production configuration for exactly that reason.
+    ///
+    /// Not `pub(super)`: that would publish construction to every module of
+    /// `communication_assurance`, and a caller that can say *a mechanism associated this*
+    /// holds evidence of nothing.
     fn associate(chain_der: Vec<Vec<u8>>) -> Result<Self, ChannelCredentialAssociationRefusal> {
         if chain_der.is_empty() {
             return Err(ChannelCredentialAssociationRefusal::NoCredentialAssociated);

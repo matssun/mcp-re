@@ -1048,22 +1048,36 @@ This is a claim about ORIGIN, not about simultaneous lifetime. The value owns it
 bytes and is `Clone`, so it may outlive the relationship it came from; what cannot happen is
 that it came from anywhere else.
 
-Every ChannelAssociatedCertificateCredentialEvidence inhabitant originates from an inhabitant
-produced by
+Every ChannelAssociatedCertificateCredentialEvidence inhabitant produced by this crate's
+production configuration originates from an inhabitant produced by
 communication_assurance::channel_associated_credential::rustls_adapter::associated_credential
-from a connection the establishment mechanism reported as no longer handshaking. Cloning
-preserves that provenance and cannot introduce a new credential or relationship origin. The
-originating inhabitant carries the non-empty credential chain the mechanism reported for that
-same connection.
+for a connection the establishment mechanism reported as established — that is, as no longer
+handshaking. Cloning preserves that provenance and cannot introduce a new credential or
+relationship origin. The originating inhabitant carries the non-empty credential chain the
+mechanism reported for that same connection.
 
-The producer boundary is what carries the claim, and it is exact. The representation and the
-constructor are PRIVATE to the owning module, and the mechanism adapter is a CHILD of that
-module rather than a sibling of it — Rust privacy is the defining module and its
-descendants, so the adapter reaches the constructor and nothing else in the crate does. A
-`pub(super)` constructor would not establish this: it would publish construction to every
-module of `communication_assurance`, present and future, and this product's whole semantic
-content is provenance. The historical `TransportIdentity` — public fields, a total
-constructor — is the shape at the other end of that scale.
+The producer boundary is a CALL-SITE fact, and privacy alone does not establish it. The
+constructor is private to the owning module, and the mechanism adapter is a CHILD of that
+module rather than a sibling of it. But Rust privacy is the defining module and its
+descendants, so what privacy bounds is a SET of modules that could call the constructor, not
+a single one. What makes this claim true is the narrower fact that in the production
+configuration the only production call site is the descendant mechanism adapter
+rustls_adapter::associated_credential. Privacy bounds who could; the call sites say who does,
+and only the conjunction is the claim.
+
+The owner's `#[cfg(test)]` module deliberately constructs synthetic inhabitants directly,
+from chains no connection ever reported, because the refusal at construction has to be
+exercised. Those test-only inhabitants are outside this theorem's scope, and they are why it
+is scoped to the production configuration rather than quantified over every inhabitant the
+crate can build. An earlier draft said the adapter reaches the constructor and nothing else
+in the crate does; those two constructions are counterexamples to it.
+
+A `pub(super)` constructor would still not do, for the reason the call-site framing makes
+plain: it widens the set privacy admits to every module of `communication_assurance`, present
+and future, at exactly the point where this product's whole semantic content is provenance —
+and a future production call site added inside that set would falsify the claim without
+touching this file. The historical `TransportIdentity` — public fields, a total constructor —
+is the shape at the other end of that scale.
 
 Establishment is a predecessor, not a decision made here. Each serving path calls the
 adapter after its own successful-establishment boundary: the async path after
