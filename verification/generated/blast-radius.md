@@ -108,3 +108,4 @@ attestations this view cannot see.
 | ASM-0031 | description, justification, scope or mechanism | proxy.ed25519_public_key | assumption review |
 | ASM-0032 | description, justification, scope or mechanism | proxy.credential_key_correspondence | assumption review |
 | ASM-0033 | description, justification, scope or mechanism | proxy.channel_associated_credential | assumption review |
+| ASM-0034 | description, justification, scope or mechanism | proxy.channel_associated_identity | assumption review |

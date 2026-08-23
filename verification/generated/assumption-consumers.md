@@ -47,5 +47,6 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0031 | The X.509 SubjectPublicKeyInfo parser faithfully reports a key's algorithm OID, and refuses what is not a SubjectPublicKeyInfo. | proxy.ed25519_public_key | THM-0025 |
 | ASM-0032 | The X.509 certificate parser faithfully reports the leaf certificate's SubjectPublicKeyInfo bytes. | proxy.credential_key_correspondence | THM-0026 |
 | ASM-0033 | The TLS establishment mechanism faithfully reports whether a relationship has established, and which peer credential it associated with it. | proxy.channel_associated_credential | THM-0028 |
+| ASM-0034 | rustls::ServerConnection::peer_certificates() reports the peer certificate chain in TLS order: element 0 is the peer/end-entity credential, and later elements certify preceding elements. | proxy.channel_associated_identity | THM-0029 |
 
 19 assumption(s) are reached by more than one theorem.
