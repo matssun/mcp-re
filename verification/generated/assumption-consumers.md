@@ -48,5 +48,6 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0032 | The X.509 certificate parser faithfully reports the leaf certificate's SubjectPublicKeyInfo bytes. | proxy.credential_key_correspondence | THM-0026 |
 | ASM-0033 | The TLS establishment mechanism faithfully reports whether a relationship has established, and which peer credential it associated with it. | proxy.channel_associated_credential | THM-0028 |
 | ASM-0034 | rustls::ServerConnection::peer_certificates() reports the peer certificate chain in TLS order: element 0 is the peer/end-entity credential, and later elements certify preceding elements. | proxy.channel_associated_identity | THM-0029 |
+| ASM-0035 | The TLS establishment mechanism faithfully reports which establishment path a relationship took, and admits a resumed session only where an earlier full handshake accepted the peer under an anchor set that has not changed since. | proxy.mechanism_verified_credential | THM-0030 |
 
 19 assumption(s) are reached by more than one theorem.

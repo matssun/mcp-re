@@ -781,3 +781,41 @@ introduced_by = "ADR-MCPRE-063 Slice 5"
 review_requirement = "Owner review; any change to which element of the associated chain the identity is read from, or the admission of a second establishment mechanism."
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0035"
+description = "The TLS establishment mechanism faithfully reports which establishment path a relationship took, and admits a resumed session only where an earlier full handshake accepted the peer under an anchor set that has not changed since."
+justification = """
+Slice 1 of ADR-MCPRE-064 relays two mechanism reports. The first — which credential was
+associated — is ASM-0033 and stays there. The second is the establishment PATH, and it is a
+different premise: `handshake_kind` reporting `Resumed` for a relationship that in fact ran a
+full handshake, or `Full` for one that did not, would put the wrong verification fact under a
+true-sounding sentence.
+
+The resumed half carries more than the report. A resumed relationship's acceptance rests on
+an earlier full handshake, and what makes it admissible now is the ADR-MCPRE-055 epoch gate:
+the session store refuses a ticket whose anchor-set digest no longer matches. That gate is
+owned and measured by `tls_listener_state::resumption_acceptance`, whose four controls drive
+real handshakes — this unit consumes the conclusion rather than re-deriving it, and the
+assumption is that the mechanism honours the store's refusal rather than resuming behind it.
+
+Not proved here, for the reason ASM-0033 is not: a TLS implementation is a far larger
+verification target than the authority relaying it. The controls drive real handshakes,
+including a genuine resumption, precisely because a synthetic value would establish nothing
+about which path the mechanism took.
+
+It bounds the claim rather than weakening it. A wrong path report yields a faithful record of
+the wrong verification fact — a consumer would believe the configured verifier ran when it
+did not, or the reverse — and that is exactly the consequence worth registering rather than
+absorbing into "we use rustls".
+
+It stops being acceptable if this authority ever begins to DECIDE acceptance rather than
+relay it, if a second establishment mechanism with different path semantics is admitted
+without its own premise, or if the epoch gate stops being the thing that governs resumption.
+"""
+scope = ["unit://proxy.mechanism_verified_credential"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-064 Slice 1"
+review_requirement = "Owner review; any change to how the establishment path is read, or to the gate that governs resumption."
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"

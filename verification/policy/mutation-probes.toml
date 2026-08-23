@@ -1356,3 +1356,33 @@ expect_red = [
   "lib#communication_assurance::channel_associated_identity::tests::an_intermediate_carrying_a_rival_identity_is_never_the_answer",
   "lib#communication_assurance::channel_associated_identity::tests::the_derivation_reads_the_first_certificate_of_the_associated_chain",
 ]
+
+# ---------------------------------------------------------------------------
+# ADR-MCPRE-064 Slice 1 — the establishment path
+# ---------------------------------------------------------------------------
+#
+# What is probed is the one thing this authority decides: which path it reports. The seal —
+# that no caller can pair a credential with another relationship's path — is not probed, and
+# per L-4 that is not an omission: the weakening cannot be expressed as an edit to a check,
+# because the derivation takes a connection and there is no parameter to corrupt.
+
+[[probe]]
+id = "M41-a-resumed-acceptance-is-not-reported-as-a-full-handshake"
+unit = "proxy.mechanism_verified_credential"
+theorem = "THM-0030"
+conjunct = "the reported path is the mechanism's own, never inferred"
+# The weakening every consumer of this product is exposed to: reporting that the configured
+# verifier ran when the mechanism restored a stored session instead. Nothing else goes red —
+# the credential is byte-identical on both paths (Slice 4's measurement), so a control
+# asserting a successful acceptance would stay green while the verification fact behind it
+# was silently upgraded.
+path = "mcp-re-proxy/src/communication_assurance/mechanism_verified_credential/rustls_adapter.rs"
+anchor = """
+        Some(HandshakeKind::Resumed) => EstablishmentPath::ResumedSession,
+"""
+weakening = """
+        Some(HandshakeKind::Resumed) => EstablishmentPath::FullHandshake,
+"""
+expect_red = [
+  "lib#communication_assurance::mechanism_verified_credential::rustls_adapter::acceptance::a_resumed_relationship_reports_a_resumed_path_not_a_full_one",
+]
