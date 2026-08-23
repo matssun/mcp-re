@@ -55,8 +55,8 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-063 Slice 4: the credential a communication-establishment mechanism
     # associated with an established relationship, and the rustls adapter that is the one
     # place `peer_certificates()` is read.
-    "src/communication_assurance/channel_associated_credential.rs",
-    "src/communication_assurance/rustls_established_channel.rs",
+    "src/communication_assurance/channel_associated_credential/mod.rs",
+    "src/communication_assurance/channel_associated_credential/rustls_adapter.rs",
     # ADR-MCPRE-063: the compatibility surface of the migration, grouped so it stays
     # countable — each module translates a historical vocabulary into an authority and
     # decides nothing.

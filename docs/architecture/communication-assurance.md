@@ -655,12 +655,36 @@ The first block whose entire content is *a mechanism said so*. It verifies nothi
 interprets nothing; what it owns is that the sentence cannot be written by anyone who was
 not there when the relationship was established.
 
-**Shape.** `ChannelAssociatedCertificateCredentialEvidence` — sealed, private
-representation, `pub(super)` constructor — produced only by
-`rustls_established_channel::associated_credential`, the one module in the authority that
-knows a TLS connection exists and now the only place in the crate that reads
-`peer_certificates()`. Registered as `unit://proxy.channel_associated_credential`; claimed
-as THM-0028; the establishment mechanism's report is ASM-0033; probes M38–M39.
+**Shape.** `ChannelAssociatedCertificateCredentialEvidence` — private representation,
+private constructor — produced only by
+`channel_associated_credential::rustls_adapter::associated_credential`, the one module in
+the authority that knows a TLS connection exists and now the only place in the crate that
+reads `peer_certificates()`. Registered as `unit://proxy.channel_associated_credential`;
+claimed as THM-0028; the establishment mechanism's report is ASM-0033; probes M38–M39.
+
+**The producer boundary had to be exact, and `pub(super)` was not.** The first
+implementation put the adapter beside the product and made the constructor `pub(super)`,
+reading it as *the authority's own producers*. It is not: it publishes construction to
+every module of `communication_assurance`, present and future, so a neighbouring authority
+could have manufactured the evidence from an arbitrary chain with no relationship behind
+it. Slice 1 could live with subtree-owned construction because its claim was about
+interpretation *within* one authority tree; here the entire semantic content IS provenance,
+so the producer set has to be exactly the mechanism adapter.
+
+The repair is topological rather than a new mechanism — no token, no friend object, no
+testing constructor. The adapter became a CHILD of the product's module instead of a
+sibling, and the constructor became private:
+
+```text
+communication_assurance/                 cannot call the constructor
+└── channel_associated_credential/
+    ├── mod.rs                           private representation + private constructor
+    └── rustls_adapter.rs                the one producer — a descendant, so it can
+```
+
+Rust privacy is *the defining module and its descendants*, which is precisely the shape the
+claim needs. Both routes were checked to fail from a sibling: the constructor is a private
+associated function (E0624) and the field is private (E0451).
 
 **The issue was amended in four places before implementation**, and three of the four came
 from the same mistake the earlier slices keep teaching: a contract that looks precise while
@@ -712,12 +736,17 @@ refusing keeps that lane failing closed here too.
 **No test seam was added to manufacture either state**, and none was needed: a fresh
 connection and a refused handshake are both obtainable from real handshakes.
 
-**The seal is the point, and it is not probed.** M38 and M39 weaken what the adapter reads
-from the mechanism. Nothing probes *construct the evidence beside a relationship*, because
-the representation is private to its module and the constructor is `pub(super)`, so that
-weakening does not compile — L-4, with the mechanism and the evidence kept apart: the
-enforcement is the visibility boundary, and the evidence for it is that boundary plus
-successful compilation of the crate.
+**The producer boundary is the point, and it is not probed.** M38 and M39 weaken what the
+adapter reads from the mechanism. Nothing probes *construct the evidence without a mechanism
+report*, because no sibling can express that weakening — it does not compile — L-4, with the
+mechanism and the evidence kept apart: the enforcement is the visibility boundary, and the
+evidence for it is that boundary plus successful compilation of the crate.
+
+**What THM-0028 claims is ORIGIN, not simultaneous lifetime.** Its first title —
+*cannot exist beside a relationship* — overstated in the other direction: the product owns
+its bytes and is `Clone`, so it may certainly outlive the connection it came from. What is
+proved is that it came from nowhere else. A consumer that needs the relationship to still
+exist must establish that separately; this block does not carry it.
 
 **What the slice did NOT do.** `TransportIdentity` is untouched and its consumers are
 unmigrated: this slice removes the manufacture route for the CREDENTIAL fact, not for the

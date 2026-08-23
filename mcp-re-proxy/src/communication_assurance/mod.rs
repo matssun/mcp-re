@@ -53,7 +53,6 @@ pub mod credential_key_correspondence;
 pub mod credential_public_key_evidence;
 pub mod ed25519_public_key;
 pub mod peer_identity_value;
-pub(crate) mod rustls_established_channel;
 pub mod signing_key_evidence;
 
 // PRIVATE to the authority. These two are the block's internal machinery: the

@@ -10,8 +10,9 @@
 //! the arguments [`crate::tls`] decides from. They own no policy: each one projects the
 //! credential and calls the authority. Asking the mechanism WHICH credential it associated
 //! is not theirs either — that authority lives in
-//! [`crate::communication_assurance::rustls_established_channel`], and this module reaches
-//! it once, at the point the request read has driven the handshake to completion.
+//! [`crate::communication_assurance::channel_associated_credential::rustls_adapter`], and
+//! this module reaches it once, at the point the request read has driven the handshake to
+//! completion.
 
 use std::io;
 use std::io::Write;
@@ -23,7 +24,7 @@ use rustls::ServerConnection;
 use rustls::StreamOwned;
 
 use crate::communication_assurance::associated_chain_der;
-use crate::communication_assurance::rustls_established_channel::associated_credential;
+use crate::communication_assurance::channel_associated_credential::rustls_adapter::associated_credential;
 use crate::communication_assurance::ChannelAssociatedCertificateCredentialEvidence;
 use crate::tls::assertion_header;
 use crate::tls::cert_lifetime_rejection_for_chain;

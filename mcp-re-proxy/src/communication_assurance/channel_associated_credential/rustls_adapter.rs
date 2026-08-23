@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The `rustls` mechanism adapter for channel-associated credential evidence — the ONLY
-//! module in the authority that knows a TLS connection exists.
+//! module in the authority that knows a TLS connection exists, and the only module in the
+//! crate that can construct the product.
+//!
+//! It is a CHILD of the product's module rather than a sibling of it: the constructor is
+//! private to the owner, so descendants reach it and nothing else does. See the parent's
+//! note on where the producer boundary is drawn.
 //!
 //! # Where the boundary is
 //!
@@ -29,8 +34,8 @@
 
 use rustls::ServerConnection;
 
-use super::channel_associated_credential::ChannelAssociatedCertificateCredentialEvidence;
-use super::channel_associated_credential::ChannelCredentialAssociationRefusal;
+use super::ChannelAssociatedCertificateCredentialEvidence;
+use super::ChannelCredentialAssociationRefusal;
 
 /// The credential `rustls` associated with this relationship, or the boundary
 /// inconsistency that stopped the association.
@@ -38,7 +43,8 @@ use super::channel_associated_credential::ChannelCredentialAssociationRefusal;
 /// `pub(crate)`: the two serving paths live outside this module tree and each must reach
 /// its own establishment boundary. The widening buys exactly one capability — turning a
 /// mechanism's report into the semantic product — and it is the reason
-/// `peer_certificates()` need appear nowhere else in the crate.
+/// `peer_certificates()` need appear nowhere else in the crate. The CONSTRUCTOR it calls
+/// stays private to the owner, so widening this entrance does not widen production.
 pub(crate) fn associated_credential(
     conn: &ServerConnection,
 ) -> Result<ChannelAssociatedCertificateCredentialEvidence, ChannelCredentialAssociationRefusal> {

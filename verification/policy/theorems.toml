@@ -1042,18 +1042,25 @@ depends_on = ["THM-0026"]
 
 [[theorem]]
 id = "THM-0028"
-title = "Channel-associated credential evidence cannot exist beside a relationship"
+title = "Channel-associated certificate credential evidence originates only from an established relationship's mechanism report"
 statement = """
-Every ChannelAssociatedCertificateCredentialEvidence value was produced by
-communication_assurance::rustls_established_channel::associated_credential from a connection
-the establishment mechanism reported as no longer handshaking, and carries the non-empty
-credential chain that mechanism reported for that same connection.
+This is a claim about ORIGIN, not about simultaneous lifetime. The value owns its credential
+bytes and is `Clone`, so it may outlive the relationship it came from; what cannot happen is
+that it came from anywhere else.
 
-The seal is what carries the claim. The representation is private to the product's module
-and the only constructor is `pub(super)`, so the mechanism adapter is the sole producer; a
-caller cannot assemble the value from a chain it obtained some other way, nor from no chain
-at all. The historical `TransportIdentity` — public fields, a total constructor — is exactly
-the shape this excludes.
+Every ChannelAssociatedCertificateCredentialEvidence value was constructed by
+communication_assurance::channel_associated_credential::rustls_adapter::associated_credential
+from a connection the establishment mechanism reported as no longer handshaking, and carries
+the non-empty credential chain that mechanism reported for that same connection.
+
+The producer boundary is what carries the claim, and it is exact. The representation and the
+constructor are PRIVATE to the owning module, and the mechanism adapter is a CHILD of that
+module rather than a sibling of it — Rust privacy is the defining module and its
+descendants, so the adapter reaches the constructor and nothing else in the crate does. A
+`pub(super)` constructor would not establish this: it would publish construction to every
+module of `communication_assurance`, present and future, and this product's whole semantic
+content is provenance. The historical `TransportIdentity` — public fields, a total
+constructor — is the shape at the other end of that scale.
 
 Establishment is a predecessor, not a decision made here. Each serving path calls the
 adapter after its own successful-establishment boundary: the async path after
@@ -1082,6 +1089,10 @@ It is a claim about CONSTRUCTION, and only about values this crate produces. It 
 establish that the credential is trusted, current, unrevoked, or issued by a configured
 anchor; that it has been interpreted as any identity; that the peer is admitted or
 authorized; or that the credential is bound to the actor that signed any request.
+
+Nor does it say the relationship still exists. Holding the evidence proves where it came
+from, not that anything is still connected — a value may be cloned and outlive its
+connection, and a consumer needing currency must establish that separately.
 
 It says nothing about what the establishment mechanism did internally. That the mechanism
 reports establishment honestly, and reports the credential it actually associated, is

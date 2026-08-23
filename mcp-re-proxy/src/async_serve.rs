@@ -57,7 +57,7 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
 use crate::communication_assurance::associated_chain_der;
-use crate::communication_assurance::rustls_established_channel::associated_credential;
+use crate::communication_assurance::channel_associated_credential::rustls_adapter::associated_credential;
 use crate::communication_assurance::ChannelAssociatedCertificateCredentialEvidence;
 use crate::tls::assertion_header;
 use crate::tls::connection_rejection_for_chain;

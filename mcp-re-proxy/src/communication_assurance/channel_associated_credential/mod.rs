@@ -33,9 +33,20 @@
 //! # Establishment is a predecessor, not a refusal
 //!
 //! Whether establishment succeeded is not this authority's decision. The mechanism decides
-//! it, at its own boundary, before anything here runs — see
-//! [`super::rustls_established_channel`], which is the only module that knows what a
-//! `rustls` connection is.
+//! it, at its own boundary, before anything here runs — see [`rustls_adapter`], the
+//! subordinate that is the only module knowing what a `rustls` connection is.
+//!
+//! # Where the producer boundary is drawn, and why it is drawn HERE
+//!
+//! The mechanism adapter is a CHILD of this module rather than a sibling next door, and
+//! that placement is the seal. Rust privacy is *the defining module and its descendants*,
+//! so a private constructor here is callable by [`rustls_adapter`] and by nothing else in
+//! the crate. As a sibling it would have needed `pub(super)`, which opens construction to
+//! every module of `communication_assurance` — present and future — and this product's
+//! entire semantic content is provenance. A neighbouring authority able to manufacture it
+//! from an arbitrary chain would make the claim false while every control stayed green.
+
+pub(crate) mod rustls_adapter;
 
 /// The certificate credential evidence a communication-establishment mechanism associated
 /// with one successfully established relationship.
@@ -55,13 +66,11 @@ impl ChannelAssociatedCertificateCredentialEvidence {
     /// Associate a mechanism-reported credential chain with the established relationship
     /// it was reported for.
     ///
-    /// `pub(super)` — the authority's own producers and no wider. A public constructor
-    /// would be the manufacture route the slice exists to remove: the whole content of the
-    /// product is *a mechanism said so*, and a caller that can say so itself holds
-    /// evidence of nothing.
-    pub(super) fn associate(
-        chain_der: Vec<Vec<u8>>,
-    ) -> Result<Self, ChannelCredentialAssociationRefusal> {
+    /// PRIVATE to this authority — callable by [`rustls_adapter`], its subordinate, and by
+    /// nothing else in the crate. Not `pub(super)`: that would publish construction to
+    /// every module of `communication_assurance`, and a caller that can say *a mechanism
+    /// associated this* holds evidence of nothing.
+    fn associate(chain_der: Vec<Vec<u8>>) -> Result<Self, ChannelCredentialAssociationRefusal> {
         if chain_der.is_empty() {
             return Err(ChannelCredentialAssociationRefusal::NoCredentialAssociated);
         }

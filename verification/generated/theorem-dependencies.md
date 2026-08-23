@@ -125,5 +125,5 @@ graph BT
 
 ```mermaid
 graph BT
-    THM_0028["THM-0028<br/>Channel-associated credential evidence cannot exist beside a relationship"]
+    THM_0028["THM-0028<br/>Channel-associated certificate credential evidence originates only from an established relationship's mechanism report"]
 ```

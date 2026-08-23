@@ -1028,10 +1028,10 @@ rationale = "The resolver's guarantee is exactly the correspondence authority's 
 [[unit]]
 id = "proxy.channel_associated_credential"
 class = "V0"
-description = "The credential a communication-establishment mechanism associated with a successfully established relationship, sealed so it cannot be manufactured beside one — and claiming nothing about the credential's freshness, validity, revocation, trust, or identity."
+description = "The credential a communication-establishment mechanism associated with a successfully established relationship, constructible only by the mechanism adapter inside the owning module — and claiming nothing about the credential's freshness, validity, revocation, trust, or identity."
 paths = [
-  "mcp-re-proxy/src/communication_assurance/channel_associated_credential.rs",
-  "mcp-re-proxy/src/communication_assurance/rustls_established_channel.rs",
+  "mcp-re-proxy/src/communication_assurance/channel_associated_credential/mod.rs",
+  "mcp-re-proxy/src/communication_assurance/channel_associated_credential/rustls_adapter.rs",
 ]
 exported_contracts = []
 evidence = [
@@ -1049,9 +1049,9 @@ assumptions = ["ASM-0033"]
 tested_symbols = [
   "lib#communication_assurance::channel_associated_credential::tests::an_associated_chain_is_carried_leaf_first",
   "lib#communication_assurance::channel_associated_credential::tests::an_empty_chain_is_not_a_credential",
-  "lib#communication_assurance::rustls_established_channel::establishment::an_established_relationship_associates_the_credential_the_peer_presented",
-  "lib#communication_assurance::rustls_established_channel::establishment::a_resumed_relationship_associates_the_same_credential_as_the_full_handshake",
-  "lib#communication_assurance::rustls_established_channel::establishment::a_connection_that_has_not_established_associates_nothing",
-  "lib#communication_assurance::rustls_established_channel::establishment::a_peer_with_no_credential_never_reaches_an_established_relationship",
+  "lib#communication_assurance::channel_associated_credential::rustls_adapter::establishment::an_established_relationship_associates_the_credential_the_peer_presented",
+  "lib#communication_assurance::channel_associated_credential::rustls_adapter::establishment::a_resumed_relationship_associates_the_same_credential_as_the_full_handshake",
+  "lib#communication_assurance::channel_associated_credential::rustls_adapter::establishment::a_connection_that_has_not_established_associates_nothing",
+  "lib#communication_assurance::channel_associated_credential::rustls_adapter::establishment::a_peer_with_no_credential_never_reaches_an_established_relationship",
 ]
 pilot = "verus-candidate"
