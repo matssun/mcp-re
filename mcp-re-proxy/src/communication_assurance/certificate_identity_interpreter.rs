@@ -25,7 +25,7 @@
 use super::certificate_identity_fields::CertificateIdentityFields;
 use super::certificate_identity_fields::FieldReadout;
 use super::certificate_identity_policy::CertificateIdentityPolicy;
-use super::certificate_identity_refusal::CertificateIdentityRefusal;
+use super::certificate_identity_refusal::LeafIdentityRefusal;
 use super::certificate_peer_identity_evidence::CertificatePeerIdentityEvidence;
 use super::peer_identity_value::PeerIdentityValue;
 
@@ -35,10 +35,16 @@ use super::peer_identity_value::PeerIdentityValue;
 /// Establishes only that the selected field denoted this well-formed identity value. It
 /// does not establish trust, revocation status, freshness, authentication, admission, or
 /// authorization.
+///
+/// It refuses in the leaf-level algebra, of which it produces the three field-level
+/// reasons; the fourth, an unreadable certificate, is the adapter's and is raised before
+/// this function is reached. They share one type because every consumer of the leaf
+/// composition must be able to receive either, and a fifth enum naming the split would
+/// name a boundary no consumer distinguishes.
 pub(super) fn interpret_certificate_identity(
     fields: &CertificateIdentityFields,
     policy: CertificateIdentityPolicy,
-) -> Result<CertificatePeerIdentityEvidence, CertificateIdentityRefusal> {
+) -> Result<CertificatePeerIdentityEvidence, LeafIdentityRefusal> {
     // ONE candidate. The authoritative value of the configured field, or nothing —
     // there is deliberately no iterator here for a later value to be drawn from.
     let readout = match policy {
@@ -51,14 +57,14 @@ pub(super) fn interpret_certificate_identity(
     // before it can be called absent, and present before its shape can be judged. Each
     // step refuses on its own rule and never on a later one.
     let FieldReadout::Read(candidate) = readout else {
-        return Err(CertificateIdentityRefusal::SelectedFieldUninterpretable { selected: policy });
+        return Err(LeafIdentityRefusal::SelectedFieldUninterpretable { selected: policy });
     };
 
     let candidate =
-        candidate.ok_or(CertificateIdentityRefusal::SelectedFieldAbsent { selected: policy })?;
+        candidate.ok_or(LeafIdentityRefusal::SelectedFieldAbsent { selected: policy })?;
 
     let value = PeerIdentityValue::interpret(candidate).map_err(|reason| {
-        CertificateIdentityRefusal::SelectedFieldMalformed {
+        LeafIdentityRefusal::SelectedFieldMalformed {
             selected: policy,
             reason,
         }
@@ -77,8 +83,8 @@ mod tests {
     use super::interpret_certificate_identity;
     use super::CertificateIdentityFields;
     use super::CertificateIdentityPolicy;
-    use super::CertificateIdentityRefusal;
     use super::FieldReadout;
+    use super::LeafIdentityRefusal;
     use crate::communication_assurance::certificate_identity_policy::CertificateIdentitySource;
     use crate::communication_assurance::peer_identity_value::PeerIdentityValueRefusal;
 
@@ -170,7 +176,7 @@ mod tests {
         for (policy, fields) in cases {
             assert_eq!(
                 interpret_certificate_identity(&fields, policy),
-                Err(CertificateIdentityRefusal::SelectedFieldAbsent { selected: policy }),
+                Err(LeafIdentityRefusal::SelectedFieldAbsent { selected: policy }),
                 "under {policy:?} the present decoy fields must not be read"
             );
         }
@@ -193,14 +199,14 @@ mod tests {
         ] {
             assert_eq!(
                 interpret_certificate_identity(&fields, policy),
-                Err(CertificateIdentityRefusal::SelectedFieldUninterpretable { selected: policy }),
+                Err(LeafIdentityRefusal::SelectedFieldUninterpretable { selected: policy }),
                 "a representation the parser refused must not be reported as a field the \
                  certificate did not carry"
             );
         }
         assert_eq!(
             interpret_certificate_identity(&fields, CertificateIdentityPolicy::DnsSan),
-            Err(CertificateIdentityRefusal::SelectedFieldAbsent {
+            Err(LeafIdentityRefusal::SelectedFieldAbsent {
                 selected: CertificateIdentityPolicy::DnsSan
             }),
             "and unreadability is per field: the readable-but-empty DNS list is absence"
@@ -222,15 +228,15 @@ mod tests {
         let policy = CertificateIdentityPolicy::UriSan;
         assert_eq!(
             interpret_certificate_identity(&unreadable, policy),
-            Err(CertificateIdentityRefusal::SelectedFieldUninterpretable { selected: policy })
+            Err(LeafIdentityRefusal::SelectedFieldUninterpretable { selected: policy })
         );
         assert_eq!(
             interpret_certificate_identity(&absent, policy),
-            Err(CertificateIdentityRefusal::SelectedFieldAbsent { selected: policy })
+            Err(LeafIdentityRefusal::SelectedFieldAbsent { selected: policy })
         );
         assert_eq!(
             interpret_certificate_identity(&malformed, policy),
-            Err(CertificateIdentityRefusal::SelectedFieldMalformed {
+            Err(LeafIdentityRefusal::SelectedFieldMalformed {
                 selected: policy,
                 reason: PeerIdentityValueRefusal::ControlCharacter,
             })
@@ -249,7 +255,7 @@ mod tests {
         );
         assert_eq!(
             interpret_certificate_identity(&fields, CertificateIdentityPolicy::UriSan),
-            Err(CertificateIdentityRefusal::SelectedFieldMalformed {
+            Err(LeafIdentityRefusal::SelectedFieldMalformed {
                 selected: CertificateIdentityPolicy::UriSan,
                 reason: PeerIdentityValueRefusal::ControlCharacter,
             }),
@@ -287,7 +293,7 @@ mod tests {
             );
             assert_eq!(
                 interpret_certificate_identity(&fields, CertificateIdentityPolicy::UriSan),
-                Err(CertificateIdentityRefusal::SelectedFieldMalformed {
+                Err(LeafIdentityRefusal::SelectedFieldMalformed {
                     selected: CertificateIdentityPolicy::UriSan,
                     reason: expected,
                 })
@@ -316,7 +322,7 @@ mod tests {
         for policy in EVERY_POLICY {
             assert_eq!(
                 interpret_certificate_identity(&fields, policy),
-                Err(CertificateIdentityRefusal::SelectedFieldAbsent { selected: policy })
+                Err(LeafIdentityRefusal::SelectedFieldAbsent { selected: policy })
             );
         }
     }

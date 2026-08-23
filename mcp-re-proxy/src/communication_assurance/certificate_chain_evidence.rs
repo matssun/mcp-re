@@ -28,6 +28,7 @@ use super::certificate_identity_fields::FieldReadout;
 use super::certificate_identity_interpreter::interpret_certificate_identity;
 use super::certificate_identity_policy::CertificateIdentityPolicy;
 use super::certificate_identity_refusal::CertificateIdentityRefusal;
+use super::certificate_identity_refusal::LeafIdentityRefusal;
 use super::certificate_peer_identity_evidence::CertificatePeerIdentityEvidence;
 
 /// The certificate evidence a peer presented, as far as identity interpretation needs it.
@@ -68,54 +69,6 @@ impl<'a> CertificateChainEvidence<'a> {
         self.leaf_der
     }
 
-    /// Interpret the leaf's identity fields through the foreign X.509 parser.
-    ///
-    /// The two representation-level refusals originate here and nowhere else.
-    fn identity_fields(self) -> Result<CertificateIdentityFields, CertificateIdentityRefusal> {
-        let leaf_der = self.leaf_der.ok_or(CertificateIdentityRefusal::NoLeaf)?;
-        let (_, certificate) = X509Certificate::from_der(leaf_der)
-            .map_err(|_| CertificateIdentityRefusal::MalformedCertificate)?;
-
-        // Three outcomes, kept apart. The SAN extension may be absent (no SAN list — an
-        // ordinary certificate), present and readable, or present and NOT readable: the
-        // parser distinguishes `Ok(None)` from an error, and its errors here mean a
-        // malformed extension or one appearing more than once. Only the first is absence.
-        // Mapping the third onto it would tell the authority above that a peer presented
-        // no field when it presented a broken one.
-        let general_names = match certificate.subject_alternative_name() {
-            Ok(Some(san)) => FieldReadout::Read(san.value.general_names.clone()),
-            Ok(None) => FieldReadout::Read(Vec::new()),
-            Err(_) => FieldReadout::Uninterpretable,
-        };
-
-        // Presentation order is preserved: the FIRST value of the selected field is the
-        // authoritative one, so a reordering here would change which identity a peer has.
-        let uri_sans = select_names(&general_names, |name| match name {
-            GeneralName::URI(uri) => Some((*uri).to_string()),
-            _ => None,
-        });
-        let dns_sans = select_names(&general_names, |name| match name {
-            GeneralName::DNSName(dns) => Some((*dns).to_string()),
-            _ => None,
-        });
-
-        // The same distinction for the Common Name: no CN attribute is absence, and a CN
-        // whose string encoding the parser cannot represent is not.
-        let common_name = match certificate.subject().iter_common_name().next() {
-            None => FieldReadout::Read(None),
-            Some(cn) => match cn.as_str() {
-                Ok(value) => FieldReadout::Read(Some(value.to_string())),
-                Err(_) => FieldReadout::Uninterpretable,
-            },
-        };
-
-        Ok(CertificateIdentityFields::new(
-            uri_sans,
-            dns_sans,
-            common_name,
-        ))
-    }
-
     /// Interpret this evidence's identity under `policy`: the composition of the X.509
     /// adapter above with the pure selector.
     ///
@@ -125,9 +78,76 @@ impl<'a> CertificateChainEvidence<'a> {
         self,
         policy: CertificateIdentityPolicy,
     ) -> Result<CertificatePeerIdentityEvidence, CertificateIdentityRefusal> {
-        let fields = self.identity_fields()?;
-        interpret_certificate_identity(&fields, policy)
+        let leaf_der = self.leaf_der.ok_or(CertificateIdentityRefusal::NoLeaf)?;
+        interpret_presented_leaf_identity(leaf_der, policy)
+            .map_err(CertificateIdentityRefusal::Leaf)
     }
+}
+
+/// Interpret the identity of a leaf certificate that IS present.
+///
+/// The existence question is the caller's, and it is answered before this is reached:
+/// `CertificateChainEvidence::interpret_identity` answers it from an `Option`, and the
+/// channel-associated credential authority answers it from its non-empty-chain invariant.
+/// Splitting it out is what lets the second caller consume an algebra with no absence
+/// state in it, rather than one carrying a variant its input excludes.
+///
+/// `pub(super)` — the authority's own composition seam, reachable by the sibling
+/// authorities that build on it and by nothing outside. A public one would be a second
+/// entrance to identity interpretation that takes raw bytes.
+pub(super) fn interpret_presented_leaf_identity(
+    leaf_der: &[u8],
+    policy: CertificateIdentityPolicy,
+) -> Result<CertificatePeerIdentityEvidence, LeafIdentityRefusal> {
+    let fields = leaf_identity_fields(leaf_der)?;
+    interpret_certificate_identity(&fields, policy)
+}
+
+/// Interpret a presented leaf's identity fields through the foreign X.509 parser.
+///
+/// The representation-level refusal originates here and nowhere else.
+fn leaf_identity_fields(leaf_der: &[u8]) -> Result<CertificateIdentityFields, LeafIdentityRefusal> {
+    let (_, certificate) = X509Certificate::from_der(leaf_der)
+        .map_err(|_| LeafIdentityRefusal::MalformedCertificate)?;
+
+    // Three outcomes, kept apart. The SAN extension may be absent (no SAN list — an
+    // ordinary certificate), present and readable, or present and NOT readable: the
+    // parser distinguishes `Ok(None)` from an error, and its errors here mean a
+    // malformed extension or one appearing more than once. Only the first is absence.
+    // Mapping the third onto it would tell the authority above that a peer presented
+    // no field when it presented a broken one.
+    let general_names = match certificate.subject_alternative_name() {
+        Ok(Some(san)) => FieldReadout::Read(san.value.general_names.clone()),
+        Ok(None) => FieldReadout::Read(Vec::new()),
+        Err(_) => FieldReadout::Uninterpretable,
+    };
+
+    // Presentation order is preserved: the FIRST value of the selected field is the
+    // authoritative one, so a reordering here would change which identity a peer has.
+    let uri_sans = select_names(&general_names, |name| match name {
+        GeneralName::URI(uri) => Some((*uri).to_string()),
+        _ => None,
+    });
+    let dns_sans = select_names(&general_names, |name| match name {
+        GeneralName::DNSName(dns) => Some((*dns).to_string()),
+        _ => None,
+    });
+
+    // The same distinction for the Common Name: no CN attribute is absence, and a CN
+    // whose string encoding the parser cannot represent is not.
+    let common_name = match certificate.subject().iter_common_name().next() {
+        None => FieldReadout::Read(None),
+        Some(cn) => match cn.as_str() {
+            Ok(value) => FieldReadout::Read(Some(value.to_string())),
+            Err(_) => FieldReadout::Uninterpretable,
+        },
+    };
+
+    Ok(CertificateIdentityFields::new(
+        uri_sans,
+        dns_sans,
+        common_name,
+    ))
 }
 
 /// Project one kind of general name out of a SAN readout, preserving unreadability.
@@ -150,6 +170,7 @@ mod tests {
     use super::CertificateChainEvidence;
     use super::CertificateIdentityPolicy;
     use super::CertificateIdentityRefusal;
+    use super::LeafIdentityRefusal;
 
     #[test]
     fn absent_evidence_refuses_as_no_leaf_under_every_policy() {
@@ -180,7 +201,9 @@ mod tests {
         assert_eq!(
             CertificateChainEvidence::from_leaf_der(&garbage)
                 .interpret_identity(CertificateIdentityPolicy::UriSan),
-            Err(CertificateIdentityRefusal::MalformedCertificate),
+            Err(CertificateIdentityRefusal::Leaf(
+                LeafIdentityRefusal::MalformedCertificate
+            )),
             "unreadable evidence and readable evidence without the configured field are \
              different incidents"
         );
@@ -194,7 +217,9 @@ mod tests {
         assert_eq!(
             CertificateChainEvidence::from_leaf_der(&[])
                 .interpret_identity(CertificateIdentityPolicy::UriSan),
-            Err(CertificateIdentityRefusal::MalformedCertificate)
+            Err(CertificateIdentityRefusal::Leaf(
+                LeafIdentityRefusal::MalformedCertificate
+            ))
         );
     }
 }

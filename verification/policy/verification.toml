@@ -1055,3 +1055,59 @@ tested_symbols = [
   "lib#communication_assurance::channel_associated_credential::rustls_adapter::establishment::a_peer_with_no_credential_never_reaches_an_established_relationship",
 ]
 pilot = "verus-candidate"
+
+# ---------------------------------------------------------------------------
+# Communication assurance — ADR-MCPRE-063 Slice 5
+# ---------------------------------------------------------------------------
+#
+# The first unit whose content is a PROVENANCE LINKAGE rather than a transformation. Both
+# of its premises already exist and neither is weakened here: what it adds is that the
+# identity was interpreted from the credential the relationship itself carries, derived
+# inside one construction closure so that no caller can pair credential A with an identity
+# read out of certificate B.
+
+[[edge]]
+# Producer -> consumer. The linkage consumes the credential fact; it does not re-derive
+# what association means.
+kind = "CONTRACT_CONSUMES"
+from = "proxy.channel_associated_credential"
+to = "proxy.channel_associated_identity"
+rationale = "The linkage's whole added content is that the leaf it interpreted came from a channel-associated credential. If association became manufacturable, the linkage would still be constructed and its own controls would still pass — they measure WHICH certificate of the association was read, not where the association came from."
+
+[[edge]]
+# Producer -> consumer. The linkage reuses the Slice-1 interpreter unchanged rather than
+# reimplementing selection, so a weakened selector changes what the linkage returns.
+kind = "COMPILE_DEPENDENCY"
+from = "proxy.certificate_identity"
+to = "proxy.channel_associated_identity"
+rationale = "The identity half of this product IS the certificate identity interpretation, called on the relationship's own leaf. A no-fallback law that weakened would change which field the linkage reports without any control here going red, because these controls vary the CERTIFICATE and hold the policy fixed."
+
+[[unit]]
+id = "proxy.channel_associated_identity"
+class = "V0"
+description = "The identity interpreted from the leaf of the credential an established relationship carries: the configured identity rule applied to that relationship's own credential, inside one construction closure — and claiming nothing about trust, currency, revocation, authentication, admission, or authorization."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/channel_associated_identity.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/channel_associated_identity/credential_provenance",
+  "mutation://proxy/channel_associated_identity/credential_provenance",
+]
+# No new assumption. The mechanism premise (ASM-0033) sits under the credential authority
+# and the parser premise (ASM-0030) under the identity authority; this unit consumes their
+# semantic products and re-states neither. Duplicating them upward would make the closure
+# look like the place those trust decisions are taken.
+assumptions = []
+# The controls measure PROVENANCE, not a successful identity outcome: every relationship is
+# established with a leaf carrying identity A and an intermediate carrying identity B in the
+# same field, so a derivation reading any certificate other than the peer's leaf returns the
+# wrong identity rather than merely a different-looking success.
+tested_symbols = [
+  "lib#communication_assurance::channel_associated_identity::tests::the_identity_is_read_from_the_leaf_of_the_relationships_own_credential",
+  "lib#communication_assurance::channel_associated_identity::tests::an_intermediate_carrying_a_rival_identity_is_never_the_answer",
+  "lib#communication_assurance::channel_associated_identity::tests::each_relationship_yields_its_own_identity",
+  "lib#communication_assurance::channel_associated_identity::tests::a_leaf_without_the_configured_field_refuses_rather_than_falling_back",
+  "lib#communication_assurance::channel_associated_identity::tests::the_derivation_reads_the_first_certificate_of_the_associated_chain",
+]
+pilot = "verus-candidate"
