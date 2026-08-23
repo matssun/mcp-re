@@ -1128,3 +1128,87 @@ owner = "proxy.channel_associated_credential"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.channel_associated_credential"]
 depends_on = []
+
+# ---------------------------------------------------------------------------
+# ADR-MCPRE-063 Slice 5 — the provenance linkage
+# ---------------------------------------------------------------------------
+
+[[theorem]]
+id = "THM-0029"
+title = "A channel-associated peer identity is interpreted from the leaf of that relationship's own credential"
+statement = """
+This is a claim about the COMPOSITION, not about either half of it. Both premises are stated
+elsewhere and neither is strengthened here: THM-0024 says what interpreting a certificate's
+configured identity field yields, and THM-0028 says where a channel-associated credential
+comes from.
+
+Every ChannelAssociatedCertificatePeerIdentityEvidence inhabitant originates from an
+inhabitant produced by
+communication_assurance::channel_associated_identity::interpret_associated_identity — a free
+function taking a &ChannelAssociatedCertificateCredentialEvidence and a
+CertificateIdentityPolicy, and nothing else — from some channel-associated certificate
+credential evidence C and some identity-selection policy P, and its value and source are
+exactly what interpreting the FIRST certificate of C's associated chain under P returned.
+Cloning preserves that provenance and cannot introduce a new credential or identity origin.
+
+No other certificate can be the source of that identity. The derivation's whole parameter
+list is a credential and a policy: there is no parameter through which a separately obtained
+certificate, or a separately obtained identity product, could enter, so pairing credential A
+with an identity read from certificate B is unconstructible rather than merely untaken. The
+representation is private to the deriving module, and the owning authority exposes only the
+free interpret_associated_identity operation taking the predecessor credential and
+identity-selection policy, so that operation is the only producer; a sibling authority
+attempting the struct literal fails with E0451.
+
+The deriving module is communication_assurance::channel_associated_identity, a SIBLING of the
+credential authority rather than a module inside it, and that placement is load-bearing in
+the other direction: inside, it would be a descendant of the credential's module and would
+therefore reach the private constructor THM-0028 claims only the mechanism adapter can reach
+— measured, that layout compiled a call to it. It consumes the owner's named `pub(super)`
+leaf projection instead. A consumer's placement is part of its predecessor's seal.
+
+The refusal algebra is the leaf-level one, which has no absence state. The predecessor
+guarantees a non-empty chain, so *no certificate was presented* is not a state this
+derivation's input can be in, and the type does not advertise it.
+"""
+security_consequence = """
+An identity that a consumer receives with a relationship cannot have been read out of a
+different peer's certificate. The composition this replaces — a caller holding relationship
+credential A and, separately, identity evidence interpreted from certificate B, and pairing
+them — is the shape in which two individually true facts state a false relation, and nothing
+downstream could detect it, because the only record of which certificate an identity came
+from is the pairing itself.
+
+It also refuses the intermediate. A chain carries certificates that signed the peer as well
+as the peer's own; reading identity from anything but the leaf would let an issuer choose
+the identity the proxy binds to.
+"""
+scope = """
+It is NOT authentication, and the type is deliberately not named as though it were. THM-0028
+establishes no trust, currency, revocation status, or anchor membership for the credential,
+and THM-0024 establishes only what a certificate representation denotes. Two deliberately
+weaker facts do not compose into a stronger one: nothing here establishes that the peer is
+authenticated, that the relationship is admitted, that any action is authorized, or that the
+identity is bound to the actor that signed any request. Naming the product Authenticated
+would require a premise that does not exist.
+
+Nor does it say the relationship still exists. The product may be cloned and outlive the
+connection its credential came from — it inherits that limit from THM-0028 rather than
+repairing it.
+
+It says nothing about the establishment mechanism or the X.509 parser. Those premises are
+ASM-0033 and ASM-0030, and they stay under the theorems that own them: this claim consumes
+semantic products, so a wrong parser yields a faithful linkage of the wrong fields and this
+theorem still holds.
+
+One premise IS this claim's own. That element 0 of the reported chain is the peer's own
+credential rather than an issuer's is ASM-0034, a documented and measured property of the
+mechanism's reporting order — and not something ASM-0033 supplies, since *the mechanism
+reports the credential it associated* is true under any ordering. Reading the FIRST
+certificate is what this theorem says; that the first certificate is the PEER'S is what
+ASM-0034 assumes.
+"""
+owner = "proxy.channel_associated_identity"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.channel_associated_identity"]
+depends_on = ["THM-0024", "THM-0028"]

@@ -12,15 +12,29 @@
 //! The variants are ordered by the refusal precedence of ADR-MCPRE-063 §9: existence,
 //! then local validity, then the selected field's presence, then its shape. A refusal
 //! names the first rule that failed, so the reason never depends on evaluation order.
+//!
+//! # Why the algebra is split in two
+//!
+//! Exactly one of the five reasons — no certificate was presented — is a fact about the
+//! EVIDENCE rather than about a leaf. The other four are reasons a leaf that exists failed
+//! to yield an identity, and they are the whole surface for a caller whose predecessor
+//! already guarantees a leaf: channel-associated credential evidence carries a non-empty
+//! chain, so its identity derivation cannot refuse for absence and must not advertise a
+//! state its input excludes.
+//!
+//! So [`LeafIdentityRefusal`] is the algebra of interpreting a presented leaf, and
+//! [`CertificateIdentityRefusal`] is that algebra plus the one existence question. The
+//! five outcomes stay distinguishable; each authority names only the ones it can produce.
 
 use super::certificate_identity_policy::CertificateIdentityPolicy;
 use super::peer_identity_value::PeerIdentityValueRefusal;
 
-/// Why no peer-identity evidence was produced from a certificate.
+/// Why a leaf certificate that WAS presented yielded no peer-identity evidence.
+///
+/// Every variant is a fact about a leaf that exists. Absence is not in this algebra, and
+/// that is the property a caller holding a guaranteed leaf relies on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CertificateIdentityRefusal {
-    /// No leaf certificate was presented. Produced by the mechanism adapter.
-    NoLeaf,
+pub enum LeafIdentityRefusal {
     /// A leaf was presented but could not be interpreted as a certificate. Produced by
     /// the mechanism adapter; the foreign parser's reason is deliberately not carried,
     /// because nothing in this authority may branch on it.
@@ -55,18 +69,36 @@ pub enum CertificateIdentityRefusal {
     },
 }
 
+/// Why no peer-identity evidence was produced from certificate-chain evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CertificateIdentityRefusal {
+    /// No leaf certificate was presented. The one reason that is a fact about the evidence
+    /// rather than about a leaf, which is why it sits here and not in
+    /// [`LeafIdentityRefusal`].
+    NoLeaf,
+    /// A leaf was presented, and interpreting it refused for one of the leaf-level reasons.
+    Leaf(LeafIdentityRefusal),
+}
+
+impl From<LeafIdentityRefusal> for CertificateIdentityRefusal {
+    fn from(refusal: LeafIdentityRefusal) -> Self {
+        CertificateIdentityRefusal::Leaf(refusal)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::CertificateIdentityPolicy;
     use super::CertificateIdentityRefusal;
+    use super::LeafIdentityRefusal;
     use super::PeerIdentityValueRefusal;
 
     #[test]
     fn absent_and_malformed_are_distinguishable_for_the_same_field() {
-        let absent = CertificateIdentityRefusal::SelectedFieldAbsent {
+        let absent = LeafIdentityRefusal::SelectedFieldAbsent {
             selected: CertificateIdentityPolicy::UriSan,
         };
-        let malformed = CertificateIdentityRefusal::SelectedFieldMalformed {
+        let malformed = LeafIdentityRefusal::SelectedFieldMalformed {
             selected: CertificateIdentityPolicy::UriSan,
             reason: PeerIdentityValueRefusal::ControlCharacter,
         };
@@ -80,10 +112,10 @@ mod tests {
     #[test]
     fn an_unreadable_field_and_an_absent_one_are_different_refusals() {
         assert_ne!(
-            CertificateIdentityRefusal::SelectedFieldUninterpretable {
+            LeafIdentityRefusal::SelectedFieldUninterpretable {
                 selected: CertificateIdentityPolicy::UriSan,
             },
-            CertificateIdentityRefusal::SelectedFieldAbsent {
+            LeafIdentityRefusal::SelectedFieldAbsent {
                 selected: CertificateIdentityPolicy::UriSan,
             },
             "a broken SAN extension is evidence about the issuer; a missing one is not"
@@ -92,12 +124,37 @@ mod tests {
 
     #[test]
     fn a_refusal_names_the_configured_field_not_the_field_that_was_present() {
-        let refusal = CertificateIdentityRefusal::SelectedFieldAbsent {
+        let refusal = LeafIdentityRefusal::SelectedFieldAbsent {
             selected: CertificateIdentityPolicy::UriSan,
         };
-        let CertificateIdentityRefusal::SelectedFieldAbsent { selected } = refusal else {
+        let LeafIdentityRefusal::SelectedFieldAbsent { selected } = refusal else {
             panic!("expected an absence refusal");
         };
         assert_eq!(selected, CertificateIdentityPolicy::UriSan);
+    }
+
+    #[test]
+    fn a_presented_leaf_that_refuses_is_never_reported_as_an_absent_one() {
+        // The split must not lose the distinction it exists to sharpen: every leaf-level
+        // reason lifts into the `Leaf` arm, and none of them can become `NoLeaf`.
+        for refusal in [
+            LeafIdentityRefusal::MalformedCertificate,
+            LeafIdentityRefusal::SelectedFieldUninterpretable {
+                selected: CertificateIdentityPolicy::DnsSan,
+            },
+            LeafIdentityRefusal::SelectedFieldAbsent {
+                selected: CertificateIdentityPolicy::DnsSan,
+            },
+            LeafIdentityRefusal::SelectedFieldMalformed {
+                selected: CertificateIdentityPolicy::DnsSan,
+                reason: PeerIdentityValueRefusal::Empty,
+            },
+        ] {
+            assert_ne!(
+                CertificateIdentityRefusal::from(refusal),
+                CertificateIdentityRefusal::NoLeaf,
+                "a peer that presented a certificate is never a peer that presented none"
+            );
+        }
     }
 }
