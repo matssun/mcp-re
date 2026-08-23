@@ -489,9 +489,9 @@ pub(crate) fn resolve_identity_from_leaf(
 /// done, so the peer chain is captured at handshake and handed here per request.
 ///
 /// `chain[0]` is the leaf and the rest are the intermediates the peer presented,
-/// leaf-first — the same order and the same decision as the blocking path, which
-/// reads them from `ServerConnection::peer_certificates`. An empty chain is an absent
-/// peer certificate and fails closed in the core.
+/// leaf-first — the same order and the same decision as the blocking path, both taking
+/// it from the channel-associated credential evidence the establishment mechanism
+/// reported. An empty chain is an absent peer certificate and fails closed in the core.
 ///
 /// NOTE: online-OCSP revocation (`#[cfg(feature = "online_ocsp")]`) needs the live
 /// connection and is NOT yet wired on the async path — combining `async_serve` with
@@ -590,8 +590,8 @@ pub(crate) fn wall_clock_unix() -> i64 {
 /// provenance differs.
 ///
 /// `chain[0]` is the peer leaf and the rest are the intermediates the peer presented,
-/// leaf-first, exactly as `ServerConnection::peer_certificates` orders them. An empty
-/// chain is an absent peer certificate.
+/// leaf-first, exactly as the channel-associated credential evidence carries them. An
+/// empty chain is an absent peer certificate.
 ///
 /// The leaf carries the lifetime, validity-window and revocation decision; every
 /// further certificate carries a validity window and a revocation decision. That matches
@@ -777,8 +777,8 @@ pub(crate) fn routing_header_rejection(
 /// result (rejected unless soft-fail). The HTTP fetch carries the checker's
 /// mandatory timeout so this can never wedge the blocking serve thread.
 ///
-/// The chain is handed in leaf-first, exactly as `ServerConnection::peer_certificates`
-/// orders it, so the decision does not depend on who holds the connection. The
+/// The chain is handed in leaf-first, exactly as the channel-associated credential
+/// evidence carries it, so the decision does not depend on who holds the connection. The
 /// policy — which responder verdicts reject, and what an unobtainable verdict means —
 /// is this module's, not the caller's.
 #[cfg(feature = "online_ocsp")]

@@ -6,9 +6,13 @@
 //! function, so a guard cannot be present on one blocking path and missing on the other —
 //! it used to be written twice, once per entry point.
 //!
-//! The adapters here turn a live [`ServerConnection`] into the arguments
-//! [`crate::tls`] decides from. They own no policy: each one reads the connection and calls
-//! the authority.
+//! The adapters here turn the relationship's channel-associated credential evidence into
+//! the arguments [`crate::tls`] decides from. They own no policy: each one projects the
+//! credential and calls the authority. Asking the mechanism WHICH credential it associated
+//! is not theirs either — that authority lives in
+//! [`crate::communication_assurance::channel_associated_credential::rustls_adapter`], and
+//! this module reaches it once, at the point the request read has driven the handshake to
+//! completion.
 
 use std::io;
 use std::io::Write;
@@ -19,6 +23,9 @@ use rustls::ServerConfig;
 use rustls::ServerConnection;
 use rustls::StreamOwned;
 
+use crate::communication_assurance::associated_chain_der;
+use crate::communication_assurance::channel_associated_credential::rustls_adapter::associated_credential;
+use crate::communication_assurance::ChannelAssociatedCertificateCredentialEvidence;
 use crate::tls::assertion_header;
 use crate::tls::cert_lifetime_rejection_for_chain;
 use crate::tls::routing_header_rejection;
@@ -57,10 +64,17 @@ where
     let mut stream = StreamOwned::new(conn, DeadlineStream::new(tcp, &options.limits));
 
     let request = read_http_request(&mut stream, &options.limits)?;
+    // THE ESTABLISHMENT BOUNDARY (ADR-MCPRE-063 Slice 4). The read above is what drove
+    // the rustls handshake to completion — a `ServerConnection` exists before that and
+    // proves nothing — so this is the first point at which the mechanism can be asked
+    // which credential it associated with the relationship. A refusal becomes an absent
+    // credential and the fail-closed core downstream decides it, exactly as an absent
+    // chain did before.
+    let credential = associated_credential(&stream.conn).ok();
     let headers = RequestHeaders::parse(&request.header_block);
-    let identity = resolve_identity(&stream.conn, options);
+    let identity = resolve_identity(credential.as_ref(), options);
     let assertion = assertion_header(options, &headers);
-    let response = match connection_rejection(&stream.conn, options, &request.body)
+    let response = match connection_rejection(credential.as_ref(), options, &request.body)
         .or_else(|| routing_header_rejection(&headers, &request.body))
     {
         Some(error) => error,
@@ -81,36 +95,30 @@ fn apply_socket_timeouts(tcp: &TcpStream, limits: &ServerLimits) -> io::Result<(
     Ok(())
 }
 
-/// The peer certificate chain of an established connection, leaf-first, borrowed from
-/// rustls' own storage. An absent peer certificate is an EMPTY chain, passed through
-/// rather than short-circuited here, so the no-leaf case is decided once by the
-/// fail-closed core in [`crate::tls`] instead of a second time in this module.
-fn peer_chain(conn: &ServerConnection) -> Vec<&[u8]> {
-    conn.peer_certificates()
-        .map(|chain| chain.iter().map(|cert| cert.as_ref()).collect())
-        .unwrap_or_default()
-}
-
 /// The verified transport identity for one served request. The strategy dispatch, the
 /// extraction and the fail-closed `None` are all
-/// [`crate::tls::resolve_identity_from_leaf`]'s; this reads the leaf out of the
-/// connection and hands it over — the same extractor, and so the same identity, the
-/// async fleet resolves from the chain it captured at handshake.
-fn resolve_identity(conn: &ServerConnection, options: &ServerOptions) -> Option<TransportIdentity> {
-    let chain = peer_chain(conn);
+/// [`crate::tls::resolve_identity_from_leaf`]'s; this takes the leaf of the
+/// channel-associated credential and hands it over — the same extractor, and so the same
+/// identity, the async fleet resolves from the credential it captured at its own
+/// establishment boundary.
+fn resolve_identity(
+    credential: Option<&ChannelAssociatedCertificateCredentialEvidence>,
+    options: &ServerOptions,
+) -> Option<TransportIdentity> {
+    let chain = associated_chain_der(credential);
     crate::tls::resolve_identity_from_leaf(chain.first().copied(), options)
 }
 
-/// The per-request rejection decision for an established connection: the certificate
+/// The per-request rejection decision for an established relationship: the certificate
 /// lifetime/revocation guard, then (under the `online_ocsp` feature) the online OCSP
 /// guard. The order and every verdict are [`crate::tls`]'s; this supplies the chain.
 /// Returns the first rejection's error bytes, or `None` if the request is admitted.
 fn connection_rejection(
-    conn: &ServerConnection,
+    credential: Option<&ChannelAssociatedCertificateCredentialEvidence>,
     options: &ServerOptions,
     request: &[u8],
 ) -> Option<Vec<u8>> {
-    let chain = peer_chain(conn);
+    let chain = associated_chain_der(credential);
     if let Some(error) =
         cert_lifetime_rejection_for_chain(&chain, options, request, wall_clock_unix())
     {

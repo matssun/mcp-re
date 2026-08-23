@@ -120,3 +120,10 @@ graph BT
     THM_0025 --> THM_0026
     THM_0026 --> THM_0027
 ```
+
+## Component 12
+
+```mermaid
+graph BT
+    THM_0028["THM-0028<br/>Channel-associated certificate credential evidence originates only from an established relationship's mechanism report"]
+```

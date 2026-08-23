@@ -705,3 +705,40 @@ introduced_by = "ADR-MCPRE-063 Slice 2"
 review_requirement = "Owner review; any change to the credential adapter's certificate parsing or its parser dependency."
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0033"
+description = "The TLS establishment mechanism faithfully reports whether a relationship has established, and which peer credential it associated with it."
+justification = """
+Slice 4's product says one thing — *the establishment mechanism associated this credential
+with this established relationship* — and both halves of that sentence are read from
+`rustls`: `ServerConnection::is_handshaking` for whether establishment completed, and
+`ServerConnection::peer_certificates` for the credential associated with it.
+
+Nothing in this repository re-derives either fact, and nothing could: the association is
+made inside the handshake state machine, from material this crate never sees. The authority
+is therefore a faithful RELAY of a mechanism report, and the assumption is exactly that the
+report is faithful. A mechanism that returned another relationship's chain, or reported
+completion before the peer had authenticated, would make the product false while every
+control here stayed green.
+
+The premise is narrow in what it can affect and wide in what it cannot. It cannot make the
+credential trusted, current, unrevoked, or an identity: those are separate authorities that
+consume the association and take their own premises. What it can do is put the wrong
+credential under a true-sounding sentence, which is why it is registered rather than left
+implicit in "we use rustls".
+
+Not proved here: a TLS implementation is a far larger verification target than the authority
+relaying it, and the measured controls drive real handshakes against it rather than a
+stand-in precisely because a synthetic chain would establish nothing about the report.
+
+It stops being acceptable if this authority ever begins to CONSTRUCT the association — for
+instance by pairing a chain captured from one connection with another — rather than reading
+it from the connection it was reported for.
+"""
+scope = ["unit://proxy.channel_associated_credential"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-063 Slice 4"
+review_requirement = "Owner review; any change that captures a credential anywhere other than the connection whose establishment boundary was just crossed."
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
