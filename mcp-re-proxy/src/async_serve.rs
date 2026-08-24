@@ -12,7 +12,7 @@
 //!   * the verified client identity, the per-connection cert-lifetime rejection,
 //!     the routing-header hygiene rejection, and the Tier-3 assertion extraction
 //!     all go through the SAME `tls` helpers the blocking loop uses
-//!     ([`resolve_identity_from_leaf`], [`connection_rejection_for_chain`],
+//!     ([`resolve_authenticated_identity`], [`connection_rejection_for_chain`],
 //!     [`routing_header_rejection`], [`assertion_header`]);
 //!   * the request handler is the SAME `Proxy` handler (`Proxy` is `Send + Sync`
 //!     since MCPRE-111, which is why this work was blocked on it).
@@ -61,7 +61,7 @@ use crate::communication_assurance::mechanism_verified_credential::rustls_adapte
 use crate::communication_assurance::MechanismVerifiedCredentialEvidence;
 use crate::tls::assertion_header;
 use crate::tls::connection_rejection_for_chain;
-use crate::tls::resolve_identity_from_leaf;
+use crate::tls::resolve_authenticated_identity;
 use crate::tls::routing_header_rejection;
 use crate::tls::ServerOptions;
 use crate::transport::RequestHeaders;
@@ -792,9 +792,9 @@ async fn handle_request<H: AsyncRequestHandler>(
         },
     };
 
-    let chain: Vec<&[u8]> = accepted_chain_der(peer_credential.as_ref().as_ref());
-    let leaf = chain.first().copied();
-    let identity = resolve_identity_from_leaf(leaf, &options);
+    // ADR-MCPRE-064 (#619). The chain is no longer on the identity route: it is projected
+    // only for the unmigrated per-request currency authority, and goes when that does.
+    let identity = resolve_authenticated_identity(peer_credential.as_ref().as_ref(), &options);
     let assertion = assertion_header(&options, &headers);
 
     // SAME order as the blocking loop: per-connection cert-lifetime rejection, then
@@ -807,7 +807,7 @@ async fn handle_request<H: AsyncRequestHandler>(
     // handshake, so this is the only point at which a certificate that has since
     // passed `notAfter` can be caught on a connection the peer keeps open.
     let served = match connection_rejection_for_chain(
-        &chain,
+        &accepted_chain_der(peer_credential.as_ref().as_ref()),
         &options,
         &body_bytes,
         crate::tls::wall_clock_unix(),

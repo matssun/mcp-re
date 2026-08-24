@@ -7,9 +7,11 @@
 //! request handler, where the transport-binding policy (MCPS-026) ties it to the request
 //! `signer`.
 //!
-//! Every per-request decision here takes the peer chain as an ARGUMENT, leaf-first, and
-//! never a connection: `cert_lifetime_rejection_for_chain`, `ocsp_rejection_for_chain`,
-//! `resolve_identity_from_leaf`, `routing_header_rejection`, `assertion_header`. Both
+//! Every per-request decision here takes its input as an ARGUMENT and never a connection:
+//! the unmigrated rejection guards take the peer chain leaf-first
+//! (`cert_lifetime_rejection_for_chain`, `ocsp_rejection_for_chain`), and
+//! `resolve_authenticated_identity` takes the mechanism's acceptance — a semantic product,
+//! not a representation. `routing_header_rejection` and `assertion_header` read headers. Both
 //! serving shapes therefore reach the same verdict from the same input — the async fleet
 //! captures the chain at handshake because `hyper` owns the stream thereafter, and
 //! [`crate::blocking_mtls_harness`] reads it from the live `ServerConnection` it holds.
@@ -33,7 +35,10 @@ use rustls_pki_types::CertificateRevocationListDer;
 use x509_parser::certificate::X509Certificate;
 use x509_parser::prelude::FromDer;
 
+use crate::communication_assurance::authenticate_relationship_peer;
 use crate::communication_assurance::CertificateChainEvidence;
+use crate::communication_assurance::MechanismVerifiedCredentialEvidence;
+use crate::facades::asserted_identity::rendered_transport_identity;
 use crate::transport::IdentityPolicy;
 use crate::transport::RequestHeaders;
 use crate::transport::TransportIdentity;
@@ -467,19 +472,36 @@ pub fn extract_identity(leaf_der: &[u8], policy: IdentityPolicy) -> Option<Trans
     ))
 }
 
-/// Leaf-DER form of [`resolve_identity`] for the opt-in async serve path
-/// (ADR-MCPRE-051 §1): identical strategy dispatch, but `DirectTls` reads the peer
-/// identity from the leaf DER captured once at handshake (`hyper` owns the TLS
-/// stream thereafter) rather than from the live `ServerConnection`. `extract_identity`
-/// is the SAME extractor the blocking path's `connection_identity` calls, so the
-/// resolved identity is byte-identical.
-#[cfg_attr(not(feature = "async_serve"), allow(dead_code))]
-pub(crate) fn resolve_identity_from_leaf(
-    leaf_der: Option<&[u8]>,
+/// The identity of the peer this relationship AUTHENTICATED as, for both direct-TLS
+/// serving paths (ADR-MCPRE-064, issue #619).
+///
+/// The strategy dispatch is the only decision here. Under [`IdentityStrategy::DirectTls`]
+/// the identity comes from the ADR-MCPRE-064 Slice 2 authority: the mechanism's own
+/// acceptance plus the configured identity policy, composed by
+/// `authenticate_relationship_peer` so that the identity is read from the leaf of the very
+/// credential the mechanism accepted for THIS relationship. Under
+/// [`IdentityStrategy::LbAssertion`] there is no transport identity, unchanged.
+///
+/// **Nothing but the acceptance and the policy is supplied.** There is no certificate
+/// parameter, no leaf parameter, and no second credential — which is what makes the
+/// historical route (project the chain, take element 0, reinterpret the DER) not merely
+/// unused but unavailable from here. Both serving paths call THIS function, so their
+/// identities are the same fact and not two derivations that currently agree.
+///
+/// The `Option` is the historical shape and stays lossy: an absent acceptance and a leaf
+/// carrying no configured identity field both arrive as `None`, and the fail-closed core
+/// downstream decides them, exactly as before. What changed is where the value came from.
+pub(crate) fn resolve_authenticated_identity(
+    accepted: Option<&MechanismVerifiedCredentialEvidence>,
     options: &ServerOptions,
 ) -> Option<TransportIdentity> {
     match &options.identity_strategy {
-        IdentityStrategy::DirectTls => extract_identity(leaf_der?, options.identity_policy),
+        IdentityStrategy::DirectTls => {
+            let peer =
+                authenticate_relationship_peer(accepted?.clone(), options.identity_policy.into())
+                    .ok()?;
+            Some(rendered_transport_identity(&peer))
+        }
         IdentityStrategy::LbAssertion => None,
     }
 }
@@ -1967,5 +1989,155 @@ mod delegated_credential_key_correspondence_tests {
             &spki[spki.len() - 32..],
             "the corresponding key is the key, not a re-derivation of it"
         );
+    }
+}
+
+#[cfg(test)]
+mod authenticated_identity_resolution_tests {
+    //! ADR-MCPRE-064 (#619) — the direct-TLS serving paths resolve identity from the
+    //! AUTHENTICATED peer, not from certificate representation.
+    //!
+    //! Every control drives a real handshake. What a synthetic chain would prove about
+    //! which credential a relationship authenticated with is nothing, and the property at
+    //! stake here is provenance rather than parsing.
+
+    use super::*;
+
+    use rustls::HandshakeKind;
+
+    use crate::transport::IdentitySource;
+
+    use crate::communication_assurance::channel_associated_credential::mechanism_harness::*;
+    use crate::communication_assurance::mechanism_verified_credential::rustls_adapter::verified_credential;
+
+    const IDENTITY_A: &str = "spiffe://example.org/A";
+    const IDENTITY_B: &str = "spiffe://example.org/B";
+
+    fn direct_tls(policy: IdentityPolicy) -> ServerOptions {
+        ServerOptions {
+            identity_policy: policy,
+            identity_strategy: IdentityStrategy::DirectTls,
+            ..Default::default()
+        }
+    }
+
+    /// A real relationship whose client chain is `[leaf(uri_san), intermediate(decoy)]` —
+    /// the decoy answers the same policy with a DIFFERENT identity, so a route that read
+    /// any certificate other than the accepted credential's leaf returns the wrong
+    /// identity rather than merely a different-looking success.
+    fn accepted(uri_san: &str, decoy: &str) -> MechanismVerifiedCredentialEvidence {
+        let root = make_ca("serving-root");
+        let intermediate = make_intermediate(&root, "serving-intermediate", decoy);
+        let server_ca = make_ca("serving-server-ca");
+        let (server_leaf, server_key) = make_leaf(&server_ca, "localhost", false);
+        let (client_leaf, client_key) = make_uri_leaf(&intermediate, uri_san);
+        let server = server_config(&[root.der()], vec![server_leaf], server_key);
+        let client = client_config(
+            &server_ca.der(),
+            Some((vec![client_leaf, intermediate.der()], client_key)),
+        );
+        let conn = handshake(&client, &server);
+        assert_eq!(conn.handshake_kind(), Some(HandshakeKind::Full));
+        verified_credential(&conn).expect("an established relationship accepts")
+    }
+
+    #[test]
+    fn direct_tls_resolves_the_identity_the_relationship_authenticated_as() {
+        let acceptance = accepted(IDENTITY_A, IDENTITY_B);
+        let identity =
+            resolve_authenticated_identity(Some(&acceptance), &direct_tls(IdentityPolicy::UriSan))
+                .expect("the accepted credential's leaf carries the configured field");
+
+        assert_eq!(identity.value, IDENTITY_A);
+        assert_eq!(identity.source, IdentitySource::UriSan);
+    }
+
+    #[test]
+    fn an_issuer_in_the_accepted_chain_never_becomes_the_transport_identity() {
+        // The failure a raw-chain route invites: two certificates in the accepted chain
+        // answer the policy, and reading "some certificate the peer presented" binds the
+        // deployment to the CA rather than to the workload.
+        let acceptance = accepted(IDENTITY_A, IDENTITY_B);
+        let identity =
+            resolve_authenticated_identity(Some(&acceptance), &direct_tls(IdentityPolicy::UriSan))
+                .expect("resolution succeeds");
+        assert_ne!(identity.value, IDENTITY_B);
+    }
+
+    #[test]
+    fn each_relationship_resolves_its_own_peers_identity() {
+        // The L-5 control at the serving boundary: two live relationships, one options
+        // record. A route that reached past its own acceptance would answer the same
+        // identity twice.
+        let first = accepted(IDENTITY_A, IDENTITY_B);
+        let second = accepted(IDENTITY_B, IDENTITY_A);
+        let options = direct_tls(IdentityPolicy::UriSan);
+
+        let from_first =
+            resolve_authenticated_identity(Some(&first), &options).expect("first resolves");
+        let from_second =
+            resolve_authenticated_identity(Some(&second), &options).expect("second resolves");
+        assert_eq!(from_first.value, IDENTITY_A);
+        assert_eq!(from_second.value, IDENTITY_B);
+    }
+
+    #[test]
+    fn a_resumed_relationship_resolves_the_same_identity_as_a_full_handshake() {
+        // Resumption restores the stored peer chain, so it is the same peer and must
+        // resolve to the same identity. The establishment-path distinction is carried by
+        // the authenticated product and is deliberately NOT visible in this rendering —
+        // what a resumed relationship must not do is resolve to a different peer.
+        let peers = mutually_authenticated_peers();
+        let full = verified_credential(&handshake(&peers.client, &peers.server)).expect("accepts");
+        let resumed_conn = handshake(&peers.client, &peers.server);
+        assert_eq!(
+            resumed_conn.handshake_kind(),
+            Some(HandshakeKind::Resumed),
+            "without a real resumption this control is a second full handshake"
+        );
+        let resumed = verified_credential(&resumed_conn).expect("accepts");
+        let options = direct_tls(IdentityPolicy::DnsSan);
+
+        assert_eq!(
+            resolve_authenticated_identity(Some(&full), &options),
+            resolve_authenticated_identity(Some(&resumed), &options),
+            "a resumed relationship is the same authenticated peer"
+        );
+    }
+
+    #[test]
+    fn a_leaf_without_the_configured_field_resolves_no_identity() {
+        // No-fallback, at the serving boundary. The peer's leaf carries a DNS SAN and the
+        // deployment configured URI SANs: the request must reach the fail-closed core with
+        // no identity rather than with a weaker field's value.
+        let peers = mutually_authenticated_peers();
+        let acceptance =
+            verified_credential(&handshake(&peers.client, &peers.server)).expect("accepts");
+        assert!(
+            resolve_authenticated_identity(Some(&acceptance), &direct_tls(IdentityPolicy::UriSan))
+                .is_none(),
+            "a present DNS SAN is not a reason to answer under a URI-SAN policy"
+        );
+    }
+
+    #[test]
+    fn an_absent_acceptance_resolves_no_identity() {
+        assert!(
+            resolve_authenticated_identity(None, &direct_tls(IdentityPolicy::UriSan)).is_none(),
+            "no acceptance is no authenticated peer"
+        );
+    }
+
+    #[test]
+    fn an_lb_assertion_deployment_resolves_no_transport_identity() {
+        // Untouched by this migration: under LB assertion the client certificate is not
+        // consulted for identity, and a live accepted credential must not change that.
+        let acceptance = accepted(IDENTITY_A, IDENTITY_B);
+        let options = ServerOptions {
+            identity_policy: IdentityPolicy::UriSan,
+            identity_strategy: IdentityStrategy::LbAssertion,
+            ..Default::default()
+        };
+        assert!(resolve_authenticated_identity(Some(&acceptance), &options).is_none());
     }
 }

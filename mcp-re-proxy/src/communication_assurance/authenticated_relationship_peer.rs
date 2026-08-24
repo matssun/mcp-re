@@ -8,7 +8,9 @@
 //! > The establishment mechanism accepted a credential for this relationship, on this
 //! > establishment path, and the configured certificate-identity rule reads this identity
 //! > from the leaf of **that same** credential. The party at the far end of this
-//! > relationship proved control of that credential.
+//! > relationship is bound to that credential by the proof the path required — current
+//! > control of its private key on a full handshake, continuity from an earlier
+//! > authenticated handshake on a resumed one.
 //!
 //! # Why this one may say `authenticated`, and the two earlier ones may not
 //!
@@ -24,7 +26,8 @@
 //! ```
 //!
 //! Authentication is exactly the conjunction of those two over ONE credential, plus the
-//! premise that acceptance entailed proof of control (ASM-0036). Neither predecessor is
+//! premise that acceptance entailed a proof binding the peer to it (ASM-0036 — a fresh
+//! private-key proof on a full handshake, carried-forward continuity on a resumed one). Neither predecessor is
 //! strengthened here and no third fact is invented: what this authority adds is that the
 //! identity and the acceptance are about the same credential, which is the only thing the
 //! word was ever waiting for.
