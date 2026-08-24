@@ -11,7 +11,6 @@
 //! code lives in its taxonomy but is emitted here, at the proxy, which is the only
 //! component holding the connection.
 
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 use mcp_re_core::b64url_decode;
@@ -20,6 +19,11 @@ use mcp_re_core::parse_hash_id;
 use mcp_re_core::verify_ed25519_with;
 use mcp_re_core::McpReError;
 use mcp_re_core::VerificationKey;
+
+use crate::communication_assurance::bind_request_to_peer;
+use crate::communication_assurance::AuthenticatedChannelPeer;
+use crate::communication_assurance::RequestPeerBindingFacts;
+use crate::communication_assurance::VerifiedRequestSubject;
 
 /// Where a verified transport identity was read from in the client certificate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,17 +240,24 @@ pub fn validate_routing_headers(headers: &RequestHeaders) -> Result<(), RoutingH
     Ok(())
 }
 
-/// Decides whether a request's verified `signer` is bound to the transport
-/// identity. A failure is always [`McpReError::TransportBindingFailed`].
+/// Decides whether the actor a request verifier resolved is bound to the peer that
+/// authenticated the relationship it arrived over. A failure is always
+/// [`McpReError::TransportBindingFailed`].
 pub trait TransportBindingPolicy {
-    /// `Ok(())` iff `signer` is bound to `identity`; otherwise
-    /// [`McpReError::TransportBindingFailed`].
-    fn check(&self, signer: &str, identity: Option<&TransportIdentity>) -> Result<(), McpReError>;
+    /// The binding fact, or [`McpReError::TransportBindingFailed`].
+    fn bind(
+        &self,
+        peer: AuthenticatedChannelPeer,
+        subject: VerifiedRequestSubject,
+    ) -> Result<RequestPeerBindingFacts, McpReError>;
 }
 
-/// The strongest default: the request `signer` must equal the verified transport
-/// identity (the key-holder is the cert-holder). A required identity that is
-/// absent fails closed.
+/// The strongest default: the authenticated peer and the resolved request actor must be
+/// the same principal (the key-holder is the cert-holder).
+///
+/// A COMPATIBILITY facade, and nothing more. The relation lives in the ADR-MCPRE-064
+/// Slice 4 authority; this converts its refusal into the historical error. There is no
+/// check here to delete.
 #[derive(Debug, Clone, Default)]
 pub struct ExactMatchBinding;
 
@@ -258,11 +269,12 @@ impl ExactMatchBinding {
 }
 
 impl TransportBindingPolicy for ExactMatchBinding {
-    fn check(&self, signer: &str, identity: Option<&TransportIdentity>) -> Result<(), McpReError> {
-        match identity {
-            Some(identity) if identity.value == signer => Ok(()),
-            _ => Err(McpReError::TransportBindingFailed),
-        }
+    fn bind(
+        &self,
+        peer: AuthenticatedChannelPeer,
+        subject: VerifiedRequestSubject,
+    ) -> Result<RequestPeerBindingFacts, McpReError> {
+        bind_request_to_peer(peer, subject).map_err(|_| McpReError::TransportBindingFailed)
     }
 }
 
@@ -299,56 +311,38 @@ impl TransportBinding {
         }
     }
 
-    /// Apply the binding. The serving path's only projection of the private policy.
-    pub(crate) fn check(
+    /// Apply the binding to two SEMANTIC products, and hand back the fact it establishes.
+    ///
+    /// The serving path's only projection of the private policy. It takes the channel peer
+    /// and the verified request subject — never two strings a caller chose — so the
+    /// relation is over values whose provenance their own authorities state.
+    ///
+    /// An ABSENT channel peer fails closed. A configured binding is a claim that every
+    /// served request is bound; a request that presents no authenticated peer has not
+    /// been shown to be, and treating "nothing to compare" as a pass would satisfy the
+    /// claim with an absence.
+    pub(crate) fn bind(
         &self,
-        signer: &str,
-        identity: Option<&TransportIdentity>,
-    ) -> Result<(), McpReError> {
-        self.policy.check(signer, identity)
+        peer: Option<&AuthenticatedChannelPeer>,
+        subject: VerifiedRequestSubject,
+    ) -> Result<RequestPeerBindingFacts, McpReError> {
+        let peer = peer.ok_or(McpReError::TransportBindingFailed)?;
+        self.policy.bind(peer.clone(), subject)
     }
 }
 
-/// Cross-namespace binding: each `signer` maps to a set of allowed transport
-/// identities (e.g. a DID signer permitted over one or more SPIFFE IDs). A signer
-/// with no mapping, or an identity outside its set (or absent), fails closed.
-///
-/// This is a STRICT, EXPLICIT allowlist: matches are by exact string equality
-/// only. There are deliberately no wildcards, no globs, and no regular
-/// expressions — every permitted `(signer, identity)` pair is enumerated and
-/// auditable, and any pair not enumerated is denied. A literal `"*"` is just an
-/// ordinary string with no special meaning.
-#[derive(Debug, Clone, Default)]
-pub struct MappedBinding {
-    allowed: BTreeMap<String, BTreeSet<String>>,
-}
-
-impl MappedBinding {
-    /// An empty mapping (every signer fails closed until permitted).
-    pub fn new() -> Self {
-        MappedBinding {
-            allowed: BTreeMap::new(),
-        }
-    }
-
-    /// Permit `signer` to arrive over the transport identity `identity`.
-    pub fn permit(&mut self, signer: impl Into<String>, identity: impl Into<String>) {
-        self.allowed
-            .entry(signer.into())
-            .or_default()
-            .insert(identity.into());
-    }
-}
-
-impl TransportBindingPolicy for MappedBinding {
-    fn check(&self, signer: &str, identity: Option<&TransportIdentity>) -> Result<(), McpReError> {
-        let identity = identity.ok_or(McpReError::TransportBindingFailed)?;
-        match self.allowed.get(signer) {
-            Some(set) if set.contains(&identity.value) => Ok(()),
-            _ => Err(McpReError::TransportBindingFailed),
-        }
-    }
-}
+// `MappedBinding` — a cross-namespace signer -> allowed-identities allowlist — was removed
+// here by ADR-MCPRE-064 Slice 4. It had no production path: no `BindingKind` reaches it and
+// `TransportBinding` never had a constructor for it. It also cannot honestly satisfy the
+// binding trait any more, because the fact that trait now produces is *these two denote the
+// SAME principal*, and a mapping deliberately relates two DIFFERENT ones.
+//
+// The capability is deferred, not discarded. A cross-namespace relation is its own authority
+// producing its own fact, and the requirements its tests pinned are recorded in
+// ADR-MCPRE-064 §15 so the next author inherits them rather than rediscovering them: an
+// explicit enumerated allowlist, exact string equality only, no wildcards or globs or
+// regular expressions, a literal `"*"` with no special meaning, and an absent identity or an
+// unmapped signer failing closed.
 
 // ---------------------------------------------------------------------------
 // Tier 3 (ADR-MCPS-023, future-boundary, issue #71): LB-signed, request-bound
@@ -1284,7 +1278,6 @@ mod tests {
     use super::LbAssertionV2;
     use super::LbAssertionV2Binding;
     use super::LbAssertionV2Rejection;
-    use super::MappedBinding;
     use super::RequestHeaders;
     use super::StaticIdentityProvider;
     use super::TransportBinding;
@@ -1296,6 +1289,58 @@ mod tests {
     use mcp_re_core::McpReError;
     use mcp_re_core::SigningKey;
 
+    use super::AuthenticatedChannelPeer;
+    use super::RequestPeerBindingFacts;
+    use super::VerifiedRequestSubject;
+    use crate::communication_assurance::bind_request_to_peer;
+
+    const PRINCIPAL: &str = "spiffe://example.org/agent-1";
+
+    /// A real authenticated channel peer naming `value`.
+    ///
+    /// Driven through a real handshake rather than constructed: the whole difference
+    /// between this operand and the freely-constructible `TransportIdentity` it replaces is
+    /// that it cannot be fabricated, and a synthetic fixture would prove nothing about that.
+    fn channel_peer(value: &str) -> AuthenticatedChannelPeer {
+        use crate::communication_assurance::authenticate_relationship_peer;
+        use crate::communication_assurance::certificate_identity_policy::CertificateIdentityPolicy;
+        use crate::communication_assurance::channel_associated_credential::mechanism_harness::*;
+        use crate::communication_assurance::mechanism_verified_credential::rustls_adapter::verified_credential;
+
+        let root = make_ca("binding-root");
+        let server_ca = make_ca("binding-server-ca");
+        let (server_leaf, server_key) = make_leaf(&server_ca, "localhost", false);
+        let (client_leaf, client_key) = make_uri_leaf(&root, value);
+        let server = server_config(&[root.der()], vec![server_leaf], server_key);
+        let client = client_config(&server_ca.der(), Some((vec![client_leaf], client_key)));
+        let accepted = verified_credential(&handshake(&client, &server)).expect("accepts");
+        AuthenticatedChannelPeer::CurrencyNotEvaluated(
+            authenticate_relationship_peer(accepted, CertificateIdentityPolicy::UriSan)
+                .expect("the leaf carries a URI SAN"),
+        )
+    }
+
+    /// The subject the request verifier resolved, through the ONE producer.
+    fn subject(value: &str) -> VerifiedRequestSubject {
+        use mcp_re_http_profile::ActorIdentity;
+        use mcp_re_http_profile::ResolvedActor;
+        use mcp_re_http_profile::SignerSlot;
+
+        crate::communication_assurance::request_peer_binding::http_profile_adapter::verified_request_subject(
+            &ResolvedActor {
+                identity: ActorIdentity {
+                    role: "client".into(),
+                    trust_domain: "example.org".into(),
+                    subject: value.into(),
+                    keyid: "key-a".into(),
+                },
+                verification_key: mcp_re_core::SigningKey::from_seed_bytes(&[9u8; 32]).public_key(),
+                slot: SignerSlot::Request,
+            },
+        )
+    }
+
+    #[allow(dead_code)]
     fn spiffe(value: &str) -> TransportIdentity {
         TransportIdentity::new(value, IdentitySource::UriSan)
     }
@@ -1340,148 +1385,112 @@ mod tests {
         assert_eq!(headers.count("x-forwarded-client-cert"), 1);
     }
 
-    #[test]
-    fn exact_match_binds_equal_signer_and_identity() {
-        let policy = ExactMatchBinding::new();
-        let id = spiffe("did:example:agent-1");
-        assert!(policy.check("did:example:agent-1", Some(&id)).is_ok());
-    }
-
-    #[test]
-    fn exact_match_rejects_mismatch_and_absence() {
-        let policy = ExactMatchBinding::new();
-        let id = spiffe("did:example:other");
-        assert_eq!(
-            policy.check("did:example:agent-1", Some(&id)).unwrap_err(),
-            McpReError::TransportBindingFailed
-        );
-        assert_eq!(
-            policy.check("did:example:agent-1", None).unwrap_err(),
-            McpReError::TransportBindingFailed
-        );
-    }
-
-    /// The installable binding enforces the exact-match rule, not merely some rule.
+    /// The binding relation, over the two SEMANTIC products — ADR-MCPRE-064 Slice 4.
     ///
-    /// `TransportBinding` exists to make "a rule ran" and "THE approved rule ran" the same
-    /// statement, so its behaviour is pinned here rather than inferred from the policy it
-    /// happens to wrap today.
+    /// The operands are a channel peer whose provenance descends from a mechanism
+    /// adapter's acceptance, and a subject with exactly one producer. Neither is a string
+    /// a caller chose, which is what the old `check(&str, Option<&TransportIdentity>)`
+    /// signature could not say.
+    #[test]
+    fn exact_match_binds_a_peer_and_a_request_actor_that_name_one_principal() {
+        let peer = channel_peer(PRINCIPAL);
+        let bound = ExactMatchBinding::new()
+            .bind(peer, subject(PRINCIPAL))
+            .expect("the same principal on both sides binds");
+        assert_eq!(bound.principal().as_str(), PRINCIPAL);
+    }
+
+    #[test]
+    fn exact_match_refuses_two_different_principals() {
+        assert_eq!(
+            ExactMatchBinding::new()
+                .bind(
+                    channel_peer(PRINCIPAL),
+                    subject("spiffe://example.org/agent-2")
+                )
+                .unwrap_err(),
+            McpReError::TransportBindingFailed
+        );
+    }
+
+    #[test]
+    fn the_composite_actor_id_is_not_the_binding_coordinate() {
+        // THE SLICE-4 RULING, as a control. The channel identity is a subject; the
+        // `role:trust_domain:subject:keyid` composite is the replay/audit coordinate. A
+        // binding taken over the composite forces certificate issuance to serialize the
+        // request verifier's internal trust record — and to be reissued on every
+        // signing-key rotation.
+        let composite = format!("client:example.org:{}:key-a", PRINCIPAL.replace(':', "%3A"));
+        assert_ne!(composite, PRINCIPAL);
+        assert_eq!(
+            ExactMatchBinding::new()
+                .bind(channel_peer(PRINCIPAL), subject(&composite))
+                .unwrap_err(),
+            McpReError::TransportBindingFailed,
+            "a certificate naming the principal must not be expected to name the composite"
+        );
+    }
+
+    #[test]
+    fn an_absent_channel_peer_fails_closed() {
+        // A configured binding claims every served request is bound. A request presenting
+        // no authenticated peer has not been shown to be, and satisfying the claim with an
+        // absence is the `identity.map(check).unwrap_or(true)` defect.
+        assert_eq!(
+            TransportBinding::exact_match()
+                .bind(None, subject(PRINCIPAL))
+                .unwrap_err(),
+            McpReError::TransportBindingFailed
+        );
+    }
+
     #[test]
     fn the_installable_binding_is_exact_match() {
-        let binding = TransportBinding::exact_match();
-        let id = spiffe("did:example:agent-1");
-        assert!(binding.check("did:example:agent-1", Some(&id)).is_ok());
-        assert_eq!(
-            binding.check("did:example:agent-2", Some(&id)).unwrap_err(),
-            McpReError::TransportBindingFailed,
-            "a signer that is not the channel identity was admitted"
-        );
-        assert_eq!(
-            binding.check("did:example:agent-1", None).unwrap_err(),
-            McpReError::TransportBindingFailed,
-            "a request with no channel identity at all was admitted"
-        );
+        let installable = TransportBinding::exact_match();
+        assert!(installable
+            .bind(Some(&channel_peer(PRINCIPAL)), subject(PRINCIPAL))
+            .is_ok());
+        assert!(installable
+            .bind(
+                Some(&channel_peer(PRINCIPAL)),
+                subject("spiffe://example.org/agent-2")
+            )
+            .is_err());
     }
 
     /// A permissive policy is expressible, which is exactly why it must not be installable.
     ///
-    /// This is the state the seal excludes: an implementation of the public
-    /// [`TransportBindingPolicy`] trait that admits every request. Nothing stops an
-    /// embedder writing it — the point is that there is no longer a public route from one
-    /// of these to the serving path, so `TransportBinding` cannot wrap it.
+    /// The state the seal excludes: an implementation of the public
+    /// [`TransportBindingPolicy`] trait that admits every request. Nothing stops an embedder
+    /// writing it — the point is that there is no public route from one of these to the
+    /// serving path, so `TransportBinding` cannot wrap it.
+    ///
+    /// Note what the new trait costs such an implementation: to admit everything it must
+    /// PRODUCE a `RequestPeerBindingFacts`, and the only producer is the authority's own
+    /// relation. The permissive policy below can therefore only call that relation and
+    /// hand back its answer, which is not permissive at all — the seal now defeats this
+    /// shape at the type level, not merely at the composition root.
     #[test]
-    fn a_permissive_policy_is_not_what_the_installable_binding_does() {
+    fn a_permissive_policy_cannot_manufacture_the_binding_fact() {
         struct AdmitEverything;
         impl TransportBindingPolicy for AdmitEverything {
-            fn check(&self, _: &str, _: Option<&TransportIdentity>) -> Result<(), McpReError> {
-                Ok(())
+            fn bind(
+                &self,
+                peer: AuthenticatedChannelPeer,
+                subject: VerifiedRequestSubject,
+            ) -> Result<RequestPeerBindingFacts, McpReError> {
+                // There is no other way to obtain the return value.
+                bind_request_to_peer(peer, subject).map_err(|_| McpReError::TransportBindingFailed)
             }
         }
-
-        let id = spiffe("did:example:agent-1");
-        // The negative control: this is what the serving path would do if a caller could
-        // supply the rule.
         assert!(AdmitEverything
-            .check("did:example:impostor", Some(&id))
-            .is_ok());
-        assert_eq!(
-            TransportBinding::exact_match()
-                .check("did:example:impostor", Some(&id))
-                .unwrap_err(),
-            McpReError::TransportBindingFailed,
-            "the installable binding must not behave like the policy the seal excludes"
-        );
+            .bind(
+                channel_peer(PRINCIPAL),
+                subject("spiffe://example.org/agent-2")
+            )
+            .is_err());
     }
 
-    #[test]
-    fn mapped_binding_honours_the_allow_set() {
-        let mut policy = MappedBinding::new();
-        policy.permit("did:example:agent-1", "spiffe://example.org/agent-1");
-        let ok = spiffe("spiffe://example.org/agent-1");
-        assert!(policy.check("did:example:agent-1", Some(&ok)).is_ok());
-
-        // Identity outside the set.
-        let bad = spiffe("spiffe://example.org/evil");
-        assert_eq!(
-            policy.check("did:example:agent-1", Some(&bad)).unwrap_err(),
-            McpReError::TransportBindingFailed
-        );
-        // Signer with no mapping.
-        assert_eq!(
-            policy.check("did:example:unmapped", Some(&ok)).unwrap_err(),
-            McpReError::TransportBindingFailed
-        );
-        // Absent identity.
-        assert_eq!(
-            policy.check("did:example:agent-1", None).unwrap_err(),
-            McpReError::TransportBindingFailed
-        );
-    }
-
-    #[test]
-    fn mapped_binding_has_no_wildcard_semantics() {
-        // A literal "*" is an ordinary string, not a wildcard: permitting "*"
-        // for a signer must NOT permit some other concrete identity.
-        let mut policy = MappedBinding::new();
-        policy.permit("did:example:agent-1", "*");
-        let star = spiffe("*");
-        assert!(
-            policy.check("did:example:agent-1", Some(&star)).is_ok(),
-            "the literal '*' identity matches the literal '*' entry"
-        );
-        let concrete = spiffe("spiffe://example.org/agent-1");
-        assert_eq!(
-            policy
-                .check("did:example:agent-1", Some(&concrete))
-                .unwrap_err(),
-            McpReError::TransportBindingFailed,
-            "'*' must NOT act as a wildcard over concrete identities"
-        );
-    }
-
-    #[test]
-    fn mapped_binding_matches_are_exact_and_case_sensitive() {
-        // Matching is byte-exact: no case folding, no trimming, no normalization.
-        let mut policy = MappedBinding::new();
-        policy.permit("did:example:agent-1", "spiffe://example.org/agent-1");
-        let differing_case = spiffe("spiffe://example.org/AGENT-1");
-        assert_eq!(
-            policy
-                .check("did:example:agent-1", Some(&differing_case))
-                .unwrap_err(),
-            McpReError::TransportBindingFailed,
-            "identity match is case-sensitive"
-        );
-        // Signer is matched exactly too.
-        let ok = spiffe("spiffe://example.org/agent-1");
-        assert_eq!(
-            policy.check("DID:EXAMPLE:AGENT-1", Some(&ok)).unwrap_err(),
-            McpReError::TransportBindingFailed,
-            "signer match is case-sensitive"
-        );
-    }
-
-    // ADR-MCPS-023: strict asserted-identity header validation.
     #[test]
     fn asserted_identity_accepts_a_well_formed_value_and_trims() {
         assert_eq!(
@@ -1641,13 +1650,14 @@ mod tests {
             identity,
             TransportIdentity::new("spiffe://example.org/agent-1", IdentitySource::UriSan)
         );
-        let policy = ExactMatchBinding::new();
-        assert!(
-            policy
-                .check("spiffe://example.org/agent-1", Some(&identity))
-                .is_ok(),
-            "the verified Tier-3 identity must bind to its signer"
-        );
+        // The Tier-3 assertion path yields a `TransportIdentity`, not a channel peer: no
+        // TLS relationship authenticated anybody here, the LB asserted them. Since
+        // ADR-MCPRE-064 Slice 4 the binding relation takes two SEMANTIC products, so this
+        // control asserts what the assertion actually established — which identity was
+        // verified — rather than running it through a policy that no longer models this
+        // ingress. `--transport-binding lb-assertion` is refused by configuration
+        // validation, so no deployment reaches the missing composition.
+        assert_eq!(identity.value, "spiffe://example.org/agent-1");
     }
 
     #[test]
@@ -1928,11 +1938,12 @@ mod tests {
         );
         assert_eq!(verified.revocation_result, AttestedRevocation::Good);
         assert_eq!(verified.crl_next_update, now + 86_400);
-        // The verified delegated identity binds to its signer via the SAME policy.
-        let policy = ExactMatchBinding::new();
-        assert!(policy
-            .check(V2_CLIENT, Some(&verified.client_identity))
-            .is_ok());
+        // Mode C attests an identity rather than authenticating a TLS peer, so what this
+        // pins is the identity the attestation carried. The Slice-4 binding relation takes
+        // two semantic products and this path produces neither; Mode C is refused by
+        // configuration validation, and rebinding it onto the request evidence is the
+        // unspecified work that refusal names.
+        assert_eq!(verified.client_identity.value, V2_CLIENT);
     }
 
     #[test]

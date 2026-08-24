@@ -222,7 +222,7 @@ async fn rfc9421_round_trip_zero_object_evidence() {
         target_uri: req.target_uri.clone(),
         headers: req.headers.clone(),
         body: req.body.clone(),
-        identity: None,
+        peer: None,
         assertion: None,
     };
     let response = proxy.handle(served, NOW).await;
@@ -299,7 +299,7 @@ async fn replayed_request_is_rejected() {
         target_uri: req.target_uri.clone(),
         headers: req.headers.clone(),
         body: req.body.clone(),
-        identity: None,
+        peer: None,
         assertion: None,
     };
     let first = proxy.handle(served(), NOW).await;

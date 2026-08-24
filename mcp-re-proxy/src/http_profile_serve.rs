@@ -72,6 +72,7 @@ use crate::async_inner::AsyncInnerServer;
 use crate::async_inner::InnerOutcome;
 use crate::async_serve::ServedHttpRequest;
 use crate::async_serve::ServedHttpResponse;
+use crate::communication_assurance::request_peer_binding::http_profile_adapter::verified_request_subject;
 use crate::continuation_store::continuation_key;
 use crate::continuation_store::AsyncContinuationStore;
 use crate::continuation_store::RetainedBases;
@@ -892,26 +893,24 @@ impl HttpProfileProxy {
     }
 
     /// TRANSPORT-BOUND — Mode-A: the verified request actor must be the mTLS peer.
-    ///
     /// ```text
-    /// ensures   Ok  => the signer and the transport peer are the same principal
+    /// ensures   Ok  => authenticated peer == resolved actor's SUBJECT (never `actor_id()`)
     ///           Err => 403, bound to the request via `;req`
     /// forbids   any effect on the request's behalf
     /// refusal   free
     /// ```
-    ///
-    /// A deployment with no binding policy installed passes: the channel is then not
-    /// claimed to be bound, rather than claimed to be bound by an absent check.
+    /// No binding policy installed passes: the channel is then not CLAIMED to be bound.
     fn transport_binding_stage(
         &self,
         ex: &Exchange<'_>,
-        identity: Option<&crate::transport::TransportIdentity>,
+        peer: Option<&crate::communication_assurance::AuthenticatedChannelPeer>,
     ) -> Result<Established<()>, Refusal> {
         let bound = Established::new((), ExchangeEvent::TransportBindingChecked);
         let Some(binding) = &self.transport_binding else {
             return Ok(bound);
         };
-        if binding.check(ex.actor_id, identity).is_ok() {
+        let subject = verified_request_subject(ex.verified.resolved_actor());
+        if binding.bind(peer, subject).is_ok() {
             return Ok(bound);
         }
         Err(Refusal::before_admission(
@@ -1516,7 +1515,7 @@ impl HttpProfileProxy {
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         };
 
-        match self.transport_binding_stage(&ex, req.identity.as_ref()) {
+        match self.transport_binding_stage(&ex, req.peer.as_ref()) {
             Ok(bound) => progress.establish(bound),
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         }

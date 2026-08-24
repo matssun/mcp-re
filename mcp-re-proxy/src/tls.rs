@@ -34,12 +34,16 @@ use rustls_pki_types::CertificateDer;
 use rustls_pki_types::CertificateRevocationListDer;
 
 use crate::communication_assurance::authenticate_relationship_peer;
+use crate::communication_assurance::authenticated_relationship_peer::AuthenticatedRelationshipPeerFacts;
 use crate::communication_assurance::credential_currency::evaluation::evaluate_credential_currency;
 use crate::communication_assurance::credential_currency::CredentialCurrencyOutcome;
 use crate::communication_assurance::credential_currency::CredentialCurrencyPolicy;
+use crate::communication_assurance::credential_currency::CredentialCurrencyRefusal;
+use crate::communication_assurance::current_authenticated_peer::current_authenticated_peer;
+use crate::communication_assurance::current_authenticated_peer::CurrentPeerRefusal;
+use crate::communication_assurance::AuthenticatedChannelPeer;
 use crate::communication_assurance::CertificateChainEvidence;
 use crate::communication_assurance::MechanismVerifiedCredentialEvidence;
-use crate::facades::asserted_identity::rendered_transport_identity;
 use crate::transport::IdentityPolicy;
 use crate::transport::RequestHeaders;
 use crate::transport::TransportIdentity;
@@ -473,72 +477,103 @@ pub fn extract_identity(leaf_der: &[u8], policy: IdentityPolicy) -> Option<Trans
     ))
 }
 
-/// The identity of the peer this relationship AUTHENTICATED as, for both direct-TLS
-/// serving paths (ADR-MCPRE-064, issue #619).
+/// The authenticated channel peer of this relationship, with whatever currency assurance
+/// the deployment's controls established — for both direct-TLS serving paths
+/// (ADR-MCPRE-064 Slice 4, issue #623).
 ///
 /// The strategy dispatch is the only decision here. Under [`IdentityStrategy::DirectTls`]
-/// the identity comes from the ADR-MCPRE-064 Slice 2 authority: the mechanism's own
-/// acceptance plus the configured identity policy, composed by
-/// `authenticate_relationship_peer` so that the identity is read from the leaf of the very
-/// credential the mechanism accepted for THIS relationship. Under
-/// [`IdentityStrategy::LbAssertion`] there is no transport identity, unchanged.
+/// the peer comes from the ADR-MCPRE-064 authorities: the mechanism's own acceptance plus
+/// the configured identity policy authenticate it, and the deployment's currency policy
+/// then either makes it a CURRENT peer or leaves it explicitly unexamined. Under
+/// [`IdentityStrategy::LbAssertion`] there is no channel peer, unchanged.
 ///
-/// **Nothing but the acceptance and the policy is supplied.** There is no certificate
-/// parameter, no leaf parameter, and no second credential — which is what makes the
-/// historical route (project the chain, take element 0, reinterpret the DER) not merely
-/// unused but unavailable from here. Both serving paths call THIS function, so their
-/// identities are the same fact and not two derivations that currently agree.
+/// **Nothing but the acceptance and the deployment's own policies is supplied.** There is
+/// no certificate parameter, no leaf parameter, no chain and no identity — which is what
+/// makes the historical route not merely unused from here but unavailable. Both serving
+/// paths call THIS function, so their peers are the same fact and not two derivations that
+/// currently agree.
 ///
-/// The `Option` is the historical shape and stays lossy: an absent acceptance and a leaf
-/// carrying no configured identity field both arrive as `None`, and the fail-closed core
-/// downstream decides them, exactly as before. What changed is where the value came from.
-pub(crate) fn resolve_authenticated_identity(
+/// One evaluation per request. A credential the currency controls REFUSE never becomes a
+/// peer at all — the caller renders that as the transport-boundary refusal, exactly as
+/// before — and a deployment configuring no control yields the unexamined arm rather than
+/// a silently current one.
+pub(crate) fn resolve_channel_peer(
     accepted: Option<&MechanismVerifiedCredentialEvidence>,
     options: &ServerOptions,
-) -> Option<TransportIdentity> {
+    now: i64,
+) -> Result<Option<AuthenticatedChannelPeer>, CredentialCurrencyRefusal> {
+    let policy = currency_policy(options);
+    let Some(peer) = authenticated_peer(accepted, options) else {
+        // No channel peer to speak of — LB assertion, no acceptance, or a leaf carrying no
+        // configured identity field. The credential's CURRENCY is still the deployment's
+        // question, so it is asked here rather than skipped with the identity.
+        return match evaluate_credential_currency(accepted, &policy, now) {
+            CredentialCurrencyOutcome::Refused(refusal) => Err(refusal),
+            CredentialCurrencyOutcome::NotEvaluated | CredentialCurrencyOutcome::Current(_) => {
+                Ok(None)
+            }
+        };
+    };
+    match current_authenticated_peer(peer, &policy, now) {
+        Ok(current) => Ok(Some(AuthenticatedChannelPeer::Current(current))),
+        Err(CurrentPeerRefusal::CurrencyNotEvaluated) => {
+            // Recovered from the policy rather than from the refusal, because the refusal
+            // consumed the peer. The classification is total, so this is the same branch.
+            match authenticated_peer(accepted, options) {
+                Some(peer) => Ok(Some(AuthenticatedChannelPeer::CurrencyNotEvaluated(peer))),
+                None => Ok(None),
+            }
+        }
+        Err(CurrentPeerRefusal::CredentialNotCurrent(refusal)) => Err(refusal),
+    }
+}
+
+/// The peer this relationship authenticated as, before any currency question.
+///
+/// Private: the serving path consumes [`resolve_channel_peer`], which is the whole
+/// question. Publishing this would let a caller take the identity half without the
+/// currency half and pair them itself.
+fn authenticated_peer(
+    accepted: Option<&MechanismVerifiedCredentialEvidence>,
+    options: &ServerOptions,
+) -> Option<AuthenticatedRelationshipPeerFacts> {
     match &options.identity_strategy {
         IdentityStrategy::DirectTls => {
-            let peer =
-                authenticate_relationship_peer(accepted?.clone(), options.identity_policy.into())
-                    .ok()?;
-            Some(rendered_transport_identity(&peer))
+            authenticate_relationship_peer(accepted?.clone(), options.identity_policy.into()).ok()
         }
         IdentityStrategy::LbAssertion => None,
     }
 }
 
-/// The per-request credential-currency rejection for both direct-TLS serving paths
-/// (ADR-MCPRE-064 Slice 3, issue #621).
+/// The channel peer for one served request, or the transport-boundary refusal.
 ///
-/// A FACADE. It classifies the deployment's configured controls, asks the currency
-/// authority about the credential the establishment mechanism ACCEPTED for this
-/// relationship, and renders a refusal in the historical wire vocabulary. It parses no
-/// certificate, compares no clock and consults no CRL — deleting a check here is
-/// impossible, because there is no check here to delete.
+/// A FACADE over [`resolve_channel_peer`], and THE single call both direct-TLS serving
+/// paths make about their relationship. It asks the ADR-MCPRE-064 authorities once and
+/// renders a currency refusal in the historical wire vocabulary; it parses no certificate,
+/// compares no clock, consults no CRL and decides no identity — there is no check here to
+/// delete.
 ///
-/// It takes the ACCEPTANCE, never a chain: the facts reported are then about the credential
-/// this relationship actually authenticated with, and there is no parameter through which
+/// It takes the ACCEPTANCE, never a chain: the facts are then about the credential this
+/// relationship actually authenticated with, and there is no parameter through which
 /// another peer's certificates could enter.
 ///
 /// The wire outcome is unchanged. Every request production admitted is admitted, every one
-/// it refused is refused, and a refusal is still `mcp-re.transport_binding_failed` bound to
-/// the request id — the reason is now typed, and rendering it on the wire is a separate
-/// decision this migration does not take.
+/// it refused is refused, and a currency refusal is still `mcp-re.transport_binding_failed`
+/// bound to the request id — the reason is typed, and rendering it on the wire is a
+/// separate decision this migration does not take.
 ///
 /// NOTE: online-OCSP revocation (`#[cfg(feature = "online_ocsp")]`) needs the full peer
 /// chain and is NOT yet wired on the async path — combining `async_serve` with
 /// `online_ocsp` is a tracked follow-up; the default and shared-replay tier builds have
 /// full parity.
-pub(crate) fn credential_currency_rejection(
+pub(crate) fn served_channel_peer(
     accepted: Option<&MechanismVerifiedCredentialEvidence>,
     options: &ServerOptions,
     request: &[u8],
     now: i64,
-) -> Option<Vec<u8>> {
-    match evaluate_credential_currency(accepted, &currency_policy(options), now) {
-        CredentialCurrencyOutcome::NotEvaluated | CredentialCurrencyOutcome::Current(_) => None,
-        CredentialCurrencyOutcome::Refused(_) => Some(transport_binding_failure(request)),
-    }
+) -> Result<Option<AuthenticatedChannelPeer>, Vec<u8>> {
+    resolve_channel_peer(accepted, options, now)
+        .map_err(|_refusal| transport_binding_failure(request))
 }
 
 /// The deployment's configured currency controls, classified.
@@ -1361,9 +1396,10 @@ mod delegated_credential_key_correspondence_tests {
 }
 
 #[cfg(test)]
-mod authenticated_identity_resolution_tests {
-    //! ADR-MCPRE-064 (#619) — the direct-TLS serving paths resolve identity from the
-    //! AUTHENTICATED peer, not from certificate representation.
+mod channel_peer_resolution_tests {
+    //! ADR-MCPRE-064 (#619, #621, #623) — the direct-TLS serving paths resolve their
+    //! channel peer from the AUTHENTICATED peer and the deployment's own currency policy,
+    //! never from certificate representation.
     //!
     //! Every control drives a real handshake. What a synthetic chain would prove about
     //! which credential a relationship authenticated with is nothing, and the property at
@@ -1371,12 +1407,15 @@ mod authenticated_identity_resolution_tests {
 
     use super::*;
 
-    use rustls::HandshakeKind;
+    use crate::communication_assurance::mechanism_verified_credential::EstablishmentPath;
+    use crate::communication_assurance::CertificateIdentitySource;
 
-    use crate::transport::IdentitySource;
+    use rustls::HandshakeKind;
 
     use crate::communication_assurance::channel_associated_credential::mechanism_harness::*;
     use crate::communication_assurance::mechanism_verified_credential::rustls_adapter::verified_credential;
+
+    const NOW: i64 = 1_800_000_000;
 
     const IDENTITY_A: &str = "spiffe://example.org/A";
     const IDENTITY_B: &str = "spiffe://example.org/B";
@@ -1412,12 +1451,13 @@ mod authenticated_identity_resolution_tests {
     #[test]
     fn direct_tls_resolves_the_identity_the_relationship_authenticated_as() {
         let acceptance = accepted(IDENTITY_A, IDENTITY_B);
-        let identity =
-            resolve_authenticated_identity(Some(&acceptance), &direct_tls(IdentityPolicy::UriSan))
+        let peer =
+            resolve_channel_peer(Some(&acceptance), &direct_tls(IdentityPolicy::UriSan), NOW)
+                .expect("no currency control is configured")
                 .expect("the accepted credential's leaf carries the configured field");
 
-        assert_eq!(identity.value, IDENTITY_A);
-        assert_eq!(identity.source, IdentitySource::UriSan);
+        assert_eq!(peer.identity().as_str(), IDENTITY_A);
+        assert_eq!(peer.identity_source(), CertificateIdentitySource::UriSan);
     }
 
     #[test]
@@ -1426,10 +1466,11 @@ mod authenticated_identity_resolution_tests {
         // answer the policy, and reading "some certificate the peer presented" binds the
         // deployment to the CA rather than to the workload.
         let acceptance = accepted(IDENTITY_A, IDENTITY_B);
-        let identity =
-            resolve_authenticated_identity(Some(&acceptance), &direct_tls(IdentityPolicy::UriSan))
+        let peer =
+            resolve_channel_peer(Some(&acceptance), &direct_tls(IdentityPolicy::UriSan), NOW)
+                .expect("no currency control is configured")
                 .expect("resolution succeeds");
-        assert_ne!(identity.value, IDENTITY_B);
+        assert_ne!(peer.identity().as_str(), IDENTITY_B);
     }
 
     #[test]
@@ -1441,20 +1482,21 @@ mod authenticated_identity_resolution_tests {
         let second = accepted(IDENTITY_B, IDENTITY_A);
         let options = direct_tls(IdentityPolicy::UriSan);
 
-        let from_first =
-            resolve_authenticated_identity(Some(&first), &options).expect("first resolves");
-        let from_second =
-            resolve_authenticated_identity(Some(&second), &options).expect("second resolves");
-        assert_eq!(from_first.value, IDENTITY_A);
-        assert_eq!(from_second.value, IDENTITY_B);
+        let from_first = resolve_channel_peer(Some(&first), &options, NOW)
+            .expect("no currency control is configured")
+            .expect("first resolves");
+        let from_second = resolve_channel_peer(Some(&second), &options, NOW)
+            .expect("no currency control is configured")
+            .expect("second resolves");
+        assert_eq!(from_first.identity().as_str(), IDENTITY_A);
+        assert_eq!(from_second.identity().as_str(), IDENTITY_B);
     }
 
     #[test]
     fn a_resumed_relationship_resolves_the_same_identity_as_a_full_handshake() {
         // Resumption restores the stored peer chain, so it is the same peer and must
-        // resolve to the same identity. The establishment-path distinction is carried by
-        // the authenticated product and is deliberately NOT visible in this rendering —
-        // what a resumed relationship must not do is resolve to a different peer.
+        // resolve to the same identity — while the establishment path stays DIFFERENT,
+        // which is what a consumer needing "the verifier ran in this establishment" reads.
         let peers = mutually_authenticated_peers();
         let full = verified_credential(&handshake(&peers.client, &peers.server)).expect("accepts");
         let resumed_conn = handshake(&peers.client, &peers.server);
@@ -1466,11 +1508,28 @@ mod authenticated_identity_resolution_tests {
         let resumed = verified_credential(&resumed_conn).expect("accepts");
         let options = direct_tls(IdentityPolicy::DnsSan);
 
+        let from_full = resolve_channel_peer(Some(&full), &options, NOW)
+            .expect("no currency control is configured")
+            .expect("a peer");
+        let from_resumed = resolve_channel_peer(Some(&resumed), &options, NOW)
+            .expect("no currency control is configured")
+            .expect("a peer");
+
         assert_eq!(
-            resolve_authenticated_identity(Some(&full), &options),
-            resolve_authenticated_identity(Some(&resumed), &options),
+            from_full.identity(),
+            from_resumed.identity(),
             "a resumed relationship is the same authenticated peer"
         );
+        assert_eq!(
+            from_full.establishment_path(),
+            EstablishmentPath::FullHandshake
+        );
+        assert_eq!(
+            from_resumed.establishment_path(),
+            EstablishmentPath::ResumedSession,
+            "the resumed/full distinction survives all the way to the channel peer"
+        );
+        assert_ne!(from_full, from_resumed);
     }
 
     #[test]
@@ -1482,7 +1541,8 @@ mod authenticated_identity_resolution_tests {
         let acceptance =
             verified_credential(&handshake(&peers.client, &peers.server)).expect("accepts");
         assert!(
-            resolve_authenticated_identity(Some(&acceptance), &direct_tls(IdentityPolicy::UriSan))
+            resolve_channel_peer(Some(&acceptance), &direct_tls(IdentityPolicy::UriSan), NOW)
+                .expect("no currency control is configured")
                 .is_none(),
             "a present DNS SAN is not a reason to answer under a URI-SAN policy"
         );
@@ -1491,7 +1551,9 @@ mod authenticated_identity_resolution_tests {
     #[test]
     fn an_absent_acceptance_resolves_no_identity() {
         assert!(
-            resolve_authenticated_identity(None, &direct_tls(IdentityPolicy::UriSan)).is_none(),
+            resolve_channel_peer(None, &direct_tls(IdentityPolicy::UriSan), NOW)
+                .expect("no currency control is configured")
+                .is_none(),
             "no acceptance is no authenticated peer"
         );
     }
@@ -1506,6 +1568,8 @@ mod authenticated_identity_resolution_tests {
             identity_strategy: IdentityStrategy::LbAssertion,
             ..Default::default()
         };
-        assert!(resolve_authenticated_identity(Some(&acceptance), &options).is_none());
+        assert!(resolve_channel_peer(Some(&acceptance), &options, NOW)
+            .expect("no currency control is configured")
+            .is_none());
     }
 }

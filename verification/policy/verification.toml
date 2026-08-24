@@ -1340,3 +1340,63 @@ tested_symbols = [
   "lib#communication_assurance::current_authenticated_peer::tests::a_resumed_relationship_stays_resumed_after_the_currency_evaluation",
 ]
 pilot = "verus-candidate"
+
+# ---------------------------------------------------------------------------
+# Communication assurance — ADR-MCPRE-064 Slice 4
+# ---------------------------------------------------------------------------
+#
+# The unit that repairs a FALSE MODEL rather than migrating a true one. The relation was
+# taken over `ActorIdentity::actor_id()` — the replay/audit composite — and the certificate
+# fixtures were adapted to mint that composite into a URI SAN so the comparison could
+# succeed. The fixtures conformed to the defect and the tests went green.
+
+[[edge]]
+kind = "CONTRACT_CONSUMES"
+from = "proxy.current_authenticated_peer"
+to = "proxy.request_peer_binding"
+rationale = "The channel operand is the authenticated peer, with whatever currency assurance the deployment established. If authentication became manufacturable the binding would still be formed, and its controls — which vary the SUBJECT on both sides — would still pass."
+
+[[edge]]
+# The request operand is projected from what the verifier resolved. A verifier that resolved
+# an actor it should not have would put the wrong subject under a true-looking binding.
+kind = "COMPILE_DEPENDENCY"
+from = "http_profile.verifier_results"
+to = "proxy.request_peer_binding"
+rationale = "The subject bound here IS the one the RFC 9421 verifier resolved through the trust seam. A verifier that admitted an untrusted key for a subject would make this relation true of a principal that never signed, and these controls — which hold verification fixed and vary the identities — would stay green."
+
+[[unit]]
+id = "proxy.request_peer_binding"
+class = "V0"
+description = "The authenticated peer of a relationship and the actor the request verifier resolved are the same principal — related over the resolved actor's SUBJECT, never over the role:trust_domain:subject:keyid composite. Claims no admission, no authorization, no cross-namespace mapping, and no RFC 8705 artifact binding."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/request_peer_binding/mod.rs",
+  "mcp-re-proxy/src/communication_assurance/request_peer_binding/http_profile_adapter.rs",
+  "mcp-re-proxy/src/communication_assurance/authenticated_channel_peer.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/request_peer_binding/same_principal",
+  "mutation://proxy/request_peer_binding/same_principal",
+]
+# No new premise. Both operands are registered products, and the relation between them is
+# decided here rather than assumed.
+assumptions = []
+# The channel operand is driven through a REAL mutual-TLS handshake in every control, because
+# the whole difference from the `TransportIdentity` it replaces is that it cannot be
+# fabricated — and the control that let the wrong coordinate survive fabricated exactly that
+# operand. `a_rotated_signing_key_does_not_break_the_binding` and
+# `a_different_trust_domain_...` are the two that pin the RULING: each would go red under the
+# composite coordinate while every other control stayed green.
+tested_symbols = [
+  "lib#communication_assurance::request_peer_binding::tests::a_certificate_naming_the_resolved_subject_binds",
+  "lib#communication_assurance::request_peer_binding::tests::a_certificate_naming_a_different_subject_is_refused",
+  "lib#communication_assurance::request_peer_binding::tests::a_rotated_signing_key_does_not_break_the_binding",
+  "lib#communication_assurance::request_peer_binding::tests::a_different_trust_domain_does_not_break_the_binding_and_a_different_subject_does",
+  "lib#communication_assurance::request_peer_binding::tests::a_certificate_naming_the_composite_actor_id_no_longer_binds",
+  "lib#communication_assurance::request_peer_binding::tests::a_request_presenting_no_authenticated_peer_is_refused",
+  "lib#communication_assurance::request_peer_binding::http_profile_adapter::tests::the_subject_is_taken_and_the_composite_actor_id_is_not",
+  "lib#communication_assurance::request_peer_binding::http_profile_adapter::tests::a_signing_key_rotation_does_not_change_the_binding_coordinate",
+  "lib#communication_assurance::request_peer_binding::http_profile_adapter::tests::a_different_subject_is_a_different_coordinate_under_the_same_role_and_domain",
+  "lib#communication_assurance::authenticated_channel_peer::tests::both_arms_agree_on_who_the_peer_is_and_disagree_on_what_was_checked",
+]
+pilot = "verus-candidate"

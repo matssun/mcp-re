@@ -44,7 +44,6 @@ use std::thread;
 
 use mcp_re_proxy::serve_once;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
-use mcp_re_proxy::transport::IdentitySource;
 use mcp_re_proxy::AwsKmsConfig;
 use mcp_re_proxy::AwsKmsEd25519Backend;
 use mcp_re_proxy::RawEd25519TlsSigner;
@@ -344,8 +343,11 @@ fn aws_kms_delegated_tls_handshake_round_trip() {
 
     let identity = server.join().expect("join").expect("serve ok");
     let identity = identity.expect("a verified client identity");
-    assert_eq!(identity.value, "spiffe://example.org/agent-1");
-    assert_eq!(identity.source, IdentitySource::UriSan);
+    assert_eq!(identity.identity().as_str(), "spiffe://example.org/agent-1");
+    assert_eq!(
+        identity.identity_source(),
+        mcp_re_proxy::communication_assurance::CertificateIdentitySource::UriSan
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -113,6 +113,7 @@ graph BT
     THM_0031["THM-0031<br/>An authenticated relationship peer's identity is read from the leaf of the very credential the mechanism accepted for that relationship"]
     THM_0032["THM-0032<br/>Per-request credential currency is decided from the credential the mechanism accepted, and reports which of its five facts refused"]
     THM_0033["THM-0033<br/>A current authenticated peer's currency is evaluated against the credential that same peer authenticated with"]
+    THM_0034["THM-0034<br/>A request is bound to its relationship by relating the authenticated peer to the resolved actor's SUBJECT, never to the composite actor id"]
     THM_0023 --> THM_0024
     THM_0024 --> THM_0029
     THM_0028 --> THM_0029
@@ -123,6 +124,8 @@ graph BT
     THM_0030 --> THM_0032
     THM_0031 --> THM_0033
     THM_0032 --> THM_0033
+    THM_0031 --> THM_0034
+    THM_0033 --> THM_0034
 ```
 
 ## Component 11

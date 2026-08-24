@@ -220,7 +220,7 @@ impl RemoteTransport for InProcessServer {
             target_uri: request.target_uri.clone(),
             headers: request.headers.clone(),
             body: request.body.clone(),
-            identity: None,
+            peer: None,
             assertion: None,
         };
         let server = Arc::clone(&self.server);

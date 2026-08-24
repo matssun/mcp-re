@@ -52,9 +52,10 @@ use std::sync::Arc;
 use rustls::ServerConfig;
 
 use crate::tls::ServerOptions;
-use crate::transport::TransportIdentity;
 
 use connection::serve_one;
+
+use crate::communication_assurance::AuthenticatedChannelPeer;
 
 /// Accept ONE TLS connection, complete the handshake (mTLS — a missing or untrusted client
 /// certificate fails here), read one HTTP request body (bounded by `options.limits`),
@@ -67,9 +68,9 @@ pub fn serve_once<H>(
     config: Arc<ServerConfig>,
     options: &ServerOptions,
     handler: H,
-) -> io::Result<Option<TransportIdentity>>
+) -> io::Result<Option<AuthenticatedChannelPeer>>
 where
-    H: FnOnce(&[u8], Option<TransportIdentity>) -> Vec<u8>,
+    H: FnOnce(&[u8], Option<AuthenticatedChannelPeer>) -> Vec<u8>,
 {
     // Adapt the 2-arg handler to the assertion-aware form (the assertion header is
     // ignored — this entry point predates Tier-3 and stays byte-for-byte for its
@@ -93,9 +94,9 @@ pub fn serve_once_with_assertion<H>(
     config: Arc<ServerConfig>,
     options: &ServerOptions,
     handler: H,
-) -> io::Result<Option<TransportIdentity>>
+) -> io::Result<Option<AuthenticatedChannelPeer>>
 where
-    H: FnOnce(&[u8], Option<TransportIdentity>, Option<&str>) -> Vec<u8>,
+    H: FnOnce(&[u8], Option<AuthenticatedChannelPeer>, Option<&str>) -> Vec<u8>,
 {
     let (tcp, _peer) = listener.accept()?;
     // MCPS-88: a caller may set the LISTENER non-blocking so it can poll for a shutdown
@@ -118,7 +119,7 @@ pub fn serve<H>(
     options: ServerOptions,
     handler: H,
 ) where
-    H: Fn(&[u8], Option<TransportIdentity>) -> Vec<u8> + Send + Sync + 'static,
+    H: Fn(&[u8], Option<AuthenticatedChannelPeer>) -> Vec<u8> + Send + Sync + 'static,
 {
     let handler = Arc::new(handler);
     let options = Arc::new(options);
@@ -148,7 +149,7 @@ pub fn serve<H>(
 /// outlive any one peer.
 fn serve_worker<H>(tcp: TcpStream, config: Arc<ServerConfig>, options: &ServerOptions, handler: &H)
 where
-    H: Fn(&[u8], Option<TransportIdentity>) -> Vec<u8>,
+    H: Fn(&[u8], Option<AuthenticatedChannelPeer>) -> Vec<u8>,
 {
     let _ = serve_one(tcp, config, options, |request, identity, _assertion| {
         handler(request, identity)

@@ -57,14 +57,14 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
 use crate::communication_assurance::mechanism_verified_credential::rustls_adapter::verified_credential;
+use crate::communication_assurance::AuthenticatedChannelPeer;
 use crate::communication_assurance::MechanismVerifiedCredentialEvidence;
 use crate::tls::assertion_header;
-use crate::tls::credential_currency_rejection;
-use crate::tls::resolve_authenticated_identity;
+
 use crate::tls::routing_header_rejection;
+use crate::tls::served_channel_peer;
 use crate::tls::ServerOptions;
 use crate::transport::RequestHeaders;
-use crate::transport::TransportIdentity;
 
 /// The boxed, `Send` future a handler returns: signed response bytes out. The
 /// handler is genuinely ASYNC — the request path AWAITS it — so a real `Proxy`
@@ -93,8 +93,10 @@ pub struct ServedHttpRequest {
     pub headers: Vec<(String, String)>,
     /// The raw request body bytes.
     pub body: Vec<u8>,
-    /// The resolved transport identity (mTLS peer / trusted upstream header).
-    pub identity: Option<TransportIdentity>,
+    /// The peer that authenticated this relationship, with whatever currency assurance the
+    /// deployment's controls established (ADR-MCPRE-064 Slices 2-4). `None` under
+    /// LB-assertion, where no channel peer is derived at all.
+    pub peer: Option<AuthenticatedChannelPeer>,
     /// The raw Tier-3 ingress-assertion header, when the strategy is LB-assertion.
     pub assertion: Option<String>,
 }
@@ -791,27 +793,24 @@ async fn handle_request<H: AsyncRequestHandler>(
         },
     };
 
-    // ADR-MCPRE-064 (#619). The chain is no longer on the identity route: it is projected
-    // only for the unmigrated per-request currency authority, and goes when that does.
-    let identity = resolve_authenticated_identity(peer_credential.as_ref().as_ref(), &options);
-    let assertion = assertion_header(&options, &headers);
-
-    // SAME order as the blocking loop: per-connection cert-lifetime rejection, then
-    // routing-header hygiene, then (only if admitted) the handler. The inner server
-    // is never reached on a rejection. The two rejection checks are sync CPU
-    // (leaf-cert lifetime + header hygiene); only the admitted handler is AWAITED,
-    // and it is the handler that awaits the async replay tier.
-    //
-    // The clock is read PER REQUEST, not per connection: the leaf is captured once at
-    // handshake, so this is the only point at which a certificate that has since
-    // passed `notAfter` can be caught on a connection the peer keeps open.
-    let served = match credential_currency_rejection(
+    // ADR-MCPRE-064 (#623). ONE question: who authenticated, and what the controls said.
+    let channel_peer = served_channel_peer(
         peer_credential.as_ref().as_ref(),
         &options,
         &body_bytes,
         crate::tls::wall_clock_unix(),
-    )
-    .or_else(|| routing_header_rejection(&headers, &body_bytes))
+    );
+    let assertion = assertion_header(&options, &headers);
+
+    // SAME order as the blocking loop: the channel-peer question above (which carries the
+    // per-request currency decision), then routing-header hygiene, then the handler. The
+    // clock is read PER REQUEST: the credential is accepted once at handshake, so that is
+    // the only point at which one past its `notAfter` is caught on an open connection.
+    let served = match channel_peer
+        .as_ref()
+        .err()
+        .cloned()
+        .or_else(|| routing_header_rejection(&headers, &body_bytes))
     {
         // A pre-handler transport rejection carries a JSON error body, no RFC 9421
         // evidence; frame it as a 403 JSON reply.
@@ -822,7 +821,7 @@ async fn handle_request<H: AsyncRequestHandler>(
                 target_uri: options.target_uri.clone(),
                 headers: header_pairs,
                 body: body_bytes.to_vec(),
-                identity,
+                peer: channel_peer.unwrap_or(None),
                 assertion: assertion.map(str::to_string),
             };
             let _t = crate::stage_timers::Timed::start(crate::stage_timers::Stage::Handler);

@@ -247,7 +247,7 @@ fn served_of(req: &HttpRequest) -> ServedHttpRequest {
         target_uri: req.target_uri.clone(),
         headers: req.headers.clone(),
         body: req.body.clone(),
-        identity: None,
+        peer: None,
         assertion: None,
     }
 }
@@ -1986,24 +1986,17 @@ async fn a_configured_transport_binding_refuses_a_request_that_presents_no_peer_
         "the refused request must not have advanced far enough to spend anything"
     );
 
-    // Non-vacuity control: the SAME proxy admits the SAME request once the peer identity it
-    // requires is actually presented. Without this the test would pass against a proxy that
-    // refuses everything.
-    let r = resolver();
-    let verified = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
-        .verify_request(&req, &audience(), &|_b: &ArtifactBinding| None, NOW)
-        .expect("the client's own request verifies");
-    let mut with_identity = served_of(&req);
-    with_identity.identity = Some(mcp_re_proxy::transport::TransportIdentity::new(
-        verified.resolved_actor().actor_id(),
-        mcp_re_proxy::transport::IdentitySource::UriSan,
-    ));
-    let admitted = proxy.handle(with_identity, NOW).await;
-    assert_eq!(
-        admitted.status, 200,
-        "the identical request binds and is served once its peer identity is present"
-    );
-    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    // NON-VACUITY. This control used to build its own operand —
+    // `TransportIdentity::new(verified.resolved_actor().actor_id(), ..)` — so the string
+    // comparison could not fail, which is exactly how the wrong binding coordinate survived
+    // (ADR-MCPRE-064 §15). `AuthenticatedChannelPeer` cannot be fabricated: it descends from
+    // a mechanism adapter's acceptance over a real handshake.
+    //
+    // The positive side of the relation therefore lives where a handshake is available, in
+    // `http_profile_serve::request_peer_binding_stage_tests`, which drives a real mutual-TLS
+    // certificate whose URI SAN is the resolved SUBJECT and asserts it binds. What stays
+    // here is the property this test is about: the stage sits before replay admission and
+    // spends nothing, proved by the same nonce still being admissible below.
 }
 
 // --- answerability: a receipt may not outlive the credential authorizing it ---

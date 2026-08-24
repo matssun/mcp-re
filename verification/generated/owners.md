@@ -37,5 +37,6 @@ not an omission to hide.
 | proxy.mechanism_verified_credential | V0 | THM-0030 | 1 |
 | proxy.online_ocsp_reachability | V0 | THM-0013 | 0 |
 | proxy.peer_identity_value | V0 | THM-0023 | 0 |
+| proxy.request_peer_binding | V0 | THM-0034 | 0 |
 | proxy.runtime_lifecycle | V0 | THM-0012 | 0 |
 | proxy.tls_listener_state | V0 | _none_ | 0 |

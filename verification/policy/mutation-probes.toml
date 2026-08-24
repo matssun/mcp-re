@@ -1603,3 +1603,65 @@ expect_red = [
   "lib#communication_assurance::current_authenticated_peer::tests::an_authenticated_peer_with_a_current_credential_is_a_current_authenticated_peer",
   "lib#communication_assurance::current_authenticated_peer::tests::each_relationships_currency_is_evaluated_against_its_own_credential",
 ]
+
+# ---------------------------------------------------------------------------
+# ADR-MCPRE-064 Slice 4 — request to authenticated-peer binding
+# ---------------------------------------------------------------------------
+#
+# What is probed is the COORDINATE and the relation itself — the two things this slice decides.
+#
+# TWO conjuncts are deliberately unprobed, and per L-4 neither is an omission.
+#
+# The seal: neither operand has a public constructor, so the weakening cannot be expressed as
+# an edit to a check.
+#
+# The absent-peer refusal: it was probed, and the probe FAILED honestly — every weakening left
+# the declared battery green. That is the finding, not a gap. The trait now returns a
+# `RequestPeerBindingFacts`, and with no peer there is nothing to build one from, so an
+# admitting implementation cannot be written at all. The conjunct is enforced by the type
+# rather than by a deletable check, which is exactly what L-4 describes. Its control
+# (`a_request_presenting_no_authenticated_peer_is_refused`) is kept: it measures the boundary
+# that makes the weakening unwritable.
+
+[[probe]]
+id = "M51-the-binding-coordinate-is-the-subject-not-the-composite"
+unit = "proxy.request_peer_binding"
+theorem = "THM-0034"
+conjunct = "the relation is taken over the resolved actor's SUBJECT"
+# The defect this slice repaired, reintroduced. Under the composite the same principal stops
+# binding the moment its signing key rotates, and a fleet must mint
+# `role:trust_domain:subject:keyid` into every certificate SAN — which is what the demo
+# fixtures did, so every test went green while the model was wrong.
+path = "mcp-re-proxy/src/communication_assurance/request_peer_binding/http_profile_adapter.rs"
+anchor = """
+    VerifiedRequestSubject::resolved(actor.identity.subject.clone())
+"""
+weakening = """
+    VerifiedRequestSubject::resolved(actor.actor_id())
+"""
+expect_red = [
+  "lib#communication_assurance::request_peer_binding::http_profile_adapter::tests::the_subject_is_taken_and_the_composite_actor_id_is_not",
+  "lib#communication_assurance::request_peer_binding::http_profile_adapter::tests::a_signing_key_rotation_does_not_change_the_binding_coordinate",
+  "lib#communication_assurance::request_peer_binding::tests::a_certificate_naming_the_resolved_subject_binds",
+  "lib#communication_assurance::request_peer_binding::tests::a_rotated_signing_key_does_not_break_the_binding",
+]
+
+[[probe]]
+id = "M53-two-different-principals-do-not-bind"
+unit = "proxy.request_peer_binding"
+theorem = "THM-0034"
+conjunct = "the two operands must name ONE principal"
+# The relation itself. A binding that admitted any pair would be the fact this authority
+# exists to refuse to state, and the type would then certify it.
+path = "mcp-re-proxy/src/communication_assurance/request_peer_binding/mod.rs"
+anchor = """
+    if peer.identity().as_str() != subject.as_str() {
+"""
+weakening = """
+    if false {
+"""
+expect_red = [
+  "lib#communication_assurance::request_peer_binding::tests::a_certificate_naming_a_different_subject_is_refused",
+  "lib#communication_assurance::request_peer_binding::tests::a_certificate_naming_the_composite_actor_id_no_longer_binds",
+  "lib#communication_assurance::request_peer_binding::http_profile_adapter::tests::a_different_subject_is_a_different_coordinate_under_the_same_role_and_domain",
+]

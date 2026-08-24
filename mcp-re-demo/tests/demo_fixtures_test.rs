@@ -90,10 +90,13 @@ fn matching_client_identity_round_trips_and_equals_signer() {
     let identity = server.join().expect("join").expect("serve ok");
     let identity = identity.expect("a verified client identity");
     assert_eq!(
-        identity.value,
-        fx.actor_id(),
-        "the positive client URI-SAN identity must EQUAL the resolved RFC 9421 actor id \
-         (role:trust_domain:signer:keyid), which the proxy's `exact` binding compares"
+        identity.identity().as_str(),
+        fx.subject(),
+        "the positive client URI-SAN identity must EQUAL the resolved SUBJECT, which is \
+         what the proxy's `exact` binding relates the authenticated peer to \
+         (ADR-MCPRE-064 Slice 4). It must NOT be the `role:trust_domain:subject:keyid` \
+         composite: minting that coupled certificate issuance to every signing-key \
+         rotation, and made the fixtures conform to the defect."
     );
 }
 
@@ -129,9 +132,9 @@ fn mismatched_client_chains_to_the_same_ca_but_differs_from_signer() {
 
     let identity = server.join().expect("join").expect("serve ok");
     let identity = identity.expect("a verified client identity");
-    assert_eq!(identity.value, fx.mismatched_identity());
+    assert_eq!(identity.identity().as_str(), fx.mismatched_identity());
     assert_ne!(
-        identity.value,
+        identity.identity().as_str(),
         fx.signer(),
         "the mismatched identity must DIFFER from the signer (drives T3 binding denial)"
     );

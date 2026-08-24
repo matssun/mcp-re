@@ -70,6 +70,11 @@ _PROXY_LIB_SRCS = [
     "src/communication_assurance/credential_currency/policy.rs",
     "src/communication_assurance/credential_currency/x509_adapter.rs",
     "src/communication_assurance/current_authenticated_peer.rs",
+    # ADR-MCPRE-064 Slice 4: the request's resolved actor and the relationship's
+    # authenticated peer are one principal — related over the actor's SUBJECT.
+    "src/communication_assurance/authenticated_channel_peer.rs",
+    "src/communication_assurance/request_peer_binding/mod.rs",
+    "src/communication_assurance/request_peer_binding/http_profile_adapter.rs",
     # ADR-MCPRE-063: the compatibility surface of the migration, grouped so it stays
     # countable — each module translates a historical vocabulary into an authority and
     # decides nothing.

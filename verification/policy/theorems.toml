@@ -1497,3 +1497,77 @@ owner = "proxy.current_authenticated_peer"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.current_authenticated_peer"]
 depends_on = ["THM-0031", "THM-0032"]
+
+[[theorem]]
+id = "THM-0034"
+title = "A request is bound to its relationship by relating the authenticated peer to the resolved actor's SUBJECT, never to the composite actor id"
+statement = """
+This is a claim about a BINARY RELATION and about the COORDINATE it is taken over. Neither
+operand is strengthened: THM-0031/THM-0033 say what an authenticated channel peer is, and the
+request verifier and trust seam say what a resolved actor is.
+
+Every RequestPeerBindingFacts inhabitant originates from an inhabitant produced by
+communication_assurance::request_peer_binding::bind_request_to_peer — a free function taking
+an AuthenticatedChannelPeer and a VerifiedRequestSubject, and nothing else — whose two
+operands compared EQUAL on the peer's identity value and the subject. Cloning preserves that.
+
+The coordinate is `ActorIdentity.subject`, and NOT `ActorIdentity::actor_id()`. The composite
+is the injective `role:trust_domain:subject:keyid` join, and it is the canonical coordinate for
+replay keys, audit records and trusted-key identity. Binding over it is a category error with
+two measurable costs, and both are controls: requiring `keyid` couples TLS certificate issuance
+to every signing-key rotation, and requiring `trust_domain` asserts a channel-side fact the
+channel never established.
+
+Nothing is weakened by taking the subject alone. The role, the trust domain, the signing key
+and the signer slot are established by the request verifier and the trust seam BEFORE this
+relation runs, and remain facts owned by those authorities. A key not trusted for a subject
+fails at request verification and is never rescued here; a key the resolver DOES trust for that
+subject is not overturned here because the credential rotated.
+
+Neither operand can be fabricated, which is what makes the relation worth taking. The channel
+peer descends from a mechanism adapter's acceptance over a real handshake (THM-0028, THM-0030,
+THM-0031). The subject's representation and constructor are private to the binding module and
+its one producer is the request adapter, a CHILD of that module — so a caller cannot assert a
+subject any more than it can assert a peer. The historical operand, `TransportIdentity`, was a
+public struct with public fields and a total constructor, and the one control where the old
+comparison passed built its input from `actor_id()` so the comparison could not fail.
+
+An ABSENT channel peer refuses. A configured binding claims every served request is bound, and
+an absence does not satisfy that claim.
+
+This is a BINARY COMPOSITION, not an ADR-MCPRE-063 L-5 substitution. The two operands are
+genuinely independent — one from a TLS relationship, one from a request signature — and their
+concerning the same principal is the CONCLUSION rather than a premise, as in the Slice-2
+credential/key correspondence.
+"""
+security_consequence = """
+This is the fact a deployment means by *end-to-end mTLS*: the party that signed the request is
+the party that authenticated the channel it arrived over. Before it, the comparison could not
+succeed for a certificate naming the principal, and the only way to make it pass was to mint
+the escaped composite into the SAN — which is what the demo fixtures did, so the tests were
+green while the model was wrong.
+
+Its failure mode under the old coordinate was not an open door but a closed one plus a
+distorted provisioning scheme: certificates had to serialize the request verifier's internal
+trust record, and every signing-key rotation invalidated the fleet's certificates.
+"""
+scope = """
+It is NOT admission and NOT authorization: that a request and a channel are the same principal
+says nothing about what that principal may do.
+
+It is not a cross-namespace mapping. Exact-subject equality is the only relation here. A
+deployment needing `(trust-domain X, subject Y) <-> SPIFFE Z` gets an explicit mapped-binding
+authority producing its own fact — not a looser reading of this one, and not the removed
+`MappedBinding`, which could not honestly produce a same-principal fact.
+
+It is not RFC 8705 `x5t#S256`. That binds a request artifact to certificate BYTES; a signer can
+commit to the thumbprint of a certificate whose key it does not hold, so it does not establish
+principal equality. Production supplies no mTLS artifact material to the verifier today.
+
+It says nothing about the credential's currency beyond what the channel operand carries, and
+the binding reports which of the two assurances that was rather than flattening them.
+"""
+owner = "proxy.request_peer_binding"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.request_peer_binding"]
+depends_on = ["THM-0031", "THM-0033"]

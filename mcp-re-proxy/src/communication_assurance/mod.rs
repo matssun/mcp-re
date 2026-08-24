@@ -55,6 +55,7 @@
 //! boundaries: the X.509 parser to [`certificate_chain_evidence`], and `rustls` to the
 //! `rustls_adapter` child of each authority that relays a mechanism report.
 
+pub mod authenticated_channel_peer;
 pub mod authenticated_relationship_peer;
 pub mod certificate_chain_evidence;
 pub mod certificate_identity_policy;
@@ -69,6 +70,7 @@ pub mod current_authenticated_peer;
 pub mod ed25519_public_key;
 pub mod mechanism_verified_credential;
 pub mod peer_identity_value;
+pub mod request_peer_binding;
 pub mod signing_key_evidence;
 
 // PRIVATE to the authority. These two are the block's internal machinery: the
@@ -87,6 +89,7 @@ pub mod signing_key_evidence;
 mod certificate_identity_fields;
 mod certificate_identity_interpreter;
 
+pub use authenticated_channel_peer::AuthenticatedChannelPeer;
 pub use authenticated_relationship_peer::authenticate_relationship_peer;
 pub use authenticated_relationship_peer::AuthenticatedRelationshipPeerFacts;
 pub use certificate_chain_evidence::CertificateChainEvidence;
@@ -121,6 +124,10 @@ pub use mechanism_verified_credential::MechanismVerifiedCredentialEvidence;
 pub use peer_identity_value::PeerIdentityValue;
 pub use peer_identity_value::PeerIdentityValueRefusal;
 pub use peer_identity_value::MAX_PEER_IDENTITY_LEN;
+pub use request_peer_binding::bind_request_to_peer;
+pub use request_peer_binding::RequestPeerBindingFacts;
+pub use request_peer_binding::RequestPeerBindingRefusal;
+pub use request_peer_binding::VerifiedRequestSubject;
 pub use signing_key_evidence::CryptographicSigningKeyEvidence;
 pub use signing_key_evidence::SigningKeyExportEvidence;
 pub use signing_key_evidence::SigningKeyRefusal;
