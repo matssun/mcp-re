@@ -65,6 +65,12 @@ spec:
               value: "0.0.0.0"
             - name: MCP_RE_INNER_BACKEND_PORT
               value: "8620"
+            # DNS-rebinding protection stays ON; this names the hosts that are
+            # legitimate in-cluster. The proxy reaches this backend by its Service DNS
+            # name, which the SDK's default 127.0.0.1 allowlist refuses with 421 —
+            # surfacing at the proxy as `mcp-re.upstream_response_invalid`.
+            - name: MCP_RE_INNER_BACKEND_ALLOWED_HOSTS
+              value: "mcp-re-inner-fastmcp:8620,mcp-re-inner-fastmcp,localhost:8620,127.0.0.1:8620"
           ports:
             - name: http
               containerPort: 8620

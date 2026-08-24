@@ -31,6 +31,7 @@ import json
 import secrets
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 
 mcp = MCPServer("mcp-re-inner-backend")
 
@@ -180,7 +181,33 @@ if __name__ == "__main__":
     # `mcp.run(...)` would build+serve internally but give no seam to wrap, so we build
     # the app explicitly and run uvicorn on the wrapped app (lifespan passes through the
     # shim to the SDK's session manager).
+    # DNS-REBINDING PROTECTION, configured rather than disabled.
+    #
+    # The SDK validates the request's `Host` header against an allowlist that defaults to
+    # `127.0.0.1`, which is right for a local run and refuses every in-cluster request with
+    # 421 Misdirected Request: the proxy addresses this backend by its Service DNS name.
+    # The proxy then reports `mcp-re.upstream_response_invalid` with
+    # `execution_status=possibly_executed`, which reads as a backend defect rather than as a
+    # host-header refusal — the fleet proof failed exactly there.
+    #
+    # `MCP_RE_INNER_BACKEND_ALLOWED_HOSTS` is a comma-separated allowlist. It is ADDITIVE to
+    # the bound host, and the protection stays ON: an unset variable keeps the local default,
+    # so nothing is widened for a run that did not ask.
+    allowed = [h for h in os.environ.get(
+        "MCP_RE_INNER_BACKEND_ALLOWED_HOSTS", ""
+    ).split(",") if h]
+    security = None
+    if allowed:
+        security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=allowed,
+            allowed_origins=allowed,
+        )
     app = mcp.streamable_http_app(
-        streamable_http_path="/mcp/", stateless_http=True, json_response=True
+        streamable_http_path="/mcp/",
+        stateless_http=True,
+        json_response=True,
+        transport_security=security,
+        host=host,
     )
     uvicorn.run(ConfirmActionShim(app), host=host, port=port)
