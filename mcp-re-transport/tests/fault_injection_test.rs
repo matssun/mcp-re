@@ -136,7 +136,9 @@ fn spawn_server(
     listener: TcpListener,
     config: Arc<rustls::ServerConfig>,
     handler_reached: Arc<AtomicBool>,
-) -> thread::JoinHandle<std::io::Result<Option<mcp_re_proxy::communication_assurance::AuthenticatedChannelPeer>>> {
+) -> thread::JoinHandle<
+    std::io::Result<Option<mcp_re_proxy::communication_assurance::AuthenticatedChannelPeer>>,
+> {
     thread::spawn(move || {
         serve_once(
             &listener,
