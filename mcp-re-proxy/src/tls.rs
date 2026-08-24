@@ -32,10 +32,11 @@ use mcp_re_core::json_rpc_error_object;
 use mcp_re_core::McpReError;
 use rustls_pki_types::CertificateDer;
 use rustls_pki_types::CertificateRevocationListDer;
-use x509_parser::certificate::X509Certificate;
-use x509_parser::prelude::FromDer;
 
 use crate::communication_assurance::authenticate_relationship_peer;
+use crate::communication_assurance::credential_currency::evaluation::evaluate_credential_currency;
+use crate::communication_assurance::credential_currency::CredentialCurrencyOutcome;
+use crate::communication_assurance::credential_currency::CredentialCurrencyPolicy;
 use crate::communication_assurance::CertificateChainEvidence;
 use crate::communication_assurance::MechanismVerifiedCredentialEvidence;
 use crate::facades::asserted_identity::rendered_transport_identity;
@@ -506,27 +507,67 @@ pub(crate) fn resolve_authenticated_identity(
     }
 }
 
-/// Captured-chain form of [`connection_rejection`] for the async serve path, which
-/// cannot read the live connection: hyper owns the TLS stream once the handshake is
-/// done, so the peer chain is captured at handshake and handed here per request.
+/// The per-request credential-currency rejection for both direct-TLS serving paths
+/// (ADR-MCPRE-064 Slice 3, issue #621).
 ///
-/// `chain[0]` is the leaf and the rest are the intermediates the peer presented,
-/// leaf-first — the same order and the same decision as the blocking path, both taking
-/// it from the channel-associated credential evidence the establishment mechanism
-/// reported. An empty chain is an absent peer certificate and fails closed in the core.
+/// A FACADE. It classifies the deployment's configured controls, asks the currency
+/// authority about the credential the establishment mechanism ACCEPTED for this
+/// relationship, and renders a refusal in the historical wire vocabulary. It parses no
+/// certificate, compares no clock and consults no CRL — deleting a check here is
+/// impossible, because there is no check here to delete.
 ///
-/// NOTE: online-OCSP revocation (`#[cfg(feature = "online_ocsp")]`) needs the live
-/// connection and is NOT yet wired on the async path — combining `async_serve` with
+/// It takes the ACCEPTANCE, never a chain: the facts reported are then about the credential
+/// this relationship actually authenticated with, and there is no parameter through which
+/// another peer's certificates could enter.
+///
+/// The wire outcome is unchanged. Every request production admitted is admitted, every one
+/// it refused is refused, and a refusal is still `mcp-re.transport_binding_failed` bound to
+/// the request id — the reason is now typed, and rendering it on the wire is a separate
+/// decision this migration does not take.
+///
+/// NOTE: online-OCSP revocation (`#[cfg(feature = "online_ocsp")]`) needs the full peer
+/// chain and is NOT yet wired on the async path — combining `async_serve` with
 /// `online_ocsp` is a tracked follow-up; the default and shared-replay tier builds have
 /// full parity.
-#[cfg_attr(not(feature = "async_serve"), allow(dead_code))]
-pub(crate) fn connection_rejection_for_chain(
-    chain: &[&[u8]],
+pub(crate) fn credential_currency_rejection(
+    accepted: Option<&MechanismVerifiedCredentialEvidence>,
     options: &ServerOptions,
     request: &[u8],
     now: i64,
 ) -> Option<Vec<u8>> {
-    cert_lifetime_rejection_for_chain(chain, options, request, now)
+    match evaluate_credential_currency(accepted, &currency_policy(options), now) {
+        CredentialCurrencyOutcome::NotEvaluated | CredentialCurrencyOutcome::Current(_) => None,
+        CredentialCurrencyOutcome::Refused(_) => Some(transport_binding_failure(request)),
+    }
+}
+
+/// The deployment's configured currency controls, classified.
+///
+/// A TOTAL selector: every `ServerOptions` is exactly one policy, and the classification
+/// cannot fail. The revocation index is SNAPSHOTTED here, once per request, so the leaf
+/// check and the issuer check cannot read two different indexes across a reload.
+fn currency_policy(options: &ServerOptions) -> CredentialCurrencyPolicy {
+    let index = options
+        .client_revocation
+        .as_ref()
+        .map(|revocation| revocation.load());
+    match (options.max_client_cert_lifetime, index) {
+        (None, None) => CredentialCurrencyPolicy::NotEvaluated,
+        (Some(ceiling), None) => CredentialCurrencyPolicy::Ceiling(ceiling),
+        (None, Some(index)) => CredentialCurrencyPolicy::Revocation(index),
+        (Some(ceiling), Some(index)) => {
+            CredentialCurrencyPolicy::CeilingAndRevocation(ceiling, index)
+        }
+    }
+}
+
+/// The historical transport-boundary refusal, bound to the request id when it can be read.
+fn transport_binding_failure(request: &[u8]) -> Vec<u8> {
+    let id = serde_json::from_slice::<serde_json::Value>(request)
+        .ok()
+        .and_then(|value| value.get("id").cloned())
+        .unwrap_or(serde_json::Value::Null);
+    json_rpc_error_object(&McpReError::TransportBindingFailed, &id)
 }
 
 /// Extract the raw Tier-3 ingress-assertion header value to hand to the
@@ -555,43 +596,6 @@ pub(crate) fn assertion_header<'a>(
     }
 }
 
-/// Everything the per-request transport checks need from the peer leaf, borrowed from
-/// the DER rather than copied.
-pub(crate) struct LeafFacts<'a> {
-    pub(crate) not_before: i64,
-    pub(crate) not_after: i64,
-    /// The raw DER of the issuer `Name`, matched byte-for-byte against a CRL's issuer.
-    pub(crate) issuer_der: &'a [u8],
-    /// The serial's DER INTEGER content octets.
-    pub(crate) serial: &'a [u8],
-}
-
-/// Parse the peer leaf ONCE for every per-request transport decision: its validity
-/// window, and the (issuer, serial) coordinate revocation is keyed by.
-///
-/// One parse because these are separate questions about the same certificate, and
-/// parsing X.509 DER twice per request is measurable on the §7 envelope — it cost ~18%
-/// of throughput when the validity checks alone were two functions.
-///
-/// `None` if the certificate cannot be parsed, or its window is degenerate
-/// (`not_after <= not_before`). A degenerate window is treated exactly like an
-/// unparseable certificate: the caller fails closed (G-5) rather than admitting a cert
-/// whose negative span would trivially satisfy any `<= max` bound.
-fn leaf_facts(leaf_der: &[u8]) -> Option<LeafFacts<'_>> {
-    let (_, cert) = X509Certificate::from_der(leaf_der).ok()?;
-    let not_before = cert.validity().not_before.timestamp();
-    let not_after = cert.validity().not_after.timestamp();
-    if not_after <= not_before {
-        return None;
-    }
-    Some(LeafFacts {
-        not_before,
-        not_after,
-        issuer_der: cert.tbs_certificate.issuer.as_raw(),
-        serial: cert.tbs_certificate.raw_serial(),
-    })
-}
-
 /// Wall-clock Unix seconds for the transport-layer certificate-validity check.
 ///
 /// The serving path's own `now` is threaded from `app.rs` for every EVIDENCE
@@ -603,159 +607,6 @@ pub(crate) fn wall_clock_unix() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
-}
-
-/// The certificate core of [`cert_lifetime_rejection`], shared by the blocking serve
-/// loop (which reads the chain from the live `ServerConnection`) and the async serving
-/// fleet (which captures it once at handshake, because `hyper` takes ownership of the
-/// TLS stream for keep-alive/H2). The DECISION is identical on both — only the chain's
-/// provenance differs.
-///
-/// `chain[0]` is the peer leaf and the rest are the intermediates the peer presented,
-/// leaf-first, exactly as the channel-associated credential evidence carries them. An
-/// empty chain is an absent peer certificate.
-///
-/// The leaf carries the lifetime, validity-window and revocation decision; every
-/// further certificate carries a validity window and a revocation decision. That matches
-/// what the handshake verifier does — chain-deep revocation to the trust anchor, one
-/// validity window per certificate checked by the path builder — so a peer cannot be
-/// admitted on request 2 under an intermediate that was refused on request 1, and a
-/// session resumed after its issuing intermediate expired stops being served.
-///
-/// Intermediates are refused only on an EXPLICIT `Revoked` verdict, never on `Unknown`.
-/// Whether the chain reaches a CRL-covered issuer is a path-building question the
-/// handshake already settled; re-deciding it here from the certificates the peer chose
-/// to send would refuse chains the handshake admitted.
-pub(crate) fn cert_lifetime_rejection_for_chain(
-    chain: &[&[u8]],
-    options: &ServerOptions,
-    request: &[u8],
-    now: i64,
-) -> Option<Vec<u8>> {
-    // Nothing to enforce: no lifetime ceiling AND no CRLs. Return before the parse, so
-    // a deployment that configures neither pays nothing for either.
-    let ceiling = options.max_client_cert_lifetime;
-    let revocation = options.client_revocation.as_ref();
-    if ceiling.is_none() && revocation.is_none() {
-        return None;
-    }
-
-    // An ABSENT leaf is treated exactly like an unparseable one. Only a leaf that
-    // parses AND passes every configured check is admitted; every other case —
-    // no peer certificate, unparseable DER, inverted validity window, over-long
-    // span, revoked serial — falls through to the rejection below. Returning `None`
-    // for a missing leaf would waive the very checks these exist to perform, and would
-    // do it one line before an unparseable cert fails closed.
-    let leaf_admitted = chain
-        .first()
-        .and_then(|leaf| leaf_facts(leaf))
-        .is_some_and(|facts| {
-            // The certificate's OWN validity window, independent of every configured
-            // control. A short-lived certificate satisfies a span ceiling for the rest
-            // of time, so without this comparison a peer that keeps one connection open
-            // keeps serving under an EXPIRED credential. It is checked whenever any
-            // per-request certificate control is configured, because it is a property of
-            // the certificate rather than of the ceiling: fusing it to
-            // `max_client_cert_lifetime` made a CRL-only deployment stop re-checking
-            // expiry at all.
-            let within_window = now >= facts.not_before && now < facts.not_after;
-            // SPAN within the ceiling — the short-lived-certificate posture.
-            let within_lifetime = ceiling
-                .is_none_or(|max| facts.not_after - facts.not_before <= max.as_secs() as i64);
-            // And NOT REVOKED as of the CRLs in force right now. The handshake consulted
-            // them once; every later request on a keep-alive or HTTP/2 connection is served
-            // without the verifier ever running again, so this is the only point at which a
-            // reloaded CRL reaches the connection a revoked peer is already holding open.
-            let not_revoked = revocation.is_none_or(|revocation| {
-                revocation
-                    .load()
-                    .admits(facts.issuer_der, facts.serial, now)
-            });
-            within_window && within_lifetime && not_revoked
-        });
-    if leaf_admitted
-        && chain_issuers_within_validity(chain, now)
-        && chain_issuers_not_revoked(chain, options, now)
-    {
-        return None;
-    }
-    // Absent, unparseable, over-long or revoked cert → fail closed with the transport
-    // error, bound to the request id when we can read it.
-    let id = serde_json::from_slice::<serde_json::Value>(request)
-        .ok()
-        .and_then(|value| value.get("id").cloned())
-        .unwrap_or(serde_json::Value::Null);
-    Some(json_rpc_error_object(
-        &McpReError::TransportBindingFailed,
-        &id,
-    ))
-}
-
-/// Is every certificate ABOVE the leaf still inside its own validity window?
-///
-/// Chain building runs during client authentication, which rustls performs on a FULL
-/// handshake only. A resumed session restores the stored peer chain verbatim and skips
-/// it, so without this a peer whose issuing INTERMEDIATE has since expired keeps being
-/// admitted on every reconnect that resumes — and the trust epoch cannot catch it,
-/// because the epoch digests the configured anchor set and an intermediate is not in it.
-///
-/// The handshake's path builder refuses an expired certificate on the path it builds, so
-/// refusing one here can only agree with what a full handshake would have decided.
-///
-/// A SELF-ISSUED certificate (issuer `Name` == subject `Name`) is exempt. A peer may
-/// send its root, path building matches that against the CONFIGURED anchor set rather
-/// than against its own validity window, and holding it to a window here would refuse
-/// chains a full handshake admits.
-///
-/// A certificate whose DER does not parse is refused — the same fail-closed direction
-/// the leaf takes, and the handshake already parsed every one of these.
-fn chain_issuers_within_validity(chain: &[&[u8]], now: i64) -> bool {
-    let Some(issuers) = chain.get(1..).filter(|rest| !rest.is_empty()) else {
-        return true;
-    };
-    issuers
-        .iter()
-        .all(|der| match X509Certificate::from_der(der) {
-            Err(_) => false,
-            Ok((_, cert)) => {
-                let self_issued =
-                    cert.tbs_certificate.issuer.as_raw() == cert.tbs_certificate.subject.as_raw();
-                self_issued
-                    || (now >= cert.validity().not_before.timestamp()
-                        && now < cert.validity().not_after.timestamp())
-            }
-        })
-}
-
-/// Is every certificate ABOVE the leaf still un-revoked as of the CRLs in force?
-///
-/// The handshake verifier checks revocation to the trust anchor, so an operator who
-/// revokes a compromised intermediate expects that to reach open connections the same
-/// way a revoked leaf does. Without this, a peer holding a keep-alive or HTTP/2
-/// connection under a leaf issued by that intermediate kept full authenticated access
-/// until the connection-age bound closed it.
-///
-/// `Revoked` is the only refusal: see [`cert_lifetime_rejection_for_chain`]. An
-/// intermediate whose DER does not parse is refused too — the same fail-closed
-/// direction the leaf takes, and the handshake already parsed every one of these.
-fn chain_issuers_not_revoked(chain: &[&[u8]], options: &ServerOptions, now: i64) -> bool {
-    let Some(revocation) = options.client_revocation.as_ref() else {
-        return true;
-    };
-    let Some(issuers) = chain.get(1..).filter(|rest| !rest.is_empty()) else {
-        return true;
-    };
-    let index = revocation.load();
-    if index.is_empty() {
-        return true;
-    }
-    issuers.iter().all(|der| match leaf_facts(der) {
-        None => false,
-        Some(facts) => {
-            index.verdict(facts.issuer_der, facts.serial, now)
-                != crate::client_revocation::RevocationVerdict::Revoked
-        }
-    })
 }
 
 /// ADR-MCPS-025 routing-header hygiene rejection — runs at the SAME per-connection
@@ -893,69 +744,91 @@ pub fn load_client_crls(
 }
 
 #[cfg(test)]
-mod lifetime_tests {
-    //! MCPS-078 (audit gap G-5): `leaf_facts` is private, so the
-    //! fail-closed behaviour on an inverted validity window is exercised here,
-    //! inline, over real DER minted with rcgen (mirroring the rcgen 0.14 idiom in
-    //! `tests/tls_test.rs`). The caller `cert_lifetime_rejection` uses
-    //! `leaf_facts(..).is_some_and(..)`; a `None` therefore
-    //! fails closed (the cert is rejected), which is precisely what an
-    //! inverted/degenerate span must produce.
+mod currency_policy_tests {
+    //! ADR-MCPRE-064 Slice 3. The classification is a TOTAL selector over deployment state,
+    //! and it is where the per-request index snapshot is taken.
 
-    use super::leaf_facts;
+    use std::sync::Arc;
+    use std::time::Duration;
 
-    use rcgen::CertificateParams;
-    use rcgen::ExtendedKeyUsagePurpose;
-    use rcgen::KeyPair;
+    use super::currency_policy;
+    use super::ServerOptions;
+    use crate::client_revocation::ClientRevocationIndex;
+    use crate::client_revocation::SharedClientRevocation;
+    use crate::communication_assurance::CredentialCurrencyPolicy;
 
-    /// Mint a self-signed leaf with an explicit validity window (day granularity)
-    /// and return its DER bytes. Self-signed is sufficient here: the function
-    /// under test only reads the validity fields, not the signature chain.
-    fn mint_leaf_der(not_before: (i32, u8, u8), not_after: (i32, u8, u8)) -> Vec<u8> {
-        let key = KeyPair::generate().expect("leaf key");
-        let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
-        params.not_before = rcgen::date_time_ymd(not_before.0, not_before.1, not_before.2);
-        params.not_after = rcgen::date_time_ymd(not_after.0, not_after.1, not_after.2);
-        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
-        let cert = params.self_signed(&key).expect("leaf self-signed");
-        cert.der().as_ref().to_vec()
+    fn shared() -> Arc<SharedClientRevocation> {
+        Arc::new(SharedClientRevocation::new(ClientRevocationIndex::empty()))
     }
 
     #[test]
-    fn normal_validity_window_yields_positive_span() {
-        // not_before (2020) < not_after (2021): a well-formed ~1y window.
-        let der = mint_leaf_der((2020, 1, 1), (2021, 1, 1));
-        let span = leaf_facts(&der)
-            .map(|facts| facts.not_after - facts.not_before)
-            .expect("a normal cert has a parseable span");
-        assert!(
-            span > 0,
-            "a well-formed validity window must yield a positive lifetime, got {span}"
-        );
+    fn every_deployment_classifies_to_exactly_one_policy() {
+        // A total selector, and the reason the policy is an enum: the fifth combination two
+        // `Option`s would admit — evaluating with nothing configured — cannot be written.
+        let ceiling = Duration::from_secs(3600);
+        let revocation = shared();
+
+        assert!(matches!(
+            currency_policy(&ServerOptions::default()),
+            CredentialCurrencyPolicy::NotEvaluated
+        ));
+        assert!(matches!(
+            currency_policy(&ServerOptions {
+                max_client_cert_lifetime: Some(ceiling),
+                ..Default::default()
+            }),
+            CredentialCurrencyPolicy::Ceiling(_)
+        ));
+        assert!(matches!(
+            currency_policy(&ServerOptions {
+                client_revocation: Some(Arc::clone(&revocation)),
+                ..Default::default()
+            }),
+            CredentialCurrencyPolicy::Revocation(_)
+        ));
+        assert!(matches!(
+            currency_policy(&ServerOptions {
+                max_client_cert_lifetime: Some(ceiling),
+                client_revocation: Some(revocation),
+                ..Default::default()
+            }),
+            CredentialCurrencyPolicy::CeilingAndRevocation(_, _)
+        ));
     }
 
     #[test]
-    fn inverted_validity_window_is_none_and_fails_closed() {
-        // not_after (2020) < not_before (2021): inverted/degenerate window. The
-        // G-5 fix returns None so the caller's `is_some_and(|l| l <= max)` is
-        // false and `cert_lifetime_rejection` fails closed (rejects the cert).
-        let der = mint_leaf_der((2021, 1, 1), (2020, 1, 1));
+    fn currency_policy_reads_the_index_in_force_at_the_time_of_the_call() {
+        // The half of the reload claim that moved here when the authority began taking the
+        // index as a value. The broken implementation this catches is hoisting `load()` out
+        // of the per-request decision — caching it per connection is exactly the
+        // handshake-only posture the per-request check exists to replace.
+        let revocation = shared();
+        let options = ServerOptions {
+            client_revocation: Some(Arc::clone(&revocation)),
+            ..Default::default()
+        };
+        let before = currency_policy(&options);
         assert!(
-            leaf_facts(&der).is_none(),
-            "an inverted validity window must yield None (fail closed), not a negative span"
+            before
+                .revocation()
+                .is_some_and(ClientRevocationIndex::is_empty),
+            "the first snapshot is the empty index that was in force"
+        );
+
+        revocation.store(ClientRevocationIndex::empty());
+        let after = currency_policy(&options);
+        assert!(
+            !std::ptr::eq(
+                before.revocation().expect("configured"),
+                after.revocation().expect("configured")
+            ),
+            "a second call must re-read the cell, not reuse the first snapshot"
         );
     }
+}
 
-    #[test]
-    fn garbage_bytes_are_none() {
-        // Not a certificate at all → unparseable → None (fail closed).
-        let garbage = b"this is definitely not a DER X.509 certificate";
-        assert!(
-            leaf_facts(garbage).is_none(),
-            "unparseable bytes must yield None"
-        );
-    }
-
+#[cfg(test)]
+mod routing_header_tests {
     #[test]
     fn routing_header_rejection_fails_closed_on_bad_headers_only() {
         // ADR-MCPS-025 rule 4 enforcement at the transport seam. Clean/absent
@@ -980,118 +853,6 @@ mod lifetime_tests {
 
         let malformed = RequestHeaders::from_pairs([("Mcp-Name", "echo\r\nX-Spoof: evil")]);
         assert!(super::routing_header_rejection(&malformed, req).is_some());
-    }
-
-    #[test]
-    fn absent_leaf_is_rejected_when_a_lifetime_ceiling_is_configured() {
-        // C095: the ceiling is a check on the peer certificate, so "there is no peer
-        // certificate to check" must not be an admission. This is the ONE case that
-        // used to short-circuit to `None` (= admit) one line before an unparseable
-        // cert failed closed. Negative control: restore `let leaf = leaf_der?;` and
-        // this asserts `Some(..)` on a `None`.
-        let req = br#"{"jsonrpc":"2.0","id":"req-7","method":"tools/call"}"#;
-        let options = super::ServerOptions {
-            max_client_cert_lifetime: Some(std::time::Duration::from_secs(3600)),
-            ..Default::default()
-        };
-        let rejected = super::cert_lifetime_rejection_for_chain(&[], &options, req, 0)
-            .expect("an absent leaf must be rejected when a ceiling is configured");
-        let value: serde_json::Value =
-            serde_json::from_slice(&rejected).expect("json error object");
-        assert_eq!(value["error"]["message"], "mcp-re.transport_binding_failed");
-        assert_eq!(value["id"], "req-7", "the rejection binds the request id");
-    }
-
-    #[test]
-    fn absent_leaf_is_admitted_only_when_no_ceiling_is_configured() {
-        // The converse, so the fix above cannot be read as "always reject a missing
-        // leaf": with the check DISABLED there is nothing to enforce, and this
-        // function is not the mandatory-client-auth gate (rustls' verifier is).
-        let req = br#"{"jsonrpc":"2.0","id":"req-8","method":"tools/call"}"#;
-        let options = super::ServerOptions {
-            max_client_cert_lifetime: None,
-            ..Default::default()
-        };
-        assert!(
-            super::cert_lifetime_rejection_for_chain(&[], &options, req, 0).is_none(),
-            "with no ceiling configured there is no lifetime decision to make"
-        );
-    }
-
-    #[test]
-    fn within_limit_leaf_is_admitted_and_over_long_leaf_is_rejected() {
-        // Pins the two ordinary outcomes THROUGH the same entry point the absent-leaf
-        // cases use, so the fail-closed rewrite is shown not to have broken admission.
-        let req = br#"{"jsonrpc":"2.0","id":"req-9","method":"tools/call"}"#;
-        let options = super::ServerOptions {
-            max_client_cert_lifetime: Some(std::time::Duration::from_secs(3600)),
-            ..Default::default()
-        };
-        // ~1 year span — far over a 1h ceiling.
-        let long = mint_leaf_der((2020, 1, 1), (2021, 1, 1));
-        assert!(
-            super::cert_lifetime_rejection_for_chain(&[&long], &options, req, IN_2020).is_some(),
-            "a 1-year cert must be rejected under a 1-hour ceiling"
-        );
-        // Day granularity is the coarsest this fixture mints, so admit-side coverage
-        // uses a ceiling wide enough for a 1-day span.
-        let generous = super::ServerOptions {
-            max_client_cert_lifetime: Some(std::time::Duration::from_secs(48 * 3600)),
-            ..Default::default()
-        };
-        let short = mint_leaf_der((2020, 1, 1), (2020, 1, 2));
-        assert!(
-            super::cert_lifetime_rejection_for_chain(&[&short], &generous, req, IN_2020).is_none(),
-            "a 1-day cert must be admitted under a 2-day ceiling"
-        );
-    }
-
-    /// 2020-01-01T01:00:00Z — inside the `mint_leaf_der((2020,1,1), (2020,1,2))`
-    /// window used by the admit-side fixtures.
-    const IN_2020: i64 = 1_577_836_800 + 3600;
-
-    #[test]
-    fn a_leaf_past_not_after_is_rejected_however_short_its_span() {
-        // The SPAN check alone admits this forever: a 1-day certificate satisfies a
-        // 2-day ceiling in 2020 and equally in 2030. On a keep-alive or HTTP/2
-        // connection the leaf is captured once at handshake, so this per-request
-        // clock comparison is the only thing that ever notices the expiry.
-        let req = br#"{"jsonrpc":"2.0","id":"req-10","method":"tools/call"}"#;
-        let options = super::ServerOptions {
-            max_client_cert_lifetime: Some(std::time::Duration::from_secs(48 * 3600)),
-            ..Default::default()
-        };
-        let short = mint_leaf_der((2020, 1, 1), (2020, 1, 2));
-        assert!(
-            super::cert_lifetime_rejection_for_chain(&[&short], &options, req, IN_2020).is_none(),
-            "inside its validity window the cert is admitted"
-        );
-        // One day later — same certificate, same span, same ceiling.
-        assert!(
-            super::cert_lifetime_rejection_for_chain(&[&short], &options, req, IN_2020 + 86_400)
-                .is_some(),
-            "past not_after the cert must be refused even though its span is small"
-        );
-        // And before it is valid.
-        assert!(
-            super::cert_lifetime_rejection_for_chain(&[&short], &options, req, IN_2020 - 86_400)
-                .is_some(),
-            "before not_before the cert must be refused"
-        );
-    }
-
-    #[test]
-    fn zero_length_validity_window_is_none_and_fails_closed() {
-        // not_after == not_before: a DEGENERATE (zero-length) window. Without the
-        // `<=` guard this returned Some(0), which `cert_lifetime_rejection` treats
-        // as within ANY max lifetime — admitting a useless instant-lifetime cert.
-        // The fix fails closed (None) for the degenerate span too, matching the
-        // documented "negative OR degenerate span is rejected" contract.
-        let der = mint_leaf_der((2021, 1, 1), (2021, 1, 1));
-        assert!(
-            leaf_facts(&der).is_none(),
-            "a zero-length validity window must yield None (fail closed)"
-        );
     }
 }
 
@@ -1198,402 +959,6 @@ pub(crate) mod fault_accept_any {
             // `verify_client_cert` above accepting any presented cert.
             false
         }
-    }
-}
-
-#[cfg(test)]
-mod chain_validity_tests {
-    //! ADR-MCPRE-055: a resumed TLS 1.3 handshake restores the stored peer chain and
-    //! skips chain building, so the per-request gate is the only place an INTERMEDIATE's
-    //! expiry is ever re-read. The trust epoch cannot cover it — the epoch digests the
-    //! configured anchor set, and an intermediate is not in it.
-
-    use super::*;
-    use rcgen::BasicConstraints;
-    use rcgen::CertificateParams;
-    use rcgen::DnType;
-    use rcgen::IsCa;
-    use rcgen::KeyPair;
-    use rcgen::KeyUsagePurpose;
-
-    struct Signer {
-        params: CertificateParams,
-        key: KeyPair,
-        der: CertificateDer<'static>,
-    }
-
-    impl Signer {
-        fn issuer(&self) -> rcgen::Issuer<'_, &KeyPair> {
-            rcgen::Issuer::from_params(&self.params, &self.key)
-        }
-    }
-
-    fn root(name: &str) -> Signer {
-        let key = KeyPair::generate().expect("root key");
-        let mut params = CertificateParams::new(Vec::new()).expect("root params");
-        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-        params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-        params.distinguished_name.push(DnType::CommonName, name);
-        let der = params.self_signed(&key).expect("root").der().clone();
-        Signer { params, key, der }
-    }
-
-    /// A CA signed by `issuer` with an explicit validity window, so its expiry is a
-    /// deterministic input rather than a wall-clock accident.
-    fn intermediate(issuer: &Signer, name: &str, not_after: (i32, u8, u8)) -> Signer {
-        let key = KeyPair::generate().expect("intermediate key");
-        let mut params = CertificateParams::new(Vec::new()).expect("intermediate params");
-        params.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
-        params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-        params.distinguished_name.push(DnType::CommonName, name);
-        params.not_before = rcgen::date_time_ymd(2020, 1, 1);
-        params.not_after = rcgen::date_time_ymd(not_after.0, not_after.1, not_after.2);
-        let der = params
-            .signed_by(&key, &issuer.issuer())
-            .expect("intermediate")
-            .der()
-            .clone();
-        Signer { params, key, der }
-    }
-
-    fn leaf(issuer: &Signer) -> CertificateDer<'static> {
-        let key = KeyPair::generate().expect("leaf key");
-        let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
-        params.distinguished_name.push(DnType::CommonName, "peer");
-        params.not_before = rcgen::date_time_ymd(2020, 1, 1);
-        params.not_after = rcgen::date_time_ymd(2999, 1, 1);
-        params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
-        params
-            .signed_by(&key, &issuer.issuer())
-            .expect("leaf")
-            .der()
-            .clone()
-    }
-
-    /// The gate runs whenever any per-request certificate control is configured; a
-    /// lifetime ceiling wide enough to admit the leaf isolates the chain decision.
-    fn options() -> ServerOptions {
-        ServerOptions {
-            max_client_cert_lifetime: Some(Duration::from_secs(365 * 24 * 3600 * 1000)),
-            ..Default::default()
-        }
-    }
-
-    const NOW: i64 = 1_800_000_000; // 2027-01-15
-
-    fn rejected(chain: &[&[u8]]) -> bool {
-        cert_lifetime_rejection_for_chain(chain, &options(), b"{\"id\":1}", NOW).is_some()
-    }
-
-    /// A leaf under a still-valid intermediate is served.
-    #[test]
-    fn a_chain_whose_intermediate_is_current_is_admitted() {
-        let root = root("chain-root");
-        let ica = intermediate(&root, "chain-ica", (2999, 1, 1));
-        let peer = leaf(&ica);
-        assert!(!rejected(&[peer.as_ref(), ica.der.as_ref()]));
-    }
-
-    /// A leaf under an EXPIRED intermediate is refused, even though the leaf itself is
-    /// current, un-revoked and within the lifetime ceiling.
-    ///
-    /// The broken implementation this catches: applying `within_window` to `chain[0]`
-    /// only. With resumption enabled the peer never re-runs chain building, so every
-    /// reconnect restores the same expired chain and keeps being admitted.
-    #[test]
-    fn a_chain_whose_intermediate_has_expired_is_refused() {
-        let root = root("chain-root");
-        let ica = intermediate(&root, "chain-ica", (2021, 1, 1));
-        let peer = leaf(&ica);
-        assert!(
-            rejected(&[peer.as_ref(), ica.der.as_ref()]),
-            "an expired issuing intermediate must stop the leaf being served"
-        );
-    }
-
-    /// A peer that redundantly sends its (self-issued) root is NOT refused on that
-    /// root's window. Path building matches a root against the configured anchor set
-    /// rather than against its own validity, so refusing it here would refuse chains a
-    /// full handshake admits.
-    #[test]
-    fn a_self_issued_root_in_the_presented_chain_is_not_held_to_a_window() {
-        let root = root("chain-root");
-        let ica = intermediate(&root, "chain-ica", (2999, 1, 1));
-        let peer = leaf(&ica);
-        assert!(!rejected(&[
-            peer.as_ref(),
-            ica.der.as_ref(),
-            root.der.as_ref()
-        ]));
-    }
-
-    /// An unparseable certificate above the leaf fails closed, matching the leaf.
-    #[test]
-    fn an_unparseable_intermediate_is_refused() {
-        let root = root("chain-root");
-        let ica = intermediate(&root, "chain-ica", (2999, 1, 1));
-        let peer = leaf(&ica);
-        assert!(rejected(&[peer.as_ref(), b"not der".as_ref()]));
-    }
-}
-
-#[cfg(test)]
-mod per_request_revocation_tests {
-    //! The per-request CRL consultation in [`cert_lifetime_rejection_for_chain`] is the
-    //! ONLY way a revocation reaches a peer that already holds a connection: rustls runs
-    //! client authentication on a full handshake only, and the trust epoch deliberately
-    //! digests the anchor set and the client-auth policy — not the CRLs — so a revocation
-    //! published after the handshake moves nothing the epoch can see.
-    //!
-    //! The certificates here are real and signed, and the CRLs are real and signed, so
-    //! the (issuer `Name` DER, serial) coordinate the index is keyed by is the one the
-    //! serving path actually extracts rather than a synthetic pair.
-
-    use super::*;
-    use crate::client_revocation::ClientRevocationIndex;
-    use crate::client_revocation::SharedClientRevocation;
-    use rcgen::BasicConstraints;
-    use rcgen::CertificateParams;
-    use rcgen::CertificateRevocationListParams;
-    use rcgen::DnType;
-    use rcgen::IsCa;
-    use rcgen::KeyPair;
-    use rcgen::KeyUsagePurpose;
-    use rcgen::RevocationReason;
-    use rcgen::RevokedCertParams;
-    use rcgen::SerialNumber;
-
-    /// 2027-01-15 — inside every window minted below, and before the CRLs' `nextUpdate`.
-    const NOW: i64 = 1_800_000_000;
-    const LEAF_SERIAL: u64 = 0x2a;
-    const ICA_SERIAL: u64 = 0x2b;
-
-    struct Ca {
-        params: CertificateParams,
-        key: KeyPair,
-        der: CertificateDer<'static>,
-    }
-
-    impl Ca {
-        fn issuer(&self) -> rcgen::Issuer<'_, &KeyPair> {
-            rcgen::Issuer::from_params(&self.params, &self.key)
-        }
-    }
-
-    fn ca_params(name: &str, constraints: BasicConstraints) -> CertificateParams {
-        let mut params = CertificateParams::new(Vec::new()).expect("ca params");
-        params.is_ca = IsCa::Ca(constraints);
-        params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-        params.distinguished_name.push(DnType::CommonName, name);
-        params.not_before = rcgen::date_time_ymd(2020, 1, 1);
-        params.not_after = rcgen::date_time_ymd(2035, 1, 1);
-        params
-    }
-
-    fn root(name: &str) -> Ca {
-        let key = KeyPair::generate().expect("root key");
-        let params = ca_params(name, BasicConstraints::Unconstrained);
-        let der = params.self_signed(&key).expect("root").der().clone();
-        Ca { params, key, der }
-    }
-
-    /// A CA signed by `issuer` carrying an explicit serial, so `issuer`'s CRL can name
-    /// exactly this intermediate.
-    fn intermediate(issuer: &Ca, name: &str, serial: u64) -> Ca {
-        let key = KeyPair::generate().expect("intermediate key");
-        let mut params = ca_params(name, BasicConstraints::Constrained(0));
-        params.serial_number = Some(SerialNumber::from(serial));
-        let der = params
-            .signed_by(&key, &issuer.issuer())
-            .expect("intermediate")
-            .der()
-            .clone();
-        Ca { params, key, der }
-    }
-
-    /// A client leaf with an explicit serial, so a CRL can revoke exactly this
-    /// certificate.
-    fn leaf(issuer: &Ca, serial: u64) -> CertificateDer<'static> {
-        let key = KeyPair::generate().expect("leaf key");
-        let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
-        params.distinguished_name.push(DnType::CommonName, "peer");
-        params.serial_number = Some(SerialNumber::from(serial));
-        params.not_before = rcgen::date_time_ymd(2020, 1, 1);
-        params.not_after = rcgen::date_time_ymd(2035, 1, 1);
-        params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
-        params
-            .signed_by(&key, &issuer.issuer())
-            .expect("leaf")
-            .der()
-            .clone()
-    }
-
-    /// A signed CRL from `ca` revoking each serial in `revoked`. An empty list is the
-    /// "issuer covered, nothing revoked" state a deployment runs in most of the time.
-    fn crl(ca: &Ca, revoked: &[u64], next_update: (i32, u8, u8)) -> Vec<u8> {
-        let params = CertificateRevocationListParams {
-            this_update: rcgen::date_time_ymd(2020, 1, 1),
-            next_update: rcgen::date_time_ymd(next_update.0, next_update.1, next_update.2),
-            crl_number: SerialNumber::from(1u64),
-            issuing_distribution_point: None,
-            revoked_certs: revoked
-                .iter()
-                .map(|serial| RevokedCertParams {
-                    serial_number: SerialNumber::from(*serial),
-                    revocation_time: rcgen::date_time_ymd(2021, 1, 1),
-                    reason_code: Some(RevocationReason::KeyCompromise),
-                    invalidity_date: None,
-                })
-                .collect(),
-            key_identifier_method: rcgen::KeyIdMethod::Sha256,
-        };
-        params.signed_by(&ca.issuer()).expect("crl").der().to_vec()
-    }
-
-    fn shared(crls: &[Vec<u8>]) -> Arc<SharedClientRevocation> {
-        Arc::new(SharedClientRevocation::new(
-            ClientRevocationIndex::from_crl_ders(crls).expect("index builds"),
-        ))
-    }
-
-    /// No lifetime ceiling: revocation ALONE must arm the per-request gate, and nothing
-    /// else here can account for a refusal.
-    fn options(revocation: &Arc<SharedClientRevocation>) -> ServerOptions {
-        ServerOptions {
-            client_revocation: Some(Arc::clone(revocation)),
-            ..Default::default()
-        }
-    }
-
-    fn rejected(chain: &[&[u8]], options: &ServerOptions) -> bool {
-        cert_lifetime_rejection_for_chain(chain, options, b"{\"id\":1}", NOW).is_some()
-    }
-
-    /// A leaf whose issuer is covered by a CRL that does not list it keeps being served.
-    ///
-    /// This is the control every refusal below is read against, and it is also what
-    /// catches the (issuer, serial) coordinate being passed in the wrong order: the
-    /// swapped call finds no CRL for the "issuer" it was handed, answers `Unknown`, and
-    /// refuses this request under the deny-unknown policy.
-    #[test]
-    fn a_leaf_a_current_crl_does_not_list_is_served() {
-        let ca = root("revocation-ca");
-        let peer = leaf(&ca, LEAF_SERIAL);
-        let revocation = shared(&[crl(&ca, &[], (2035, 1, 1))]);
-        assert!(!rejected(&[peer.as_ref()], &options(&revocation)));
-    }
-
-    /// A leaf listed on a CRL in force is refused on every request, with no lifetime
-    /// ceiling configured at all.
-    ///
-    /// The broken implementation this catches: dropping the `not_revoked` conjunct, or
-    /// arming the gate on `max_client_cert_lifetime` alone — either leaves a revoked peer
-    /// serving on the connection it already holds for as long as it holds it.
-    #[test]
-    fn a_leaf_on_a_current_crl_is_refused() {
-        let ca = root("revocation-ca");
-        let peer = leaf(&ca, LEAF_SERIAL);
-        let revocation = shared(&[crl(&ca, &[LEAF_SERIAL], (2035, 1, 1))]);
-        assert!(
-            rejected(&[peer.as_ref()], &options(&revocation)),
-            "a revoked leaf must stop being served"
-        );
-    }
-
-    /// A CRL reload reaches a request on a connection whose handshake is long past.
-    ///
-    /// The broken implementation this catches: reading the index once per connection (or
-    /// hoisting `load()` out of the per-request decision), which is exactly the
-    /// handshake-only posture this check exists to replace.
-    #[test]
-    fn a_reloaded_crl_refuses_a_leaf_that_was_served_a_moment_earlier() {
-        let ca = root("revocation-ca");
-        let peer = leaf(&ca, LEAF_SERIAL);
-        let revocation = shared(&[crl(&ca, &[], (2035, 1, 1))]);
-        let options = options(&revocation);
-        assert!(!rejected(&[peer.as_ref()], &options));
-
-        revocation.store(
-            ClientRevocationIndex::from_crl_ders(&[crl(&ca, &[LEAF_SERIAL], (2035, 1, 1))])
-                .expect("index builds"),
-        );
-        assert!(
-            rejected(&[peer.as_ref()], &options),
-            "the reloaded CRL must reach the connection already being served"
-        );
-    }
-
-    /// A leaf whose issuer no configured CRL covers is `Unknown`, and deny-unknown is the
-    /// handshake's posture, so it is refused.
-    #[test]
-    fn a_leaf_whose_issuer_no_crl_covers_is_refused() {
-        let ca = root("revocation-ca");
-        let other = root("unrelated-ca");
-        let peer = leaf(&ca, LEAF_SERIAL);
-        let revocation = shared(&[crl(&other, &[], (2035, 1, 1))]);
-        assert!(rejected(&[peer.as_ref()], &options(&revocation)));
-    }
-
-    /// A CRL past its `nextUpdate` can no longer answer `Good`, so its issuer's
-    /// certificates become `Unknown` and are refused — the same direction as rustls'
-    /// `enforce_revocation_expiration`.
-    #[test]
-    fn a_leaf_under_a_crl_that_has_fallen_out_of_force_is_refused() {
-        let ca = root("revocation-ca");
-        let peer = leaf(&ca, LEAF_SERIAL);
-        let revocation = shared(&[crl(&ca, &[], (2021, 1, 1))]);
-        assert!(rejected(&[peer.as_ref()], &options(&revocation)));
-    }
-
-    /// A chain whose intermediate is covered and unlisted is served — the control for
-    /// the refusal below.
-    #[test]
-    fn a_chain_whose_intermediate_is_on_no_crl_is_served() {
-        let ca = root("revocation-root");
-        let ica = intermediate(&ca, "revocation-ica", ICA_SERIAL);
-        let peer = leaf(&ica, LEAF_SERIAL);
-        let revocation = shared(&[crl(&ca, &[], (2035, 1, 1)), crl(&ica, &[], (2035, 1, 1))]);
-        assert!(!rejected(
-            &[peer.as_ref(), ica.der.as_ref()],
-            &options(&revocation)
-        ));
-    }
-
-    /// Revoking the ISSUING INTERMEDIATE stops the leaf being served, even though the
-    /// leaf's own serial is on no CRL.
-    ///
-    /// The broken implementation this catches: asking the index about `chain[0]` only.
-    /// The handshake verifier checks revocation to the trust anchor, so a per-request
-    /// check that stopped at the leaf would keep honouring a revoked intermediate on
-    /// every connection the peer already holds.
-    #[test]
-    fn a_chain_under_a_revoked_intermediate_is_refused() {
-        let ca = root("revocation-root");
-        let ica = intermediate(&ca, "revocation-ica", ICA_SERIAL);
-        let peer = leaf(&ica, LEAF_SERIAL);
-        let revocation = shared(&[
-            crl(&ca, &[ICA_SERIAL], (2035, 1, 1)),
-            crl(&ica, &[], (2035, 1, 1)),
-        ]);
-        assert!(
-            rejected(&[peer.as_ref(), ica.der.as_ref()], &options(&revocation)),
-            "a revoked issuing intermediate must stop the leaf being served"
-        );
-    }
-
-    /// An intermediate is refused only on an EXPLICIT `Revoked` verdict. Whether the
-    /// presented chain reaches a CRL-covered issuer is a path-building question the
-    /// handshake settled, so an `Unknown` intermediate must not be re-decided here.
-    #[test]
-    fn an_intermediate_no_crl_covers_does_not_refuse_the_chain() {
-        let ca = root("revocation-root");
-        let ica = intermediate(&ca, "revocation-ica", ICA_SERIAL);
-        let peer = leaf(&ica, LEAF_SERIAL);
-        let revocation = shared(&[crl(&ica, &[], (2035, 1, 1))]);
-        assert!(!rejected(
-            &[peer.as_ref(), ica.der.as_ref()],
-            &options(&revocation)
-        ));
     }
 }
 
@@ -1716,6 +1081,9 @@ mod delegated_credential_key_correspondence_tests {
     //! an empty credential chain apart from a genuine key mismatch is prose. A caller,
     //! an audit record and a test can all match on the variant; none of them can match on
     //! the sentence.
+
+    use x509_parser::certificate::X509Certificate;
+    use x509_parser::prelude::FromDer;
 
     use super::*;
     use crate::communication_assurance::credential_key_correspondence::establish_credential_key_correspondence;

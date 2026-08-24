@@ -105,13 +105,14 @@ impl MechanismVerifiedCredentialEvidence {
     }
 }
 
-/// The accepted credential's chain in DER, leaf first — an absent acceptance is the empty
-/// chain.
+/// The credential chain of an OPTIONAL association, leaf first — an absent credential is
+/// the empty chain.
 ///
-/// The compatibility projection the two serving paths need, composed from Slice 4's rather
-/// than duplicated: the unmigrated fail-closed core still consumes a representation, and
-/// both refusals mean the same thing to it. One authority owns the fact; this restates
-/// nothing.
+/// A COMPATIBILITY projection with exactly ONE consumer left: the online-OCSP guard, which
+/// ADR-MCPRE-064 Slice 3 deliberately did not migrate. Currency and identity both moved to
+/// semantic products, so this and its Slice-4 sibling are the whole remaining raw-chain
+/// surface of the serving path, and they go when OCSP does.
+#[cfg_attr(not(feature = "online_ocsp"), allow(dead_code))]
 pub(crate) fn accepted_chain_der(
     accepted: Option<&MechanismVerifiedCredentialEvidence>,
 ) -> Vec<&[u8]> {

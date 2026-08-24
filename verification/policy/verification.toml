@@ -1221,3 +1221,122 @@ tested_symbols = [
   "lib#communication_assurance::authenticated_relationship_peer::tests::a_leaf_without_the_configured_field_refuses_rather_than_falling_back",
 ]
 pilot = "verus-candidate"
+
+# ---------------------------------------------------------------------------
+# Communication assurance — ADR-MCPRE-064 Slice 3
+# ---------------------------------------------------------------------------
+#
+# The unit that replaces a representation-level decision with semantic facts. It decides
+# exactly what production already decided — the admitted set is unchanged — and what it adds
+# is that the five facts production computed and threw away are distinguishable, and that
+# *nobody asked* is a state rather than a silent admission.
+
+[[edge]]
+# Producer -> consumer. Currency is ABOUT the accepted credential, projected from it inside
+# the operation rather than handed in as a chain.
+kind = "CONTRACT_CONSUMES"
+from = "proxy.mechanism_verified_credential"
+to = "proxy.credential_currency"
+rationale = "The chain evaluated is projected from the acceptance, so the verdict is about the credential this relationship presented. If acceptance became manufacturable, this unit would still evaluate and its own controls would still pass — they measure WHICH fact refused, not where the credential came from."
+
+[[edge]]
+# The revocation index this unit consults is the one the CRL loader builds; a weakened
+# index changes every verdict here without any control in this unit going red.
+kind = "COMPILE_DEPENDENCY"
+from = "proxy.tls_listener_state"
+to = "proxy.credential_currency"
+rationale = "The per-request revocation verdict IS the client-revocation index's, consulted at request time. A loader that admitted a CRL without a nextUpdate, or keyed the index by the wrong coordinate, would change what this unit concludes while its controls — which vary the CERTIFICATE and the CRL contents, not the loader — stayed green."
+
+[[unit]]
+id = "proxy.credential_currency"
+class = "V0"
+description = "Whether the credential a communication-establishment mechanism accepted for a relationship is still acceptable at a named instant under the deployment's configured controls — with the leaf/issuer revocation strength asymmetry preserved, and with 'no control configured' a distinct state from 'evaluated and acceptable'. Claims no identity, no authentication, no admission, no authorization."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/credential_currency/mod.rs",
+  "mcp-re-proxy/src/communication_assurance/credential_currency/evaluation.rs",
+  "mcp-re-proxy/src/communication_assurance/credential_currency/policy.rs",
+  "mcp-re-proxy/src/communication_assurance/credential_currency/x509_adapter.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/credential_currency/five_facts",
+  "mutation://proxy/credential_currency/five_facts",
+]
+# The parser premise, and nothing else. The mechanism premises stay under the authorities
+# that own them: this unit consumes their products and restates neither.
+assumptions = ["ASM-0030"]
+# The controls mint hostile certificates a handshake never produces — an inverted window, a
+# zero-length one, unparseable DER — because those are the inputs the fail-closed direction
+# has to survive, and they drive real signed chains and real signed CRLs where the question
+# is what the index concludes. Each names WHICH refusal, so a weakening that swaps one for
+# another goes red instead of staying green.
+tested_symbols = [
+  "lib#communication_assurance::credential_currency::evaluation::tests::a_deployment_that_configures_nothing_evaluates_nothing",
+  "lib#communication_assurance::credential_currency::evaluation::tests::the_public_entrance_reports_an_unexamined_credential_as_unexamined",
+  "lib#communication_assurance::credential_currency::evaluation::tests::an_absent_leaf_is_refused_wherever_a_control_is_configured",
+  "lib#communication_assurance::credential_currency::evaluation::tests::an_absent_leaf_is_evaluated_by_nobody_when_no_control_is_configured",
+  "lib#communication_assurance::credential_currency::evaluation::tests::unparseable_der_is_refused_as_unreadable_and_not_as_something_else",
+  "lib#communication_assurance::credential_currency::evaluation::tests::an_inverted_or_degenerate_window_is_unreadable_not_an_admissible_span",
+  "lib#communication_assurance::credential_currency::evaluation::tests::an_over_long_span_is_refused_as_a_lifetime_breach_naming_both_numbers",
+  "lib#communication_assurance::credential_currency::evaluation::tests::expiry_is_a_different_refusal_from_an_over_long_span",
+  "lib#communication_assurance::credential_currency::evaluation::tests::the_validity_window_runs_in_a_revocation_only_deployment",
+  "lib#communication_assurance::credential_currency::evaluation::tests::an_unreadable_issuer_is_refused_as_an_issuer_and_not_as_the_credential",
+  "lib#communication_assurance::credential_currency::evaluation::chain_validity_tests::a_chain_whose_intermediate_has_expired_is_refused",
+  "lib#communication_assurance::credential_currency::evaluation::chain_validity_tests::a_self_issued_root_in_the_presented_chain_is_not_held_to_a_window",
+  "lib#communication_assurance::credential_currency::evaluation::chain_validity_tests::an_unparseable_intermediate_is_refused",
+  "lib#communication_assurance::credential_currency::evaluation::per_request_revocation_tests::a_leaf_on_a_current_crl_is_refused",
+  "lib#communication_assurance::credential_currency::evaluation::per_request_revocation_tests::a_chain_under_a_revoked_intermediate_is_refused",
+  "lib#communication_assurance::credential_currency::evaluation::per_request_revocation_tests::an_intermediate_no_crl_covers_does_not_refuse_the_chain",
+  "lib#communication_assurance::credential_currency::evaluation::per_request_revocation_tests::a_reloaded_crl_refuses_a_leaf_that_was_served_a_moment_earlier",
+  "lib#communication_assurance::credential_currency::evaluation::per_request_revocation_tests::a_leaf_whose_issuer_no_crl_covers_is_refused",
+  "lib#communication_assurance::credential_currency::evaluation::per_request_revocation_tests::a_leaf_under_a_crl_that_has_fallen_out_of_force_is_refused",
+  "lib#communication_assurance::credential_currency::evaluation::per_request_revocation_tests::a_leaf_a_current_crl_does_not_list_is_served",
+  "lib#communication_assurance::credential_currency::evaluation::per_request_revocation_tests::a_chain_whose_intermediate_is_on_no_crl_is_served",
+  "lib#communication_assurance::credential_currency::evaluation::chain_validity_tests::a_chain_whose_intermediate_is_current_is_admitted",
+  "lib#communication_assurance::credential_currency::policy::tests::every_policy_states_exactly_which_controls_it_applies",
+]
+pilot = "verus-candidate"
+
+# ---------------------------------------------------------------------------
+# Communication assurance — ADR-MCPRE-064 Slice 3, the composition
+# ---------------------------------------------------------------------------
+
+[[edge]]
+kind = "CONTRACT_CONSUMES"
+from = "proxy.authenticated_relationship_peer"
+to = "proxy.current_authenticated_peer"
+rationale = "The authentication half is carried whole and its acceptance is the credential the currency half evaluates. If authentication became manufacturable this product would still be built, and its controls — which vary the RELATIONSHIP and the policy — would still pass."
+
+[[edge]]
+kind = "CONTRACT_CONSUMES"
+from = "proxy.credential_currency"
+to = "proxy.current_authenticated_peer"
+rationale = "The currency half IS the currency authority's verdict on the peer's own acceptance, and its refusal is carried unchanged rather than re-decided. A currency authority that stopped distinguishing its five facts would collapse this product's refusal algebra with no control here going red."
+
+[[unit]]
+id = "proxy.current_authenticated_peer"
+class = "V0"
+description = "An authenticated relationship peer whose own accepted credential the deployment's controls found acceptable at a named instant, composed inside one construction closure — refusing where currency was never evaluated, and claiming nothing about admission, authorization, binding, or the next request."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/current_authenticated_peer.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/current_authenticated_peer/one_relationship",
+  "mutation://proxy/current_authenticated_peer/one_relationship",
+]
+# No new premise. Both halves are registered products and this unit adds only the fact that
+# they are about one relationship — which is structural, not assumed.
+assumptions = []
+# The controls drive REAL handshakes, including a genuine resumption and two relationships
+# with different peers. A control asserting only that a current peer was produced would stay
+# green while the composition reached past its own authentication.
+tested_symbols = [
+  "lib#communication_assurance::current_authenticated_peer::tests::an_authenticated_peer_with_a_current_credential_is_a_current_authenticated_peer",
+  "lib#communication_assurance::current_authenticated_peer::tests::a_deployment_that_evaluates_nothing_yields_no_current_peer",
+  "lib#communication_assurance::current_authenticated_peer::tests::an_expired_credential_refuses_and_carries_the_authoritys_own_reason",
+  "lib#communication_assurance::current_authenticated_peer::tests::a_ceiling_below_the_credentials_span_refuses_as_a_lifetime_breach",
+  "lib#communication_assurance::current_authenticated_peer::tests::each_relationships_currency_is_evaluated_against_its_own_credential",
+  "lib#communication_assurance::current_authenticated_peer::tests::a_resumed_relationship_stays_resumed_after_the_currency_evaluation",
+]
+pilot = "verus-candidate"

@@ -129,6 +129,20 @@ impl AuthenticatedRelationshipPeerFacts {
         self.identity.source()
     }
 
+    /// The acceptance this peer authenticated under.
+    ///
+    /// A NAMED SEMANTIC PROJECTION, `pub(super)` for the currency composition next door.
+    /// Projecting is not constructing: the constructor stays private to this module, so
+    /// widening a projection does not widen the set of modules that can produce the fact,
+    /// which is what THM-0031 claims.
+    ///
+    /// It exists so the composition can reach THIS peer's own credential rather than being
+    /// handed one — the absence of a credential parameter is what makes pairing
+    /// relationship A's authentication with relationship B's currency unconstructible.
+    pub(super) fn accepted_credential(&self) -> &MechanismVerifiedCredentialEvidence {
+        &self.accepted
+    }
+
     /// The path on which the authentication was reached.
     ///
     /// Projected from the predecessor rather than stored again. A consumer that needs *the

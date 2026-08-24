@@ -23,11 +23,12 @@ use rustls::ServerConfig;
 use rustls::ServerConnection;
 use rustls::StreamOwned;
 
+#[cfg(feature = "online_ocsp")]
 use crate::communication_assurance::mechanism_verified_credential::accepted_chain_der;
 use crate::communication_assurance::mechanism_verified_credential::rustls_adapter::verified_credential;
 use crate::communication_assurance::MechanismVerifiedCredentialEvidence;
 use crate::tls::assertion_header;
-use crate::tls::cert_lifetime_rejection_for_chain;
+use crate::tls::credential_currency_rejection;
 use crate::tls::resolve_authenticated_identity;
 use crate::tls::routing_header_rejection;
 use crate::tls::wall_clock_unix;
@@ -108,14 +109,17 @@ fn connection_rejection(
     options: &ServerOptions,
     request: &[u8],
 ) -> Option<Vec<u8>> {
-    let chain = accepted_chain_der(credential);
     if let Some(error) =
-        cert_lifetime_rejection_for_chain(&chain, options, request, wall_clock_unix())
+        credential_currency_rejection(credential, options, request, wall_clock_unix())
     {
         return Some(error);
     }
+    // The one remaining raw-chain consumer, named rather than hidden: online OCSP has not
+    // been migrated and its redesign is a separate slice. The async path does not wire it.
     #[cfg(feature = "online_ocsp")]
-    if let Some(error) = crate::tls::ocsp_rejection_for_chain(&chain, options, request) {
+    if let Some(error) =
+        crate::tls::ocsp_rejection_for_chain(&accepted_chain_der(credential), options, request)
+    {
         return Some(error);
     }
     None

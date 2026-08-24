@@ -1357,3 +1357,143 @@ owner = "proxy.authenticated_relationship_peer"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.authenticated_relationship_peer"]
 depends_on = ["THM-0029", "THM-0030"]
+
+[[theorem]]
+id = "THM-0032"
+title = "Per-request credential currency is decided from the credential the mechanism accepted, and reports which of its five facts refused"
+statement = """
+This is a claim about a PREDICATE AT AN INSTANT and about the ALGEBRA of its refusal. It does
+not say the credential is trusted or that the peer is authenticated; it says what the
+deployment's configured controls concluded about that credential at a named moment.
+
+Every CurrentCredentialFacts inhabitant originates from an inhabitant produced by
+communication_assurance::credential_currency::evaluation::evaluate_credential_currency — a
+free function taking an Option<&MechanismVerifiedCredentialEvidence>, a
+CredentialCurrencyPolicy and an instant, and nothing else — and carries that acceptance, that
+instant, and the controls the policy actually applied. There is no chain parameter and no
+certificate parameter: the chain evaluated is projected from the acceptance inside the
+operation, so the facts reported cannot be about another relationship's certificates. The
+chain-form worker is private to the authority, and publishing it would be a second entrance
+letting a caller evaluate certificates no relationship ever presented.
+
+The ADMITTED SET IS UNCHANGED from the implementation this replaces. What is new is that the
+five facts production computed and discarded are now distinguishable, and that the
+STRENGTH ASYMMETRY between them is preserved rather than repaired:
+
+  leaf validity window   runs whenever ANY control is configured — never fused to the ceiling
+  leaf span ceiling      only where a ceiling is configured
+  leaf revocation        `admits`: an empty index admits, otherwise Revoked AND Unknown refuse
+  issuer validity window self-issued certificates exempt; unparseable refused
+  issuer revocation      EXPLICIT `Revoked` only — `Unknown` admits
+
+The issuer/leaf revocation asymmetry is deliberate and is carried, not corrected: whether a
+chain reaches a CRL-covered issuer is a path-building question the handshake settled, and
+re-deciding it from the certificates a peer chose to send would refuse chains a full
+handshake admitted.
+
+The outcome has THREE states, not two. A deployment configuring neither a ceiling nor CRLs
+evaluates nothing — production returns before parsing — so `NotEvaluated` is distinct from
+`Current`. A two-state answer would report an unexamined credential as unobjectionable, which
+is the same sentence as *checked, and fine*, and the credential of a peer holding a keep-alive
+connection open past its notAfter is exactly the credential that reaches that state.
+
+The policy is a TOTAL classification of deployment state with no `Option` and four variants,
+so *evaluating with nothing configured* cannot be written. The revocation index it carries is
+the SNAPSHOT in force for the request, not the atomic cell: the leaf check and the issuer
+check therefore cannot read two different indexes across a reload.
+"""
+security_consequence = """
+A revocation published after a handshake, and an expiry that falls during one, reach a peer
+that already holds a connection — rustls runs client authentication on a full handshake only,
+and the ADR-MCPRE-055 trust epoch digests the anchor set rather than the CRLs, so nothing else
+does. That property is production's and is preserved; what this adds is that the reason is no
+longer discarded.
+
+Before it, all seven refusals arrived as one `mcp-re.transport_binding_failed`, so an
+operator could not tell an expired credential from a revoked one from an absent one, and no
+downstream authority could branch on the difference. A weakening that swapped one refusal for
+another — reporting an expired credential as over-long, or an unreadable issuer as an
+unreadable credential — was invisible to every control that could only assert *something
+refused*.
+"""
+scope = """
+It establishes NO identity and NO authentication: it consumes the acceptance, not the
+authenticated peer, precisely so that a deployment deriving no transport identity at all
+(`IdentityStrategy::LbAssertion`) keeps having its credential examined. An authority gated on
+authentication would silently stop checking currency in exactly that deployment.
+
+It does not establish admission, authorization, or binding to a request actor. It says nothing
+about online OCSP, which is a separate existing path over the same chain and is deliberately
+unmigrated — the last raw-chain projection in the serving path is its consumer.
+
+It is a claim about an INSTANT. The product carries the instant it was evaluated at, and says
+nothing about the next request on the same connection.
+
+The parser premise is ASM-0030 under the adapter that owns it; the mechanism premises stay
+under THM-0028 and THM-0030. This claim consumes their conclusions and restates none of them.
+"""
+owner = "proxy.credential_currency"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.credential_currency"]
+depends_on = ["THM-0028", "THM-0030"]
+
+[[theorem]]
+id = "THM-0033"
+title = "A current authenticated peer's currency is evaluated against the credential that same peer authenticated with"
+statement = """
+This is a claim about the COMPOSITION, the third application of the ADR-MCPRE-063 L-5 rule.
+Neither premise is strengthened: THM-0031 says what an authenticated relationship peer is, and
+THM-0032 says what a currency evaluation concluded about an accepted credential.
+
+Every CurrentAuthenticatedRelationshipPeerFacts inhabitant originates from an inhabitant
+produced by communication_assurance::current_authenticated_peer::current_authenticated_peer —
+a free function taking an AuthenticatedRelationshipPeerFacts by value, a
+CredentialCurrencyPolicy and an instant, and nothing else. Its identity, identity source and
+establishment path are exactly that peer's, and its evaluated instant and applied controls are
+exactly what evaluating the currency of THAT PEER'S OWN acceptance returned.
+
+The two facts cannot be about different credentials. The derivation's whole parameter list is
+a peer, a policy and an instant: there is no parameter through which a separately obtained
+currency product, credential, chain or certificate could enter, so pairing the authentication
+of relationship A with the currency of relationship B is unconstructible rather than merely
+untaken. That both facts concern *a* relationship establishes nothing, because it does not
+establish the same one, and a proxy holds many at once. No fingerprint and no linkage token
+were introduced: the relation is structural, so there is nothing to compare.
+
+The peer's own acceptance is reached through a named `pub(super)` projection on the
+predecessor. Projecting is not constructing — the predecessor's constructor stays private to
+its module, so THM-0031's producer boundary is untouched.
+
+`NotEvaluated` is a REFUSAL here and a legitimate outcome one level down. This type's
+proposition contains the words *still acceptable*, and an unexamined credential has not earned
+them; the currency authority's proposition is *what did the configured controls conclude*, for
+which the truthful answer in that deployment is that none was reached. That difference is
+between the two TYPES and says nothing about what a deployment may serve: the serving path
+consumes the currency authority directly and keeps admitting an unexamined credential exactly
+as before.
+
+The establishment path is projected through and never flattened. A resumed relationship whose
+credential is current is authenticated earlier, carried forward, and acceptable now — three
+facts, and reporting the first as fresh is the sentence ADR-MCPRE-055 forbids.
+"""
+security_consequence = """
+This is the first product a consumer may read as *the peer of this relationship is this
+identity, and its credential is still good*. Before it, a consumer wanting that sentence had
+to hold an authentication and a currency verdict side by side and assert the relation itself —
+the composition this authority makes unconstructible, and whose failure mode is a request
+served under a peer whose credential was revoked on another connection.
+"""
+scope = """
+It does not establish admission, authorization, channel binding, or that this peer is the
+actor that signed any request. It does not say the relationship still exists, and it is a
+claim about the instant it carries rather than about the next request.
+
+It has NO production caller in this slice, exactly as Slice 5 of ADR-MCPRE-063 and Slice 2 of
+this ADR had none when they were built. The serving path consumes the currency authority
+directly, because currency must keep being evaluated where no transport identity is derived
+at all.
+"""
+owner = "proxy.current_authenticated_peer"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.current_authenticated_peer"]
+depends_on = ["THM-0031", "THM-0032"]

@@ -111,12 +111,18 @@ graph BT
     THM_0029["THM-0029<br/>A channel-associated peer identity is interpreted from the leaf of that relationship's own credential"]
     THM_0030["THM-0030<br/>Verified-credential evidence records the mechanism's own acceptance and the path it was reached on"]
     THM_0031["THM-0031<br/>An authenticated relationship peer's identity is read from the leaf of the very credential the mechanism accepted for that relationship"]
+    THM_0032["THM-0032<br/>Per-request credential currency is decided from the credential the mechanism accepted, and reports which of its five facts refused"]
+    THM_0033["THM-0033<br/>A current authenticated peer's currency is evaluated against the credential that same peer authenticated with"]
     THM_0023 --> THM_0024
     THM_0024 --> THM_0029
     THM_0028 --> THM_0029
     THM_0028 --> THM_0030
     THM_0029 --> THM_0031
     THM_0030 --> THM_0031
+    THM_0028 --> THM_0032
+    THM_0030 --> THM_0032
+    THM_0031 --> THM_0033
+    THM_0032 --> THM_0033
 ```
 
 ## Component 11
