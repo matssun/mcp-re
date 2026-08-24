@@ -23,9 +23,9 @@ use rustls::ServerConfig;
 use rustls::ServerConnection;
 use rustls::StreamOwned;
 
-use crate::communication_assurance::associated_chain_der;
-use crate::communication_assurance::channel_associated_credential::rustls_adapter::associated_credential;
-use crate::communication_assurance::ChannelAssociatedCertificateCredentialEvidence;
+use crate::communication_assurance::mechanism_verified_credential::accepted_chain_der;
+use crate::communication_assurance::mechanism_verified_credential::rustls_adapter::verified_credential;
+use crate::communication_assurance::MechanismVerifiedCredentialEvidence;
 use crate::tls::assertion_header;
 use crate::tls::cert_lifetime_rejection_for_chain;
 use crate::tls::routing_header_rejection;
@@ -70,7 +70,7 @@ where
     // which credential it associated with the relationship. A refusal becomes an absent
     // credential and the fail-closed core downstream decides it, exactly as an absent
     // chain did before.
-    let credential = associated_credential(&stream.conn).ok();
+    let credential = verified_credential(&stream.conn).ok();
     let headers = RequestHeaders::parse(&request.header_block);
     let identity = resolve_identity(credential.as_ref(), options);
     let assertion = assertion_header(options, &headers);
@@ -102,10 +102,10 @@ fn apply_socket_timeouts(tcp: &TcpStream, limits: &ServerLimits) -> io::Result<(
 /// identity, the async fleet resolves from the credential it captured at its own
 /// establishment boundary.
 fn resolve_identity(
-    credential: Option<&ChannelAssociatedCertificateCredentialEvidence>,
+    credential: Option<&MechanismVerifiedCredentialEvidence>,
     options: &ServerOptions,
 ) -> Option<TransportIdentity> {
-    let chain = associated_chain_der(credential);
+    let chain = accepted_chain_der(credential);
     crate::tls::resolve_identity_from_leaf(chain.first().copied(), options)
 }
 
@@ -114,11 +114,11 @@ fn resolve_identity(
 /// guard. The order and every verdict are [`crate::tls`]'s; this supplies the chain.
 /// Returns the first rejection's error bytes, or `None` if the request is admitted.
 fn connection_rejection(
-    credential: Option<&ChannelAssociatedCertificateCredentialEvidence>,
+    credential: Option<&MechanismVerifiedCredentialEvidence>,
     options: &ServerOptions,
     request: &[u8],
 ) -> Option<Vec<u8>> {
-    let chain = associated_chain_der(credential);
+    let chain = accepted_chain_der(credential);
     if let Some(error) =
         cert_lifetime_rejection_for_chain(&chain, options, request, wall_clock_unix())
     {

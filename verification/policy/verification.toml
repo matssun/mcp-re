@@ -1115,3 +1115,51 @@ tested_symbols = [
   "lib#communication_assurance::channel_associated_identity::tests::the_derivation_reads_the_first_certificate_of_the_associated_chain",
 ]
 pilot = "verus-candidate"
+
+# ---------------------------------------------------------------------------
+# Communication assurance — ADR-MCPRE-064 Slice 1
+# ---------------------------------------------------------------------------
+#
+# The first unit of Phase 2, and the premise the word AUTHENTICATED will need. It decides
+# nothing: acceptance is the mechanism's, taken during establishment, and this relays it
+# together with the path it was reached on. What it adds to Slice 4 is the distinction Slice 4
+# measured, deliberately omitted, and predicted would enter the representation when a consumer
+# appeared.
+
+[[edge]]
+# Producer -> consumer. Verified-credential evidence consumes the association fact; it does
+# not re-derive what association means, and it does not read `peer_certificates()`.
+kind = "CONTRACT_CONSUMES"
+from = "proxy.channel_associated_credential"
+to = "proxy.mechanism_verified_credential"
+rationale = "The acceptance is ABOUT the associated credential, obtained from the same connection in the same operation. If association became manufacturable, this product would still be constructed and its own controls would still pass — they measure which PATH the mechanism reported, not where the credential came from."
+
+[[unit]]
+id = "proxy.mechanism_verified_credential"
+class = "V0"
+description = "The credential a communication-establishment mechanism accepted for a relationship, and the establishment path on which acceptance was reached — claiming nothing about the credential's currency, trust policy, identity, or admission, and not carrying the anchor epoch."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/mechanism_verified_credential/mod.rs",
+  "mcp-re-proxy/src/communication_assurance/mechanism_verified_credential/rustls_adapter.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/mechanism_verified_credential/establishment_path",
+  "mutation://proxy/mechanism_verified_credential/establishment_path",
+]
+# The path report, and the epoch gate behind a resumed acceptance. ASM-0033 stays under the
+# association authority: what THIS unit adds is the second report, and broadening the first
+# would widen a blast radius THM-0028 does not need.
+assumptions = ["ASM-0035"]
+# The controls drive REAL handshakes on both paths, including a genuine resumption. A control
+# asserting only that acceptance succeeded would stay green while a resumed relationship was
+# reported as one whose verifier had just run.
+tested_symbols = [
+  "lib#communication_assurance::mechanism_verified_credential::tests::the_two_establishment_paths_are_distinguishable",
+  "lib#communication_assurance::mechanism_verified_credential::tests::an_unreported_path_is_not_read_as_a_full_handshake",
+  "lib#communication_assurance::mechanism_verified_credential::rustls_adapter::acceptance::a_full_handshake_reports_the_path_its_verifier_ran_on",
+  "lib#communication_assurance::mechanism_verified_credential::rustls_adapter::acceptance::a_resumed_relationship_reports_a_resumed_path_not_a_full_one",
+  "lib#communication_assurance::mechanism_verified_credential::rustls_adapter::acceptance::a_connection_that_has_not_established_carries_slice_fours_refusal",
+  "lib#communication_assurance::mechanism_verified_credential::rustls_adapter::acceptance::a_peer_the_verifier_refused_never_reaches_this_authority",
+]
+pilot = "verus-candidate"

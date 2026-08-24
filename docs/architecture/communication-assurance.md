@@ -3,6 +3,7 @@
 # Communication Assurance — Implementation Blueprint
 
 **Governing ADR:** [ADR-MCPRE-063](https://github.com/matssun/mcp-re/discussions/601) — ✅ Accepted 2026-08-22; the Discussion is the source of truth.
+**Phase 2 ADR:** [ADR-MCPRE-064](https://github.com/matssun/mcp-re/discussions/615) — 📄 Proposed 2026-08-23; verified relationships and authentication composition (§12).
 **Constitutional parent:** [ADR-MCPRE-061](https://github.com/matssun/mcp-re/discussions/567)
 **Assurance/evidence framework:** ADR-MCPRE-059
 **Current mechanism-specific lifecycle:** ADR-MCPRE-062
@@ -956,34 +957,180 @@ PR #600 / MCPRE-138                                                          DON
 ADR-MCPRE-063 + blueprint                                                    ACCEPTED
   -> ratify semantic architecture, initial graph, migration discipline
 
-Slice 1  (#602)                                                              COMPLETE
+Slice 1  (#602)                                                       LANDED ON MAIN
   -> certificate-chain evidence -> peer-identity evidence
   -> taught L-1, L-2
 
-Slice 2  (#605)                                                              COMPLETE
+Slice 2  (#605)                                                       LANDED ON MAIN
   -> credential evidence + signing-key evidence -> credential/key correspondence
   -> the first BINARY composition; taught L-3
 
-Slice 3  (#607)                                                              COMPLETE
+Slice 3  (#607)                                                       LANDED ON MAIN
   -> correspondence facts gate delegated credential materialization
   -> the first semantic product gating a RUNTIME CAPABILITY; taught L-4
   -> selected because Slice 2 exposed a defect in its own successor boundary
 
-Slice 4  (#609)                                                              COMPLETE
+Slice 4  (#609)                                                       LANDED ON MAIN
   -> successful establishment -> channel-associated certificate credential evidence
   -> the first FAITHFUL RELAY: a sealed product whose whole content is a mechanism
      report, and which therefore cannot be manufactured beside a relationship
   -> the contract was amended before implementation; §8.18 records the four changes
 
-Slice 5  (#612)                                                              COMPLETE
+Slice 5  (#612 / #614)                                          LANDED ON MAIN 5d9a694
   -> identity interpreted from the credential the relationship carries, in ONE
      construction operation — never a caller pairing two independently obtained facts
-  -> the first PROVENANCE LINKAGE: it adds no transformation, only the fact that two
-     established facts are about the same object (§8.19, §8.20)
+  -> the first PROVENANCE LINKAGE: it adds no new identity transformation, only the
+     fact that two established facts are about the same object (§8.19, §8.20)
   -> taught L-5
 
+=========================== PHASE BOUNDARY ===========================
+  Slices 1-5 are LANDED ON MAIN. ADR-MCPRE-063 has demonstrated five materially
+  different composition patterns and the laws they taught. The next question —
+  what constitutes a VERIFIED / AUTHENTICATED communication relationship — is a
+  new normative question and gets its own decision record: ADR-MCPRE-064.
+
+Phase 2  (ADR-MCPRE-064)
+  -> mechanism-verified credential evidence, then the composition that finally
+     earns the word AUTHENTICATED
+  -> first slice: #616, contract in §12.5
+
 Later
-  -> map ADR-062/#598 session lifecycle into the mechanism-specific assurance branch
-  -> compose higher facts
+  -> map ADR-062/#598 session lifecycle into the mechanism-specific assurance branch,
+     unless characterization shows verified credential facts cannot be modelled
+     without resolving resumed-session provenance first
   -> draft #581 theorems only against the architecture/evidence that actually exists
 ```
+
+## 12. The phase boundary — what is built, what it taught, and what comes next
+
+### 12.1 The authority graph on main
+
+```text
+CertificateChainEvidence ──[X.509 adapter, ASM-0030]──> CertificateIdentityFields
+                         ──[identity interpreter]─────> CertificatePeerIdentityEvidence   (S1)
+
+CredentialPublicKeyEvidence + CryptographicSigningKeyEvidence
+                         ──[correspondence]──────────> CredentialKeyCorrespondenceFacts   (S2)
+                                                            │
+                                                            └─gates─> delegated resolver  (S3)
+
+successful establishment ──[rustls adapter, ASM-0033]──> ChannelAssociatedCertificate
+                                                         CredentialEvidence               (S4)
+                                                            │
+                    exact associated leaf + CertificateIdentityPolicy   [ASM-0034]
+                                                            │
+                                                            v
+                                          ChannelAssociatedCertificatePeerIdentityEvidence (S5)
+```
+
+Slice 5's final shape, stated once:
+
+```text
+successful relationship
+      |
+      v
+ChannelAssociatedCertificateCredentialEvidence
+      |
+      | exact associated leaf + CertificateIdentityPolicy
+      v
+ChannelAssociatedCertificatePeerIdentityEvidence
+```
+
+Theorems: THM-0023, THM-0024 (identity), THM-0025..THM-0027 (correspondence, materialization),
+THM-0028 (credential origin), THM-0029 (provenance linkage). Assumptions: ASM-0030 (parser),
+ASM-0033 (mechanism report), ASM-0034 (chain ordering). None of them carries a human review
+record yet, and the review axis reports that truthfully — that status governs whether a claim
+may be called ESTABLISHED, and never whether a change may merge.
+
+### 12.2 The conclusions worth carrying forward
+
+The debates are in §8.14–§8.20; these are the results.
+
+- **Evidence is not a conclusion.** A product's name stops where its evidence stops. This is
+  why `CertificatePeerIdentityEvidence` is not `AuthenticatedPeer`, and why nothing built so
+  far may be read as trust.
+- **Identity is not assurance.** Knowing which identity a certificate denotes says nothing
+  about whether that certificate was accepted under configured trust.
+- **One fact, many consumers, one authority.** A fact is derived where it is owned and read
+  everywhere else through named projections. Consumers do not re-derive it from
+  representation.
+- **Provenance must establish that composed facts concern the same object** (L-5). Two true
+  facts can state a false relation, and the caller doing the pairing is the defect.
+- **A semantic construction operation is not a Rust producer/privacy closure.** Deriving a
+  fact in one operation is required; moving the successor into the predecessor's privacy
+  subtree to do it destroys the predecessor's seal.
+- **Predecessor invariants must narrow successor state.** A non-empty-chain guarantee means
+  the successor's refusal algebra carries no absence state; the invariant has to buy
+  something or it is decoration.
+- **Mechanism assumptions stay at the narrowest unit that consumes them.** ASM-0034 is
+  scoped to the identity linkage, not folded into ASM-0033, because THM-0028 does not need
+  ordering.
+- **Privacy bounds who could; call sites say who does.** A sole-producer claim is the
+  conjunction, scoped to the production configuration.
+
+The implementation laws L-1…L-5 remain as stated in §8.15, §8.16, §8.17 and §8.20.
+
+### 12.3 The next phase, and the gap it closes
+
+The refusal that ends Phase 1 is the entry to Phase 2. Slice 5 declined the name
+`AuthenticatedPeerIdentityFacts` because the trust premise did not exist:
+
+```text
+ChannelAssociatedCertificatePeerIdentityEvidence
+            +
+verified / trusted credential facts          <- MISSING
+            v
+authenticated peer / relationship facts
+            v
+binding facts
+            v
+admission / authority consumers
+```
+
+Phase 2 builds the missing premise and then composes it. Its normative decisions —
+what facts constitute a verified relationship, and how they compose — are
+**ADR-MCPRE-064**, because they are a new question rather than a further application of
+ADR-MCPRE-063's laws.
+
+### 12.4 Characterization of the existing verification path
+
+Measured on main before any Phase 2 type was named, because the first product must have a
+proposition that is *already true in production*.
+
+| question | what production does |
+|---|---|
+| what establishes acceptance under configured trust? | the `WebPkiClientVerifier` built in `tls_listener_state::client_verifier`, run by rustls during client authentication |
+| what does it establish? | a path to a configured anchor, each certificate on that path inside its validity window, full-chain revocation against configured CRLs with `UnknownStatusPolicy::Deny` and no opt-out, CRL expiration enforced, and client auth mandatory |
+| are those separable? | **no** — rustls reports one accept/reject. Production draws no observable line between anchor membership, path validity and revocation |
+| what survives resumption? | none of them are re-run: the stored peer chain is restored verbatim. What holds is the ADR-MCPRE-055 epoch gate — a session resumes only while the anchor-set digest is unchanged |
+| what is re-established per request? | `tls::cert_lifetime_rejection_for_chain`: leaf validity window, leaf span against the lifetime ceiling, leaf revocation against the live index, issuer validity windows and explicit `Revoked`. **Only when a ceiling or CRLs are configured** — otherwise it returns before parsing |
+| what carries the conclusion today? | nothing typed. *This connection completed a full handshake against the verifier built from this anchor set* exists only as the implicit existence of a `ServerConnection`, plus `handshake_kind()`, plus the epoch digest inside the session store |
+
+Two consequences follow directly, and they are decisions rather than options:
+
+1. **Do not build a `VerifiedCredentialFacts` bag of `Option<T>`.** Production establishes
+   one inseparable conclusion at the handshake; a type separating anchor membership from
+   validity from revocation would claim a distinction the mechanism does not make.
+2. **Full and resumed are materially different propositions here**, unlike in Slice 4. There,
+   both paths associated byte-identical evidence and the product correctly omitted the
+   distinction — with the note that it "enters the representation when a consumer does".
+   This is that consumer: *verified in this handshake* and *inherited from an earlier
+   handshake under an unchanged anchor epoch* are different facts, and a verification
+   product that flattened them would be the one sentence ADR-MCPRE-055 forbids.
+
+### 12.5 First slice of Phase 2, and what is deferred
+
+Issue **#616**. The smallest product whose proposition is already real: **mechanism-verified
+credential evidence** — *the listener's configured client-certificate verifier accepted this credential,
+under this anchor-set epoch, on this establishment path*. Predecessor: Slice 4's credential.
+Not trust policy, not currency, not identity, not admission.
+
+Deferred, with reasons rather than as a backlog:
+
+- per-request currency (validity window, span ceiling, revocation) stays where it is — it is
+  a different authority answering *is it still good now*, and it is configuration-dependent;
+- OCSP is a separate existing path and a separate fact;
+- ADR-MCPRE-062 / #598 session lifecycle stays deferred. It is adjacent in TLS code, which
+  §9 says is not a reason. Pull it forward only if characterization shows verified credential
+  facts cannot be modelled without resolving resumed-session provenance first — the epoch
+  gate suggests they can, because the epoch is exactly the fact a resumed relationship needs.

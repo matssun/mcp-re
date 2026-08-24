@@ -1212,3 +1212,75 @@ owner = "proxy.channel_associated_identity"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.channel_associated_identity"]
 depends_on = ["THM-0024", "THM-0028"]
+
+# ---------------------------------------------------------------------------
+# ADR-MCPRE-064 Slice 1 — mechanism-verified credential evidence
+# ---------------------------------------------------------------------------
+
+[[theorem]]
+id = "THM-0030"
+title = "Verified-credential evidence records the mechanism's own acceptance and the path it was reached on"
+statement = """
+This is a claim about RELAY and ORIGIN. It does not say the credential is trusted, current,
+or unrevoked; it says the mechanism accepted it, and on which path.
+
+Every MechanismVerifiedCredentialEvidence inhabitant produced by this crate's production
+configuration originates from an inhabitant produced by
+communication_assurance::mechanism_verified_credential::rustls_adapter::verified_credential
+from ONE connection, carrying that connection's channel-associated credential evidence
+(THM-0028) and the establishment path the mechanism reported for that same connection.
+Cloning preserves that provenance.
+
+The two components cannot be mismatched, because there is no operation that accepts them
+separately: the derivation's whole parameter list is a connection, and both facts are read
+from it in one call. A caller cannot pair a credential with another relationship's path.
+
+The path is reported, never inferred. `Full` and `FullWithHelloRetryRequest` are a full
+handshake; `Resumed` is a resumed session; a relationship for which the mechanism reports no
+path at all is refused rather than defaulted, because guessing the full-handshake reading
+would invent the strongest verification fact from a report the mechanism declined to make.
+
+The producer boundary is a call-site fact scoped to the production configuration, as in
+THM-0028: the representation and constructor are private to the owning module, its one
+production call site is the descendant mechanism adapter, and the owner's test module is the
+other member of the set privacy admits.
+"""
+security_consequence = """
+A consumer that needs *the configured verifier ran during THIS establishment* can tell,
+instead of inferring it from the existence of a connection. That inference is currently
+unavoidable and silently wrong on every resumed session: rustls re-runs neither chain
+building, nor CRL consultation, nor the validity window when it restores a stored session,
+so a consumer treating every established relationship as freshly verified believes work
+happened that did not.
+
+Equally, a consumer that does NOT need freshness cannot be misled into thinking a resumed
+acceptance is defective. It rests on an earlier full handshake plus an unchanged anchor set,
+which is a different fact, not a weaker one.
+"""
+scope = """
+It is NOT authentication, and nothing here may be read as trust. It does not establish that
+the credential is currently valid, unrevoked, within a configured lifetime, or issued under a
+policy — those are recovered per request by a different authority, and only where a ceiling
+or CRLs are configured. It does not establish any identity, admission, or authorization, and
+it does not say the relationship still exists.
+
+It deliberately does NOT carry the anchor epoch. The epoch does not reach the serving path;
+the only one an adapter could read there is the listener's current epoch, while the
+acceptance described happened at an earlier handshake, so carrying it would be the L-5
+pairing this architecture forbids. What makes a resumed acceptance admissible is the
+ADR-MCPRE-055 epoch gate inside the session store, owned and measured by
+tls_listener_state::resumption_acceptance — this claim consumes that conclusion and does not
+restate it.
+
+The mechanism premises stay where they are owned: that the reported credential is the one
+associated is ASM-0033 under THM-0028, and that the reported PATH is faithful, with the store
+honouring its own refusal, is ASM-0035 here.
+
+Acceptance itself is a predecessor, not a decision. Every supported production build refuses
+an unverified peer during establishment, so the refusals this authority carries are
+mechanism-boundary inconsistencies rather than legal domain states.
+"""
+owner = "proxy.mechanism_verified_credential"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.mechanism_verified_credential"]
+depends_on = ["THM-0028"]

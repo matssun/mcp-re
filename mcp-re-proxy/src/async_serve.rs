@@ -56,9 +56,9 @@ use hyper_util::server::conn::auto;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
-use crate::communication_assurance::associated_chain_der;
-use crate::communication_assurance::channel_associated_credential::rustls_adapter::associated_credential;
-use crate::communication_assurance::ChannelAssociatedCertificateCredentialEvidence;
+use crate::communication_assurance::mechanism_verified_credential::accepted_chain_der;
+use crate::communication_assurance::mechanism_verified_credential::rustls_adapter::verified_credential;
+use crate::communication_assurance::MechanismVerifiedCredentialEvidence;
 use crate::tls::assertion_header;
 use crate::tls::connection_rejection_for_chain;
 use crate::tls::resolve_identity_from_leaf;
@@ -554,8 +554,8 @@ async fn serve_connection<H: AsyncRequestHandler>(
     // the trust anchor (`RevocationCheckDepth::Chain`), so a per-request check that
     // stopped at the leaf would keep honouring a peer whose INTERMEDIATE was revoked
     // for as long as it held the connection open.
-    let peer_credential: Arc<Option<ChannelAssociatedCertificateCredentialEvidence>> =
-        Arc::new(associated_credential(tls.get_ref().1).ok());
+    // THE ESTABLISHMENT BOUNDARY: `accept` succeeded (ADR-MCPRE-064 Slice 1).
+    let peer_credential = Arc::new(verified_credential(tls.get_ref().1).ok());
 
     // Capture the header-read deadline before `options` moves into the service.
     let header_read_timeout = options
@@ -691,7 +691,7 @@ async fn handle_request<H: AsyncRequestHandler>(
     req: Request<Incoming>,
     options: Arc<ServerOptions>,
     handler: Arc<H>,
-    peer_credential: Arc<Option<ChannelAssociatedCertificateCredentialEvidence>>,
+    peer_credential: Arc<Option<MechanismVerifiedCredentialEvidence>>,
     in_flight: Option<Arc<tokio::sync::Semaphore>>,
     in_flight_requests: Arc<AtomicUsize>,
     body_budget: Arc<BodyByteBudget>,
@@ -792,7 +792,7 @@ async fn handle_request<H: AsyncRequestHandler>(
         },
     };
 
-    let chain: Vec<&[u8]> = associated_chain_der(peer_credential.as_ref().as_ref());
+    let chain: Vec<&[u8]> = accepted_chain_der(peer_credential.as_ref().as_ref());
     let leaf = chain.first().copied();
     let identity = resolve_identity_from_leaf(leaf, &options);
     let assertion = assertion_header(&options, &headers);

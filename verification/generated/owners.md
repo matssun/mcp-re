@@ -31,6 +31,7 @@ not an omission to hide.
 | proxy.credential_key_correspondence | V0 | THM-0026 | 1 |
 | proxy.delegated_resolver_materialization | V0 | THM-0027 | 1 |
 | proxy.ed25519_public_key | V0 | THM-0025 | 1 |
+| proxy.mechanism_verified_credential | V0 | THM-0030 | 1 |
 | proxy.online_ocsp_reachability | V0 | THM-0013 | 0 |
 | proxy.peer_identity_value | V0 | THM-0023 | 0 |
 | proxy.runtime_lifecycle | V0 | THM-0012 | 0 |
