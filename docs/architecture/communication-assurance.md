@@ -1222,3 +1222,135 @@ unavoidable predecessor: the composition needed one new premise about the mechan
 authority. The product has **no production caller yet**, exactly as Slice 5 had none — wiring
 it into the serving paths is a migration, and §9 keeps migrations separate from the slice that
 creates the product they consume.
+
+## 14. Slice 3 as built — per-request credential currency
+
+Issue **#621**. The slice that removes representation-level currency from the serving path.
+
+### 14.1 The characterization
+
+`tls::cert_lifetime_rejection_for_chain` answered **seven** distinguishable questions and
+returned one `Option<Vec<u8>>`:
+
+| fact | premise it needs | scope | strength |
+|---|---|---|---|
+| the deployment asked at all | a ceiling **or** CRLs configured | whole check | if neither → returns **before the parse** |
+| leaf parses, window orderable | X.509 parser | leaf | `notAfter > notBefore` required |
+| leaf inside its validity window | a clock | leaf | unconditional once *any* control is configured |
+| leaf span within the ceiling | deployment policy | leaf | only where a ceiling is configured |
+| leaf not revoked | live CRL index | leaf | `admits()` — **Unknown REFUSES** |
+| issuers inside their own windows | a clock; self-issued exempt | `chain[1..]` | only reached if the leaf was admitted |
+| issuers not revoked | live CRL index | `chain[1..]` | `!= Revoked` — **Unknown ADMITS** |
+
+Two findings came out of it, and both shaped the design:
+
+1. **Leaf and issuer revocation are different strengths inside one boolean.** The asymmetry is
+   deliberate — whether a chain reaches a CRL-covered issuer is a path-building question the
+   handshake settled, and re-deciding it from certificates the peer chose to send would refuse
+   chains a full handshake admitted. It is **carried, not repaired**. An authority whose
+   algebra is more precise than its semantics reports the wrong fact.
+2. **With neither control configured, expiry is never re-checked.** The early return fires
+   before the parse, so a peer holding a keep-alive or HTTP/2 connection past its `notAfter`
+   keeps being served. The handshake caught it once; nothing catches it again.
+
+### 14.2 The smallest truthful products
+
+Finding 2 decides the outcome shape. A two-state answer reports that deployment as *no
+currency objection*, which is the same sentence as *checked, and fine*. So:
+
+```text
+CredentialCurrencyOutcome
+    NotEvaluated              the deployment configured no control — UNEXAMINED, not current
+    Current(facts)            evaluated, and acceptable at a named instant
+    Refused(refusal)          evaluated, and refused — naming WHICH of the five facts failed
+```
+
+**Not a bag of `Option<T>`.** The five distinctions live in the refusal algebra, which is
+where they are actually observable; a struct of five optional verdicts would claim a
+separability the conjunction does not have, and would spell "nobody asked" as another `None`.
+
+**The policy is a four-variant enum, not two `Option`s.** `NotEvaluated`, `Ceiling`,
+`Revocation`, `CeilingAndRevocation` — a total classification of deployment state in which
+*evaluated with nothing to evaluate* cannot be written. It carries the revocation **snapshot**
+in force for the request rather than the atomic cell, so the leaf check and the issuer check
+cannot read two different indexes across a reload. Classifying it is `tls::currency_policy`, a
+total selector, and that is where the per-request `load()` happens.
+
+**The admitted set is unchanged.** Every request production admitted is admitted; every one it
+refused is refused; a refusal is still `mcp-re.transport_binding_failed` bound to the request
+id. Rendering the typed reason on the wire is a separate decision this migration does not take.
+
+### 14.3 Why currency consumes the ACCEPTANCE, not the authenticated peer
+
+Gating currency on authentication would stop checking it under `IdentityStrategy::LbAssertion`,
+where no transport identity is derived at all and the credential the mechanism accepted is
+still the one holding the connection open. That would be a regression introduced by tidiness.
+So the currency authority takes `Option<&MechanismVerifiedCredentialEvidence>`, and the serving
+path takes that route for every strategy.
+
+### 14.4 The composition, and L-5 a third time
+
+`current_authenticated_peer(peer, policy, now)` takes the authenticated peer **by value**, a
+policy and an instant — never a currency product, never a credential, never a chain — and
+evaluates the currency of the acceptance that peer already carries, reached through a named
+`pub(super)` projection. The rejected shape is the familiar one:
+
+```text
+AuthenticatedRelationshipPeerFacts(A) + CurrentCredentialFacts(for B)   # REJECTED
+```
+
+No fingerprint and no linkage token: the relation is structural, so there is nothing to
+compare. That both facts concern *a* relationship establishes nothing — a proxy holds many.
+
+`NotEvaluated` is a **refusal** at the composition and a legitimate **outcome** one level down.
+This type's proposition contains the words *still acceptable*; an unexamined credential has not
+earned them. That is a claim about the TYPE, not about what a deployment may serve — the
+serving path consumes the currency authority directly and keeps admitting an unexamined
+credential exactly as before.
+
+### 14.5 Runtime migration, and the residue
+
+```text
+TLS establishment -> MechanismVerifiedCredentialEvidence
+                  -> AuthenticatedRelationshipPeerFacts        (identity, #619)
+                  -> per-request currency evaluation           (#621)
+                  -> admit / typed refusal
+```
+
+Both serving paths call `tls::credential_currency_rejection`, which takes the acceptance and
+never a chain. `cert_lifetime_rejection_for_chain`, `connection_rejection_for_chain`,
+`leaf_facts`, `LeafFacts`, `chain_issuers_within_validity` and `chain_issuers_not_revoked` are
+deleted from `tls.rs`; their claims moved with them and each is now stronger, because a control
+can name which fact refused instead of only that something did.
+
+**The residue, named rather than hidden:** `ocsp_rejection_for_chain` under the `online_ocsp`
+feature is the one remaining raw-chain consumer, and `accepted_chain_der` /
+`associated_chain_der` survive only for it. The async path has none at all. The provenance gate
+enforces exactly that: the async path may not name the projection, the blocking path may only
+while the file also carries the OCSP feature gate.
+
+### 14.6 Controls and registry
+
+Theorems **THM-0032** (currency) and **THM-0033** (composition). Units
+`proxy.credential_currency` and `proxy.current_authenticated_peer`. Assumption: ASM-0030 only —
+the parser — since no new premise was needed.
+
+Probes **M43–M50** attack the **individual semantic checks**, not the final verdict: the leaf's
+validity window, the fail-closed direction on an unreadable credential, the orderable-window
+rule, the leaf's deny-unknown revocation posture, issuer validity, issuer revocation, the
+`NotEvaluated`/`Current` distinction, and the composition reading its own acceptance. M49 is
+the one worth noting — its weakening changes **nothing** about the admitted set, so only a
+control that reads the outcome STATE catches it.
+
+`scripts/serving_identity_provenance_gate.py` now covers both routes, and its `--selftest`
+runs nine undo scenarios.
+
+### 14.7 What this slice did not touch
+
+`#598` / ADR-MCPRE-062, the OCSP redesign, request↔peer binding, admission, authorization, and
+review-record work. Characterization did not show any of them to be an unavoidable
+predecessor: currency needed no new premise about the mechanism, and the resumption question is
+answered by the establishment path the products already carry.
+
+**Next: Slice 4 — request ↔ authenticated peer binding.** One semantic slice, one migration,
+merge, next.

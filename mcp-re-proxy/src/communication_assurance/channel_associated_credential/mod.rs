@@ -128,6 +128,7 @@ impl ChannelAssociatedCertificateCredentialEvidence {
 /// serving paths, which hold the association as an `Option`: both refusals mean the same
 /// thing to the unmigrated fail-closed core, and passing the empty chain keeps that
 /// decision in the one place that owns it rather than adding a second one per path.
+#[cfg_attr(not(feature = "online_ocsp"), allow(dead_code))]
 pub(crate) fn associated_chain_der(
     credential: Option<&ChannelAssociatedCertificateCredentialEvidence>,
 ) -> Vec<&[u8]> {

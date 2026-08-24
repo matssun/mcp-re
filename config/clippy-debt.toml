@@ -151,7 +151,7 @@ count = 7
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "arithmetic_side_effects"
-count = 49
+count = 48
 
 [[debt]]
 crate = "mcp-re-proxy"

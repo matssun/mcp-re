@@ -1418,3 +1418,188 @@ weakening = """
 expect_red = [
   "lib#communication_assurance::authenticated_relationship_peer::tests::a_resumed_authentication_is_not_reported_as_a_freshly_verified_one",
 ]
+
+# ---------------------------------------------------------------------------
+# ADR-MCPRE-064 Slice 3 — per-request credential currency
+# ---------------------------------------------------------------------------
+#
+# What is probed is EACH SEMANTIC CHECK, one at a time — not the final reject/accept, which a
+# single probe could flip while leaving four of the five facts unmeasured. Production
+# collapsed all seven refusals into one `mcp-re.transport_binding_failed`, so a control could
+# only assert THAT something refused; these attack the individual conjuncts and the
+# distinctions between them.
+#
+# The seal — that no caller can pair one relationship's authentication with another's
+# currency — is not probed, and per L-4 that is not an omission: the enforcement mechanism is
+# the absence of a parameter, so the weakening cannot be expressed as an edit to a check.
+
+[[probe]]
+id = "M43-an-expired-leaf-is-refused-however-short-its-span"
+unit = "proxy.credential_currency"
+theorem = "THM-0032"
+conjunct = "the leaf's own validity window is checked whenever ANY control is configured"
+# The conjunct a span ceiling silently satisfies forever: a 1-day certificate is inside a
+# 2-day ceiling in 2020 and equally in 2030. On a keep-alive or HTTP/2 connection the
+# credential is accepted once at handshake, so this comparison is the ONLY thing that ever
+# notices the expiry — and deleting it leaves every ceiling and revocation control green.
+path = "mcp-re-proxy/src/communication_assurance/credential_currency/evaluation.rs"
+anchor = """
+    if !facts.contains(now) {
+"""
+weakening = """
+    if false {
+"""
+expect_red = [
+  "lib#communication_assurance::credential_currency::evaluation::tests::expiry_is_a_different_refusal_from_an_over_long_span",
+  "lib#communication_assurance::credential_currency::evaluation::tests::the_validity_window_runs_in_a_revocation_only_deployment",
+]
+
+[[probe]]
+id = "M44-an-unreadable-credential-fails-closed-rather-than-being-waived"
+unit = "proxy.credential_currency"
+theorem = "THM-0032"
+conjunct = "an absent, unparseable or never-ordered leaf REFUSES"
+# The exact defect C095 fixed, restated in the new vocabulary: returning "no objection" for a
+# credential that could not be read waives every check one line before an unparseable
+# certificate fails closed. `?` here is the whole weakening — one character.
+path = "mcp-re-proxy/src/communication_assurance/credential_currency/evaluation.rs"
+anchor = """
+    else {
+        return Some(CredentialCurrencyRefusal::CredentialUnreadable);
+    };
+"""
+weakening = """
+    else {
+        return None;
+    };
+"""
+expect_red = [
+  "lib#communication_assurance::credential_currency::evaluation::tests::an_absent_leaf_is_refused_wherever_a_control_is_configured",
+  "lib#communication_assurance::credential_currency::evaluation::tests::unparseable_der_is_refused_as_unreadable_and_not_as_something_else",
+  "lib#communication_assurance::credential_currency::evaluation::tests::an_inverted_or_degenerate_window_is_unreadable_not_an_admissible_span",
+]
+
+[[probe]]
+id = "M45-an-inverted-window-is-not-an-admissible-span"
+unit = "proxy.credential_currency"
+theorem = "THM-0032"
+conjunct = "a validity window is orderable, or the certificate never had one"
+# MCPS-078 audit gap G-5. `notAfter <= notBefore` once yielded a NEGATIVE span, and the
+# degenerate case a span of zero — both of which are "within ANY ceiling". A certificate that
+# never had a window is not one whose window is generous.
+path = "mcp-re-proxy/src/communication_assurance/credential_currency/x509_adapter.rs"
+anchor = """
+        self.not_after > self.not_before
+"""
+weakening = """
+        self.not_after >= self.not_before
+"""
+expect_red = [
+  "lib#communication_assurance::credential_currency::evaluation::tests::an_inverted_or_degenerate_window_is_unreadable_not_an_admissible_span",
+]
+
+[[probe]]
+id = "M46-the-leaf-refuses-unknown-revocation-status"
+unit = "proxy.credential_currency"
+theorem = "THM-0032"
+conjunct = "leaf revocation goes through `admits`, so Unknown REFUSES"
+# The leaf/issuer strength asymmetry, from the strict side. Weakening the leaf to the issuer's
+# rule — refuse only an explicit `Revoked` — admits every peer whose issuer no CRL covers and
+# every peer under a CRL that has fallen out of force, which is the deny-unknown posture the
+# handshake verifier holds.
+path = "mcp-re-proxy/src/communication_assurance/credential_currency/evaluation.rs"
+anchor = """
+    if index.admits(facts.issuer_der, facts.serial, now) {
+"""
+weakening = """
+    if index.verdict(facts.issuer_der, facts.serial, now) != RevocationVerdict::Revoked {
+"""
+expect_red = [
+  "lib#communication_assurance::credential_currency::evaluation::per_request_revocation_tests::a_leaf_whose_issuer_no_crl_covers_is_refused",
+  "lib#communication_assurance::credential_currency::evaluation::per_request_revocation_tests::a_leaf_under_a_crl_that_has_fallen_out_of_force_is_refused",
+]
+
+[[probe]]
+id = "M47-an-expired-intermediate-stops-the-leaf-being-served"
+unit = "proxy.credential_currency"
+theorem = "THM-0032"
+conjunct = "every certificate above the leaf is inside its own validity window"
+# Chain building runs during client authentication, which rustls performs on a FULL handshake
+# only. Deleting this leaves a peer whose issuing intermediate expired after establishment
+# admitted on every reconnect that resumes — and the ADR-MCPRE-055 anchor epoch cannot catch
+# it, because it digests the configured anchor set and an intermediate is not in it.
+path = "mcp-re-proxy/src/communication_assurance/credential_currency/evaluation.rs"
+anchor = """
+        Some(facts) if facts.self_issued || facts.contains(now) => None,
+"""
+weakening = """
+        Some(_facts) => None,
+"""
+expect_red = [
+  "lib#communication_assurance::credential_currency::evaluation::chain_validity_tests::a_chain_whose_intermediate_has_expired_is_refused",
+]
+
+[[probe]]
+id = "M48-a-revoked-intermediate-reaches-an-open-connection"
+unit = "proxy.credential_currency"
+theorem = "THM-0032"
+conjunct = "every certificate above the leaf is not EXPLICITLY revoked"
+# An operator who revokes a compromised intermediate expects that to reach open connections
+# the way a revoked leaf does. Without it, a peer holding a keep-alive connection under a leaf
+# that intermediate issued keeps full access until the connection-age bound closes it — and
+# the leaf's own revocation check says nothing, because the leaf is not on any CRL.
+path = "mcp-re-proxy/src/communication_assurance/credential_currency/evaluation.rs"
+anchor = """
+                    == RevocationVerdict::Revoked =>
+"""
+weakening = """
+                    == RevocationVerdict::Good =>
+"""
+expect_red = [
+  "lib#communication_assurance::credential_currency::evaluation::per_request_revocation_tests::a_chain_under_a_revoked_intermediate_is_refused",
+]
+
+[[probe]]
+id = "M49-a-deployment-that-asked-nothing-is-not-reported-as-satisfied"
+unit = "proxy.credential_currency"
+theorem = "THM-0032"
+conjunct = "`NotEvaluated` is distinct from `Current`"
+# The finding this authority exists to make visible. Reporting an unexamined credential as
+# evaluated-and-acceptable is the same sentence as "checked, and fine" — and the credential of
+# a peer holding a connection open past its notAfter, in a deployment with neither a ceiling
+# nor CRLs, is exactly the credential that reaches this state. Nothing about the ADMITTED SET
+# changes under this weakening, which is why only a control that reads the STATE catches it.
+path = "mcp-re-proxy/src/communication_assurance/credential_currency/evaluation.rs"
+anchor = """
+        Ok(None) => CredentialCurrencyOutcome::NotEvaluated,
+"""
+weakening = """
+        Ok(None) => CredentialCurrencyOutcome::Current(CurrentCredentialFacts::evaluated(
+            accepted,
+            now,
+            CurrencyControls::Lifetime,
+        )),
+"""
+expect_red = [
+  "lib#communication_assurance::credential_currency::evaluation::tests::the_public_entrance_reports_an_unexamined_credential_as_unexamined",
+]
+
+[[probe]]
+id = "M50-currency-is-evaluated-against-the-peers-own-acceptance"
+unit = "proxy.current_authenticated_peer"
+theorem = "THM-0033"
+conjunct = "the currency evaluated is that of the peer's OWN accepted credential"
+# The L-5 conjunct, from the one angle a check can express: the composition must reach its
+# predecessor's acceptance rather than declining to look. Supplying `None` is what a caller
+# that had no credential in hand would do, and it must not silently become a current peer.
+path = "mcp-re-proxy/src/communication_assurance/current_authenticated_peer.rs"
+anchor = """
+        match evaluate_credential_currency(Some(peer.accepted_credential()), policy, now) {
+"""
+weakening = """
+        match evaluate_credential_currency(None, policy, now) {
+"""
+expect_red = [
+  "lib#communication_assurance::current_authenticated_peer::tests::an_authenticated_peer_with_a_current_credential_is_a_current_authenticated_peer",
+  "lib#communication_assurance::current_authenticated_peer::tests::each_relationships_currency_is_evaluated_against_its_own_credential",
+]

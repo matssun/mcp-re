@@ -12,7 +12,7 @@
 //!   * the verified client identity, the per-connection cert-lifetime rejection,
 //!     the routing-header hygiene rejection, and the Tier-3 assertion extraction
 //!     all go through the SAME `tls` helpers the blocking loop uses
-//!     ([`resolve_authenticated_identity`], [`connection_rejection_for_chain`],
+//!     ([`resolve_authenticated_identity`], [`credential_currency_rejection`],
 //!     [`routing_header_rejection`], [`assertion_header`]);
 //!   * the request handler is the SAME `Proxy` handler (`Proxy` is `Send + Sync`
 //!     since MCPRE-111, which is why this work was blocked on it).
@@ -27,7 +27,7 @@
 //! SCOPE (this increment): the async path is opt-in dev scaffolding — a single
 //! shared runtime, never a release (ADR-MCPRE-051 §1); per-core runtimes +
 //! `SO_REUSEPORT` are MCPRE-113. Online-OCSP revocation on the async path needs the
-//! full peer chain and is a tracked follow-up (see [`connection_rejection_for_chain`]);
+//! full peer chain and is a tracked follow-up (see [`credential_currency_rejection`]);
 //! the default + shared-replay-tier builds have full parity. Precise `write_timeout`
 //! mapping onto `hyper` is likewise deferred (the load-bearing slow-loris defense is
 //! the READ side, which is mapped).
@@ -56,11 +56,10 @@ use hyper_util::server::conn::auto;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
-use crate::communication_assurance::mechanism_verified_credential::accepted_chain_der;
 use crate::communication_assurance::mechanism_verified_credential::rustls_adapter::verified_credential;
 use crate::communication_assurance::MechanismVerifiedCredentialEvidence;
 use crate::tls::assertion_header;
-use crate::tls::connection_rejection_for_chain;
+use crate::tls::credential_currency_rejection;
 use crate::tls::resolve_authenticated_identity;
 use crate::tls::routing_header_rejection;
 use crate::tls::ServerOptions;
@@ -806,8 +805,8 @@ async fn handle_request<H: AsyncRequestHandler>(
     // The clock is read PER REQUEST, not per connection: the leaf is captured once at
     // handshake, so this is the only point at which a certificate that has since
     // passed `notAfter` can be caught on a connection the peer keeps open.
-    let served = match connection_rejection_for_chain(
-        &accepted_chain_der(peer_credential.as_ref().as_ref()),
+    let served = match credential_currency_rejection(
+        peer_credential.as_ref().as_ref(),
         &options,
         &body_bytes,
         crate::tls::wall_clock_unix(),
