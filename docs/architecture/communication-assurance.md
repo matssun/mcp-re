@@ -1354,3 +1354,135 @@ answered by the establishment path the products already carry.
 
 **Next: Slice 4 — request ↔ authenticated peer binding.** One semantic slice, one migration,
 merge, next.
+
+## 15. Slice 4 as built — request ↔ authenticated peer binding, and a false model repaired
+
+Issue **#623**. Unlike Slices 1–3, this slice did not migrate a true model onto typed products.
+It **repaired one**.
+
+### 15.1 The defect, and how it survived
+
+`transport_binding_stage` compared `ex.actor_id` against `TransportIdentity.value`:
+
+```text
+signer  = ActorIdentity::actor_id()  =  client:example.org:spiffe%3A//example.org/agent-1:key-a
+channel = certificate URI SAN        =  spiffe://example.org/agent-1
+```
+
+`actor_id()` is the injective `role:trust_domain:subject:keyid` join, documented for replay
+keys, audit records and trusted-key identity. It is the **wrong semantic coordinate for
+"same principal"**, and two things kept the mismatch invisible:
+
+1. **`DemoFixtureSpec::actor_id()` reimplemented the composite and minted it as the client
+   leaf's URI SAN.** The certificate provisioning adapted itself to encode the
+   implementation's string, and the tests went green. Fixtures conforming to the defect.
+2. **`TransportIdentity` is freely constructible** — public fields, total constructor — so the
+   one control where the stage passed built its own operand out of `actor_id()`. A test that
+   could not fail on the property.
+
+### 15.2 The ruling
+
+> **Exact request-to-peer binding relates the authenticated communication peer identity to the
+> resolved request actor's SUBJECT. `actor_id()` remains the canonical composite for
+> replay, audit and trusted-key identity, and is not a communication-peer identifier.**
+
+Two costs of the wrong coordinate, and both are now controls:
+
+| what the composite required in a SAN | cost |
+|---|---|
+| `keyid` | couples TLS certificate issuance to every signing-key rotation |
+| `trust_domain` | asserts a trust-domain relation the channel never independently established |
+
+Nothing is weakened. Role, trust domain, signing key, and signer slot are established by the
+request verifier and the trust seam **before** this relation runs, and remain owned by them. A
+key not trusted for a subject fails at request verification and is never rescued here; a key
+the resolver **does** trust for that subject is not overturned here because the credential
+rotated. That last one is `a_rotated_signing_key_does_not_break_the_binding`, and it is the
+control that pins the ruling.
+
+### 15.3 The products
+
+```text
+AuthenticatedChannelPeer            the channel operand, and it carries the Slice-3 distinction
+    Current(..)                     currency evaluated, credential acceptable now
+    CurrencyNotEvaluated(..)        the deployment configures no currency control
+
+VerifiedRequestSubject              the request operand — one producer, the request adapter
+RequestPeerBindingFacts             the two name ONE principal
+```
+
+The channel side is an enum rather than always-`Current` because requiring currency would
+refuse every request in a deployment that configures none — a regression introduced by
+tidiness. Flattening the two would destroy the distinction Slice 3 exists to make, one level
+above the authority that makes it, so the binding reports which assurance it was formed over.
+
+**This is a binary relation, not an L-5 substitution.** The operands are genuinely independent
+— one from a TLS relationship, one from a request signature — and their concerning the same
+principal is the *conclusion*, not a premise. It is the Slice-2 credential/key correspondence
+shape. What still has to hold is that neither can be fabricated, and neither can: the peer
+descends from a mechanism adapter's acceptance over a real handshake, and the subject's
+constructor is private to the authority with the adapter as its one producer.
+
+### 15.4 What was removed
+
+- `resolve_authenticated_identity` and `credential_currency_rejection` merged into one
+  `served_channel_peer` — one call site per serving path, one question about the relationship.
+- `ServedHttpRequest.identity` had exactly **one** consumer, the binding stage, so the
+  `TransportIdentity` rendering added in #619 is gone with it. `facades::asserted_identity`
+  no longer renders a peer at all; `TransportIdentity` survives only for the ingress-assertion
+  paths, both refused by configuration validation.
+- **`MappedBinding`** — a cross-namespace `signer -> allowed identities` allowlist with no
+  production path (no `BindingKind` reaches it, `TransportBinding` never had a constructor for
+  it). It also cannot honestly satisfy the new trait, whose product asserts *the same
+  principal* while a mapping deliberately relates two different ones. **Deferred, not
+  discarded:** a cross-namespace relation is its own authority producing its own fact, and the
+  requirements its tests pinned are recorded here so the next author inherits them — an
+  explicit enumerated allowlist, exact string equality only, no wildcards or globs or regular
+  expressions, a literal `"*"` with no special meaning, and an absent identity or unmapped
+  signer failing closed.
+
+### 15.5 x5t#S256 — characterization only
+
+The RFC 8705 primitive and its real-handshake integration test are real. Production
+`verify_stage` supplies `|_b: &ArtifactBinding| None`, so **no mTLS artifact material reaches
+the verifier today.** Conceptually it would not substitute anyway:
+
+```text
+x5t      the request commits to certificate A's bytes
+Slice 4  the peer that authenticated as A is the principal that signed the request
+```
+
+A signer can commit to the thumbprint of a certificate whose key it does not hold. x5t gives
+credential/channel binding; principal equality is a different proposition. No production wiring
+in this slice.
+
+### 15.6 Registry, and one honest probe failure
+
+Theorem **THM-0034**, depending on THM-0031 and THM-0033. Unit `proxy.request_peer_binding`.
+No new assumption. Probes **M51** (the coordinate) and **M53** (the relation).
+
+**M52 was written, run, and removed.** It attacked the absent-peer refusal, and every weakening
+left the battery green — because the trait now returns a `RequestPeerBindingFacts` and with no
+peer there is nothing to build one from, so an admitting implementation cannot be written. The
+conjunct is enforced by the type rather than by a deletable check. That is the L-4 finding, and
+it is recorded in the probe file rather than resolved by softening the theorem.
+
+The same shift defeats the permissive-policy shape at the type level: an embedder's
+`AdmitEverything` must still *produce* the fact, and the only producer is the authority's own
+relation.
+
+### 15.7 Fixtures and docs
+
+`DemoFixtureSpec::actor_id()` is replaced by `subject()`, and the positive client leaves carry
+the resolved subject as their URI SAN — the natural model the operator documentation always
+described. The different-subject negative certificate is kept.
+`docs/transport-hardening-guide.md` records the coordinate.
+
+### 15.8 Live evidence
+
+After the ordinary gates, the kind fleet path is to be run with freshly generated
+**subject-based** certificates, requiring a genuine accepted request through the real binding
+stage. That is the positive live control for the corrected semantics, and it is stronger and
+cheaper than reconstructing which convention historical GKE runs happened to use.
+
+**Next: admission and authority consumers.**

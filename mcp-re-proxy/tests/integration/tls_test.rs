@@ -642,8 +642,11 @@ fn mtls_round_trip_extracts_client_identity_and_serves_request() {
 
     let identity = server.join().expect("join").expect("serve ok");
     let identity = identity.expect("a verified client identity");
-    assert_eq!(identity.value, "spiffe://example.org/agent-1");
-    assert_eq!(identity.source, IdentitySource::UriSan);
+    assert_eq!(identity.identity().as_str(), "spiffe://example.org/agent-1");
+    assert_eq!(
+        identity.identity_source(),
+        mcp_re_proxy::communication_assurance::CertificateIdentitySource::UriSan
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -789,7 +792,10 @@ fn delegated_ed25519_tls_handshake_round_trip() {
 
     let identity = server.join().expect("join").expect("serve ok");
     assert_eq!(
-        identity.expect("verified client identity").value,
+        identity
+            .expect("verified client identity")
+            .identity()
+            .as_str(),
         "spiffe://example.org/agent-1"
     );
 }

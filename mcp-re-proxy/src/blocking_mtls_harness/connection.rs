@@ -26,16 +26,15 @@ use rustls::StreamOwned;
 #[cfg(feature = "online_ocsp")]
 use crate::communication_assurance::mechanism_verified_credential::accepted_chain_der;
 use crate::communication_assurance::mechanism_verified_credential::rustls_adapter::verified_credential;
+use crate::communication_assurance::AuthenticatedChannelPeer;
 use crate::communication_assurance::MechanismVerifiedCredentialEvidence;
 use crate::tls::assertion_header;
-use crate::tls::credential_currency_rejection;
-use crate::tls::resolve_authenticated_identity;
 use crate::tls::routing_header_rejection;
+use crate::tls::served_channel_peer;
 use crate::tls::wall_clock_unix;
 use crate::tls::ServerLimits;
 use crate::tls::ServerOptions;
 use crate::transport::RequestHeaders;
-use crate::transport::TransportIdentity;
 
 use super::deadline_stream::DeadlineStream;
 use super::http1::read_http_request;
@@ -52,9 +51,9 @@ pub(super) fn serve_one<H>(
     config: Arc<ServerConfig>,
     options: &ServerOptions,
     handler: H,
-) -> io::Result<Option<TransportIdentity>>
+) -> io::Result<Option<AuthenticatedChannelPeer>>
 where
-    H: FnOnce(&[u8], Option<TransportIdentity>, Option<&str>) -> Vec<u8>,
+    H: FnOnce(&[u8], Option<AuthenticatedChannelPeer>, Option<&str>) -> Vec<u8>,
 {
     apply_socket_timeouts(&tcp, &options.limits)?;
     let conn = ServerConnection::new(config).map_err(|e| io::Error::other(e.to_string()))?;
@@ -74,23 +73,25 @@ where
     // chain did before.
     let credential = verified_credential(&stream.conn).ok();
     let headers = RequestHeaders::parse(&request.header_block);
-    // ADR-MCPRE-064 (#619): the SAME function the async fleet calls, taking the SAME
-    // acceptance product. Parity is now one call site rather than two derivations that
+    // ADR-MCPRE-064 (#619, #621, #623): the SAME function the async fleet calls, taking the
+    // SAME acceptance product. Parity is one call site rather than two derivations that
     // agree — there is no per-path leaf projection left to drift.
-    let identity = resolve_authenticated_identity(credential.as_ref(), options);
+    let outcome = connection_rejection(credential.as_ref(), options, &request.body);
     let assertion = assertion_header(options, &headers);
-    let response = match connection_rejection(credential.as_ref(), options, &request.body)
+    let peer = outcome.clone().ok().flatten();
+    let response = match outcome
+        .err()
         .or_else(|| routing_header_rejection(&headers, &request.body))
     {
         Some(error) => error,
-        None => handler(&request.body, identity.clone(), assertion),
+        None => handler(&request.body, peer.clone(), assertion),
     };
     write_http_response(&mut stream, &response)?;
     // Clean TLS shutdown: send close_notify so the peer does not see an
     // unexpected EOF, then flush it out.
     stream.conn.send_close_notify();
     let _ = stream.flush();
-    Ok(identity)
+    Ok(peer)
 }
 
 /// Apply the configured read/write timeouts to a freshly-accepted socket.
@@ -102,25 +103,21 @@ fn apply_socket_timeouts(tcp: &TcpStream, limits: &ServerLimits) -> io::Result<(
 
 /// The per-request rejection decision for an established relationship: the certificate
 /// lifetime/revocation guard, then (under the `online_ocsp` feature) the online OCSP
-/// guard. The order and every verdict are [`crate::tls`]'s; this supplies the chain.
-/// Returns the first rejection's error bytes, or `None` if the request is admitted.
+/// guard. The order and every verdict are [`crate::tls`]'s; this supplies the acceptance.
+/// Returns the channel peer for an admitted request, or the first rejection's error bytes.
 fn connection_rejection(
     credential: Option<&MechanismVerifiedCredentialEvidence>,
     options: &ServerOptions,
     request: &[u8],
-) -> Option<Vec<u8>> {
-    if let Some(error) =
-        credential_currency_rejection(credential, options, request, wall_clock_unix())
-    {
-        return Some(error);
-    }
+) -> Result<Option<AuthenticatedChannelPeer>, Vec<u8>> {
+    let peer = served_channel_peer(credential, options, request, wall_clock_unix())?;
     // The one remaining raw-chain consumer, named rather than hidden: online OCSP has not
     // been migrated and its redesign is a separate slice. The async path does not wire it.
     #[cfg(feature = "online_ocsp")]
     if let Some(error) =
         crate::tls::ocsp_rejection_for_chain(&accepted_chain_der(credential), options, request)
     {
-        return Some(error);
+        return Err(error);
     }
-    None
+    Ok(peer)
 }

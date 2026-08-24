@@ -400,7 +400,6 @@ pub use transport::LbAssertionRejection;
 pub use transport::LbAssertionV2;
 pub use transport::LbAssertionV2Binding;
 pub use transport::LbAssertionV2Rejection;
-pub use transport::MappedBinding;
 pub use transport::RequestHeaders;
 pub use transport::RoutingHeaderRejection;
 pub use transport::StaticIdentityProvider;

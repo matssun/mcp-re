@@ -24,7 +24,6 @@ use std::thread;
 
 use mcp_re_proxy::serve_once;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
-use mcp_re_proxy::transport::IdentitySource;
 use mcp_re_proxy::ServerOptions;
 
 use mcp_re_transport::ClientTlsConfig;
@@ -154,7 +153,9 @@ fn spawn_server(
     listener: TcpListener,
     config: Arc<rustls::ServerConfig>,
     handler_reached: Arc<std::sync::atomic::AtomicBool>,
-) -> thread::JoinHandle<std::io::Result<Option<mcp_re_proxy::transport::TransportIdentity>>> {
+) -> thread::JoinHandle<
+    std::io::Result<Option<mcp_re_proxy::communication_assurance::AuthenticatedChannelPeer>>,
+> {
     thread::spawn(move || {
         serve_once(
             &listener,
@@ -207,8 +208,11 @@ fn trusted_server_and_client_round_trip_succeeds() {
 
     let identity = server.join().expect("join").expect("serve ok");
     let identity = identity.expect("a verified client identity");
-    assert_eq!(identity.value, CLIENT_SPIFFE);
-    assert_eq!(identity.source, IdentitySource::UriSan);
+    assert_eq!(identity.identity().as_str(), CLIENT_SPIFFE);
+    assert_eq!(
+        identity.identity_source(),
+        mcp_re_proxy::communication_assurance::CertificateIdentitySource::UriSan
+    );
     assert!(
         reached.load(std::sync::atomic::Ordering::SeqCst),
         "handler must be reached on the happy path"

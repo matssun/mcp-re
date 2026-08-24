@@ -64,15 +64,16 @@ use time::OffsetDateTime;
 /// explicit so a caller can mint a fresh, isolated set.
 #[derive(Debug, Clone)]
 pub struct DemoFixtureSpec {
-    /// The request signer identity (the LLM caller) — the `signer` in `trust.json`.
-    /// Under RFC 9421 (ADR-MCPRE-050) the proxy's `exact` transport binding compares
-    /// the client cert URI SAN to the resolved ACTOR ID ([`Self::actor_id`]), not to
-    /// this bare signer, so the positive client leaf carries the actor id as its SAN.
+    /// The request signer identity (the LLM caller) — the `signer` in `trust.json`, and
+    /// the SUBJECT the proxy resolves for it. The `exact` binding relates the
+    /// authenticated peer to this subject (ADR-MCPRE-064 Slice 4), so the positive client
+    /// leaf carries it as its URI SAN.
     pub signer: String,
     /// The signer's key id (the key id in `trust.json`).
     pub signer_key_id: String,
     /// The trust domain the proxy resolves the request actor under (its
-    /// `--trust-domain`); a component of [`Self::actor_id`].
+    /// `--trust-domain`). Request-side resolution CONTEXT, and deliberately NOT part of
+    /// the transport binding: the channel established no corresponding fact.
     pub trust_domain: String,
     /// The 32-byte Ed25519 seed for the signer's signing key.
     pub signer_seed: [u8; 32],
@@ -112,23 +113,20 @@ impl Default for DemoFixtureSpec {
 }
 
 impl DemoFixtureSpec {
-    /// The RFC 9421 resolved actor id for the request signer — `role:trust_domain:
-    /// subject:keyid` with role `client`, each component `%`/`:`-escaped EXACTLY as
-    /// `mcp_re_http_profile::ActorIdentity::actor_id` (which the proxy's `exact`
-    /// transport binding compares the mTLS client cert URI SAN against). The positive
-    /// and short-lived client leaves carry this as their URI SAN so a `--strict`
-    /// fleet (which requires `--transport-binding exact`) binds them.
-    pub fn actor_id(&self) -> String {
-        fn esc(s: &str) -> String {
-            s.replace('%', "%25").replace(':', "%3A")
-        }
-        format!(
-            "{}:{}:{}:{}",
-            esc("client"),
-            esc(&self.trust_domain),
-            esc(&self.signer),
-            esc(&self.signer_key_id),
-        )
+    /// The SUBJECT the proxy's trust resolver resolves for this signer — and the URI SAN
+    /// the positive client leaves carry.
+    ///
+    /// **This deliberately is not the composite actor id.** `ActorIdentity::actor_id()` is
+    /// the injective `role:trust_domain:subject:keyid` join used for replay keys, audit
+    /// records and trusted-key identity. These fixtures once minted THAT into the client
+    /// certificate SAN, because the transport binding compared against it — the fixtures
+    /// conformed to the defect, and the tests went green.
+    ///
+    /// Slice 4 corrected the relation to the subject, removing two couplings: a
+    /// certificate no longer has to be reissued when the signing key rotates, nor name a
+    /// trust domain the channel never established.
+    pub fn subject(&self) -> String {
+        self.signer.clone()
     }
 }
 
@@ -273,9 +271,9 @@ impl DemoFixtures {
         let client_ca = make_ca("mcp-re-demo-client-ca");
         // RFC 9421 `exact` transport binding compares the URI SAN to the resolved
         // actor id (role:trust_domain:subject:keyid), NOT the bare signer.
-        let client_actor_id = spec.actor_id();
+        let client_subject = spec.subject();
         let (client_leaf, client_leaf_key) =
-            make_leaf(&client_ca, vec![uri(&client_actor_id)], None, true);
+            make_leaf(&client_ca, vec![uri(&client_subject)], None, true);
         // A short-lived (< strict 3600s ceiling) client leaf, same identity + CA,
         // valid from ~1min ago to +50min so it is currently valid AND its lifetime
         // (window duration) is ≤ 3600s. `now`-relative — expires ~50min out.
@@ -288,7 +286,7 @@ impl DemoFixtures {
         .expect("valid unix time");
         let (short_client_leaf, short_client_leaf_key) = make_leaf_windowed(
             &client_ca,
-            vec![uri(&client_actor_id)],
+            vec![uri(&client_subject)],
             None,
             true,
             now - time::Duration::seconds(60),
@@ -360,8 +358,8 @@ impl DemoFixtures {
     /// The resolved RFC 9421 actor id (`role:trust_domain:signer:keyid`) that the
     /// positive/short-lived client cert URI SAN carries and the proxy's `exact`
     /// transport binding compares against.
-    pub fn actor_id(&self) -> String {
-        self.spec.actor_id()
+    pub fn subject(&self) -> String {
+        self.spec.subject()
     }
     /// The request signer's key id.
     pub fn signer_key_id(&self) -> &str {

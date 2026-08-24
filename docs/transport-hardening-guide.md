@@ -70,12 +70,24 @@ silently downgraded to a DNS SAN or CN.
 
 Source: [`transport.rs`](../mcp-re-proxy/src/transport.rs).
 
-The binding policy asserts the request's verified `signer` is consistent with the
-verified transport identity.
+The binding policy asserts that the peer which authenticated the mTLS relationship and
+the actor the request verifier resolved are the **same principal**.
 
 **`--transport-binding exact` is the default and the only deployable value.** The
-request `signer` must equal the verified transport identity (the key-holder is the
-cert-holder), and a required-but-absent identity fails closed. The parser accepts two
+authenticated peer identity must equal the resolved request actor's **subject** — the
+`signer` in `trust.json` — and a request presenting no authenticated peer fails closed.
+
+**Mint the client leaf's SAN as the signer/subject, and nothing more.** The proxy does
+NOT compare against `role:trust_domain:subject:keyid`, the composite actor id it uses for
+replay keys and audit records. Two consequences, both deliberate (ADR-MCPRE-064 §15):
+
+- **Rotating a signing key does not require reissuing certificates.** The key id is a
+  request-side trust fact settled by the trust seam before binding runs.
+- **The trust domain does not belong in the certificate.** The channel establishes no
+  corresponding fact, so encoding one would assert a relation nothing proved.
+
+A key that is not trusted for that subject fails earlier, at request verification, and is
+never rescued by a matching certificate. The parser accepts two
 other values — `lb-assertion` (Mode B) and `attested-ingress` (Mode C) — and the
 validation boundary refuses both; they are retained and tested, not deployable.
 

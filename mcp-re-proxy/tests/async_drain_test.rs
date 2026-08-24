@@ -25,8 +25,8 @@ use std::time::Duration;
 use std::time::Instant;
 
 use mcp_re_proxy::async_serve;
+use mcp_re_proxy::communication_assurance::AuthenticatedChannelPeer;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
-use mcp_re_proxy::transport::TransportIdentity;
 use mcp_re_proxy::ServerLimits;
 use mcp_re_proxy::ServerOptions;
 
@@ -287,7 +287,7 @@ fn spawn_server<H>(
     handler: H,
 ) -> AsyncServer
 where
-    H: Fn(&[u8], Option<TransportIdentity>, Option<&str>) -> Vec<u8> + Send + Sync + 'static,
+    H: Fn(&[u8], Option<AuthenticatedChannelPeer>, Option<&str>) -> Vec<u8> + Send + Sync + 'static,
 {
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_srv = Arc::clone(&shutdown);
@@ -321,7 +321,7 @@ where
                 // runtime healthy (production handlers are async and never need it).
                 Box::pin(async move {
                     let body = tokio::task::block_in_place(|| {
-                        h(&req.body, req.identity, req.assertion.as_deref())
+                        h(&req.body, req.peer, req.assertion.as_deref())
                     });
                     async_serve::ServedHttpResponse { status: 200, headers: Vec::new(), body }
                 })

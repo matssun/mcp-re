@@ -18,14 +18,12 @@
 //! to be untangled first.
 
 use crate::communication_assurance::peer_identity_value::MAX_PEER_IDENTITY_LEN;
-use crate::communication_assurance::AuthenticatedRelationshipPeerFacts;
 use crate::communication_assurance::CertificateIdentityPolicy;
 use crate::communication_assurance::CertificateIdentitySource;
 use crate::communication_assurance::PeerIdentityValue;
 use crate::communication_assurance::PeerIdentityValueRefusal;
 use crate::transport::IdentityPolicy;
 use crate::transport::IdentitySource;
-use crate::transport::TransportIdentity;
 
 /// Maximum accepted length (bytes) of an asserted trusted-ingress identity value
 /// (ADR-MCPS-023: asserted-identity metadata MUST be length-bounded — oversized values
@@ -78,24 +76,14 @@ pub fn validate_asserted_identity_value(value: &str) -> Result<&str, AssertedIde
     }
 }
 
-/// The authenticated peer of a direct-TLS relationship, in the historical vocabulary.
-///
-/// **A rendering, never an authority.** Everything this returns was decided by
-/// [`AuthenticatedRelationshipPeerFacts`]: which identity the peer authenticated as, and
-/// which certificate field it was read from. This function parses nothing, selects
-/// nothing, and decides no fallback — there is no check here to delete, which is what
-/// makes it a facade rather than a second route to an identity.
-///
-/// [`TransportIdentity`] is freely constructible and always has been. That is precisely
-/// why it may not be the authority: a value of it proves nothing about where it came from.
-/// It survives because the transport-binding consumers still match on it, and it is
-/// produced HERE, from a product whose provenance THM-0031 states, rather than
-/// reconstructed from certificate representation.
-pub(crate) fn rendered_transport_identity(
-    peer: &AuthenticatedRelationshipPeerFacts,
-) -> TransportIdentity {
-    TransportIdentity::new(peer.identity().as_str(), peer.identity_source().into())
-}
+// `rendered_transport_identity` was removed here by ADR-MCPRE-064 Slice 4. Its only
+// consumer was the transport-binding comparison, and that relation now takes two SEMANTIC
+// products — an authenticated channel peer and a verified request subject — so nothing in
+// production renders a peer into the historical `TransportIdentity` any more.
+//
+// `TransportIdentity` itself survives for the ingress-assertion paths (Tier 3 and Mode C),
+// which assert an identity rather than authenticating a TLS peer. Both are refused by
+// configuration validation today.
 
 impl From<IdentityPolicy> for CertificateIdentityPolicy {
     /// The configuration vocabulary names the same choice the authority names.

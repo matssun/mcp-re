@@ -134,19 +134,21 @@ const SERVER: &str = "did:example:server-1";
 const SERVER_KEY_ID: &str = "server-key-1";
 const AUDIENCE: &str = "did:example:server-1";
 const TRUST_DOMAIN: &str = "example.org";
-// A DID request-signer (subject) with colons: the real-world shape (and the GKE
-// proof's identity). Its colons force `%3A` escaping in the resolved actor_id, so
-// this harness now covers the escaped-actor-id `ExactMatchBinding` path — the case a
-// colon-free subject silently skipped.
+// A DID request-signer (subject) with colons: the real-world shape, and the GKE proof's
+// identity. Since ADR-MCPRE-064 Slice 4 the client leaf carries THIS value as its URI SAN —
+// the binding relates the authenticated peer to the resolved actor's SUBJECT.
 const SUBJECT_A: &str = "did:example:agent-1"; // the request signer (subject) in trust.json
 const SIGNER_A_KEY_ID: &str = "key-a";
 const TARGET_URI: &str = "https://localhost/";
 const DPOP_TOKEN: &str = "loadgen-dpop-token";
-/// The RFC 9421 Mode-A `ExactMatchBinding` compares the mTLS client cert URI SAN to
-/// the resolved actor_id `role:trust_domain:subject:keyid`, each component `%`/`:`
-/// escaped. The DID subject's colons escape to `%3A`; the client leaf below carries
-/// EXACTLY this escaped URI SAN.
-const CLIENT_ACTOR_ID: &str = "client:example.org:did%3Aexample%3Aagent-1:key-a";
+/// The URI SAN the client leaf carries: the resolved actor's SUBJECT, which is what
+/// Mode-A binding relates the authenticated peer to (ADR-MCPRE-064 §15).
+///
+/// It is deliberately NOT the `role:trust_domain:subject:keyid` composite. This harness
+/// used to mint that — one of three places where the certificate provisioning had adapted
+/// itself to the implementation's string — and the DID subject's `%3A` escaping was
+/// described as coverage rather than as the symptom it was.
+const CLIENT_SUBJECT: &str = SUBJECT_A;
 
 fn server_seed() -> [u8; 32] {
     [2u8; 32]
@@ -771,7 +773,7 @@ impl ServerCertVerifier for AcceptAnyServer {
 /// actor_id) and share it via `Arc` across every connection, so the measured latency
 /// is the handshake + request cost, not repeated config/cert construction.
 fn build_client_config(ca: &Ca) -> Arc<ClientConfig> {
-    let (leaf, key) = make_client_leaf(ca, vec![uri(CLIENT_ACTOR_ID)]);
+    let (leaf, key) = make_client_leaf(ca, vec![uri(CLIENT_SUBJECT)]);
     client_config_from(&leaf, &key)
 }
 
@@ -1605,7 +1607,7 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
     //    gate. Chains to the same CA (handshake succeeds), so it is the LIFETIME, not
     //    the chain, that rejects it — exactly the GKE failure.
     let (long_leaf, long_key) =
-        make_leaf(&material.client_ca, vec![uri(CLIENT_ACTOR_ID)], None, true);
+        make_leaf(&material.client_ca, vec![uri(CLIENT_SUBJECT)], None, true);
     let rej = cold_round_trip(
         addr,
         client_config_from(&long_leaf, &long_key),

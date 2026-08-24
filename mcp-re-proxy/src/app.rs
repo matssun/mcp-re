@@ -1550,13 +1550,30 @@ mod tests {
     /// The broken implementation this catches: reading `binding` and `identity_source` off
     /// the request at the call site, which installs `ExactMatchBinding` over
     /// `IdentityPolicy::CnLegacy` for a request this owner refuses outright.
+    /// A verified request subject, through the one producer. The composition root's own
+    /// controls need an operand, not a relation.
+    fn binding_subject() -> crate::communication_assurance::VerifiedRequestSubject {
+        crate::communication_assurance::request_peer_binding::http_profile_adapter::verified_request_subject(
+            &mcp_re_http_profile::ResolvedActor {
+                identity: mcp_re_http_profile::ActorIdentity {
+                    role: "client".into(),
+                    trust_domain: "example.com".into(),
+                    subject: "did:example:agent-1".into(),
+                    keyid: "key-a".into(),
+                },
+                verification_key: mcp_re_core::SigningKey::from_seed_bytes(&[3u8; 32]).public_key(),
+                slot: mcp_re_http_profile::SignerSlot::Request,
+            },
+        )
+    }
+
     #[test]
     fn the_channel_binding_effects_are_a_function_of_the_recognised_state() {
         use crate::config_state::transport::classify_and_validate_binding;
         use crate::config_state::ChannelBindingState;
-        use crate::transport::{IdentityPolicy, IdentitySource, TransportIdentity};
+        use crate::transport::{IdentityPolicy, IdentitySource};
 
-        for (source, expected_state, expected_policy, field) in [
+        for (source, expected_state, expected_policy, _field) in [
             (
                 IdentityPolicy::UriSan,
                 ChannelBindingState::ExactUriSan,
@@ -1585,21 +1602,16 @@ mod tests {
                 effects.identity_policy, expected_policy,
                 "{expected_state:?} must read the identity from its own SAN"
             );
-            let identity = TransportIdentity::new("did:example:agent-1", field);
-            assert!(effects
-                .binding
-                .check("did:example:agent-1", Some(&identity))
-                .is_ok());
+            // What the composition root owns is WHICH binding it installs and which SAN
+            // the identity is read from. Since ADR-MCPRE-064 Slice 4 the relation itself
+            // takes two semantic products built from a real handshake, so the equal /
+            // unequal claims live with the authority — `transport::tests::
+            // exact_match_binds_a_peer_and_a_request_actor_that_name_one_principal` and its
+            // negative. What stays here is the fail-closed direction, which is a property
+            // of the installed binding rather than of any peer.
             assert!(
-                effects
-                    .binding
-                    .check("did:example:agent-2", Some(&identity))
-                    .is_err(),
-                "{expected_state:?} left the signer unbound to the channel identity"
-            );
-            assert!(
-                effects.binding.check("did:example:agent-1", None).is_err(),
-                "{expected_state:?} admitted a request with no channel identity at all"
+                effects.binding.bind(None, binding_subject()).is_err(),
+                "{expected_state:?} must refuse a request presenting no authenticated peer"
             );
         }
 

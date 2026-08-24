@@ -305,7 +305,7 @@ fn served_of(req: &HttpRequest) -> ServedHttpRequest {
         target_uri: req.target_uri.clone(),
         headers: req.headers.clone(),
         body: req.body.clone(),
-        identity: None,
+        peer: None,
         assertion: None,
     }
 }

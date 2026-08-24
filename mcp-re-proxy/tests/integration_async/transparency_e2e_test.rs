@@ -315,7 +315,7 @@ fn serve_one_full(proxy: &HttpProfileProxy, nonce: &str) -> (u16, Option<String>
         target_uri: request.target_uri.clone(),
         headers: request.headers.clone(),
         body: request.body.clone(),
-        identity: None,
+        peer: None,
         assertion: None,
     };
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -394,7 +394,7 @@ fn serve_one_notification(proxy: &HttpProfileProxy, nonce: &str) -> u16 {
         target_uri: request.target_uri.clone(),
         headers: request.headers.clone(),
         body: request.body.clone(),
-        identity: None,
+        peer: None,
         assertion: None,
     };
     let rt = tokio::runtime::Builder::new_current_thread()

@@ -89,13 +89,22 @@ RAW_CURRENCY_ROUTE = (
 OCSP_RESIDUE = "accepted_chain_der"
 OCSP_GATE = 'feature = "online_ocsp"'
 
-#: `(resolver, authority it must reach)`, one pair per question the serving path asks.
+#: The ONE function each direct-TLS serving path calls about its relationship. Since
+#: ADR-MCPRE-064 Slice 4 the identity question and the currency question are one question —
+#: who authenticated, and what the deployment's controls concluded about their credential —
+#: so there is one call site per path rather than two that must stay in step.
+RESOLVER = "served_channel_peer"
+
+#: `(function, authority or route it must reach)`. Each link of the chain from the serving
+#: path to the ADR-MCPRE-064 authorities, so a resolver that stopped reaching one of them
+#: fails here rather than silently answering from somewhere else.
 RESOLVERS = (
-    ("resolve_authenticated_identity", "authenticate_relationship_peer"),
-    ("credential_currency_rejection", "evaluate_credential_currency"),
+    ("served_channel_peer", "resolve_channel_peer"),
+    ("resolve_channel_peer", "current_authenticated_peer"),
+    ("resolve_channel_peer", "evaluate_credential_currency"),
+    ("authenticated_peer", "authenticate_relationship_peer"),
 )
 
-RESOLVER = "resolve_authenticated_identity"
 COMPOSITION = "authenticate_relationship_peer"
 
 # ADR-MCPRE-061 §5.1 — both `#[cfg(test)]` and `#[cfg(all(test, ...))]` open a test region.
@@ -171,14 +180,13 @@ def check_serving_path(path: str, text: str) -> list[str]:
                 f"identity and currency from semantic products, not by reconstructing them "
                 f"from certificate representation (ADR-MCPRE-064 #619/#621)."
             )
-    for resolver, _authority in RESOLVERS:
-        calls = len(re.findall(r"\b" + resolver + r"\s*\(", text))
-        if calls != 1:
-            problems.append(
-                f"{path}: calls `{resolver}` {calls} time(s); expected exactly 1. Two call "
-                f"sites in one path, or none, is how the async and blocking paths stop "
-                f"being one derivation and become two that happen to agree."
-            )
+    calls = len(re.findall(r"\b" + RESOLVER + r"\s*\(", text))
+    if calls != 1:
+        problems.append(
+            f"{path}: calls `{RESOLVER}` {calls} time(s); expected exactly 1. Two call "
+            f"sites in one path, or none, is how the async and blocking paths stop being "
+            f"one derivation and become two that happen to agree."
+        )
     if OCSP_RESIDUE in text:
         if path == ASYNC_PATH:
             problems.append(
@@ -197,36 +205,42 @@ def check_serving_path(path: str, text: str) -> list[str]:
 
 def check_dispatch(text: str) -> list[str]:
     problems = []
-    for resolver, authority in RESOLVERS:
-        signature = signature_re(resolver).search(text)
-        body = resolver_body(text, resolver)
-        if signature is None or body is None:
+    # Signatures are checked ONCE per function. A function that must reach two authorities
+    # appears twice in RESOLVERS, and reporting its parameter list twice would count one
+    # defect as two.
+    for name in dict.fromkeys(fn for fn, _ in RESOLVERS):
+        signature = signature_re(name).search(text)
+        if signature is None or resolver_body(text, name) is None:
             problems.append(
-                f"{DISPATCH_MODULE}: `{resolver}` is not defined here. It is the one route "
-                f"both serving paths take for its question; moving it needs this gate "
-                f"moved with it."
+                f"{DISPATCH_MODULE}: `{name}` is not defined here. It is a link in the one "
+                f"route both serving paths take; moving it needs this gate moved with it."
             )
             continue
-        if authority not in body:
-            problems.append(
-                f"{DISPATCH_MODULE}: `{resolver}` does not reach `{authority}`. The fact "
-                f"must come from the ADR-MCPRE-064 authority that owns it."
-            )
-        for name in RAW_IDENTITY_ROUTE + RAW_CURRENCY_ROUTE:
-            if name in body:
-                problems.append(
-                    f"{DISPATCH_MODULE}: `{resolver}` names `{name}`. A resolver may not "
-                    f"carry a raw-certificate route of its own."
-                )
         forbidden = sorted(set(FORBIDDEN_PARAM.findall(signature.group("params"))))
         if forbidden:
             problems.append(
-                f"{DISPATCH_MODULE}: `{resolver}` takes parameter(s) named {forbidden}. "
-                f"Each resolver takes its predecessor product and the deployment's options "
-                f"and NOTHING else — the absence of a second-credential parameter is what "
-                f"makes pairing relationship A's facts with relationship B's certificates "
-                f"unconstructible (THM-0031, THM-0032). A parameter is how that returns."
+                f"{DISPATCH_MODULE}: `{name}` takes parameter(s) named {forbidden}. Each "
+                f"link takes its predecessor product and the deployment's own policies and "
+                f"NOTHING else — the absence of a second-credential parameter is what makes "
+                f"pairing relationship A's facts with relationship B's certificates "
+                f"unconstructible (THM-0031, THM-0032, THM-0034). A parameter is how that "
+                f"returns."
             )
+    for name, authority in RESOLVERS:
+        body = resolver_body(text, name)
+        if body is None:
+            continue
+        if authority not in body:
+            problems.append(
+                f"{DISPATCH_MODULE}: `{name}` does not reach `{authority}`. The fact must "
+                f"come from the ADR-MCPRE-064 authority that owns it."
+            )
+        for raw in RAW_IDENTITY_ROUTE + RAW_CURRENCY_ROUTE:
+            if raw in body:
+                problems.append(
+                    f"{DISPATCH_MODULE}: `{name}` names `{raw}`. A link in this route may "
+                    f"not carry a raw-certificate route of its own."
+                )
     return problems
 
 
@@ -273,74 +287,51 @@ def selftest() -> int:
     """Each case is a way the migration could be undone. A gate that passed them all would
     be reporting on a file set rather than on a property."""
     cases = [
-        (
-            "clean",
-            "let identity = resolve_authenticated_identity(c, o);\nlet r = credential_currency_rejection(c, o, b, n);",
-            "pub(crate) fn resolve_authenticated_identity(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<TransportIdentity> { authenticate_relationship_peer(accepted?.clone(), p).ok() }\npub(crate) fn credential_currency_rejection(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Option<Vec<u8>> { evaluate_credential_currency(accepted, &q, now) }",
-            0,
-        ),
+        ("clean", "let peer = served_channel_peer(c, o, b, n);", "pub(crate) fn served_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Result<Option<Peer>, Vec<u8>> { resolve_channel_peer(accepted, options, now) }\npub(crate) fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64) -> Result<Option<Peer>, R> { let p = authenticated_peer(accepted, options); evaluate_credential_currency(accepted, &q, now); current_authenticated_peer(p, &q, now) }\nfn authenticated_peer(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<Facts> { authenticate_relationship_peer(accepted?.clone(), p).ok() }", 0),
         (
             "serving path reconstructs identity from the leaf",
-            "let identity = extract_identity(leaf, policy);\nlet identity = resolve_authenticated_identity(c, o);\nlet r = credential_currency_rejection(c, o, b, n);",
-            "pub(crate) fn resolve_authenticated_identity(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<TransportIdentity> { authenticate_relationship_peer(accepted?.clone(), p).ok() }\npub(crate) fn credential_currency_rejection(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Option<Vec<u8>> { evaluate_credential_currency(accepted, &q, now) }",
+            "let identity = extract_identity(leaf, policy);\nlet peer = served_channel_peer(c, o, b, n);",
+            "pub(crate) fn served_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Result<Option<Peer>, Vec<u8>> { resolve_channel_peer(accepted, options, now) }\npub(crate) fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64) -> Result<Option<Peer>, R> { let p = authenticated_peer(accepted, options); evaluate_credential_currency(accepted, &q, now); current_authenticated_peer(p, &q, now) }\nfn authenticated_peer(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<Facts> { authenticate_relationship_peer(accepted?.clone(), p).ok() }",
             1,
         ),
         (
             "serving path rebuilds the currency decision from a chain",
-            "let r = cert_lifetime_rejection_for_chain(&chain, o, b, n);\nlet identity = resolve_authenticated_identity(c, o);\nlet r = credential_currency_rejection(c, o, b, n);",
-            "pub(crate) fn resolve_authenticated_identity(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<TransportIdentity> { authenticate_relationship_peer(accepted?.clone(), p).ok() }\npub(crate) fn credential_currency_rejection(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Option<Vec<u8>> { evaluate_credential_currency(accepted, &q, now) }",
+            "let r = cert_lifetime_rejection_for_chain(&chain, o, b, n);\nlet peer = served_channel_peer(c, o, b, n);",
+            "pub(crate) fn served_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Result<Option<Peer>, Vec<u8>> { resolve_channel_peer(accepted, options, now) }\npub(crate) fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64) -> Result<Option<Peer>, R> { let p = authenticated_peer(accepted, options); evaluate_credential_currency(accepted, &q, now); current_authenticated_peer(p, &q, now) }\nfn authenticated_peer(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<Facts> { authenticate_relationship_peer(accepted?.clone(), p).ok() }",
+            1,
+        ),
+        ("serving path stopped asking at all", "let peer = None;", "pub(crate) fn served_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Result<Option<Peer>, Vec<u8>> { resolve_channel_peer(accepted, options, now) }\npub(crate) fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64) -> Result<Option<Peer>, R> { let p = authenticated_peer(accepted, options); evaluate_credential_currency(accepted, &q, now); current_authenticated_peer(p, &q, now) }\nfn authenticated_peer(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<Facts> { authenticate_relationship_peer(accepted?.clone(), p).ok() }", 1),
+        (
+            "serving path asks twice",
+            "let peer = served_channel_peer(c, o, b, n);\nlet again = served_channel_peer(c, o, b, n);",
+            "pub(crate) fn served_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Result<Option<Peer>, Vec<u8>> { resolve_channel_peer(accepted, options, now) }\npub(crate) fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64) -> Result<Option<Peer>, R> { let p = authenticated_peer(accepted, options); evaluate_credential_currency(accepted, &q, now); current_authenticated_peer(p, &q, now) }\nfn authenticated_peer(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<Facts> { authenticate_relationship_peer(accepted?.clone(), p).ok() }",
             1,
         ),
         (
-            "serving path stopped resolving identity at all",
-            "let r = credential_currency_rejection(c, o, b, n);",
-            "pub(crate) fn resolve_authenticated_identity(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<TransportIdentity> { authenticate_relationship_peer(accepted?.clone(), p).ok() }\npub(crate) fn credential_currency_rejection(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Option<Vec<u8>> { evaluate_credential_currency(accepted, &q, now) }",
+            "resolver widened to accept a leaf",
+            "let peer = served_channel_peer(c, o, b, n);",
+            "pub(crate) fn served_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Result<Option<Peer>, Vec<u8>> { resolve_channel_peer(accepted, options, now) }\npub(crate) fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64) -> Result<Option<Peer>, R> { let p = authenticated_peer(accepted, options); evaluate_credential_currency(accepted, &q, now); current_authenticated_peer(p, &q, now) }\nfn authenticated_peer(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<Facts> { authenticate_relationship_peer(accepted?.clone(), p).ok() }".replace(
+                "fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64)",
+                "fn resolve_channel_peer(accepted: Option<&Mvc>, leaf: Option<&[u8]>, options: &ServerOptions, now: i64)",
+            ),
             1,
         ),
         (
-            "serving path stopped evaluating currency at all",
-            "let identity = resolve_authenticated_identity(c, o);",
-            "pub(crate) fn resolve_authenticated_identity(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<TransportIdentity> { authenticate_relationship_peer(accepted?.clone(), p).ok() }\npub(crate) fn credential_currency_rejection(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Option<Vec<u8>> { evaluate_credential_currency(accepted, &q, now) }",
+            "resolver stopped reaching the currency authority",
+            "let peer = served_channel_peer(c, o, b, n);",
+            "pub(crate) fn served_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Result<Option<Peer>, Vec<u8>> { resolve_channel_peer(accepted, options, now) }\npub(crate) fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64) -> Result<Option<Peer>, R> { let p = authenticated_peer(accepted, options); evaluate_credential_currency(accepted, &q, now); current_authenticated_peer(p, &q, now) }\nfn authenticated_peer(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<Facts> { authenticate_relationship_peer(accepted?.clone(), p).ok() }".replace("evaluate_credential_currency(accepted, &q, now); ", ""),
             1,
         ),
         (
-            "identity resolver widened to accept a leaf",
-            "let identity = resolve_authenticated_identity(c, o);\nlet r = credential_currency_rejection(c, o, b, n);",
-            "pub(crate) fn resolve_authenticated_identity(accepted: Option<&Mvc>, "
-            "leaf: Option<&[u8]>, options: &ServerOptions) -> Option<TransportIdentity> "
-            "{ authenticate_relationship_peer(accepted?.clone(), p).ok() }\n"
-            "pub(crate) fn credential_currency_rejection(accepted: Option<&Mvc>, "
-            "options: &ServerOptions, request: &[u8], now: i64) -> Option<Vec<u8>> "
-            "{ evaluate_credential_currency(accepted, &q, now) }",
+            "resolver stopped reaching the authentication authority",
+            "let peer = served_channel_peer(c, o, b, n);",
+            "pub(crate) fn served_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Result<Option<Peer>, Vec<u8>> { resolve_channel_peer(accepted, options, now) }\npub(crate) fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64) -> Result<Option<Peer>, R> { let p = authenticated_peer(accepted, options); evaluate_credential_currency(accepted, &q, now); current_authenticated_peer(p, &q, now) }\nfn authenticated_peer(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<Facts> { authenticate_relationship_peer(accepted?.clone(), p).ok() }".replace("authenticate_relationship_peer(accepted?.clone(), p).ok()", "None"),
             1,
-        ),
-        (
-            "currency resolver widened to accept a chain",
-            "let identity = resolve_authenticated_identity(c, o);\nlet r = credential_currency_rejection(c, o, b, n);",
-            "pub(crate) fn resolve_authenticated_identity(accepted: Option<&Mvc>, "
-            "options: &ServerOptions) -> Option<TransportIdentity> "
-            "{ authenticate_relationship_peer(accepted?.clone(), p).ok() }\n"
-            "pub(crate) fn credential_currency_rejection(chain: &[&[u8]], "
-            "options: &ServerOptions, request: &[u8], now: i64) -> Option<Vec<u8>> "
-            "{ evaluate_credential_currency(chain, &q, now) }",
-            1,
-        ),
-        (
-            "currency resolver stopped reaching the authority",
-            "let identity = resolve_authenticated_identity(c, o);\nlet r = credential_currency_rejection(c, o, b, n);",
-            "pub(crate) fn resolve_authenticated_identity(accepted: Option<&Mvc>, "
-            "options: &ServerOptions) -> Option<TransportIdentity> "
-            "{ authenticate_relationship_peer(accepted?.clone(), p).ok() }\n"
-            "pub(crate) fn credential_currency_rejection(accepted: Option<&Mvc>, "
-            "options: &ServerOptions, request: &[u8], now: i64) -> Option<Vec<u8>> "
-            "{ leaf_facts(x) }",
-            2,
         ),
         (
             "the route is named only inside a test region",
-            "#[cfg(test)]\nmod tests {\n    fn t() { extract_identity(leaf, p); }\n}\n"
-            "let identity = resolve_authenticated_identity(c, o);\nlet r = credential_currency_rejection(c, o, b, n);",
-            "pub(crate) fn resolve_authenticated_identity(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<TransportIdentity> { authenticate_relationship_peer(accepted?.clone(), p).ok() }\npub(crate) fn credential_currency_rejection(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Option<Vec<u8>> { evaluate_credential_currency(accepted, &q, now) }",
+            "#[cfg(test)]\nmod tests {\n    fn t() { extract_identity(leaf, p); }\n}\nlet peer = served_channel_peer(c, o, b, n);",
+            "pub(crate) fn served_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Result<Option<Peer>, Vec<u8>> { resolve_channel_peer(accepted, options, now) }\npub(crate) fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64) -> Result<Option<Peer>, R> { let p = authenticated_peer(accepted, options); evaluate_credential_currency(accepted, &q, now); current_authenticated_peer(p, &q, now) }\nfn authenticated_peer(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<Facts> { authenticate_relationship_peer(accepted?.clone(), p).ok() }",
             0,
         ),
     ]

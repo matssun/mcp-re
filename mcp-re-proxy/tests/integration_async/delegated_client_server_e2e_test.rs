@@ -249,7 +249,7 @@ impl RemoteTransport for InProcessServer {
             target_uri: request.target_uri.clone(),
             headers: request.headers.clone(),
             body: request.body.clone(),
-            identity: None,
+            peer: None,
             assertion: None,
         };
         let server = Arc::clone(&self.server);
@@ -553,7 +553,7 @@ fn one_exchange(
         target_uri: signed.request().target_uri.clone(),
         headers: signed.request().headers.clone(),
         body: signed.request().body.clone(),
-        identity: None,
+        peer: None,
         assertion: None,
     };
     let resp = rt.block_on(async { server.handle(served, at).await });

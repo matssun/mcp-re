@@ -676,7 +676,10 @@ fn pkcs11_tls_full_mtls_handshake_token_resident_no_disk_read() {
 
     let identity = server.join().expect("join").expect("serve ok");
     assert_eq!(
-        identity.expect("verified client identity").value,
+        identity
+            .expect("verified client identity")
+            .identity()
+            .as_str(),
         "spiffe://example.org/agent-1"
     );
 }
