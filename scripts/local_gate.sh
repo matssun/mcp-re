@@ -117,6 +117,8 @@ stage_static() {
     && python3 scripts/lifecycle_purity_gate.py \
     && python3 scripts/registry_approval_gate.py --selftest \
     && python3 scripts/registry_approval_gate.py \
+    && python3 scripts/serving_identity_provenance_gate.py --selftest \
+    && python3 scripts/serving_identity_provenance_gate.py \
     && python3 tools/verification/test_verdict_algebra.py \
     && python3 tools/verification/test_invalidation.py \
     && python3 tools/verification/test_attest.py \

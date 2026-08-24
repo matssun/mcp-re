@@ -27,8 +27,8 @@
 //! It owns no TLS authentication policy. It holds the live [`ServerConnection`], so it is
 //! the only place that can turn one into a peer chain — but every decision made from that
 //! chain belongs to [`crate::tls`] and is called, not reimplemented:
-//! [`resolve_identity_from_leaf`](crate::tls::resolve_identity_from_leaf) for the verified
-//! identity, [`cert_lifetime_rejection_for_chain`](crate::tls::cert_lifetime_rejection_for_chain)
+//! [`resolve_authenticated_identity`](crate::tls::resolve_authenticated_identity) for the
+//! identity the relationship authenticated as, [`cert_lifetime_rejection_for_chain`](crate::tls::cert_lifetime_rejection_for_chain)
 //! and (under `online_ocsp`) `ocsp_rejection_for_chain` for the per-request rejection
 //! guards, [`routing_header_rejection`](crate::tls::routing_header_rejection) and
 //! [`assertion_header`](crate::tls::assertion_header) for the header guards. The adapters

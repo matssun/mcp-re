@@ -822,7 +822,7 @@ tool_specific_mechanism = "foreign-dependency"
 
 [[assumption]]
 id = "ASM-0036"
-description = "A TLS establishment mechanism accepts a client credential only where the peer proved control of that credential's private key — by CertificateVerify on a full handshake, and by resumption-secret continuity with the peer that completed the earlier full handshake on a resumed one."
+description = "A TLS establishment mechanism accepts a client credential only under proof that binds the peer to it: on a FULL handshake, current control of the credential's private key, proved by CertificateVerify; on a RESUMED handshake, possession of resumption secret material derived from an earlier authenticated handshake — authentication CONTINUITY, not a fresh private-key proof."
 justification = """
 Slice 2 of ADR-MCPRE-064 is the first product to use the word AUTHENTICATED, and this is the
 premise that word needs beyond the two facts the composition already carries. Those two are
@@ -839,14 +839,21 @@ sees that material and could not re-derive the fact. On a resumed session no cer
 message is exchanged at all, and possession is inherited: the resumption secret is derived
 from the earlier full handshake, so the resuming party is the one that completed it. That
 inheritance is why the composed product carries the establishment path rather than flattening
-it, and why the resumed reading is *authenticated earlier, admitted now under an unchanged
-anchor set* rather than *authenticated now*.
+it, and why the resumed reading is *authenticated earlier, carried forward now under an
+unchanged anchor set* rather than *authenticated now*.
 
-The two halves of the premise fail differently, which is why both are stated. A mechanism that
-skipped `CertificateVerify` would authenticate a peer holding only a copied certificate. A
-mechanism that resumed a session for a party other than the one that established it would
-authenticate a peer that never held the credential at all — the resumption half of ASM-0035
-bounds when a session may be resumed, and this bounds who the resuming party is.
+The two halves are DIFFERENT PROOFS, not one proof in two settings, and the headline says so
+because collapsing them is the error this premise exists to prevent. A full handshake proves
+control of the private key AT THAT MOMENT. A resumed handshake proves nothing about the
+private key: no certificate message is exchanged, and the peer may no longer hold the key at
+all. What it proves is possession of secret material derived from an earlier handshake that
+did prove it — continuity of an authentication, carried forward.
+
+They also fail differently. A mechanism that skipped `CertificateVerify` would authenticate a
+peer holding only a copied certificate. A mechanism that resumed a session for a party other
+than the one that established it would authenticate a peer that never held the credential at
+all — the resumption half of ASM-0035 bounds WHEN a session may be resumed, and this bounds
+WHO the resuming party is.
 
 Not proved here, for the reason ASM-0033 and ASM-0035 are not: a TLS implementation is a far
 larger verification target than the authority composing over it. The controls drive real

@@ -1343,9 +1343,10 @@ configured.
 It does not establish admission, authorization, channel binding, or that this peer is the
 actor that signed any particular request. It does not say the relationship still exists.
 
-The word *authenticated* rests on ASM-0036: that mechanism acceptance entailed proof of
-control of the credential's private key, by CertificateVerify on a full handshake and by
-resumption-secret continuity on a resumed one. That premise is this unit's own and is not
+The word *authenticated* rests on ASM-0036: that mechanism acceptance entailed a proof binding
+the peer to the credential — current control of its private key via CertificateVerify on a
+full handshake, and possession of resumption secret material derived from an earlier
+authenticated handshake on a resumed one, which is continuity rather than a fresh key proof. That premise is this unit's own and is not
 supplied by ASM-0033 or ASM-0035, which speak to what the mechanism REPORTS rather than to
 what acceptance required of the peer.
 

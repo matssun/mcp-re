@@ -181,6 +181,15 @@ jobs:
           python3 scripts/seam_posture_gate.py --selftest
           python3 scripts/seam_posture_gate.py
 
+      # ADR-MCPRE-064 (#619): direct-TLS serving resolves identity from the AUTHENTICATED
+      # peer. The defect this catches reintroduces itself by WIDENING A SIGNATURE — "pass
+      # the leaf too, we already have it" — which no existing control notices, because
+      # each one still measures a true thing about a correctly-composed value.
+      - name: Serving-identity provenance gate
+        run: |
+          python3 scripts/serving_identity_provenance_gate.py --selftest
+          python3 scripts/serving_identity_provenance_gate.py
+
       # A guide that teaches a flag the CLI no longer parses sends an operator to debug
       # their own environment. Only command lines that LAUNCH the proxy are scanned, so
       # prose may still name a removed flag in order to say it was removed.

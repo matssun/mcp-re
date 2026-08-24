@@ -28,6 +28,7 @@ use crate::communication_assurance::mechanism_verified_credential::rustls_adapte
 use crate::communication_assurance::MechanismVerifiedCredentialEvidence;
 use crate::tls::assertion_header;
 use crate::tls::cert_lifetime_rejection_for_chain;
+use crate::tls::resolve_authenticated_identity;
 use crate::tls::routing_header_rejection;
 use crate::tls::wall_clock_unix;
 use crate::tls::ServerLimits;
@@ -72,7 +73,10 @@ where
     // chain did before.
     let credential = verified_credential(&stream.conn).ok();
     let headers = RequestHeaders::parse(&request.header_block);
-    let identity = resolve_identity(credential.as_ref(), options);
+    // ADR-MCPRE-064 (#619): the SAME function the async fleet calls, taking the SAME
+    // acceptance product. Parity is now one call site rather than two derivations that
+    // agree — there is no per-path leaf projection left to drift.
+    let identity = resolve_authenticated_identity(credential.as_ref(), options);
     let assertion = assertion_header(options, &headers);
     let response = match connection_rejection(credential.as_ref(), options, &request.body)
         .or_else(|| routing_header_rejection(&headers, &request.body))
@@ -93,20 +97,6 @@ fn apply_socket_timeouts(tcp: &TcpStream, limits: &ServerLimits) -> io::Result<(
     tcp.set_read_timeout(limits.read_timeout)?;
     tcp.set_write_timeout(limits.write_timeout)?;
     Ok(())
-}
-
-/// The verified transport identity for one served request. The strategy dispatch, the
-/// extraction and the fail-closed `None` are all
-/// [`crate::tls::resolve_identity_from_leaf`]'s; this takes the leaf of the
-/// channel-associated credential and hands it over — the same extractor, and so the same
-/// identity, the async fleet resolves from the credential it captured at its own
-/// establishment boundary.
-fn resolve_identity(
-    credential: Option<&MechanismVerifiedCredentialEvidence>,
-    options: &ServerOptions,
-) -> Option<TransportIdentity> {
-    let chain = accepted_chain_der(credential);
-    crate::tls::resolve_identity_from_leaf(chain.first().copied(), options)
 }
 
 /// The per-request rejection decision for an established relationship: the certificate

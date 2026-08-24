@@ -93,25 +93,42 @@ Identity extraction and channel binding are separate propositions, and the first
 no longer lives here:
 
 ```text
-certificate-chain evidence
-    -> [ certificate identity authority ]  ADR-MCPRE-063 Slice 1
-        -> peer-identity evidence
-            -> ... verification, assurance, binding ...
-                -> signer <-> identity binding
+TLS establishment
+    -> [ mechanism adapter, ASM-0033/0035 ]     ADR-MCPRE-064 Slice 1
+        -> mechanism-verified credential evidence
+            -> [ + configured CertificateIdentityPolicy ]   ADR-MCPRE-064 Slice 2
+                -> authenticated relationship peer facts
+                    -> [ compatibility rendering ]  -> TransportIdentity
+                        -> ... currency, binding ...
+                            -> signer <-> identity binding
 ```
 
-`extract_identity` is now a compatibility facade in `tls.rs` over
-`communication_assurance::CertificateChainEvidence::interpret_identity`. It parses nothing,
+Production serving takes exactly that route. Both direct-TLS paths — the async fleet and
+the blocking harness — call one function, `tls::resolve_authenticated_identity`, which
+dispatches on the identity strategy and, under `DirectTls`, hands the mechanism's own
+acceptance and the configured policy to `authenticate_relationship_peer`. The identity is
+therefore read from the leaf of the very credential the mechanism accepted for THAT
+relationship (THM-0031), and `TransportIdentity` is produced from that product rather than
+reconstructed from certificate representation.
+
+`extract_identity` is a compatibility facade in `tls.rs` over
+`communication_assurance::CertificateChainEvidence::interpret_identity`, with **no
+production caller left** — it survives for its published X.509 conformance suite over real
+DER, and `scripts/serving_identity_provenance_gate.py` fails the build if a serving path
+calls it again. It parses nothing,
 selects nothing and validates nothing; the historical vocabulary it converts —
 `IdentityPolicy`, `IdentitySource`, `TransportIdentity`, `validate_asserted_identity_value`
 — is named and dated in `asserted_identity_facade.rs` so the migration surface is
 countable and can be deleted whole.
 
 The arrow that used to read `TLS certificate verification -> verified transport identity`
-collapsed two authorities into one name. Identity interpretation does NOT establish that
-the chain was verified, and the type it returns no longer implies it: what the authority
-produces is peer-identity EVIDENCE, and the authority that would turn it into an
-authenticated peer fact does not exist yet.
+collapsed two authorities into one name, and the split survives the migration: identity
+interpretation still does NOT establish that the chain was verified. What closed the gap is
+a THIRD fact — the mechanism's own acceptance — composed with the identity over ONE
+credential. `TransportIdentity` remains freely constructible and is therefore explicitly a
+RENDERING, never the authority: a value of it proves nothing about where it came from,
+which is why it is produced only in `facades::asserted_identity` from a product whose
+provenance THM-0031 states.
 
 ## 7. Connection credential window
 
@@ -125,7 +142,7 @@ The blocking mTLS + hand-rolled HTTP/1 harness is not the shipped MCP-RE serving
 
 Relocation was justified by ownership, not by LOC reduction. `serve`, `serve_once` and `serve_once_with_assertion` have no in-crate production caller — every caller is a test or an external embedder — which is what makes them a harness rather than a serving path. It is not on its own a reason to delete them (ADR-061 §2 class 4 — zero production callers is not a deletion argument), so they are retained and still exported from the crate root, with `blocking_mtls_harness` as their provenance.
 
-What moved is the capability, whole: the entry points, the accept loop, the per-connection sequence, the deadline wrapper and the HTTP/1 framing. What did **not** move is any authentication policy. The harness holds the live `ServerConnection`, so it is the only code that can produce a peer chain from one, but every decision taken from that chain is called here: `resolve_identity_from_leaf`, `cert_lifetime_rejection_for_chain`, `ocsp_rejection_for_chain`, `routing_header_rejection`, `assertion_header`. `ocsp_rejection` was reshaped to its chain form rather than moved, precisely so the online-OCSP fail-closed policy stayed in the authority.
+What moved is the capability, whole: the entry points, the accept loop, the per-connection sequence, the deadline wrapper and the HTTP/1 framing. What did **not** move is any authentication policy. The harness holds the live `ServerConnection`, so it is the only code that can produce a peer chain from one, but every decision taken from that chain is called here: `cert_lifetime_rejection_for_chain`, `ocsp_rejection_for_chain`, `routing_header_rejection`, `assertion_header`. `ocsp_rejection` was reshaped to its chain form rather than moved, precisely so the online-OCSP fail-closed policy stayed in the authority.
 
 Every per-request decision in this component now takes the chain as an argument, so the blocking and async paths reach the same verdict from the same input, and who holds the connection is not part of the decision. The measurement is EX-004's post-#574 re-census.
 
@@ -147,7 +164,7 @@ Registry: [`verification/policy/theorems.toml`](../../../verification/policy/the
 | Fail-closed revocation is a property of the verifier type, not a constructor argument | local | type-level — a verifier that admits unknown revocation status is unconstructible | structural, no registry entry |
 | **Resumption is offered only while the authentication epoch is current** (ADR-055) | listener lifetime | `EpochBoundSessionStore` + `TlsAuthEpoch::compute`; test below | **structural + tested, not stated as a theorem** |
 | **A connection cannot outlive the credential that authenticated it** | relation | `ClientCredentialWindow` projections | **sealed, no registry entry** |
-| **Transport identity is derived only from the verified client certificate** | composition | none | **gap** |
+| **Transport identity is derived only from the credential the mechanism accepted for that relationship** | composition | THM-0031 · `unit://proxy.authenticated_relationship_peer` · probe M42 · ASM-0036 · `tls::authenticated_identity_resolution_tests` · `scripts/serving_identity_provenance_gate.py` | in registry (authority) + gated (call sites) |
 | Certificate identity interpretation reads the configured field and refuses rather than falling back | certificate evidence → identity evidence | THM-0024 · `unit://proxy.certificate_identity` · probes M25–M28 | in registry |
 | Every peer identity value is well-formed, whatever evidence produced it | identity value | THM-0023 · `unit://proxy.peer_identity_value` · probe M29 | in registry |
 | Every canonical Ed25519 public key value is the canonical RFC 8410 encoding of its own point | key representation | THM-0025 · `unit://proxy.ed25519_public_key` · probes M32, M35 | in registry |
