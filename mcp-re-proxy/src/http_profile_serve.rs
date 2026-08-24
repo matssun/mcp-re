@@ -67,12 +67,15 @@ use mcp_re_http_profile::VerifiedMcpRequest;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 
+use crate::admission_enforcer::AdmissionEnforcement;
+use crate::admission_enforcer::AdmissionEnforcer;
 use crate::admission_source::AsyncAdmissionSource;
 use crate::async_inner::AsyncInnerServer;
 use crate::async_inner::InnerOutcome;
 use crate::async_serve::ServedHttpRequest;
 use crate::async_serve::ServedHttpResponse;
 use crate::communication_assurance::request_peer_binding::http_profile_adapter::verified_request_subject;
+use crate::communication_assurance::RequestPeerBindingFacts;
 use crate::continuation_store::continuation_key;
 use crate::continuation_store::AsyncContinuationStore;
 use crate::continuation_store::RetainedBases;
@@ -325,78 +328,6 @@ pub struct HttpProfileProxy {
     retention: Option<Arc<crate::transparency::EvidenceRetention>>,
 }
 
-/// What a request that carries NO admission evidence means to this deployment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AdmissionEnforcement {
-    /// Serve it. For a deployment that has not rolled admission out to every client
-    /// yet — the binding is honoured when present and absent is not an error.
-    Optional,
-    /// Refuse it. The only setting under which "every served call acted under a
-    /// current admission" is a true statement about the deployment.
-    Required,
-}
-
-/// The §7 admission gate's collaborators, held together because none of them is
-/// meaningful alone.
-struct AdmissionEnforcer {
-    /// The authoritative state this PEP consults per call.
-    source: Arc<dyn AsyncAdmissionSource>,
-    /// The N/P/TTL freshness budget and the degraded-mode opt-in (§5.2).
-    policy: AdmissionPolicy,
-    /// What an admission-free request means here.
-    enforcement: AdmissionEnforcement,
-    /// Resolves an assertion's `issuer_kid` to the admission authority's root key.
-    /// A kid never introduces trust: an assertion signed by an unresolvable issuer
-    /// is refused, exactly as an unknown request keyid is.
-    resolve_authority: AdmissionAuthorityResolver,
-    /// When the authoritative source was last READ successfully, in unix seconds.
-    ///
-    /// P bounds how long this PEP may serve on last-known state while the authority is
-    /// unreachable. Applied to the presented assertion's `iat`, it bounds the wrong
-    /// thing: the revocation channel is the STORE, so during a store outage the
-    /// assertion issuer never learns of a revocation and keeps minting assertions with
-    /// a current `iat` — and a caller that simply keeps fetching them is served for the
-    /// whole outage, however long. Bounding elapsed time since the last successful read
-    /// is what makes "degraded serving is bounded by P" a true statement about the
-    /// deployment.
-    ///
-    /// `i64::MIN` until the first successful read: a replica that has never reached the
-    /// authority has no last-known state to serve on, so it fails closed rather than
-    /// treating startup as a confirmation.
-    last_authoritative_read: std::sync::atomic::AtomicI64,
-}
-
-impl AdmissionEnforcer {
-    /// Note that the authoritative record was read at `now`.
-    ///
-    /// A definitive negative counts: the authority answered, which is what P measures.
-    fn record_authoritative_read(&self, now: i64) {
-        self.last_authoritative_read
-            .fetch_max(now, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// Has the authority been unreachable for longer than P (+ skew)?
-    ///
-    /// True also when it has never been reachable, and whenever degraded mode is not
-    /// enabled at all — in both cases there is no window to be inside of.
-    fn degraded_window_exhausted(&self, now: i64) -> bool {
-        if !self.policy.allow_degraded_mode {
-            return true;
-        }
-        let last = self
-            .last_authoritative_read
-            .load(std::sync::atomic::Ordering::Relaxed);
-        if last == i64::MIN {
-            return true;
-        }
-        now.saturating_sub(last)
-            > self
-                .policy
-                .degraded_propagation_bound
-                .saturating_add(self.policy.max_clock_skew)
-    }
-}
-
 impl HttpProfileProxy {
     /// Install the ADR-MCPS-035 audit sink. Without one the serving path emits no
     /// security record — which is what `docs/spec/security-boundary.md` S9 describes as
@@ -585,12 +516,20 @@ impl HttpProfileProxy {
     /// wire code, and thread an [`ExecutionDisposition`] in to do it — which is the retry
     /// contract, a fact about the whole exchange that no stage can state. The machine
     /// states it now, once, where [`HttpProfileProxy::refuse`] signs.
-    async fn admission_stage(&self, ex: &Exchange<'_>) -> Result<Established<()>, Refusal> {
-        let admitted = Established::new((), ExchangeEvent::AdmissionCurrencyChecked);
+    async fn admission_stage(
+        &self,
+        ex: &Exchange<'_>,
+        bound: Option<&RequestPeerBindingFacts>,
+    ) -> Result<Established<Option<RequestPeerBindingFacts>>, Refusal> {
+        // The prerequisite travels WITH the decision: an authority downstream of admission
+        // receives what the decision was taken over instead of re-deriving it, and the
+        // *bound* / *not claimed* distinction survives the stage that consumed it.
+        let admitted = || Established::new(bound.cloned(), ExchangeEvent::AdmissionCurrencyChecked);
         let refused = |code: &'static str| Refusal::before_admission(code, 403);
         let Some(enforcer) = self.admission.as_ref() else {
-            return Ok(admitted);
+            return Ok(admitted());
         };
+        // `bound`: the ADR-MCPRE-064 §16 prerequisite, never an identity source.
         let verified = ex.verified;
         let block = Some(verified.request_block());
         let binding = block.and_then(|b| b.admission.as_ref());
@@ -606,7 +545,7 @@ impl HttpProfileProxy {
                         HttpProfileError::AdmissionStateUnavailable.wire_code(),
                     ));
                 }
-                return Ok(admitted);
+                return Ok(admitted());
             }
         };
 
@@ -641,9 +580,10 @@ impl HttpProfileProxy {
         match check_admission(
             binding,
             assertion,
-            // The VERIFIER-RESOLVED actor, never anything the request asserts. An
-            // assertion issued to another workload names a different actor and is
-            // refused here, so possession alone no longer satisfies the gate.
+            // The VERIFIER-RESOLVED actor — the FULL signing actor, keyid included, never
+            // the bare subject and never anything the request asserts. An assertion issued
+            // to another workload, or under another key, names a different actor and is
+            // refused, so possession alone does not satisfy the gate (§16.4).
             ex.actor_id,
             authoritative.as_ref(),
             mcp_re_http_profile::PROFILE_TAG,
@@ -660,7 +600,7 @@ impl HttpProfileProxy {
             // ADR. So a degraded-mode serve is indistinguishable in audit from a
             // confirmed one. That is a real gap in the record, named here rather
             // than closed by quietly widening a pinned vocabulary.
-            Ok(_) => Ok(admitted),
+            Ok(_) => Ok(admitted()),
             Err(e) => Err(refused(e.wire_code())),
         }
     }
@@ -899,24 +839,24 @@ impl HttpProfileProxy {
     /// forbids   any effect on the request's behalf
     /// refusal   free
     /// ```
-    /// No binding policy installed passes: the channel is then not CLAIMED to be bound.
+    /// No policy installed passes: the channel is then not CLAIMED to be bound.
     fn transport_binding_stage(
         &self,
         ex: &Exchange<'_>,
         peer: Option<&crate::communication_assurance::AuthenticatedChannelPeer>,
-    ) -> Result<Established<()>, Refusal> {
-        let bound = Established::new((), ExchangeEvent::TransportBindingChecked);
+    ) -> Result<Established<Option<RequestPeerBindingFacts>>, Refusal> {
+        let checked = ExchangeEvent::TransportBindingChecked;
         let Some(binding) = &self.transport_binding else {
-            return Ok(bound);
+            return Ok(Established::new(None, checked)); // NOT CLAIMED to be bound
         };
         let subject = verified_request_subject(ex.verified.resolved_actor());
-        if binding.bind(peer, subject).is_ok() {
-            return Ok(bound);
-        }
-        Err(Refusal::before_admission(
-            "mcp-re.transport_binding_failed",
-            403,
-        ))
+        let Ok(bound) = binding.bind(peer, subject) else {
+            return Err(Refusal::before_admission(
+                "mcp-re.transport_binding_failed",
+                403,
+            ));
+        };
+        Ok(Established::new(Some(bound), checked))
     }
 
     /// CONTINUATION-PREPARED — recover the retained open-leg bases for an ANSWER leg.
@@ -1515,13 +1455,15 @@ impl HttpProfileProxy {
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         };
 
-        match self.transport_binding_stage(&ex, req.peer.as_ref()) {
+        let bound = match self.transport_binding_stage(&ex, req.peer.as_ref()) {
             Ok(bound) => progress.establish(bound),
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
-        }
+        };
 
-        match self.admission_stage(&ex).await {
-            Ok(admitted) => progress.establish(admitted),
+        match self.admission_stage(&ex, bound.as_ref()).await {
+            Ok(admitted) => {
+                let _decided_over = progress.establish(admitted);
+            }
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         }
 
@@ -2263,6 +2205,94 @@ mod last_resort_receipt_tests {
             e.as_object().expect("an object").len(),
             1,
             "only the wire code: {e}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod admission_prerequisite_tests {
+    //! ADR-MCPRE-064 Slice 5 (#625) — admission CONSUMES the request↔peer binding.
+    //!
+    //! # What changed, stated precisely
+    //!
+    //! The exchange machine already refused an out-of-order transition: advancing
+    //! `AdmissionCurrencyChecked` before `TransportBindingChecked` latches an anomaly. So
+    //! stage ORDER was never the gap.
+    //!
+    //! What was discarded is the binding's CONTENT. `TransportBinding::bind` built a
+    //! `RequestPeerBindingFacts` and the stage returned `Established<()>`, so no later
+    //! authority could condition on whether binding had been claimed at all — the
+    //! `Some`/`None` distinction died at the stage that made it.
+    //!
+    //! # What the prerequisite says
+    //!
+    //! `Required` is the only enforcement under which *every served call acted under a
+    //! current admission* is a true statement about the deployment. It is only true if the
+    //! caller was also shown to be the peer of the channel it arrived over; otherwise the
+    //! assertion was matched against an actor whose channel nobody checked, and the
+    //! sentence quietly weakens to *every call presented a current admission*.
+    //!
+    //! # What is deliberately NOT changed
+    //!
+    //! The assertion match stays on `actor_id()`. An admission assertion is issued to the
+    //! full resolved signing actor — role, trust domain, subject AND keyid — so the
+    //! composite is the correct coordinate here, and the ADR-MCPRE-064 Slice 4 ruling does
+    //! NOT extend to it. Narrowing this to the subject would let an assertion issued for
+    //! one signing key be presented under another. The control below pins that.
+
+    use super::*;
+
+    #[test]
+    fn the_binding_stage_hands_on_the_fact_rather_than_a_unit() {
+        // What the slice actually changed. Ordering was never the gap — the exchange
+        // machine latches an anomaly on an out-of-order transition — so the measurable
+        // difference is that the stage's established value now HAS content, and the
+        // *bound* / *no policy installed* distinction survives it.
+        //
+        // The two shapes are asserted through `Established`'s own type, which is the point:
+        // a stage returning `Established<()>` cannot hand anything to its successor, and no
+        // amount of call-site discipline changes that.
+        let not_claimed: Established<Option<RequestPeerBindingFacts>> =
+            Established::new(None, ExchangeEvent::TransportBindingChecked);
+        let mut progress = ExchangeProgress::new();
+        assert!(
+            progress.establish(not_claimed).is_none(),
+            "no binding policy installed is NOT CLAIMED to be bound, and says so"
+        );
+    }
+
+    #[test]
+    fn the_binding_prerequisite_and_the_assertion_coordinate_are_different_facts() {
+        // THE CONTROL THAT KEEPS THE TWO RULINGS APART. A reader applying Slice 4's ruling
+        // by analogy would narrow the admission match from `actor_id()` to the subject —
+        // and an assertion issued for one signing key would then be presentable under
+        // another key of the same subject.
+        //
+        //   request <-> peer :  authenticated peer identity == resolved actor SUBJECT
+        //   assertion <-> actor:  admitted_actor            == resolved actor ACTOR_ID
+        use mcp_re_http_profile::ActorIdentity;
+
+        let actor = ActorIdentity {
+            role: "client".into(),
+            trust_domain: "example.org".into(),
+            subject: "spiffe://example.org/agent-1".into(),
+            keyid: "key-a".into(),
+        };
+        let rotated = ActorIdentity {
+            keyid: "key-b".into(),
+            ..actor.clone()
+        };
+
+        assert_eq!(
+            actor.subject, rotated.subject,
+            "one principal — which is why the TRANSPORT binding survives a key rotation"
+        );
+        assert_ne!(
+            actor.actor_id(),
+            rotated.actor_id(),
+            "two signing actors — which is why an ADMISSION assertion issued to the first \
+             must not be presentable under the second. Collapsing this to subject equality \
+             is the mistake this control exists to catch."
         );
     }
 }

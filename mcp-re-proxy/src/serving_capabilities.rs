@@ -341,7 +341,7 @@ const ADMISSION_OFF: &str = "admission currency = OFF (--admission off): a call 
 pub(crate) struct AdmissionGate {
     pub(crate) source: Arc<dyn crate::admission_source::AsyncAdmissionSource>,
     pub(crate) policy: mcp_re_http_profile::AdmissionPolicy,
-    pub(crate) enforcement: crate::http_profile_serve::AdmissionEnforcement,
+    pub(crate) enforcement: crate::admission_enforcer::AdmissionEnforcement,
     pub(crate) resolve_authority: crate::http_profile_serve::AdmissionAuthorityResolver,
 }
 
@@ -371,8 +371,8 @@ pub(crate) fn admission_currency(
         return Ok(Established::off(ADMISSION_OFF));
     };
     let enforcement = match gate.posture() {
-        AdmissionPosture::Optional => crate::http_profile_serve::AdmissionEnforcement::Optional,
-        AdmissionPosture::Required => crate::http_profile_serve::AdmissionEnforcement::Required,
+        AdmissionPosture::Optional => crate::admission_enforcer::AdmissionEnforcement::Optional,
+        AdmissionPosture::Required => crate::admission_enforcer::AdmissionEnforcement::Required,
     };
     let (kid, key, url, availability) = (
         gate.authority_kid().to_string(),
@@ -404,8 +404,8 @@ pub(crate) fn admission_currency(
     let line = format!(
         "admission currency = {} (authority {kid}, shared record over redis, degraded {})",
         match enforcement {
-            crate::http_profile_serve::AdmissionEnforcement::Required => "REQUIRED",
-            crate::http_profile_serve::AdmissionEnforcement::Optional => "optional",
+            crate::admission_enforcer::AdmissionEnforcement::Required => "REQUIRED",
+            crate::admission_enforcer::AdmissionEnforcement::Optional => "optional",
         },
         match availability {
             AdmissionAvailability::FailClosed => {

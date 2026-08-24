@@ -39,6 +39,9 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPS-028 §B: native AWS KMS Ed25519 response signer (blocking ureq HTTPS +
     # minimal audited SigV4; behind #[cfg(feature = "aws_kms_keysource")], cfg'd out
     # of the default build). No async aws-sdk-kms/tokio (ADR-MCPS-018 lean-sync).
+    # ADR-MCPRE-064 Slice 5: the §7 admission gate's collaborators, decomposed out of the
+    # serving pipeline — a deployment posture, not a stage.
+    "src/admission_enforcer.rs",
     "src/aws_kms_keysource.rs",
     "src/aws_sigv4.rs",
     # ADR-MCPRE-063 Slice 1: the compatibility surface of the certificate identity
