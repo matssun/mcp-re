@@ -1163,3 +1163,61 @@ tested_symbols = [
   "lib#communication_assurance::mechanism_verified_credential::rustls_adapter::acceptance::a_peer_the_verifier_refused_never_reaches_this_authority",
 ]
 pilot = "verus-candidate"
+
+# ---------------------------------------------------------------------------
+# Communication assurance — ADR-MCPRE-064 Slice 2
+# ---------------------------------------------------------------------------
+#
+# The first unit entitled to the word AUTHENTICATED, and the second application of the L-5
+# composition rule. Both predecessors already exist and neither is strengthened: what this
+# unit adds is that the acceptance and the identity are about ONE credential, derived inside
+# one construction closure so that no caller can pair relationship A's acceptance with
+# relationship B's identity.
+
+[[edge]]
+# Producer -> consumer. The authenticated fact consumes the acceptance whole; it does not
+# re-derive what acceptance means and it does not read a connection.
+kind = "CONTRACT_CONSUMES"
+from = "proxy.mechanism_verified_credential"
+to = "proxy.authenticated_relationship_peer"
+rationale = "The acceptance is the half of this product that the word AUTHENTICATED rests on, and the establishment path is projected from it rather than stored again. If acceptance became manufacturable, this product would still be constructed and its own controls would still pass — they measure WHICH credential the identity came from, not whether the mechanism really accepted it."
+
+[[edge]]
+# Producer -> consumer. The identity half IS the Slice-5 linkage, called on the accepted
+# credential, so a weakened linkage changes which certificate this product authenticates.
+kind = "CONTRACT_CONSUMES"
+from = "proxy.channel_associated_identity"
+to = "proxy.authenticated_relationship_peer"
+rationale = "The identity half of this product is the channel-associated identity linkage applied to the accepted credential. If that linkage stopped reading the relationship's own leaf, this product would authenticate the wrong certificate's identity while these controls — which vary the RELATIONSHIP and hold the policy fixed — stayed green."
+
+[[unit]]
+id = "proxy.authenticated_relationship_peer"
+class = "V0"
+description = "The peer of an established relationship, authenticated: the mechanism's acceptance and the identity read from the leaf of that same accepted credential, composed inside one construction closure — and claiming nothing about currency, revocation, admission, authorization, channel binding, or which actor signed a request."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/authenticated_relationship_peer.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/authenticated_relationship_peer/one_credential",
+  "mutation://proxy/authenticated_relationship_peer/one_credential",
+]
+# ONE new premise, and it is the one the NAME needs. ASM-0033 and ASM-0035 speak to what the
+# mechanism reports; ASM-0036 is what acceptance required of the peer, and without it the
+# composition would be two true facts under a word neither earns. ASM-0034 stays under the
+# identity linkage that reads element 0.
+assumptions = ["ASM-0036"]
+# The controls drive REAL handshakes, on both establishment paths and with an intermediate
+# carrying a RIVAL identity in the configured field, so a derivation reaching any certificate
+# other than the accepted credential's leaf returns the wrong identity rather than merely a
+# different-looking success. `each_relationship_authenticates_its_own_peer` is the L-5
+# control: two relationships, and a product that reached past its own acceptance would have
+# to return the same identity twice.
+tested_symbols = [
+  "lib#communication_assurance::authenticated_relationship_peer::tests::the_authenticated_identity_comes_from_the_credential_the_mechanism_accepted",
+  "lib#communication_assurance::authenticated_relationship_peer::tests::an_issuer_in_the_accepted_chain_is_never_the_authenticated_peer",
+  "lib#communication_assurance::authenticated_relationship_peer::tests::each_relationship_authenticates_its_own_peer",
+  "lib#communication_assurance::authenticated_relationship_peer::tests::a_resumed_authentication_is_not_reported_as_a_freshly_verified_one",
+  "lib#communication_assurance::authenticated_relationship_peer::tests::a_leaf_without_the_configured_field_refuses_rather_than_falling_back",
+]
+pilot = "verus-candidate"

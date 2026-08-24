@@ -1284,3 +1284,75 @@ owner = "proxy.mechanism_verified_credential"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.mechanism_verified_credential"]
 depends_on = ["THM-0028"]
+
+[[theorem]]
+id = "THM-0031"
+title = "An authenticated relationship peer's identity is read from the leaf of the very credential the mechanism accepted for that relationship"
+statement = """
+This is a claim about the COMPOSITION, and about the ONE word it adds. Neither premise is
+strengthened: THM-0030 says the mechanism accepted a credential for a relationship and on
+which path, and THM-0029 says which identity a channel-associated credential's leaf denotes
+under a configured policy.
+
+Every AuthenticatedRelationshipPeerFacts inhabitant originates from an inhabitant produced by
+communication_assurance::authenticated_relationship_peer::authenticate_relationship_peer — a
+free function taking a MechanismVerifiedCredentialEvidence by value and a
+CertificateIdentityPolicy, and nothing else — from some acceptance V and some policy P. Its
+identity and source are exactly what interpreting the leaf of V's OWN channel-associated
+credential under P returned, and its establishment path is exactly V's. Cloning preserves that
+provenance.
+
+The two facts cannot be about different credentials. The derivation's whole parameter list is
+an acceptance and a policy: there is no parameter through which a separately obtained identity
+product, credential, or certificate could enter, so pairing the acceptance of relationship A
+with an identity read from relationship B's credential is unconstructible rather than merely
+untaken. That both predecessors ultimately arose from *a* connection establishes nothing —
+the defect this excludes is precisely two honest products of two DIFFERENT connections, and a
+runtime fingerprint comparison would have left the caller doing the pairing.
+
+The representation is private to the deriving module, so the derivation is the only producer;
+a sibling authority attempting the struct literal fails with E0451 — measured.
+
+The deriving module is a SIBLING of both predecessors rather than a module inside either, and
+that placement is load-bearing in the other direction: inside mechanism_verified_credential it
+would be a descendant and would reach the private `accept` constructor THM-0030 claims only
+the mechanism adapter reaches; inside channel_associated_credential it would reach `associate`
+and falsify THM-0028 the same way. A consumer's placement is part of its predecessor's seal.
+
+The refusal algebra is the leaf interpreter's, unchanged. Nothing new can fail: the acceptance
+is already in hand and is not re-decided, and the only fallible step is reading the configured
+field from the accepted credential's leaf.
+"""
+security_consequence = """
+This is the first product a consumer may read as *the peer of this relationship is this
+identity*, and the first whose name says so. Before it, a consumer wanting that sentence had
+to write it itself by holding an acceptance and an identity side by side — which is the
+composition this authority makes unconstructible, and whose failure mode is a request bound to
+an identity that authenticated on some other connection.
+
+The establishment path survives the composition. A consumer that needs *the configured
+verifier ran during THIS establishment* can still tell, so authentication inherited across a
+resumption is not silently reported as freshly verified.
+"""
+scope = """
+It does NOT establish currency. Whether the accepted credential is still within its validity
+window, still unrevoked, and within a configured lifetime ceiling is a different authority
+answering *is it still good now* — recovered per request, and only where a ceiling or CRLs are
+configured.
+
+It does not establish admission, authorization, channel binding, or that this peer is the
+actor that signed any particular request. It does not say the relationship still exists.
+
+The word *authenticated* rests on ASM-0036: that mechanism acceptance entailed proof of
+control of the credential's private key, by CertificateVerify on a full handshake and by
+resumption-secret continuity on a resumed one. That premise is this unit's own and is not
+supplied by ASM-0033 or ASM-0035, which speak to what the mechanism REPORTS rather than to
+what acceptance required of the peer.
+
+The mechanism and parser premises stay where they are owned, and the chain-ordering premise
+stays under THM-0029: this claim consumes those conclusions and restates none of them.
+"""
+owner = "proxy.authenticated_relationship_peer"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.authenticated_relationship_peer"]
+depends_on = ["THM-0029", "THM-0030"]

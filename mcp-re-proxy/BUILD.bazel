@@ -60,6 +60,9 @@ _PROXY_LIB_SRCS = [
     "src/communication_assurance/channel_associated_identity.rs",
     "src/communication_assurance/mechanism_verified_credential/mod.rs",
     "src/communication_assurance/mechanism_verified_credential/rustls_adapter.rs",
+    # ADR-MCPRE-064 Slice 2: the peer of an established relationship, authenticated —
+    # the acceptance and the identity of the SAME credential, composed in one closure.
+    "src/communication_assurance/authenticated_relationship_peer.rs",
     # ADR-MCPRE-063: the compatibility surface of the migration, grouped so it stays
     # countable — each module translates a historical vocabulary into an authority and
     # decides nothing.

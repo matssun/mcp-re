@@ -1134,3 +1134,91 @@ Deferred, with reasons rather than as a backlog:
   §9 says is not a reason. Pull it forward only if characterization shows verified credential
   facts cannot be modelled without resolving resumed-session provenance first — the epoch
   gate suggests they can, because the epoch is exactly the fact a resumed relationship needs.
+
+## 13. Slice 2 of Phase 2 as built — the composition that earns the word
+
+Issue: this slice's product is `AuthenticatedRelationshipPeerFacts`, the gap §12.3 named.
+
+### 13.1 The characterization, and the one attack it had to close
+
+The two operands existed and were both honest:
+
+```text
+MechanismVerifiedCredentialEvidence                 the mechanism accepted THIS credential
+                                                    for THIS relationship, on THIS path
+ChannelAssociatedCertificatePeerIdentityEvidence    the configured rule reads THIS identity
+                                                    from THAT relationship's own leaf
+```
+
+The central control is that *this* and *that* are the same relationship. The attack is
+credential A accepted by the mechanism, paired with an identity derived from credential B —
+and it is not excluded by either operand's own theorem. **That both products ultimately arose
+from a connection establishes nothing**, because it does not establish the same connection.
+Two connections are the ordinary case: a proxy holds many at once, and the pairing is done by
+whoever composes them.
+
+Three candidate answers were weighed and two rejected:
+
+| candidate | verdict |
+|---|---|
+| a pair type carrying both products, checked at construction against a credential fingerprint | **rejected** — the caller still does the pairing; a comparison refuses some pairs rather than making the pairing unrepresentable, and fingerprint equality is not provenance |
+| a linkage token threaded from the connection through both products | **rejected** — a second representation of a fact the products already carry, and it invites the reading that the token is what makes the relation true |
+| the derivation takes the acceptance plus a policy and reaches the identity itself | **taken** — Slice 5's own resolution, one level up |
+
+`authenticate_relationship_peer(accepted, policy)` takes the acceptance **by value** and a
+deployment policy, and derives the identity from `accepted.credential()` through the Slice-5
+operation unchanged. There is no parameter through which a foreign identity, credential, or
+certificate can enter, so the substitution is unconstructible rather than refused at runtime.
+
+### 13.2 Does the result earn the word `authenticated`
+
+Yes, and the analysis is what bounds it. Authentication is the conjunction of *this credential
+was accepted under the configured trust* and *this credential denotes this identity*, over one
+credential — which is exactly what the composition now establishes — **plus** the premise that
+acceptance entailed proof of control of the credential's private key.
+
+That third premise did not exist. ASM-0033 and ASM-0035 speak to what the mechanism *reports*;
+neither says what acceptance *required of the peer*, and both would remain true of a mechanism
+that accepted a copied certificate. It is registered as **ASM-0036**, scoped to this unit, and
+it names both halves separately because they fail differently: `CertificateVerify` on the full
+path, and resumption-secret continuity on the resumed one.
+
+What the word does not extend to, and why each is a different authority:
+
+- **not current** — validity window, lifetime ceiling and revocation are recovered per
+  request, and only where a ceiling or CRLs are configured;
+- **not freshly verified on a resumed path** — the establishment path is projected through the
+  composition and never flattened, so a consumer that needs *the verifier ran in this
+  establishment* can still branch. §12.4 decision 2 survives the composition intact;
+- **not admitted, authorized, or bound** — three further authorities that do not exist.
+
+### 13.3 Placement, and the seal measurement
+
+The authority is a **sibling of both predecessors**, a flat module under
+`communication_assurance`. Inside `mechanism_verified_credential` it would be a descendant and
+would reach the private `accept` constructor THM-0030 claims only the mechanism adapter
+reaches; inside `channel_associated_credential` it would reach `associate` and falsify THM-0028
+the same way. Measured, as in Slice 5: a sibling attempting the struct literal fails with
+**E0451**.
+
+The predecessor is carried **whole**, not destructured. Copying the establishment path out and
+discarding the acceptance would make this type a second place where an acceptance is
+represented — R-COMPOSE — so `establishment_path()` is a projection through the predecessor.
+
+The refusal algebra is the leaf interpreter's, unchanged: the acceptance is already in hand and
+is not re-decided, and nothing new can fail.
+
+### 13.4 Registry
+
+Theorem **THM-0031**, depending on THM-0029 and THM-0030. Assumption **ASM-0036**. Unit
+`proxy.authenticated_relationship_peer`, with `CONTRACT_CONSUMES` edges from both predecessors.
+No human review record yet, and the review axis reports that truthfully.
+
+### 13.5 What this slice deliberately did not touch
+
+`#598` / ADR-MCPRE-062 session lifecycle, the OCSP and CRL paths, `TransportIdentity`, request
+binding, admission, and authorization. Characterization did not show any of them to be an
+unavoidable predecessor: the composition needed one new premise about the mechanism, not a new
+authority. The product has **no production caller yet**, exactly as Slice 5 had none — wiring
+it into the serving paths is a migration, and §9 keeps migrations separate from the slice that
+creates the product they consume.

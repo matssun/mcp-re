@@ -25,6 +25,7 @@ not an omission to hide.
 | http_profile.keyid | V0 | _none_ | 0 |
 | http_profile.verifier_result_separation | V0 | _none_ | 0 |
 | http_profile.verifier_results | V0 | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022 | 3 |
+| proxy.authenticated_relationship_peer | V0 | THM-0031 | 1 |
 | proxy.certificate_identity | V0 | THM-0024 | 1 |
 | proxy.channel_associated_credential | V0 | THM-0028 | 1 |
 | proxy.channel_associated_identity | V0 | THM-0029 | 1 |
