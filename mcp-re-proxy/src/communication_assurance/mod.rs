@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Communication assurance — ADR-MCPRE-063, Slice 1.
+//! Communication assurance — ADR-MCPRE-063 and ADR-MCPRE-064.
 //!
 //! The architecture this module belongs to models communication security as a composition
 //! of semantic products: evidence is verified, verified evidence is interpreted into facts
@@ -10,40 +10,52 @@
 //!
 //! # What exists here today
 //!
-//! One transformation, complete:
-//!
 //! ```text
-//! CertificateChainEvidence  --[ X.509 adapter — ASSUMED ]-->  CertificateIdentityFields
-//!                           --[ identity interpreter ]------>  CertificatePeerIdentityEvidence
-//!                                                          |   or CertificateIdentityRefusal
+//! CertificateChainEvidence --[X.509 adapter — ASSUMED]--> CertificateIdentityFields
+//!                          --[identity interpreter]-----> CertificatePeerIdentityEvidence
+//!
+//! established relationship --[mechanism adapter — ASSUMED]-->
+//!                              ChannelAssociatedCertificateCredentialEvidence
+//!                          --[+ establishment path, one connection]-->
+//!                              MechanismVerifiedCredentialEvidence
+//!                          --[+ CertificateIdentityPolicy, one closure]-->
+//!                              AuthenticatedRelationshipPeerFacts
+//!
+//! CredentialPublicKeyEvidence + CryptographicSigningKeyEvidence
+//!                          --[correspondence]-----------> CredentialKeyCorrespondenceFacts
 //! ```
 //!
-//! and one product it shares with every other identity provenance:
-//! [`PeerIdentityValue`], the generic identity-value invariant.
+//! and one product shared by every identity provenance: [`PeerIdentityValue`], the generic
+//! identity-value invariant.
 //!
 //! # What deliberately does not exist here
 //!
-//! Chain verification, revocation, freshness, authenticated-peer facts, channel binding,
-//! admission, and authorization. Their absence is the point of the slice: this module
-//! establishes exactly one proposition, and the missing authorities are missing rather
-//! than being implied by a type whose name claims them.
+//! Per-request credential currency, channel binding, admission, and authorization. Their
+//! absence is the point: each authority establishes exactly one proposition, and the
+//! missing ones are missing rather than being implied by a type whose name claims them.
+//! `AuthenticatedRelationshipPeerFacts` is the first product entitled to the word
+//! *authenticated*, and it is entitled to no more than that word — see its own module.
 //!
-//! # The one public entrance
+//! # The public entrances
 //!
 //! `CertificateChainEvidence::interpret_identity` is the only public route from a
-//! certificate to the evidence product. The field set and the pure selector are private to
-//! this module tree: both are separately testable and both are the formal-verification
-//! candidates, and neither is therefore a public composition edge. A published selector
-//! would let a caller fabricate a field set and interpret it into evidence without
-//! presenting a certificate — a route the diagram above says does not exist, and the
-//! diagram is meant to be the type graph rather than a description of it.
+//! certificate to identity evidence; `interpret_associated_identity` and
+//! `authenticate_relationship_peer` are the only routes to their products, and each takes
+//! its predecessor plus a deployment policy and nothing else. The certificate field set and
+//! the pure selector are private to this module tree: both are separately testable and both
+//! are the formal-verification candidates, and neither is therefore a public composition
+//! edge. A published selector would let a caller fabricate a field set and interpret it
+//! into evidence without presenting a certificate — a route the diagram above says does not
+//! exist, and the diagram is meant to be the type graph rather than a description of it.
 //!
 //! # Dependency firewall
 //!
-//! Nothing here depends on MCP types, HTTP headers, `rustls`, a connection, a listener, or
-//! a request. The one mechanism dependency — the X.509 parser — is confined to
-//! [`certificate_chain_evidence`], the adapter, and is an ADR-MCPRE-059 assumed boundary.
+//! Nothing here depends on MCP types, HTTP headers, a listener, or a request. The two
+//! mechanism dependencies are confined to adapters and are ADR-MCPRE-059 assumed
+//! boundaries: the X.509 parser to [`certificate_chain_evidence`], and `rustls` to the
+//! `rustls_adapter` child of each authority that relays a mechanism report.
 
+pub mod authenticated_relationship_peer;
 pub mod certificate_chain_evidence;
 pub mod certificate_identity_policy;
 pub mod certificate_identity_refusal;
@@ -73,6 +85,8 @@ pub mod signing_key_evidence;
 mod certificate_identity_fields;
 mod certificate_identity_interpreter;
 
+pub use authenticated_relationship_peer::authenticate_relationship_peer;
+pub use authenticated_relationship_peer::AuthenticatedRelationshipPeerFacts;
 pub use certificate_chain_evidence::CertificateChainEvidence;
 pub use certificate_identity_policy::CertificateIdentityPolicy;
 pub use certificate_identity_policy::CertificateIdentitySource;

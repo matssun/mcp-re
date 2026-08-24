@@ -819,3 +819,52 @@ introduced_by = "ADR-MCPRE-064 Slice 1"
 review_requirement = "Owner review; any change to how the establishment path is read, or to the gate that governs resumption."
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0036"
+description = "A TLS establishment mechanism accepts a client credential only where the peer proved control of that credential's private key — by CertificateVerify on a full handshake, and by resumption-secret continuity with the peer that completed the earlier full handshake on a resumed one."
+justification = """
+Slice 2 of ADR-MCPRE-064 is the first product to use the word AUTHENTICATED, and this is the
+premise that word needs beyond the two facts the composition already carries. Those two are
+registered elsewhere and neither supplies it: THM-0030 says the mechanism ACCEPTED a
+credential, and THM-0029 says which identity that credential's leaf denotes. Both would remain
+true of a mechanism that accepted a certificate the peer had merely copied, and the composed
+sentence — *the party at the far end proved control of this credential* — would then be false
+while every control here stayed green.
+
+It is a property of the protocol and of `rustls`, not of this repository. On a full handshake
+the peer must send a `CertificateVerify` signature over the handshake transcript with the
+leaf's private key, and `rustls` rejects the handshake if it does not verify; this crate never
+sees that material and could not re-derive the fact. On a resumed session no certificate
+message is exchanged at all, and possession is inherited: the resumption secret is derived
+from the earlier full handshake, so the resuming party is the one that completed it. That
+inheritance is why the composed product carries the establishment path rather than flattening
+it, and why the resumed reading is *authenticated earlier, admitted now under an unchanged
+anchor set* rather than *authenticated now*.
+
+The two halves of the premise fail differently, which is why both are stated. A mechanism that
+skipped `CertificateVerify` would authenticate a peer holding only a copied certificate. A
+mechanism that resumed a session for a party other than the one that established it would
+authenticate a peer that never held the credential at all — the resumption half of ASM-0035
+bounds when a session may be resumed, and this bounds who the resuming party is.
+
+Not proved here, for the reason ASM-0033 and ASM-0035 are not: a TLS implementation is a far
+larger verification target than the authority composing over it. The controls drive real
+handshakes on both paths, including a genuine resumption, precisely because a synthetic
+acceptance would establish nothing about proof of control.
+
+It bounds the claim rather than weakening it. Its failure does not make the identity wrong or
+the acceptance unreported; it makes the word *authenticated* unearned, which is exactly the
+consequence worth registering rather than absorbing into "we use mTLS".
+
+It stops being acceptable if this authority ever composes over an acceptance produced by a
+mechanism that does not prove possession — a credential presented in a request header, a
+credential recovered from a store, or an establishment mechanism admitted without its own
+premise — or if client authentication ever becomes optional in a supported build.
+"""
+scope = ["unit://proxy.authenticated_relationship_peer"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-064 Slice 2"
+review_requirement = "Owner review; any change that composes an authenticated peer from an acceptance produced by a different establishment mechanism, or that makes client authentication optional."
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"

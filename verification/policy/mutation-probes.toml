@@ -1386,3 +1386,35 @@ weakening = """
 expect_red = [
   "lib#communication_assurance::mechanism_verified_credential::rustls_adapter::acceptance::a_resumed_relationship_reports_a_resumed_path_not_a_full_one",
 ]
+
+# ---------------------------------------------------------------------------
+# ADR-MCPRE-064 Slice 2 — the authenticated peer
+# ---------------------------------------------------------------------------
+#
+# What is probed is the one thing that survives the composition and could be lost in it: the
+# establishment path. The same-credential conjunct — that the identity and the acceptance are
+# about ONE credential — is not probed, and per L-4 that is not an omission: the enforcement
+# mechanism is the absence of a parameter through which a foreign identity could enter, plus a
+# private representation, so the weakening cannot be expressed as an edit to a check. Its
+# evidence is the boundary plus successful compilation, and the sibling probe that fails with
+# E0451.
+
+[[probe]]
+id = "M42-authentication-inherited-across-a-resumption-is-not-reported-as-fresh"
+unit = "proxy.authenticated_relationship_peer"
+theorem = "THM-0031"
+conjunct = "the establishment path is projected from the acceptance, not chosen by the composition"
+# The weakening a composition invites: having established the peer's identity, report the
+# strongest verification fact for every peer. Nothing else goes red — the identity is the same
+# on both paths, so a control asserting only that the right peer authenticated stays green
+# while a resumed authentication is upgraded to one whose configured verifier had just run.
+path = "mcp-re-proxy/src/communication_assurance/authenticated_relationship_peer.rs"
+anchor = """
+        self.accepted.establishment_path()
+"""
+weakening = """
+        EstablishmentPath::FullHandshake
+"""
+expect_red = [
+  "lib#communication_assurance::authenticated_relationship_peer::tests::a_resumed_authentication_is_not_reported_as_a_freshly_verified_one",
+]
