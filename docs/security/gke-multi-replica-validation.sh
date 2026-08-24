@@ -899,7 +899,21 @@ else
     --remote-addr "$REPLICA_A" --save-cont "$CONT_FILE")" \
     || fail "could not open a multi-round-trip continuation on A"
   STATE="$(printf '%s' "$OPEN_RESP" | jq -r '.result.requestState // empty')"
-  [[ -n "$STATE" ]] || fail "A's response carried no requestState (tool did not elicit input)"
+  # An ABSENT requestState has two very different causes, and reporting the wrong one
+  # costs an investigation: the open leg may have been REFUSED (a fail-closed replay
+  # store reads exactly like a spent nonce — see the quorum note above), or it may have
+  # been served by an inner with no eliciting tool. Distinguish them before blaming the
+  # tool, and quote the refusal so the reader sees which it was.
+  if [[ -z "$STATE" ]]; then
+    OPEN_CODE="$(printf '%s' "$OPEN_RESP" \
+      | jq -r '.error.data.mcp_re_error.wire_code // .error.message // empty')"
+    if [[ -n "$OPEN_CODE" ]]; then
+      fail "the MRT open leg on A was REFUSED ($OPEN_CODE) — this is not an elicitation \
+failure. A fail-closed replay store reads as a spent nonce even for a fresh one; check \
+the wait quorum before looking at the inner backend."
+    fi
+    fail "A's response carried no requestState (tool did not elicit input)"
+  fi
   ANSWER_REQ="$(jq -nc --arg s "$STATE" --arg t "$MRT_TOOL" \
     '{jsonrpc:"2.0",id:2,method:"tools/call",params:{name:$t,arguments:{},inputResponses:{confirm:true},requestState:$s}}')"
   printf '%s\n' "$ANSWER_REQ" | client \
