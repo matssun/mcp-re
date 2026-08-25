@@ -39,7 +39,7 @@
 
 [[debt]]
 path = "mcp-re-proxy/src/http_profile_serve.rs"
-baseline_prod_loc = 2062
+baseline_prod_loc = 2056
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -532,7 +532,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-http-profile/src/mcp_transport.rs"
-baseline_prod_loc = 269
+baseline_prod_loc = 250
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 

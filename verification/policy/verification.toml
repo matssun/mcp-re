@@ -130,7 +130,8 @@ description = "The seven public verifier operations and the products they return
 paths = [
   "mcp-re-http-profile/src/verifier.rs",
   "mcp-re-http-profile/src/verify.rs",
-  "mcp-re-http-profile/src/verified_request.rs",
+  "mcp-re-http-profile/src/verified_request/mod.rs",
+  "mcp-re-http-profile/src/verified_request/floor.rs",
   "mcp-re-http-profile/src/verified_response/mod.rs",
   "mcp-re-http-profile/src/verified_response/facts.rs",
   "mcp-re-http-profile/src/verified_response/bound.rs",
@@ -304,7 +305,8 @@ id = "http_profile.verifier_result_separation"
 class = "V0"
 description = "The verifier's assurance products are not substitutable: a weaker product cannot be passed where a stronger one is required."
 paths = [
-  "mcp-re-http-profile/src/verified_request.rs",
+  "mcp-re-http-profile/src/verified_request/mod.rs",
+  "mcp-re-http-profile/src/verified_request/floor.rs",
   "mcp-re-http-profile/src/verified_response/mod.rs",
   "mcp-re-http-profile/src/verified_response/facts.rs",
   "mcp-re-http-profile/src/verified_response/bound.rs",
@@ -649,7 +651,8 @@ paths = [
   # The postcondition reads `verified.request_block` on the product type, so the type's
   # own module is part of what the proof depends on. A path set narrower than the
   # dependency set does not go red when the gap matters — it stops asking.
-  "mcp-re-http-profile/src/verified_request.rs",
+  "mcp-re-http-profile/src/verified_request/mod.rs",
+  "mcp-re-http-profile/src/verified_request/floor.rs",
   "mcp-re-http-profile/src/verus_std_specs.rs",
 ]
 exported_contracts = ["contract://http_profile/dispatch/prepare_http_dispatch"]

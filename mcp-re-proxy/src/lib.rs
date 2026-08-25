@@ -6,39 +6,31 @@
 //! envelope, injects a fresh verified-context block as the sole writer, forwards
 //! only verified requests, and signs the inner server's result on the way back.
 //!
-//! MCPS-023 adds opt-in Phase 5 policy enforcement; MCPS-024 (ADR-MCPS-014) adds
-//! the Phase 6 transport-binding abstraction (`transport`): identity types, the
-//! provider seam, and the binding policy that ties the verified `signer` to the
-//! mTLS channel identity.
+//! `transport` carries the ADR-MCPS-014 transport-binding abstraction: identity
+//! types, the provider seam, and the binding policy that ties the verified request
+//! actor to the mTLS channel identity.
 //!
-//! # Security posture (v1, Phase 6.1)
+//! # Security posture
 //!
-//! What this supports: **single-node production hardening** with Rust-native
-//! mTLS, file-backed *single-node* durable replay protection, an explicit
-//! client-cert identity policy (no implicit fallback), and a **short-lived
-//! client-certificate revocation posture** — there is NO online CRL/OCSP, so the
-//! proxy ENFORCES a maximum client-cert lifetime (CLI default 1h) and a
-//! compromised credential is bounded by that lifetime.
-//!
-//! What v1 does NOT support (and must not be claimed) until the corresponding
-//! work lands: **horizontally-scaled production** replay protection, **enterprise
-//! key custody** (needs an HSM/KMS `KeySource`), and **full revocation** (needs
-//! CRL/OCSP or equivalent). Issue #3837 adds the SHARED-cache machinery for
-//! horizontal scale — [`SharedReplayCache`] over an [`AtomicReplayStore`], with an
-//! in-memory reference store proving cross-node rejection — but the only in-tree
-//! [`AtomicReplayStore`] today is that in-memory reference store; no production
-//! shared backend ships in this build. A real shared backend (the Redis adapter
-//! plus the `crates_mcp_re` repin and a live-backend black-box test) is tracked as a
-//! separate follow-up. Until it lands, the file cache remains single-node only and
-//! multi-node replay safety MUST NOT be claimed in a real deployment.
+//! Fleet serving is supported: [`SharedReplayCache`] over an [`AtomicReplayStore`]
+//! gives cross-replica replay rejection, and [`redis_store`] is the shared backend
+//! that ships for it. Key custody reaches an HSM/KMS through [`key_source`].
+//! Client-certificate revocation is a **short-lived-credential** posture plus an
+//! in-process CRL: the proxy enforces a maximum client-certificate lifetime, and
+//! online OCSP is compiled only under its own feature.
 
+// ADR-MCPRE-065: authorization over verified request evidence. A NEW authority, not
+// a continuation of ADR-MCPRE-064 — permission is not produced by assurance about a
+// relationship. Always compiled; the frozen ADR-MCPS-013 denial taxonomy is its only
+// non-std dependency.
+pub mod authorization;
+pub mod communication_assurance;
 // ADR-MCPS-022: explicit authorized server key set + per-audience response-signing
 // identity mode (per_node_keyset default | shared_remote_signer). The verifier-side
 // admission anchor; composes with `trust_cache::BoundedTrustCache` (ADR-MCPS-021).
 // ADR-MCPRE-051 §6 (MCPRE-116): versioned, atomically-swapped serving-config
-// snapshots + the in-process CRL hot-reloader (subsumes MCPS-66). Always compiled;
-// pure std (RwLock<Arc<ServerConfig>>), no new dependency.
-pub mod communication_assurance;
+// snapshots + the in-process CRL hot-reloader. Always compiled; pure std
+// (RwLock<Arc<ServerConfig>>), no new dependency.
 pub mod config_snapshot;
 mod facades;
 // ADR-MCPS-028 §B: native AWS KMS Ed25519 response signer over blocking HTTPS

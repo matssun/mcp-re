@@ -1,33 +1,29 @@
-//! MCP-RE delegated authorization (Phase 5 — ADR-MCPS-013).
+// SPDX-License-Identifier: Apache-2.0
+//! MCP-RE authorization vocabulary — the frozen denial taxonomy (ADR-MCPS-013).
 //!
-//! Core (`mcp-re-core`) proves a request is authentic, fresh, non-replayed, and
-//! audience-correct, and carries an OPAQUE `authorization_hash`. This crate
-//! interprets the authorization artifact behind that hash and renders an
-//! allow/deny decision, WITHOUT reopening the frozen Core vocabulary or extending
-//! the Core error taxonomy.
+//! What survives here is profile-agnostic and is what every authorization mechanism denies
+//! THROUGH: the [`AuthorizationDecision`] / [`PolicyError`] taxonomy, one variant per
+//! `mcp-re.authorization_*` wire token, the injected [`RevocationSource`], and the JSON-RPC
+//! error surface. A mechanism adapter cannot mint a wire token; it chooses one of these.
 //!
-//! The artifact travels in a sibling `_meta` block,
-//! `se.syncom/mcp-re.authorization = { profile, artifact }`, bound to
-//! the request because `authorization_hash == sha256(decoded artifact bytes)`.
+//! # What this crate is NOT, any more
 //!
-//! MCPS-019 lands the abstraction: the [`AuthorizationProfile`] trait, the
-//! [`AuthorizationDecision`] / [`PolicyError`] types, the authorization-block
-//! types, and the injected [`RevocationSource`]. The Reference Signed
-//! Authorization Profile (MCPS-020) and the policy evaluator (MCPS-021) build on
-//! it; Biscuit / UCAN / OAuth-bound are later pluggable profiles.
+//! Not an evaluator, and not a profile. The authorization EVALUATOR, the
+//! authorization-object PROFILE and the REFERENCE grant profile were built for the native
+//! `_meta` carrier that ADR-MCPRE-050 replaced, and were deleted with it. The semantic
+//! boundary — verified actor and action facts in, a typed decision out — belongs to
+//! ADR-MCPRE-065 and lives in `mcp_re_proxy::authorization`; this crate supplies the
+//! vocabulary that boundary refuses in.
+//!
+//! ADR-MCPS-013 selected Biscuit as the production policy profile **for that superseded
+//! carrier**. ADR-MCPRE-065 R-1 rules that the selection does not carry forward as a
+//! normative requirement: Biscuit remains an admissible future mechanism, alongside UCAN,
+//! OAuth-bound grants and an external PDP, BEHIND the ADR-MCPRE-065 boundary. No mechanism
+//! ships today.
 //!
 //! Firewall (ADR-MCPS-011/012): this crate depends only on `mcp-re-core` plus
 //! `serde`/`serde_json`. No networking, async runtime, or filesystem access.
 
-// Deferred: the authorization EVALUATOR (`evaluator`), the authorization-object
-// PROFILE (`profile`), and the REFERENCE grant profile (`reference`) are not yet
-// built on the RFC 9421 carrier (files retained); they are rebuilt on the RFC 9421
-// request evidence (`VerifiedMcpRequest.request_block.artifact_bindings`)
-// in a follow-up.
-// The profile-agnostic pieces below — the decision/error taxonomy, the
-// authorization-block wire types, revocation, and the JSON-RPC error surface —
-// stay. Policy enforcement is NOT wired into the RFC 9421 serving path yet (the
-// serving PEP fails closed if a policy is configured).
 pub mod block;
 pub mod decision;
 pub mod error;

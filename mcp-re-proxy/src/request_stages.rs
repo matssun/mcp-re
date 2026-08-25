@@ -29,7 +29,9 @@
 //! [`ReadyForDispatch`] can only be built with every pre-dispatch prerequisite in hand,
 //! and the inner dispatch consumes one. So "remember to reserve retention before the side
 //! effects run" stops being a comment and becomes: *dispatch requires `ReadyForDispatch`,
-//! and `ReadyForDispatch` proves a [`RetentionDisposition`]*.
+//! and `ReadyForDispatch` proves a [`RetentionDisposition`]* — and, since ADR-MCPRE-065,
+//! that an authorization decision was taken, because the body it carries has exactly one
+//! producer and that producer is a decision.
 //!
 //! This is not a stage type per numbered comment (ADR-MCPRE-058 §9.3). Two states carry
 //! the boundary and everything else stays ordinary control flow, because only this one
@@ -38,6 +40,7 @@
 use std::sync::Arc;
 
 use crate::async_inner::InnerOutcome;
+use crate::authorization::AuthorizedRequestBody;
 use crate::transparency::RetentionReservation;
 use mcp_re_http_profile::ActiveDelegatedKey;
 
@@ -81,7 +84,13 @@ pub(crate) enum RetentionDisposition {
 pub(crate) struct ReadyForDispatch {
     /// The body actually sent to the backend: proxy-owned `_meta` stripped, verified
     /// context written if this deployment carries one.
-    forwarded: Vec<u8>,
+    ///
+    /// Typed as an [`AuthorizedRequestBody`] rather than `Vec<u8>` because that is where
+    /// "dispatch only from an authorized request" stops being a sentence: the only producer
+    /// is `AuthorizationPosture::release`, so a serving path that skipped the ADR-MCPRE-065
+    /// decision has nothing to pass here, and the failure is a compile error at the
+    /// dispatch rather than a proxy that quietly serves unjudged requests.
+    forwarded: AuthorizedRequestBody,
     /// The delegated key this reply will be signed with, snapshotted BEFORE the backend
     /// runs. Taken early on purpose: discovering a missing key at signing time meant the
     /// tool call had already executed and the client got a retryable 503, so the action
@@ -97,7 +106,7 @@ pub(crate) struct ReadyForDispatch {
 impl ReadyForDispatch {
     /// Assemble the ready state. Every argument is a completed pre-dispatch stage.
     pub(crate) fn new(
-        forwarded: Vec<u8>,
+        forwarded: AuthorizedRequestBody,
         signing_key: Arc<ActiveDelegatedKey>,
         expires: i64,
         retention: RetentionDisposition,
@@ -113,7 +122,7 @@ impl ReadyForDispatch {
     /// The body to send, borrowed — the dispatch does not consume the ready state,
     /// because what survives it is the obligation, not the request.
     pub(crate) fn forwarded(&self) -> &[u8] {
-        &self.forwarded
+        self.forwarded.bytes()
     }
 
     /// Cross the boundary: yield what the post-dispatch half is answerable for.
@@ -209,7 +218,9 @@ mod tests {
             exp: 1_700_000_000,
         });
         let ready = ReadyForDispatch::new(
-            b"{}".to_vec(),
+            // Through the ONE producer. There is no other way to obtain a dispatchable
+            // body, which is the property this type now carries.
+            crate::authorization::AuthorizationPosture::NoPolicyConfigured.release(b"{}".to_vec()),
             key,
             1_700_000_000,
             RetentionDisposition::NotConfigured,

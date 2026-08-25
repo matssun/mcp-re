@@ -342,7 +342,8 @@ Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_g
 
 | file | prod | current role | target role |
 |---|---:|---|---|
-| `mcp-re-http-profile/src/verified_request.rs` | 198 | the two request products | unchanged; the value owns its own module rather than living beside the procedure that builds it |
+| `mcp-re-http-profile/src/verified_request/mod.rs` | 128 | the full-profile product | unchanged; the value owns its own module rather than living beside the procedure that builds it |
+| `mcp-re-http-profile/src/verified_request/floor.rs` | 102 | the cryptographic-floor product | split out under ADR-MCPRE-065 Slice 1: two propositions were two types in one file, and the floor now owns the pairing question (`covers_body`) that its digest answers |
 | `mcp-re-http-profile/src/verified_response/mod.rs` | 71 | the response-product surface and the two-authorization-propositions argument | unchanged |
 | `mcp-re-http-profile/src/verified_response/facts.rs` | 90 | the authorization-INDEPENDENT facts shared by both paths | unchanged |
 | `mcp-re-http-profile/src/verified_response/bound.rs` | 177 | the three request-bound products | unchanged |

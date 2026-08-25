@@ -37,31 +37,10 @@ use crate::error::HttpProfileError;
 use crate::ids::MCP_METHOD_HEADER;
 use crate::ids::MCP_NAME_HEADER;
 use crate::ids::MCP_PROTOCOL_VERSION_HEADER;
+use crate::mcp_name_source::mcp_name_source;
+use crate::mcp_name_source::McpNameSource;
 use crate::message::single_header;
 use crate::message::HttpRequest;
-
-/// The body field an `Mcp-Name` header must agree with, per method.
-///
-/// `tools/call` names the tool in `params.name`; `resources/read` names the
-/// resource in `params.uri`. The mapping is explicit because the two methods put
-/// the same routing value under different keys, and a verifier comparing against
-/// the wrong key would either miss a mismatch or invent one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum McpNameSource {
-    /// `params.name` — the `tools/call` shape.
-    ParamsName,
-    /// `params.uri` — the `resources/read` shape.
-    ParamsUri,
-}
-
-impl McpNameSource {
-    fn extract(self, params: &Value) -> Option<&str> {
-        match self {
-            McpNameSource::ParamsName => params.get("name").and_then(Value::as_str),
-            McpNameSource::ParamsUri => params.get("uri").and_then(Value::as_str),
-        }
-    }
-}
 
 /// The verifier-local MCP transport contract (§4.1).
 ///
@@ -96,10 +75,12 @@ impl McpTransportPolicy {
                 .collect(),
             require_protocol_version_header: true,
             require_mcp_method: true,
-            mcp_name_required: vec![
-                ("tools/call".to_owned(), McpNameSource::ParamsName),
-                ("resources/read".to_owned(), McpNameSource::ParamsUri),
-            ],
+            // Built from the protocol fact rather than restated, so the contract and the
+            // authorization coordinate can never disagree about where a target is named.
+            mcp_name_required: ["tools/call", "resources/read"]
+                .into_iter()
+                .filter_map(|m| mcp_name_source(m).map(|s| (m.to_owned(), s)))
+                .collect(),
             allow_legacy_header_omission: false,
             protocol_version_body_key: "io.modelcontextprotocol/protocolVersion".to_owned(),
         }

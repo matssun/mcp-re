@@ -39,7 +39,6 @@ use mcp_re_core::McpReError;
 use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::build_delegated_rejection;
 use mcp_re_http_profile::build_delegated_rejection_preflight;
-use mcp_re_http_profile::check_admission;
 use mcp_re_http_profile::insert_verified_context;
 use mcp_re_http_profile::parse_response_body;
 use mcp_re_http_profile::result_class::classify_result_type;
@@ -74,6 +73,9 @@ use crate::async_inner::AsyncInnerServer;
 use crate::async_inner::InnerOutcome;
 use crate::async_serve::ServedHttpRequest;
 use crate::async_serve::ServedHttpResponse;
+use crate::authorization::AuthorizationEvaluator;
+use crate::authorization::AuthorizationPosture;
+use crate::authorization::AuthorizationStage;
 use crate::communication_assurance::request_peer_binding::http_profile_adapter::verified_request_subject;
 use crate::communication_assurance::RequestPeerBindingFacts;
 use crate::continuation_store::continuation_key;
@@ -292,6 +294,9 @@ pub struct HttpProfileProxy {
     /// Optional Mode-A transport binding: bind the verified request actor to the
     /// mTLS peer identity. `None` disables the channel binding.
     transport_binding: Option<TransportBinding>,
+    /// What this deployment decides authorization with (ADR-MCPRE-065). Deciding with
+    /// nothing is one of its states, and it claims nothing rather than permitting.
+    authorization: AuthorizationStage,
     /// Response-signature validity window (seconds added to `created`).
     sig_ttl_secs: i64,
     /// Optional MRTR continuation correlation store (ADR-MCPS-047) — the fleet-shared
@@ -403,6 +408,7 @@ impl HttpProfileProxy {
             continuation_ttl_secs: DEFAULT_CONTINUATION_TTL_SECS,
             verified_context_policy: VerifiedContextPolicy::default(),
             verifier_policy: VerifierPolicy::default(),
+            authorization: AuthorizationStage::default(),
             audit: None,
             admission: None,
             retention: None,
@@ -453,6 +459,45 @@ impl HttpProfileProxy {
     pub(crate) fn with_transport_binding(mut self, binding: TransportBinding) -> Self {
         self.transport_binding = Some(binding);
         self
+    }
+
+    /// Install the authorization mechanism this deployment decides under
+    /// (ADR-MCPRE-065).
+    ///
+    /// A named capability, not a policy parameter, for the same reason the transport
+    /// binding is one: the caller chooses WHETHER a policy decides, and supplies the
+    /// mechanism whole. Without this call the deployment authorizes nothing and says so —
+    /// it does not quietly permit.
+    pub fn with_authorization(mut self, evaluator: Arc<dyn AuthorizationEvaluator>) -> Self {
+        self.authorization = AuthorizationStage::under(evaluator);
+        self
+    }
+
+    /// AUTHORIZED — may this actor perform this action (ADR-MCPRE-065)?
+    ///
+    /// ```text
+    /// ensures   Ok  => a policy permitted this action, or no policy is deployed
+    ///           Err => 403, bound
+    /// forbids   burning a nonce, running the backend
+    /// refusal   free — nothing has happened
+    /// ```
+    ///
+    /// Ordered after admission and before everything irreversible. Admission's facts are an
+    /// input to the decision, and running a tool for an action no policy permits is exactly
+    /// what a free refusal here prevents.
+    ///
+    /// The posture it returns is not advisory: [`ReadyForDispatch`] carries a body that only
+    /// `AuthorizationPosture::release` can produce, so a pipeline that dropped this stage
+    /// would not compile at the dispatch. What the DECISION means is
+    /// [`AuthorizationStage`]'s; what a refusal costs the client is the machine's.
+    fn authorization_stage(
+        &self,
+        ex: &Exchange<'_>,
+        bound: Option<&RequestPeerBindingFacts>,
+    ) -> Result<AuthorizationPosture, Refusal> {
+        self.authorization
+            .decide(ex.verified, &ex.http_req.body, bound)
+            .map_err(|refusal| Refusal::before_admission(refusal.wire_code(), 403))
     }
 
     /// Wire the MRTR continuation correlation store (ADR-MCPS-047) with a bounded
@@ -511,97 +556,36 @@ impl HttpProfileProxy {
     /// irreversible: burning a nonce and running a tool on behalf of a workload whose
     /// admission has been revoked is precisely what this exists to prevent.
     ///
-    /// Names its refusal like every other stage rather than minting one. It used to build
-    /// five signed rejections itself, each an eight-argument call differing only in the
-    /// wire code, and thread an [`ExecutionDisposition`] in to do it — which is the retry
-    /// contract, a fact about the whole exchange that no stage can state. The machine
-    /// states it now, once, where [`HttpProfileProxy::refuse`] signs.
+    /// The DECISION belongs to [`AdmissionEnforcer`], next door, which owns the
+    /// deployment's posture and the degraded-window arithmetic. What is here is the
+    /// ordering and the prerequisite: `bound` — the ADR-MCPRE-064 §16 predecessor, never an
+    /// identity source — travels WITH the decision, so an authority downstream receives
+    /// what the decision was taken over instead of re-deriving it, and the
+    /// *bound* / *not claimed* distinction survives the stage that consumed it.
+    ///
+    /// Names its refusal like every other stage rather than minting one. The retry contract
+    /// is a fact about the whole exchange, which no stage can state; the machine states it,
+    /// once, where [`HttpProfileProxy::refuse`] signs.
     async fn admission_stage(
         &self,
         ex: &Exchange<'_>,
         bound: Option<&RequestPeerBindingFacts>,
     ) -> Result<Established<Option<RequestPeerBindingFacts>>, Refusal> {
-        // The prerequisite travels WITH the decision: an authority downstream of admission
-        // receives what the decision was taken over instead of re-deriving it, and the
-        // *bound* / *not claimed* distinction survives the stage that consumed it.
         let admitted = || Established::new(bound.cloned(), ExchangeEvent::AdmissionCurrencyChecked);
-        let refused = |code: &'static str| Refusal::before_admission(code, 403);
         let Some(enforcer) = self.admission.as_ref() else {
             return Ok(admitted());
         };
-        // `bound`: the ADR-MCPRE-064 §16 prerequisite, never an identity source.
-        let verified = ex.verified;
-        let block = Some(verified.request_block());
-        let binding = block.and_then(|b| b.admission.as_ref());
-        let assertion = block.and_then(|b| b.admission_assertion.as_deref());
-
-        let (binding, assertion) = match (binding, assertion) {
-            (Some(b), Some(a)) => (b, a),
-            // The block validator already refuses one half without the other, so
-            // reaching here means BOTH are absent: the call declares no admission.
-            _ => {
-                if enforcer.enforcement == AdmissionEnforcement::Required {
-                    return Err(refused(
-                        HttpProfileError::AdmissionStateUnavailable.wire_code(),
-                    ));
-                }
-                return Ok(admitted());
-            }
-        };
-
-        // The authoritative lookup. An outage yields `None` — the ONLY input that
-        // reaches the §5.2 degraded fork — while a healthy authority that has never
-        // heard of this workload is a definitive negative, refused here rather than
-        // being handed to a fork that would serve it on its own assertion.
-        let authoritative = match enforcer.source.current(&binding.admission_id).await {
-            Ok(Some(state)) => {
-                enforcer.record_authoritative_read(ex.now);
-                Some(state)
-            }
-            Ok(None) => {
-                enforcer.record_authoritative_read(ex.now);
-                return Err(refused(HttpProfileError::AdmissionNotCurrent.wire_code()));
-            }
-            // The source is unreachable. Whether the §5.2 degraded fork may be entered
-            // at all is decided HERE, by how long the authority has been unreachable —
-            // not downstream by how fresh the caller's assertion is, which the caller
-            // controls.
-            Err(_) => {
-                if enforcer.degraded_window_exhausted(ex.now) {
-                    return Err(refused(
-                        HttpProfileError::AdmissionStateUnavailable.wire_code(),
-                    ));
-                }
-                None
-            }
-        };
-
-        let resolve = Arc::clone(&enforcer.resolve_authority);
-        match check_admission(
-            binding,
-            assertion,
-            // The VERIFIER-RESOLVED actor — the FULL signing actor, keyid included, never
-            // the bare subject and never anything the request asserts. An assertion issued
-            // to another workload, or under another key, names a different actor and is
-            // refused, so possession alone does not satisfy the gate (§16.4).
-            ex.actor_id,
-            authoritative.as_ref(),
-            mcp_re_http_profile::PROFILE_TAG,
-            &[self.expected_audience.audience_id.as_str()],
-            &enforcer.policy,
-            ex.now,
-            move |kid: &str| resolve(kid),
-        ) {
-            // Admitted. Note what is NOT recorded: `VerifiedAdmission::degraded`
-            // distinguishes a live-confirmed admission from one served on a stale
-            // snapshot inside the P window, and the audit stream cannot currently
-            // carry that difference — ADR-MCPS-035 §3 freezes the success-event
-            // allowlist and says no third success event may be minted without an
-            // ADR. So a degraded-mode serve is indistinguishable in audit from a
-            // confirmed one. That is a real gap in the record, named here rather
-            // than closed by quietly widening a pinned vocabulary.
-            Ok(_) => Ok(admitted()),
-            Err(e) => Err(refused(e.wire_code())),
+        match enforcer
+            .decide(
+                ex.verified,
+                ex.actor_id,
+                &self.expected_audience.audience_id,
+                ex.now,
+            )
+            .await
+        {
+            Ok(()) => Ok(admitted()),
+            Err(code) => Err(Refusal::before_admission(code, 403)),
         }
     }
 
@@ -1460,12 +1444,22 @@ impl HttpProfileProxy {
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         };
 
-        match self.admission_stage(&ex, bound.as_ref()).await {
-            Ok(admitted) => {
-                let _decided_over = progress.establish(admitted);
-            }
+        // The prerequisite chain, carried rather than re-derived: the binding reaches
+        // admission, and what admission DECIDED OVER reaches authorization. Authorization
+        // receives the ADR-MCPRE-064 product whole; it never reopens it.
+        let decided_over = match self.admission_stage(&ex, bound.as_ref()).await {
+            Ok(admitted) => progress.establish(admitted),
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
-        }
+        };
+
+        // AUTHORIZED. This deployment's honest posture — a policy's grant, or the fact
+        // that no policy is deployed. Held across the stages below because the dispatch
+        // consumes it: the body `ReadyForDispatch` carries has exactly one producer, and
+        // that producer is this value.
+        let authorized = match self.authorization_stage(&ex, decided_over.as_ref()) {
+            Ok(posture) => posture,
+            Err(refusal) => return self.refuse(&ex, refusal, &progress),
+        };
 
         let prep = match self.prepare_continuation_stage(&ex).await {
             Ok(prep) => progress.establish(prep),
@@ -1573,7 +1567,7 @@ impl HttpProfileProxy {
         // says so: it cannot be built without them, and the dispatch consumes it. Past this
         // line no exit can claim nothing happened — which is why every one of them is a
         // `response_rejection` rather than a `rejection`.
-        let ready = ReadyForDispatch::new(forwarded, a, expires, retention);
+        let ready = ReadyForDispatch::new(authorized.release(forwarded), a, expires, retention);
         // BEFORE the await, not after it. Once the request is committed to the backend the
         // exchange must read as possibly-executed, whatever the dispatch goes on to return:
         // a state entered only on the way out would leave a cancelled or panicking dispatch

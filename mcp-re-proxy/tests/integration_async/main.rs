@@ -16,6 +16,7 @@ mod common;
 
 mod admission_currency_serving_test;
 mod async_replay_test;
+mod authorization_serving_test;
 mod config_snapshot_hot_reload_test;
 mod delegated_client_server_e2e_test;
 mod delegated_production_wiring_test;

@@ -18,12 +18,14 @@ flowchart TD
     TLS[TLS & Transport Identity]
     V[Evidence Verification]
     E[Exchange Lifecycle]
+    Z[Authorization\nADR-MCPRE-065]
 
     A --> B
     A --> T
     A --> TLS
     A --> V
     A --> E
+    A --> Z
     B --> C
 ```
 
@@ -32,7 +34,9 @@ flowchart TD
 - [**ADR-MCPRE-061**](https://github.com/matssun/mcp-re/discussions/567) — the durable architectural decision. ✅ Accepted 2026-08-20; the Discussion is the source of truth (`docs/adr/README.md`).
 - [**ADR-MCPRE-063**](https://github.com/matssun/mcp-re/discussions/601) — communication assurance as composed semantic products. ✅ Accepted 2026-08-22. Specializes ADR-061 for the communication-security surface; does not supersede it.
 - [**ADR-MCPRE-064**](https://github.com/matssun/mcp-re/discussions/615) — verified relationships and authentication composition. 📄 Proposed 2026-08-23. Extends ADR-063 with the premise the word *authenticated* requires; ADR-063 keeps the laws, this record decides the facts.
+- [**ADR-MCPRE-065**](https://github.com/matssun/mcp-re/discussions/629) — composable authorization over verified request evidence. 📄 Proposed 2026-08-24. A NEW authority, not a continuation of ADR-064: permission is not produced by assurance about a relationship. See [`authorization.md`](authorization.md).
 - [`communication-assurance.md`](communication-assurance.md) — the ADR-063/064 companion blueprint: the target authority graph, the migration questions, and the vertical-slice contracts.
+- [`authorization.md`](authorization.md) — the ADR-065 companion blueprint: the characterization, the three resolved laws, and the slice contracts.
 - [`implementation-blueprint.md`](implementation-blueprint.md) — current execution method for the refactoring campaign.
 - [`component-blueprint-template.md`](component-blueprint-template.md) — standard anatomy for subordinate component design documents.
 - [`review-dispositions.md`](review-dispositions.md) — the ADR-061 §14 review dispositions: the records `config/module-size-debt.toml`'s `review_ref` fields point at, granted and declined alike, and the disposition lifecycle they move through.
