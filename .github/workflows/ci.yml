@@ -234,6 +234,18 @@ jobs:
           python3 scripts/lifecycle_purity_gate.py --selftest
           python3 scripts/lifecycle_purity_gate.py
 
+      # ADR-MCPRE-061 Amendment 1 §3. The Group A zero-debt protections live in ONE
+      # `[workspace.lints]` table in the root Cargo.toml — thirteen copies of the same
+      # deny block grew six files already registered in config/module-size-debt.toml.
+      # A workspace table reaches a member only through that member's `[lints]
+      # workspace = true`, so a member added without it is silently exempt and nothing
+      # else in the build reports it. `--probe` runs after the toolchain is selected
+      # (below, with the clippy lanes) because proving the table is ENFORCED needs a
+      # build; a table that is merely present is the configuration-enforces-nothing
+      # failure this repo has already hit twice.
+      - name: Workspace-lints gate (every member opts into the one lint authority)
+        run: python3 scripts/workspace_lints_gate.py
+
       # The SCITT service-key fetcher refuses a plaintext redirect hop. `build_opener`
       # installs the permissive default redirect handler unless it is passed a
       # subclass, so a guard class that exists but is never consulted leaves the
@@ -353,6 +365,12 @@ jobs:
       # such leftovers survived both lanes above (`TEST_ACTOR` under `async_serve`
       # alone, `ReplayInsert` under `redis_replay` alone) because no build ever used
       # exactly one flag. Each feature on its own is the cheap lane that covers it.
+      # Proves the `[workspace.lints]` table is enforced, not merely declared: a
+      # deliberate `todo!()` is compiled inside a real workspace member and the build
+      # must fail with clippy::todo. Runs here because it needs the toolchain.
+      - name: Workspace-lints enforcement probe
+        run: python3 scripts/workspace_lints_gate.py --probe
+
       - name: Clippy — each feature alone
         run: |
           for feature in dev_env_key_source pkcs11_keysource redis_replay online_ocsp \

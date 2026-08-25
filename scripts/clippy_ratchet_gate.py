@@ -81,9 +81,23 @@ ADOPTED = (
     "too_many_lines",           # 27  -> ratcheted
     "excessive_nesting",        # 164 -> ratcheted
     "arithmetic_side_effects",  # 124 -> ratcheted
+    # ADR-MCPRE-061 Amendment 1 §3, Group B. Zero PRODUCTION sites in both the default
+    # and the full CI feature lane, but NOT zero in test code — so these cannot be a
+    # crate-level `#![deny]` the way the Group A lints are (that would be red under
+    # every `--all-targets` lane). This gate's production-only measurement is exactly
+    # the mechanism the §6.4 ruling built for that case, so they land here and are
+    # denied at zero. They carry no debt entry, for the same reason `unwrap_used` does
+    # not: there is nothing to pay off.
+    "panic_in_result_fn",       # 0 -> denied at zero
+    "exit",                     # 0 -> denied at zero
+    "create_dir",               # 0 -> denied at zero
+    "assertions_on_result_states",  # 0 -> denied at zero
+    "partial_pub_fields",       # 0 -> denied at zero
 )
 
-# `unwrap_used` is absent: it is denied at zero and carries no debt entry.
+# The lints carrying a debt baseline. Every ADOPTED lint NOT listed here is denied at
+# zero — it has no entry in the registry because it has nothing to pay off, and the
+# first occurrence fails the gate.
 RATCHETED = (
     "expect_used",
     "indexing_slicing",
@@ -180,7 +194,11 @@ def compare(counts: Counter, baseline: dict[str, int]) -> list[str]:
     problems = []
     for key, n in sorted(counts.items()):
         lint = key.split("::", 1)[1]
-        if lint not in RATCHETED and lint != "unwrap_used":
+        # Every ADOPTED lint is compared. A lint outside RATCHETED has no registry entry,
+        # so `baseline.get` yields 0 below and the first occurrence fails — which is what
+        # "denied at zero" means here. Skipping non-RATCHETED lints would silently make
+        # every zero-debt adoption inert.
+        if lint not in ADOPTED:
             continue
         allowed = baseline.get(key, 0)
         if n > allowed:
@@ -605,9 +623,11 @@ def main() -> int:
         return 1
 
     total = sum(n for k, n in counts.items() if k.split("::", 1)[1] in RATCHETED)
+    at_zero = [l for l in ADOPTED if l not in RATCHETED]
     print(
         f"clippy-ratchet gate: OK — production targets only (--lib --bins). "
-        f"clippy::unwrap_used denied at zero; {total} baselined occurrence(s) of "
+        f"Denied at zero: {', '.join('clippy::' + l for l in at_zero)}; "
+        f"{total} baselined occurrence(s) of "
         f"{', '.join(RATCHETED)} across {len(baseline)} crate/lint entries, none grew. "
         f"Allow discipline: {scanned} file(s) scanned, no crate/module-wide or "
         f"unjustified exception."

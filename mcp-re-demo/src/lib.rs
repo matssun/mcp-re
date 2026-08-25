@@ -18,6 +18,10 @@
 //! MCP-RE is HTTP-profile only — stdio is out of scope; a stdio-only host uses an
 //! external plain-MCP adapter (e.g. FastMCP) that speaks HTTP to MCP-RE.
 
+// ADR-MCPRE-061 Amendment 1 §3.1 — this crate holds no production `unsafe`, and `forbid`
+// (unlike `deny`) cannot be overridden by an inner `#[allow]` anywhere in it. Acquiring
+// `unsafe` here means deleting this line: an architectural decision, reviewed as one.
+#![forbid(unsafe_code)]
 pub mod demo_fixtures;
 
 pub use demo_fixtures::DemoFixtureFiles;

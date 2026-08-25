@@ -44,8 +44,9 @@ verify = true
 
 # `verus_keep_ghost` is defined by the prover's rustc driver, never by cargo. Declared so
 # the guard in lib.rs does not read as a typo'd cfg on an ordinary build.
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)'] }
 
 [dev-dependencies]
 hex = { workspace = true }
+
+[lints]
+workspace = true

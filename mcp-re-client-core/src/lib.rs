@@ -20,6 +20,10 @@
 //! **deferred** from the build (files retained) and rebuilt on RFC 9421 evidence in
 //! a follow-up slice; the request/response evidence seam below is the working core.
 
+// ADR-MCPRE-061 Amendment 1 §3.1 — this crate holds no production `unsafe`, and `forbid`
+// (unlike `deny`) cannot be overridden by an inner `#[allow]` anywhere in it. Acquiring
+// `unsafe` here means deleting this line: an architectural decision, reviewed as one.
+#![forbid(unsafe_code)]
 pub mod binding_spec;
 mod delegated_evidence;
 pub mod request;

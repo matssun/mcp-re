@@ -43,3 +43,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "mcp-re-client"
 path = "src/main.rs"
+
+[lints]
+workspace = true

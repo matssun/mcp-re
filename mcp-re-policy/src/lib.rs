@@ -24,6 +24,10 @@
 //! Firewall (ADR-MCPS-011/012): this crate depends only on `mcp-re-core` plus
 //! `serde`/`serde_json`. No networking, async runtime, or filesystem access.
 
+// ADR-MCPRE-061 Amendment 1 §3.1 — this crate holds no production `unsafe`, and `forbid`
+// (unlike `deny`) cannot be overridden by an inner `#[allow]` anywhere in it. Acquiring
+// `unsafe` here means deleting this line: an architectural decision, reviewed as one.
+#![forbid(unsafe_code)]
 pub mod block;
 pub mod decision;
 pub mod error;
