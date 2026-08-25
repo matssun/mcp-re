@@ -40,16 +40,29 @@ record itself:
      composition root that builds the facet out of parts has re-derived what an owner
      already decided.
 
+ADDED BY SLICE 2 (#648) — the containment stops being a rule and becomes a type:
+
+ 10. **No audit rejection constructor takes a string.** `mcp-re-core/src/audit.rs` declares
+     no `fn *_rejected_code(reason: &'static str)`. That was the join where two authorities'
+     tokens became indistinguishable (#637); with it gone, `PolicyError -> AuditEvent.reason`
+     does not typecheck, and invariant 9's producer graph is decided by the compiler rather
+     than discovered by a scanner over a hand-maintained file list.
+ 11. **The serving path never renders a token into an audit event.** `rejection` and
+     `response_rejection` take a typed `RefusalCause` and ask it for a Core verdict; neither
+     passes a `wire_code()` result to an `AuditEvent` constructor.
+
 WHY (5) IS THE ONE THAT MATTERS. Every other check here constrains a shape that a reviewer
 would notice changing. A `From<PolicyError> for McpReError` would look like a convenience,
 would compile, would make every existing test pass, and would re-create the exact defect
 ADR-MCPRE-066 was opened for — one taxonomy quietly absorbing another's semantics. It is
 the only one of the six that a well-intentioned edit is likely to introduce.
 
-WHAT IT STILL DOES NOT PROVE, and deliberately: that Core's `reason` is free of foreign
-tokens. It is not — an authorization refusal's `wire_code()` still reaches
-`request_rejected_code`. Slice 1 adds the second coordinate; closing the first one is Slice
-2's structural containment, and a gate asserting it today would fail on purpose-built code.
+WHAT (10) REPLACED. Slice 1 could not assert that Core's `reason` was free of foreign
+tokens, because it was not: an authorization refusal's `wire_code()` still reached
+`request_rejected_code`. Slice 2 deleted the constructor rather than adding a scanner for
+its callers, which is why the check is the absence of a SHAPE rather than a survey of
+producers. The companion claim — that no carrier mints an `mcp-re.*` token of its own — is
+`//mcp-re-conformance:audit_vocabulary_guard_test`.
 
 WHAT IT DOES NOT PROVE: that the right cause is chosen at any given site. That is the unit
 controls in `refusal/cause.rs`, and the wire-compatibility controls that show Slice 0 is
@@ -70,6 +83,7 @@ REPO = Path(__file__).resolve().parent.parent
 REFUSAL = ["mcp-re-proxy/src/refusal/mod.rs", "mcp-re-proxy/src/refusal/cause.rs"]
 SERVING = "mcp-re-proxy/src/http_profile_serve.rs"
 RECORD = "mcp-re-proxy/src/audit_record.rs"
+CORE_AUDIT = "mcp-re-core/src/audit.rs"
 
 #: Where a `From<PolicyError>` conversion could plausibly be introduced. Every Rust file in
 #: the workspace, because the whole point is that it must exist NOWHERE — restricting the
@@ -223,6 +237,23 @@ def check(overrides: dict[str, str] | None = None) -> list[str]:
                 f"projection (ADR-MCPRE-066 invariant 5 / R-COMPOSE)"
             )
 
+    # 10. no audit rejection constructor takes a string
+    core_audit = read(CORE_AUDIT, overrides)
+    if re.search(r"fn\s+\w*rejected\w*\s*\(\s*\w+\s*:\s*&'static str", core_audit):
+        problems.append(
+            f"{CORE_AUDIT}: an audit rejection constructor takes a `&'static str` — that is "
+            f"the join where two authorities' tokens become one (ADR-MCPRE-066 invariant 8/9)"
+        )
+
+    # 11. the serving path never renders a token into an audit event
+    for m in re.finditer(r"AuditEvent::\w+\(", serving):
+        head = serving[m.end() : m.end() + 160].split(";")[0]
+        if ".wire_code()" in head:
+            problems.append(
+                "the serving path renders a token into an `AuditEvent` constructor instead "
+                "of passing a typed Core verdict (ADR-MCPRE-066 invariant 9)"
+            )
+
     # 6. the cause algebra is exhaustive by construction
     if re.search(r"^\s*_\s*=>", refusal, re.M):
         problems.append(
@@ -289,13 +320,25 @@ SELFTEST = [
                   "AuthorizationFacet::Refused(x))) }\n"},
         1,
     ),
+    (
+        "a string-taking audit rejection constructor comes back (invariant 8)",
+        {CORE_AUDIT: "impl AuditEvent {\n"
+                     "    pub fn request_rejected_code(reason: &'static str) -> Self { todo!() }\n"
+                     "}\n"},
+        1,
+    ),
+    (
+        "the serving path renders a token into an audit event (invariant 9)",
+        {SERVING: "fn f() { self.audit(AuditEvent::request_rejected_code(cause.wire_code())) }\n"},
+        1,
+    ),
 ]
 
 
 def selftest() -> int:
     failures = 0
     for name, override, expected in SELFTEST:
-        base = {r: (REPO / r).read_text() for r in REFUSAL + [SERVING, RECORD]}
+        base = {r: (REPO / r).read_text() for r in REFUSAL + [SERVING, RECORD, CORE_AUDIT]}
         base.update(override)
         got = len(check(base))
         ok = got >= expected
@@ -325,8 +368,9 @@ def main() -> int:
     print(
         "refusal-provenance gate: OK — a refusal carries its authority rather than a rendered "
         "token, the authorization branch survives the stage boundary intact, PolicyError has "
-        "no route into the Core taxonomy, the cause algebra is exhaustive, and the record "
-        "states each authority's outcome in its own coordinate."
+        "no route into the Core taxonomy, the cause algebra is exhaustive, the record states "
+        "each authority's outcome in its own coordinate, and no rejection reason can be "
+        "built from a string."
     )
     return 0
 

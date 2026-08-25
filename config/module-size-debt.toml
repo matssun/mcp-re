@@ -477,12 +477,6 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-test-paths/src/lib.rs"
-baseline_prod_loc = 298
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
 path = "mcp-re-http-profile/src/error.rs"
 baseline_prod_loc = 294
 baseline_sha = "d1fc5fa"

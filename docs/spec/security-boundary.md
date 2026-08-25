@@ -375,7 +375,16 @@ rejection vocabulary**.
   `McpReError::wire_code()` token. Example:
   `{ "event_type": "mcp-re.request.rejected", "reason": "mcp-re.invalid_signature" }`.
   No minted sub-names (no `…rejected.bad_signature`, `…expired`, `…replay`,
-  `…untrusted_signer`).
+  `…untrusted_signer`). This is now a property of the TYPE: no audit constructor
+  takes a string, so a token from another authority's taxonomy cannot be written
+  into `reason` (ADR-MCPRE-066 Slice 2).
+- **A rejection Core did not decide carries no `reason`.** Where the authority
+  that terminated the exchange is not Core — today, an authorization policy's
+  denial — Core has no verdict and states none rather than borrowing another
+  authority's token. `reason` is absent and `decision` is `Rejected`, which is a
+  combination no success event can produce; §9.1's authorization coordinate names
+  who did refuse. The client still receives the refusing authority's own code in
+  the signed rejection: this changed the record, not the wire.
 - **Success events** are the only net-new surface, because the error enum cannot
   express a success/lifecycle outcome. The set is **exactly two**:
   `mcp-re.request.accepted` and `mcp-re.response.signed`. No third success event may
@@ -393,7 +402,10 @@ rejection vocabulary**.
 **Adding a rejection outcome** therefore requires adding an `McpReError` variant
 first (the frozen-taxonomy process), which the audit layer inherits
 automatically — the vocabulary cannot drift from the verdicts the pipeline
-actually makes.
+actually makes. Carriers that legitimately represent Core outcomes
+(`HttpProfileError`, `DispatchError`, `ProxyDispatchError`) declare an exhaustive
+projection onto `McpReError` and **derive** their wire token from it; none keeps a
+token table of its own.
 
 ### 9.1 The authorization coordinate (ADR-MCPRE-066)
 

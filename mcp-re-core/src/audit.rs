@@ -14,6 +14,16 @@
 //! "mismatch" would imply Core semantically compared the authorization artifact —
 //! which is the configured AuthorizationProfile's job (ADR-MCPS-013), not Core's.
 //!
+//! # A rejection reason is a Core verdict, by type (ADR-MCPRE-066 Slice 2)
+//!
+//! No constructor here takes a string. A rejection event is built from an
+//! [`McpReError`] — or, when the authority that terminated the exchange is not Core, from
+//! nothing at all. That is what makes "an audit reason is always a frozen Core token" a
+//! property of the type rather than a claim a scanner rechecks over a hand-maintained list
+//! of producers: a foreign taxonomy does not typecheck, so there is no producer graph to
+//! discover. Carriers that legitimately represent Core outcomes say so with an exhaustive
+//! `From<&_> for McpReError` and derive their wire token from it.
+//!
 //! **Non-goal:** this vocabulary is NOT a full SIEM schema and does not replace
 //! deployment audit policy. It fixes only the stable machine tokens; the optional
 //! [`reason_label`](AuditEvent::reason_label) is non-normative display text.
@@ -22,6 +32,10 @@
 //! ADR-MCPS-035/036) asserts every rejection `reason` this module can emit is a
 //! member of `McpReError::wire_code()`, and that the success set is exactly the
 //! two-item allowlist below.
+
+mod reason_label;
+
+pub use reason_label::reason_label;
 
 use crate::error::McpReError;
 
@@ -81,72 +95,6 @@ pub const KEY_LIFECYCLE_EVENT_TYPES: &[&str] = &[
 /// frozen-taxonomy process), which the audit layer then inherits automatically.
 pub fn rejection_reason(error: &McpReError) -> &'static str {
     error.wire_code()
-}
-
-/// A non-normative, human-readable label for an `McpReError`, suitable for the
-/// optional [`AuditEvent::reason_label`] display field. SIEM readability only —
-/// the stable machine token is always [`rejection_reason`]; this MUST NOT be
-/// parsed. Provided as a convenience so consumers need not maintain their own
-/// map; absence of a label is always acceptable.
-pub fn reason_label(error: &McpReError) -> &'static str {
-    match error {
-        McpReError::MissingEnvelope => "Missing MCP-RE envelope",
-        McpReError::UnsupportedVersion => "Unsupported envelope version",
-        McpReError::InvalidSignature => "Invalid signature",
-        McpReError::SerializationFailed => "Serialization failed",
-        McpReError::ExpiredRequest => "Expired request",
-        McpReError::ReplayDetected => "Replay detected",
-        McpReError::InvalidAudience => "Invalid audience",
-        McpReError::ActorBindingFailed => "Signer trust binding failed",
-        McpReError::TransportBindingFailed => "Transport binding failed",
-        McpReError::AuthorizationHashMissing => "Authorization hash missing",
-        McpReError::OnBehalfOfMissing => "on_behalf_of missing",
-        McpReError::OnBehalfOfInvalidFormat => "on_behalf_of malformed",
-        McpReError::ResponseSigInvalid => "Invalid response signature",
-        McpReError::ResponseHashMismatch => "Response/request hash mismatch",
-        McpReError::DowngradeForbidden => "Security downgrade forbidden",
-        McpReError::BatchForbidden => "JSON-RPC batch forbidden",
-        McpReError::NotificationForbidden => "Security notification forbidden",
-        McpReError::UnknownEnvelopeField => "Unknown envelope field",
-        McpReError::TrustResolverUnavailable => "Trust resolver unavailable",
-        McpReError::ReplayCacheUnavailable => "Replay cache unavailable",
-        McpReError::EvidenceRetentionUnavailable => "Retained-evidence store unavailable",
-        McpReError::EvidenceRetentionIndeterminate => {
-            "Retained-evidence write failed after the call had already executed"
-        }
-        // Draft-02 (v0.6) — ADR-MCPS-040 / decision F.1.
-        McpReError::AuthorizationBindingMissing => "authorization_binding missing",
-        McpReError::AuthorizationBindingTypeUnsupported => "authorization_binding type unsupported",
-        McpReError::AuthorizationBindingMalformed => "authorization_binding malformed",
-        McpReError::AuthorizationBindingProfileRequired => "authorization_binding profile required",
-        McpReError::AuthorizationBindingAmbiguousBytes => "authorization_binding ambiguous bytes",
-        McpReError::ContinuationTypeUnsupported => "continuation type unsupported",
-        McpReError::ContinuationMalformed => "continuation malformed",
-        // HTTP-profile signed-rejection codes (ADR-MCPRE-050, MCPRE-92).
-        McpReError::MalformedEnvelope => "Malformed evidence structure",
-        McpReError::DigestMismatch => "Content-Digest mismatch",
-        McpReError::ArtifactBindingFailed => "Artifact binding failed",
-        McpReError::RequestBindingMismatch => "Response/request binding mismatch",
-        McpReError::ContinuationBindingFailed => "Continuation binding failed",
-        // Delegated signing-key attestation (ADR-MCPRE-052).
-        McpReError::DelegationCredentialMissing => "Delegation credential missing",
-        McpReError::DelegationCredentialInvalid => "Delegation credential invalid",
-        McpReError::DelegationCredentialExpired => "Delegation credential expired",
-        McpReError::DelegationIssuerUntrusted => "Delegation issuer untrusted",
-        McpReError::DelegationProfileMismatch => "Delegation profile mismatch",
-        McpReError::DelegationAudienceMismatch => "Delegation audience/scope mismatch",
-        McpReError::DelegationKeyUseInvalid => "Delegation key-use invalid",
-        McpReError::DelegationTrustEpochStale => "Delegation trust epoch stale",
-        McpReError::DelegationKeyMismatch => "Delegation key mismatch",
-        McpReError::DelegationRevoked => "Delegation revoked",
-        McpReError::DelegatedSigningUnavailable => "Delegated signing unavailable",
-        // Response region (ADR-MCPRE-058 §10).
-        McpReError::UpstreamResponseInvalid => "Upstream response is not a legal MCP response",
-        McpReError::InnerDispatchIndeterminate => {
-            "Inner transport failed after the request was transmitted; execution unknown"
-        }
-        McpReError::InnerPlaneUnavailable => "Inner plane could not begin a dispatch",
-    }
 }
 
 /// A minimal MCP-RE audit event. The fields mirror ADR-MCPS-035 §6 (the kept seed
@@ -222,34 +170,38 @@ impl AuditEvent {
         }
     }
 
-    /// A `mcp-re.request.rejected` event from an ALREADY-FROZEN wire code.
+    /// A `mcp-re.request.rejected` event for a rejection **Core did not decide**.
     ///
-    /// The RFC 9421 serving path reaches its verdict as an `HttpProfileError` and
-    /// carries the `&'static str` wire code, not an [`McpReError`] — every rejection
-    /// exit funnels the code into one choke point. This constructor lets that producer
-    /// emit without reconstructing an error value it no longer holds.
+    /// The exchange terminated, and the authority that terminated it is not Core — today
+    /// that is exactly an authorization policy's denial. Core has no verdict to state, so
+    /// it states none: `reason` is `None`, because the only honest alternative would be to
+    /// put another authority's token in Core's field, which is the defect ADR-MCPRE-066
+    /// was opened for (#637).
     ///
-    /// `reason` MUST be a member of the frozen `McpReError::wire_code()` taxonomy;
-    /// there is no parallel sub-name. That containment is not a convention here — the
-    /// conformance guard asserts every `HttpProfileError::wire_code()` token is a
-    /// frozen wire code, so the real producer's whole reason set is checked.
-    pub fn request_rejected_code(reason: &'static str) -> Self {
+    /// **`None` here is not an absence with two meanings.** A success event carries
+    /// [`Decision::Accepted`] or [`Decision::Signed`]; this one carries
+    /// [`Decision::Rejected`], so *rejected with no Core reason* is a state of its own. The
+    /// record's authority coordinate names who did decide and why — lifecycle and
+    /// attribution are separate coordinates, which is the whole of ADR-MCPRE-066 §4.
+    pub fn request_rejected_elsewhere() -> Self {
         AuditEvent {
             event_type: event_type::REQUEST_REJECTED,
             decision: Decision::Rejected,
-            reason: Some(reason),
+            reason: None,
             reason_label: None,
         }
     }
 
-    /// A `mcp-re.response.rejected` event from an already-frozen wire code. The
-    /// response-side sibling of [`request_rejected_code`](Self::request_rejected_code);
-    /// the same containment requirement applies.
-    pub fn response_rejected_code(reason: &'static str) -> Self {
+    /// The response-side sibling of
+    /// [`request_rejected_elsewhere`](Self::request_rejected_elsewhere).
+    ///
+    /// Present for symmetry of the taxonomy rather than because a producer exists:
+    /// authorization is request-side, so no non-Core authority terminates a response today.
+    pub fn response_rejected_elsewhere() -> Self {
         AuditEvent {
             event_type: event_type::RESPONSE_REJECTED,
             decision: Decision::Rejected,
-            reason: Some(reason),
+            reason: None,
             reason_label: None,
         }
     }

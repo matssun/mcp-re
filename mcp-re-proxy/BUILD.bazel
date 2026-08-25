@@ -7,7 +7,10 @@ package(default_visibility = ["//visibility:public"])
 
 # Read from disk by the ADR-MCPS-035 audit-vocabulary drift guard: the replay-tier
 # gate is one of the three `wire_code()` producers feeding `request_rejected_code`.
-exports_files(["src/http_profile_dispatch.rs"])
+exports_files([
+    "src/http_profile_dispatch.rs",
+    "src/http_profile_dispatch/core_projection.rs",
+])
 
 # ADR-MCPS-048 / MCPS-69 — these HITL live-cloud KMS tests are intentionally
 # cargo-only (no Bazel target): each is `#![cfg(feature = "…kms…")]` + `#[ignore]`
@@ -233,6 +236,7 @@ _PROXY_LIB_SRCS = [
     # (ReplayDurabilityTier gate layered above the dispatcher's core single-process
     # gate; tier type stays in the proxy).
     "src/http_profile_dispatch.rs",
+    "src/http_profile_dispatch/core_projection.rs",
     # ADR-MCPRE-050 production RFC 9421 serving handler + the App runner that wires
     # the fleet (serving path / replay tier / transport binding), extracted from main.
     "src/http_profile_serve.rs",

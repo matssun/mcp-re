@@ -812,7 +812,9 @@ fn a_replay_emits_exactly_one_rejection_carrying_the_frozen_wire_code() {
     assert_eq!(
         record.subject,
         mcp_re_proxy::AuditSubject::request(
-            mcp_re_core::audit::AuditEvent::request_rejected_code("mcp-re.replay_detected"),
+            mcp_re_core::audit::AuditEvent::request_rejected(
+                &mcp_re_core::McpReError::ReplayDetected
+            ),
             mcp_re_proxy::authorization::AuthorizationFacet::Refused(
                 mcp_re_proxy::authorization::AuthorizationRefusalFacet::BeforePolicy
             ),

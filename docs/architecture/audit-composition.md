@@ -517,6 +517,7 @@ Slice 0   typed Refusal — preserve authority provenance across the stage bound
               v
 Slice 1   the authorization audit facet
           NotConfigured | Authorized | Refused, projected from the live sealed product
+          PR #647 (issue #646)
               v
 Slice 2   close the remaining untyped audit escape hatches; containment becomes structural
           INCLUDING the deferred HttpProfileError -> McpReError projection and the
@@ -618,6 +619,51 @@ expiry. It arrives with the first production mechanism, typed by what that mecha
 establish. Until then the record answers *which exchange* with the request evidence handle
 every other authority on this path attributes by.
 
+### 9.4 Slice 2 contract — the containment becomes a type
+
+Slice 2 answers invariants 8 and 9, and the shape of the answer is a **deletion**, not a
+scanner.
+
+```text
+before   request_rejected_code(&'static str)   <- anyone who can make a string is a producer
+after    request_rejected(&McpReError)         <- a foreign taxonomy does not typecheck
+         request_rejected_elsewhere()          <- Core reached no verdict, and says so
+```
+
+**No token is minted.** §4 said the tempting first move was to mint
+`mcp-re.authorization_refused` and route policy denials through it, and it is still not
+taken — for a better reason than deferral. With lifecycle and attribution as separate
+coordinates (Slice 1), the lifecycle record does not need a token for *who refused*; the
+authorization coordinate already says so. What it needs is to stop claiming a Core verdict
+that Core never reached. So Core states none.
+
+**`reason: None` on a rejection is a state, not an absence.** Success events carry
+`Decision::Accepted` or `Decision::Signed`; this carries `Decision::Rejected`. *Rejected,
+with no Core reason* is therefore its own combination, and it means exactly one thing: the
+authority that terminated this exchange is not Core. That is §4's finding — lifecycle is
+one fact, attribution is one fact per authority — landed in the encoding rather than argued
+about.
+
+**Every carrier states which Core verdict it IS.** `HttpProfileError`, `DispatchError`,
+`ProxyDispatchError` and `AuthorizationActionRefusal` each carry an exhaustive
+`From<&_> for McpReError`, and each **derives** `wire_code` from it. One file per crate
+decides. The four string tables that used to agree with Core by spelling the same literals
+are gone, and with them the class of drift where a renamed Core token leaves a carrier
+emitting the old one.
+
+That derivation is what created the room: `mcp-re-http-profile/src/error.rs` is pinned at
+its baseline, so the projection could not simply be added beside `wire_code`. Deleting the
+table it replaces is what fits — the ratchet chose the mechanism, which is its job.
+
+**The wire is unchanged.** A policy denial still serves `mcp-re.authorization_scope_denied`
+to the client, because that is ADR-MCPRE-065's decision and §11 does not reopen it. Only
+the audit record changed, and only by ceasing to attribute that token to Core.
+
+**What the guards became.** The conformance guard stopped asking *are the carriers' strings
+a subset of Core's* and started asking *do the carriers have strings at all* — a claim whose
+scope is not a hand-maintained list of producers. §5 predicted exactly this: at that point
+the compiler is the producer-graph guard and the conformance test is defence in depth.
+
 ### 9.2 Slice 0's two poison pills
 
 Mechanical, so the invariant is established before B depends on it:
@@ -655,7 +701,14 @@ Resolved by Slice 1:
   is now structural: the type carries no authorization coordinate to duplicate.
 - **Q4 — one PR or two?** Two. See §9.
 
-Still open, and neither blocks Slice 1:
+Resolved by Slice 2:
+
+- **The `mcp-re.authorization_refused` question** §4 left open. No token is minted, and the
+  reason is structural rather than cautious: once lifecycle and attribution are separate
+  coordinates, a lifecycle record does not need a token naming the authority that refused.
+  Core records the rejection with no reason of its own.
+
+Still open, and neither blocks Slice 1 or 2:
 
 1. Should a request record carry an explicit schema version rather than relying on
    field-presence as R3's discriminator? Field-presence works and R2-P4 makes it cheap, but it

@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Fail-closed error taxonomy for the HTTP profile.
 //!
-//! No parallel namespace (v0.11 grill E-11): every `wire_code()` is a token of
-//! the frozen `mcp_re_core::McpReError` taxonomy. The per-variant mapping below
-//! was ratified by owner ruling 2026-07-07 (MCPRE-92), which added five
-//! security-grouped codes to the frozen taxonomy for the signed-rejection
+//! This file owns the TAXONOMY: what can go wrong in the HTTP profile, and what each
+//! failure means. What each failure means *in Core's terms* is a second fact with a
+//! second owner, and it lives in [`core_projection`] — an exhaustive
+//! `From<&HttpProfileError> for McpReError` from which `wire_code` is derived.
+//!
+//! No parallel namespace (v0.11 grill E-11): every `wire_code()` is a token of the frozen
+//! `mcp_re_core::McpReError` taxonomy. That is no longer a rule a test rechecks over two
+//! agreeing string tables — the carrier states which Core verdict each failure IS, and the
+//! token follows from it. The mapping was ratified by owner ruling 2026-07-07 (MCPRE-92),
+//! which added five security-grouped codes to the frozen taxonomy for the signed-rejection
 //! surface — `malformed_envelope`, `digest_mismatch`, `artifact_binding_failed`,
-//! `request_binding_mismatch`, `continuation_binding_failed` — so the HTTP
-//! profile no longer folds distinct failures onto coarser draft-01/02 tokens.
-//! The `every_wire_code_is_a_frozen_core_token` test machine-checks the no-
-//! parallel-namespace rule.
+//! `request_binding_mismatch`, `continuation_binding_failed` — so the HTTP profile no
+//! longer folds distinct failures onto coarser draft-01/02 tokens.
 
 /// A fail-closed HTTP-profile verification failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -202,265 +206,44 @@ pub enum HttpProfileError {
     DelegationRevoked,
 }
 
-impl HttpProfileError {
-    /// The frozen `mcp-re.*` wire token this failure maps to (reuse-only —
-    /// tokens from `McpReError::wire_code()`, never new strings).
-    pub fn wire_code(&self) -> &'static str {
-        match self {
-            // Evidence entirely absent (nothing to parse). A duplicated
-            // exactly-once header and a genuinely missing covered component are
-            // both "the evidence you needed is not there".
-            HttpProfileError::MissingEvidence(_)
-            | HttpProfileError::DuplicateHeader(_)
-            | HttpProfileError::McpTransportHeaderMissing(_)
-            | HttpProfileError::MissingCoveredComponent(_) => "mcp-re.missing_envelope",
-            // Evidence present but structurally invalid (MCPRE-92): a foreign
-            // component/parameter, an unparseable inner list, a wrong-shaped
-            // digest member. Grouped away from "absent" so a rejection reason
-            // distinguishes tampering from omission.
-            // Self-contradictory evidence is malformed evidence: the covered
-            // header and the covered body state different methods (§4.1), so
-            // there is nothing coherent to act on.
-            HttpProfileError::MalformedEvidence(_)
-            | HttpProfileError::McpMethodDivergence
-            | HttpProfileError::McpTransportDivergence(_) => "mcp-re.malformed_envelope",
-            // Content-model / value-domain violation of the protected message:
-            // an encoded body, or a media type outside JSON mode (§3.4).
-            HttpProfileError::ContentEncodingPresent | HttpProfileError::NonJsonMediaType => {
-                "mcp-re.serialization_failed"
-            }
-            // The content commitment itself is wrong — precise digest code
-            // (MCPRE-92), no longer folded onto invalid_signature.
-            HttpProfileError::ContentDigestMismatch => "mcp-re.digest_mismatch",
-            // The signature does not authenticate the bytes.
-            HttpProfileError::InvalidSignature | HttpProfileError::ReceiptInvalid => {
-                "mcp-re.invalid_signature"
-            }
-            // Profile-selection failure: cannot select this profile.
-            HttpProfileError::UnknownProfileTag
-            | HttpProfileError::UnsupportedAlgorithm
-            | HttpProfileError::McpProtocolVersionUnsupported => "mcp-re.unsupported_version",
-            HttpProfileError::StaleWindow | HttpProfileError::AdmissionAssertionExpired => {
-                "mcp-re.expired_request"
-            }
-            // A keyid outside trust is an actor-binding failure, not a broken
-            // signature: the crypto may verify under an untrusted key.
-            // An outage is not a binding failure: the resolver never rendered a
-            // verdict, so reporting one would misattribute an availability fault to
-            // the caller's key.
-            HttpProfileError::TrustResolverUnavailable => "mcp-re.trust_resolver_unavailable",
-            HttpProfileError::UnresolvedKeyId
-            | HttpProfileError::ActorSlotMismatch
-            | HttpProfileError::AdmissionAssertionInvalid
-            | HttpProfileError::AdmissionIssuerUntrusted
-            | HttpProfileError::AdmissionNotCurrent
-            | HttpProfileError::AdmissionStateUnavailable
-            | HttpProfileError::ReceiptIssuerUntrusted => "mcp-re.actor_binding_failed",
-            HttpProfileError::ArtifactBindingFailed => "mcp-re.artifact_binding_failed",
-            HttpProfileError::AudienceMismatch => "mcp-re.invalid_audience",
-            // A response bound to a different request is a request-binding
-            // splice — precise code (MCPRE-92), not the native response_hash
-            // field name.
-            HttpProfileError::ResponseBindingMismatch
-            | HttpProfileError::AdmissionBindingMismatch
-            | HttpProfileError::ReceiptInclusionInvalid
-            | HttpProfileError::ReceiptPositionUnbound
-            | HttpProfileError::ReceiptPositionMismatch => "mcp-re.request_binding_mismatch",
-            HttpProfileError::ResponseSignatureInvalid => "mcp-re.response_sig_invalid",
-            HttpProfileError::ContinuationBindingFailed => "mcp-re.continuation_binding_failed",
-            // An unrecognized `resultType` and an unrecognized continuation `type`
-            // are one fact: the message declares a continuation model this reader
-            // does not implement, so it cannot be classified and must not be
-            // treated as an ordinary terminal answer.
-            HttpProfileError::UnrecognizedResultType => "mcp-re.continuation_type_unsupported",
-            // The backend answered, and what it said is not a legal response. Its own
-            // frozen token, because "the caller's evidence is malformed" sends an
-            // operator to the wrong system.
-            HttpProfileError::UpstreamResponseInvalid(_) => "mcp-re.upstream_response_invalid",
-            // Delegated signing-key attestation (ADR-MCPRE-052 §8).
-            HttpProfileError::DelegationCredentialMissing => "mcp-re.delegation_credential_missing",
-            HttpProfileError::DelegationCredentialInvalid => "mcp-re.delegation_credential_invalid",
-            HttpProfileError::DelegationCredentialExpired => "mcp-re.delegation_credential_expired",
-            HttpProfileError::DelegationIssuerUntrusted => "mcp-re.delegation_issuer_untrusted",
-            HttpProfileError::DelegationProfileMismatch => "mcp-re.delegation_profile_mismatch",
-            HttpProfileError::DelegationAudienceMismatch => "mcp-re.delegation_audience_mismatch",
-            HttpProfileError::DelegationKeyUseInvalid => "mcp-re.delegation_key_use_invalid",
-            HttpProfileError::DelegationTrustEpochStale => "mcp-re.delegation_trust_epoch_stale",
-            HttpProfileError::DelegationKeyMismatch => "mcp-re.delegation_key_mismatch",
-            HttpProfileError::DelegationRevoked => "mcp-re.delegation_revoked",
-        }
-    }
-}
+mod core_projection;
 
+// Everything below is test code. The `#[cfg(test)]` marker lives HERE because it is the
+// region `scripts/module_size_gate.py` reads.
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::HttpProfileError;
 
-    /// E-11 drift guard: every wire_code() this crate emits must be a token the
-    /// frozen core taxonomy also emits — no parallel namespace, machine-checked.
+    /// What this file owns is the taxonomy, and the taxonomy's job is to keep failures
+    /// that mean different things apart. MCPRE-92 separated omission from tampering
+    /// precisely so a rejection could say which happened; they are distinct values here
+    /// before anything projects them.
     #[test]
-    fn every_wire_code_is_a_frozen_core_token() {
-        // The frozen taxonomy from its OWN single source, not a copy. The copy that
-        // stood here had fallen behind: `mcp-re.continuation_type_unsupported` is a
-        // real member and was missing, so a profile error carrying it would have been
-        // reported as a stray.
-        let frozen: std::collections::BTreeSet<&'static str> = mcp_re_core::ALL_ERRORS
-            .iter()
-            .map(mcp_re_core::McpReError::wire_code)
-            .collect();
-        // ONE source for the variant set: an exhaustive match makes a new variant a
-        // COMPILE error until it is listed, which is what "machine-checked" has to
-        // mean. The hand-written list this replaced had silently fallen two variants
-        // behind — `TrustResolverUnavailable` and `UnrecognizedResultType` were both
-        // emitted and neither was checked.
-        let all = all_variants_for_containment_check();
-        for e in &all {
-            assert!(
-                frozen.contains(&e.wire_code()),
-                "wire_code {:?} not in the frozen core taxonomy",
-                e.wire_code()
-            );
-        }
-    }
-
-    /// One representative value per `HttpProfileError` variant, via an EXHAUSTIVE
-    /// match: a new variant is a compile error here until it is added.
-    ///
-    /// This is what makes the containment check above machine-checked rather than
-    /// machine-checked-against-a-list-somebody-maintains.
-    fn all_variants_for_containment_check() -> Vec<HttpProfileError> {
-        // The match is on a value only so the compiler proves the arms exhaustive; the
-        // returned vector is what the caller compares against.
-        fn _exhaustive(e: &HttpProfileError) {
-            match e {
-                HttpProfileError::MissingEvidence(_)
-                | HttpProfileError::MalformedEvidence(_)
-                | HttpProfileError::DuplicateHeader(_)
-                | HttpProfileError::ContentEncodingPresent
-                | HttpProfileError::NonJsonMediaType
-                | HttpProfileError::ContentDigestMismatch
-                | HttpProfileError::MissingCoveredComponent(_)
-                | HttpProfileError::UnknownProfileTag
-                | HttpProfileError::UnsupportedAlgorithm
-                | HttpProfileError::InvalidSignature
-                | HttpProfileError::StaleWindow
-                | HttpProfileError::UnresolvedKeyId
-                | HttpProfileError::ActorSlotMismatch
-                | HttpProfileError::ArtifactBindingFailed
-                | HttpProfileError::AudienceMismatch
-                | HttpProfileError::ResponseBindingMismatch
-                | HttpProfileError::ResponseSignatureInvalid
-                | HttpProfileError::ContinuationBindingFailed
-                | HttpProfileError::McpMethodDivergence
-                | HttpProfileError::McpTransportHeaderMissing(_)
-                | HttpProfileError::McpProtocolVersionUnsupported
-                | HttpProfileError::McpTransportDivergence(_)
-                | HttpProfileError::AdmissionAssertionInvalid
-                | HttpProfileError::AdmissionIssuerUntrusted
-                | HttpProfileError::AdmissionAssertionExpired
-                | HttpProfileError::AdmissionBindingMismatch
-                | HttpProfileError::AdmissionNotCurrent
-                | HttpProfileError::AdmissionStateUnavailable
-                | HttpProfileError::ReceiptInvalid
-                | HttpProfileError::ReceiptInclusionInvalid
-                | HttpProfileError::ReceiptPositionUnbound
-                | HttpProfileError::ReceiptPositionMismatch
-                | HttpProfileError::ReceiptIssuerUntrusted
-                | HttpProfileError::UnrecognizedResultType
-                | HttpProfileError::UpstreamResponseInvalid(_)
-                | HttpProfileError::TrustResolverUnavailable
-                | HttpProfileError::DelegationCredentialMissing
-                | HttpProfileError::DelegationCredentialInvalid
-                | HttpProfileError::DelegationCredentialExpired
-                | HttpProfileError::DelegationIssuerUntrusted
-                | HttpProfileError::DelegationProfileMismatch
-                | HttpProfileError::DelegationAudienceMismatch
-                | HttpProfileError::DelegationKeyUseInvalid
-                | HttpProfileError::DelegationTrustEpochStale
-                | HttpProfileError::DelegationKeyMismatch
-                | HttpProfileError::DelegationRevoked => {}
-            }
-        }
-        vec![
-            HttpProfileError::MissingEvidence("x"),
-            HttpProfileError::MalformedEvidence("x"),
-            HttpProfileError::DuplicateHeader("x"),
-            HttpProfileError::ContentEncodingPresent,
-            HttpProfileError::NonJsonMediaType,
-            HttpProfileError::ContentDigestMismatch,
-            HttpProfileError::MissingCoveredComponent("x"),
-            HttpProfileError::UnknownProfileTag,
-            HttpProfileError::UnsupportedAlgorithm,
-            HttpProfileError::InvalidSignature,
-            HttpProfileError::StaleWindow,
-            HttpProfileError::UnresolvedKeyId,
-            HttpProfileError::ActorSlotMismatch,
-            HttpProfileError::ArtifactBindingFailed,
-            HttpProfileError::AudienceMismatch,
-            HttpProfileError::ResponseBindingMismatch,
-            HttpProfileError::ResponseSignatureInvalid,
-            HttpProfileError::ContinuationBindingFailed,
-            HttpProfileError::McpMethodDivergence,
-            HttpProfileError::McpTransportHeaderMissing("x"),
-            HttpProfileError::McpProtocolVersionUnsupported,
-            HttpProfileError::McpTransportDivergence("x"),
-            HttpProfileError::AdmissionAssertionInvalid,
-            HttpProfileError::AdmissionIssuerUntrusted,
-            HttpProfileError::AdmissionAssertionExpired,
-            HttpProfileError::AdmissionBindingMismatch,
-            HttpProfileError::AdmissionNotCurrent,
-            HttpProfileError::AdmissionStateUnavailable,
-            HttpProfileError::ReceiptInvalid,
-            HttpProfileError::ReceiptInclusionInvalid,
-            HttpProfileError::ReceiptIssuerUntrusted,
-            HttpProfileError::UnrecognizedResultType,
-            HttpProfileError::UpstreamResponseInvalid("clause"),
-            HttpProfileError::TrustResolverUnavailable,
-            HttpProfileError::DelegationCredentialMissing,
-            HttpProfileError::DelegationCredentialInvalid,
-            HttpProfileError::DelegationCredentialExpired,
-            HttpProfileError::DelegationIssuerUntrusted,
-            HttpProfileError::DelegationProfileMismatch,
-            HttpProfileError::DelegationAudienceMismatch,
-            HttpProfileError::DelegationKeyUseInvalid,
-            HttpProfileError::DelegationTrustEpochStale,
-            HttpProfileError::DelegationKeyMismatch,
-            HttpProfileError::DelegationRevoked,
-        ]
-    }
-
-    /// MCPRE-92: each HTTP-profile failure class maps to its intended precise
-    /// token and only that token — the folds this taxonomy replaced are gone.
-    #[test]
-    fn failure_classes_map_to_their_precise_codes() {
-        assert_eq!(
-            HttpProfileError::ContentDigestMismatch.wire_code(),
-            "mcp-re.digest_mismatch"
-        );
-        assert_eq!(
-            HttpProfileError::MalformedEvidence("inner list").wire_code(),
-            "mcp-re.malformed_envelope"
-        );
-        assert_eq!(
-            HttpProfileError::MissingEvidence("signature label").wire_code(),
-            "mcp-re.missing_envelope"
-        );
-        assert_eq!(
-            HttpProfileError::ArtifactBindingFailed.wire_code(),
-            "mcp-re.artifact_binding_failed"
-        );
-        assert_eq!(
-            HttpProfileError::ResponseBindingMismatch.wire_code(),
-            "mcp-re.request_binding_mismatch"
-        );
-        assert_eq!(
-            HttpProfileError::ContinuationBindingFailed.wire_code(),
-            "mcp-re.continuation_binding_failed"
-        );
-        // A digest mismatch is no longer reported as a broken signature.
+    fn omission_and_tampering_are_different_failures() {
         assert_ne!(
-            HttpProfileError::ContentDigestMismatch.wire_code(),
-            HttpProfileError::InvalidSignature.wire_code()
+            HttpProfileError::MissingEvidence("signature"),
+            HttpProfileError::MalformedEvidence("signature")
+        );
+    }
+
+    /// A context-carrying variant is distinguished BY its context: two missing components
+    /// are two different facts about the request, not one repeated.
+    #[test]
+    fn a_context_carrying_failure_names_what_was_missing() {
+        assert_ne!(
+            HttpProfileError::MissingCoveredComponent("@method"),
+            HttpProfileError::MissingCoveredComponent("content-digest")
+        );
+    }
+
+    /// A store outage is not a verdict about the caller's key. The taxonomy keeps them as
+    /// separate variants; collapsing them once told an operator "untrusted key" during an
+    /// outage.
+    #[test]
+    fn an_outage_is_not_an_untrusted_key() {
+        assert_ne!(
+            HttpProfileError::TrustResolverUnavailable,
+            HttpProfileError::UnresolvedKeyId
         );
     }
 }

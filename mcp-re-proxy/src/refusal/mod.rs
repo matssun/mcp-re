@@ -31,17 +31,19 @@
 //! authorization refusal must arrive at the audit boundary still recognizably authorization
 //! provenance.
 //!
-//! ## What this module renders, and what it does not
+//! ## Three projections, three questions
 //!
-//! Two projections, and they answer different questions. [`RefusalCause::wire_code`] serves
-//! the public code at the presentation boundary, exactly as the string did.
-//! `RefusalCause::authorization_facet` answers what the AUTHORIZATION authority may say
-//! about the same refusal — the question the pre-rendered string made unanswerable.
+//! * [`RefusalCause::wire_code`] — the public code, at the one presentation boundary.
+//! * `RefusalCause::authorization_facet` — what the AUTHORIZATION authority says about this
+//!   refusal, the question the pre-rendered string made unanswerable.
+//! * `RefusalCause::core_verdict` — which CORE verdict the audit record is written under,
+//!   and `None` where Core reached none.
 //!
-//! What is still not decided here: Core's own audit `reason`. It remains
-//! `request_rejected_code(wire_code)`, so an authorization refusal's token still reaches
-//! that field as well as its own coordinate. Closing that is ADR-MCPRE-066 Slice 2's
-//! structural containment, and Slice 1 does not claim it.
+//! The third is what closes ADR-MCPRE-066 invariants 8 and 9. The audit boundary takes an
+//! `McpReError`, so a policy denial cannot be written into Core's `reason` by any route: it
+//! has nothing of that type to offer, and Core records the rejection with no reason of its
+//! own while the authorization coordinate says who refused. The producer graph stopped
+//! being something a scanner discovers and became something the compiler decides.
 
 mod cause;
 
@@ -113,11 +115,6 @@ impl Refusal {
             posture: RefusalPosture::AfterAdmission,
         }
     }
-
-    /// The frozen public token this refusal is served as.
-    pub(crate) fn wire_code(&self) -> &'static str {
-        self.cause.wire_code()
-    }
 }
 
 #[cfg(test)]
@@ -135,9 +132,10 @@ mod tests {
 
     #[test]
     fn a_refusal_renders_only_at_the_presentation_boundary() {
-        // `wire_code` is the one rendering point, and it asks the authority rather than
-        // choosing: the refusal itself never holds a token.
+        // The refusal itself holds no token and no longer offers one: the serving path
+        // asks the CAUSE, at the one point that presents a public code. A convenience
+        // delegation here would be a second place a token appears to come from.
         let r = Refusal::before_admission(McpReError::ReplayDetected, 409);
-        assert_eq!(r.wire_code(), "mcp-re.replay_detected");
+        assert_eq!(r.cause.wire_code(), "mcp-re.replay_detected");
     }
 }
