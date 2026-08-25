@@ -1587,3 +1587,80 @@ refusal, and the assertion match on the composite. No wire code changed and no b
 changed for any deployment `app.rs` can build.
 
 **Next: authority consumers.**
+
+## 17. The authority-consumer edge — classified, and owned
+
+The next edge in §4's composition model is `Assurance / Binding -> Admission / Authority`.
+Slice 5 closed the admission half. This section records what the **authority** half turns out
+to be, because the answer is not "wire it up".
+
+### 17.1 Measurement: no production consumer reads the established facts
+
+Every projection the Phase-2 authorities expose is read only by their own controls:
+
+| projection | production consumers |
+|---|---|
+| `RequestPeerBindingFacts::principal()` | 0 |
+| `AuthenticatedChannelPeer::establishment_path()` | 0 |
+| `AuthenticatedChannelPeer::identity_source()` | 0 |
+| `AuthenticatedChannelPeer::currency_was_evaluated()` | 0 |
+
+A naive reading is that the chain establishes facts nobody uses. That reading is wrong, and
+the ADR-MCPRE-059 classification says why.
+
+### 17.2 Classification — CONTROL, WITNESS, DESCRIPTIVE
+
+*Produced-but-not-consumed is not automatically a finding.* The question is whether the
+**producer already made the unsafe state unreachable**:
+
+| value | class | why |
+|---|---|---|
+| `RequestPeerBindingFacts` | **CONTROL** | it cannot be produced unless the relation holds, and a request that fails binding is REFUSED at the stage. The control is the refusal; the value being unread changes nothing |
+| currency | **CONTROL, already consumed** | Slice 3 refuses a non-current credential before the peer exists. `currency_was_evaluated()` is the witness of which controls ran |
+| `establishment_path()` | **WITNESS** | nothing branches on it. §12.4 stated it "enters the representation when a consumer does" — that is still true |
+| `identity_source()` | **DESCRIPTIVE** | which field an identity came from, for a reader |
+
+So there is **no authority-consumer defect to fix**. Each stage refuses on its own proposition;
+the projections are witnesses held for consumers that do not exist yet.
+
+### 17.3 Why they do not exist yet — three ADR-owned deferrals
+
+Every candidate consumer is deferred by an accepted decision, not by omission:
+
+| candidate | what defers it |
+|---|---|
+| **authorization** | `--authz reference` is REFUSED at validation. ADR-MCPS-013: the reference profile is not the production authority (Biscuit is), and "authorization enforcement is not wired on the RFC 9421 serving path in any case — the evaluator must be rebuilt on the HTTP-profile request evidence first" |
+| **the security audit record** | ADR-MCPS-035 §3 freezes the success-event allowlist. The serving path already names a gap it refused to close "by quietly widening a pinned vocabulary" — a degraded-mode serve is indistinguishable from a confirmed one |
+| **the inner-plane verified context** | `VerifiedContext` is `#[serde(deny_unknown_fields)]` and its shape is committed to by `verified_context_commitment` in the transparency record. Adding channel facts is a wire change and a commitment change |
+
+Applying the ADRs therefore yields *not yet*, three times, each with a named prerequisite.
+Inventing a consumer here would mean choosing one of those prerequisites unilaterally.
+
+### 17.4 The skipped assurance layer, owned
+
+§4 requires that a skipped stage be **deliberate and owned**. Slices 4 and 5 built `binding`
+directly on relationship facts, skipping `assurance` (strength / freshness / provenance class).
+
+That skip is deliberate, and this is the record. The three assurance facts already exist and
+are already carried — establishment path is strength-and-provenance, currency is freshness,
+identity source is provenance class — as projections of the products that own them. Minting a
+separate assurance authority now would build a layer whose products no consumer reads, stacked
+on products no consumer reads. It earns its own type when a consumer needs to compare
+assurances rather than possess them.
+
+### 17.5 What this means for the campaign
+
+Phase 2's producer chain is complete and in the production serving path:
+
+```text
+TLS establishment
+  -> MechanismVerifiedCredentialEvidence            Slice 1
+  -> AuthenticatedRelationshipPeerFacts             Slice 2   (in serving)
+  -> per-request credential currency                Slice 3   (in serving)
+  -> RequestPeerBindingFacts                        Slice 4   (in serving)
+  -> admission prerequisite -> admission decision   Slice 5   (in serving)
+```
+
+The remaining work is not another slice of this shape. It is one of the three deferrals above,
+and each is a normative decision an accepted ADR currently answers with *no* — which is the
+kind of fork that belongs to the owner rather than to an implementation slice.
