@@ -2,7 +2,7 @@
 
 # ADR-MCPRE-066 — Audit composition: two authorities, one record
 
-**Status:** PROPOSED — not accepted, not implemented.
+**Status:** PROPOSED — scope rulings taken, grilled once. Not accepted, not implemented.
 **Discussion:** [#638](https://github.com/matssun/mcp-re/discussions/638).
 **Characterization:** issue #637.
 **Predecessor:** ADR-MCPRE-065 (discussion #629), whose §10 deferred exactly this question
@@ -44,6 +44,40 @@ byte-identical on an unauthorized proxy and on a PDP-enforcing one.
 
 A distinction preserved in a type and erased in the record is preserved only for as long as
 nobody looks at the record. This is not optional telemetry.
+
+### 1.2 Scope rulings
+
+Taken 2026-08-25, before the grill, so the grill had something falsifiable to attack.
+
+**R1 — the two-jobs finding is a law here; the repository-wide repair is not.** ADR-066 states
+that lifecycle outcome and authority attribution are separate dimensions with different
+cardinalities. Candidate B may satisfy that *locally for authorization* by co-locating two
+typed dimensions in one serialized record. Generalizing the separation across admission,
+retention, and transport is successor work. **C is therefore not rejected — it is the likely
+later generalization of this law.**
+
+**R2 — `Authorized` carries the action coordinate.** Authority + version + evidence digest
+answers *who decided, under which policy, on what evidence*; it does not answer *what was
+authorized*. Carry only the already-established semantic authorization coordinate —
+operation/target as evaluated — never raw params or reconstructed request material. That is
+what keeps R-COMPOSE satisfied instead of turning the audit record into a second request
+representation.
+
+**R3 — `NoPolicyConfigured` is explicit; absence never means it.** For newly emitted request
+records the facet is always present as one of `NotConfigured | Authorized | Refused`. An absent
+facet can then mean only *legacy or unknown record*. This is the same `Off == Allow` ambiguity
+ADR-065 eliminated in the type, refused again at the record.
+
+**R4 — `PdpRelationRefusal` does not enter the normative facet.** That would make a
+mechanism-specific internal algebra part of the general audit contract and widen the
+observable vocabulary past `PolicyError`. The two conflations `pdp/refusal.rs` documents are
+unfortunate, but **ADR-066 does not repair ADR-MCPS-013 through the back door.** If finer PDP
+diagnostics are ever wanted, that is a separate restricted, non-normative diagnostic product.
+
+**R5 — authorization is request-side.** It is not duplicated onto `response.signed`. A
+response record does not represent another authorization decision. Under B this is not a note
+but a type requirement: the facet belongs to a *request* audit record, not indiscriminately to
+every `AuditRecord`.
 
 ## 2. What is actually there today
 
@@ -103,7 +137,7 @@ Owner-set. A proposal that violates one of these is not a candidate.
 | 6 | Where available, attribution — authority, version, decision-evidence identity — survives well enough to answer *who authorized what, under which authority, on what evidence*. |
 | 7 | No design may require exposing the whole policy artifact or leaking sensitive policy content. |
 | 8 | `request_rejected_code(&'static str)` ceases to be an untyped vocabulary escape hatch; the compiler should make the authority distinction harder to violate. |
-| 9 | The drift guard covers the **actual producer graph**, not a hand-maintained list. |
+| 9 | The producer graph is made **irrelevant by construction**: audit rejection accepts a typed Core verdict, so a foreign taxonomy is a type error rather than something a scanner must discover. See §5. |
 | 10 | **No production authorization evaluator is wired until this is resolved.** The violation is latent only because none is; wiring one makes it live. |
 
 Invariant 10 is a standing constraint on other work, not a task in this ADR. It is consistent
@@ -178,13 +212,66 @@ product.
 *Cost:* the largest change, and it touches every existing stage rather than only
 authorization.
 
-**Lean: B, with A as the fallback if the facet cannot be kept from growing.** B satisfies
-invariant 5 most directly — a facet is a projection of a value that already exists — and it is
-the only one of the three that does not change what an existing consumer of `request.rejected`
-sees. C is the most honest about §4's finding and should not be dismissed; it is deferred
-because doing it *with* the authorization work would make one change carry two arguments.
+**Preferred hypothesis: refined B — not the accepted answer.** A is the fallback if refined B
+cannot be established; C stays recorded as R1's later generalization and is not dragged into
+this slice.
 
-### 4.3 What each candidate must answer
+### 4.3 Refined B — co-location is not conflation
+
+Plain B is under-specified in a way that would quietly destroy the algebra it exists to
+preserve. `AuditRecord` also represents `response.signed`, response rejection, and key
+lifecycle. A facet on *every* record forces either an `Option` or a `NotApplicable` state, and
+both re-introduce an absence with two meanings — the exact defect R3 refuses.
+
+So B means a record kind, not a wider struct:
+
+```text
+AuditRecord
+    |
+    +-- RequestRecord
+    |      lifecycle
+    |      authorization:  NotConfigured | Authorized(..) | Refused(..)
+    |
+    +-- ResponseRecord
+    |      lifecycle
+    |
+    +-- KeyLifecycleRecord
+           ...
+```
+
+Not those exact Rust types — that is the algebra an implementation must preserve.
+
+And `Refused` cannot collapse to `Refused(PolicyError)`, because ADR-065 already has two
+refusal paths and only one of them reaches a policy at all:
+
+```text
+AuthorizationRefusal
+    +-- ActionNotVerifiable(..)      no policy verdict was ever reached
+    +-- PolicyRefused(PolicyError)   a policy returned a verdict
+```
+
+So:
+
+```text
+AuthorizationFacet
+    +-- NotConfigured
+    +-- Authorized(AuthorizationAttribution)
+    +-- Refused
+           +-- BeforePolicy
+           +-- ByPolicy(PolicyRefusalAttribution)
+```
+
+`BeforePolicy` imports **no vocabulary**. The request defect it accompanies is already
+expressed by the Core-owned lifecycle reason; the facet adds exactly one fact — *no policy
+verdict was reached* — which is why it does not duplicate `McpReError` inside the
+authorization authority.
+
+The point of the whole shape: **co-location is not conflation.** Lifecycle and authorization
+remain separately typed coordinates that happen to serialize into one record. That keeps B's
+practical advantages — no join for a consumer, and no change to what `request.rejected` means
+today — without denying §4's finding.
+
+### 4.4 What each candidate must answer
 
 - Which type does a consumer hold that makes an authorization fact unavailable-by-construction
   when no policy was configured? (Invariant 4 is not satisfied by an `Option` that reads as
@@ -201,50 +288,160 @@ because doing it *with* the authorization work would make one change carry two a
   typed Core verdict, with the authorization path unable to reach it at all, is the shape that
   makes the authority distinction a compile error rather than a review note.)
 
-## 5. The guard must follow the producer graph
+## 5. Make the producer graph irrelevant, not discoverable
 
-Invariant 9 is separable from the vocabulary question in principle and not in practice.
+The blueprint's first form of invariant 9 asked for a guard that follows the call graph. That
+is the wrong end state, and this section replaces it.
 
-Adding `mcp-re-policy/src/error.rs` to the guard's declared inputs makes the gate go **red** —
-correctly, because twelve of its thirteen tokens are outside the frozen taxonomy. What to do
-about that red *is* the algebra decision above. So the guard change lands with the design, not
-before it.
+Today the guard *must* discover producers because the sink accepts a string:
 
-But the deeper defect outlives whichever candidate wins: the guard's producer set is a
-hand-maintained list in a BUILD file, and the thing it must track — *who can reach
-`AuditEvent.reason`* — is a property of the call graph. A list agrees with the graph until
-someone adds a producer, which is the only moment the guard was ever needed. The accepted
-design must state how the guard learns about a fourth producer without a human remembering to
-tell it, and a proposal that answers "we add it to the list" has answered the wrong question.
+```text
+request_rejected_code(&'static str)      <- anyone who can make a string is a producer
+```
 
-This is the same failure the repo has already recorded twice: a threshold that parameterised a
-lint nobody switched on, and a `tests/` glob that silently exempted a crate for a whole
-campaign while printing OK. **A gate's exemption is part of its measurement.**
+The accepted design should instead reach:
 
-## 6. Open questions for the grill
+```text
+Audit request rejection
+        accepts
+        v
+typed Core rejection
+        ^
+only explicit typed conversions
+```
 
-1. Is `request.rejected` doing two jobs (§4), and if so, is fixing that in scope here or a
-   successor ADR? The lean defers it; the lean may be wrong.
-2. Does an `Authorized` record need the action coordinate, or is the authority + version +
-   evidence identity sufficient to answer *who authorized what*? Carrying the operation and
-   target is more useful and is also more of the request restated in a second place.
-3. Should `NoPolicyConfigured` be recorded at all, or is its correct representation the
-   *absence* of an authorization facet? The ruling says observably distinct; absence is
-   distinguishable from `Authorized` only if a consumer can tell it from a record written by
-   an older build.
-4. Two conflations `pdp/refusal.rs` documents — untrusted-issuer ≡ bad-signature, and
-   explicit-deny ≡ action-mismatch — are forced by `PolicyError`'s granularity. Does an
-   authorization facet carrying the typed `PdpRelationRefusal` resolve them, and is
-   distinguishing them in an audit record desirable or an information leak to an attacker who
-   can read it?
-5. Does the response side need the same treatment, or is authorization request-only by
-   construction?
+Then this is not a rule anybody enforces — it does not typecheck:
 
-## 7. Explicitly not in this ADR
+```text
+PolicyError -> &'static str -> AuditEvent.reason
+```
+
+`PolicyError` simply has the wrong type. HTTP-profile and dispatch errors that legitimately
+represent Core taxonomy outcomes make an **explicit exhaustive typed projection** into the
+Core rejection type instead of laundering themselves through strings.
+
+At that point the compiler is the producer-graph guard, and the conformance test becomes
+defence in depth — it checks the frozen enums and the projections, and may forbid an
+authority-crossing conversion outright. It no longer has to guess which source file might one
+day reach a string-taking function. A scanner over a hand-maintained file list was always
+going to agree with the architecture right up until the moment it changed.
+
+Adding `mcp-re-policy/src/error.rs` to the current guard's inputs still turns it red, and that
+red is still the algebra decision — so the guard change lands with the design either way. The
+difference is what it lands as.
+
+## 6. Grill round 1 — five propositions, measured
+
+Refined B is a hypothesis, so it was attacked rather than admired. Each proposition below was
+tested against the code, not reasoned about abstractly. **Four survive; one fails as currently
+written, and its failure is the most useful result in this record.**
+
+### P1 — request/response applicability without an ambiguous `Option`? **SURVIVES**
+
+Three `AuditSink` implementors exist, all in-crate (`StderrAuditSink`, `NoAuditSink`,
+`CollectingAuditSink`); no external implementor constrains the shape.
+
+More importantly, `event_type` **already** discriminates request records from response records.
+The record-kind split is therefore a re-expression of a distinction the data carries today, not
+a new one being invented — which is why it needs no `Option` and no `NotApplicable`.
+
+### P2 — `BeforePolicy` vs `ByPolicy` without merging vocabularies? **SURVIVES**
+
+More cleanly than expected. `AuthorizationRefusal::wire_code()` already renders
+`ActionNotVerifiable` onto **Core** tokens — `digest_mismatch` and `malformed_envelope` — under
+a comment stating this slice "is not entitled to restate in a vocabulary ADR-MCPS-035 freezes."
+
+So the Core-owned lifecycle reason already carries the `BeforePolicy` defect correctly, today,
+by prior deliberate design. `BeforePolicy` adds one fact and imports no vocabulary.
+
+### P3 — project the action coordinate without re-derivation? **SURVIVES ON SUCCESS, FAILS ON REFUSAL**
+
+*Success path — survives, with no carrying required.* The posture is bound at
+`http_profile_serve.rs:1459`; `release()` consumes it at :1570; `request_accepted()` is emitted
+at **:1535 — between them**. The sealed product is alive at the audit site, so the facet is a
+borrowing projection taken right there. No wider struct, no threading through
+`ReadyForDispatch`.
+
+*Refusal path — fails as currently written:*
+
+```rust
+// authorization_stage
+.map_err(|refusal| Refusal::before_admission(refusal.wire_code(), 403))
+```
+
+The typed `AuthorizationRefusal` is destroyed **at the stage boundary**. `Refusal` is
+`{ wire_code: &'static str, status, posture }`, so only a pre-rendered string survives, and
+`BeforePolicy` vs `ByPolicy` is unrecoverable downstream. **Refined B requires `Refusal` to
+stop pre-rendering and carry a typed verdict.**
+
+### P4 — old-record absence distinguishable from explicit `NotConfigured`? **SURVIVES, conditionally**
+
+`StderrAuditSink` formats every field unconditionally, rendering `None` as `-`
+(`reason=record.event.reason.unwrap_or("-")`). So a new request record always carries the key,
+and a missing `authorization=` key can only mean an older build — provided one condition:
+
+> **`-` is reserved for *not established*. `NotConfigured` must render as its own token and
+> must never render as `-`.**
+
+The other absence — a response record legitimately having no facet — is already disambiguated
+by `event_type` (P1). Both meanings of "no facet here" stay separable.
+
+### P5 — eliminate the raw-string producer by typing? **SURVIVES, and is smaller than feared**
+
+`HttpProfileError::wire_code()` is a **total** match over its variants into Core tokens.
+`ProxyDispatchError::wire_code()` delegates to it plus one token of its own,
+`mcp-re.replay_cache_unavailable`, which **is** in the Core taxonomy
+(`McpReError::ReplayCacheUnavailable`).
+
+The exhaustive typed projection §5 asks for therefore already exists semantically — it is
+merely spelled as strings. And the conformance guard's current assertion (every
+`HttpProfileError::wire_code()` token is a frozen Core code) is exactly the **proof of totality**
+that makes converting it safe rather than speculative.
+
+### The synthesis: P3's failure and P5 are one defect
+
+Both are `wire_code()`-to-`&'static str` at a stage boundary. That single move destroys the
+authority distinction (P5) *and* destroys the authorization facet (P3-refusal). They are not
+two problems that happen to rhyme.
+
+The consequence for sequencing is concrete: **§5's typed-projection work is a precondition for
+refined B being implementable at all**, not an independent hardening item that could follow it.
+An implementation that added the facet while `Refusal` still pre-rendered would produce a
+record able to say `Refused` but never able to say *by whom* — the same silent flattening this
+ADR exists to stop, one layer further in.
+
+### Verdict of round 1
+
+Refined B survives with one required precondition (typed `Refusal`) and one serialization
+constraint (P4's reserved `-`). A remains the fallback if the record-kind split proves more
+disruptive than measured. C remains R1's recorded generalization.
+
+**Not yet accepted.** Round 1 attacked the algebra; it did not attack the deployment
+consequences, the cost to existing consumers of the stderr format, or the migration for
+records already written.
+
+## 7. Open questions still standing
+
+1. Does an `Authorized` record need the operation *and* the target, or does R2's coordinate
+   admit a narrower projection still sufficient to answer *what was authorized*?
+2. Should the record carry an explicit schema version rather than relying on field-presence as
+   P4's discriminator? Field-presence works, but it is an inference where a version would be a
+   statement.
+3. What does the response side do when a request was `Refused` — is `response.rejected`'s
+   existing reason sufficient, given R5 forbids duplicating the facet there?
+4. Does the typed `Refusal` change (P3/P5) belong in this ADR's implementation or as a separate
+   preparatory change that lands first, given it touches every stage rather than only
+   authorization?
+5. Migration: records already emitted have no facet. Is that acceptable as *legacy* under R3,
+   or does the deployment need a marker distinguishing "before ADR-066" from "field dropped"?
+
+## 8. Explicitly not in this ADR
 
 - **Verified-context widening.** Stays after audit, and only if a real inner-plane consumer
   needs authorization facts. A committed wire representation does not change because a fact
   now exists.
+- **The repository-wide lifecycle/attribution split (candidate C).** R1 keeps it recorded as
+  this law's later generalization; doing it here would make one change carry two arguments.
 - **Reopening ADR-MCPRE-065.** The boundary, the mechanism, and the producer are accepted and
   merged. This ADR observes their product; it does not revisit it.
 - **Any implementation.** No vocabulary is widened, no token minted, and no guard input added
