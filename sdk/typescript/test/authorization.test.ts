@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { describe, it, expect } from "vitest";
 import {
   AuthorizationBindingPolicy,
+  AuthorizationDecisionProvider,
   AuthzSystemReferenceProvider,
   McpReError,
   OpaqueBytesProvider,
@@ -25,6 +26,17 @@ const SEED = Buffer.from(Array.from({ length: 32 }, (_, i) => i));
 const BLOCK_KEY = "se.syncom/mcp-re.http.request";
 const MATERIAL = Buffer.from("pdp-decision-document-v1");
 const OTHER_MATERIAL = Buffer.from("pdp-decision-document-v2");
+/**
+ * The GENERIC opaque example. Deliberately not `pdp-decision`: that type carries
+ * ADR-MCPRE-065 semantics and reaches the opaque form only through
+ * `AuthorizationDecisionProvider`. `human-approval` is used purely as a registry member
+ * with a legitimate generic opaque form — nothing here claims it has a typed verifier.
+ */
+const GENERIC = "human-approval";
+const GENERIC_MATERIAL = Buffer.from("approved-by-alice");
+const OTHER_GENERIC_MATERIAL = Buffer.from("approved-by-bob");
+/** A compact decision document. Shaped like a JWS; never verified in this file. */
+const DECISION = "ZmFrZS1oZWFkZXI.ZmFrZS1jbGFpbXM.ZmFrZS1zaWc";
 
 const CTX: BindingRequestContext = {
   audienceId: "did:example:server-1",
@@ -78,18 +90,18 @@ const ofType = (s: SignedRequestJs, t: string): Binding =>
 
 describe("opaque bytes", () => {
   it("has the core digest the real artifact", () => {
-    const b = ofType(sign([new OpaqueBytesProvider("pdp-decision", MATERIAL)]), "pdp-decision");
+    const b = ofType(sign([new OpaqueBytesProvider(GENERIC, GENERIC_MATERIAL)]), GENERIC);
     expect(b.binding_type).toBe("opaque-digest");
     expect(b.digest_alg).toBe("sha256");
     // Checked against node:crypto SHA-256 — an independent oracle.
-    expect(b.digest_value).toBe(oracleDigest(MATERIAL));
+    expect(b.digest_value).toBe(oracleDigest(GENERIC_MATERIAL));
   });
 
   it("carries metadata only, never the artifact", () => {
-    const s = sign([new OpaqueBytesProvider("pdp-decision", MATERIAL)]);
-    expect(s.body.includes(MATERIAL)).toBe(false);
-    expect(s.body.toString()).not.toContain(MATERIAL.toString("base64url"));
-    expect(Object.keys(ofType(s, "pdp-decision")).sort()).toEqual([
+    const s = sign([new OpaqueBytesProvider(GENERIC, GENERIC_MATERIAL)]);
+    expect(s.body.includes(GENERIC_MATERIAL)).toBe(false);
+    expect(s.body.toString()).not.toContain(GENERIC_MATERIAL.toString("base64url"));
+    expect(Object.keys(ofType(s, GENERIC)).sort()).toEqual([
       "artifact_type",
       "binding_type",
       "digest_alg",
@@ -98,31 +110,31 @@ describe("opaque bytes", () => {
   });
 
   it("changes the digest when the artifact bytes change", () => {
-    const a = sign([new OpaqueBytesProvider("pdp-decision", MATERIAL)]);
-    const b = sign([new OpaqueBytesProvider("pdp-decision", OTHER_MATERIAL)]);
-    expect(ofType(a, "pdp-decision").digest_value).not.toBe(ofType(b, "pdp-decision").digest_value);
+    const a = sign([new OpaqueBytesProvider(GENERIC, GENERIC_MATERIAL)]);
+    const b = sign([new OpaqueBytesProvider(GENERIC, OTHER_GENERIC_MATERIAL)]);
+    expect(ofType(a, GENERIC).digest_value).not.toBe(ofType(b, GENERIC).digest_value);
     // ...and therefore the signed evidence differs too.
     expect(a.evidenceDigestValue).not.toBe(b.evidenceDigestValue);
   });
 
   it("digests deterministically", () => {
-    const a = sign([new OpaqueBytesProvider("pdp-decision", MATERIAL)]);
-    const b = sign([new OpaqueBytesProvider("pdp-decision", MATERIAL)]);
+    const a = sign([new OpaqueBytesProvider(GENERIC, GENERIC_MATERIAL)]);
+    const b = sign([new OpaqueBytesProvider(GENERIC, GENERIC_MATERIAL)]);
     expect(Buffer.compare(a.body, b.body)).toBe(0);
   });
 
   it("gives a caller no way to pass a precomputed digest", () => {
-    const spec = new OpaqueBytesProvider("pdp-decision", MATERIAL).spec(CTX);
+    const spec = new OpaqueBytesProvider(GENERIC, GENERIC_MATERIAL).spec(CTX);
     expect(spec).not.toHaveProperty("digest_value");
     expect(spec).toHaveProperty("material_b64url");
     // And the core refuses a spec that tries to smuggle one in.
     const smuggled = JSON.stringify([{ ...spec, digest_value: "ZmFrZQ" }]);
-    expect(() => sign([], smuggled)).toThrow(/invalid bindings json/);
+    expect(() => sign([], smuggled)).toThrow(/authorization_binding_malformed/);
   });
 
   it("fails closed on empty material", () => {
     try {
-      new OpaqueBytesProvider("pdp-decision", Buffer.alloc(0));
+      new OpaqueBytesProvider(GENERIC, Buffer.alloc(0));
       throw new Error("expected empty material to fail closed");
     } catch (e) {
       expect((e as McpReError).wireCode).toBe("mcp-re.authorization_binding_missing");
@@ -166,7 +178,10 @@ describe("authz-system reference", () => {
   it("produces the same digest as the opaque form for the same bytes", () => {
     // The form names the issuer; it does not change what is bound.
     const ref = ofType(sign([provider()]), "pdp-decision");
-    const opq = ofType(sign([new OpaqueBytesProvider("pdp-decision", MATERIAL)]), "pdp-decision");
+    // Across artifact types on purpose: `pdp-decision` has no generic opaque form any
+    // more, and the claim was never about the type — it is that the digest is over the
+    // material, whatever form wraps it.
+    const opq = ofType(sign([new OpaqueBytesProvider(GENERIC, MATERIAL)]), GENERIC);
     expect(ref.digest_value).toBe(opq.digest_value);
   });
 
@@ -191,8 +206,8 @@ describe("DPoP stays built-in", () => {
   });
 
   it("has provider bindings append after it", () => {
-    const b = bindings(sign([new OpaqueBytesProvider("pdp-decision", MATERIAL)]));
-    expect(b.map((x) => x.artifact_type)).toEqual(["oauth-dpop", "pdp-decision"]);
+    const b = bindings(sign([new OpaqueBytesProvider(GENERIC, GENERIC_MATERIAL)]));
+    expect(b.map((x) => x.artifact_type)).toEqual(["oauth-dpop", GENERIC]);
   });
 
   it("signs the no-bindings path unchanged", () => {
@@ -203,18 +218,18 @@ describe("DPoP stays built-in", () => {
   it("binds several providers in order", () => {
     const b = bindings(
       sign([
-        new OpaqueBytesProvider("pdp-decision", MATERIAL),
+        new OpaqueBytesProvider("oauth-rar", MATERIAL),
         new OpaqueBytesProvider("human-approval", Buffer.from("approved-by-alice")),
       ]),
     );
-    expect(b.map((x) => x.artifact_type)).toEqual(["oauth-dpop", "pdp-decision", "human-approval"]);
+    expect(b.map((x) => x.artifact_type)).toEqual(["oauth-dpop", "oauth-rar", "human-approval"]);
   });
 });
 
 describe("policy fails closed", () => {
   it("passes a permitted type", () => {
     const p = AuthorizationBindingPolicy.permitting(["pdp-decision"]);
-    expect(() => p.check([new OpaqueBytesProvider("pdp-decision", MATERIAL)])).not.toThrow();
+    expect(() => p.check([new AuthorizationDecisionProvider(DECISION)])).not.toThrow();
   });
 
   it("fails closed on an unpermitted type", () => {
@@ -273,6 +288,101 @@ describe("canonical bindingsJson is byte-identical across SDKs", () => {
     expect(json).not.toContain("\\u");
     expect(`sha-256:${createHash("sha256").update(json!, "utf8").digest("base64url")}`).toBe(
       "sha-256:5qndaYSZ4RWRPC68gVX125zTyK8XeWHdwWvnFZnr0XI",
+    );
+  });
+});
+
+describe("authorization decision (ADR-MCPRE-065 Slice 3)", () => {
+  // The property under test is that an INCONSISTENT carrier — a document committing to one
+  // digest while another travels with it — is unconstructible through the public API.
+  const block = (s: SignedRequestJs): Record<string, unknown> =>
+    JSON.parse(s.body.toString())._meta[BLOCK_KEY];
+
+  it("carries the document and has the core mint its binding", () => {
+    const s = sign([new AuthorizationDecisionProvider(DECISION)]);
+    expect(block(s).authorization_decision).toBe(DECISION);
+    const b = ofType(s, "pdp-decision");
+    expect(b.binding_type).toBe("opaque-digest");
+    // The digest is over the document's EXACT bytes, checked against node:crypto.
+    expect(b.digest_value).toBe(oracleDigest(Buffer.from(DECISION, "utf8")));
+  });
+
+  it("carries the document exactly once", () => {
+    const body = sign([new AuthorizationDecisionProvider(DECISION)]).body.toString();
+    expect(body.split(DECISION).length - 1).toBe(1);
+  });
+
+  it("gives a caller no parameter for the digest", () => {
+    const spec = new AuthorizationDecisionProvider(DECISION).spec(CTX);
+    expect(spec).toEqual({
+      artifact_type: "pdp-decision",
+      form: "authorization-decision",
+      material_b64url: Buffer.from(DECISION, "utf8").toString("base64url"),
+    });
+  });
+
+  it("lets a request act under at most one decision", () => {
+    expect(() =>
+      sign([new AuthorizationDecisionProvider(DECISION), new AuthorizationDecisionProvider("b.c.d")]),
+    ).toThrow(/authorization_binding_malformed/);
+  });
+
+  it("fails closed on an empty decision", () => {
+    try {
+      new AuthorizationDecisionProvider(Buffer.alloc(0));
+      throw new Error("expected an empty decision to fail closed");
+    } catch (e) {
+      expect((e as McpReError).wireCode).toBe("mcp-re.authorization_binding_missing");
+    }
+  });
+
+  it("produces the same carrier from a string and from bytes", () => {
+    const a = sign([new AuthorizationDecisionProvider(DECISION)]);
+    const b = sign([new AuthorizationDecisionProvider(Buffer.from(DECISION, "utf8"))]);
+    expect(Buffer.compare(a.body, b.body)).toBe(0);
+  });
+});
+
+describe("the generic provider cannot mint half a pair", () => {
+  // The negative is about the PAIR `(pdp-decision, opaque-bytes)`, never about the token
+  // `pdp-decision` appearing in a spec: a token-keyed rule would take the legitimate
+  // reference form with it, which the last test here pins.
+
+  it("is refused by the wrapper", () => {
+    try {
+      new OpaqueBytesProvider("pdp-decision", MATERIAL);
+      throw new Error("expected the generic opaque form to be refused");
+    } catch (e) {
+      expect((e as McpReError).wireCode).toBe("mcp-re.authorization_binding_type_unsupported");
+    }
+  });
+
+  it("is refused independently by the native seam", () => {
+    // A caller composing the spec JSON never passes through the wrapper class. Without
+    // this, the guard above would be cosmetic.
+    const smuggled = JSON.stringify([
+      {
+        artifact_type: "pdp-decision",
+        form: "opaque-bytes",
+        material_b64url: MATERIAL.toString("base64url"),
+      },
+    ]);
+    expect(() => sign([], smuggled)).toThrow(/authorization_binding_type_unsupported/);
+  });
+
+  it("leaves the reference form untouched", () => {
+    // Mode-1 external decision linkage is a different claim, and stays legal.
+    const s = sign([
+      new AuthzSystemReferenceProvider("pdp-decision", MATERIAL, {
+        authorizationSystemId: "authz-1",
+        referenceSchemeId: "scheme-1",
+        referenceValue: "grant-123",
+      }),
+    ]);
+    expect(ofType(s, "pdp-decision").binding_type).toBe("reference-digest");
+    // ...and it carries no document: linkage is not evidence.
+    expect(JSON.parse(s.body.toString())._meta[BLOCK_KEY]).not.toHaveProperty(
+      "authorization_decision",
     );
   });
 });

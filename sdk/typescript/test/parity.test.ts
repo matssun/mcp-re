@@ -9,6 +9,7 @@
 //
 // Either binding drifting from the other — or from the core — fails here rather than
 // shipping. Regenerate the oracle with `tools/gen_sdk_parity_fixture.py`.
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -161,6 +162,44 @@ describe("signed bytes match the frozen oracle", () => {
     const b = sign(name).signed;
     expect(Buffer.compare(a.body, b.body)).toBe(0);
     expect(a.evidenceDigestValue).toBe(b.evidenceDigestValue);
+  });
+});
+
+describe("the oracle covers the binding forms", () => {
+  it("pins all three, not just DPoP", () => {
+    expect(NAMES).toContain("binding_opaque_bytes");
+    expect(NAMES).toContain("binding_authz_system_reference");
+    expect(NAMES).toContain("binding_authorization_decision");
+  });
+
+  it("has the pinned decision carrier hold the document and its digest", () => {
+    // The ADR-MCPRE-065 producer emits TWO things from one input. Pinning only the signed
+    // bytes would let the halves drift together into a self-consistent other carrier.
+    const body = JSON.parse(
+      Buffer.from(
+        ORACLE.cases["binding_authorization_decision"].expected.body_b64,
+        "base64",
+      ).toString(),
+    );
+    const block = body._meta["se.syncom/mcp-re.http.request"];
+    const minted = block.artifact_bindings.filter(
+      (b: { artifact_type: string }) => b.artifact_type === "pdp-decision",
+    );
+    expect(minted).toHaveLength(1);
+    expect(minted[0].binding_type).toBe("opaque-digest");
+    // An INDEPENDENT node:crypto digest over the carried document's exact bytes.
+    expect(minted[0].digest_value).toBe(
+      createHash("sha256").update(block.authorization_decision, "utf8").digest("base64url"),
+    );
+  });
+
+  it("keeps the generic opaque case off the decision type", () => {
+    // `pdp-decision` has semantics now; the generic example must not borrow them.
+    const spec = JSON.parse(
+      ORACLE.cases["binding_opaque_bytes"].inputs["bindings_json"] as string,
+    );
+    expect(spec.map((s: { artifact_type: string }) => s.artifact_type)).toEqual(["human-approval"]);
+    expect(spec.map((s: { form: string }) => s.form)).toEqual(["opaque-bytes"]);
   });
 });
 

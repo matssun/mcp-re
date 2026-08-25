@@ -10,13 +10,25 @@ artifact means.
 Two base forms:
 
 ``OpaqueBytesProvider``
-    The client holds the artifact bytes (a capability token, a PDP decision document).
-    The binding digest is ``base64url-no-pad(SHA-256(bytes))``, computed in Rust.
+    The client holds the artifact bytes (a capability token, a consent record). The
+    binding digest is ``base64url-no-pad(SHA-256(bytes))``, computed in Rust.
 
 ``AuthzSystemReferenceProvider``
     Same digest over the same real bytes, plus the external system's identity and grant
     handle for cross-audit. The record stays verifiable independently of that system's
     live state.
+
+``AuthorizationDecisionProvider``
+    An authorization authority's signed decision document (ADR-MCPRE-065). This one is
+    not merely a binding: the document travels inside the signed evidence block AND the
+    core mints the ``pdp-decision``/``opaque-digest`` binding over those exact bytes, so
+    the carried decision and the digest committing to it cannot disagree.
+
+    ``pdp-decision`` is therefore not available through ``OpaqueBytesProvider``. That
+    would build the binding half alone — a request a Mode-2 verifier necessarily refuses,
+    and half of a pair ADR-MCPRE-065 says must exist together. The *reference* form is
+    untouched: ``AuthzSystemReferenceProvider("pdp-decision", ...)`` still expresses
+    external decision linkage, which is a different claim.
 
 Neither accepts a precomputed digest: the digest is always derived from material the
 caller actually presents, so a caller cannot assert a binding to an artifact it does not
@@ -37,6 +49,7 @@ from .custody import McpReError
 __all__ = [
     "ArtifactType",
     "AuthorizationBindingPolicy",
+    "AuthorizationDecisionProvider",
     "AuthorizationBindingProvider",
     "AuthzSystemReferenceProvider",
     "BindingRequestContext",
@@ -59,6 +72,11 @@ _REGISTRY: frozenset = frozenset(
         "human-approval",
     }
 )
+
+
+#: The artifact type an authorization decision is, and the one type whose opaque form is
+#: reachable only through :class:`AuthorizationDecisionProvider`.
+_DECISION_TYPE = "pdp-decision"
 
 
 def _b64url(raw: bytes) -> str:
@@ -107,6 +125,16 @@ class OpaqueBytesProvider(AuthorizationBindingProvider):
             raise McpReError(
                 "mcp-re.authorization_binding_type_unsupported",
                 f"{artifact_type!r} is not an artifact-type registry token",
+            )
+        if artifact_type == _DECISION_TYPE:
+            # Ergonomics only — the native seam refuses this pair independently, because
+            # a caller composing the spec JSON never passes through this class.
+            raise McpReError(
+                "mcp-re.authorization_binding_type_unsupported",
+                f"{_DECISION_TYPE!r} has no generic opaque form: an opaque binding "
+                "without its decision document is half of a pair the verifier refuses. "
+                "Use AuthorizationDecisionProvider, or AuthzSystemReferenceProvider for "
+                "external decision linkage.",
             )
         if not isinstance(material, (bytes, bytearray)) or not material:
             raise McpReError(
@@ -179,6 +207,39 @@ class AuthzSystemReferenceProvider(AuthorizationBindingProvider):
             "authorization_system_id": self._authorization_system_id,
             "reference_scheme_id": self._reference_scheme_id,
             "reference_value": self._reference_value,
+        }
+
+
+class AuthorizationDecisionProvider(AuthorizationBindingProvider):
+    """Present the authorization decision this call acts under (ADR-MCPRE-065).
+
+    ``decision`` is the compact JWS an authorization authority issued. Unlike the other
+    providers this contributes TWO things — the document, carried inside the signed
+    evidence block, and the ``pdp-decision``/``opaque-digest`` binding over it — and the
+    binding is minted by the audited core from the document's exact bytes.
+
+    There is deliberately no parameter for the digest. A caller able to supply both could
+    commit to one document and carry another, and the digest is the only thing tying the
+    two together.
+    """
+
+    def __init__(self, decision: bytes | str) -> None:
+        material = decision.encode() if isinstance(decision, str) else decision
+        if not isinstance(material, (bytes, bytearray)) or not material:
+            raise McpReError(
+                "mcp-re.authorization_binding_missing",
+                "an authorization decision requires the compact decision document",
+            )
+        self._material = bytes(material)
+
+    def binding_type(self) -> str:
+        return _DECISION_TYPE
+
+    def spec(self, context: BindingRequestContext) -> dict:
+        return {
+            "artifact_type": _DECISION_TYPE,
+            "form": "authorization-decision",
+            "material_b64url": _b64url(self._material),
         }
 
 

@@ -130,7 +130,7 @@ async def test_the_signer_is_checked_before_anything_is_signed():
 @pytest.mark.anyio
 async def test_the_authorization_policy_is_checked_at_open_too():
     config = _config(
-        authorization=[OpaqueBytesProvider("pdp-decision", b"doc")],
+        authorization=[OpaqueBytesProvider("oauth-rar", b"doc")],
         authorization_policy=AuthorizationBindingPolicy.permitting(["human-approval"]),
     )
     with pytest.raises(McpReError) as ei:
@@ -617,7 +617,7 @@ async def test_the_correlation_entry_records_the_authorization_binding_digest():
     # a false "artifact binding changed". The TypeScript twin's test pins this SAME
     # string — that is the point of writing it down.
     store = CorrelationStore()
-    config = _config(authorization=[OpaqueBytesProvider("pdp-decision", b"doc")])
+    config = _config(authorization=[OpaqueBytesProvider("human-approval", b"doc")])
 
     async def poster(method, target_uri, headers, body) -> HttpReply:
         await anyio.sleep(5)
@@ -628,7 +628,7 @@ async def test_the_correlation_entry_records_the_authorization_binding_digest():
         await anyio.sleep(0.05)
         pending = next(iter(store))
         canonical = (
-            '[{"artifact_type":"pdp-decision","form":"opaque-bytes",'
+            '[{"artifact_type":"human-approval","form":"opaque-bytes",'
             '"material_b64url":"ZG9j"}]'
         )
         assert _bindings_json(config, "tools/list") == canonical, (
@@ -636,7 +636,7 @@ async def test_the_correlation_entry_records_the_authorization_binding_digest():
         )
         assert (
             pending.authz_binding_digest
-            == "sha-256:czwnl9p6eDzBuZBaI8aHsupsVpiCErQAcahWFp2z7ZI"
+            == "sha-256:huucRBvtO7V1Xm8EFbC6ci-xlsf8EYyNZQix9sJx64Q"
         )
 
 
@@ -1102,14 +1102,14 @@ async def test_authorization_bindings_reach_the_core_which_digests_the_real_byte
     # bytes themselves must never appear in the evidence.
     import base64
 
-    material = b"pdp-decision-document"
+    material = b"human-approval-record"
     calls = []
-    config = _config(authorization=[OpaqueBytesProvider("pdp-decision", material)])
+    config = _config(authorization=[OpaqueBytesProvider("human-approval", material)])
     await _send(config, _capturing_poster(calls), _request())
 
     evidence = calls[0]["body"].decode()
-    assert "pdp-decision" in evidence
-    assert "pdp-decision-document" not in evidence
+    assert "human-approval" in evidence
+    assert "human-approval-record" not in evidence
     assert base64.urlsafe_b64encode(material).decode().rstrip("=") not in evidence
 
 

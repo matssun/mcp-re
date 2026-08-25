@@ -604,3 +604,140 @@ async fn a_deployment_running_no_decision_profile_is_unaffected() {
     assert_eq!(status, 200, "{body}");
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
+
+// --- ADR-MCPRE-065 Slice 3: the SDK producer's output, through this same PEP ----------
+//
+// The controls above build the evidence block by hand, which is right for attacking one
+// link at a time but proves nothing about what a CLIENT can actually construct. These two
+// drive the language SDKs' own path — the provider spec JSON that
+// `AuthorizationDecisionProvider` emits, through `build_authorization` and
+// `RequestSigningInputs::with_authorization_decision`, into the real signing core — and
+// then serve the result. Without them, "the SDK can produce enforceable evidence" would
+// be an inference from two separately-green test suites.
+
+/// The spec JSON the Python and TypeScript `AuthorizationDecisionProvider` emit.
+///
+/// Written out rather than imported: the point is that THIS text, which the wrappers
+/// produce, is what the core accepts.
+fn decision_spec_json(decision: &str) -> String {
+    format!(
+        r#"[{{"artifact_type":"pdp-decision","form":"authorization-decision","material_b64url":"{}"}}]"#,
+        mcp_re_core::b64url_encode(decision.as_bytes())
+    )
+}
+
+/// Build a `tools/call` exactly as an SDK client does, from a provider list alone.
+fn sdk_signed_call(tool: &str, nonce: &str, bindings_json: &str) -> HttpRequest {
+    let provided = mcp_re_client_core::build_authorization(bindings_json).expect("legal spec");
+    let mut inputs = mcp_re_client_core::RequestSigningInputs::new(
+        CLIENT_KEY_ID,
+        audience(),
+        // DPoP stays the built-in, header-derived binding, as it is in both SDKs.
+        {
+            let mut b = vec![ArtifactBinding::opaque_digest(
+                ArtifactType::OauthDpop,
+                b"tok",
+            )];
+            b.extend(provided.bindings);
+            b
+        },
+        nonce,
+        CREATED,
+        EXPIRES,
+    )
+    .with_headers(vec![("Authorization".into(), "Bearer tok".into())]);
+    if let Some(jws) = provided.decision {
+        inputs = inputs.with_authorization_decision(jws);
+    }
+    let mut params = serde_json::Map::new();
+    params.insert("name".into(), serde_json::Value::String(tool.into()));
+    mcp_re_client_core::build_signed_request(
+        &serde_json::Value::from(1),
+        "tools/call",
+        params,
+        TARGET,
+        &inputs,
+        &client_key(),
+    )
+    .expect("signs")
+    .into_request()
+}
+
+#[tokio::test]
+async fn a_decision_attached_through_the_sdk_producer_is_authorized_end_to_end() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let d = issue(&decision_for(Some("read"), "tools/call"), &pdp_key());
+    let req = sdk_signed_call("read", "n-sdk-permit-0001-128bit", &decision_spec_json(&d));
+
+    // The producer derived the binding; nothing in this test computed a digest.
+    let block: serde_json::Value = serde_json::from_slice(&req.body).expect("json");
+    let block = &block["_meta"]["se.syncom/mcp-re.http.request"];
+    assert_eq!(block["authorization_decision"].as_str(), Some(d.as_str()));
+
+    let (status, body) = serve(&proxy(Arc::clone(&calls)), req).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "the backend ran");
+}
+
+#[tokio::test]
+async fn the_sdk_producer_cannot_build_the_half_pair_this_pep_refuses() {
+    // The narrowing, measured against the enforcement point rather than restated: the
+    // spec a generic opaque provider would emit for `pdp-decision` is refused at
+    // construction, so the request the PEP would reject is never built.
+    let d = issue(&decision_for(Some("read"), "tools/call"), &pdp_key());
+    let generic = format!(
+        r#"[{{"artifact_type":"pdp-decision","form":"opaque-bytes","material_b64url":"{}"}}]"#,
+        mcp_re_core::b64url_encode(d.as_bytes())
+    );
+    let refusal = mcp_re_client_core::build_authorization(&generic).expect_err("half a pair");
+    assert_eq!(
+        refusal.wire_code(),
+        "mcp-re.authorization_binding_type_unsupported"
+    );
+
+    // And what that construction WOULD have produced is exactly what this PEP refuses: a
+    // `pdp-decision`/`opaque-digest` binding with no document to check it against. The
+    // narrowing therefore removes a construction that could only ever be refused — it does
+    // not invent a rule the enforcement point does not already hold.
+    let mut req = HttpRequest {
+        method: "POST".into(),
+        target_uri: TARGET.into(),
+        headers: vec![
+            ("Content-Type".into(), "application/json".into()),
+            ("Authorization".into(), "Bearer tok".into()),
+        ],
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
+    };
+    let orphan = HttpRequestEvidenceBlock {
+        profile: PROFILE_TAG.into(),
+        audience: audience(),
+        artifact_bindings: vec![
+            ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"tok"),
+            ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, d.as_bytes()),
+        ],
+        continuation: None,
+        admission: None,
+        admission_assertion: None,
+        authorization_decision: None,
+    };
+    sign_request_full(
+        &mut req,
+        &orphan,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-sdk-half",
+    )
+    .expect("signs");
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (status, body) = serve(&proxy(Arc::clone(&calls)), req).await;
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "a binding with no document authorizes nothing"
+    );
+}

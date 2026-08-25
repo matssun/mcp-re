@@ -416,7 +416,65 @@ recorded as [`verification/README.md`](../../verification/README.md) rule 16 —
 formally annotated code moves its verification-unit, fingerprint, and trigger-set ownership
 with it.
 
-## 9. Deferred, deliberately
+## 9. Slice 3 — the client/SDK production surface
+
+Slice 2 shipped a mechanism the language SDKs could not conveniently produce evidence for.
+The typed Rust producer already owned the invariant; this slice gives Python and TypeScript
+the same one, and removes the construction that could only ever be refused.
+
+### 9.1 One semantic operation, two contributions
+
+```text
+decision document
+      |
+AuthorizationDecisionProvider          (Python / TypeScript)
+      |  spec: {artifact_type: pdp-decision, form: authorization-decision, material}
+      v
+build_authorization                    (mcp-re-client-core — ONE implementation)
+      |
+      v
+RequestSigningInputs::with_authorization_decision
+      |
+      +--> inline `authorization_decision`
+      +--> derived `pdp-decision` / `opaque-digest` binding
+```
+
+No API anywhere accepts a document together with an independently supplied digest. A caller
+able to supply both could commit to one document and carry another, and the digest is the
+only thing tying them together.
+
+### 9.2 The generic opaque provider may not mint `pdp-decision`
+
+The distinction is the FORM, never the token:
+
+| form | `pdp-decision` |
+|---|---|
+| `opaque-bytes` | refused — the binding half of a pair, which a Mode-2 verifier necessarily rejects |
+| `authz-system-reference` | legal, unchanged — Mode-1 external decision LINKAGE |
+| `authorization-decision` | legal — the document, whose binding the seam mints |
+
+Refusing the *token* would take the reference form with it, so the control is written over
+the pair and a structural test pins that.
+
+### 9.3 The enforcement owner is the conversion, not the wrapper
+
+The rule lives in `mcp-re-client-core::binding_spec`, which the PyO3 and N-API layers both
+call. The spec JSON is itself a public seam: a guard in the Python or TypeScript wrapper
+class alone would be cosmetic, because a caller composing that JSON walks straight past it.
+One implementation is also what keeps the two languages from drifting apart on a security
+rule — two copies agree only until one is edited.
+
+The wrapper classes still reject early, for ergonomics. Both layers are held by separate
+controls, because they are separate routes.
+
+### 9.4 What the narrowing removes
+
+Nothing enforceable. A `pdp-decision`/`opaque-digest` binding with no document is a
+composable block — the profile permits it — that a configured decision profile refuses with
+the backend never called. The producer now refuses what the enforcement point already
+refused; it does not invent a rule.
+
+## 10. Deferred, deliberately
 
 - **ADR-MCPS-035 audit vocabulary** — not widened here. Which authorization facts belong in the
   audit record is decided once a semantic product exists.

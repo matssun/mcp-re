@@ -57,9 +57,38 @@ def _sign(name: str):
 
 
 def test_the_oracle_covers_the_binding_forms():
-    """Both authorization-binding forms must be pinned, not just DPoP."""
+    """All three authorization-binding forms must be pinned, not just DPoP."""
     assert "binding_opaque_bytes" in CASES
     assert "binding_authz_system_reference" in CASES
+    assert "binding_authorization_decision" in CASES
+
+
+def test_the_pinned_decision_carrier_holds_the_document_and_its_digest():
+    """The ADR-MCPRE-065 producer emits TWO things from one input.
+
+    Pinning only the signed bytes would let the two halves drift together into a
+    different but self-consistent carrier; this reads them out.
+    """
+    import hashlib
+
+    body = json.loads(
+        base64.b64decode(ORACLE["cases"]["binding_authorization_decision"]["expected"]["body_b64"])
+    )
+    block = body["_meta"]["se.syncom/mcp-re.http.request"]
+    decision = block["authorization_decision"]
+    minted = [b for b in block["artifact_bindings"] if b["artifact_type"] == "pdp-decision"]
+    assert len(minted) == 1
+    assert minted[0]["binding_type"] == "opaque-digest"
+    # An INDEPENDENT stdlib digest over the carried document's exact bytes.
+    expected = base64.urlsafe_b64encode(hashlib.sha256(decision.encode()).digest())
+    assert minted[0]["digest_value"] == expected.decode().rstrip("=")
+
+
+def test_the_pinned_generic_opaque_case_is_not_a_decision_type():
+    """`pdp-decision` has semantics now; the generic example must not borrow them."""
+    spec = json.loads(ORACLE["cases"]["binding_opaque_bytes"]["inputs"]["bindings_json"])
+    assert [s["artifact_type"] for s in spec] == ["human-approval"]
+    assert [s["form"] for s in spec] == ["opaque-bytes"]
 
 
 def test_the_oracle_covers_the_notification_envelope():

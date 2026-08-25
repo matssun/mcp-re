@@ -25,6 +25,7 @@ import pathlib
 
 import mcp_re_sdk
 from mcp_re_sdk import (
+    AuthorizationDecisionProvider,
     AuthzSystemReferenceProvider,
     BindingRequestContext,
     OpaqueBytesProvider,
@@ -38,6 +39,16 @@ SIGNER_ID = "did:example:client"
 KEY_ID = "key-1"
 #: A fixed TEST-ONLY authorization artifact the core digests into a binding.
 ARTIFACT_MATERIAL = b"pdp-decision-document-v1"
+#: A fixed TEST-ONLY artifact for the GENERIC opaque case. It is deliberately not a
+#: `pdp-decision`: that type carries ADR-MCPRE-065 semantics and reaches the opaque form
+#: only through `AuthorizationDecisionProvider`, so using it as the arbitrary generic
+#: example would make this fixture argue with the architecture. `human-approval` is here
+#: only as a registry member with a legitimate generic opaque form — this case pins
+#: serialization and binding parity, and claims nothing about a typed verifier for it.
+GENERIC_MATERIAL = b"approved-by-alice"
+#: A fixed TEST-ONLY compact decision document. Shaped like a JWS; never verified here —
+#: this fixture pins what the PRODUCER emits, not what an authority would sign.
+DECISION_JWS = "ZmFrZS1oZWFkZXI.ZmFrZS1jbGFpbXM.ZmFrZS1zaWc"
 
 OUT = pathlib.Path("sdk/fixtures/parity_vectors.json")
 
@@ -121,7 +132,7 @@ def build() -> dict:
         target_uri=BASE["target_uri"],
         method=BASE["method"],
     )
-    opaque = OpaqueBytesProvider("pdp-decision", ARTIFACT_MATERIAL)
+    opaque = OpaqueBytesProvider("human-approval", GENERIC_MATERIAL)
     opaque_args = dict(BASE, nonce="nonce-parity-0004-128bit")
     cases["binding_opaque_bytes"] = case(
         mcp_re_sdk.sign_request(
@@ -143,6 +154,19 @@ def build() -> dict:
             SEED, KEY_ID, **ref_args, bindings_json=json.dumps([reference.spec(ctx)])
         ),
         {**ref_args, **meta, "bindings_json": json.dumps([reference.spec(ctx)])},
+    )
+
+    # The ADR-MCPRE-065 authorization decision. Pinned because this producer contributes
+    # TWO things from one input — the carried document and the `pdp-decision` binding the
+    # core mints over its exact bytes — and a binding that derived either half differently
+    # would emit evidence the other SDK's caller could not reproduce.
+    decision = AuthorizationDecisionProvider(DECISION_JWS)
+    decision_args = dict(BASE, nonce="nonce-parity-0008-128bit")
+    cases["binding_authorization_decision"] = case(
+        mcp_re_sdk.sign_request(
+            SEED, KEY_ID, **decision_args, bindings_json=json.dumps([decision.spec(ctx)])
+        ),
+        {**decision_args, **meta, "bindings_json": json.dumps([decision.spec(ctx)])},
     )
 
     # A one-way NOTIFICATION. Pinned because the two SDKs could drift here in a way the
