@@ -2,7 +2,8 @@
 
 # ADR-MCPRE-066 — Audit composition: two authorities, one record
 
-**Status:** PROPOSED — scope rulings taken, grilled once. Not accepted, not implemented.
+**Status:** **ACCEPTED** 2026-08-25 — refined B, after two grill rounds. Not yet implemented;
+implementation order is §9.
 **Discussion:** [#638](https://github.com/matssun/mcp-re/discussions/638).
 **Characterization:** issue #637.
 **Predecessor:** ADR-MCPRE-065 (discussion #629), whose §10 deferred exactly this question
@@ -420,22 +421,179 @@ disruptive than measured. C remains R1's recorded generalization.
 consequences, the cost to existing consumers of the stderr format, or the migration for
 records already written.
 
-## 7. Open questions still standing
+## 7. Grill round 2 — deployment, consumers, migration
+
+Round 1 attacked the algebra. Round 2 attacks refined B specifically, on the three fronts
+round 1 explicitly did not reach. Measured, not reasoned.
+
+### R2-P1 — is R3 meaningful in a shipped deployment? **YES**
+
+`deploy/helm/mcp-re-proxy/values.yaml` ships `auditSink: stderr` and the chart passes
+`--audit-sink` through. So the facet is observable in a default production deployment, and R3
+is a real property rather than a property of a test harness.
+
+`--audit-sink none` produces **no record at all**, which is a third absence — and all three
+stay separable:
+
+| absence | means | discriminated by |
+|---|---|---|
+| no record | the deployment chose `--audit-sink none` | nothing was emitted |
+| no facet on an emitted record | it is a response/key-lifecycle record | `event_type` |
+| no facet field on a request record | record predates ADR-066 | field presence (R3) |
+
+A deployment that turns the sink off has made authorization posture unobservable *by
+decision*. That is not the `Off == Allow` ambiguity — nothing claims anything.
+
+### R2-P2 — is there a committed serialization contract to break? **NO**
+
+The only emitting sink formats a flat line:
+
+```text
+mcp-re-proxy: audit seq=… event=… decision=… reason=… actor=… status=… at=…
+```
+
+There is **no JSON audit record anywhere in the product**. `security-boundary.md` §9 shows
+`{ "event_type": …, "reason": … }`, but that example illustrates the *vocabulary*, not a wire
+format — and §9 opens by stating this is "**not** a SIEM schema".
+
+So refined B's record-kind split changes an in-crate Rust type and one stderr line. It does not
+break a published schema, because there is not one.
+
+**A divergence this exposes, and a constraint it creates.** §9's JSON example and the emitted
+key=value line already differ in shape. That is tolerable while the example is read as
+vocabulary. It would stop being tolerable if ADR-066 were read as adding a *serialization*
+contract, so this record states explicitly: **ADR-066 introduces no audit serialization
+contract.** It decides which facts exist and who owns them. How a sink renders them stays the
+sink's, and any future serialization contract needs its own record.
+
+### R2-P3 — what does the change cost existing consumers? **Measurably little**
+
+- **No external `AuditSink` implementor exists.** Three, all in-crate: `StderrAuditSink`,
+  `NoAuditSink`, `CollectingAuditSink`.
+- **The line format is pinned by exactly one test, and only its prefix** — `app.rs:1439,1450`
+  assert `stderr.contains("audit seq=0 ")` and a `format!("audit seq={} ", BATCH - 1)`. Adding
+  a field does not break it.
+- **`CollectingAuditSink::records()` is consumed by two e2e test functions**
+  (`delegated_client_server_e2e_test.rs:711,743`), asserting on `record.event.event_type` and
+  neighbours. Those become pattern matches on a record kind. Contained.
+- For a line-oriented log consumer, an added `key=value` field is additive.
+
+### R2-P4 — what has to migrate? **Nothing inside the artifact**
+
+The product **never persists an audit record.** There is no file sink, no object-store sink, no
+Redis sink — `StderrAuditSink` writes to stderr, `NoAuditSink` discards, `CollectingAuditSink`
+is a test double. Records already written live in an operator's log pipeline, outside the
+artifact entirely.
+
+This resolves round 1's open question 5. R3's "an absent facet means a legacy record" is a
+statement about **operator-side historical logs**, not a migration this repository performs.
+There is no stored corpus to rewrite, version, or dual-write.
+
+### Verdict of round 2
+
+**Refined B survives.** No disqualifying deployment, consumer, or migration consequence was
+found, and two objections dissolved on measurement: there is no serialization contract to
+break, and there is no stored record corpus to migrate.
+
+## 8. Design selection
+
+**Design selection after grill rounds 1 and 2: refined B.**
+
+- **A** remains the fallback, and is now only reachable if implementation discovers something
+  neither round found.
+- **C** remains the successor generalization of the lifecycle-versus-attribution law (R1). It
+  is not an alternative to B; it is what B's law grows into across the other stages.
+
+A/B/C stop being equally open alternatives at this point.
+
+## 9. Implementation order
+
+Frozen. Each slice has an independent correctness criterion, so a failure is attributable.
+
+```text
+Slice 0   typed Refusal — preserve authority provenance across the stage boundary
+          NO audit schema change · NO vocabulary widening
+              v
+Slice 1   the authorization audit facet
+          NotConfigured | Authorized | Refused, projected from the live sealed product
+              v
+Slice 2   close the remaining untyped audit escape hatches; containment becomes structural
+              v
+          only afterwards may wiring a production evaluator be considered
+```
+
+Whether Slices 1 and 2 share a PR is decided **after** Slice 0, not now.
+
+### 9.1 Slice 0 contract — semantically neutral
+
+Slice 0's job is **only to stop destroying the information** the next slice needs. It preserves
+what the stages already decided; it does not decide how audit represents those facts. That is
+what gives it a correctness criterion independent of B, and what keeps it valid even if a later
+round modifies B.
+
+```text
+stage-specific typed refusal          stage-specific typed refusal
+          v                                     v
+   typed refusal cause          NOT        wire_code()
+          v                                     v
+final serving/audit boundary            &'static str -> Refusal
+```
+
+**It must not:** add the authorization facet · mint or widen any vocabulary · add `PolicyError`
+to Core · make `PolicyError` a legal Core audit reason · wire a production evaluator · change
+`request.accepted`/`request.rejected` semantics · attempt candidate C.
+
+**The cause must stay closed over owners.** Replacing `wire_code: &'static str` with
+`error: McpReError` would move the authority collapse one level earlier rather than remove it.
+The representation must be able to say:
+
+```text
+RefusalCause
+    Core(..)
+    Authorization(AuthorizationRefusal)
+```
+
+An exhaustive projection `HttpProfileError -> Core` is legitimate, because that relationship is
+already a ratified invariant — every HTTP-profile `wire_code()` is deliberately a Core token,
+and the conformance guard asserts it. But **`PolicyError -> McpReError` must remain
+impossible**: the authorization branch has to arrive at the audit-composition boundary still
+recognizably authorization provenance. That is the entire value of Slice 0.
+
+Only the final presentation boundary renders a public code.
+
+### 9.2 Slice 0's two poison pills
+
+Mechanical, so the invariant is established before B depends on it:
+
+1. **Replace the typed authorization refusal at the stage boundary with its `wire_code()`
+   string again — the suite must fail.**
+2. **Attempt to construct a Core audit reason directly from a `PolicyError` — compilation or a
+   structural gate must fail.**
+
+A poison pill that does not fail is a control that measures nothing.
+
+## 10. Open questions still standing
+
+Two of round 1's five are now closed:
+
+- **Q4 — packaging of the typed `Refusal` change.** RESOLVED: its own preparatory slice
+  (§9.1). Round 1 showed it is an independent information-preservation defect, not a detail of
+  the facet.
+- **Q5 — migration of already-written records.** RESOLVED by R2-P4: the product persists no
+  audit record, so there is no stored corpus to migrate.
+
+Still open, and none of them blocks Slice 0:
 
 1. Does an `Authorized` record need the operation *and* the target, or does R2's coordinate
    admit a narrower projection still sufficient to answer *what was authorized*?
-2. Should the record carry an explicit schema version rather than relying on field-presence as
-   P4's discriminator? Field-presence works, but it is an inference where a version would be a
-   statement.
+2. Should a request record carry an explicit schema version rather than relying on
+   field-presence as R3's discriminator? Field-presence works and R2-P4 makes it cheap, but it
+   is an inference where a version would be a statement.
 3. What does the response side do when a request was `Refused` — is `response.rejected`'s
    existing reason sufficient, given R5 forbids duplicating the facet there?
-4. Does the typed `Refusal` change (P3/P5) belong in this ADR's implementation or as a separate
-   preparatory change that lands first, given it touches every stage rather than only
-   authorization?
-5. Migration: records already emitted have no facet. Is that acceptable as *legacy* under R3,
-   or does the deployment need a marker distinguishing "before ADR-066" from "field dropped"?
+4. Do Slices 1 and 2 share a PR? Decided after Slice 0.
 
-## 8. Explicitly not in this ADR
+## 11. Explicitly not in this ADR
 
 - **Verified-context widening.** Stays after audit, and only if a real inner-plane consumer
   needs authorization facts. A committed wire representation does not change because a fact
