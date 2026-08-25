@@ -86,6 +86,8 @@ pub mod trust_document;
 // ADR-MCPS-028 §C: native GCP Cloud KMS Ed25519 response signer over blocking HTTPS
 // (ureq) + OAuth2 bearer — NO async google-cloud SDK. Compiled ONLY under the
 // non-default `gcp_kms_keysource` feature.
+// ADR-MCPRE-066 Slice 1: what a record IS, kept apart from how one is delivered.
+pub mod audit_record;
 pub mod audit_sink;
 #[cfg(feature = "gcp_kms_keysource")]
 pub mod gcp_kms_keysource;
@@ -319,7 +321,8 @@ pub use delegated_tls::DelegatedCertResolver;
 pub use delegated_tls::DelegatedEd25519SigningKey;
 pub use delegated_tls::RawEd25519TlsSigner;
 // ADR-MCPS-028 §C: the GCP Cloud KMS Ed25519 backend (feature-gated).
-pub use audit_sink::AuditRecord;
+pub use audit_record::AuditRecord;
+pub use audit_record::AuditSubject;
 pub use audit_sink::AuditSink;
 pub use audit_sink::CollectingAuditSink;
 pub use audit_sink::NoAuditSink;

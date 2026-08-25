@@ -2881,7 +2881,11 @@ mod tests {
         // startup: build_key_source is a public entry point.
         use std::os::unix::fs::PermissionsExt;
         let path = std::env::temp_dir().join(format!("mcp-re-pin-lax-{}", std::process::id()));
-        std::fs::write(&path, b"1234").expect("write pin");
+        // A PIN that cannot occur in the path itself. `b"1234"` could: the file is named
+        // after the process id, and a pid of 12341 made the assertion below fire on the
+        // path in the message rather than on an echoed secret.
+        const PIN: &[u8] = b"pin-nowhere-in-any-path";
+        std::fs::write(&path, PIN).expect("write pin");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640))
             .expect("chmod 0640");
         let err = super::read_pkcs11_pin(path.to_str().unwrap()).unwrap_err();
@@ -2891,7 +2895,7 @@ mod tests {
             "expected a permission refusal, got: {message}"
         );
         assert!(
-            !message.contains("1234"),
+            !message.contains(std::str::from_utf8(PIN).expect("utf-8")),
             "the refusal must not echo the PIN: {message}"
         );
         let _ = std::fs::remove_file(&path);

@@ -24,11 +24,32 @@ WHAT THIS PROVES, over production Rust (test regions excluded):
      (`_ =>`), so a new authority or a new Core producer is a COMPILE error until it names
      its verdict, rather than silently inheriting one.
 
+ADDED BY SLICE 1 (#644) — the provenance now has to survive one step further, into the
+record itself:
+
+  7. **A request record always states an authorization outcome.** The `Request` arm carries
+     an `authorization: AuthorizationFacet`, never an `Option` and never a `NotApplicable`.
+     ADR-MCPRE-066 R3: absence must have exactly one meaning — a record from before this
+     slice — and an `Option` gives it two.
+  8. **A response record carries none.** Authorization is request-side (R5). A response
+     record does not represent a second authorization decision and must not be able to
+     claim one.
+  9. **The facet is PROJECTED, never assembled at the audit site.** The serving path does
+     not construct an `AuthorizationFacet` variant or an `AuthorizationAttribution` literal;
+     it asks the owner (`audit_facet` / `authorization_facet`). Invariant 5 / R-COMPOSE: a
+     composition root that builds the facet out of parts has re-derived what an owner
+     already decided.
+
 WHY (5) IS THE ONE THAT MATTERS. Every other check here constrains a shape that a reviewer
 would notice changing. A `From<PolicyError> for McpReError` would look like a convenience,
 would compile, would make every existing test pass, and would re-create the exact defect
 ADR-MCPRE-066 was opened for — one taxonomy quietly absorbing another's semantics. It is
 the only one of the six that a well-intentioned edit is likely to introduce.
+
+WHAT IT STILL DOES NOT PROVE, and deliberately: that Core's `reason` is free of foreign
+tokens. It is not — an authorization refusal's `wire_code()` still reaches
+`request_rejected_code`. Slice 1 adds the second coordinate; closing the first one is Slice
+2's structural containment, and a gate asserting it today would fail on purpose-built code.
 
 WHAT IT DOES NOT PROVE: that the right cause is chosen at any given site. That is the unit
 controls in `refusal/cause.rs`, and the wire-compatibility controls that show Slice 0 is
@@ -48,6 +69,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 REFUSAL = ["mcp-re-proxy/src/refusal/mod.rs", "mcp-re-proxy/src/refusal/cause.rs"]
 SERVING = "mcp-re-proxy/src/http_profile_serve.rs"
+RECORD = "mcp-re-proxy/src/audit_record.rs"
 
 #: Where a `From<PolicyError>` conversion could plausibly be introduced. Every Rust file in
 #: the workspace, because the whole point is that it must exist NOWHERE — restricting the
@@ -95,6 +117,21 @@ def read(rel: str, overrides: dict[str, str] | None = None) -> str:
 def body_of(src: str, fn: str) -> str:
     """The body of `fn`, brace-matched from its signature."""
     m = re.search(rf"fn\s+{re.escape(fn)}\s*[(<]", src)
+    if not m:
+        return ""
+    start = src.index("{", m.start())
+    depth, i = 0, start
+    while i < len(src):
+        depth += 1 if src[i] == "{" else -1 if src[i] == "}" else 0
+        if depth == 0:
+            return src[start : i + 1]
+        i += 1
+    return src[start:]
+
+
+def body_of_variant(src: str, variant: str) -> str:
+    """The brace-matched body of enum variant `variant`, or `""`."""
+    m = re.search(rf"^\s{{4}}{re.escape(variant)}\s*\{{", src, re.M)
     if not m:
         return ""
     start = src.index("{", m.start())
@@ -158,6 +195,34 @@ def check(overrides: dict[str, str] | None = None) -> list[str]:
         if re.search(r"RefusalCause::Core\(\s*[A-Za-z_:]*[Pp]olicy", src):
             problems.append(f"{rel}: a PolicyError is being placed in the Core arm")
 
+    # 7/8. the record kind decides what each authority may say (R3, R5)
+    record = read(RECORD, overrides)
+    if "Option<AuthorizationFacet>" in record:
+        problems.append(
+            f"{RECORD}: the authorization facet is optional — an absent facet then means both "
+            f"'no policy' and 'legacy record' (ADR-MCPRE-066 R3)"
+        )
+    request_arm = body_of_variant(record, "Request")
+    if "authorization: AuthorizationFacet" not in request_arm:
+        problems.append(
+            f"{RECORD}: the Request record does not state an authorization outcome (R3)"
+        )
+    response_arm = body_of_variant(record, "Response")
+    if "AuthorizationFacet" in response_arm:
+        problems.append(
+            f"{RECORD}: a Response record carries an authorization coordinate — authorization "
+            f"is request-side (ADR-MCPRE-066 R5)"
+        )
+
+    # 9. the facet is projected from an owner, never assembled at the audit site
+    for bad in ("AuthorizationFacet::Authorized(", "AuthorizationFacet::Refused(",
+                "AuthorizationAttribution {"):
+        if bad in serving:
+            problems.append(
+                f"the serving path builds `{bad}` itself instead of asking the owner for its "
+                f"projection (ADR-MCPRE-066 invariant 5 / R-COMPOSE)"
+            )
+
     # 6. the cause algebra is exhaustive by construction
     if re.search(r"^\s*_\s*=>", refusal, re.M):
         problems.append(
@@ -201,13 +266,36 @@ SELFTEST = [
         {SERVING: 'fn f() { Refusal::preflight("mcp-re.missing_envelope", 400) }\n'},
         1,
     ),
+    (
+        "the request record's facet becomes optional (R3)",
+        {RECORD: "pub enum AuditSubject {\n"
+                 "    Request {\n        event: AuditEvent,\n"
+                 "        authorization: Option<AuthorizationFacet>,\n    },\n"
+                 "    Response {\n        event: AuditEvent,\n    },\n}\n"},
+        1,
+    ),
+    (
+        "a response record acquires an authorization coordinate (R5)",
+        {RECORD: "pub enum AuditSubject {\n"
+                 "    Request {\n        event: AuditEvent,\n"
+                 "        authorization: AuthorizationFacet,\n    },\n"
+                 "    Response {\n        event: AuditEvent,\n"
+                 "        authorization: AuthorizationFacet,\n    },\n}\n"},
+        1,
+    ),
+    (
+        "the serving path assembles the facet instead of projecting it",
+        {SERVING: "fn f() { self.audit(AuditSubject::request(e, "
+                  "AuthorizationFacet::Refused(x))) }\n"},
+        1,
+    ),
 ]
 
 
 def selftest() -> int:
     failures = 0
     for name, override, expected in SELFTEST:
-        base = {r: (REPO / r).read_text() for r in REFUSAL + [SERVING]}
+        base = {r: (REPO / r).read_text() for r in REFUSAL + [SERVING, RECORD]}
         base.update(override)
         got = len(check(base))
         ok = got >= expected
@@ -237,7 +325,8 @@ def main() -> int:
     print(
         "refusal-provenance gate: OK — a refusal carries its authority rather than a rendered "
         "token, the authorization branch survives the stage boundary intact, PolicyError has "
-        "no route into the Core taxonomy, and the cause algebra is exhaustive."
+        "no route into the Core taxonomy, the cause algebra is exhaustive, and the record "
+        "states each authority's outcome in its own coordinate."
     )
     return 0
 

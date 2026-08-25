@@ -716,7 +716,7 @@ fn an_accepted_request_emits_accepted_then_signed_with_the_resolved_actor() {
     assert_eq!(out.kind, ResponseKind::Success);
 
     let records = sink.records();
-    let types: Vec<&str> = records.iter().map(|r| r.event.event_type).collect();
+    let types: Vec<&str> = records.iter().map(|r| r.event().event_type).collect();
     assert_eq!(
         types,
         vec!["mcp-re.request.accepted", "mcp-re.response.signed"],
@@ -729,10 +729,51 @@ fn an_accepted_request_emits_accepted_then_signed_with_the_resolved_actor() {
             "an admitted request's records must carry the resolved actor"
         );
         assert_eq!(
-            record.event.reason, None,
+            record.event().reason,
+            None,
             "a success event carries no rejection reason"
         );
     }
+}
+
+/// ADR-MCPRE-066 Slice 1: a request record states this deployment's authorization outcome,
+/// and an unconfigured deployment states that it configured none.
+///
+/// Without this the record for a proxy running no policy is byte-identical to the one a
+/// PDP-enforcing proxy writes — the `Off == Allow` collapse ADR-MCPRE-065 removed from the
+/// type, reintroduced at the only place a later reader can look.
+#[test]
+fn an_unconfigured_deployments_records_say_so_rather_than_claiming_an_authorization() {
+    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
+    let proxy = client_proxy(build_server().with_audit_sink(sink.clone()));
+    proxy
+        .handle("r1", &plain_request(), &params("nonce-audit-facet-1"))
+        .expect("round trip succeeds");
+
+    let records = sink.records();
+    let accepted = records
+        .iter()
+        .find(|r| r.event().event_type == "mcp-re.request.accepted")
+        .expect("the admitted request is recorded");
+    assert_eq!(
+        accepted.subject,
+        mcp_re_proxy::AuditSubject::request(
+            mcp_re_core::audit::AuditEvent::request_accepted(),
+            mcp_re_proxy::authorization::AuthorizationFacet::NotConfigured,
+        ),
+        "no policy is deployed, and the record says exactly that — never `Authorized`"
+    );
+
+    // R5: the response record carries no authorization coordinate at all, because a
+    // response does not represent a second authorization decision.
+    let signed = records
+        .iter()
+        .find(|r| r.event().event_type == "mcp-re.response.signed")
+        .expect("the signed response is recorded");
+    assert!(matches!(
+        signed.subject,
+        mcp_re_proxy::AuditSubject::Response { .. }
+    ));
 }
 
 /// A rejection records the EXACT frozen wire code, and never also claims acceptance —
@@ -757,15 +798,26 @@ fn a_replay_emits_exactly_one_rejection_carrying_the_frozen_wire_code() {
         "the replayed request records ONE decision, got {replay_records:?}"
     );
     let record = &replay_records[0];
-    assert_eq!(record.event.event_type, "mcp-re.request.rejected");
+    assert_eq!(record.event().event_type, "mcp-re.request.rejected");
     assert_eq!(
-        record.event.reason,
+        record.event().reason,
         Some("mcp-re.replay_detected"),
         "the reason is the exact frozen wire code, never a parallel sub-name"
     );
     // 409 Conflict is the replay status; the record carries the status actually
     // returned, so a reader can correlate the audit line with the HTTP response.
     assert_eq!(record.status, 409);
+    // ADR-MCPRE-066 Slice 1: a replay never reached a policy, so the authorization
+    // coordinate says only that — it does not restate the Core reason beside it.
+    assert_eq!(
+        record.subject,
+        mcp_re_proxy::AuditSubject::request(
+            mcp_re_core::audit::AuditEvent::request_rejected_code("mcp-re.replay_detected"),
+            mcp_re_proxy::authorization::AuthorizationFacet::Refused(
+                mcp_re_proxy::authorization::AuthorizationRefusalFacet::BeforePolicy
+            ),
+        )
+    );
 }
 
 /// No sink installed is the explicit no-emission posture and must not disturb serving.

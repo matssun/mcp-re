@@ -61,6 +61,7 @@
 
 #[cfg(test)]
 pub(crate) mod action_harness;
+pub mod audit;
 pub mod decide;
 pub(crate) mod dispatch;
 pub mod evaluator;
@@ -72,6 +73,9 @@ pub(crate) mod serving;
 pub mod verified_action;
 pub mod verified_actor;
 
+pub use audit::AuthorizationAttribution;
+pub use audit::AuthorizationFacet;
+pub use audit::AuthorizationRefusalFacet;
 pub use decide::authorize;
 pub use decide::AuthorizationRefusal;
 pub(crate) use dispatch::AuthorizedRequestBody;

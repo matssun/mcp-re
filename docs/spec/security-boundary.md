@@ -395,12 +395,43 @@ first (the frozen-taxonomy process), which the audit layer inherits
 automatically — the vocabulary cannot drift from the verdicts the pipeline
 actually makes.
 
+### 9.1 The authorization coordinate (ADR-MCPRE-066)
+
+A **request** record additionally carries an authorization outcome, in the
+authorization authority's own vocabulary and **never** in `reason`:
+
+```text
+NotConfigured   no policy is deployed; this boundary claims nothing
+Authorized      authority · version · action · request-evidence handle
+Refused         BeforePolicy  no policy verdict was reached
+                ByPolicy      a policy decided and denied (a PolicyError token)
+```
+
+This **widens nothing above.** `event_type`, `reason` and the two-item success
+allowlist are unchanged and remain Core-owned; the drift guard's claim is
+untouched. The point is the opposite of a widening: `PolicyError` is a *second*
+authority's taxonomy, and giving it its own coordinate is what stops it being
+rendered into Core's `reason`, where no reader could tell which authority spoke
+(issue #637). **Co-location is not conflation.**
+
+Two properties are structural rather than conventional:
+
+- A request record **always** states one of the three. Absence therefore means
+  exactly one thing — a record predating ADR-MCPRE-066 — and in particular
+  *nobody asked* is a state, not an absence. An unconfigured proxy's record is
+  distinguishable from a policy-protected one's, which is the whole reason
+  ADR-MCPRE-065 built three postures instead of a boolean.
+- A **response** record carries no authorization coordinate. Authorization is
+  request-side; a response does not represent a second decision.
+
 **Enforcement.** A CI drift guard
 (`//mcp-re-conformance:audit_vocabulary_guard_test`, ADR-MCPS-035) reads
 `error.rs` and `audit.rs` from disk and FAILS if any audit rejection `reason` is
 not a member of `McpReError::wire_code()`, if the success set is not exactly the
 two-item allowlist, or if an `authorization_hash_mismatch` notion reappears as an
-audit reason.
+audit reason. `scripts/refusal_provenance_gate.py` (ADR-MCPRE-066) additionally
+holds the two structural properties above and asserts `PolicyError` has no route
+into the Core taxonomy.
 
 ## 10. v0.5 owner sign-off (proposal-readiness)
 
