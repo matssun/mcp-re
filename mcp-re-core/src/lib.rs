@@ -27,12 +27,16 @@
 // ADR-MCPRE-061 Amendment 1 §3.1 — this crate holds no production `unsafe`, and `forbid`
 // (unlike `deny`) cannot be overridden by an inner `#[allow]` anywhere in it. Acquiring
 // `unsafe` here means deleting this line: an architectural decision, reviewed as one.
-// QUALIFIED on this crate: `--features verify` expands Verus `assume_specification`
-// items into `unsafe fn` declarations (`verus_std_specs.rs`), so the crate is not
-// unsafe-free under the prover. That feature cannot reach a shipped build — the
-// crate itself raises a `compile_error!` if cargo enables it, and only
+// QUALIFIED on this crate: under `--features verify` the standard-library
+// specification stubs in `verus_std_specs.rs` expand to `unsafe fn` declarations, so the
+// crate is not unsafe-free under the prover. That feature cannot reach a shipped build —
+// the crate raises a `compile_error!` if cargo enables it, and only
 // `tools/verification/verify-verus` under the pinned prover may turn it on — so the
 // property this states is: no `unsafe` in any build of this crate that can ship.
+//
+// The wording avoids naming the Verus spec-stub macro: `check-assumptions` text-scans
+// for that token and would read this comment as proof text living outside any declared
+// `verification.toml` unit.
 #![cfg_attr(not(feature = "verify"), forbid(unsafe_code))]
 #[cfg(all(feature = "verify", not(verus_keep_ghost)))]
 compile_error!(
