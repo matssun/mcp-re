@@ -52,6 +52,8 @@ use mcp_re_proxy::async_inner::AsyncInnerServer;
 use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve::ServedHttpRequest;
+use mcp_re_proxy::authorization::AuthorizationFacet;
+use mcp_re_proxy::authorization::AuthorizationRefusalFacet;
 use mcp_re_proxy::authorization::PdpDecisionEvaluator;
 use mcp_re_proxy::authorization::PdpDecisionPolicy;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
@@ -291,6 +293,17 @@ fn proxy_with(
 
 fn proxy(calls: Arc<AtomicUsize>) -> HttpProfileProxy {
     proxy_with(DecisionScope::Principal, PDP_KID, calls)
+}
+
+/// Serve, and hand back the audit records the exchange produced.
+async fn serve_recorded(
+    p: HttpProfileProxy,
+    req: HttpRequest,
+) -> (u16, Vec<mcp_re_proxy::AuditRecord>) {
+    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
+    let p = p.with_audit_sink(sink.clone());
+    let (status, _) = serve(&p, req).await;
+    (status, sink.records())
 }
 
 async fn serve(p: &HttpProfileProxy, req: HttpRequest) -> (u16, String) {
@@ -739,5 +752,109 @@ async fn the_sdk_producer_cannot_build_the_half_pair_this_pep_refuses() {
         calls.load(Ordering::SeqCst),
         0,
         "a binding with no document authorizes nothing"
+    );
+}
+
+// --- ADR-MCPRE-066 Slice 1: what the audit record says about authorization ------------
+//
+// Issue #637 measured the defect these controls close: with only Core's `reason` field, a
+// policy denial and a Core verification failure are the same record shape, and a policy
+// GRANT leaves no trace at all. The facet is a second coordinate, and these assert what
+// each authority is entitled to put in it.
+
+#[tokio::test]
+async fn an_authorized_request_records_which_policy_permitted_what() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let d = issue(&decision_for(Some("read"), "tools/call"), &pdp_key());
+    let (status, records) = serve_recorded(
+        proxy(Arc::clone(&calls)),
+        signed_call("read", "n-audit-grant", Some(&d)),
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    let accepted = records
+        .iter()
+        .find(|r| r.event().event_type == "mcp-re.request.accepted")
+        .expect("the admitted request is recorded");
+    let mcp_re_proxy::AuditSubject::Request { authorization, .. } = &accepted.subject else {
+        panic!("a request record");
+    };
+    let AuthorizationFacet::Authorized(a) = authorization else {
+        panic!("a policy permitted this, and the record must say so: {authorization:?}");
+    };
+    // Who decided, under which policy, over what — none of it reconstructed here. The
+    // authority is the PDP that issued the decision, not this proxy: an operator asking
+    // "why was this permitted" is pointed at the party that answered.
+    assert_eq!(a.authority, "did:example:pdp");
+    assert_eq!(a.action.operation(), "tools/call");
+    assert_eq!(a.action.target().named(), Some("read"));
+    assert!(
+        !a.attributable_to.digest_value.is_empty(),
+        "the record names the exchange the decision was taken for"
+    );
+    // Invariant 7: naming the evidence costs no byte of the decision document.
+    assert!(!format!("{a:?}").contains(&d));
+}
+
+#[tokio::test]
+async fn a_policy_denial_is_recorded_as_a_policy_denial_and_not_merely_as_a_rejection() {
+    // THE #637 property. Core's `reason` cannot distinguish these two records; the
+    // authorization coordinate can, and an operator reading it is not sent to inspect a
+    // grant that was never consulted.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut claims = decision_for(Some("read"), "tools/call");
+    claims.mcp_re_decision = PdpDecisionOutcome::Deny;
+    let d = issue(&claims, &pdp_key());
+    let (status, records) = serve_recorded(
+        proxy(Arc::clone(&calls)),
+        signed_call("read", "n-audit-deny", Some(&d)),
+    )
+    .await;
+    assert_eq!(status, 403);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+    let rejected = records
+        .iter()
+        .find(|r| r.event().event_type == "mcp-re.request.rejected")
+        .expect("the denial is recorded");
+    let mcp_re_proxy::AuditSubject::Request { authorization, .. } = &rejected.subject else {
+        panic!("a request record");
+    };
+    assert!(
+        matches!(
+            authorization,
+            AuthorizationFacet::Refused(AuthorizationRefusalFacet::ByPolicy(_))
+        ),
+        "a policy decided and denied: {authorization:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_request_refused_before_any_policy_ran_is_not_attributed_to_one() {
+    // The other half of the same distinction. This request never presented a decision, so
+    // the PDP profile refuses — but the refusal IS a policy verdict, so it must not be
+    // confused with a request that failed before authorization was reached. A replay is
+    // that second case, and `delegated_client_server_e2e_test` pins it; here the point is
+    // that these two do not project to the same facet.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (status, records) = serve_recorded(
+        proxy(Arc::clone(&calls)),
+        signed_call("read", "n-audit-none", None),
+    )
+    .await;
+    assert_eq!(status, 403);
+
+    let rejected = records
+        .iter()
+        .find(|r| r.event().event_type == "mcp-re.request.rejected")
+        .expect("the refusal is recorded");
+    let mcp_re_proxy::AuditSubject::Request { authorization, .. } = &rejected.subject else {
+        panic!("a request record");
+    };
+    assert_ne!(
+        authorization,
+        &AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy),
+        "the configured profile reached a verdict; the record must not say none did"
     );
 }

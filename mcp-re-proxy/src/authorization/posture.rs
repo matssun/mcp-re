@@ -20,6 +20,8 @@
 //! collapse here would make an unconfigured proxy indistinguishable from a policy-protected
 //! one in every record either produces.
 
+use super::audit::AuthorizationAttribution;
+use super::audit::AuthorizationFacet;
 use super::grant::GrantAttribution;
 use super::request::AuthorizationRequest;
 
@@ -50,6 +52,20 @@ impl AuthorizedRequestFacts {
     pub fn granted(&self) -> &GrantAttribution {
         &self.granted
     }
+
+    /// What an audit record may say about this authorization (ADR-MCPRE-066 Slice 1).
+    ///
+    /// A NAMED projection, produced by the owner from its own private representation. The
+    /// composition root never destructures these facts and never re-derives one: R-COMPOSE
+    /// is satisfied by there being exactly one call, not by the caller being careful.
+    pub fn audit_attribution(&self) -> AuthorizationAttribution {
+        AuthorizationAttribution {
+            authority: self.granted.authority().to_owned(),
+            version: self.granted.version().to_owned(),
+            action: self.request.action().clone(),
+            attributable_to: self.request.evidence().clone(),
+        }
+    }
 }
 
 /// What this deployment claims about a request's permission.
@@ -75,6 +91,21 @@ impl AuthorizationPosture {
             AuthorizationPosture::Authorized(facts) => Some(facts),
         }
     }
+
+    /// What an audit record may say about this posture (ADR-MCPRE-066 Slice 1).
+    ///
+    /// The projection is total and keeps the postures apart, which is the point: nothing on
+    /// the record path can turn *no policy is deployed* into *a policy permitted this*
+    /// (ADR-MCPRE-066 §1.1). A refusal is not reachable from here — it is the `Err` half of
+    /// the operation that produces this type, and projects itself.
+    pub fn audit_facet(&self) -> AuthorizationFacet {
+        match self {
+            AuthorizationPosture::NoPolicyConfigured => AuthorizationFacet::NotConfigured,
+            AuthorizationPosture::Authorized(facts) => {
+                AuthorizationFacet::Authorized(facts.audit_attribution())
+            }
+        }
+    }
 }
 
 // Everything below is test code. The `#[cfg(test)]` marker lives HERE because it is the
@@ -82,6 +113,7 @@ impl AuthorizationPosture {
 #[cfg(test)]
 mod tests {
     use super::AuthorizationPosture;
+    use crate::authorization::audit::AuthorizationFacet;
 
     #[test]
     fn an_unconfigured_deployment_does_not_report_an_authorization() {
@@ -90,5 +122,15 @@ mod tests {
         assert!(AuthorizationPosture::NoPolicyConfigured
             .authorized()
             .is_none());
+    }
+
+    #[test]
+    fn the_audit_projection_keeps_off_and_allow_apart() {
+        // The same distinction one layer down. If this ever yields `Authorized`, every
+        // record an unauthorized deployment writes claims a permission nobody granted.
+        assert_eq!(
+            AuthorizationPosture::NoPolicyConfigured.audit_facet(),
+            AuthorizationFacet::NotConfigured
+        );
     }
 }

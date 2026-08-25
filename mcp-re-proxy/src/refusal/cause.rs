@@ -9,7 +9,9 @@
 use mcp_re_core::McpReError;
 use mcp_re_http_profile::HttpProfileError;
 
+use crate::authorization::AuthorizationFacet;
 use crate::authorization::AuthorizationRefusal;
+use crate::authorization::AuthorizationRefusalFacet;
 use crate::http_profile_dispatch::ProxyDispatchError;
 
 /// Which authority refused, and its own verdict in its own vocabulary.
@@ -70,6 +72,25 @@ impl RefusalCause {
         match self {
             RefusalCause::Core(v) => v.wire_code(),
             RefusalCause::Authorization(r) => r.wire_code(),
+        }
+    }
+
+    /// What the authorization authority may say about a request refused for this cause
+    /// (ADR-MCPRE-066 Slice 1).
+    ///
+    /// Total, and it is the reason Slice 0 kept the cause typed. Every Core arm projects to
+    /// `BeforePolicy` — a request whose signature did not verify, whose nonce replayed, or
+    /// whose dispatch failed reached no policy, and the record's Core-owned `reason` already
+    /// says what did go wrong. The authorization arm asks the authorization authority, which
+    /// is the only one that can tell *no verdict was reached* from *a policy denied*.
+    ///
+    /// This composes; it does not decide. Neither authority's vocabulary is read here.
+    pub(crate) fn authorization_facet(&self) -> AuthorizationFacet {
+        match self {
+            RefusalCause::Core(_) => {
+                AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy)
+            }
+            RefusalCause::Authorization(r) => r.audit_facet(),
         }
     }
 }
@@ -141,6 +162,42 @@ mod tests {
         assert_ne!(before, by);
         assert!(matches!(before, RefusalCause::Authorization(_)));
         assert_eq!(before.wire_code(), "mcp-re.digest_mismatch");
+    }
+
+    #[test]
+    fn a_core_verdict_never_attributes_a_refusal_to_a_policy() {
+        // A request that failed verification reached no policy. Saying anything else on the
+        // record would send an operator to inspect a grant that was never consulted.
+        use crate::authorization::AuthorizationFacet;
+        use crate::authorization::AuthorizationRefusalFacet;
+        for c in [
+            RefusalCause::from(McpReError::ReplayDetected),
+            RefusalCause::from(HttpProfileError::InvalidSignature),
+            RefusalCause::from(ProxyDispatchError::NoDeclaredReplayTier),
+        ] {
+            assert_eq!(
+                c.authorization_facet(),
+                AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy)
+            );
+        }
+    }
+
+    #[test]
+    fn a_policy_denial_reaches_the_record_as_policy_provenance() {
+        // The end-to-end property Slice 0 preserved and Slice 1 spends: the token the
+        // policy authority produced arrives at the composition boundary still attributed
+        // to the policy authority, in its own coordinate.
+        use crate::authorization::AuthorizationFacet;
+        use crate::authorization::AuthorizationRefusalFacet;
+        let c = RefusalCause::from(AuthorizationRefusal::PolicyRefused(
+            PolicyError::AuthorizationScopeDenied,
+        ));
+        assert_eq!(
+            c.authorization_facet(),
+            AuthorizationFacet::Refused(AuthorizationRefusalFacet::ByPolicy(
+                PolicyError::AuthorizationScopeDenied
+            ))
+        );
     }
 
     #[test]

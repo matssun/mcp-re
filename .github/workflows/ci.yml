@@ -191,8 +191,9 @@ jobs:
           python3 scripts/serving_identity_provenance_gate.py
           python3 scripts/authorization_provenance_gate.py --selftest
           python3 scripts/authorization_provenance_gate.py
-          # ADR-MCPRE-066 Slice 0: a refusal carries its authority, not a rendered token,
-          # and PolicyError has no route into the Core taxonomy.
+          # ADR-MCPRE-066 Slice 0/1: a refusal carries its authority, not a rendered token;
+          # PolicyError has no route into the Core taxonomy; and the record states each
+          # authority's outcome in its own coordinate.
           python3 scripts/refusal_provenance_gate.py --selftest
           python3 scripts/refusal_provenance_gate.py
 

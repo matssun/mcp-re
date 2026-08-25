@@ -26,17 +26,22 @@
 //! including the stages that never consulted Core.
 //!
 //! [`HttpProfileError`] projects into Core because that relationship is a ratified invariant
-//! — `crate::core_projection` carries the exhaustive projection and the test that it agrees
-//! with the ratified `wire_code()`. **`PolicyError` has no such projection and may never
-//! acquire one**: an authorization refusal must arrive at the audit boundary still recognizably
-//! authorization provenance.
+//! — the conformance guard asserts every one of its `wire_code()` tokens is a frozen Core
+//! token. **`PolicyError` has no such projection and may never acquire one**: an
+//! authorization refusal must arrive at the audit boundary still recognizably authorization
+//! provenance.
 //!
-//! ## What this module does NOT decide
+//! ## What this module renders, and what it does not
 //!
-//! How audit represents any of it. Slice 0 is semantically neutral by contract: it preserves
-//! what the stages decided and leaves the representation to ADR-MCPRE-066 Slice 1. The only
-//! rendering here is [`RefusalCause::wire_code`], which serves the public code at the
-//! presentation boundary exactly as before — this slice is observably a no-op on the wire.
+//! Two projections, and they answer different questions. [`RefusalCause::wire_code`] serves
+//! the public code at the presentation boundary, exactly as the string did.
+//! `RefusalCause::authorization_facet` answers what the AUTHORIZATION authority may say
+//! about the same refusal — the question the pre-rendered string made unanswerable.
+//!
+//! What is still not decided here: Core's own audit `reason`. It remains
+//! `request_rejected_code(wire_code)`, so an authorization refusal's token still reaches
+//! that field as well as its own coordinate. Closing that is ADR-MCPRE-066 Slice 2's
+//! structural containment, and Slice 1 does not claim it.
 
 mod cause;
 

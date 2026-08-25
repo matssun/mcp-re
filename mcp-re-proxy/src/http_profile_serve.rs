@@ -297,16 +297,21 @@ impl HttpProfileProxy {
     }
 
     /// Emit one audit record, if a sink is installed.
+    ///
+    /// `subject` decides which authorities the record carries: a request record states an
+    /// authorization outcome, a response record has none to state (ADR-MCPRE-066 R5). The
+    /// choice is made by the caller that knows which half of the exchange it is reporting,
+    /// and the type refuses the other combination.
     fn audit(
         &self,
-        event: mcp_re_core::audit::AuditEvent,
+        subject: crate::audit_record::AuditSubject,
         actor_id: Option<String>,
         status: u16,
         now: i64,
     ) {
         if let Some(sink) = &self.audit {
-            sink.record(&crate::audit_sink::AuditRecord {
-                event,
+            sink.record(&crate::audit_record::AuditRecord {
+                subject,
                 actor_id,
                 status,
                 at_unix: now,
@@ -563,6 +568,7 @@ impl HttpProfileProxy {
             ex.now,
             bound,
             actor,
+            refusal.cause.authorization_facet(),
             execution,
             ex.key.clone(),
         )
@@ -628,7 +634,9 @@ impl HttpProfileProxy {
                 // and it is returned on this line — so the record describes bytes the
                 // client actually receives.
                 self.audit(
-                    mcp_re_core::audit::AuditEvent::response_signed(),
+                    crate::audit_record::AuditSubject::response(
+                        mcp_re_core::audit::AuditEvent::response_signed(),
+                    ),
                     Some(actor_id),
                     202,
                     now,
@@ -1344,6 +1352,7 @@ impl HttpProfileProxy {
                     now,
                     None,
                     None,
+                    refusal.cause.authorization_facet(),
                     Self::disposition(&progress),
                     None,
                 )
@@ -1460,7 +1469,13 @@ impl HttpProfileProxy {
         // request was admitted, so a `request.rejected` record would contradict this one,
         // and the fault is on the response side anyway.
         self.audit(
-            mcp_re_core::audit::AuditEvent::request_accepted(),
+            crate::audit_record::AuditSubject::request(
+                mcp_re_core::audit::AuditEvent::request_accepted(),
+                // The live product, asked for its own projection. Nothing here reconstructs
+                // an authorization fact, and an unconfigured deployment says so rather than
+                // reading as an allow (ADR-MCPRE-066 §1.1, invariant 5).
+                authorized.audit_facet(),
+            ),
             Some(actor_id.clone()),
             200,
             now,
@@ -1609,7 +1624,9 @@ impl HttpProfileProxy {
         // response, and a `response.signed` record for bytes the client never received is
         // exactly the kind of contradiction that makes an audit stream unusable.
         self.audit(
-            mcp_re_core::audit::AuditEvent::response_signed(),
+            crate::audit_record::AuditSubject::response(
+                mcp_re_core::audit::AuditEvent::response_signed(),
+            ),
             Some(actor_id),
             response.status,
             now,
@@ -1715,11 +1732,15 @@ impl HttpProfileProxy {
         now: i64,
         bound: Option<&RequestEvidence>,
         actor_id: Option<String>,
+        authorization: crate::authorization::AuthorizationFacet,
         execution: ExecutionDisposition,
         snapshot: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
     ) -> ServedHttpResponse {
         self.audit(
-            mcp_re_core::audit::AuditEvent::request_rejected_code(wire_code),
+            crate::audit_record::AuditSubject::request(
+                mcp_re_core::audit::AuditEvent::request_rejected_code(wire_code),
+                authorization,
+            ),
             actor_id,
             status,
             now,
@@ -1749,7 +1770,9 @@ impl HttpProfileProxy {
         snapshot: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
     ) -> ServedHttpResponse {
         self.audit(
-            mcp_re_core::audit::AuditEvent::response_rejected_code(wire_code),
+            crate::audit_record::AuditSubject::response(
+                mcp_re_core::audit::AuditEvent::response_rejected_code(wire_code),
+            ),
             actor_id,
             status,
             now,

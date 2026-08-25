@@ -513,16 +513,29 @@ Frozen. Each slice has an independent correctness criterion, so a failure is att
 ```text
 Slice 0   typed Refusal — preserve authority provenance across the stage boundary
           NO audit schema change · NO vocabulary widening
+          MERGED b9246fe (#643, issue #642)
               v
 Slice 1   the authorization audit facet
           NotConfigured | Authorized | Refused, projected from the live sealed product
               v
 Slice 2   close the remaining untyped audit escape hatches; containment becomes structural
+          INCLUDING the deferred HttpProfileError -> McpReError projection and the
+          wire_code derivation that makes room for it
               v
           only afterwards may wiring a production evaluator be considered
 ```
 
-Whether Slices 1 and 2 share a PR is decided **after** Slice 0, not now.
+**Slices 1 and 2 do not share a PR.** Ruled after Slice 0, on evidence Slice 0 produced.
+Slice 2 has an internal dependency chain of its own — structural containment, the deferred
+projection, and deriving `wire_code` from it rather than duplicating it beside it, where the
+derivation is what creates the room under `mcp-re-http-profile/src/error.rs`'s pinned
+baseline. Slice 1 depends on none of that. They are adjacent; they are not one atomic
+change. Slice 1 changes what authorization facts exist; Slice 2 changes how facts and
+failures are structurally contained and projected.
+
+After Slice 2 is complete and measured, **stop again.** An evaluator is a subsequent
+implementation decision, not an automatic next step: this ADR establishes the model and the
+containment first.
 
 ### 9.1 Slice 0 contract — semantically neutral
 
@@ -561,6 +574,50 @@ recognizably authorization provenance. That is the entire value of Slice 0.
 
 Only the final presentation boundary renders a public code.
 
+### 9.3 Slice 1 contract — the facet, and only the facet
+
+Slice 1 spends what Slice 0 preserved. It adds the authorization coordinate to the record
+and nothing else.
+
+```text
+AuthorizationFacet
+    NotConfigured
+    Authorized(authority · version · action · evidence handle)
+    Refused
+        BeforePolicy
+        ByPolicy(PolicyError)
+```
+
+**It must not:** pull forward structural containment · project `HttpProfileError` onto
+`McpReError` · derive `wire_code` · expand the audit drift guard's inputs · wire a production
+evaluator · widen any Core vocabulary.
+
+What it therefore leaves standing, named in the code rather than left to be discovered: an
+authorization refusal's `wire_code()` still reaches Core's `reason` through
+`request_rejected_code`. Slice 1 adds the second coordinate; it does not close the first,
+and it does not claim to. That is invariant 8/9 and it is Slice 2's.
+
+**The record kind is two arms, not three.** §4.3 draws `KeyLifecycleRecord` beside the other
+two, and it is not implemented, because it never used this type: the ADR-MCPRE-052 §7
+lifecycle events are emitted by the custody layer as bare `AuditEvent`s on its own path. An
+arm nothing constructs would model a producer that does not exist.
+
+**The projection is one call per owner.** `AuthorizationPosture::audit_facet`,
+`AuthorizedRequestFacts::audit_attribution`, `AuthorizationRefusal::audit_facet`,
+`RefusalCause::authorization_facet`. §4.4 asks whether the path destructures the sealed
+product or asks it for a named projection; the answer is one named projection, written in
+the owner's own module where it reads the private representation, so the composition root
+holds a single call rather than four accessor reads it then assembles (R-COMPOSE).
+
+**What Slice 1 does not carry.** No decision-evidence identity: §4.4 names the
+`BoundDecisionEvidence` digest, and no mechanism states it. `GrantAttribution` returns
+authority and version; deriving a decision digest at the audit site would re-derive
+(invariant 5) and would arrive as an `Option` whose `None` means both *no decision was
+presented* and *no decision profile is running* — the shape `grant.rs` already refused for
+expiry. It arrives with the first production mechanism, typed by what that mechanism can
+establish. Until then the record answers *which exchange* with the request evidence handle
+every other authority on this path attributes by.
+
 ### 9.2 Slice 0's two poison pills
 
 Mechanical, so the invariant is established before B depends on it:
@@ -582,16 +639,30 @@ Two of round 1's five are now closed:
 - **Q5 — migration of already-written records.** RESOLVED by R2-P4: the product persists no
   audit record, so there is no stored corpus to migrate.
 
-Still open, and none of them blocks Slice 0:
+Resolved by Slice 1:
 
-1. Does an `Authorized` record need the operation *and* the target, or does R2's coordinate
-   admit a narrower projection still sufficient to answer *what was authorized*?
-2. Should a request record carry an explicit schema version rather than relying on
+- **Q1 — operation *and* target?** Both, and the target keeps its own three states. The
+  facet carries the whole `VerifiedAuthorizationAction` rather than a narrower projection,
+  because that type is already the evaluated coordinate — narrowing it at the record would
+  be a second representation of a fact an owner decided. The one place a narrowing was
+  tempting is the diagnostic line, where `AuthorizationTarget::named()` answers `None` for
+  both *names no target* and *names one and the body carried none*; the record renders the
+  three states apart, since a reader holding only the record could not recover the
+  difference.
+- **Q3 — the response side of a refused request.** Nothing changes there.
+  `response.rejected` is not emitted for a request-side refusal at all — the refusal posture
+  decides which of the two events is correct — and where a response record *is* emitted, R5
+  is now structural: the type carries no authorization coordinate to duplicate.
+- **Q4 — one PR or two?** Two. See §9.
+
+Still open, and neither blocks Slice 1:
+
+1. Should a request record carry an explicit schema version rather than relying on
    field-presence as R3's discriminator? Field-presence works and R2-P4 makes it cheap, but it
    is an inference where a version would be a statement.
-3. What does the response side do when a request was `Refused` — is `response.rejected`'s
-   existing reason sufficient, given R5 forbids duplicating the facet there?
-4. Do Slices 1 and 2 share a PR? Decided after Slice 0.
+2. Does the diagnostic `key=value` rendering want a structured (JSON) audit sink before the
+   facet has more than one consumer? The vocabulary is stable either way; this is about the
+   sink, not the algebra.
 
 ## 11. Explicitly not in this ADR
 

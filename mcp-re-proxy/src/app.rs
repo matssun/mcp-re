@@ -1399,8 +1399,11 @@ mod tests {
             // Attributed records, so the unattributed ceiling cannot drop any of them and
             // an absent seq means "lost at exit" rather than "refused by the queue".
             for i in 0..BATCH {
-                crate::audit_sink::StderrAuditSink.record(&crate::audit_sink::AuditRecord {
-                    event: AuditEvent::request_accepted(),
+                crate::audit_sink::StderrAuditSink.record(&crate::audit_record::AuditRecord {
+                    subject: crate::audit_record::AuditSubject::request(
+                        AuditEvent::request_accepted(),
+                        crate::authorization::AuthorizationFacet::NotConfigured,
+                    ),
                     actor_id: Some("teardown-actor".to_string()),
                     status: 200,
                     at_unix: i as i64,

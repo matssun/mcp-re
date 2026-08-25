@@ -23,28 +23,7 @@
 
 use std::sync::Arc;
 
-use mcp_re_core::audit::AuditEvent;
-
-/// One audit record: the frozen event plus the attribution context the serving path
-/// knows at that exit.
-///
-/// `actor_id` is the VERIFIER-RESOLVED actor for an accepted request (the same value
-/// the continuation key is domain-separated by), and `None` when the request was
-/// rejected before an actor could be resolved — which is itself the useful signal, so
-/// it is represented rather than defaulted to a placeholder.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuditRecord {
-    /// The frozen event (type + decision + `mcp-re.*` reason for a rejection).
-    pub event: AuditEvent,
-    /// The verifier-resolved actor id, when one was established before this exit.
-    pub actor_id: Option<String>,
-    /// The HTTP status the PEP returned alongside this decision.
-    pub status: u16,
-    /// Unix seconds at the decision, taken from the serving path's clock (never a
-    /// second, independently-read clock — two clocks would let the record disagree
-    /// with the freshness decision it describes).
-    pub at_unix: i64,
-}
+use crate::audit_record::AuditRecord;
 
 /// A sink for [`AuditRecord`]s.
 ///
@@ -218,16 +197,20 @@ pub fn flush_stderr_audit(timeout: std::time::Duration) -> bool {
 impl AuditSink for StderrAuditSink {
     fn record(&self, record: &AuditRecord) {
         let seq = STDERR_AUDIT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // Each authority renders its own fields (`AuditSubject::audit_fields`); this sink
+        // formats only the ones every record shares. A sink that interpreted the
+        // authorization coordinate would be a third place the two vocabularies could merge.
         let line = format!(
             "mcp-re-proxy: audit seq={} event={} decision={:?} reason={} actor={} \
-             status={} at={}",
+             status={} at={} {}",
             seq,
-            record.event.event_type,
-            record.event.decision,
-            record.event.reason.unwrap_or("-"),
+            record.event().event_type,
+            record.event().decision,
+            record.event().reason.unwrap_or("-"),
             record.actor_id.as_deref().unwrap_or("-"),
             record.status,
             record.at_unix,
+            record.subject.audit_fields(),
         );
         offer(
             stderr_audit_writer(),
@@ -332,26 +315,36 @@ pub type MaybeAuditSink = Option<Arc<dyn AuditSink>>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audit_record::AuditSubject;
+    use crate::authorization::AuthorizationFacet;
+    use crate::authorization::AuthorizationRefusalFacet;
+    use mcp_re_core::audit::AuditEvent;
 
     #[test]
     fn the_collector_preserves_emission_order() {
         let sink = CollectingAuditSink::new();
         sink.record(&AuditRecord {
-            event: AuditEvent::request_accepted(),
+            subject: AuditSubject::request(
+                AuditEvent::request_accepted(),
+                AuthorizationFacet::NotConfigured,
+            ),
             actor_id: Some("actor-a".into()),
             status: 200,
             at_unix: 10,
         });
         sink.record(&AuditRecord {
-            event: AuditEvent::request_rejected_code("mcp-re.replay_detected"),
+            subject: AuditSubject::request(
+                AuditEvent::request_rejected_code("mcp-re.replay_detected"),
+                AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy),
+            ),
             actor_id: None,
             status: 403,
             at_unix: 11,
         });
         let records = sink.records();
         assert_eq!(records.len(), 2);
-        assert_eq!(records[0].event.event_type, "mcp-re.request.accepted");
-        assert_eq!(records[1].event.reason, Some("mcp-re.replay_detected"));
+        assert_eq!(records[0].event().event_type, "mcp-re.request.accepted");
+        assert_eq!(records[1].event().reason, Some("mcp-re.replay_detected"));
     }
 
     /// R7-C145: the emission must never wait on the reader. `record` is reached from
@@ -500,13 +493,19 @@ mod tests {
     fn every_record_carries_a_sequence_number() {
         let first = STDERR_AUDIT_SEQ.load(std::sync::atomic::Ordering::SeqCst);
         StderrAuditSink.record(&AuditRecord {
-            event: AuditEvent::request_accepted(),
+            subject: AuditSubject::request(
+                AuditEvent::request_accepted(),
+                AuthorizationFacet::NotConfigured,
+            ),
             actor_id: Some("actor-a".into()),
             status: 200,
             at_unix: 10,
         });
         StderrAuditSink.record(&AuditRecord {
-            event: AuditEvent::request_rejected_code("mcp-re.replay_detected"),
+            subject: AuditSubject::request(
+                AuditEvent::request_rejected_code("mcp-re.replay_detected"),
+                AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy),
+            ),
             actor_id: None,
             status: 403,
             at_unix: 11,
@@ -526,7 +525,7 @@ mod tests {
     #[test]
     fn the_no_audit_sink_records_nothing_and_does_not_panic() {
         NoAuditSink.record(&AuditRecord {
-            event: AuditEvent::response_signed(),
+            subject: AuditSubject::response(AuditEvent::response_signed()),
             actor_id: None,
             status: 200,
             at_unix: 1,

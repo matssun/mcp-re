@@ -49,6 +49,7 @@ _PROXY_LIB_SRCS = [
     "src/authorization/dispatch.rs",
     "src/authorization/evaluator.rs",
     "src/authorization/grant.rs",
+    "src/authorization/audit.rs",
     "src/authorization/posture.rs",
     "src/authorization/request.rs",
     "src/authorization/serving.rs",
@@ -199,6 +200,7 @@ _PROXY_LIB_SRCS = [
     "src/lib.rs",
     # ADR-MCPS-035: the serving path's audit emission seam (admitted actor, rejection
     # wire code, response signing key). Pure std, no feature gate — always compiled.
+    "src/audit_record.rs",
     "src/audit_sink.rs",
     # Inner-server lifecycle logging seam (transport-agnostic; used by the async
     # dispatch path). Split out of inner_launch so it stays in the PEP when the

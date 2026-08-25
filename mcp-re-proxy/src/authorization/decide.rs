@@ -9,6 +9,8 @@
 use mcp_re_core::McpReError;
 use mcp_re_policy::PolicyError;
 
+use super::audit::AuthorizationFacet;
+use super::audit::AuthorizationRefusalFacet;
 use super::evaluator::AuthorizationEvaluator;
 use super::posture::AuthorizationPosture;
 use super::posture::AuthorizedRequestFacts;
@@ -52,6 +54,28 @@ impl AuthorizationRefusal {
             AuthorizationRefusal::PolicyRefused(e) => e.wire_code(),
         }
     }
+
+    /// What an audit record may say about this refusal (ADR-MCPRE-066 Slice 1).
+    ///
+    /// The projection [`wire_code`](Self::wire_code) cannot make. Both arms render *Core*
+    /// tokens — the action arm deliberately, the policy arm because `PolicyError` mints
+    /// `mcp-re.*` too — so a reader holding the rendered string cannot tell whether a policy
+    /// was ever consulted. The facet answers exactly that, and carries the policy's own
+    /// verdict in the authorization coordinate rather than in Core's `reason`.
+    ///
+    /// No attribution accompanies `ByPolicy`: the evaluator seam returns a `PolicyError` and
+    /// no `GrantAttribution`, so *which* policy denied is a fact no mechanism states yet. It
+    /// is not invented here.
+    pub fn audit_facet(&self) -> AuthorizationFacet {
+        match self {
+            AuthorizationRefusal::ActionNotVerifiable(_) => {
+                AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy)
+            }
+            AuthorizationRefusal::PolicyRefused(e) => {
+                AuthorizationFacet::Refused(AuthorizationRefusalFacet::ByPolicy(e.clone()))
+            }
+        }
+    }
 }
 
 /// Decide what this deployment may say about a request's permission.
@@ -90,6 +114,8 @@ mod tests {
     use super::authorize;
     use super::AuthorizationRefusal;
     use crate::authorization::action_harness::verified_over;
+    use crate::authorization::audit::AuthorizationFacet;
+    use crate::authorization::audit::AuthorizationRefusalFacet;
     use crate::authorization::evaluator::AuthorizationEvaluator;
     use crate::authorization::grant::GrantAttribution;
     use crate::authorization::request::AuthorizationRequest;
@@ -178,6 +204,58 @@ mod tests {
             AuthorizationRefusal::ActionNotVerifiable(AuthorizationActionRefusal::BodyIsNotJson)
         );
         assert_eq!(refusal.wire_code(), "mcp-re.malformed_envelope");
+    }
+
+    #[test]
+    fn a_denial_and_a_missing_coordinate_project_to_different_authorities() {
+        // The facet's reason for existing. Both of these render a `mcp-re.*` token, so the
+        // rendered string cannot tell them apart; the projection can, and says which
+        // authority — if any — actually decided.
+        let verified = verified_over(READ);
+        let denied = authorize(
+            Some(&Always(Err(PolicyError::AuthorizationScopeDenied))),
+            &verified,
+            READ,
+            None,
+        )
+        .expect_err("denied");
+        assert_eq!(
+            denied.audit_facet(),
+            AuthorizationFacet::Refused(AuthorizationRefusalFacet::ByPolicy(
+                PolicyError::AuthorizationScopeDenied
+            ))
+        );
+
+        let junk = b"not json";
+        let unreadable = authorize(
+            Some(&Always(Ok("conformance"))),
+            &verified_over(junk),
+            junk,
+            None,
+        )
+        .expect_err("no coordinate");
+        assert_eq!(
+            unreadable.audit_facet(),
+            AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy),
+            "no policy was consulted, so the record must not attribute this to one"
+        );
+    }
+
+    #[test]
+    fn an_authorized_request_projects_the_grant_and_the_coordinate_it_was_taken_over() {
+        let verified = verified_over(READ);
+        let posture =
+            authorize(Some(&Always(Ok("conformance"))), &verified, READ, None).expect("granted");
+        let AuthorizationFacet::Authorized(a) = posture.audit_facet() else {
+            panic!("a policy permitted this");
+        };
+        assert_eq!(a.authority, "conformance");
+        assert_eq!(a.version, "1");
+        assert_eq!(a.action.operation(), "tools/call");
+        assert_eq!(a.action.target().named(), Some("read"));
+        // The exchange the decision is attributable to, named by a handle rather than by
+        // any of the request's content.
+        assert_eq!(&a.attributable_to, verified.evidence());
     }
 
     #[test]
