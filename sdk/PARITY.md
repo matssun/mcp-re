@@ -41,6 +41,18 @@ extends byte parity from the primitives to the transport.
 
 Ed25519 is deterministic and every input is fixed, so freezing bytes is honest.
 
+`binding_authorization_decision` pins the ADR-MCPRE-065 producer, which emits TWO things
+from one input — the carried document and the `pdp-decision`/`opaque-digest` binding over
+it. Byte parity alone would let both halves drift together into a different but
+self-consistent carrier, so each language additionally reads the pinned case apart and
+recomputes the digest with its own stdlib.
+
+`binding_opaque_bytes` uses `human-approval`, not `pdp-decision`. It pins the GENERIC
+opaque provider, and `pdp-decision` now has semantics that reach the opaque form only
+through the decision producer — keeping it as the arbitrary generic example would leave a
+fixture arguing with the architecture. Nothing in that case claims `human-approval` has a
+typed semantic verifier.
+
 ## Gate 2 — behavioural parity
 
 **Asked:** given identical bytes, do both SDKs *behave* the same?
@@ -59,6 +71,7 @@ behaviour**, in both languages, mirrored:
 | **Continuation** | that a chain is driven to a TERMINAL result; that the answer leg's bytes carry the continuation binding; that an unanswerable pause is refused; that the round ceiling is enforced before the caller is asked; that no correlation entry outlives the chain | `transport_replay` — `elicitation.answer`, replayed in both |
 | **mTLS channel** | that an untrusted root and a wrong-identity certificate are both refused; that response headers keep wire order and repeats | `test_mtls.py` / `mtls.test.ts` — same generated X.509 |
 | **Shutdown** | in-flight work on close, for a request AND a notification; whether a reply can still be delivered | *partially covered* — see below |
+| **Authorization decision** | that the decision document reaches the signed body once, that the binding is derived from its exact bytes against an INDEPENDENT digest oracle, and that the generic opaque provider cannot mint the `pdp-decision` half-pair — at the wrapper AND at the native seam | `test_authorization.py` / `authorization.test.ts` — `authorization decision`, `the generic provider cannot mint half a pair` |
 
 ### The rule
 

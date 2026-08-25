@@ -701,16 +701,16 @@ describe("McpReHttpTransport signing inputs", () => {
   it("passes authorization bindings to the core, which digests the real bytes", async () => {
     // bind-not-interpret: the provider supplies the artifact; the core digests it. The
     // bytes themselves must never appear in the evidence.
-    const material = Buffer.from("pdp-decision-document");
+    const material = Buffer.from("human-approval-record");
     const { poster, calls } = capturingPoster();
     await sendAndCapture(
-      minimalConfig({ authorization: [new OpaqueBytesProvider("pdp-decision", material)] }),
+      minimalConfig({ authorization: [new OpaqueBytesProvider("human-approval", material)] }),
       poster,
     );
 
     const evidence = calls[0].body.toString("utf8");
-    expect(evidence).toContain("pdp-decision");
-    expect(evidence).not.toContain("pdp-decision-document");
+    expect(evidence).toContain("human-approval");
+    expect(evidence).not.toContain("human-approval-record");
     expect(evidence).not.toContain(material.toString("base64url"));
   });
 
@@ -728,7 +728,7 @@ describe("McpReHttpTransport signing inputs", () => {
   it("records the authorization-binding digest on the correlation entry", async () => {
     // ADR-MCPS-044 enumerates it; retained for audit only, never re-interpreted. It must
     // be the digest of the bytes that were SIGNED, not of anything recomputed later.
-    const providers = [new OpaqueBytesProvider("pdp-decision", Buffer.from("doc"))];
+    const providers = [new OpaqueBytesProvider("human-approval", Buffer.from("doc"))];
     const config = minimalConfig({ authorization: providers });
     const signedBindings = bindingsJson(providers, {
       audienceId: config.audienceId,
@@ -744,10 +744,10 @@ describe("McpReHttpTransport signing inputs", () => {
     // two saw a false "artifact binding changed". The Python twin pins these same two
     // strings — that is the point of writing them down.
     expect(signedBindings).toBe(
-      '[{"artifact_type":"pdp-decision","form":"opaque-bytes","material_b64url":"ZG9j"}]',
+      '[{"artifact_type":"human-approval","form":"opaque-bytes","material_b64url":"ZG9j"}]',
     );
     expect((await inspectPending(config)).authzBindingDigest).toBe(
-      "sha-256:czwnl9p6eDzBuZBaI8aHsupsVpiCErQAcahWFp2z7ZI",
+      "sha-256:huucRBvtO7V1Xm8EFbC6ci-xlsf8EYyNZQix9sJx64Q",
     );
   });
 

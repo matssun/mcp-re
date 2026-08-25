@@ -20,12 +20,18 @@
 //! **deferred** from the build (files retained) and rebuilt on RFC 9421 evidence in
 //! a follow-up slice; the request/response evidence seam below is the working core.
 
+pub mod binding_spec;
 mod delegated_evidence;
 pub mod request;
 pub mod request_signing_inputs;
 pub mod response;
 pub mod trust_manifest;
 
+pub use binding_spec::build_authorization;
+pub use binding_spec::BindingForm;
+pub use binding_spec::BindingSpec;
+pub use binding_spec::BindingSpecRefusal;
+pub use binding_spec::ProvidedAuthorization;
 pub use delegated_evidence::DelegatedResponseEvidence;
 pub use request::build_signed_notification;
 pub use request::build_signed_notification_with_signer;

@@ -1,5 +1,51 @@
 {
   "cases": {
+    "binding_authorization_decision": {
+      "expected": {
+        "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifSx7ImFydGlmYWN0X3R5cGUiOiJwZHAtZGVjaXNpb24iLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IjVfS0lxTVV3U1B2djBjVGwtZVkyckE5em05NmkzU0d1ZWxQc1VwNS1iRHcifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJhdXRob3JpemF0aW9uX2RlY2lzaW9uIjoiWm1GclpTMW9aV0ZrWlhJLlptRnJaUzFqYkdGcGJYTS5abUZyWlMxemFXYyIsInByb2ZpbGUiOiJtY3AtcmUtaHR0cC12MSJ9fSwiaWQiOjEsImpzb25ycGMiOiIyLjAiLCJtZXRob2QiOiJ0b29scy9saXN0IiwicGFyYW1zIjp7fX0=",
+        "evidence_digest_alg": "sha256",
+        "evidence_digest_value": "5cWKgKjtl4LrEHU8BBr7JEK--58clWpBs-S2xs_64H0",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "Authorization",
+            "Bearer dpop-token"
+          ],
+          [
+            "Content-Digest",
+            "sha-256=:lUgTk37dTGTVVSyFh++A1Uxqa0+15WBxrH/ukqxhzTY=:"
+          ],
+          [
+            "Signature-Input",
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0008-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+          ],
+          [
+            "Signature",
+            "mcp-re=:IUPc5XFoUeozK9Gyh9d1L4hZ0Ux/DBStBWibkqpm5QHGMkqdiDVblMtV96jwdu8ef4yi6mSqgIzWjNuGeqcJAg==:"
+          ]
+        ],
+        "method": "POST",
+        "target_uri": "https://proxy.internal:8600/mcp"
+      },
+      "inputs": {
+        "audience_id": "did:example:server-1",
+        "bindings_json": "[{\"artifact_type\": \"pdp-decision\", \"form\": \"authorization-decision\", \"material_b64url\": \"Wm1GclpTMW9aV0ZrWlhJLlptRnJaUzFqYkdGcGJYTS5abUZyWlMxemFXYw\"}]",
+        "created": 1700000000,
+        "dpop_token": "dpop-token",
+        "expires": 1700000300,
+        "id_json": "1",
+        "key_id": "key-1",
+        "method": "tools/list",
+        "nonce": "nonce-parity-0008-128bit",
+        "params_json": "{}",
+        "route": null,
+        "seed_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        "target_uri": "https://proxy.internal:8600/mcp"
+      }
+    },
     "binding_authz_system_reference": {
       "expected": {
         "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifSx7ImFydGlmYWN0X3R5cGUiOiJwZHAtZGVjaXNpb24iLCJhdXRob3JpemF0aW9uX3N5c3RlbV9pZCI6ImF1dGh6LTEiLCJiaW5kaW5nX3R5cGUiOiJyZWZlcmVuY2UtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IlZZNjhjUnB5bGZva3RhaXVlbTY5QzJTS1UyUUltbXF6NUlrUnJZeEFQOGciLCJyZWZlcmVuY2Vfc2NoZW1lX2lkIjoic2NoZW1lLTEiLCJyZWZlcmVuY2VfdmFsdWUiOiJncmFudC0xMjMifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoxLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvbGlzdCIsInBhcmFtcyI6e319",
@@ -48,9 +94,9 @@
     },
     "binding_opaque_bytes": {
       "expected": {
-        "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifSx7ImFydGlmYWN0X3R5cGUiOiJwZHAtZGVjaXNpb24iLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IlZZNjhjUnB5bGZva3RhaXVlbTY5QzJTS1UyUUltbXF6NUlrUnJZeEFQOGcifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoxLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvbGlzdCIsInBhcmFtcyI6e319",
+        "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifSx7ImFydGlmYWN0X3R5cGUiOiJodW1hbi1hcHByb3ZhbCIsImJpbmRpbmdfdHlwZSI6Im9wYXF1ZS1kaWdlc3QiLCJkaWdlc3RfYWxnIjoic2hhMjU2IiwiZGlnZXN0X3ZhbHVlIjoiSTVudVpmUmluMWJBNEJVbWxvV2l6QlpEcDk1b2gxRWlEQ3pYMVhkMnlmdyJ9XSwiYXVkaWVuY2UiOnsiYXVkaWVuY2VfaWQiOiJkaWQ6ZXhhbXBsZTpzZXJ2ZXItMSIsInRhcmdldF91cmkiOiJodHRwczovL3Byb3h5LmludGVybmFsOjg2MDAvbWNwIn0sInByb2ZpbGUiOiJtY3AtcmUtaHR0cC12MSJ9fSwiaWQiOjEsImpzb25ycGMiOiIyLjAiLCJtZXRob2QiOiJ0b29scy9saXN0IiwicGFyYW1zIjp7fX0=",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "aZpmwI3IsdyXsC21oLLEkbFTfFt5CVtZZcx_P5Mvo14",
+        "evidence_digest_value": "1dEXUPxyxW-pBm7SXFJhZGCFYqlauSiB50VK2PHR62M",
         "headers": [
           [
             "content-type",
@@ -62,7 +108,7 @@
           ],
           [
             "Content-Digest",
-            "sha-256=:vXWsYaRRZvK4hQzMPya6svlKr/bxjrCqfOP4gPmRThM=:"
+            "sha-256=:3egkUvj/DcG5hdp1vuWNywHpVWlMyiKJVgw8pHwtNEE=:"
           ],
           [
             "Signature-Input",
@@ -70,7 +116,7 @@
           ],
           [
             "Signature",
-            "mcp-re=:0VGjsg3dOQcoW78eMd3ozHbZzzBV4XzhznTbecnNIyAFL18F/bmLNY2qDnVw4oXHGvaQd1WThXNy7aHR+1ThCw==:"
+            "mcp-re=:XzOam3gJXzhCb5RDF4aV+/fKRbsLMMlTHlEaHG3/L8Zdg3ATPloM66wwx7XzRiVYHTeWCUilpvi9vpXBl2s+BQ==:"
           ]
         ],
         "method": "POST",
@@ -78,7 +124,7 @@
       },
       "inputs": {
         "audience_id": "did:example:server-1",
-        "bindings_json": "[{\"artifact_type\": \"pdp-decision\", \"form\": \"opaque-bytes\", \"material_b64url\": \"cGRwLWRlY2lzaW9uLWRvY3VtZW50LXYx\"}]",
+        "bindings_json": "[{\"artifact_type\": \"human-approval\", \"form\": \"opaque-bytes\", \"material_b64url\": \"YXBwcm92ZWQtYnktYWxpY2U\"}]",
         "created": 1700000000,
         "dpop_token": "dpop-token",
         "expires": 1700000300,

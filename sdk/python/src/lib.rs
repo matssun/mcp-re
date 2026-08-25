@@ -13,6 +13,7 @@
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
+use mcp_re_client_core::build_authorization;
 use mcp_re_client_core::build_signed_notification;
 use mcp_re_client_core::build_signed_notification_with_signer;
 use mcp_re_client_core::build_signed_request;
@@ -23,12 +24,12 @@ use mcp_re_client_core::ActorIdentity;
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::ArtifactType;
 use mcp_re_client_core::AudienceTuple;
-use mcp_re_client_core::BindingType;
 use mcp_re_client_core::DelegationPolicy;
 use mcp_re_client_core::HttpContinuation;
 use mcp_re_client_core::HttpProfileError;
 use mcp_re_client_core::HttpRequest;
 use mcp_re_client_core::HttpResponse;
+use mcp_re_client_core::ProvidedAuthorization;
 use mcp_re_client_core::RequestEvidence;
 use mcp_re_client_core::RequestEvidenceDigest;
 use mcp_re_client_core::RequestSigningInputs;
@@ -68,67 +69,6 @@ fn params_object(params_json: &str) -> PyResult<Map<String, Value>> {
     }
 }
 
-/// The binding form a provider asks for (ADR-MCPS-044 §Authorization-binding hook).
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-enum BindingForm {
-    /// The digest is over artifact bytes the client holds.
-    OpaqueBytes,
-    /// The digest is over artifact bytes the client holds, and the record additionally
-    /// names the external authorization system that issued them, for cross-audit.
-    AuthzSystemReference,
-}
-
-/// One provider-supplied artifact binding, before the core digests it.
-///
-/// `material_b64url` is the ARTIFACT ITSELF (base64url, no pad) — never a digest. The
-/// core hashes it, so a caller cannot pass off a precomputed digest as the binding, and
-/// the raw bytes never reach the evidence block.
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "snake_case")]
-struct BindingSpec {
-    artifact_type: ArtifactType,
-    form: BindingForm,
-    material_b64url: String,
-    #[serde(default)]
-    authorization_system_id: Option<String>,
-    #[serde(default)]
-    reference_scheme_id: Option<String>,
-    #[serde(default)]
-    reference_value: Option<String>,
-}
-
-/// Turn provider specs into validated `ArtifactBinding`s, digesting the real material.
-///
-/// Bindings are appended to the built-in DPoP binding, which stays header-derived.
-fn build_bindings(bindings_json: &str) -> PyResult<Vec<ArtifactBinding>> {
-    let specs: Vec<BindingSpec> = serde_json::from_str(bindings_json).map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("invalid bindings json: {e}"))
-    })?;
-    specs
-        .into_iter()
-        .map(|s| {
-            let material = mcp_re_core::b64url_decode(&s.material_b64url).map_err(|_| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "artifact material must be base64url (no pad)",
-                )
-            })?;
-            // The core digests the artifact; the caller never supplies digest_value.
-            let mut b = ArtifactBinding::opaque_digest(s.artifact_type, &material);
-            if matches!(s.form, BindingForm::AuthzSystemReference) {
-                b.binding_type = BindingType::ReferenceDigest;
-                b.authorization_system_id = s.authorization_system_id;
-                b.reference_scheme_id = s.reference_scheme_id;
-                b.reference_value = s.reference_value;
-            }
-            // Fail closed on a malformed shape: an opaque binding carrying reference
-            // fields, or a reference binding missing any of them.
-            b.validate().map_err(err)?;
-            Ok(b)
-        })
-        .collect()
-}
-
 /// The RFC 9421 signing inputs shared by both custody paths: the signed audience
 /// tuple, the DPoP artifact binding whose credential is the covered `Authorization`
 /// header, and — for an ADR-MCPS-047 MRTR answer leg — the signed continuation.
@@ -152,7 +92,7 @@ fn signing_inputs(
     cont_irr_alg: Option<String>,
     cont_irr_value: Option<String>,
     cont_request_state: Option<String>,
-    extra_bindings: Vec<ArtifactBinding>,
+    provided: ProvidedAuthorization,
 ) -> RequestSigningInputs {
     let audience = AudienceTuple {
         audience_id: audience_id.to_owned(),
@@ -166,7 +106,7 @@ fn signing_inputs(
         ArtifactType::OauthDpop,
         dpop_token.as_bytes(),
     )];
-    bindings.extend(extra_bindings);
+    bindings.extend(provided.bindings);
     let mut inputs = RequestSigningInputs::new(key_id, audience, bindings, nonce, created, expires)
         .with_headers(vec![(
             "Authorization".to_owned(),
@@ -192,7 +132,25 @@ fn signing_inputs(
         );
         inputs = inputs.with_continuation(continuation);
     }
+    if let Some(jws) = provided.decision {
+        // The document goes in; the `pdp-decision` binding over it is minted there, from
+        // these exact bytes, so nothing in this file can make the two disagree.
+        inputs = inputs.with_authorization_decision(jws);
+    }
     inputs
+}
+
+/// Deserialize a provider list into the bindings and decision it contributes.
+///
+/// The rule lives in `mcp-re-client-core`, not here: the spec JSON is a public seam that
+/// the Python wrapper classes do not stand in front of, and one implementation is what
+/// keeps this binding and the N-API one from drifting apart on it.
+fn provided_authorization(bindings_json: Option<&str>) -> PyResult<ProvidedAuthorization> {
+    let Some(json) = bindings_json else {
+        return Ok(ProvidedAuthorization::default());
+    };
+    build_authorization(json)
+        .map_err(|r| pyo3::exceptions::PyValueError::new_err(format!("mcp-re: {}", r.wire_code())))
 }
 
 fn to_signed_request(signed: mcp_re_client_core::SignedRequest) -> PySignedRequest {
@@ -319,10 +277,7 @@ fn sign_request(
         cont_irr_alg,
         cont_irr_value,
         cont_request_state,
-        match bindings_json.as_deref() {
-            Some(j) => build_bindings(j)?,
-            None => Vec::new(),
-        },
+        provided_authorization(bindings_json.as_deref())?,
     );
     let signed =
         build_signed_request(&id, method, params, target_uri, &inputs, &key).map_err(err)?;
@@ -389,10 +344,7 @@ fn sign_request_with_signer(
         cont_irr_alg,
         cont_irr_value,
         cont_request_state,
-        match bindings_json.as_deref() {
-            Some(j) => build_bindings(j)?,
-            None => Vec::new(),
-        },
+        provided_authorization(bindings_json.as_deref())?,
     );
     // The device seam. Any failure — the callback raising, returning a non-bytes
     // value, or returning a wrong-length signature — is an unusable signature and
@@ -541,10 +493,7 @@ fn notification_inputs(
         None,
         None,
         None,
-        match bindings_json.as_deref() {
-            Some(j) => build_bindings(j)?,
-            None => Vec::new(),
-        },
+        provided_authorization(bindings_json.as_deref())?,
     ))
 }
 

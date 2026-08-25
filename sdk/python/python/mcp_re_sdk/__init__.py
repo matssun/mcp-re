@@ -21,6 +21,7 @@ from .authorization import (
     AuthorizationBindingProvider,
     AuthzSystemReferenceProvider,
     BindingRequestContext,
+    AuthorizationDecisionProvider,
     OpaqueBytesProvider,
 )
 from .correlation import ContinuationHandles, CorrelationStore, PendingRequest
@@ -62,6 +63,7 @@ __all__ = [
     "AuthorizationBindingProvider",
     "AuthzSystemReferenceProvider",
     "BindingRequestContext",
+    "AuthorizationDecisionProvider",
     "OpaqueBytesProvider",
     # Lazy — these need the upstream `mcp` extra (see __getattr__ below).
     "ClientResponseUnsupported",

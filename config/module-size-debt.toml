@@ -159,7 +159,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "sdk/python/src/lib.rs"
-baseline_prod_loc = 845
+baseline_prod_loc = 794
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -184,7 +184,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "sdk/typescript/src/lib.rs"
-baseline_prod_loc = 780
+baseline_prod_loc = 731
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 

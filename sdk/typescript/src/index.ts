@@ -45,6 +45,7 @@ export type { PendingRequest, RecordArgs } from "./correlation.js";
 export {
   ARTIFACT_TYPES,
   AuthorizationBindingPolicy,
+  AuthorizationDecisionProvider,
   AuthzSystemReferenceProvider,
   OpaqueBytesProvider,
   bindingsJson,

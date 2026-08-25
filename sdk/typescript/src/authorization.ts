@@ -10,12 +10,23 @@
  *
  * Two base forms:
  *
- * - `OpaqueBytesProvider` — the client holds the artifact bytes (a capability token, a PDP
- *   decision document). The binding digest is `base64url-no-pad(SHA-256(bytes))`, computed
+ * - `OpaqueBytesProvider` — the client holds the artifact bytes (a capability token, a
+ *   consent record). The binding digest is `base64url-no-pad(SHA-256(bytes))`, computed
  *   in Rust.
  * - `AuthzSystemReferenceProvider` — the same digest over the same real bytes, plus the
  *   external system's identity and grant handle for cross-audit. The record stays
  *   verifiable independently of that system's live state.
+ * - `AuthorizationDecisionProvider` — an authorization authority's signed decision
+ *   document (ADR-MCPRE-065). Not merely a binding: the document travels inside the signed
+ *   evidence block AND the core mints the `pdp-decision`/`opaque-digest` binding over
+ *   those exact bytes, so the carried decision and the digest committing to it cannot
+ *   disagree.
+ *
+ * `pdp-decision` is therefore not available through `OpaqueBytesProvider`: that would build
+ * the binding half alone — a request a Mode-2 verifier necessarily refuses, and half of a
+ * pair ADR-MCPRE-065 says must exist together. The *reference* form is untouched;
+ * `AuthzSystemReferenceProvider("pdp-decision", …)` still expresses external decision
+ * linkage, which is a different claim.
  *
  * Neither accepts a precomputed digest: the digest is always derived from material the
  * caller actually presents, so a caller cannot assert a binding to an artifact it does not
@@ -48,6 +59,12 @@ const REGISTRY: ReadonlySet<string> = new Set(ARTIFACT_TYPES);
 const b64url = (raw: Buffer): string => raw.toString("base64url");
 
 /**
+ * The artifact type an authorization decision is, and the one type whose opaque form is
+ * reachable only through {@link AuthorizationDecisionProvider}.
+ */
+const DECISION_TYPE = "pdp-decision";
+
+/**
  * What a provider may branch on when choosing a binding.
  *
  * The route/method/audience a request is about — never the request bytes, so a provider
@@ -64,7 +81,7 @@ export interface BindingRequestContext {
 /** The binding spec the native core consumes. */
 export interface BindingSpec {
   artifact_type: string;
-  form: "opaque-bytes" | "authz-system-reference";
+  form: "opaque-bytes" | "authz-system-reference" | "authorization-decision";
   material_b64url: string;
   authorization_system_id?: string;
   reference_scheme_id?: string;
@@ -113,6 +130,17 @@ export class OpaqueBytesProvider implements AuthorizationBindingProvider {
 
   constructor(artifactType: string, material: Buffer) {
     assertRegistered(artifactType);
+    if (artifactType === DECISION_TYPE) {
+      // Ergonomics only — the native seam refuses this pair independently, because a
+      // caller composing the spec JSON never passes through this class.
+      throw new McpReError(
+        "mcp-re.authorization_binding_type_unsupported",
+        `'${DECISION_TYPE}' has no generic opaque form: an opaque binding without its ` +
+          "decision document is half of a pair the verifier refuses. Use " +
+          "AuthorizationDecisionProvider, or AuthzSystemReferenceProvider for external " +
+          "decision linkage.",
+      );
+    }
     assertMaterial(material, "opaque");
     this.#artifactType = artifactType;
     this.#material = Buffer.from(material);
@@ -251,4 +279,43 @@ export function bindingsJson(
     return sorted;
   });
   return JSON.stringify(canonical);
+}
+
+/**
+ * Present the authorization decision this call acts under (ADR-MCPRE-065).
+ *
+ * `decision` is the compact JWS an authorization authority issued. Unlike the other
+ * providers this contributes TWO things — the document, carried inside the signed evidence
+ * block, and the `pdp-decision`/`opaque-digest` binding over it — and the binding is minted
+ * by the audited core from the document's exact bytes.
+ *
+ * There is deliberately no parameter for the digest. A caller able to supply both could
+ * commit to one document and carry another, and the digest is the only thing tying the two
+ * together.
+ */
+export class AuthorizationDecisionProvider implements AuthorizationBindingProvider {
+  readonly #material: Buffer;
+
+  constructor(decision: Buffer | string) {
+    const material = typeof decision === "string" ? Buffer.from(decision, "utf8") : decision;
+    if (!Buffer.isBuffer(material) || material.length === 0) {
+      throw new McpReError(
+        "mcp-re.authorization_binding_missing",
+        "an authorization decision requires the compact decision document",
+      );
+    }
+    this.#material = Buffer.from(material);
+  }
+
+  bindingType(): string {
+    return DECISION_TYPE;
+  }
+
+  spec(_context: BindingRequestContext): BindingSpec {
+    return {
+      artifact_type: DECISION_TYPE,
+      form: "authorization-decision",
+      material_b64url: b64url(this.#material),
+    };
+  }
 }
