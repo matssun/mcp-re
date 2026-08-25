@@ -181,6 +181,10 @@ _PROXY_LIB_SRCS = [
     # make "assemble a resolver without consulting the authority" inexpressible.
     "src/delegated_tls/resolver.rs",
     "src/retained_evidence.rs",
+    # ADR-MCPRE-066 Slice 0: what a stage decided when it refused, and which authority
+    # decided it. Split from the serving path so the cause outlives the stage.
+    "src/refusal/mod.rs",
+    "src/refusal/cause.rs",
     "src/transparency.rs",
     # Trust-document interpretation: the authoritative rules over the bytes, owned apart
     # from the parser that was merely their first caller.
