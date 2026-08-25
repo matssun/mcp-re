@@ -22,6 +22,7 @@
 
 mod delegated_evidence;
 pub mod request;
+pub mod request_signing_inputs;
 pub mod response;
 pub mod trust_manifest;
 
@@ -31,9 +32,9 @@ pub use request::build_signed_notification_with_signer;
 pub use request::build_signed_request;
 pub use request::build_signed_request_with_signer;
 pub use request::build_signed_tool_call;
-pub use request::RequestSigningInputs;
 pub use request::SignedRequest;
 pub use request::MIN_NONCE_CHARS;
+pub use request_signing_inputs::RequestSigningInputs;
 pub use response::classify_result;
 pub use response::continuation_state;
 pub use response::verify_and_classify_response;

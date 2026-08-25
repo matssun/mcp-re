@@ -140,6 +140,7 @@ fn signed_request_with_admission(claims: Option<&AdmissionClaims>) -> HttpReques
         continuation: None,
         admission: admission.as_ref().map(|(b, _)| b.clone()),
         admission_assertion: admission.as_ref().map(|(_, jws)| jws.clone()),
+        authorization_decision: None,
     };
     sign_request_full(
         &mut req,

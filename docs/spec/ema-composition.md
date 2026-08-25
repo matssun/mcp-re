@@ -22,10 +22,17 @@ the authorized one — unforged, unreplayed, and is its response genuinely bound
 back to it?" They sit at different layers and compose; neither replaces the
 other.
 
-MCP-RE **binds, it does not interpret.** It treats the EMA-derived authorization
-artifact as an opaque, hashed input bound into the signed request evidence. It
-does not parse EMA policy, re-decide scope, or re-run the enterprise's
+MCP-RE **binds EMA artifacts, it does not interpret them.** It treats an EMA-derived
+authorization artifact as an opaque, hashed input bound into the signed request
+evidence. It does not parse EMA policy, re-decide scope, or re-run the enterprise's
 authorization logic. In particular it does not parse ID-JAG.
+
+That rule is about EMA-NATIVE artifacts. It is not a claim that MCP-RE never
+interprets any authorization evidence: under ADR-MCPRE-065 a deployment may configure
+an authorization authority whose decisions MCP-RE authenticates and enforces itself
+(Mode 2). Those decisions are issued in MCP-RE's own claim vocabulary by an authority
+MCP-RE is configured to trust — not EMA artifacts read by a proxy that was told not
+to read them.
 
 ## Diagram A — the MCP-RE enforcement path, without EMA
 
@@ -127,7 +134,7 @@ explicitly in the deployment's security posture.
 A double-check / defence-in-depth deployment is permitted only as an explicit,
 documented choice, carrying all four consequences above.
 
-## How an EMA artifact binds — no wire change
+## How an EMA artifact binds
 
 The request evidence block's `artifact_bindings[]` (ADR-MCPRE-050) is the binding
 surface. It is required and non-empty on every signed request, and each entry
@@ -137,15 +144,29 @@ carries a digest — never artifact bytes, never a raw credential.
 |---|---|---|
 | The final MCP access token, proof-of-possession bound | `oauth-dpop` / `oauth-mtls` | `opaque-digest` |
 | A rich-authorization-request grant | `oauth-rar` | `opaque-digest` |
-| A normalized authorization **decision** from the enterprise IdP / PDP | `pdp-decision` | `reference-digest` |
+| A normalized authorization **decision** from the enterprise IdP / PDP — LINKED | `pdp-decision` | `reference-digest` |
+| An authorization **decision** MCP-RE itself enforces — CARRIED | `pdp-decision` | `opaque-digest` |
 
-The decision form is the one that answers this note's central question. A
-`reference-digest` binding carries `authorization_system_id` (which authorization
-system decided), `reference_scheme_id` (what the reference means and how the
-digest was produced), and `reference_value` — **the stable `decision_id`**. The
-digest keeps the record verifiable independently of that system's live state, so
-an audit years later does not depend on the IdP still being able to replay the
-decision.
+The two decision rows are different claims, and the `artifact_type` × `binding_type`
+product is what expresses the difference.
+
+**`reference-digest` is LINKAGE.** It carries `authorization_system_id` (which
+authorization system decided), `reference_scheme_id` (what the reference means and
+how the digest was produced), and `reference_value` — **the stable `decision_id`**.
+What MCP-RE establishes is that this reference and digest were integrity-bound into
+the signed call. It does **not** establish that the referenced decision is genuine,
+authoritative, or about this request: MCP-RE holds no decision artifact and no
+authority signature, so there is nothing for it to authenticate. The EMA-native
+backend remains responsible for establishing that. The digest keeps the record
+verifiable independently of that system's live state, so an audit years later does
+not depend on the IdP still being able to replay the decision.
+
+**`opaque-digest` is CARRIED EVIDENCE**, and it is the Mode-2 enforcement profile
+(ADR-MCPRE-065 Slice 2). The decision document itself travels in the body beside its
+binding, and MCP-RE authenticates it under a configured authorization-authority trust
+seam, matches it against the verified actor and the signed-body action, and refuses
+before dispatch unless it says permit. That is the form a private-backend deployment
+uses, and it is what makes MCP-RE an enforcement point rather than a binder.
 
 Consequences worth stating plainly:
 
@@ -154,8 +175,12 @@ Consequences worth stating plainly:
 - Binding a token digest and binding a decision reference are different claims.
   The first proves *this call presented that credential*; the second proves *this
   call was made under that decision id*. A deployment may bind both.
-- Nothing here needs a new field. An EMA composition that demands one is a
-  separate ADR, not an extension of this note.
+- EMA composition needs no new field: the linkage row above binds through the
+  existing machinery. The **carried** row does add one — `authorization_decision`,
+  the inline compact JWS beside its binding — and that is exactly the "separate ADR"
+  this note pointed at: ADR-MCPRE-065, which owns authorization semantics. It is an
+  extension of the ADR-MCPRE-050 request evidence block, not a new envelope, and it
+  follows the `admission` / `admission_assertion` precedent.
 
 ## Verified-context linkage
 

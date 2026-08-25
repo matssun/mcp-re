@@ -287,6 +287,18 @@ one" is not a reason.
     invocations; broken implementation, 503 with one. Only the invocation count witnesses
     that the execution threshold was not crossed, so a status-code assertion would have
     passed against the defect it was written to catch.
+16. **Moving code that carries formal annotations moves its verification ownership with
+    it. A file split is incomplete until the new path belongs to every verification
+    unit, fingerprint, and trigger set whose proposition depends on it.** This is the
+    formal-verification analogue of moving a Rust function without moving its tests, and
+    ordinary Rust tooling cannot see the omission: the code compiles, the tests pass, and
+    `cargo clippy` is clean, because the loss is in what the manifest *declares*, not in
+    what the compiler *checks*. Splitting `ArtifactBinding` out of
+    `mcp-re-http-profile/src/block.rs` into `block/artifact_binding.rs` produced both
+    halves of the failure at once — `check-assumptions` found a Verus annotation in a file
+    no unit declared, and `verify-verus` found the new module missing the `vstd` prelude
+    the old one had. A path list in `verification/policy/verification.toml` is part of the
+    proposition; a refactor that leaves it stale narrows the proved unit silently.
 
 ## Running it
 

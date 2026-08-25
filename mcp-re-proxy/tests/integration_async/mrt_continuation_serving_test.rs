@@ -340,6 +340,7 @@ fn signed_request_as(
         continuation,
         admission: None,
         admission_assertion: None,
+        authorization_decision: None,
     };
     let mut req = HttpRequest {
         method: "POST".into(),

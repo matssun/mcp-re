@@ -54,6 +54,13 @@ _PROXY_LIB_SRCS = [
     "src/authorization/serving.rs",
     "src/authorization/verified_action.rs",
     "src/authorization/verified_actor.rs",
+    # ADR-MCPRE-065 Slice 2: the PDP-decision mechanism behind the boundary — carried
+    # decision evidence, the authorization-authority trust seam, and the relation.
+    "src/authorization/pdp/mod.rs",
+    "src/authorization/pdp/evidence.rs",
+    "src/authorization/pdp/policy.rs",
+    "src/authorization/pdp/refusal.rs",
+    "src/authorization/pdp/relation.rs",
     # Test-only: fabricates a verified request whose digest genuinely matches a body, which
     # is what the L-5 control for `BodyIsNotTheSignedBody` needs.
     "src/authorization/action_harness.rs",

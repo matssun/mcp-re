@@ -319,7 +319,104 @@ Slice 1 therefore introduces **no** Biscuit, UCAN, OPA, Cedar or PDP protocol. S
 implementing the first production mechanism is the next bounded piece of work, chosen *under*
 this architecture rather than defining it.
 
-## 8. Deferred, deliberately
+## 8. Slice 2 — the first production mechanism: carried PDP decisions
+
+Not Biscuit, and not the deleted reference evaluator. An **external authorization authority**
+decides; MCP-RE enforces. That exercises the boundary without making MCP-RE a policy-language
+product, and it composes with OPA, Cedar, an enterprise PDP or cloud IAM through one shape:
+normalized decision evidence in, enforcement before dispatch.
+
+### 8.1 The `artifact_type` × `binding_type` product does the work
+
+`docs/spec/ema-composition.md` had already assigned `pdp-decision`, to the LINKAGE role. It
+is not overruled — it is joined by the other form, which is what the two independent axes
+were for:
+
+```text
+pdp-decision + reference-digest   =  decision LINKAGE
+                                     the call names an external decision; MCP-RE neither
+                                     authenticates nor interprets it, and an EMA-native
+                                     backend remains the enforcement point.
+                                     Produces NO AuthorizedRequestFacts.
+
+pdp-decision + opaque-digest      =  decision EVIDENCE
+      + inline authorization_decision JWS
+                                     the decision travels with the request; MCP-RE
+                                     authenticates and enforces it. Mode 2.
+```
+
+`ArtifactBinding::validate` has always permitted both combinations. The note simply had one
+consumer and tabulated one row.
+
+**One correction to that note.** Its Mode-1 language overstated what a reference binding
+buys: MCP-RE cannot say it prevented a forged decision, because it holds no decision artifact
+and no authority signature. It can say the reference and digest were integrity-bound into the
+signed call.
+
+### 8.2 The chain, and why each link is separate
+
+```text
+digest correspondence      exactly these bytes, exactly one applicable binding
+        v
+authorization-authority trust   its OWN seam, never inferred from request-signer trust
+        v
+JWS authentication + typed claims
+        v
+actor relation             at the scope the decision itself declares
+        v
+action relation            the signed-body coordinate (Law A-1)
+        v
+explicit Permit
+        v
+AuthorizedRequestFacts
+```
+
+Digest matching is not authorization. A valid signature is not authorization. A matching
+actor and action are not authorization until the decision says permit. Collapsing them would
+make the failure unreportable, and every link is a different thing for an operator to do.
+
+### 8.3 The scope is a closed, signed choice
+
+```text
+principal   ->  trust_domain + subject          survives a signing-key rotation
+credential  ->  trust_domain + subject + keyid  voided by one
+```
+
+A sum type tagged inside the signed claims, not a struct with an optional `keyid`. So a
+principal-scoped decision has no keyid to omit, a credential-scoped one cannot lack it, and
+one document cannot mean a principal grant at one deployment and a credential grant at the
+next. **Configuration declares what it ACCEPTS; the decision declares what it IS.**
+
+This is Law A-2 exercised by a profile, not a reversal of it.
+
+### 8.4 What a success product means, and what it does not
+
+> A configured and trusted authorization authority permitted this verified actor to perform
+> this verified action, and this decision evidence is bound to this request under the
+> configured profile.
+
+It does **not** mean transport peer authentication happened (ADR-MCPRE-064 owns that),
+admission succeeded (admission owns that), the authority is currently online, or that policy
+has not changed since — unless freshness semantics establish it. Carrying the decision rather
+than resolving a reference is what keeps *the PDP is reachable* out of the proposition.
+
+### 8.5 Indeterminacy is local, not signed
+
+The decision carries `permit` or `deny` and nothing else. An evaluator that cannot verify a
+signature, resolve an authority key, parse claims or determine freshness has produced a LOCAL
+refusal — it is not a proposition the authority signed, and inventing an `indeterminate`
+outcome for it would put words in the authority's mouth.
+
+### 8.6 A split file must be re-declared to the verification manifest
+
+Extracting `ArtifactBinding` into its own module carried Verus annotations to a path no
+verification unit declared. Nothing in the Rust toolchain reports that: the crate compiles,
+the tests pass, clippy is clean, and the proved unit silently narrows. The standing rule is
+recorded as [`verification/README.md`](../../verification/README.md) rule 16 — moving
+formally annotated code moves its verification-unit, fingerprint, and trigger-set ownership
+with it.
+
+## 9. Deferred, deliberately
 
 - **ADR-MCPS-035 audit vocabulary** — not widened here. Which authorization facts belong in the
   audit record is decided once a semantic product exists.

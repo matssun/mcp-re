@@ -1,0 +1,606 @@
+// SPDX-License-Identifier: Apache-2.0
+//! The PDP-decision authorization profile through the production PEP — ADR-MCPRE-065 Slice 2.
+//!
+//! Slice 1 built the boundary and shipped no mechanism. This is the first production one: an
+//! external authority signs a decision, the client carries it in the signed request, and
+//! MCP-RE enforces it before dispatch.
+//!
+//! Every control drives a real signed request through `HttpProfileProxy::handle` with a real
+//! Ed25519 authority key. None constructs a policy input directly, and none asserts only on
+//! the HTTP status: a refusal that arrives after the tool ran is a log line, so the backend
+//! call COUNT is the assertion that matters.
+//!
+//! The chain each control attacks one link of:
+//!
+//! ```text
+//! digest correspondence -> authority trust -> JWS authentication
+//!   -> actor relation -> action relation -> explicit Permit
+//! ```
+
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+
+use mcp_re_core::b64url_decode;
+use mcp_re_core::SigningKey;
+use mcp_re_http_profile::issue_delegation_credential;
+use mcp_re_http_profile::pdp_decision::issue_authorization_decision;
+use mcp_re_http_profile::pdp_decision::DecidedActor;
+use mcp_re_http_profile::pdp_decision::DecisionScope;
+use mcp_re_http_profile::pdp_decision::PdpDecisionClaims;
+use mcp_re_http_profile::pdp_decision::PdpDecisionFreshness;
+use mcp_re_http_profile::pdp_decision::PdpDecisionOutcome;
+use mcp_re_http_profile::sign_request_full;
+use mcp_re_http_profile::ActorIdentity;
+use mcp_re_http_profile::ArtifactBinding;
+use mcp_re_http_profile::ArtifactType;
+use mcp_re_http_profile::Audience;
+use mcp_re_http_profile::AudienceTuple;
+use mcp_re_http_profile::BindingType;
+use mcp_re_http_profile::CustodyConfig;
+use mcp_re_http_profile::DelegatedSigningCustody;
+use mcp_re_http_profile::DelegationClaims;
+use mcp_re_http_profile::DelegationHeader;
+use mcp_re_http_profile::HttpProfileError;
+use mcp_re_http_profile::HttpRequest;
+use mcp_re_http_profile::HttpRequestEvidenceBlock;
+use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::PROFILE_TAG;
+
+use mcp_re_proxy::async_inner::AsyncInnerServer;
+use mcp_re_proxy::async_replay::AsyncReplayTier;
+use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
+use mcp_re_proxy::async_serve::ServedHttpRequest;
+use mcp_re_proxy::authorization::PdpDecisionEvaluator;
+use mcp_re_proxy::authorization::PdpDecisionPolicy;
+use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
+use mcp_re_proxy::ActorResolver;
+use mcp_re_proxy::DelegatedRotor;
+use mcp_re_proxy::DelegatedServerSigner;
+use mcp_re_proxy::HttpProfileProxy;
+
+const CLIENT_SEED: [u8; 32] = [31u8; 32];
+const ROOT_SEED: [u8; 32] = [63u8; 32];
+const PDP_SEED: [u8; 32] = [77u8; 32];
+const OTHER_PDP_SEED: [u8; 32] = [78u8; 32];
+const NOW: i64 = 1_700_000_100;
+const CREATED: i64 = 1_700_000_000;
+const EXPIRES: i64 = 1_700_000_300;
+const TARGET: &str = "https://mcp.example.com/mcp?route=a";
+const CLIENT_KEY_ID: &str = "client-key-1";
+const ROOT_KID: &str = "root-kid";
+const PDP_KID: &str = "pdp-root-1";
+const VERIFIER_AUD: &str = "verifier-1";
+const TRUST_DOMAIN: &str = "example.com";
+const SUBJECT: &str = "did:example:host-a";
+
+fn client_key() -> SigningKey {
+    SigningKey::from_seed_bytes(&CLIENT_SEED)
+}
+fn root_key() -> SigningKey {
+    SigningKey::from_seed_bytes(&ROOT_SEED)
+}
+/// The AUTHORIZATION authority's root — a different key from the response-signing root and
+/// from the client's, so "trusted to sign responses" or "trusted to sign requests" can never
+/// be mistaken for "trusted to decide permission".
+fn pdp_key() -> SigningKey {
+    SigningKey::from_seed_bytes(&PDP_SEED)
+}
+fn other_pdp_key() -> SigningKey {
+    SigningKey::from_seed_bytes(&OTHER_PDP_SEED)
+}
+
+fn audience() -> AudienceTuple {
+    AudienceTuple {
+        audience_id: VERIFIER_AUD.into(),
+        target_uri: TARGET.into(),
+        route: Some("a".into()),
+    }
+}
+
+fn actor_resolver() -> ActorResolver {
+    Box::new(move |key_id: &str, slot: SignerSlot| {
+        let (role, subject, key) = match (key_id, slot) {
+            (CLIENT_KEY_ID, SignerSlot::Request) => ("client", SUBJECT, client_key().public_key()),
+            (ROOT_KID, SignerSlot::Response) => {
+                ("server", "did:example:server", root_key().public_key())
+            }
+            _ => return None::<ResolvedActor>.into(),
+        };
+        Some(ResolvedActor {
+            identity: ActorIdentity {
+                role: role.into(),
+                trust_domain: TRUST_DOMAIN.into(),
+                subject: subject.into(),
+                keyid: key_id.into(),
+            },
+            verification_key: key,
+            slot,
+        })
+        .into()
+    })
+}
+
+/// A principal-scoped decision permitting `tool` to `SUBJECT`.
+fn decision_for(tool: Option<&str>, operation: &str) -> PdpDecisionClaims {
+    PdpDecisionClaims {
+        iss: "did:example:pdp".into(),
+        iat: NOW - 5,
+        nbf: NOW - 5,
+        exp: NOW + 300,
+        jti: "decision-1".into(),
+        aud: Audience::One(VERIFIER_AUD.into()),
+        mcp_re_profile: PROFILE_TAG.into(),
+        mcp_re_decided_actor: DecidedActor::Principal {
+            trust_domain: TRUST_DOMAIN.into(),
+            subject: SUBJECT.into(),
+        },
+        mcp_re_decided_operation: operation.into(),
+        mcp_re_decided_target: tool.map(str::to_owned),
+        mcp_re_decision: PdpDecisionOutcome::Permit,
+        mcp_re_policy_version: "2026-08-01".into(),
+        issuer_kid: PDP_KID.into(),
+    }
+}
+
+fn issue(claims: &PdpDecisionClaims, key: &SigningKey) -> String {
+    issue_authorization_decision(claims, |input| {
+        b64url_decode(&key.sign(input)).map_err(|_| HttpProfileError::InvalidSignature)
+    })
+    .expect("issues")
+}
+
+/// A signed call for `tool`, optionally carrying a decision. `nonce` must be fresh per call.
+fn signed_call(tool: &str, nonce: &str, decision: Option<&str>) -> HttpRequest {
+    signed_call_bound_by(tool, nonce, decision, |d| {
+        ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, d.as_bytes())
+    })
+}
+
+/// The same, with the caller choosing how the decision is bound — which is what lets a
+/// control present the LINKAGE form where the evidence form is required.
+fn signed_call_bound_by(
+    tool: &str,
+    nonce: &str,
+    decision: Option<&str>,
+    bind: impl Fn(&str) -> ArtifactBinding,
+) -> HttpRequest {
+    let mut req = HttpRequest {
+        method: "POST".into(),
+        target_uri: TARGET.into(),
+        headers: vec![
+            ("Content-Type".into(), "application/json".into()),
+            ("Authorization".into(), "Bearer tok".into()),
+        ],
+        body: format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"{tool}"}}}}"#
+        )
+        .into_bytes(),
+    };
+    let mut bindings = vec![ArtifactBinding::opaque_digest(
+        ArtifactType::OauthDpop,
+        b"tok",
+    )];
+    if let Some(d) = decision {
+        bindings.push(bind(d));
+    }
+    let block = HttpRequestEvidenceBlock {
+        profile: PROFILE_TAG.into(),
+        audience: audience(),
+        artifact_bindings: bindings,
+        continuation: None,
+        admission: None,
+        admission_assertion: None,
+        authorization_decision: decision.map(str::to_owned),
+    };
+    sign_request_full(
+        &mut req,
+        &block,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        nonce,
+    )
+    .expect("signs");
+    req
+}
+
+fn counting_inner(calls: Arc<AtomicUsize>) -> Box<dyn AsyncInnerServer> {
+    Box::new(move |_forwarded: &[u8]| -> Vec<u8> {
+        calls.fetch_add(1, Ordering::SeqCst);
+        br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
+    })
+}
+
+fn ready_signer() -> Arc<DelegatedServerSigner> {
+    let signer = Arc::new(DelegatedServerSigner::new());
+    let root = root_key();
+    let issue_cred = move |h: &DelegationHeader, c: &DelegationClaims| {
+        Some(issue_delegation_credential(&root, h, c))
+    };
+    let mut n = 200u8;
+    let factory = move || {
+        n = n.wrapping_add(1);
+        SigningKey::from_seed_bytes(&[n; 32])
+    };
+    let mut rotor = DelegatedRotor::new(
+        DelegatedSigningCustody::new(
+            CustodyConfig {
+                issuer_kid: ROOT_KID.into(),
+                iss: "did:example:server".into(),
+                profile: PROFILE_TAG.into(),
+                aud: VERIFIER_AUD.into(),
+                audience_hash: "aud-scope-1".into(),
+                trust_epoch: "epoch-1".into(),
+                server_role: "server".into(),
+                server_trust_domain: TRUST_DOMAIN.into(),
+                server_subject: "did:example:server".into(),
+                ttl: 300,
+                overlap: 60,
+            },
+            issue_cred,
+            factory,
+        ),
+        Arc::clone(&signer),
+    );
+    rotor.rotate(NOW).expect("issue first delegated key");
+    std::mem::forget(rotor);
+    signer
+}
+
+/// A proxy enforcing the PDP profile, trusting `trusted_kid` as its authorization authority.
+fn proxy_with(
+    scope: DecisionScope,
+    trusted_kid: &'static str,
+    calls: Arc<AtomicUsize>,
+) -> HttpProfileProxy {
+    let evaluator = PdpDecisionEvaluator::new(
+        PdpDecisionPolicy {
+            resolve_authority: Arc::new(move |kid: &str| {
+                (kid == trusted_kid).then(|| pdp_key().public_key())
+            }),
+            accepted_scope: scope,
+            freshness: PdpDecisionFreshness {
+                max_clock_skew: 30,
+                max_decision_age: 600,
+            },
+        },
+        PROFILE_TAG,
+        vec![VERIFIER_AUD.to_string()],
+        Arc::new(|| NOW),
+    );
+    HttpProfileProxy::new_delegated(
+        actor_resolver(),
+        audience(),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
+        counting_inner(calls),
+        300,
+        ready_signer(),
+    )
+    .with_authorization(Arc::new(evaluator))
+}
+
+fn proxy(calls: Arc<AtomicUsize>) -> HttpProfileProxy {
+    proxy_with(DecisionScope::Principal, PDP_KID, calls)
+}
+
+async fn serve(p: &HttpProfileProxy, req: HttpRequest) -> (u16, String) {
+    let served = p
+        .handle(
+            ServedHttpRequest {
+                method: req.method,
+                target_uri: req.target_uri,
+                headers: req.headers,
+                body: req.body,
+                peer: None,
+                assertion: None,
+            },
+            NOW,
+        )
+        .await;
+    (
+        served.status,
+        String::from_utf8_lossy(&served.body).into_owned(),
+    )
+}
+
+#[tokio::test]
+async fn a_permit_decision_reaches_the_backend() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let d = issue(&decision_for(Some("read"), "tools/call"), &pdp_key());
+    let (status, body) = serve(
+        &proxy(Arc::clone(&calls)),
+        signed_call("read", "n-permit", Some(&d)),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn an_explicit_deny_never_reaches_the_backend() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut claims = decision_for(Some("read"), "tools/call");
+    claims.mcp_re_decision = PdpDecisionOutcome::Deny;
+    let d = issue(&claims, &pdp_key());
+    let (status, body) = serve(
+        &proxy(Arc::clone(&calls)),
+        signed_call("read", "n-deny", Some(&d)),
+    )
+    .await;
+    assert_eq!(status, 403);
+    assert!(body.contains("mcp-re.authorization_scope_denied"), "{body}");
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_decision_issued_to_another_actor_does_not_authorize_this_one() {
+    // The BEARER-TOKEN control. The decision is genuine, current, signed by the real
+    // authority; the only thing wrong with it is that it names somebody else.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut claims = decision_for(Some("read"), "tools/call");
+    claims.mcp_re_decided_actor = DecidedActor::Principal {
+        trust_domain: TRUST_DOMAIN.into(),
+        subject: "did:example:someone-else".into(),
+    };
+    let d = issue(&claims, &pdp_key());
+    let (status, body) = serve(
+        &proxy(Arc::clone(&calls)),
+        signed_call("read", "n-other-actor", Some(&d)),
+    )
+    .await;
+    assert_eq!(status, 403);
+    assert!(
+        body.contains("mcp-re.authorization_signer_mismatch"),
+        "{body}"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_decision_for_another_trust_domain_does_not_authorize_this_subject() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut claims = decision_for(Some("read"), "tools/call");
+    claims.mcp_re_decided_actor = DecidedActor::Principal {
+        trust_domain: "other.example".into(),
+        subject: SUBJECT.into(),
+    };
+    let d = issue(&claims, &pdp_key());
+    let (status, _) = serve(
+        &proxy(Arc::clone(&calls)),
+        signed_call("read", "n-other-domain", Some(&d)),
+    )
+    .await;
+    assert_eq!(status, 403);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_decision_for_another_tool_does_not_authorize_this_call() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let d = issue(&decision_for(Some("read"), "tools/call"), &pdp_key());
+    let (status, body) = serve(
+        &proxy(Arc::clone(&calls)),
+        signed_call("delete", "n-other-tool", Some(&d)),
+    )
+    .await;
+    assert_eq!(status, 403);
+    assert!(body.contains("mcp-re.authorization_scope_denied"), "{body}");
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_decision_for_another_operation_does_not_authorize_this_one() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let d = issue(&decision_for(None, "tools/list"), &pdp_key());
+    let (status, _) = serve(
+        &proxy(Arc::clone(&calls)),
+        signed_call("read", "n-other-op", Some(&d)),
+    )
+    .await;
+    assert_eq!(status, 403);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_decision_from_an_authority_this_deployment_does_not_trust_is_refused() {
+    // Signed by a real key, under a kid the deployment's AUTHORIZATION resolver does not
+    // know. Request-signer trust is irrelevant here and must not rescue it.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut claims = decision_for(Some("read"), "tools/call");
+    claims.issuer_kid = "some-other-pdp".into();
+    let d = issue(&claims, &pdp_key());
+    let (status, body) = serve(
+        &proxy(Arc::clone(&calls)),
+        signed_call("read", "n-untrusted", Some(&d)),
+    )
+    .await;
+    assert_eq!(status, 403);
+    assert!(
+        body.contains("mcp-re.authorization_signature_invalid"),
+        "{body}"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_decision_signed_by_the_wrong_key_under_a_trusted_kid_is_refused() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let d = issue(&decision_for(Some("read"), "tools/call"), &other_pdp_key());
+    let (status, body) = serve(
+        &proxy(Arc::clone(&calls)),
+        signed_call("read", "n-forged", Some(&d)),
+    )
+    .await;
+    assert_eq!(status, 403);
+    assert!(
+        body.contains("mcp-re.authorization_signature_invalid"),
+        "{body}"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_configured_profile_refuses_a_request_that_presents_no_decision() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (status, body) = serve(
+        &proxy(Arc::clone(&calls)),
+        signed_call("read", "n-none", None),
+    )
+    .await;
+    assert_eq!(status, 403);
+    assert!(
+        body.contains("mcp-re.authorization_block_missing"),
+        "{body}"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_reference_binding_can_never_satisfy_the_enforcement_profile() {
+    // THE structural negative. The linkage form carries the IDENTICAL digest of the very
+    // same decision document, and the request is otherwise exactly the one that succeeds.
+    // It must still be refused: a reference names an external decision MCP-RE authenticates
+    // nothing about, and letting it stand in would let a call claim an enforcement decision
+    // it never presented.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let d = issue(&decision_for(Some("read"), "tools/call"), &pdp_key());
+    let req = signed_call_bound_by("read", "n-reference", Some(&d), |doc| ArtifactBinding {
+        binding_type: BindingType::ReferenceDigest,
+        authorization_system_id: Some("urn:example:pdp".into()),
+        reference_scheme_id: Some("urn:example:scheme".into()),
+        reference_value: Some("decision-1".into()),
+        ..ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, doc.as_bytes())
+    });
+    let (status, body) = serve(&proxy(Arc::clone(&calls)), req).await;
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_decision_scoped_differently_from_the_deployments_profile_is_refused() {
+    // The signed scope is what the decision IS; configuration is what the deployment
+    // ACCEPTS. Neither infers the other, so one document cannot mean a principal grant here
+    // and a credential grant next door.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut claims = decision_for(Some("read"), "tools/call");
+    claims.mcp_re_decided_actor = DecidedActor::Credential {
+        trust_domain: TRUST_DOMAIN.into(),
+        subject: SUBJECT.into(),
+        keyid: CLIENT_KEY_ID.into(),
+    };
+    let d = issue(&claims, &pdp_key());
+    // The deployment accepts PRINCIPAL-scoped decisions; this one is credential-scoped, and
+    // it matches this caller on every dimension. It is still refused.
+    let (status, _) = serve(
+        &proxy(Arc::clone(&calls)),
+        signed_call("read", "n-scope", Some(&d)),
+    )
+    .await;
+    assert_eq!(status, 403);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_credential_scoped_deployment_binds_the_signing_key() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut claims = decision_for(Some("read"), "tools/call");
+    claims.mcp_re_decided_actor = DecidedActor::Credential {
+        trust_domain: TRUST_DOMAIN.into(),
+        subject: SUBJECT.into(),
+        keyid: CLIENT_KEY_ID.into(),
+    };
+    let d = issue(&claims, &pdp_key());
+    let p = proxy_with(DecisionScope::Credential, PDP_KID, Arc::clone(&calls));
+    let (status, body) = serve(&p, signed_call("read", "n-cred-ok", Some(&d))).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    // The same decision, naming a different signing credential for the same principal.
+    let calls2 = Arc::new(AtomicUsize::new(0));
+    let mut rotated = decision_for(Some("read"), "tools/call");
+    rotated.mcp_re_decided_actor = DecidedActor::Credential {
+        trust_domain: TRUST_DOMAIN.into(),
+        subject: SUBJECT.into(),
+        keyid: "client-key-2-rotated".into(),
+    };
+    let d2 = issue(&rotated, &pdp_key());
+    let p2 = proxy_with(DecisionScope::Credential, PDP_KID, Arc::clone(&calls2));
+    let (status2, _) = serve(&p2, signed_call("read", "n-cred-rotated", Some(&d2))).await;
+    assert_eq!(
+        status2, 403,
+        "a credential-scoped decision does not survive rotation"
+    );
+    assert_eq!(calls2.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_stale_decision_is_refused_even_inside_its_own_validity_window() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut claims = decision_for(Some("read"), "tools/call");
+    claims.iat = NOW - 10_000;
+    claims.nbf = NOW - 10_000;
+    claims.exp = NOW + 10_000;
+    let d = issue(&claims, &pdp_key());
+    let (status, body) = serve(
+        &proxy(Arc::clone(&calls)),
+        signed_call("read", "n-stale", Some(&d)),
+    )
+    .await;
+    assert_eq!(status, 403);
+    assert!(body.contains("mcp-re.authorization_expired"), "{body}");
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_decision_issued_for_another_enforcement_point_is_refused() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut claims = decision_for(Some("read"), "tools/call");
+    claims.aud = Audience::One("verifier-2".into());
+    let d = issue(&claims, &pdp_key());
+    let (status, body) = serve(
+        &proxy(Arc::clone(&calls)),
+        signed_call("read", "n-aud", Some(&d)),
+    )
+    .await;
+    assert_eq!(status, 403);
+    assert!(
+        body.contains("mcp-re.authorization_audience_mismatch"),
+        "{body}"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_deployment_running_no_decision_profile_is_unaffected() {
+    // `NotConfigured`, never `Authorized`: a proxy with no evaluator serves as before, and
+    // the request carrying a decision is not thereby authorized by anything.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let base = HttpProfileProxy::new_delegated(
+        actor_resolver(),
+        audience(),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
+        counting_inner(Arc::clone(&calls)),
+        300,
+        ready_signer(),
+    );
+    let (status, body) = serve(&base, signed_call("read", "n-off", None)).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}

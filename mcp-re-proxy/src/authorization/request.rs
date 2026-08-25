@@ -28,6 +28,9 @@
 use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::VerifiedMcpRequest;
 
+use super::pdp::evidence::bound_decision_evidence;
+use super::pdp::evidence::BoundDecisionEvidence;
+use super::pdp::evidence::DecisionEvidenceRefusal;
 use super::verified_action::interpret_authorization_action;
 use super::verified_action::AuthorizationActionRefusal;
 use super::verified_action::VerifiedAuthorizationAction;
@@ -49,6 +52,12 @@ pub struct AuthorizationRequest {
     /// that a binding was attempted and skipped.
     binding: Option<RequestPeerBindingFacts>,
     evidence: RequestEvidence,
+    /// The verified request itself, retained so a MECHANISM can read evidence this boundary
+    /// deliberately does not interpret — the ADR-MCPRE-065 Slice 2 decision document is the
+    /// first. Kept whole rather than projected into a widening set of fields: the semantic
+    /// layer must not have to grow a member per mechanism, and the products it DOES own are
+    /// the typed ones above.
+    verified: VerifiedMcpRequest,
 }
 
 impl AuthorizationRequest {
@@ -78,6 +87,18 @@ impl AuthorizationRequest {
     pub fn evidence(&self) -> &RequestEvidence {
         &self.evidence
     }
+
+    /// The authorization decision this request carried, proved to be the document its
+    /// binding committed to (ADR-MCPRE-065 Slice 2).
+    ///
+    /// `Ok(None)` means the request presented none. Whether that is fatal belongs to the
+    /// MECHANISM: a deployment running no decision profile does not care, and one that does
+    /// refuses. This boundary establishes the fact and takes no view.
+    pub fn decision_evidence(
+        &self,
+    ) -> Result<Option<BoundDecisionEvidence>, DecisionEvidenceRefusal> {
+        bound_decision_evidence(&self.verified)
+    }
 }
 
 /// Compose the policy input from ONE verified request.
@@ -95,6 +116,7 @@ pub fn authorization_request(
         action: interpret_authorization_action(verified, body)?,
         binding: binding.cloned(),
         evidence: verified.evidence().clone(),
+        verified: verified.clone(),
     })
 }
 

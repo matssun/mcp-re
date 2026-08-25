@@ -678,6 +678,7 @@ mod http_profile_full_stack {
             continuation: None,
             admission: None,
             admission_assertion: None,
+            authorization_decision: None,
         };
         let mut req = HttpRequest {
             method: "POST".into(),

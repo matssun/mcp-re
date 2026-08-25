@@ -591,6 +591,11 @@ description = "MCPRE-95 typed artifact bindings: a verified binding is the opaqu
 paths = [
   "mcp-re-http-profile/src/artifact.rs",
   "mcp-re-http-profile/src/block.rs",
+  # The artifact-binding vocabulary and its structurally-verified `validate` moved here
+  # under ADR-MCPRE-065 Slice 2, which split it from the evidence block that carries it.
+  # The path follows the ITEM: a unit whose path set no longer covers its own
+  # specification stops asking rather than going red.
+  "mcp-re-http-profile/src/block/artifact_binding.rs",
   "mcp-re-http-profile/src/verus_std_specs.rs",
 ]
 exported_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]

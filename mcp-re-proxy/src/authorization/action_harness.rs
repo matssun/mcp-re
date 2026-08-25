@@ -65,6 +65,7 @@ pub(super) fn verified_over_as(body: &[u8], subject: &str, keyid: &str) -> Verif
             continuation: None,
             admission: None,
             admission_assertion: None,
+            authorization_decision: None,
         },
     }
 }

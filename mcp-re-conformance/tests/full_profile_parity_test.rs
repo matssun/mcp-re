@@ -131,6 +131,7 @@ fn full_block() -> HttpRequestEvidenceBlock {
         continuation: Some(HttpContinuation::build(PREV_BASE, IRR_BASE, REQ_STATE)),
         admission: None,
         admission_assertion: None,
+        authorization_decision: None,
     }
 }
 

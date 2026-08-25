@@ -77,7 +77,7 @@ review_ref = "EX-004 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-http-profile/src/verify.rs"
-baseline_prod_loc = 1388
+baseline_prod_loc = 1373
 baseline_sha = "d1fc5fa"
 status = "reviewed-action-required"
 review_ref = "EX-003 in docs/architecture/review-dispositions.md"
@@ -232,7 +232,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-http-profile/src/block.rs"
-baseline_prod_loc = 647
+baseline_prod_loc = 603
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -352,7 +352,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-client-core/src/request.rs"
-baseline_prod_loc = 439
+baseline_prod_loc = 330
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 

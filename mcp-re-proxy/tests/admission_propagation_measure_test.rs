@@ -226,6 +226,7 @@ fn signed_call(claims: &AdmissionClaims, nonce: &str) -> HttpRequest {
         continuation: None,
         admission: Some(AdmissionBinding::opaque_from(claims)),
         admission_assertion: Some(assertion),
+        authorization_decision: None,
     };
     sign_request_full(
         &mut req,

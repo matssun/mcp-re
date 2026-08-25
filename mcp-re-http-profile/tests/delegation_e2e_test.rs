@@ -142,6 +142,7 @@ fn signed_request() -> (HttpRequest, RequestEvidence, VerifiedMcpRequest) {
         continuation: None,
         admission: None,
         admission_assertion: None,
+        authorization_decision: None,
     };
     let ev = sign_request_full(
         &mut req,
@@ -658,6 +659,7 @@ fn a_delegated_response_advertising_another_requests_evidence_is_refused() {
         continuation: None,
         admission: None,
         admission_assertion: None,
+        authorization_decision: None,
     };
     let ev_b = sign_request_full(
         &mut req_b,

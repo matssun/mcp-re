@@ -1,12 +1,13 @@
 //! Phase 5 authorization error taxonomy (ADR-MCPS-013).
 //!
-//! This is a SEPARATE taxonomy from the frozen Core `mcp_re_core::McpReError`. Core
-//! proves a request is authentic, fresh, non-replayed, and audience-correct and
-//! carries an opaque `authorization_hash`; the policy layer interprets the
-//! authorization artifact behind that hash and renders an allow/deny decision.
-//! The variants here supersede the planning brief's stale `mcp-re.capability_*`
-//! names for the same reason Core renamed `capability_hash` -> `authorization_hash`:
-//! the term "capability" was dropped from the MCP-RE vocabulary.
+//! A SEPARATE taxonomy from the frozen Core `mcp_re_core::McpReError`. Core proves a
+//! request is authentic, fresh, non-replayed and audience-correct; this is what an
+//! authorization MECHANISM refuses in, under ADR-MCPRE-065.
+//!
+//! The tokens are frozen. The prose is not, and it says what each one means for the RFC 9421
+//! carrier rather than for the `_meta`/`authorization_hash` model ADR-MCPRE-050 replaced —
+//! a taxonomy whose explanations describe a deleted carrier sends an operator looking for
+//! fields that no longer exist.
 
 /// The frozen Phase 5 authorization-error taxonomy (ADR-MCPS-013). One variant
 /// per `mcp-re.authorization_*` wire token. `Display` (via `thiserror`) and
@@ -14,13 +15,13 @@
 /// context is kept out of the token.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PolicyError {
-    /// The request verified at the Core layer but carries no
-    /// `se.syncom/mcp-re.authorization` sibling block.
+    /// The request verified, and carries none of the authorization evidence the active
+    /// profile requires.
     #[error("mcp-re.authorization_block_missing")]
     AuthorizationBlockMissing,
 
-    /// `sha256(decoded artifact bytes)` did not equal the verified
-    /// `authorization_hash` — the artifact is not the one Core signed over.
+    /// The presented authorization artifact's bytes do not match the digest its verified
+    /// binding committed to — the artifact is not the one the request signed over.
     #[error("mcp-re.authorization_hash_mismatch")]
     AuthorizationHashMismatch,
 
@@ -33,16 +34,25 @@ pub enum PolicyError {
     #[error("mcp-re.authorization_malformed")]
     AuthorizationMalformed,
 
-    /// The issuer signature (or delegation chain) over the artifact did not
-    /// verify.
+    /// The artifact could not be AUTHENTICATED under the deployment's configured
+    /// authorization-authority trust: the signature did not verify, or its issuer is not one
+    /// this deployment trusts to decide.
+    ///
+    /// Those two are different facts and only the diagnostic channel separates them — an
+    /// authority a deployment has not been told about is not a forgery. The token is
+    /// nevertheless truthful for both, and the taxonomy is frozen; the cost is named here
+    /// rather than hidden. Distinct from
+    /// [`AuthorizationBindingProfileRequired`](Self::AuthorizationBindingProfileRequired),
+    /// which is the deployment having configured no authorization authority at all.
     #[error("mcp-re.authorization_signature_invalid")]
     AuthorizationSignatureInvalid,
 
-    /// The artifact's grantee did not match the Core-verified request signer.
+    /// The decision's actor coordinate does not match the verified actor, at the scope the
+    /// active profile binds (ADR-MCPRE-065 Law A-2).
     #[error("mcp-re.authorization_signer_mismatch")]
     AuthorizationSignerMismatch,
 
-    /// The artifact's subject did not match the verified `on_behalf_of`.
+    /// The artifact's subject did not match the verified delegating subject.
     #[error("mcp-re.authorization_subject_mismatch")]
     AuthorizationSubjectMismatch,
 
@@ -67,19 +77,26 @@ pub enum PolicyError {
     #[error("mcp-re.authorization_revocation_unavailable")]
     AuthorizationRevocationUnavailable,
 
-    /// The requested method / tool-or-resource / arguments are not within the
-    /// artifact's granted scope.
+    /// The action is not permitted: the requested operation or target is outside what the
+    /// evidence grants, or an authority evaluated this request and explicitly denied it.
+    ///
+    /// The taxonomy has no generic `authorization_denied`, so this is the coarse
+    /// policy-denial surface. A profile that renders an explicit deny here says so in its
+    /// own refusal algebra, where the two remain distinct.
     #[error("mcp-re.authorization_scope_denied")]
     AuthorizationScopeDenied,
 
-    /// A draft-02 `authz-system-reference` binding was presented, but no
-    /// authorization-reference profile/resolver is configured for its
-    /// `authorization_system_id`. MCP-RE binds the system-produced evidence but
-    /// never interprets it; without a configured resolver there is no one to
-    /// validate the reference, so the policy fails closed (ADR-MCPS-039 /
-    /// decision E.2). Distinct from `authorization_profile_unsupported` (which is
-    /// about the artifact-interpretation `profile`): this is the binding-form
-    /// resolver, a separate axis.
+    /// Authorization evidence was presented and this deployment has configured NO
+    /// authorization authority to validate it against.
+    ///
+    /// A statement about the DEPLOYMENT, not about the caller: without a configured
+    /// resolver there is nobody to validate against, so the policy fails closed
+    /// (ADR-MCPS-039 / decision E.2). Deliberately distinct from
+    /// [`AuthorizationSignatureInvalid`](Self::AuthorizationSignatureInvalid), which is a
+    /// configured authority REFUSING an issuer or a signature — the two send an operator to
+    /// entirely different places. Also distinct from
+    /// [`AuthorizationProfileUnsupported`](Self::AuthorizationProfileUnsupported), which is
+    /// about the artifact-interpretation profile rather than the authority.
     #[error("mcp-re.authorization_binding_profile_required")]
     AuthorizationBindingProfileRequired,
 }

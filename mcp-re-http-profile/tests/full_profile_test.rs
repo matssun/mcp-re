@@ -89,6 +89,7 @@ fn request_block(bindings: Vec<ArtifactBinding>) -> HttpRequestEvidenceBlock {
         continuation: None,
         admission: None,
         admission_assertion: None,
+        authorization_decision: None,
     }
 }
 
