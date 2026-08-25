@@ -158,6 +158,10 @@ pub mod replay_tier;
 // mcp-re-proxy (the pure profile crate gains no proxy dependency).
 pub mod http_profile_dispatch;
 pub mod http_profile_serve;
+// ADR-MCPRE-066 Slice 0: what a stage decided when it refused, and WHICH AUTHORITY decided
+// it. Split from the serving path because the cause must outlive the stage that produced it
+// — a pre-rendered token cannot say whether Core or the authorization boundary refused.
+pub(crate) mod refusal;
 // ADR-MCPS-021 Axis 2: the declared REVOCATION tier (Tier 1 bounded-cache / Tier 2
 // live / Tier 3 push) — semantic names, honest per-tier guarantee, tier-claim
 // ceiling. Pure type — in the default build. The Axis-2 analogue of replay_tier.

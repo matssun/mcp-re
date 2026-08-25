@@ -191,6 +191,10 @@ jobs:
           python3 scripts/serving_identity_provenance_gate.py
           python3 scripts/authorization_provenance_gate.py --selftest
           python3 scripts/authorization_provenance_gate.py
+          # ADR-MCPRE-066 Slice 0: a refusal carries its authority, not a rendered token,
+          # and PolicyError has no route into the Core taxonomy.
+          python3 scripts/refusal_provenance_gate.py --selftest
+          python3 scripts/refusal_provenance_gate.py
 
       # A guide that teaches a flag the CLI no longer parses sends an operator to debug
       # their own environment. Only command lines that LAUNCH the proxy are scanned, so

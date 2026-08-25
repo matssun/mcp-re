@@ -36,6 +36,9 @@
 use std::sync::Arc;
 
 use mcp_re_core::McpReError;
+
+use crate::refusal::Refusal;
+use crate::refusal::RefusalPosture;
 use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::build_delegated_rejection;
 use mcp_re_http_profile::build_delegated_rejection_preflight;
@@ -126,73 +129,6 @@ pub type ActorResolver = Box<dyn Fn(&str, SignerSlot) -> ResolverOutcome + Send 
 /// are different authorities: a key trusted for one must not be usable for the other
 /// by sharing a seam.
 pub type AdmissionAuthorityResolver = Arc<dyn Fn(&str) -> Option<VerificationKey> + Send + Sync>;
-
-/// How a refusal must be signed and recorded.
-///
-/// Not a detail of presentation: each posture is a different claim. Preflight says no
-/// trustworthy request hash exists; the other two say one does, and differ on whether the
-/// request had already been ADMITTED — which decides whether the fault is attributed to the
-/// caller or to the response side (ADR-MCPS-035 §9).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RefusalPosture {
-    /// The request never verified. Signed response-only, no actor to attribute it to.
-    Preflight,
-    /// The request verified but was not yet admitted. Bound via `;req`, recorded as
-    /// `mcp-re.request.rejected`.
-    BeforeAdmission,
-    /// The request was admitted, so the fault is on the response side. Bound, recorded as
-    /// `mcp-re.response.rejected` — a `request.rejected` here would contradict the
-    /// `accepted` record already emitted for the same request.
-    AfterAdmission,
-}
-
-/// What a stage DECIDED, before anything is signed.
-///
-/// A stage names its refusal; it does not produce one. Two reasons, and the second is the
-/// load-bearing one:
-///
-/// * signing is authority, and the eleven stages have no business exercising it;
-/// * a refusal that is a VALUE can be asserted on directly, so a stage's contract can be
-///   tested without standing up a signer, a credential, or a clock.
-///
-/// Note what is absent: the retry contract. A stage cannot state it, because it is a fact
-/// about the whole exchange rather than about the step that failed. It is derived once, from
-/// the exchange machine, where [`HttpProfileProxy::refuse`] signs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Refusal {
-    wire_code: &'static str,
-    status: u16,
-    posture: RefusalPosture,
-}
-
-impl Refusal {
-    /// The request never verified.
-    fn preflight(wire_code: &'static str, status: u16) -> Self {
-        Refusal {
-            wire_code,
-            status,
-            posture: RefusalPosture::Preflight,
-        }
-    }
-
-    /// The request verified but had not been admitted.
-    fn before_admission(wire_code: &'static str, status: u16) -> Self {
-        Refusal {
-            wire_code,
-            status,
-            posture: RefusalPosture::BeforeAdmission,
-        }
-    }
-
-    /// The request was admitted; the fault is on the response side.
-    fn after_admission(wire_code: &'static str, status: u16) -> Self {
-        Refusal {
-            wire_code,
-            status,
-            posture: RefusalPosture::AfterAdmission,
-        }
-    }
-}
 
 /// One exchange's identity, as every stage past VERIFIED needs it.
 ///
@@ -497,7 +433,7 @@ impl HttpProfileProxy {
     ) -> Result<AuthorizationPosture, Refusal> {
         self.authorization
             .decide(ex.verified, &ex.http_req.body, bound)
-            .map_err(|refusal| Refusal::before_admission(refusal.wire_code(), 403))
+            .map_err(|refusal| Refusal::before_admission(refusal, 403))
     }
 
     /// Wire the MRTR continuation correlation store (ADR-MCPS-047) with a bounded
@@ -585,7 +521,7 @@ impl HttpProfileProxy {
             .await
         {
             Ok(()) => Ok(admitted()),
-            Err(code) => Err(Refusal::before_admission(code, 403)),
+            Err(e) => Err(Refusal::before_admission(e, 403)),
         }
     }
 
@@ -611,7 +547,7 @@ impl HttpProfileProxy {
         if refusal.posture == RefusalPosture::AfterAdmission {
             return self.response_rejection(
                 ex.http_req,
-                refusal.wire_code,
+                refusal.wire_code(),
                 refusal.status,
                 ex.now,
                 bound,
@@ -622,7 +558,7 @@ impl HttpProfileProxy {
         }
         self.rejection(
             ex.http_req,
-            refusal.wire_code,
+            refusal.wire_code(),
             refusal.status,
             ex.now,
             bound,
@@ -784,7 +720,7 @@ impl HttpProfileProxy {
         // and no resolved actor to attribute the denial to.
         verify_result
             .map(|v| Established::new(v, ExchangeEvent::SignatureVerified))
-            .map_err(|e| Refusal::preflight(e.wire_code(), 403))
+            .map_err(|e| Refusal::preflight(e, 403))
     }
 
     /// REQUEST-ENVELOPE-VALIDATED — is this body a legal JSON-RPC request at all?
@@ -813,7 +749,7 @@ impl HttpProfileProxy {
         http_req: &HttpRequest,
     ) -> Result<mcp_re_http_profile::OutstandingId, Refusal> {
         mcp_re_http_profile::validate_request_envelope(&http_req.body)
-            .map_err(|e| Refusal::before_admission(e.wire_code(), 400))
+            .map_err(|e| Refusal::before_admission(e, 400))
     }
 
     /// TRANSPORT-BOUND — Mode-A: the verified request actor must be the mTLS peer.
@@ -836,7 +772,7 @@ impl HttpProfileProxy {
         let subject = verified_request_subject(ex.verified.resolved_actor());
         let Ok(bound) = binding.bind(peer, subject) else {
             return Err(Refusal::before_admission(
-                "mcp-re.transport_binding_failed",
+                McpReError::TransportBindingFailed,
                 403,
             ));
         };
@@ -884,7 +820,7 @@ impl HttpProfileProxy {
                 Ok(bases) => bases,
                 Err(_) => {
                     return Err(Refusal::before_admission(
-                        McpReError::ReplayCacheUnavailable.wire_code(),
+                        McpReError::ReplayCacheUnavailable,
                         503,
                     ))
                 }
@@ -927,7 +863,7 @@ impl HttpProfileProxy {
         )
         .await
         .map(|_| Established::new((), ExchangeEvent::ReplayAdmitted))
-        .map_err(|e| Refusal::before_admission(e.wire_code(), 409))
+        .map_err(|e| Refusal::before_admission(e, 409))
     }
 
     /// ANSWERABLE — can this request be answered AT ALL?
@@ -960,7 +896,7 @@ impl HttpProfileProxy {
                 ))
             }
             None => Err(Refusal::before_admission(
-                McpReError::DelegatedSigningUnavailable.wire_code(),
+                McpReError::DelegatedSigningUnavailable,
                 503,
             )),
         }
@@ -1027,7 +963,7 @@ impl HttpProfileProxy {
                 }
                 Ok(Established::new(body, ExchangeEvent::ForwardBodyPrepared))
             }
-            Err(e) => Err(Refusal::after_admission(e.wire_code(), 500)),
+            Err(e) => Err(Refusal::after_admission(e, 500)),
         }
     }
 
@@ -1073,7 +1009,7 @@ impl HttpProfileProxy {
                      dispatch: {e}"
                 );
                 Err(Refusal::after_admission(
-                    McpReError::EvidenceRetentionUnavailable.wire_code(),
+                    McpReError::EvidenceRetentionUnavailable,
                     503,
                 ))
             }
@@ -1099,9 +1035,7 @@ impl HttpProfileProxy {
         self.inner_async
             .admit()
             .map(|_| Established::new((), ExchangeEvent::InnerPlaneAccepted))
-            .map_err(|_| {
-                Refusal::after_admission(McpReError::InnerPlaneUnavailable.wire_code(), 503)
-            })
+            .map_err(|_| Refusal::after_admission(McpReError::InnerPlaneUnavailable, 503))
     }
 
     /// RESPONSE-OBSERVED — what did the inner plane actually manage to do?
@@ -1132,18 +1066,18 @@ impl HttpProfileProxy {
             // exchange has already crossed — the floor does not move back for a more
             // precise late observation.
             InnerOutcome::NotDispatched(_) => Err(Refusal::after_admission(
-                McpReError::InnerPlaneUnavailable.wire_code(),
+                McpReError::InnerPlaneUnavailable,
                 503,
             )),
             InnerOutcome::Indeterminate(_) => {
                 progress.observe_origin(ResponseOrigin::DispatchIndeterminate);
                 Err(Refusal::after_admission(
-                    McpReError::InnerDispatchIndeterminate.wire_code(),
+                    McpReError::InnerDispatchIndeterminate,
                     504,
                 ))
             }
             InnerOutcome::InvalidUpstream(clause) => Err(Refusal::after_admission(
-                HttpProfileError::UpstreamResponseInvalid(clause).wire_code(),
+                HttpProfileError::UpstreamResponseInvalid(clause),
                 502,
             )),
         }
@@ -1184,13 +1118,13 @@ impl HttpProfileProxy {
                 ))
             }
             InnerOutcome::NotDispatched(_) => Err(Refusal::after_admission(
-                McpReError::InnerPlaneUnavailable.wire_code(),
+                McpReError::InnerPlaneUnavailable,
                 503,
             )),
             InnerOutcome::Indeterminate(_) => {
                 progress.observe_origin(ResponseOrigin::DispatchIndeterminate);
                 Err(Refusal::after_admission(
-                    McpReError::InnerDispatchIndeterminate.wire_code(),
+                    McpReError::InnerDispatchIndeterminate,
                     504,
                 ))
             }
@@ -1221,10 +1155,7 @@ impl HttpProfileProxy {
         outstanding: &mcp_re_http_profile::OutstandingId,
     ) -> Result<Established<serde_json::Value>, Refusal> {
         let invalid = |clause| {
-            Refusal::after_admission(
-                HttpProfileError::UpstreamResponseInvalid(clause).wire_code(),
-                502,
-            )
+            Refusal::after_admission(HttpProfileError::UpstreamResponseInvalid(clause), 502)
         };
         let parsed = parse_response_body(&response.body).map_err(|e| match e {
             HttpProfileError::UpstreamResponseInvalid(clause) => invalid(clause),
@@ -1233,7 +1164,7 @@ impl HttpProfileProxy {
         match validate_response_envelope(&parsed, outstanding) {
             Ok(_) => Ok(Established::new(parsed, ExchangeEvent::EnvelopeValidated)),
             Err(HttpProfileError::UpstreamResponseInvalid(clause)) => Err(invalid(clause)),
-            Err(e) => Err(Refusal::after_admission(e.wire_code(), 502)),
+            Err(e) => Err(Refusal::after_admission(e, 502)),
         }
     }
 
@@ -1263,7 +1194,7 @@ impl HttpProfileProxy {
         match classify_result_type(result) {
             ResultTypeClass::Complete => Ok(classified(ReplyClass::Terminal)),
             ResultTypeClass::Unrecognized => Err(Refusal::after_admission(
-                HttpProfileError::UnrecognizedResultType.wire_code(),
+                HttpProfileError::UnrecognizedResultType,
                 502,
             )),
             ResultTypeClass::InputRequired => match input_required_state_of(result) {
@@ -1272,8 +1203,7 @@ impl HttpProfileProxy {
                 // arms cannot both be right, and the only safe reading is that the message
                 // is invalid.
                 _ => Err(Refusal::after_admission(
-                    HttpProfileError::UpstreamResponseInvalid("input_required requestState")
-                        .wire_code(),
+                    HttpProfileError::UpstreamResponseInvalid("input_required requestState"),
                     502,
                 )),
             },
@@ -1313,7 +1243,7 @@ impl HttpProfileProxy {
         };
         sign_result
             .map(|base| Established::new(base, ExchangeEvent::ResponseSigned))
-            .map_err(|e| Refusal::after_admission(e.wire_code(), 500))
+            .map_err(|e| Refusal::after_admission(e, 500))
     }
 
     /// CONTINUATION-RECORDED — make an open leg answerable on any replica.
@@ -1346,7 +1276,7 @@ impl HttpProfileProxy {
         // in TIME, which is why the refusal belongs here.
         let Some(store) = &self.continuation_store else {
             return Err(Refusal::after_admission(
-                McpReError::ReplayCacheUnavailable.wire_code(),
+                McpReError::ReplayCacheUnavailable,
                 503,
             ));
         };
@@ -1369,7 +1299,7 @@ impl HttpProfileProxy {
             }
         }
         Err(Refusal::after_admission(
-            McpReError::ReplayCacheUnavailable.wire_code(),
+            McpReError::ReplayCacheUnavailable,
             503,
         ))
     }
@@ -1409,7 +1339,7 @@ impl HttpProfileProxy {
             Err(refusal) => {
                 return self.rejection(
                     &http_req,
-                    refusal.wire_code,
+                    refusal.wire_code(),
                     refusal.status,
                     now,
                     None,
@@ -1499,10 +1429,7 @@ impl HttpProfileProxy {
             Retirement::AlreadyAnswered => {
                 return self.refuse(
                     &ex,
-                    Refusal::before_admission(
-                        McpReError::ContinuationBindingFailed.wire_code(),
-                        409,
-                    ),
+                    Refusal::before_admission(McpReError::ContinuationBindingFailed, 409),
                     &progress,
                 )
             }
@@ -1517,7 +1444,7 @@ impl HttpProfileProxy {
                 progress.observe_continuation(ContinuationState::Consumed);
                 return self.refuse(
                     &ex,
-                    Refusal::before_admission(McpReError::ReplayCacheUnavailable.wire_code(), 503),
+                    Refusal::before_admission(McpReError::ReplayCacheUnavailable, 503),
                     &progress,
                 );
             }

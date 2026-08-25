@@ -82,7 +82,7 @@ impl AdmissionEnforcer {
         actor_id: &str,
         audience_id: &str,
         now: i64,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), HttpProfileError> {
         let block = verified.request_block();
         let (binding, assertion) = match (
             block.admission.as_ref(),
@@ -93,7 +93,7 @@ impl AdmissionEnforcer {
             // reaching here means BOTH are absent: the call declares no admission.
             _ => {
                 if self.enforcement == AdmissionEnforcement::Required {
-                    return Err(HttpProfileError::AdmissionStateUnavailable.wire_code());
+                    return Err(HttpProfileError::AdmissionStateUnavailable);
                 }
                 return Ok(());
             }
@@ -110,7 +110,7 @@ impl AdmissionEnforcer {
             }
             Ok(None) => {
                 self.record_authoritative_read(now);
-                return Err(HttpProfileError::AdmissionNotCurrent.wire_code());
+                return Err(HttpProfileError::AdmissionNotCurrent);
             }
             // The source is unreachable. Whether the §5.2 degraded fork may be entered
             // at all is decided HERE, by how long the authority has been unreachable —
@@ -118,7 +118,7 @@ impl AdmissionEnforcer {
             // controls.
             Err(_) => {
                 if self.degraded_window_exhausted(now) {
-                    return Err(HttpProfileError::AdmissionStateUnavailable.wire_code());
+                    return Err(HttpProfileError::AdmissionStateUnavailable);
                 }
                 None
             }
@@ -149,7 +149,6 @@ impl AdmissionEnforcer {
         // confirmed one. That is a real gap in the record, named here rather
         // than closed by quietly widening a pinned vocabulary.
         .map(|_| ())
-        .map_err(|e| e.wire_code())
     }
 
     /// Note that the authoritative record was read at `now`.
