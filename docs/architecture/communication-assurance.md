@@ -1486,3 +1486,104 @@ stage. That is the positive live control for the corrected semantics, and it is 
 cheaper than reconstructing which convention historical GKE runs happened to use.
 
 **Next: admission and authority consumers.**
+
+## 16. Slice 5 as built — admission consumes the binding, and two rulings kept apart
+
+Issue **#625**.
+
+### 16.1 The defect, stated precisely
+
+`TransportBinding::bind` built a `RequestPeerBindingFacts` and `transport_binding_stage`
+returned `Established<()>`. The fact was **produced and discarded**.
+
+What was NOT the defect: stage ordering. The exchange machine already latches an anomaly when
+`AdmissionCurrencyChecked` is advanced before `TransportBindingChecked`, so order was checked.
+What died at the stage was the **content** — which principal was bound, under which channel
+assurance, and whether binding was claimed at all. No later authority could condition on any
+of it.
+
+### 16.2 What changed
+
+```text
+transport_binding_stage
+      v
+Established<Option<RequestPeerBindingFacts>>     Some = bound; None = no policy installed
+      v
+admission_stage(ex, bound)
+      v
+Established<Option<RequestPeerBindingFacts>>     the prerequisite travels with the decision
+```
+
+`None` is *not claimed to be bound*, never *bound* — the same distinction Slice 3 drew for
+`NotEvaluated` and Slice 4 carried in `AuthenticatedChannelPeer`. It is preserved through the
+admission stage rather than flattened at it.
+
+### 16.3 The prerequisite is CARRIED, not re-decided — and why the first attempt was wrong
+
+The first implementation refused when admission enforcement was `Required` and no binding fact
+was present. **That was wrong, and the test suite said so:** ten admission controls build a
+proxy with admission `Required` and no binding policy, deliberately, to exercise that authority
+alone. The guard broke every one.
+
+The proposition those controls protect is real — admission's semantics are testable
+independently of transport binding — and *a deployment enforcing Required admission also binds
+its channels* is a statement about a **configuration**, not about a request. It is already true
+by construction: `app.rs` installs a binding for every channel-binding state and validation
+refuses `--transport-binding none`. Enforcing it per request would put a deployment-consistency
+check in the hot path where it can only fire for a proxy the composition root never builds.
+
+So the fact flows and is not re-decided. A broken test stated a claim; the claim was right.
+
+### 16.4 The two rulings, deliberately kept apart
+
+```text
+request <-> communication peer :  authenticated peer identity == resolved actor SUBJECT
+admission assertion <-> actor  :  admitted_actor              == resolved actor ACTOR_ID
+```
+
+`actor_id()` is **correct** for admission. An admission assertion is issued to the full
+resolved signing actor — role, trust domain, subject **and** keyid — so narrowing the match to
+the subject would let an assertion issued for one signing key be presented under another key of
+the same subject. The ADR-MCPRE-064 Slice 4 ruling does not extend here, and
+`the_binding_prerequisite_and_the_assertion_coordinate_are_different_facts` exists to catch a
+reader who applies it by analogy.
+
+The inverse is equally deliberate: transport binding must survive a signing-key rotation, which
+is why it takes the subject. Same system, two relations, two coordinates.
+
+### 16.5 The decomposition the ratchet forced, and why it was the right answer
+
+Slice 5 needed a handful of production lines in `http_profile_serve.rs` to carry the
+prerequisite. That file is a documented ADR-MCPRE-061 §14 exception already sitting at its
+debt baseline, and **a ratcheted file may not grow whatever its status.**
+
+The first response was to shave the explanatory comments until the number fit. That is exactly
+the distortion the threshold rule exists to prevent — *never split (or strip) code merely to
+satisfy a number* — and it was abandoned.
+
+The second response was the one the rule intends: **decompose along a real seam.**
+`AdmissionEnforcer`, `AdmissionEnforcement` and the degraded-window arithmetic are not a
+pipeline stage. They are the deployment's admission posture, with their own invariant and no
+dependence on the request being served, and they moved to `admission_enforcer.rs` (94 lines).
+`http_profile_serve.rs` fell from 2120 to **2062** production lines, and the debt registry was
+ratcheted down to lock the gain in rather than left holding 58 lines of headroom nobody paid
+for.
+
+`AdmissionEnforcement` moved with it, so its public path is now
+`mcp_re_proxy::admission_enforcer::AdmissionEnforcement`.
+
+### 16.6 One thing the compiler caught
+
+An intermediate version took `bound` as a parameter and never read it. `-D warnings` said so:
+an unused parameter is not a prerequisite, it is decoration, and a reader would have taken the
+signature as evidence of a dependency that did not exist. The prerequisite now travels into the
+admission stage's own established value, so it is genuinely consumed and the *bound* /
+*not claimed* distinction survives to whatever consumes admission next.
+
+### 16.7 Preserved
+
+`Optional` vs `Required` enforcement, the §5.2 degraded-window fork, the definitive-negative
+refusal, and the assertion match on the composite. No wire code changed and no behaviour
+changed for any deployment `app.rs` can build.
+
+**Next: authority consumers.**

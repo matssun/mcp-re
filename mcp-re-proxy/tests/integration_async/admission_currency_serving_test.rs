@@ -53,6 +53,7 @@ use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::PROFILE_TAG;
 
+use mcp_re_proxy::admission_enforcer::AdmissionEnforcement;
 use mcp_re_proxy::admission_source::AsyncAdmissionSource;
 use mcp_re_proxy::admission_source::InMemoryAdmissionSource;
 use mcp_re_proxy::async_inner::AsyncInnerServer;
@@ -61,7 +62,6 @@ use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve::ServedHttpRequest;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
 use mcp_re_proxy::http_profile_serve::AdmissionAuthorityResolver;
-use mcp_re_proxy::http_profile_serve::AdmissionEnforcement;
 use mcp_re_proxy::ActorResolver;
 use mcp_re_proxy::DelegatedRotor;
 use mcp_re_proxy::DelegatedServerSigner;

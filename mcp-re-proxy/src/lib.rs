@@ -290,6 +290,7 @@ pub mod async_redis_store;
 // carries a multi-round-trip continuation across a replica switch. The trait +
 // in-memory (single-process) impl are always compiled; the Redis (cross-replica)
 // backend is `redis_replay`-gated like the async replay store above.
+pub mod admission_enforcer;
 pub mod admission_source;
 pub mod continuation_store;
 #[cfg(feature = "redis_replay")]
