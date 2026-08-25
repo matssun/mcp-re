@@ -20,3 +20,6 @@ description = "Test-only helper: resolve child-process binaries and data fixture
 #   for cross-crate binaries to exist.
 
 [dependencies]
+
+[lints]
+workspace = true

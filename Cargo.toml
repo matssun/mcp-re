@@ -183,6 +183,61 @@ hyper-util = { version = "0.1", features = ["server", "server-auto", "client", "
 http-body-util = "0.1"
 bytes = "1"
 
+# ADR-MCPRE-061 Amendment 1 §3, Group A — zero-debt protections, denied at zero rather
+# than ratcheted, because nothing has to be paid off first. Each was measured at 0 sites
+# across production AND test targets, in both the default lane and the full CI feature
+# lane, so `deny` is landable in one step; each names an invariant, and the failure class
+# it prevents is recorded in the amendment.
+#
+# WHY HERE and not a `#![deny(...)]` in each crate root: the block is identical in every
+# crate, and thirteen copies of the same thirty lines grew six files already registered in
+# `config/module-size-debt.toml`, which may not grow whatever their status. The registry
+# choosing the mechanism is working as intended — the rationale belongs in one place. Each
+# member opts in with `lints.workspace = true`; `scripts/workspace_lints_gate.py` fails the
+# build if a member stops opting in, and `--probe` proves the table is actually enforced
+# rather than merely present.
+#
+# NOT here: `unsafe_code`. It is `forbid`, not `deny` (an inner `#[allow]` must not be able
+# to override it), it applies to nine members rather than all twelve, and on the two prover
+# crates it is conditional on `not(feature = "verify")`. A lints table can express none of
+# those three, so it stays a crate-root attribute — see §3.1.
+[workspace.lints.rust]
+# Verus sets this cfg during prover runs; it is not a typo. Was a per-crate
+# `[lints.rust]` in mcp-re-core and mcp-re-http-profile, which cargo forbids
+# alongside `lints.workspace = true`, so it moves here with everything else.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)'] }
+# Homoglyph / trojan-source identifiers have no place in a security codebase.
+non_ascii_idents = "deny"
+# Every unsafe operation sits in a visible `unsafe` block, edition 2021 included — so the
+# two crates that DO hold unsafe cannot acquire an implicitly-unsafe `unsafe fn` body.
+unsafe_op_in_unsafe_fn = "deny"
+# A `macro_rules!` arm that misuses its metavariables is a correctness defect, not style.
+meta_variable_misuse = "deny"
+
+[workspace.lints.clippy]
+# Panic-freedom: a policy-enforcement point returns a refusal, never a panic. A reachable
+# placeholder in a proxy is a remote denial of service.
+todo = "deny"
+unimplemented = "deny"
+# No pointer laundering around the type system.
+transmute_ptr_to_ptr = "deny"
+# Evidence stores read and classify files deliberately; `filetype_is_file` is a symlink
+# confusion in the retained-evidence store, not a style preference.
+verbose_file_reads = "deny"
+filetype_is_file = "deny"
+# The refusal taxonomy stays a taxonomy: one named error type per authority, and no
+# `Err(x)?` laundering a conversion the taxonomy did not authorise.
+error_impl_error = "deny"
+try_err = "deny"
+# A newly added security field cannot silently escape a match written to be exhaustive.
+rest_pat_in_fully_bound_structs = "deny"
+# Structural clarity at an owner boundary.
+same_name_method = "deny"
+rc_buffer = "deny"
+pub_without_shorthand = "deny"
+# A debugging macro is not an audit channel.
+dbg_macro = "deny"
+
 [profile.release]
 lto = true
 codegen-units = 1

@@ -11,6 +11,10 @@
 //! The transport is abstracted behind [`RemoteTransport`] so the security pipeline
 //! is testable without real I/O; a binary supplies a concrete stdio/HTTP transport.
 
+// ADR-MCPRE-061 Amendment 1 §3.1 — this crate holds no production `unsafe`, and `forbid`
+// (unlike `deny`) cannot be overridden by an inner `#[allow]` anywhere in it. Acquiring
+// `unsafe` here means deleting this line: an architectural decision, reviewed as one.
+#![forbid(unsafe_code)]
 pub mod manifest_floor;
 pub mod proxy;
 pub mod route;

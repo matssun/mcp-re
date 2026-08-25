@@ -25,3 +25,5 @@ mcp-re-http-profile = { path = "../mcp-re-http-profile" }
 # a corpus digest, so the vector loaders hash fixture bytes before running them.
 sha2 = { workspace = true }
 
+[lints]
+workspace = true

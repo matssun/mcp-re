@@ -31,3 +31,6 @@ dev-probe = []
 [lib]
 name = "mcp_re_client_core"
 path = "src/lib.rs"
+
+[lints]
+workspace = true

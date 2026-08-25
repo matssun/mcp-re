@@ -155,6 +155,11 @@ stage_static() {
     `# The ratchet's comparison logic needs no build; the measurement it guards does, and` \
     `# runs in stage 2 with the probes that prove the lints are actually switched on.` \
     && python3 scripts/clippy_ratchet_gate.py --selftest \
+    `# ADR-MCPRE-061 Amendment 1 §3 — the Group A protections live in one` \
+    `# \`[workspace.lints]\` table, which reaches a member ONLY if that member opts in.` \
+    `# The membership check is pure text; the --probe that proves the table is enforced` \
+    `# rather than merely present needs a build and runs in stage 2.` \
+    && python3 scripts/workspace_lints_gate.py \
     && fmt_check \
     || return 1
   if command -v helm >/dev/null 2>&1; then
@@ -257,6 +262,10 @@ clippy_check() {
   python3 scripts/clippy_ratchet_gate.py --activation-probe \
     && python3 scripts/clippy_ratchet_gate.py --nesting-probe \
     && python3 scripts/clippy_ratchet_gate.py \
+    `# Same reason the ratchet's probes run here: a lints TABLE is configuration, and` \
+    `# configuration that enforces nothing is the failure this repository has already` \
+    `# hit twice. This compiles a deliberate violation inside a real member.` \
+    && python3 scripts/workspace_lints_gate.py --probe \
     || return 1
 }
 
