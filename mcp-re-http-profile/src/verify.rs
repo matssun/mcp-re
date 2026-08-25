@@ -54,6 +54,8 @@ use crate::message::required_header;
 use crate::message::single_header;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
+use crate::pdp_decision::pdp_decision_evidence;
+use crate::pdp_decision::verify_pdp_decision_binding;
 use crate::policy::ProfileAlgorithm;
 use crate::policy::VerifierPolicy;
 use crate::sigbase::signature_base;
@@ -913,6 +915,17 @@ pub(crate) fn enforce_full_profile_bindings(
         return Err(HttpProfileError::AudienceMismatch);
     }
     for binding in &block.artifact_bindings {
+        // The ADR-MCPRE-065 Slice 2 evidence form carries its artifact in the block beside
+        // the binding, so its material is already in hand and its typed verifier is its own.
+        // Dispatching it through `verify_artifact_binding` would mean widening a function
+        // whose proved postcondition is *an `Ok` result is one of the three OAuth types* —
+        // weakening a theorem to save a match arm. Every OTHER non-OAuth type still has no
+        // verifier, and is still refused rather than silently treated as verified.
+        if let Some(decision) = pdp_decision_evidence(binding, block) {
+            verify_pdp_decision_binding(binding, decision)
+                .map_err(|_| HttpProfileError::ArtifactBindingFailed)?;
+            continue;
+        }
         let credential = resolve_artifact_credential(binding, &request.headers, artifact_material)
             .ok_or(HttpProfileError::ArtifactBindingFailed)?;
         verify_artifact_binding(binding, &credential)?;

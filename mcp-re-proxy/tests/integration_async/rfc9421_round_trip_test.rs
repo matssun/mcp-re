@@ -176,6 +176,7 @@ fn signed_request(nonce: &str) -> (HttpRequest, RequestEvidence, VerifiedMcpRequ
         continuation: None,
         admission: None,
         admission_assertion: None,
+        authorization_decision: None,
     };
     let mut req = HttpRequest {
         method: "POST".into(),

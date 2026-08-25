@@ -26,6 +26,12 @@ use serde::Serialize;
 use sha2::Digest;
 use sha2::Sha256;
 
+pub mod artifact_binding;
+
+pub use artifact_binding::ArtifactBinding;
+pub use artifact_binding::ArtifactType;
+pub use artifact_binding::BindingType;
+
 use crate::error::HttpProfileError;
 use crate::evidence::labeled_digest_value;
 use crate::ids::EVIDENCE_DIGEST_ALG;
@@ -33,6 +39,7 @@ use crate::ids::EVIDENCE_LABEL_REQUEST;
 use crate::ids::EVIDENCE_LABEL_REQUEST_STATE;
 use crate::ids::EVIDENCE_LABEL_RESPONSE;
 use crate::ids::MAX_ADMISSION_ASSERTION_LEN;
+use crate::pdp_decision::MAX_AUTHORIZATION_DECISION_LEN;
 #[cfg(feature = "verify")]
 use verus_builtin_macros::{verus_spec, verus_verify};
 #[cfg(feature = "verify")]
@@ -234,116 +241,6 @@ impl AudienceTuple {
     /// `audience_hash` replay-key component.
     pub fn audience_hash(&self) -> String {
         b64url_encode(&Sha256::digest(self.canonical_bytes()))
-    }
-}
-
-/// The seven artifact-type registry tokens (ADR-MCPRE-050 §Resolved Q5 / grill
-/// E-8). DPoP, mTLS, and RAR get typed verification in MCPRE-95; the other four
-/// bind via digest/reference until a consumer appears.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ArtifactType {
-    #[serde(rename = "oauth-dpop")]
-    OauthDpop,
-    #[serde(rename = "oauth-mtls")]
-    OauthMtls,
-    #[serde(rename = "oauth-rar")]
-    OauthRar,
-    #[serde(rename = "pdp-decision")]
-    PdpDecision,
-    #[serde(rename = "dtr-approval")]
-    DtrApproval,
-    #[serde(rename = "classifier-result")]
-    ClassifierResult,
-    #[serde(rename = "human-approval")]
-    HumanApproval,
-}
-
-/// How an artifact is bound. Both forms are digest-carrying — the digest, never
-/// the artifact bytes, is the cryptographic binding (mirrors the native
-/// `AuthorizationBinding` split). Typed OAuth proofs (`ath`, `x5t#S256`) layer
-/// on top of `opaque-digest`/`reference-digest` in MCPRE-95.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BindingType {
-    /// The digest is over the decoded artifact bytes, held locally.
-    #[serde(rename = "opaque-digest")]
-    OpaqueDigest,
-    /// The digest is produced by an external system named by the reference
-    /// fields; the record stays verifiable independent of that system's live
-    /// state.
-    #[serde(rename = "reference-digest")]
-    ReferenceDigest,
-}
-
-/// One `artifact_bindings[]` entry: the `artifact_type`/`binding_type` axis
-/// split plus the digest (and reference metadata for the reference form). No
-/// field can hold a raw secret — only digests and cross-audit references.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ArtifactBinding {
-    pub artifact_type: ArtifactType,
-    pub binding_type: BindingType,
-    /// Digest algorithm token; `"sha256"` in v0.11.
-    pub digest_alg: String,
-    /// `base64url-no-pad` digest — bare, no prefix (v0.11 grill E-5).
-    pub digest_value: String,
-    /// External authorization-system namespace (reference form only).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub authorization_system_id: Option<String>,
-    /// The external scheme: what `reference_value` means and how the digest was
-    /// produced (reference form only).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reference_scheme_id: Option<String>,
-    /// Decision/grant handle for cross-audit (reference form only).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reference_value: Option<String>,
-}
-
-impl ArtifactBinding {
-    /// Producer side: build an `opaque-digest` binding whose digest is
-    /// `base64url-no-pad(SHA-256(credential))`. This is how a client mints a
-    /// DPoP `ath` / mTLS `x5t#S256` / RAR binding from the credential surface —
-    /// the credential bytes are hashed, never stored.
-    pub fn opaque_digest(artifact_type: ArtifactType, credential: &[u8]) -> Self {
-        ArtifactBinding {
-            artifact_type,
-            binding_type: BindingType::OpaqueDigest,
-            digest_alg: EVIDENCE_DIGEST_ALG.to_owned(),
-            digest_value: b64url_encode(&Sha256::digest(credential)),
-            authorization_system_id: None,
-            reference_scheme_id: None,
-            reference_value: None,
-        }
-    }
-
-    /// Structural validation, fail-closed. The digest must be a non-empty
-    /// base64url token; the reference fields are all-present for
-    /// `reference-digest` and all-absent for `opaque-digest`.
-    // ADR-MCPRE-059 ASM-0019: structural validation, opaque to the typed-verifier
-    // theorem. Its own contract — digest token shape and the reference-field all-or-none
-    // rule — is a separate property, and the theorem above holds whatever it returns.
-    #[cfg_attr(feature = "verify", verus_verify(external_body))]
-    pub fn validate(&self) -> Result<(), HttpProfileError> {
-        if self.digest_alg != EVIDENCE_DIGEST_ALG {
-            return Err(HttpProfileError::MalformedEvidence("artifact digest_alg"));
-        }
-        if self.digest_value.is_empty() || !is_b64url_no_pad(&self.digest_value) {
-            return Err(HttpProfileError::MalformedEvidence("artifact digest_value"));
-        }
-        let has_ref = self.authorization_system_id.is_some()
-            || self.reference_scheme_id.is_some()
-            || self.reference_value.is_some();
-        let all_ref = self.authorization_system_id.is_some()
-            && self.reference_scheme_id.is_some()
-            && self.reference_value.is_some();
-        match self.binding_type {
-            BindingType::OpaqueDigest if has_ref => Err(HttpProfileError::MalformedEvidence(
-                "opaque binding carries reference fields",
-            )),
-            BindingType::ReferenceDigest if !all_ref => Err(HttpProfileError::MalformedEvidence(
-                "reference binding missing reference fields",
-            )),
-            _ => Ok(()),
-        }
     }
 }
 
@@ -554,6 +451,20 @@ pub struct HttpRequestEvidenceBlock {
     /// to appear together.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission_assertion: Option<String>,
+    /// The inline authorization decision (compact JOSE/JWS) an external authority issued
+    /// for this call — ADR-MCPRE-065 Slice 2.
+    ///
+    /// A sibling of the `pdp-decision` / `opaque-digest` entry in
+    /// [`artifact_bindings`](Self::artifact_bindings), exactly as `admission_assertion` is a
+    /// sibling of `admission`, and protected the same way: by the covered `content-digest`.
+    /// It rides in the BODY because E-3 admits a new MCP-RE header field only where the
+    /// message shape leaves no alternative, and a request has a body.
+    ///
+    /// Carried rather than referenced. A deployment that had to resolve a decision reference
+    /// would be unable to serve whenever its authority was unreachable, and the proposition
+    /// this evidence supports would then silently include *the PDP is online*.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorization_decision: Option<String>,
 }
 
 impl HttpRequestEvidenceBlock {
@@ -594,7 +505,52 @@ impl HttpRequestEvidenceBlock {
                 ))
             }
         }
+        self.validate_authorization_decision()?;
         Ok(())
+    }
+
+    /// The structural rules for an inline authorization decision (ADR-MCPRE-065 Slice 2).
+    ///
+    /// Three of them, and each closes a way the pairing could be ambiguous:
+    ///
+    /// 1. **Both halves or neither.** A binding alone commits to the digest of a document
+    ///    nobody supplied, so nothing can check it; a decision alone is an authority's
+    ///    statement bound to no call. Either shape verifies structurally and enforces
+    ///    nothing — worse than absent, which is at least legible as *this deployment does
+    ///    not do authorization*.
+    /// 2. **Exactly one applicable binding.** Two `pdp-decision` / `opaque-digest` entries
+    ///    would leave the verifier choosing which one the document is supposed to match,
+    ///    and a caller supplying both a matching and a non-matching one would pass whichever
+    ///    check happened to be written first.
+    /// 3. **A reference binding never satisfies it.** `pdp-decision` / `reference-digest` is
+    ///    the LINKAGE form: it names an external decision MCP-RE does not authenticate or
+    ///    interpret. Letting it stand in for the evidence form would let a call claim an
+    ///    enforcement decision it never carried.
+    ///
+    /// Size is bounded before any of it: the value is read from an unauthenticated peer and
+    /// an unbounded one is a parse and memory surface reachable pre-trust.
+    fn validate_authorization_decision(&self) -> Result<(), HttpProfileError> {
+        let applicable = self
+            .artifact_bindings
+            .iter()
+            .filter(|b| {
+                b.artifact_type == ArtifactType::PdpDecision
+                    && b.binding_type == BindingType::OpaqueDigest
+            })
+            .count();
+        match (&self.authorization_decision, applicable) {
+            (None, _) => Ok(()),
+            (Some(jws), _) if jws.len() > MAX_AUTHORIZATION_DECISION_LEN => Err(
+                HttpProfileError::MalformedEvidence("authorization decision size"),
+            ),
+            (Some(_), 1) => Ok(()),
+            (Some(_), 0) => Err(HttpProfileError::MalformedEvidence(
+                "authorization decision without a pdp-decision opaque-digest binding",
+            )),
+            (Some(_), _) => Err(HttpProfileError::MalformedEvidence(
+                "more than one pdp-decision opaque-digest binding",
+            )),
+        }
     }
 }
 
@@ -639,7 +595,7 @@ impl HttpResponseEvidenceBlock {
 }
 
 /// A base64url-no-pad token: URL-safe alphabet, no `=` padding, non-empty.
-fn is_b64url_no_pad(s: &str) -> bool {
+pub(crate) fn is_b64url_no_pad(s: &str) -> bool {
     !s.is_empty()
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
@@ -674,6 +630,7 @@ mod tests {
             continuation: None,
             admission: None,
             admission_assertion: None,
+            authorization_decision: None,
         }
     }
 

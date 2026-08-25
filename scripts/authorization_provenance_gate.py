@@ -27,6 +27,11 @@ WHAT THIS PROVES, exactly, over production Rust (test regions excluded):
      pipeline that dropped the decision would not compile at the dispatch.
   8. No configuration promotes a conformance evaluator to production authority:
      `--authz reference` is still refused by Layer-A validation.
+  9. **The Mode-1 linkage form can never become Mode-2 evidence.** The candidate filter in
+     `bound_decision_evidence` selects on `BindingType::OpaqueDigest`, so a
+     `pdp-decision` / `reference-digest` entry — which names an external decision MCP-RE
+     authenticates nothing about — is not a candidate at all, rather than a candidate that
+     is rejected later.
 
 WHY (5) IS THE ONE THAT MATTERS. Law A-1 is not enforced by a check that could be deleted;
 it is enforced by the ABSENCE OF A PARAMETER through which a header could enter. That is a
@@ -85,9 +90,18 @@ TRANSPORT_HINTS = (
 )
 
 #: `(function, what its body must reach)`.
+#: `(file, function, what its body must reach)`. FILE-SCOPED on purpose: the authority now
+#: has more than one `decide`, and a gate that searched the concatenated source would measure
+#: whichever it found first — reporting a true fact about the wrong function.
 LINKS = (
-    ("interpret_authorization_action", "covers_body"),
-    ("decide", "authorize"),
+    ("verified_action.rs", "interpret_authorization_action", "covers_body"),
+    ("serving.rs", "decide", "authorize"),
+    ("relation.rs", "decide", "verify_authorization_decision"),
+    ("evidence.rs", "bound_decision_evidence", "verify_pdp_decision_binding"),
+    # The Mode-1 / Mode-2 split, structurally. The candidate filter must name the EVIDENCE
+    # form: a `reference-digest` entry names an external decision MCP-RE authenticates
+    # nothing about, and it must not be selectable and then rejected — it must never enter.
+    ("evidence.rs", "bound_decision_evidence", "BindingType::OpaqueDigest"),
 )
 
 #: Every sealed product of this authority, and the rule: a private representation.
@@ -218,14 +232,24 @@ def check_authority(sources: dict[str, str]) -> list[str]:
                     f"comes from the SIGNED BODY, and authorization correctness must not "
                     f"depend on the MCP transport contract being enforced."
                 )
-    for fn, must_reach in LINKS:
-        body = body_of(joined, fn)
-        if body is None:
-            continue
-        if must_reach not in body:
+    for filename, fn, must_reach in LINKS:
+        source = next(
+            (code_only(t) for path, t in sources.items() if path.endswith("/" + filename)),
+            None,
+        )
+        if source is None:
             problems.append(
-                f"{fn}: no longer reaches `{must_reach}`. The link is the proof; without "
-                f"it the function answers from somewhere this gate cannot see."
+                f"{filename}: no longer part of the authorization authority. A link this "
+                f"gate cannot locate is a link it is not measuring."
+            )
+            continue
+        body = body_of(source, fn)
+        if body is None:
+            problems.append(f"{filename}: `{fn}` not found.")
+        elif must_reach not in body:
+            problems.append(
+                f"{filename}::{fn}: no longer reaches `{must_reach}`. The link is the "
+                f"proof; without it the function answers from somewhere this gate cannot see."
             )
     match = signature_re("authorize").search(joined)
     if match is None:
@@ -323,16 +347,26 @@ def check_validation(text: str) -> list[str]:
     return []
 
 
+def authority_sources(directory: Path) -> dict[str, str]:
+    """Every production `.rs` file of the authority, keyed by its RELATIVE PATH.
+
+    Keyed by path, not by file name: `authorization/mod.rs` and `authorization/pdp/mod.rs`
+    share a name, and a name-keyed dict silently drops one of them — a gate that examines
+    less than it claims to, which is the failure mode that matters most in a gate.
+    """
+    return {
+        str(p.relative_to(REPO)): production_text(p.read_text(encoding="utf-8"))
+        for p in sorted(directory.rglob("*.rs"))
+    }
+
+
 def read(repo: Path, rel: str) -> str:
     return code_only(production_text((repo / rel).read_text(encoding="utf-8")))
 
 
 def check(repo: Path) -> tuple[list[str], int]:
     directory = repo / AUTHORITY_DIR
-    sources = {
-        f"{AUTHORITY_DIR}/{p.name}": production_text(p.read_text(encoding="utf-8"))
-        for p in sorted(directory.rglob("*.rs"))
-    }
+    sources = authority_sources(directory)
     serving = read(repo, SERVING)
     problems = check_authority(sources)
     problems += check_serving(serving)
@@ -377,6 +411,21 @@ def selftest() -> int:
             1,
         ),
         (
+            "the Mode-1 linkage form made selectable as evidence",
+            lambda s: {**s, f"{AUTHORITY_DIR}/pdp/evidence.rs":
+                       s[f"{AUTHORITY_DIR}/pdp/evidence.rs"].replace(
+                           "&& b.binding_type == BindingType::OpaqueDigest", "")},
+            1,
+        ),
+        (
+            "the decision digest check deleted",
+            lambda s: {**s, f"{AUTHORITY_DIR}/pdp/evidence.rs":
+                       s[f"{AUTHORITY_DIR}/pdp/evidence.rs"].replace(
+                           "match verify_pdp_decision_binding(binding, document) {",
+                           "match Ok::<(), PdpBindingRefusal>(()) {")},
+            1,
+        ),
+        (
             "a sealed representation made public",
             lambda s: {**s, f"{AUTHORITY_DIR}/verified_actor.rs":
                        s[f"{AUTHORITY_DIR}/verified_actor.rs"].replace(
@@ -384,12 +433,34 @@ def selftest() -> int:
             1,
         ),
     ]
-    sources = {
-        f"{AUTHORITY_DIR}/{p.name}": production_text(p.read_text(encoding="utf-8"))
-        for p in sorted((REPO / AUTHORITY_DIR).rglob("*.rs"))
-    }
+    sources = authority_sources(REPO / AUTHORITY_DIR)
     failures = 0
     print("authorization-provenance selftest")
+
+    # THE GATE'S OWN DEFECT, pinned. Keying the source map by BASENAME silently collapsed
+    # `authorization/mod.rs` and `authorization/pdp/mod.rs` into one entry, so the gate
+    # examined a strict subset of the authority it claimed to cover — and said nothing. The
+    # extension that exposed it is exactly the kind that will happen again.
+    by_name: dict[str, list[str]] = {}
+    for path in sources:
+        by_name.setdefault(path.rsplit("/", 1)[-1], []).append(path)
+    collisions = {n: p for n, p in by_name.items() if len(p) > 1}
+    if not collisions:
+        print(
+            "  FAIL basename collision: the authority no longer contains two same-named "
+            "modules, so this control is measuring nothing. Point it at a real pair."
+        )
+        failures += 1
+    else:
+        for name, paths in sorted(collisions.items()):
+            missing = [p for p in paths if p not in sources]
+            status = "ok " if not missing else "FAIL"
+            failures += 0 if not missing else 1
+            print(
+                f"  {status} basename collision: all {len(paths)} `{name}` files are "
+                f"examined ({', '.join(sorted(paths))})"
+            )
+
     clean = check_authority(sources)
     if clean:
         print("  FAIL baseline: the live tree already has problems")
@@ -433,7 +504,7 @@ def selftest() -> int:
 
     print(
         f"\nauthorization-provenance selftest: "
-        f"{'PASS' if failures == 0 else 'FAIL'} — {len(cases) + len(text_cases) + 1} case(s)"
+        f"{'PASS' if failures == 0 else 'FAIL'} — {len(cases) + len(text_cases) + 2} case(s)"
     )
     return 1 if failures else 0
 

@@ -65,6 +65,7 @@ mod keyid;
 pub mod mcp_name_source;
 pub mod mcp_transport;
 pub mod message;
+pub mod pdp_decision;
 mod policy;
 pub mod rejection;
 pub mod replay;

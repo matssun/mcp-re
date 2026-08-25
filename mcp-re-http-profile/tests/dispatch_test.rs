@@ -101,6 +101,7 @@ fn request_block(
         continuation,
         admission: None,
         admission_assertion: None,
+        authorization_decision: None,
     }
 }
 

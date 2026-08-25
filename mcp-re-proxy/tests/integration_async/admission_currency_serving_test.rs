@@ -212,6 +212,7 @@ fn signed_call(admission: Option<(&AdmissionClaims, &SigningKey)>, nonce: &str) 
         continuation: None,
         admission: evidence.as_ref().map(|(b, _)| b.clone()),
         admission_assertion: evidence.as_ref().map(|(_, jws)| jws.clone()),
+        authorization_decision: None,
     };
     sign_request_full(
         &mut req,
@@ -841,6 +842,7 @@ fn source_revoked_workload_call(proxy: &HttpProfileProxy, calls: &Arc<AtomicUsiz
         continuation: None,
         admission: Some(binding),
         admission_assertion: Some(issue_assertion(&claims, &authority_key())),
+        authorization_decision: None,
     };
     sign_request_full(
         &mut req,

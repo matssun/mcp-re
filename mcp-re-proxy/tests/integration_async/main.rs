@@ -25,6 +25,7 @@ mod forwarded_body_fidelity_test;
 mod http_inner_test;
 mod mrt_continuation_serving_test;
 mod mtls_client_leg_e2e_test;
+mod pdp_authorization_serving_test;
 mod per_request_revocation_test;
 mod replay_race_harness_test;
 mod rfc9421_round_trip_test;

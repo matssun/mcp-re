@@ -192,6 +192,7 @@ fn block(continuation: Option<HttpContinuation>) -> HttpRequestEvidenceBlock {
         continuation,
         admission: None,
         admission_assertion: None,
+        authorization_decision: None,
     }
 }
 

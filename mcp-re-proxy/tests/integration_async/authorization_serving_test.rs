@@ -229,6 +229,7 @@ fn signed_call_with_headers(tool: &str, nonce: &str, extra: &[(&str, &str)]) -> 
         continuation: None,
         admission: None,
         admission_assertion: None,
+        authorization_decision: None,
     };
     sign_request_full(
         &mut req,
