@@ -16,7 +16,10 @@
 
 use std::sync::Arc;
 
+use mcp_re_http_profile::check_admission;
 use mcp_re_http_profile::AdmissionPolicy;
+use mcp_re_http_profile::HttpProfileError;
+use mcp_re_http_profile::VerifiedMcpRequest;
 
 use crate::admission_source::AsyncAdmissionSource;
 use crate::http_profile_serve::AdmissionAuthorityResolver;
@@ -63,6 +66,92 @@ pub(crate) struct AdmissionEnforcer {
 }
 
 impl AdmissionEnforcer {
+    /// Decide §7 admission for one verified request.
+    ///
+    /// `Ok(())` means this deployment accepts the admission the call acts under, or that a
+    /// call declaring none is acceptable here. `Err` carries the frozen wire code the
+    /// refusal is served as — never a reason phrase, and never a status: what a refusal
+    /// COSTS the client is a fact about the whole exchange, and the serving path's machine
+    /// owns it.
+    ///
+    /// It takes the verified request and the verifier-resolved actor id, and nothing the
+    /// request asserts about itself.
+    pub(crate) async fn decide(
+        &self,
+        verified: &VerifiedMcpRequest,
+        actor_id: &str,
+        audience_id: &str,
+        now: i64,
+    ) -> Result<(), &'static str> {
+        let block = verified.request_block();
+        let (binding, assertion) = match (
+            block.admission.as_ref(),
+            block.admission_assertion.as_deref(),
+        ) {
+            (Some(b), Some(a)) => (b, a),
+            // The block validator already refuses one half without the other, so
+            // reaching here means BOTH are absent: the call declares no admission.
+            _ => {
+                if self.enforcement == AdmissionEnforcement::Required {
+                    return Err(HttpProfileError::AdmissionStateUnavailable.wire_code());
+                }
+                return Ok(());
+            }
+        };
+
+        // The authoritative lookup. An outage yields `None` — the ONLY input that
+        // reaches the §5.2 degraded fork — while a healthy authority that has never
+        // heard of this workload is a definitive negative, refused here rather than
+        // being handed to a fork that would serve it on its own assertion.
+        let authoritative = match self.source.current(&binding.admission_id).await {
+            Ok(Some(state)) => {
+                self.record_authoritative_read(now);
+                Some(state)
+            }
+            Ok(None) => {
+                self.record_authoritative_read(now);
+                return Err(HttpProfileError::AdmissionNotCurrent.wire_code());
+            }
+            // The source is unreachable. Whether the §5.2 degraded fork may be entered
+            // at all is decided HERE, by how long the authority has been unreachable —
+            // not downstream by how fresh the caller's assertion is, which the caller
+            // controls.
+            Err(_) => {
+                if self.degraded_window_exhausted(now) {
+                    return Err(HttpProfileError::AdmissionStateUnavailable.wire_code());
+                }
+                None
+            }
+        };
+
+        let resolve = Arc::clone(&self.resolve_authority);
+        check_admission(
+            binding,
+            assertion,
+            // The VERIFIER-RESOLVED actor — the FULL signing actor, keyid included, never
+            // the bare subject and never anything the request asserts. An assertion issued
+            // to another workload, or under another key, names a different actor and is
+            // refused, so possession alone does not satisfy the gate (§16.4).
+            actor_id,
+            authoritative.as_ref(),
+            mcp_re_http_profile::PROFILE_TAG,
+            &[audience_id],
+            &self.policy,
+            now,
+            move |kid: &str| resolve(kid),
+        )
+        // Admitted. Note what is NOT recorded: `VerifiedAdmission::degraded`
+        // distinguishes a live-confirmed admission from one served on a stale
+        // snapshot inside the P window, and the audit stream cannot currently
+        // carry that difference — ADR-MCPS-035 §3 freezes the success-event
+        // allowlist and says no third success event may be minted without an
+        // ADR. So a degraded-mode serve is indistinguishable in audit from a
+        // confirmed one. That is a real gap in the record, named here rather
+        // than closed by quietly widening a pinned vocabulary.
+        .map(|_| ())
+        .map_err(|e| e.wire_code())
+    }
+
     /// Note that the authoritative record was read at `now`.
     ///
     /// A definitive negative counts: the authority answered, which is what P measures.

@@ -42,6 +42,21 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-064 Slice 5: the §7 admission gate's collaborators, decomposed out of the
     # serving pipeline — a deployment posture, not a stage.
     "src/admission_enforcer.rs",
+    # ADR-MCPRE-065 Slice 1: the authorization authority — verified actor and action facts,
+    # the mechanism seam, the honest posture, and the body only a decision can release.
+    "src/authorization/mod.rs",
+    "src/authorization/decide.rs",
+    "src/authorization/dispatch.rs",
+    "src/authorization/evaluator.rs",
+    "src/authorization/grant.rs",
+    "src/authorization/posture.rs",
+    "src/authorization/request.rs",
+    "src/authorization/serving.rs",
+    "src/authorization/verified_action.rs",
+    "src/authorization/verified_actor.rs",
+    # Test-only: fabricates a verified request whose digest genuinely matches a body, which
+    # is what the L-5 control for `BodyIsNotTheSignedBody` needs.
+    "src/authorization/action_harness.rs",
     "src/aws_kms_keysource.rs",
     "src/aws_sigv4.rs",
     # ADR-MCPRE-063 Slice 1: the compatibility surface of the certificate identity
@@ -782,6 +797,9 @@ nt_rust_test(
         "//mcp-re-client-proxy:mcp_re_client_proxy",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
+        # ADR-MCPRE-065 Slice 1: the frozen `mcp-re.authorization_*` denial taxonomy the
+        # authorization controls refuse in.
+        "//mcp-re-policy:mcp_re_policy",
         "//mcp-re-transport:mcp_re_transport",
         ":mcp_re_proxy_async",
         "@crates_mcp_re//:bytes",

@@ -286,7 +286,29 @@ This is the same three-state discipline as `CredentialCurrencyOutcome`: "nobody 
 Where a policy **is** configured and no production evaluator exists for it, the path continues
 to **fail closed**, exactly as Layer-A validation already refuses the superseded reference mode.
 
-### 7.2 The evaluator used to prove the boundary
+### 7.2 How dispatch depends on the decision
+
+Not by ordering, and not by a comment. The inner dispatch consumes a `ReadyForDispatch` —
+the type ADR-MCPRE-058 §9.3 already defines as *every pre-dispatch prerequisite, in hand* —
+and since this slice the body it carries is an `AuthorizedRequestBody`, whose only producer
+is `AuthorizationPosture::release`. A pipeline that dropped the authorization stage does not
+become a subtly weaker proxy that still compiles; it fails to compile at the dispatch.
+
+The first attempt added an `Authorized` state to the ADR-MCPRE-057 request machine instead.
+That is a weaker enforcement — an illegal transition latches an anomaly and degrades the
+retry contract, but it does not stop the dispatch — and `exchange_state.rs` is a reviewed
+ADR-MCPRE-061 §14 exception already at its debt baseline, which a ratcheted file may not
+grow whatever its status. The threshold did its job: it forced the question, and the answer
+was a better mechanism rather than a smaller comment.
+
+`release` is consuming, so one decision releases one body: a path cannot take a single
+decision and dispatch twice under it.
+
+**What possession does not claim.** `NoPolicyConfigured` releases a body too. The gate is
+about the decision having been TAKEN, which is what the ordering is about; the content of
+the decision stays in the posture.
+
+### 7.3 The evaluator used to prove the boundary
 
 A reference/conformance evaluator may be used to demonstrate the semantic boundary and to drive
 the positive and negative controls through the production request path. It **must not silently

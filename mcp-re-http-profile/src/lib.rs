@@ -2,9 +2,8 @@
 #![cfg_attr(feature = "verify", feature(proc_macro_hygiene))]
 //! MCP-RE HTTP standards profile — minimal proof path (ADR-MCPRE-050, seed Work Item 3).
 //!
-//! RFC 9421 HTTP Message Signatures + RFC 9530 `Content-Digest` as the
-//! cryptographic carrier for MCP-RE over HTTP transports. This crate proves the
-//! standards-profile security shape beside the native draft-02 profile:
+//! RFC 9421 HTTP Message Signatures + RFC 9530 `Content-Digest` are THE
+//! cryptographic carrier for MCP-RE (ADR-MCPRE-050): there is no second profile.
 //!
 //! - request: `Content-Digest` (sha-256, unencoded content bytes) + Ed25519
 //!   signature over the ratified covered components (`@method`, `@target-uri`,
@@ -22,12 +21,11 @@
 //! JSON-RPC body and are protected because `content-digest` is a covered
 //! component.
 //!
-//! Scope of the proof path: signature-base construction, content binding,
-//! response-to-request binding, freshness, and the negative battery from the
-//! seed (body tamper, response splice, wrong content-digest, missing covered
-//! component, stale window, wrong keyid). Replay-cache integration, artifact
-//! bindings, signed rejections, and MRTR continuation reuse the existing
-//! machinery and land with the full profile (ADR-MCPRE-050 parity gate).
+//! Scope: signature-base construction, content binding, response-to-request
+//! binding, freshness, artifact bindings, admission evidence, signed rejections,
+//! and MRTR continuation — with the negative battery beside each (body tamper,
+//! response splice, wrong content-digest, missing covered component, stale
+//! window, wrong keyid).
 
 // ADR-MCPRE-059 Phase 2: Verus needs its prelude in the crate root, and attaches loop
 // annotations to expressions, which needs `proc_macro_hygiene`. Both are gated with the
@@ -64,6 +62,7 @@ pub mod error;
 pub mod evidence;
 pub mod ids;
 mod keyid;
+pub mod mcp_name_source;
 pub mod mcp_transport;
 pub mod message;
 mod policy;
@@ -181,7 +180,7 @@ pub use ids::RESPONSE_LABEL;
 pub use ids::STATUS_ACCEPTED;
 pub use ids::VERIFIED_CONTEXT_BLOCK_KEY;
 pub use keyid::jwk_thumbprint_ed25519;
-pub use mcp_transport::McpNameSource;
+pub use mcp_name_source::McpNameSource;
 pub use mcp_transport::McpTransportPolicy;
 pub use message::HttpRequest;
 pub use message::HttpResponse;

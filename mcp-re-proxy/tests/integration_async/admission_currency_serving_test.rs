@@ -343,6 +343,56 @@ fn strict_policy() -> AdmissionPolicy {
     }
 }
 
+/// A policy that refuses everything, installed to measure ONE proposition.
+struct RefusesEverything;
+
+impl mcp_re_proxy::authorization::AuthorizationEvaluator for RefusesEverything {
+    fn evaluate(
+        &self,
+        _: &mcp_re_proxy::authorization::AuthorizationRequest,
+    ) -> Result<mcp_re_proxy::authorization::GrantAttribution, mcp_re_policy::PolicyError> {
+        Err(mcp_re_policy::PolicyError::AuthorizationScopeDenied)
+    }
+}
+
+/// ADMISSION IS NOT AUTHORIZATION (ADR-MCPRE-065 §3).
+///
+/// The caller here is admitted on every axis §7 measures: a current generation, a genuine
+/// assertion from the real authority, bound to this presenter. That is the strongest
+/// admission statement this deployment can make, and it grants no application authority at
+/// all. A denying policy still refuses, before the backend runs.
+///
+/// The inverse — an unadmitted caller reaching a granting policy — cannot happen, because
+/// admission is ordered first and refuses on its own.
+#[test]
+fn an_admitted_workload_is_still_refused_by_a_denying_policy() {
+    let source = Arc::new(InMemoryAdmissionSource::new());
+    source.admit(WORKLOAD, 5);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let proxy = replica(
+        source,
+        strict_policy(),
+        AdmissionEnforcement::Required,
+        Arc::clone(&calls),
+    )
+    .with_authorization(Arc::new(RefusesEverything));
+    let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
+    let req = signed_call(Some((&claims, &authority_key())), "n-admitted-unauthorized");
+
+    let served = block_on(proxy.handle(served_of(&req), NOW));
+    assert_eq!(served.status, 403);
+    assert_eq!(
+        wire_code_of(&served.body),
+        "mcp-re.authorization_scope_denied",
+        "the refusal is the POLICY's, not admission's — admission had already passed"
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "the backend must never have been asked"
+    );
+}
+
 #[test]
 fn a_current_admitted_workload_is_served() {
     let source = Arc::new(InMemoryAdmissionSource::new());

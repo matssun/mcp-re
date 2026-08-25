@@ -189,6 +189,8 @@ jobs:
         run: |
           python3 scripts/serving_identity_provenance_gate.py --selftest
           python3 scripts/serving_identity_provenance_gate.py
+          python3 scripts/authorization_provenance_gate.py --selftest
+          python3 scripts/authorization_provenance_gate.py
 
       # A guide that teaches a flag the CLI no longer parses sends an operator to debug
       # their own environment. Only command lines that LAUNCH the proxy are scanned, so

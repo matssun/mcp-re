@@ -12,95 +12,19 @@
 //! - [`VerifiedMcpRequest`] — all of the above, **and** audience equality and artifact
 //!   binding under the full profile.
 //!
-//! # Why these are not sealed
-//!
-//! Both products carry `pub` fields, so neither seals against forgery. That is the
-//! documented trade this project already made for [`crate::admission::VerifiedAdmission`]
-//! and it is made for the same reason: THM-0009's postcondition is stated over
-//! `VerifiedMcpRequest::request_block`, and Verus rejects private fields on a transparent
-//! datatype — the only way to seal is `external_body`, which makes the type OPAQUE and
-//! the postcondition unstatable. **A Verus-proved postcondition outranks a seal**
-//! (`docs/dev/sealed-owners.md`).
-//!
-//! So a caller could assemble either product by hand: every sentence below is therefore
-//! phrased over what a SUCCESSFUL VERIFIER RETURN establishes, never over what holding a
-//! value means — as THM-0014/THM-0015 are. What the types DO establish is the assurance
-//! split, which is not a seal question: the two propositions are different types, so no
-//! consumer requiring the full one can be handed the floor one, by the compiler.
+//! Neither is sealed, and [`floor`] carries the argument for why. What the types DO
+//! establish is the assurance split, which is not a seal question: the two propositions are
+//! different types, so no consumer requiring the full one can be handed the floor one, by
+//! the compiler.
+
+pub mod floor;
+
+pub use floor::CryptographicFloorVerifiedRequest;
 
 use crate::block::HttpRequestEvidenceBlock;
 use crate::block::ResolvedActor;
 use crate::AudienceTuple;
 use crate::RequestEvidence;
-
-/// A request whose **cryptographic floor** has been established.
-///
-/// A successful `verify_request_floor` establishes: the covered `Content-Digest` agreed
-/// with the body, the RFC 9421 signature verified over the reconstructed base under an
-/// algorithm the verifier's own policy allows, the freshness window was current, and the
-/// presented keyid resolved through the trust seam in the `Request` slot.
-///
-/// It does **not** mean the request is addressed to this deployment, and it does not mean
-/// any artifact binding was checked. Those are [`VerifiedMcpRequest`].
-#[derive(Debug, Clone)]
-pub struct CryptographicFloorVerifiedRequest {
-    pub profile_id: String,
-    pub signature_label: String,
-    pub resolved_actor: ResolvedActor,
-    pub evidence: RequestEvidence,
-    pub request_signature_base: Vec<u8>,
-    pub content_digest: String,
-    pub created: i64,
-    pub expires: i64,
-    pub nonce: String,
-    pub key_id: String,
-}
-
-impl CryptographicFloorVerifiedRequest {
-    /// The profile id (`tag`) the signature was accepted under.
-    pub fn profile_id(&self) -> &str {
-        &self.profile_id
-    }
-    /// The RFC 9421 dictionary label of the verified signature.
-    pub fn signature_label(&self) -> &str {
-        &self.signature_label
-    }
-    /// The resolved signing actor — identity, key, and vouched slot. This, not
-    /// [`Self::key_id`], is the identity replay and audit bind to.
-    pub fn resolved_actor(&self) -> &ResolvedActor {
-        &self.resolved_actor
-    }
-    /// The request signature-base handle: `SHA-256` over the reconstructed base.
-    pub fn evidence(&self) -> &RequestEvidence {
-        &self.evidence
-    }
-    /// The exact RFC 9421 signature-base bytes the signature verified over. Retained so
-    /// the MRTR continuation store can record the base an answer leg binds to; not
-    /// secret, being derived from the public message.
-    pub fn request_signature_base(&self) -> &[u8] {
-        &self.request_signature_base
-    }
-    /// The verified `Content-Digest` header value covered by the signature.
-    pub fn content_digest(&self) -> &str {
-        &self.content_digest
-    }
-    /// Signature creation time.
-    pub fn created(&self) -> i64 {
-        self.created
-    }
-    /// Signature expiry.
-    pub fn expires(&self) -> i64 {
-        self.expires
-    }
-    /// The signature nonce.
-    pub fn nonce(&self) -> &str {
-        &self.nonce
-    }
-    /// The presented keyid — a wire selector, not a trust-resolution output.
-    pub fn key_id(&self) -> &str {
-        &self.key_id
-    }
-}
 
 /// A request verified under the **full MCP-RE profile**.
 ///
@@ -156,6 +80,10 @@ impl VerifiedMcpRequest {
     // Floor facts, delegated. A full product is a floor product plus more, and reading a
     // floor fact through it is not a widening — `floor()` remains available where a
     // caller genuinely wants the weaker value.
+    /// See [`CryptographicFloorVerifiedRequest::covers_body`].
+    pub fn covers_body(&self, body: &[u8]) -> bool {
+        self.floor.covers_body(body)
+    }
     /// See [`CryptographicFloorVerifiedRequest::profile_id`].
     pub fn profile_id(&self) -> &str {
         self.floor.profile_id()
