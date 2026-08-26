@@ -86,7 +86,8 @@ review_ref = "EX-003 in docs/architecture/review-dispositions.md"
 path = "mcp-re-http-profile/src/scitt.rs"
 baseline_prod_loc = 1629
 baseline_sha = "d1fc5fa"
-status = "unreviewed"
+status = "reviewed-action-required"
+review_ref = "EX-004 in docs/architecture/review-dispositions.md"
 
 # Same migration, same rule: 1305 -> 1274 when the identity-value invariant moved to its
 # owner and the historical vocabulary moved to `asserted_identity_facade`.

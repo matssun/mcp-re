@@ -621,3 +621,72 @@ fingerprint. Four registered probes each turn a declared control red:
 It is an exception for **this file at this size**, not for the subtree and not for
 `tls.rs` — EX-004 stays `reviewed-action-required` until #574 lands and its census is
 re-run. Review granularity equals exception granularity.
+
+## EX-004 — `mcp-re-http-profile/src/scitt.rs` — **census complete, disposition: decompose**
+
+**Status:** `reviewed-action-required`. **Measured:** 1629 production lines on `main` @
+`0a24acc` (`scripts/module_size_gate.py::production_lines`); 3081 total. **Component
+blueprint:** [`components/scitt-transparency.md`](components/scitt-transparency.md), which
+carries all twelve answers, the theorem and test/lane inventories, and the proposed split.
+**Census issue:** [#575](https://github.com/matssun/mcp-re/issues/575) (MCPRE-139), the
+first of the six blueprint censuses in the ADR-061 §5.3 size order.
+
+### §8 question 1 — what single fact does it own?
+
+None. The nearest single sentence — *a portable, offline-verifiable record of a call's
+evidence* — needs an "and" at seven clauses, which §8 names as the evidence of a shallow
+authority boundary.
+
+### §8 question 2 — how many independently describable authorities?
+
+**Seven**, plus a shared wire vocabulary and one composition function:
+
+| authority | proposition | lines |
+|---|---|---|
+| evidence commitment | which digests a record commits to, and whether it identifies a verified call | 135 |
+| SCITT statement type | this COSE_Sign1 is MCP-RE call evidence, attributed to its signing key | 209 |
+| receipt wire form | these are a well-formed RFC 9942 receipt's fields | 201 |
+| RFC 9162 Merkle proof | this path folds this leaf to this root at this position | 166 |
+| COSE verification | valid under a key whose algorithm the header agrees with | 150 |
+| retained correspondence | these bytes are the ones that statement was made about | 187 |
+| service trust pin | the key an interop run verified against, and its provenance | 120 |
+
+### §8 question 11 — what inconsistent values can callers construct?
+
+The finding that outranks the size. **Four types state invariants their representations do
+not hold**: `EvidenceCommitment` (all seven fields `pub`, so a `complete` label can be
+paired with unrelated handles), `ResolvedTransparencyService` (whose own doc says the key
+and the profiles "travel together" while all three fields are `pub`),
+`CoseVerificationKey::EcdsaP256` (struct-literal construction bypasses the on-curve check —
+mitigated by a re-check at verify time), and `ScittServiceTrustPin` (an illegal `EdDSA`-plus-`y`
+pin is constructible and refused only when read).
+
+`SignedStatement` and `Receipt` are the counter-examples in the same file: private
+representation, `from_cose` the sole producer. The split is what makes the other four
+reachable the same way.
+
+### §8 question 8 — what public interface exists only because tests need it?
+
+`PrototypeTransparencyService` — `pub`, re-exported at the crate root, documented "NOT a
+production ledger", and used by three call sites, all tests.
+
+### §8 question 12 — which lane establishes each property?
+
+36 in-crate unit tests, 21 conformance tests, 8 proxy e2e tests, every lane executed for
+this census and reporting non-zero. **Zero of the 33 theorem-registry entries concern this
+unit** — the gap is the stated propositions, not the testing.
+
+### Why the census does not grant an exception
+
+A §14 exception must show that keeping the unit whole makes the security argument
+*materially clearer*. Here the opposite is measurable: the retained-correspondence authority
+re-explains the commitment's identity fields, the receipt accessors re-explain the Merkle
+fold's limits, and the position rule is explained in three places because no unit owns it.
+That is the cost of the size, written down in the file itself.
+
+### Disposition
+
+**Decompose**, along the seven authorities, and use the split to seal the four types in
+question 11. `scitt.rs` stays `reviewed-action-required` until that work lands and this
+census is re-run. The remediation issues are not opened by this census — ADR-061 orders the
+campaign, and a census recommends and stops.
