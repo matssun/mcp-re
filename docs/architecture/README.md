@@ -58,6 +58,7 @@ investigation: it answers the twelve questions and records an outcome — decomp
 
 - [`components/scitt-transparency.md`](components/scitt-transparency.md) — `scitt.rs` (1629), MCPRE-139 / #575. **Outcome: decomposition.** Seven authorities in one file, and four types that admit values their documented invariants forbid.
 - [`components/transport-binding.md`](components/transport-binding.md) — `transport.rs` (1268, not the 1305 this index carried), MCPRE-140 / #576. **Outcome: decompose along the reachability boundary.** Five authorities, of which one is live and one — 72% of the file — is deferred capability no validated deployment can reach.
+- [`components/online-ocsp.md`](components/online-ocsp.md) — `ocsp.rs` (1271), MCPRE-141 / #577. **Outcome: extract one general control, give the trust chain a success product, then §14 for the protocol remainder.** The RFC 6960 implementation is one coherent authority; a 336-line outbound-fetch/SSRF policy that is not OCSP is living inside it.
 
 These are first-pass architectural documents, not declarations that every boundary is already final. The shallow-module census and subsequent investigation may refine the tree. Refinement must preserve the governing rule: **one authority, narrow facade, private subordinate implementation tree**.
 
@@ -149,19 +150,18 @@ size orders the queue while §8 question 2 decides the outcome:
 | 1640 | 23 | 4 | 15 | `mcp-re-http-profile/src/verify.rs` — **the ruled first component** |
 | 1629 | 25 | 12 | 70 | `mcp-re-http-profile/src/scitt.rs` — **census complete**, outcome *decompose* ([`components/scitt-transparency.md`](components/scitt-transparency.md)) |
 | 1268 | 25 | 21 | 73 | `mcp-re-proxy/src/transport.rs` — **census complete**, outcome *decompose along reachability* ([`components/transport-binding.md`](components/transport-binding.md)). Was 1305 before ADR-064 Slice 4 removed `MappedBinding` |
-| 1271 | 14 | 3 | 91 | `mcp-re-proxy/src/ocsp.rs` — band 3, no blueprint yet |
+| 1271 | 14 | 3 | 91 | `mcp-re-proxy/src/ocsp.rs` — **census complete**, outcome *extract, then §14* ([`components/online-ocsp.md`](components/online-ocsp.md)) |
 | 1177 | 6 | 0 | 184 | `mcp-re-proxy/src/cli.rs` — **unreviewed**; ADR-058 ruled on `parse_args`, not on the file |
 | 1149 | 5 | 7 | 105 | `mcp-re-proxy/src/gcp_kms_keysource.rs` |
 | 1114 | 32 | 12 | 44 | `mcp-re-client-core/src/response.rs` — band 3, no blueprint yet |
 | 1037 | 3 | 0 | 31 | `mcp-re-proxy/src/app.rs` — **reviewed-action-required**; census complete, disposition *decompose first* ([EX-002](review-dispositions.md), remediation #592) |
 
-**Four** band-3 hotspots still have no component blueprint: `ocsp.rs`, `cli.rs`,
-`response.rs`, and the two KMS key sources — one census covering both backends, since the
-question there is the shared authority structure. They are named here so their absence is a
-recorded gap rather than an implied claim of coverage. `scitt.rs` and `transport.rs` were the
-first two of the six; their censuses are
-[`components/scitt-transparency.md`](components/scitt-transparency.md) and
-[`components/transport-binding.md`](components/transport-binding.md).
+**Three** band-3 hotspots still have no component blueprint: `cli.rs`, `response.rs`, and
+the two KMS key sources — one census covering both backends, since the question there is the
+shared authority structure. They are named here so their absence is a recorded gap rather
+than an implied claim of coverage. `scitt.rs`, `transport.rs` and `ocsp.rs` were the first
+three of the six, and the three reached their dispositions for three different reasons —
+semantic ownership, reachability, and a general control hiding inside a protocol module.
 
 `cli.rs` was previously left off this list as a reviewed exception. It was not one: ADR-058
 ruled on the `parse_args` function, and the file states of itself that it carries three

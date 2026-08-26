@@ -102,7 +102,8 @@ review_ref = "EX-005 in docs/architecture/review-dispositions.md"
 path = "mcp-re-proxy/src/ocsp.rs"
 baseline_prod_loc = 1271
 baseline_sha = "d1fc5fa"
-status = "unreviewed"
+status = "reviewed-action-required"
+review_ref = "EX-006 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/cli.rs"

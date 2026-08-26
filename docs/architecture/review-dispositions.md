@@ -758,3 +758,80 @@ deferred ingress-assertion capability move to `transport/ingress.rs` with the re
 stated there — and **seal `TransportIdentity` and `AttestedIngressVerified`**. The sealing is
 the part that changes what is provable. `transport.rs` stays `reviewed-action-required` until
 that work lands and this census is re-run.
+
+## EX-006 — `mcp-re-proxy/src/ocsp.rs` — **census complete, disposition: extract, then expect a §14 exception**
+
+**Status:** `reviewed-action-required`. **Measured:** 1271 production lines on `main` @
+`68e821b`. **Component blueprint:** [`components/online-ocsp.md`](components/online-ocsp.md).
+**Census issue:** [#577](https://github.com/matssun/mcp-re/issues/577) (MCPRE-141).
+
+### §8 question 2 — how many independently describable authorities?
+
+**Four**, and the count is not what decides this one. The RFC 6960 request (A, 92 lines) and
+the RFC 6960 §3.2 response trust chain (B, 393 lines) are **one coherent protocol
+authority** — five conjuncts of one security argument that reference each other — and the
+admission policy (C) and fetch orchestration (D) are thin and belong with them.
+
+The fourth is the finding: **E, a 336-line outbound-fetch network policy** — scheme
+allowlist, literal-private-IP classification including `inet_aton` dotted-decimal forms,
+IPv4/IPv6 public-range predicates, and a resolver that re-vets every resolved address
+against DNS rebinding. **Nothing about it is specific to RFC 6960.** Any future outbound
+fetch this proxy performs needs it, and it is currently reachable only through a module
+compiled out of the default build by a feature gate that has nothing to do with it.
+
+### §8 question 9 — three independent gates, and the distinctions between them
+
+| gate | kind |
+|---|---|
+| `#[cfg(feature = "online_ocsp")]` on `pub mod ocsp` | a **build** fact — the default build does not compile the module |
+| THM-0013 — `--client-ocsp require` refused at the legality boundary | a **configuration** fact — no validated deployment is handed a checker |
+| the only caller is `blocking_mtls_harness`, not the async fleet | an **architectural** fact — the production plane would not consult one |
+
+Classified as the census issue asked: **legality-excluded** (C, D), **reusable protocol
+mechanism despite unreachability** (A, B — `serving_capabilities.rs` says so in as many
+words), **reusable general control despite unreachability** (E), and **test/responder
+infrastructure** (none in the product; the responder is OpenSSL, provisioned by CI).
+
+### §8 question 11 — the sharpest instance the campaign has found
+
+`verify_and_map_response` performs all five §3.2 checks and returns a **three-valued `Copy`
+enum**. `decide_allow(CertRevocationStatus::Good, false) == true` is reachable from anywhere,
+with no responder, no signature and no freshness. **The entire trust chain collapses into a
+value carrying no evidence of having been through it.**
+
+EX-004's `EvidenceCommitment` and EX-005's `AttestedIngressVerified` are milder versions of
+the same defect: those have a representation whose fields are public. Here there is no
+representation to seal, because the success product was never given one. Today the only
+consumer sits three lines from the producer; that is what makes it latent rather than live,
+and it stops being latent the moment someone builds the async OCSP this code is retained for.
+
+### §8 question 12 — one theorem, about the module not running
+
+THM-0013 is the only registry entry, and its own scope sentence is the model the rest of the
+campaign should copy: it *"establishes reachability and legality only … It says what no
+deployment can turn on, not that what is turned off would be correct if turned on."*
+
+**One evidence row is flagged.** `tests/integration_ext/ocsp_e2e_test.rs` prints a SKIP
+notice and returns success when `MCP_RE_TEST_OCSP_RESPONDER_URL` is unset. The nightly
+`live-infra-e2e` workflow does provision a real OpenSSL responder and was green on
+2026-08-26; everywhere else the test exits 0 having proved nothing. The live-path property
+therefore holds in one non-gating nightly lane and nowhere else.
+
+### Disposition
+
+**Not decomposition of the protocol.** Three actions, in order:
+
+1. **Extract E** — the outbound-fetch/SSRF policy — into its own module, compiled
+   unconditionally. It removes 26% of the file without touching the protocol and makes the
+   control available to every future outbound fetch.
+2. **Give the §3.2 chain a success product**, so a `Good` cannot be spoken by anything that
+   did not earn it. This is also the prerequisite for the corresponding theorem.
+3. **Then record a §14 exception** for the ~935-line protocol remainder: RFC 6960 §3.2 is a
+   single security argument whose conjuncts reference each other, and splitting it would
+   damage the reasoning. That exception is **the expected end state, not an assumed one**,
+   and it must not be granted now — an exception over a file that still contains an
+   unrelated 336-line control would be granting it for the wrong unit.
+
+**Do not delete, and do not wire up.** Both prohibitions stand (`AGENT_INSTRUCTIONS` §9).
+The recommended work makes the retained implementation better *as retained code* and moves
+it no step closer to being selectable.
