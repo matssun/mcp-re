@@ -29,19 +29,36 @@
 
 /// The identity of the decision evidence a mechanism authenticated.
 ///
-/// # Where the seal actually is
+/// # The contract, and where the seal actually is
 ///
-/// Not on this constructor. [`AuthorizationEvaluator`](super::evaluator::AuthorizationEvaluator)
-/// is a public seam — a mechanism can be implemented outside this crate — so a mechanism
-/// must be able to name the evidence it verified, and a private constructor would only
-/// force a public one taking the same two strings with the same absence of checking.
-/// Privacy here would be theatre.
+/// This constructor is `pub`, and that is a decision rather than an oversight.
+/// [`AuthorizationEvaluator`](super::evaluator::AuthorizationEvaluator) is a **public
+/// trusted mechanism seam**: a mechanism may be implemented outside this crate, and it must
+/// be able to return the evidence identity it established. A private constructor would only
+/// force a public one taking the same two strings with the same absence of checking — see
+/// [`docs/dev/sealed-owners.md`](https://github.com/matssun/mcp-re/blob/main/docs/dev/sealed-owners.md)
+/// on why privacy past an external seam is theatre.
 ///
-/// The seal that holds is downstream: an identity reaches a record only through
+/// **What a caller undertakes.** Constructing one is a claim, and the claim is:
+///
+/// > I am the authority that verified the correspondence between this digest and the
+/// > decision document I decided from, and this is that digest as the binding stated it.
+///
+/// A digest computed anywhere else — over bytes nobody related to a binding, or recomputed
+/// after the fact — satisfies the type and falsifies the claim, producing a record that
+/// names evidence nobody checked was the evidence acted upon. The type cannot detect that;
+/// the mechanism's implementer owns it. `if this value is wrong, whose bug is it?` —
+/// whoever implemented the seam, which is exactly why the check does not live here.
+///
+/// **What is nonetheless unforgeable.** An audit attribution cannot be manufactured
+/// directly. An identity reaches a record only by way of
 /// [`AuthorizedRequestFacts`](super::posture::AuthorizedRequestFacts), which nothing but
-/// [`authorize`](super::decide::authorize) constructs and only from an evaluator's `Ok`.
-/// So the audit site cannot mint one, and the obligation that the digest be the verified
-/// one sits where it belongs: on whoever implements the mechanism.
+/// [`authorize`](super::decide::authorize) constructs and only from an evaluator's `Ok`, and
+/// whose only projection is
+/// [`audit_attribution`](super::posture::AuthorizedRequestFacts::audit_attribution). So no
+/// record path — and in particular no audit site — can mint an identity, pair one decision's
+/// evidence with another's attribution, or report an identity for a request no mechanism
+/// authorized. That is the seal this design relies on; the constructor is not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecisionEvidenceIdentity {
     alg: String,
