@@ -690,3 +690,71 @@ That is the cost of the size, written down in the file itself.
 question 11. `scitt.rs` stays `reviewed-action-required` until that work lands and this
 census is re-run. The remediation issues are not opened by this census — ADR-061 orders the
 campaign, and a census recommends and stops.
+
+## EX-005 — `mcp-re-proxy/src/transport.rs` — **census complete, disposition: decompose along the reachability boundary**
+
+**Status:** `reviewed-action-required`. **Measured:** 1268 production lines on `main` @
+`dc9f1c1` (`scripts/module_size_gate.py::production_lines`) — the registry baseline of 1305
+predates ADR-MCPRE-064 Slice 4, which removed `MappedBinding`. **Component blueprint:**
+[`components/transport-binding.md`](components/transport-binding.md). **Census issue:**
+[#576](https://github.com/matssun/mcp-re/issues/576) (MCPRE-140).
+
+### §8 question 2 — how many independently describable authorities?
+
+**Five**, and unlike EX-004 the live ones are genuinely one story: identity policy, header
+view, routing-header hygiene and the binding capability are four aspects of one request's
+relation to its channel, in 355 lines. On question 2 alone a §14 exception would have been
+arguable.
+
+### §8 question 9 — what is unreachable under the current legality model?
+
+**913 of 1268 production lines — 72% of the file.** `ChannelBindingState` has two
+inhabitants (`ExactUriSan`, `ExactDnsSan`); `--transport-binding lb-assertion` and
+`attested-ingress` are refused at Layer-A validation; and `TransportBinding` has exactly one
+constructor. Neither the Mode-B nor the Mode-C assertion verifier can be reached from a
+serving path.
+
+**That code is retained deliberately** — `docs/AGENT_INSTRUCTIONS.md` §9 names both halves
+of the mistake, and this census makes neither: it does not propose deleting the deferred
+capability, and it does not propose wiring it up.
+
+### Why this is nonetheless not a §14 exception
+
+The decision rests on question 9 rather than question 2. A file where the one binding every
+deployment enforces sits beside a capability no deployment can select, with nothing in its
+shape or its module doc saying which is which, does not make the security argument clearer
+by staying whole — and the two halves have **opposite change rules**. Splitting at that
+boundary is two moves, not ten, and it puts the retention rule at the top of the file it
+governs.
+
+### §8 question 11 — what inconsistent values can callers construct?
+
+Two types whose **names are the claim**:
+
+- `TransportIdentity` — documented as *"a verified client identity extracted from a
+  successfully-verified mTLS client certificate"*, with public fields and a public
+  constructor taking any string and any claimed source. It is live.
+- `AttestedIngressVerified` — the success product of Mode-C verification, all five fields
+  public. Constructible with `cert_verification_result: Verified` by anything that can name
+  the type. Currently unreachable, which limits the exposure and not the defect.
+
+`TransportBinding` is the counter-example in the same file: private representation,
+`pub(crate)` constructors, and a doc comment explaining why `pub(crate)` is the right lever
+for a consumer set that lives in this crate.
+
+### §8 question 12 — which lane establishes each property?
+
+45 unit tests, 14 integration tests across three lanes, every lane executed for this census
+and reporting non-zero. **Zero theorem-registry entries are owned by this unit.** THM-0023
+and THM-0024 sit next door in `communication_assurance` and are easy to mistake for coverage
+here; the open proposition that would be this unit's — *transport identity is derived only
+from the verified client certificate* — cannot be stated honestly until `TransportIdentity`
+is sealed, because it is false of a type anyone can build from a string.
+
+### Disposition
+
+**Decompose** along the reachability boundary — the live 355 lines stay, the 913 lines of
+deferred ingress-assertion capability move to `transport/ingress.rs` with the retention rule
+stated there — and **seal `TransportIdentity` and `AttestedIngressVerified`**. The sealing is
+the part that changes what is provable. `transport.rs` stays `reviewed-action-required` until
+that work lands and this census is re-run.
