@@ -5,8 +5,9 @@
 //!
 //! Possession of [`BoundDecisionEvidence`] means:
 //!
-//! > This verified request carried exactly one `pdp-decision` / `opaque-digest` binding, and
-//! > these are the decision bytes whose digest that binding committed to.
+//! > This verified request carried exactly one `pdp-decision` / `opaque-digest` binding,
+//! > these are the decision bytes whose digest that binding committed to, and this is that
+//! > digest.
 //!
 //! That is digest correspondence and nothing else. It says nothing about who signed the
 //! decision, whether the issuer is trusted, or what the decision permits — those are the
@@ -27,13 +28,22 @@ use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::BindingType;
 use mcp_re_http_profile::VerifiedMcpRequest;
 
+use crate::authorization::decision_evidence::DecisionEvidenceIdentity;
+
 /// A decision document and the verified request binding that commits to it.
 ///
 /// Sealed: the representation and the constructor are private to this module, so the only
 /// inhabitants are the ones [`bound_decision_evidence`] proved correspond.
+///
+/// It keeps BOTH halves of what the correspondence check established. Discarding the digest
+/// and recomputing it downstream would replace *the identity the binding committed to* with
+/// *an identity derived from bytes*, and the two are the same value only while the check
+/// that related them still holds — which is exactly what this type exists to have decided
+/// already (ADR-MCPRE-066 §4.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoundDecisionEvidence {
     document: String,
+    identity: DecisionEvidenceIdentity,
 }
 
 impl BoundDecisionEvidence {
@@ -41,6 +51,11 @@ impl BoundDecisionEvidence {
     /// authenticates it — this type has established only that it is the right bytes.
     pub fn document(&self) -> &str {
         &self.document
+    }
+
+    /// The digest the binding committed to, as verified.
+    pub fn identity(&self) -> &DecisionEvidenceIdentity {
+        &self.identity
     }
 }
 
@@ -88,6 +103,10 @@ pub fn bound_decision_evidence(
     match verify_pdp_decision_binding(binding, document) {
         Ok(()) => Ok(Some(BoundDecisionEvidence {
             document: document.to_owned(),
+            identity: DecisionEvidenceIdentity::from_verified_binding(
+                &binding.digest_alg,
+                &binding.digest_value,
+            ),
         })),
         Err(PdpBindingRefusal::DigestMismatch) => Err(DecisionEvidenceRefusal::DigestMismatch),
         Err(PdpBindingRefusal::NotTheEvidenceForm | PdpBindingRefusal::Malformed) => {

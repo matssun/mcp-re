@@ -41,8 +41,50 @@
 
 use mcp_re_policy::PolicyError;
 
+use super::decision_evidence::DecisionEvidenceIdentity;
 use super::grant::GrantAttribution;
 use super::request::AuthorizationRequest;
+
+/// What a mechanism produces when it permits a request.
+///
+/// Two coordinates, kept apart because they answer different questions: the grant says which
+/// authority decided and which of its decisions this was; the evidence identity says which
+/// exact bytes this deployment authenticated and acted on. A single `evidence_id` folding
+/// both would look like a cross-audit chain while being unable to distinguish two documents
+/// an issuer gave one `jti`.
+///
+/// They travel as ONE value because the mechanism established them together. A seam handing
+/// back two values would let a caller pair one decision's attribution with another's
+/// evidence — two honest facts stating a false relation.
+///
+/// The evidence identity is REQUIRED, not optional. Every mechanism this architecture has
+/// authenticates a carried decision document, so every one of them can name it, and an
+/// `Option` here would have no production `None` — only test evaluators. If a mechanism
+/// that decides without a carried artifact is ever selected, this becomes a sum type with
+/// its own arm, and the compile error that forces the question is the point.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizedDecision {
+    grant: GrantAttribution,
+    evidence: DecisionEvidenceIdentity,
+}
+
+impl AuthorizedDecision {
+    /// Pair the attribution with the evidence it was read from. Called by the mechanism
+    /// that established both.
+    pub fn new(grant: GrantAttribution, evidence: DecisionEvidenceIdentity) -> Self {
+        AuthorizedDecision { grant, evidence }
+    }
+
+    /// Which authority decided, under which policy version, and which decision it was.
+    pub fn grant(&self) -> &GrantAttribution {
+        &self.grant
+    }
+
+    /// Which exact decision evidence was authenticated and acted upon.
+    pub fn evidence(&self) -> &DecisionEvidenceIdentity {
+        &self.evidence
+    }
+}
 
 /// A policy mechanism that decides over verified request facts.
 ///
@@ -52,10 +94,10 @@ use super::request::AuthorizationRequest;
 pub trait AuthorizationEvaluator: Send + Sync {
     /// Decide whether this request's actor may perform this request's action.
     ///
-    /// `Ok` names the policy authority that granted it — a decision nobody can attribute is
-    /// a decision nobody can revisit. `Err` is a refusal, carrying the frozen token that
-    /// says why.
-    fn evaluate(&self, request: &AuthorizationRequest) -> Result<GrantAttribution, PolicyError>;
+    /// `Ok` names the policy authority that granted it and the evidence it decided from — a
+    /// decision nobody can attribute is a decision nobody can revisit. `Err` is a refusal,
+    /// carrying the frozen token that says why.
+    fn evaluate(&self, request: &AuthorizationRequest) -> Result<AuthorizedDecision, PolicyError>;
 }
 
 // Everything below is test code. The `#[cfg(test)]` marker lives HERE because it is the
@@ -63,7 +105,9 @@ pub trait AuthorizationEvaluator: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::AuthorizationEvaluator;
+    use super::AuthorizedDecision;
     use crate::authorization::action_harness::verified_over;
+    use crate::authorization::decision_evidence::DecisionEvidenceIdentity;
     use crate::authorization::grant::GrantAttribution;
     use crate::authorization::request::authorization_request;
     use crate::authorization::request::AuthorizationRequest;
@@ -80,11 +124,14 @@ mod tests {
         fn evaluate(
             &self,
             request: &AuthorizationRequest,
-        ) -> Result<GrantAttribution, PolicyError> {
+        ) -> Result<AuthorizedDecision, PolicyError> {
             let subject_ok = request.actor().subject() == "did:example:agent-1";
             let target_ok = request.action().target().named() == Some("read");
             if subject_ok && target_ok {
-                return Ok(GrantAttribution::new("conformance", "1"));
+                return Ok(AuthorizedDecision::new(
+                    GrantAttribution::new("conformance", "1", "decision-1"),
+                    DecisionEvidenceIdentity::from_verified_binding("sha-256", "fixture"),
+                ));
             }
             Err(PolicyError::AuthorizationScopeDenied)
         }
@@ -101,8 +148,27 @@ mod tests {
         let granted = OneToolForOneSubject
             .evaluate(&authorization_request(&verified, READ, None).expect("composes"))
             .expect("granted");
-        assert_eq!(granted.authority(), "conformance");
-        assert_eq!(granted.version(), "1");
+        assert_eq!(granted.grant().authority(), "conformance");
+        assert_eq!(granted.grant().version(), "1");
+        assert_eq!(granted.grant().authority_decision_id(), "decision-1");
+    }
+
+    /// The two coordinates are separate members of the product, not one field.
+    ///
+    /// A mechanism that answered both questions with one value would produce a record that
+    /// looks like a cross-audit chain while being unable to distinguish two documents an
+    /// issuer gave one `jti`.
+    #[test]
+    fn the_authority_decision_id_and_the_evidence_identity_are_different_coordinates() {
+        let verified = verified_over(READ);
+        let decision = OneToolForOneSubject
+            .evaluate(&authorization_request(&verified, READ, None).expect("composes"))
+            .expect("granted");
+        assert_ne!(
+            decision.grant().authority_decision_id(),
+            decision.evidence().rendered(),
+            "the authority's decision id must not be the evidence digest"
+        );
     }
 
     #[test]

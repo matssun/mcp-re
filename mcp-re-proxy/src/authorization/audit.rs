@@ -48,18 +48,30 @@
 //! same record, so restating it here would put a copy of `McpReError` inside the
 //! authorization authority — the merge this ADR exists to prevent, running the other way.
 //!
-//! # What this slice does not carry, and why not
+//! # Decision provenance: two coordinates, never one
 //!
-//! **No decision-evidence identity.** ADR-MCPRE-066 §4.4 names the digest bound by
-//! `BoundDecisionEvidence` as the natural answer to *on what evidence*, and it is — but no
-//! mechanism states it. [`GrantAttribution`](super::grant::GrantAttribution) returns
-//! authority and version; obtaining a decision digest here would mean re-reading the
-//! verified request at the audit site, which invariant 5 forbids, and representing it as an
-//! `Option` whose `None` means both *no decision was presented* and *this deployment runs no
-//! decision profile*. That is the shape `grant.rs` already refused for expiry, for the same
-//! reason: it arrives with the first production mechanism, typed by what that mechanism can
-//! establish. Until then the record answers *which exchange* with the request evidence
-//! handle every other authority on this path attributes by.
+//! ADR-MCPRE-066 §4.4 deferred decision-evidence identity until a mechanism could establish
+//! one. The carried PDP decision does, and it supplies TWO facts rather than one:
+//!
+//! ```text
+//! authz_decision_id         the authenticated `jti` — which decision the AUTHORITY says
+//!                           this was, for cross-audit against its own record
+//! authz_decision_evidence   the digest the request's binding committed to — which exact
+//!                           evidence MCP-RE authenticated and acted upon
+//! ```
+//!
+//! They are separate fields because they answer separate questions, and because the first
+//! cannot answer the second: an issuer can put one `jti` on two documents, and a record
+//! carrying only the identifier could not say which was enforced. One folded
+//! `evidence_id` would look like a cross-audit chain and not be one.
+//!
+//! Both arrive by projection from
+//! [`AuthorizedRequestFacts`](super::posture::AuthorizedRequestFacts) — the digest kept by
+//! the authority that verified the correspondence, never recomputed here (invariant 5).
+//!
+//! The record still answers *which exchange* with the request evidence handle every other
+//! authority on this path attributes by; the two decision coordinates are about the
+//! decision, not the exchange.
 //!
 //! **No PDP-internal refusal detail.** ADR-MCPRE-066 R4: `PdpRelationRefusal` is a
 //! mechanism-specific algebra and does not enter a normative audit facet.
@@ -72,22 +84,10 @@
 use mcp_re_http_profile::RequestEvidence;
 use mcp_re_policy::PolicyError;
 
-use super::verified_action::AuthorizationTarget;
+use super::decision_evidence::DecisionEvidenceIdentity;
 use super::verified_action::VerifiedAuthorizationAction;
 
-/// The target as one stable field, keeping the three states the coordinate distinguishes.
-///
-/// `named()` answers `None` for two of them, which is right for a policy that treats them
-/// alike and wrong for a record: *this operation names no target* and *this operation names
-/// one and the signed body carried none* are different facts about the request, and a reader
-/// holding only the record could not recover the difference.
-fn target_field(target: &AuthorizationTarget) -> &str {
-    match target {
-        AuthorizationTarget::NotApplicable => "none",
-        AuthorizationTarget::Named(t) => t,
-        AuthorizationTarget::Absent => "absent",
-    }
-}
+mod fields;
 
 /// What this deployment's authorization authority says about one request.
 ///
@@ -101,7 +101,12 @@ pub enum AuthorizationFacet {
     /// No authorization policy is deployed. NOT an allow, and not an examination.
     NotConfigured,
     /// A policy evaluated the verified facts and permitted this action.
-    Authorized(AuthorizationAttribution),
+    ///
+    /// Boxed for the reason
+    /// [`AuthorizationPosture`](super::posture::AuthorizationPosture) boxes its own: the
+    /// unconfigured outcome is the one every request on an unauthorized deployment carries,
+    /// and it should not pay for attribution it does not hold.
+    Authorized(Box<AuthorizationAttribution>),
     /// No permission was established.
     Refused(AuthorizationRefusalFacet),
 }
@@ -116,6 +121,14 @@ pub struct AuthorizationAttribution {
     pub authority: String,
     /// The version of that authority's policy the decision was taken under.
     pub version: String,
+    /// The authority's own identifier for the decision — its `jti`. Answers *which
+    /// decision does the authority say this was*, for cross-audit against the authority's
+    /// record. It is not an identity for the decision bytes.
+    pub authority_decision_id: String,
+    /// The digest of the decision evidence this deployment authenticated and acted upon.
+    /// Answers *which exact evidence*, which the identifier above cannot: one `jti` can
+    /// appear on two documents.
+    pub decision_evidence: DecisionEvidenceIdentity,
     /// The operation and target as evaluated — never reconstructed from the request.
     pub action: VerifiedAuthorizationAction,
     /// The request evidence handle this decision is attributable to. A role-labelled
@@ -136,36 +149,6 @@ pub enum AuthorizationRefusalFacet {
     /// A policy decided, and the decision was not to permit. The token is the policy
     /// authority's own, in the authorization coordinate — never in Core's `reason`.
     ByPolicy(PolicyError),
-}
-
-impl AuthorizationFacet {
-    /// This facet as stable `key=value` fields for the diagnostic audit line.
-    ///
-    /// Rendered HERE rather than by the sink, so no sink has to learn authorization
-    /// vocabulary in order to write a record down. A structured sink matches on the type.
-    pub fn audit_fields(&self) -> String {
-        match self {
-            AuthorizationFacet::NotConfigured => "authz=not-configured".to_owned(),
-            AuthorizationFacet::Authorized(a) => format!(
-                "authz=authorized authz_authority={} authz_version={} authz_operation={} \
-                 authz_target={} authz_evidence={}",
-                a.authority,
-                a.version,
-                a.action.operation(),
-                target_field(a.action.target()),
-                a.attributable_to.digest_value,
-            ),
-            AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy) => {
-                "authz=refused-before-policy".to_owned()
-            }
-            AuthorizationFacet::Refused(AuthorizationRefusalFacet::ByPolicy(e)) => {
-                format!(
-                    "authz=refused-by-policy authz_policy_reason={}",
-                    e.wire_code()
-                )
-            }
-        }
-    }
 }
 
 // Everything below is test code. The `#[cfg(test)]` marker lives HERE because it is the

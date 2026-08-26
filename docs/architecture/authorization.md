@@ -525,12 +525,94 @@ states that rather than leaving an operator to assume the trust-store cadence co
 A configured profile whose trust document enrols no authority **refuses to start**: it
 would otherwise refuse every call while its transcript announced enforcement.
 
-### 11.3 Mechanism-specific evidence identity is still deferred
+### 11.3 Decision provenance — two coordinates, delivered
 
-ADR-MCPRE-066 Slice 1 records no decision-evidence identity in `Authorized` attribution,
-noting that the first production mechanism might supply one. It does not yet:
-`BoundDecisionEvidence` is sealed over the decision DOCUMENT and does not retain the digest
-its binding committed to, so projecting one would mean recomputing it or reopening the
-request's evidence block at the audit site — re-derivation, which invariant 5 forbids. The
-authenticated `jti` claim is the honest candidate, and taking it would widen the §5 seam's
-success product (`GrantAttribution`). That is an ADR decision, not a wiring one.
+ADR-MCPRE-066 §4.4 deferred decision-evidence identity until a mechanism could establish
+one. The carried PDP decision can, and it establishes **two** facts, which the success
+product now carries separately:
+
+```text
+AuthorizedRequestFacts
+    request
+    grant
+        authority                 iss
+        version                   policy version
+        authority_decision_id     jti — WHICH DECISION the authority says this was
+    decision_evidence
+        <alg>:<digest>            WHICH EXACT EVIDENCE this deployment authenticated
+```
+
+`jti` is authenticated and authority-owned, and the profile defines it as tying the
+decision to the authority's own record for cross-audit. It is **not** a content identity:
+an issuer can put one `jti` on two documents, and then it cannot say which was enforced.
+The digest can, so the two are separate fields and neither is named `evidence_id`.
+
+The digest is **preserved, not recomputed**. `BoundDecisionEvidence` used to verify the
+binding's digest against the document and then discard it; it now keeps it, so the identity
+in the record is the value the binding committed to, kept by the authority that verified the
+correspondence. Recomputing it downstream would substitute *an identity derived from bytes*
+for *the identity the binding committed to* — the same value only while the check relating
+them holds, which is precisely what that type exists to have decided already.
+
+Two controls pin the separation: changing the document under one `jti` must change the
+evidence identity, and the identity over one document must not be the `jti` under another
+name.
+
+The mechanism seam's success product is therefore `AuthorizedDecision` — grant and evidence
+identity as ONE value, because the mechanism established them together and a seam handing
+back two would let a caller pair one decision's attribution with another's evidence.
+
+## 12. Acceptance — the production shape, measured
+
+The implementation is complete when a DEPLOYMENT enforces what the mechanism decides, and
+that is a different claim from any unit result. This section records the matrix and the
+lane each row is measured in, because a property holds only in the lane its test actually
+compiles into.
+
+| row | expectation | measured by | lane |
+|---|---|---|---|
+| trusted issuer + correct actor/action + Permit | dispatch | `inprocess_app_run_enforces_the_pdp_authorization_profile` | feature (`redis_replay`) |
+| Deny | refused, backend untouched | same, and `an_explicit_deny_never_reaches_the_backend` | feature / all |
+| no decision carried | refused | same, and `a_configured_profile_refuses_a_request_that_presents_no_decision` | feature / all |
+| decision for another action | refused | same, and `a_decision_for_another_tool…` / `…another_operation` | feature / all |
+| decision about another actor | refused | same, and `a_decision_issued_to_another_actor…` / `…another_trust_domain` | feature / all |
+| untrusted authorization issuer | refused | same, and `a_decision_from_an_authority_this_deployment_does_not_trust_is_refused` | feature / all |
+| stale decision | refused | same, and `a_stale_decision_is_refused_even_inside_its_own_validity_window` | feature / all |
+| valid bytes, wrong binding form | refused before any policy verdict | `a_reference_binding_can_never_satisfy_the_enforcement_profile` | all |
+| `--authz off` | serves, `NotConfigured`, never `Authorized` | `a_deployment_running_no_decision_profile_is_unaffected`, `an_unconfigured_deployments_records_say_so…` | all |
+| configured PDP, no enrolled authority | refuses startup | `a_configured_profile_with_no_enrolled_authority_refuses_to_start` | all |
+
+The first row's test drives real argv through `mcp_re_proxy::app::run` and reaches it over a
+real mTLS connection with a real signed request, so the chain it measures is the whole one:
+
+```text
+CLI/config -> trust document -> authorization-issuer slot -> capability ->
+with_authorization -> RFC 9421 verification -> decision binding ->
+decision authentication -> actor + action relation -> Permit -> dispatch
+```
+
+**Lane honesty.** That test lives in `tls_load_harness_bench.rs`, which is
+`#![cfg(feature = "redis_replay")]`: `cargo test --workspace` compiles it to zero tests and
+`bazel test //...` does not run it. It is measured by the `cargo test (feature-gated
+backends)` CI lane. Every other row above also has a handler-level or startup-level control
+that runs in every lane, so no row depends on the feature lane alone.
+
+### 12.1 What an authorized record answers
+
+For the Permit row the audit record answers all six questions, each from a fact an owner
+established rather than from a re-derivation at the record site:
+
+| question | field |
+|---|---|
+| who was authorized? | `authz_evidence` (the exchange) + the Core actor coordinate |
+| what action? | `authz_operation`, `authz_target` |
+| which authority? | `authz_authority` |
+| which policy version? | `authz_version` |
+| which authority decision? | `authz_decision_id` (`jti`) |
+| which exact decision evidence? | `authz_decision_evidence` (`<alg>:<digest>`) |
+
+Measured by `an_authorized_request_records_which_policy_permitted_what` in every lane.
+
+With this matrix green, ADR-MCPRE-065 and ADR-MCPRE-066 are **operationally** complete, not
+merely structurally complete. The next authorization work is a new decision, not a
+continuation of this campaign.

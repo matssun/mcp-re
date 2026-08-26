@@ -51,6 +51,8 @@ use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve::ServedHttpRequest;
 use mcp_re_proxy::authorization::AuthorizationEvaluator;
 use mcp_re_proxy::authorization::AuthorizationRequest;
+use mcp_re_proxy::authorization::AuthorizedDecision;
+use mcp_re_proxy::authorization::DecisionEvidenceIdentity;
 use mcp_re_proxy::authorization::GrantAttribution;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
 use mcp_re_proxy::ActorResolver;
@@ -126,7 +128,7 @@ struct Seen {
 }
 
 /// How a conformance evaluator answers, given what it saw.
-type Answer = dyn Fn(&Seen) -> Result<GrantAttribution, PolicyError> + Send + Sync;
+type Answer = dyn Fn(&Seen) -> Result<AuthorizedDecision, PolicyError> + Send + Sync;
 
 /// A conformance evaluator: records what it was asked, and answers as configured.
 ///
@@ -139,7 +141,7 @@ struct Recording {
 
 impl Recording {
     fn new(
-        answer: impl Fn(&Seen) -> Result<GrantAttribution, PolicyError> + Send + Sync + 'static,
+        answer: impl Fn(&Seen) -> Result<AuthorizedDecision, PolicyError> + Send + Sync + 'static,
     ) -> Arc<Self> {
         Arc::new(Recording {
             seen: Mutex::new(Vec::new()),
@@ -159,7 +161,7 @@ impl Recording {
 }
 
 impl AuthorizationEvaluator for Recording {
-    fn evaluate(&self, request: &AuthorizationRequest) -> Result<GrantAttribution, PolicyError> {
+    fn evaluate(&self, request: &AuthorizationRequest) -> Result<AuthorizedDecision, PolicyError> {
         let actor = request.actor();
         let seen = Seen {
             operation: request.action().operation().to_owned(),
@@ -176,11 +178,21 @@ impl AuthorizationEvaluator for Recording {
     }
 }
 
+/// What a conformance evaluator returns when it permits: an attribution and the identity
+/// of the evidence it decided from. This one authenticates nothing, so it names a fixture
+/// digest — the point of these controls is the SERVING path, not the mechanism.
+fn conformance_decision(version: &'static str) -> AuthorizedDecision {
+    AuthorizedDecision::new(
+        GrantAttribution::new("conformance", version, format!("decision-{version}")),
+        DecisionEvidenceIdentity::from_verified_binding("sha-256", "conformance-fixture"),
+    )
+}
+
 /// Grant `tool` and nothing else.
 fn grants_only(tool: &'static str) -> Arc<Recording> {
     Recording::new(move |seen| {
         if seen.target.as_deref() == Some(tool) {
-            Ok(GrantAttribution::new("conformance", "1"))
+            Ok(conformance_decision("1"))
         } else {
             Err(PolicyError::AuthorizationScopeDenied)
         }
@@ -527,7 +539,7 @@ async fn a_denied_request_is_answerable_as_nothing_executed() {
             if n.fetch_add(1, Ordering::SeqCst) == 0 {
                 Err(PolicyError::AuthorizationScopeDenied)
             } else {
-                Ok(GrantAttribution::new("conformance", "2"))
+                Ok(conformance_decision("2"))
             }
         }
     });

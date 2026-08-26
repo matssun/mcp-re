@@ -610,14 +610,22 @@ product or asks it for a named projection; the answer is one named projection, w
 the owner's own module where it reads the private representation, so the composition root
 holds a single call rather than four accessor reads it then assembles (R-COMPOSE).
 
-**What Slice 1 does not carry.** No decision-evidence identity: §4.4 names the
-`BoundDecisionEvidence` digest, and no mechanism states it. `GrantAttribution` returns
-authority and version; deriving a decision digest at the audit site would re-derive
-(invariant 5) and would arrive as an `Option` whose `None` means both *no decision was
-presented* and *no decision profile is running* — the shape `grant.rs` already refused for
-expiry. It arrives with the first production mechanism, typed by what that mechanism can
-establish. Until then the record answers *which exchange* with the request evidence handle
-every other authority on this path attributes by.
+**What Slice 1 did not carry, and what since supplied it.** Slice 1 carried no
+decision-evidence identity, because no mechanism stated one. The carried PDP decision of
+ADR-MCPRE-065 §8 does, and the deferred obligation is discharged in that ADR's §11.3 —
+under **two** coordinates rather than one:
+
+| field | question | source |
+|---|---|---|
+| `authz_decision_id` | which decision does the AUTHORITY say this was? | the authenticated `jti` |
+| `authz_decision_evidence` | which exact evidence did MCP-RE authenticate? | the digest the request's binding committed to |
+
+Neither substitutes for the other: an issuer can put one `jti` on two documents, so the
+identifier alone cannot say which was enforced. The digest is **preserved** by
+`BoundDecisionEvidence` at the moment it verifies the correspondence rather than recomputed
+at the audit site, which is what keeps invariant 5 satisfied. The record still answers
+*which exchange* with the request evidence handle every other authority on this path
+attributes by; these two are about the decision, not the exchange.
 
 ### 9.4 Slice 2 contract — the containment becomes a type
 
