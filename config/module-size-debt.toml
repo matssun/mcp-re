@@ -93,9 +93,10 @@ review_ref = "EX-004 in docs/architecture/review-dispositions.md"
 # owner and the historical vocabulary moved to `asserted_identity_facade`.
 [[debt]]
 path = "mcp-re-proxy/src/transport.rs"
-baseline_prod_loc = 1274
-baseline_sha = "c81df3e"
-status = "unreviewed"
+baseline_prod_loc = 1268
+baseline_sha = "dc9f1c1"
+status = "reviewed-action-required"
+review_ref = "EX-005 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/ocsp.rs"
