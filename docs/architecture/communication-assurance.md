@@ -1629,7 +1629,7 @@ Every candidate consumer is deferred by an accepted decision, not by omission:
 
 | candidate | what defers it |
 |---|---|
-| **authorization** | `--authz reference` is REFUSED at validation. ADR-MCPS-013: the reference profile is not the production authority (Biscuit is), and "authorization enforcement is not wired on the RFC 9421 serving path in any case — the evaluator must be rebuilt on the HTTP-profile request evidence first" |
+| **authorization** | `--authz reference` is REFUSED at validation (ADR-MCPS-013: the reference profile is not the production authority, and it was bound to the retired object carrier). ADR-MCPRE-065 has since built the production mechanism on RFC 9421 request evidence, but no configuration installs it — the composition root attaches no evaluator |
 | **the security audit record** | ADR-MCPS-035 §3 freezes the success-event allowlist. The serving path already names a gap it refused to close "by quietly widening a pinned vocabulary" — a degraded-mode serve is indistinguishable from a confirmed one |
 | **the inner-plane verified context** | `VerifiedContext` is `#[serde(deny_unknown_fields)]` and its shape is committed to by `verified_context_commitment` in the transparency record. Adding channel facts is a wire change and a commitment change |
 

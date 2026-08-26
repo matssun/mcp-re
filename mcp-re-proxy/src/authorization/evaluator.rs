@@ -15,14 +15,17 @@
 //! seam is verified facts in and a decision out; nothing above it learns how the decision
 //! was reached, and nothing below it learns how the facts were verified.
 //!
-//! # No mechanism ships with this slice
+//! # The mechanism that ships, and the one that does not
 //!
 //! ADR-MCPS-013 selected Biscuit in the context of the native/JCS authorization carrier that
 //! ADR-MCPRE-050 replaced, and ADR-MCPRE-065 R-1 rules that the selection does not carry
 //! forward as a normative requirement for the RFC 9421 path. There is no Biscuit code in
-//! this tree, no evaluator of any kind, and no dependency to preserve — so this slice
-//! defines the seam and stops. Selecting the first production mechanism is the next bounded
-//! piece of work, chosen UNDER this architecture rather than defining it.
+//! this tree and no dependency to preserve.
+//!
+//! The mechanism chosen UNDER this architecture is the carried PDP decision
+//! ([`super::pdp`], ADR-MCPRE-065 §8). It implements this trait and is enforced end to end
+//! by the serving controls — but no configuration constructs it, so a deployment installs
+//! nothing today.
 //!
 //! A deployment that attaches no evaluator is not authorizing anything, and
 //! [`AuthorizationPosture`](super::posture::AuthorizationPosture) says exactly that rather

@@ -162,10 +162,10 @@ pub fn validate_tls_signing_exclusivity(
 ///
 /// `Some(diagnostic)` means it cannot. Today that is unconditional whenever paths are
 /// supplied: the deny-list is consumed by `LiveTrustResolver::resolve_with_revocation_id`,
-/// which only runs under an authorization profile, and no production profile has landed —
-/// `--authz reference` is itself refused. So a supplied list could only be silently
-/// ignored, and an operator would believe a compromised grant was revoked while it kept
-/// being authorized.
+/// which only runs under an authorization profile, and no configuration installs one — the
+/// ADR-MCPRE-065 PDP evaluator exists but nothing constructs it, and `--authz reference` is
+/// itself refused. So a supplied list could only be silently ignored, and an operator would
+/// believe a compromised grant was revoked while it kept being authorized.
 ///
 /// Refused rather than accepted-and-ignored (security-boundary §2: never surface a
 /// capability that is not delivered). v0.16 deliberately REFUSES rather than implementing
@@ -181,8 +181,8 @@ pub fn validate_tls_signing_exclusivity(
 pub(crate) fn unenforceable_revocation_list_refusal(paths: &[String]) -> Option<String> {
     (!paths.is_empty()).then(|| {
         "--revocation-list supplies a policy-layer deny-list (ADR-MCPS-013), but it is \
-         consulted only by an authorization profile and no production profile is \
-         available (--authz is always off), so the list would enforce NOTHING. Remove \
+         consulted only by an authorization profile and no configuration installs one \
+         (--authz is always off), so the list would enforce NOTHING. Remove \
          --revocation-list; use the trust store and --revocation-tier for key \
          revocation on the request path."
             .to_string()
