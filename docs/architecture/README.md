@@ -50,6 +50,14 @@ flowchart TD
 - [`components/evidence-verification.md`](components/evidence-verification.md)
 - [`components/exchange-lifecycle.md`](components/exchange-lifecycle.md)
 
+## Authority censuses (ADR-061 §8)
+
+Produced by the blueprint-census issues, in the ruled size order. A census is an
+investigation: it answers the twelve questions and records an outcome — decomposition, or a
+§14 exception — without changing code.
+
+- [`components/scitt-transparency.md`](components/scitt-transparency.md) — `scitt.rs` (1629), MCPRE-139 / #575. **Outcome: decomposition.** Seven authorities in one file, and four types that admit values their documented invariants forbid.
+
 These are first-pass architectural documents, not declarations that every boundary is already final. The shallow-module census and subsequent investigation may refine the tree. Refinement must preserve the governing rule: **one authority, narrow facade, private subordinate implementation tree**.
 
 ## Current campaign order
@@ -138,7 +146,7 @@ size orders the queue while §8 question 2 decides the outcome:
 | 2127 | 11 | 2 | 44 | `mcp-re-proxy/src/http_profile_serve.rs` — the only band-4 unit |
 | 1907 | 23 | 9 | 100 | `mcp-re-proxy/src/tls.rs` |
 | 1640 | 23 | 4 | 15 | `mcp-re-http-profile/src/verify.rs` — **the ruled first component** |
-| 1629 | 25 | 12 | 70 | `mcp-re-http-profile/src/scitt.rs` — band 3, no blueprint yet |
+| 1629 | 25 | 12 | 70 | `mcp-re-http-profile/src/scitt.rs` — **census complete**, outcome *decompose* ([`components/scitt-transparency.md`](components/scitt-transparency.md)) |
 | 1305 | 25 | 21 | 73 | `mcp-re-proxy/src/transport.rs` — band 3, no blueprint yet |
 | 1271 | 14 | 3 | 91 | `mcp-re-proxy/src/ocsp.rs` — band 3, no blueprint yet |
 | 1177 | 6 | 0 | 184 | `mcp-re-proxy/src/cli.rs` — **unreviewed**; ADR-058 ruled on `parse_args`, not on the file |
@@ -146,10 +154,11 @@ size orders the queue while §8 question 2 decides the outcome:
 | 1114 | 32 | 12 | 44 | `mcp-re-client-core/src/response.rs` — band 3, no blueprint yet |
 | 1037 | 3 | 0 | 31 | `mcp-re-proxy/src/app.rs` — **reviewed-action-required**; census complete, disposition *decompose first* ([EX-002](review-dispositions.md), remediation #592) |
 
-**Six** band-3 hotspots have no component blueprint: `scitt.rs`, `transport.rs`, `ocsp.rs`,
+**Five** band-3 hotspots still have no component blueprint: `transport.rs`, `ocsp.rs`,
 `cli.rs`, `response.rs`, and the two KMS key sources — one census covering both backends,
 since the question there is the shared authority structure. They are named here so their
-absence is a recorded gap rather than an implied claim of coverage.
+absence is a recorded gap rather than an implied claim of coverage. `scitt.rs` was the first
+of the six and its census is [`components/scitt-transparency.md`](components/scitt-transparency.md).
 
 `cli.rs` was previously left off this list as a reviewed exception. It was not one: ADR-058
 ruled on the `parse_args` function, and the file states of itself that it carries three
