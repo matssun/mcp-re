@@ -52,12 +52,16 @@
 //!  AuthorizationPosture | AuthorizationRefusal
 //! ```
 //!
-//! # The mechanism box is empty on purpose
+//! # The mechanism, and what is still absent
 //!
 //! ADR-MCPS-013 selected Biscuit for the native/JCS carrier ADR-MCPRE-050 replaced, and
 //! ADR-MCPRE-065 R-1 rules that the selection does not carry forward as a normative
-//! requirement here. No Biscuit, UCAN, OPA, Cedar or PDP protocol arrives with this slice;
-//! the first production mechanism is chosen UNDER this architecture rather than defining it.
+//! requirement here. No Biscuit, UCAN, OPA or Cedar is in this tree. The mechanism chosen
+//! UNDER this architecture is the carried PDP decision ([`pdp`], ADR-MCPRE-065 §8).
+//!
+//! What is absent is its INSTALLATION: no configuration value selects it, and the
+//! composition root never attaches an evaluator, so every deployment serves with
+//! [`AuthorizationPosture::NoPolicyConfigured`] — which claims nothing, and is not an allow.
 
 #[cfg(test)]
 pub(crate) mod action_harness;

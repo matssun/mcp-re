@@ -70,10 +70,10 @@ fn target_uri_violation(uri: &str) -> Option<String> {
 /// `Some(diagnostic)` means it cannot. Two independent facts make it so, and the
 /// diagnostic carries both because an operator needs both to know what to do:
 ///
-/// - the reference profile is a CONFORMANCE implementation, never accepted as the
-///   production authorization authority (ADR-MCPS-013; Biscuit is the intended one);
-/// - authorization enforcement is not wired on the RFC 9421 serving path at all — the
-///   evaluator has not been rebuilt on the HTTP-profile request evidence.
+/// - the reference profile is a CONFORMANCE implementation, never accepted as the production
+///   authority (ADR-MCPS-013), and it was bound to the object carrier ADR-MCPRE-050 retired;
+/// - it names no mechanism this build can install: the production mechanism is the carried
+///   PDP decision (ADR-MCPRE-065 §8), which no configuration value selects today.
 ///
 /// Either alone is sufficient to refuse. A configured policy that would silently not
 /// enforce is the forbidden-claim shape (security-boundary §2).
@@ -87,9 +87,9 @@ fn unaccepted_authz_profile_refusal(authz: AuthzKind) -> Option<String> {
     (authz == AuthzKind::Reference).then(|| {
         "--authz reference selects the reference/conformance signed-authorization \
          profile, which is NOT accepted as the production authorization authority \
-         (ADR-MCPS-013; Biscuit is the intended production profile), and authorization \
-         enforcement is not wired on the RFC 9421 serving path in any case — the evaluator \
-         must be rebuilt on the HTTP-profile request evidence first. Run --authz off."
+         (ADR-MCPS-013) and was bound to the object carrier this release retired. The \
+         production mechanism is the carried PDP decision (ADR-MCPRE-065), which this \
+         value does not select and which no configuration installs today. Run --authz off."
             .to_string()
     })
 }
