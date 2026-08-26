@@ -56,6 +56,7 @@
 //! this".
 
 pub mod admission;
+pub mod authorization;
 pub mod client_credential_window;
 pub mod continuation_control;
 pub(crate) mod cross_machine;
@@ -76,6 +77,7 @@ pub mod trust_revocation;
 pub mod validation;
 
 pub use admission::{AdmissionAvailability, AdmissionPosture, AdmissionState, EnforcedAdmission};
+pub use authorization::{AuthorizationState, EnforcedAuthorization};
 pub use client_credential_window::ClientCredentialWindow;
 pub use continuation_control::ContinuationControlState;
 pub use custody::{AwsCredentialMode, CustodyMaterial, CustodyState};
@@ -102,33 +104,20 @@ pub use trust_revocation::TrustRevocationState;
 /// is one whose legality still lives in the residual clause list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeploymentConfigState {
-    admission: AdmissionState,
-    audit: AuditState,
-    channel_binding: ChannelBindingState,
-    client_credential_window: ClientCredentialWindow,
-    continuation_control: ContinuationControlState,
-    crl_revocation: CrlRevocationState,
-    custody: CustodyState,
-    delegated_signing: DelegatedSigningFacts,
-    freshness: FreshnessWindow,
-    in_flight_limit: InFlightLimitBasis,
-    key_file_access: KeyFileAccessPolicy,
-    mcp_transport_contract: McpTransportContractState,
-    replay: ReplayState,
-    retention: RetentionState,
-    server_identity: server_identity::ServerIdentityFacts,
-    shard_topology: ShardTopologyRequest,
-    tls_custody: TlsCustodyState,
-    topology: DeploymentTopology,
-    trust_document: TrustDocumentSource,
-    trust_revocation: TrustRevocationState,
-    verified_context: VerifiedContextState,
+    /// The recognised states themselves. One field rather than a copy of every field in
+    /// [`RecognisedStates`]: the two shapes were identical, and a state added to one had to
+    /// be transcribed into the other twice — a per-machine cost that bought nothing, since
+    /// the only difference between them was ever the claim attached, not the contents.
+    /// Private, so the `pub(crate)` fields of the inner value stay unreachable from here.
+    states: RecognisedStates,
 }
 
 /// The recognised states, as one argument, so adding a machine is a change in one place
 /// rather than in every signature between the validator and the value.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RecognisedStates {
     pub(crate) admission: AdmissionState,
+    pub(crate) authorization: AuthorizationState,
     pub(crate) audit: AuditState,
     pub(crate) channel_binding: ChannelBindingState,
     pub(crate) client_credential_window: ClientCredentialWindow,
@@ -155,95 +144,56 @@ impl DeploymentConfigState {
     /// Assemble the classified state. Crate-private: the only legitimate producer is the
     /// validation boundary, because the value's meaning is "these states were checked".
     pub(crate) fn new(states: RecognisedStates) -> Self {
-        let RecognisedStates {
-            admission,
-            audit,
-            channel_binding,
-            client_credential_window,
-            continuation_control,
-            crl_revocation,
-            custody,
-            delegated_signing,
-            freshness,
-            in_flight_limit,
-            key_file_access,
-            mcp_transport_contract,
-            replay,
-            retention,
-            server_identity,
-            shard_topology,
-            tls_custody,
-            topology,
-            trust_document,
-            trust_revocation,
-            verified_context,
-        } = states;
-        Self {
-            admission,
-            audit,
-            channel_binding,
-            client_credential_window,
-            continuation_control,
-            crl_revocation,
-            custody,
-            delegated_signing,
-            freshness,
-            in_flight_limit,
-            key_file_access,
-            mcp_transport_contract,
-            replay,
-            retention,
-            server_identity,
-            shard_topology,
-            tls_custody,
-            topology,
-            trust_document,
-            trust_revocation,
-            verified_context,
-        }
+        Self { states }
     }
 
     /// Whether a workload admission gate applies, how strictly, and — when it does — the
     /// authority and shared record it was found inhabitable by.
     pub fn admission(&self) -> &AdmissionState {
-        &self.admission
+        &self.states.admission
+    }
+
+    /// Which authorization authority this deployment installs, and the decision profile it
+    /// accepts when it installs one.
+    pub fn authorization(&self) -> &AuthorizationState {
+        &self.states.authorization
     }
 
     /// Where the per-request security record goes.
     pub fn audit(&self) -> AuditState {
-        self.audit
+        self.states.audit
     }
 
     /// How a verified request signer is bound to the authenticated channel.
     pub fn channel_binding(&self) -> ChannelBindingState {
-        self.channel_binding
+        self.states.channel_binding
     }
 
     /// Offline client-certificate revocation.
     pub fn crl_revocation(&self) -> &CrlRevocationState {
-        &self.crl_revocation
+        &self.states.crl_revocation
     }
 
     /// Whether exchanges are retained for later SCITT statements.
     pub fn retention(&self) -> &RetentionState {
-        &self.retention
+        &self.states.retention
     }
 
     /// What the PEP asserts to the inner server about the caller.
     pub fn verified_context(&self) -> VerifiedContextState {
-        self.verified_context
+        self.states.verified_context
     }
 
     /// Whether multi-round-trip flows resolve across replicas, and nothing about replay:
     /// the two were one field until CF-12 and are two facts.
     pub fn continuation_control(&self) -> &ContinuationControlState {
-        &self.continuation_control
+        &self.states.continuation_control
     }
 
     /// Where admitted nonces live. Both variants are shared — a node-local replay store is
     /// not a state a deployment can be in.
     pub fn replay(&self) -> &ReplayState {
-        &self.replay
+        &self.states.replay
     }
 
     /// Which basis the admission limit is expressed in, with the default already applied.
@@ -255,27 +205,27 @@ impl DeploymentConfigState {
     /// One fact with two consumers: the RFC 9421 acceptance window and the replay retention
     /// horizon. They read projections of the same value rather than the same raw field.
     pub fn freshness(&self) -> FreshnessWindow {
-        self.freshness
+        self.states.freshness
     }
 
     pub fn in_flight_limit(&self) -> InFlightLimitBasis {
-        self.in_flight_limit
+        self.states.in_flight_limit
     }
 
     /// Whether the MCP transport/version contract is asserted, and for which versions.
     pub fn mcp_transport_contract(&self) -> &McpTransportContractState {
-        &self.mcp_transport_contract
+        &self.states.mcp_transport_contract
     }
 
     /// Where the response-signing key lives.
     pub fn custody(&self) -> &CustodyState {
-        &self.custody
+        &self.states.custody
     }
 
     /// What was established about delegated response signing — the epoch every credential
     /// is minted under, and the two values whose defaulting rule this layer owns.
     pub fn delegated_signing(&self) -> &DelegatedSigningFacts {
-        &self.delegated_signing
+        &self.states.delegated_signing
     }
 
     /// This deployment's own actor identity, derived once.
@@ -283,23 +233,23 @@ impl DeploymentConfigState {
     /// Consumers take it rather than assembling one from `trust_domain`, `server_signer`
     /// and a `"server"` literal — which is what two of them used to do.
     pub fn server_identity(&self) -> &server_identity::ServerIdentityFacts {
-        &self.server_identity
+        &self.states.server_identity
     }
 
     /// Whether the TLS handshake key can leave the device it lives on.
     pub fn tls_custody(&self) -> &TlsCustodyState {
-        &self.tls_custody
+        &self.states.tls_custody
     }
 
     /// Whether this deployment is one node or one replica of several.
     pub fn topology(&self) -> DeploymentTopology {
-        self.topology
+        self.states.topology
     }
 
     /// The serving-shard shape as the operator stated it. Not a count: the host resolves
     /// `Auto` into one.
     pub fn shard_topology(&self) -> ShardTopologyRequest {
-        self.shard_topology
+        self.states.shard_topology
     }
 
     /// Which key-file permission postures this deployment accepts.
@@ -307,14 +257,14 @@ impl DeploymentConfigState {
     /// The policy answers whether a posture is refused; composition never receives the
     /// flag and re-derives the rule around it.
     pub fn key_file_access(&self) -> KeyFileAccessPolicy {
-        self.key_file_access
+        self.states.key_file_access
     }
 
     /// How long a client credential authorizes traffic, and how long one connection may
     /// serve on a single handshake — one fact, because the second is what makes the first
     /// a statement about requests.
     pub fn client_credential_window(&self) -> ClientCredentialWindow {
-        self.client_credential_window
+        self.states.client_credential_window
     }
 
     /// Which document the request-signer set is read from.
@@ -322,13 +272,13 @@ impl DeploymentConfigState {
     /// The locator's own authority, so a plan pairs a revocation posture with a document
     /// both owners recognised rather than with whatever string reached the plan.
     pub fn trust_document(&self) -> &TrustDocumentSource {
-        &self.trust_document
+        &self.states.trust_document
     }
 
     /// The trust-revocation state — the authority both `TrustPlan` and `SigningPlan`
     /// consume rather than each re-deriving from `trust_epoch_redis_url` (CF-09).
     pub fn trust_revocation(&self) -> &TrustRevocationState {
-        &self.trust_revocation
+        &self.states.trust_revocation
     }
 }
 
@@ -588,6 +538,9 @@ mod tests {
                 admission::classify_and_validate(&test_support::enforcing_admission_config())
                     .0
                     .expect("the enforcing fixture names an admission authority"),
+            authorization: authorization::classify_and_validate(&test_support::legal_config())
+                .0
+                .expect("the legal fixture installs no authorization authority"),
             audit: AuditState::Stderr,
             channel_binding: ChannelBindingState::ExactUriSan,
             freshness: freshness::classify_and_validate(&test_support::legal_config())

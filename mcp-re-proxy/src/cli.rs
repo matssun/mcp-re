@@ -13,13 +13,15 @@
 //! The request model itself is [`crate::deployment_request`], deliberately outside this
 //! module: the configuration state machines read a request without depending on the parser.
 
+mod authorization_flags;
+
 use std::time::Duration;
 
 use mcp_re_core::VerificationKey;
 
 use crate::deployment_request::{
-    AdmissionKind, AuditSinkKind, AuthzKind, BindingKind, DeploymentRequest, KeySourceKind,
-    OcspKind, SecretString, VerifiedContextKind,
+    AdmissionKind, AuditSinkKind, BindingKind, DeploymentRequest, KeySourceKind, OcspKind,
+    SecretString, VerifiedContextKind,
 };
 
 #[cfg(feature = "aws_kms_keysource")]
@@ -115,9 +117,8 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     let mut ingress_identities: Vec<String> = Vec::new();
     let mut ingress_audience: Option<String> = None;
     let mut ingress_pinned_mtls = false;
-    let mut authz = AuthzKind::Off;
-    // ADR-MCPS-013 policy-layer revocation: zero or more offline deny-list files.
-    let mut revocation_list_paths: Vec<String> = Vec::new();
+    // ADR-MCPRE-065: the selection, its two parameters, and the ADR-MCPS-013 deny-list.
+    let mut authorization = authorization_flags::AuthorizationFlags::new();
     // #4034 PKCS#11 key source: module path, User PIN (sensitive), token label,
     // and signing-key object label. Required only when `--key-source pkcs11`.
     let mut pkcs11_module: Option<String> = None;
@@ -211,6 +212,11 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
             .get(i + 1)
             .ok_or_else(|| format!("flag {flag} requires a value"))?;
         match flag {
+            // ADR-MCPRE-065: one arm for the whole authorization family, whose spelling
+            // and meaning live together in `authorization_flags`.
+            f if authorization_flags::AuthorizationFlags::owns(f) => {
+                authorization.take(f, value)?
+            }
             "--bind" => bind = Some(value.clone()),
             "--audience" => audience = Some(value.clone()),
             "--server-signer" => server_signer = Some(value.clone()),
@@ -302,11 +308,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
                 })?);
             }
             "--trust" => trust_path = Some(value.clone()),
-            // ADR-MCPS-013: repeatable and/or comma-separated revocation deny-list
-            // file paths, on the same terms as the two lists above.
-            "--revocation-list" => {
-                revocation_list_paths.extend(value.split(',').map(str::to_string));
-            }
             // #4030 online OCSP revocation mode.
             "--client-ocsp" => {
                 client_ocsp = match value.as_str() {
@@ -476,13 +477,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
                         "unknown --transport-identity-source '{other}' (uri_san|dns_san|cn_legacy)"
                     ))
                     }
-                }
-            }
-            "--authz" => {
-                authz = match value.as_str() {
-                    "off" => AuthzKind::Off,
-                    "reference" => AuthzKind::Reference,
-                    other => return Err(format!("unknown --authz '{other}' (off|reference)")),
                 }
             }
             "--max-header-bytes" => {
@@ -716,8 +710,7 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
         ingress_identities,
         ingress_audience,
         ingress_pinned_mtls,
-        authz,
-        revocation_list_paths,
+        authorization: authorization.finish(),
         pkcs11_module,
         pkcs11_pin_file,
         pkcs11_token_label,
@@ -1180,7 +1173,6 @@ mod tests {
     use super::build_attested_ingress_binding;
     use super::parse_args;
     use super::AuditSinkKind;
-    use super::AuthzKind;
     use super::BindingKind;
     use super::DeploymentRequest;
     use super::Duration;
@@ -1188,6 +1180,7 @@ mod tests {
     use super::KeySourceKind;
     use super::OcspKind;
     use crate::config_state::validation::unsafe_config_violations;
+    use crate::deployment_request::AuthzKind;
     use mcp_re_core::SigningKey;
 
     fn args(list: &[&str]) -> Vec<String> {
@@ -2224,7 +2217,7 @@ mod tests {
         assert_eq!(config.binding, BindingKind::Exact);
         // Safe defaults: URI SAN identity, bounded resources.
         assert_eq!(config.identity_source, IdentityPolicy::UriSan);
-        assert_eq!(config.authz, AuthzKind::Off);
+        assert_eq!(config.authorization.kind, AuthzKind::Off);
         assert_eq!(config.limits.max_header_bytes, 64 * 1024);
         assert_eq!(config.limits.max_body_bytes, 16 * 1024 * 1024);
         assert_eq!(config.limits.max_concurrent_connections, 256);
@@ -3913,8 +3906,8 @@ mod tests {
         // The default (authz off) wires no policy enforcement, so revocation is
         // moot — the guard must not spuriously demand a deny-list.
         let config = parse_args(&minimal_durable()).expect("parse");
-        assert_eq!(config.authz, AuthzKind::Off);
-        assert!(config.revocation_list_paths.is_empty());
+        assert_eq!(config.authorization.kind, AuthzKind::Off);
+        assert!(config.authorization.revocation_list_paths.is_empty());
     }
 
     // NOTE: `--authz reference` is NEVER accepted — the reference profile is a
@@ -4559,7 +4552,10 @@ mod tests {
         // `--authz off` is the explicit no-authz selection (the default value).
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--authz", "off"]));
-        assert_eq!(parse_args(&a).expect("parse").authz, AuthzKind::Off);
+        assert_eq!(
+            parse_args(&a).expect("parse").authorization.kind,
+            AuthzKind::Off
+        );
         // Dropping any required (flag, value) pair fails closed naming the flag.
         for miss in [
             "--audience",

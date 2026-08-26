@@ -482,3 +482,55 @@ refused; it does not invent a rule.
   knowing which facts downstream consumers need is the mistake this ordering avoids.
 
 Both follow the authorization model; neither precedes it.
+
+## 11. Production wiring — the composition root installs the authority
+
+Sections 7–9 established the boundary, the mechanism and the client surface. None of them
+made the mechanism *selectable*: the single production composition root (`app::run_validated`)
+never called `with_authorization`, no configuration value named the PDP profile, and the
+trust document's `authorization-issuer` slot had a reader for what it EXCLUDED and none for
+what it enrolled. Measured on `93a3bd4`, that was the whole remaining distance between the
+implementation and a deployment.
+
+```text
+--authz pdp-decision
+  + --authz-decision-scope        Law A-2: what this deployment ACCEPTS
+  + --authz-max-decision-age-secs the enforcement point's own staleness bound
+  + --trust  "slots":["authorization-issuer"]
+        v
+config_state::authorization      Off | PdpDecision { scope, max age }
+        v
+authorization::capability        reads the slot, builds the resolver, one posture line
+        v
+app::run_validated               with_authorization(...) + Seam::Authorization
+```
+
+### 11.1 There is no permissive mode, and that is §7.1 rather than an omission
+
+A `pdp-decision` deployment refuses a request carrying no applicable decision. §7.1 gives
+authorization three postures, and a deployment that has configured an authority has left
+*not configured*; letting an undecorated request through would create a fourth —
+*policy configured but not enforced for this request* — which is the `Off`/`Allow`
+ambiguity the three postures exist to remove. The analogy with admission's
+`Optional | Required` does not carry: that optionality was constituted as part of
+admission's semantics, and this ADR constituted a different algebra. A migration or shadow
+posture, if ever needed, is a separately named non-enforcing posture with its own audit
+semantics — never a weaker reading of this one.
+
+### 11.2 What the startup line has to admit
+
+Authorization authorities are read ONCE, at startup. `--trust` has a reload path and this
+does not use it, so withdrawing an authority takes effect at the next restart. The ON line
+states that rather than leaving an operator to assume the trust-store cadence covers it.
+A configured profile whose trust document enrols no authority **refuses to start**: it
+would otherwise refuse every call while its transcript announced enforcement.
+
+### 11.3 Mechanism-specific evidence identity is still deferred
+
+ADR-MCPRE-066 Slice 1 records no decision-evidence identity in `Authorized` attribution,
+noting that the first production mechanism might supply one. It does not yet:
+`BoundDecisionEvidence` is sealed over the decision DOCUMENT and does not retain the digest
+its binding committed to, so projecting one would mean recomputing it or reopening the
+request's evidence block at the audit site — re-derivation, which invariant 5 forbids. The
+authenticated `jti` claim is the honest candidate, and taking it would widen the §5 seam's
+success product (`GrantAttribution`). That is an ADR decision, not a wiring one.

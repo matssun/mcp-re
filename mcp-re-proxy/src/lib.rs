@@ -279,6 +279,7 @@ pub mod async_inner;
 // client to stateless Streamable-HTTP inner backends (keep-alive/H2, round-robin,
 // per-request timeout, fail-closed). The AsyncInnerServer the serving path awaits.
 pub mod http_inner;
+pub(crate) mod inner_plane_bound;
 // MCPRE-117 (ADR-MCPRE-051 §4): the ASYNC Redis authoritative replay backend
 // (`SET NX PX` via the tokio async client + auto-reconnecting ConnectionManager).
 // Behind the redis backend flag; the data plane awaits it without blocking a worker.

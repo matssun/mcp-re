@@ -16,9 +16,11 @@
 //! Nothing here validates. A type in this module can hold a combination no deployment may
 //! run, and must be able to: refusing a state requires representing it first.
 
+mod authorization;
 mod kinds;
 mod secret_string;
 
+pub use authorization::AuthorizationRequest;
 pub use kinds::{
     AdmissionKind, AuditSinkKind, AuthzKind, BindingKind, KeySourceKind, OcspKind,
     VerifiedContextKind,
@@ -284,13 +286,8 @@ pub struct DeploymentRequest {
     /// proxy refuses to start (fail closed), so an attested-ingress posture can
     /// never run without the pinned backend channel it depends on.
     pub ingress_pinned_mtls: bool,
-    /// Authorization-policy selection.
-    pub authz: AuthzKind,
-    /// Offline policy-layer revocation deny-list paths (ADR-MCPS-013). Each
-    /// `--revocation-list` value (comma-separated and/or repeated) adds a file of
-    /// newline-delimited revoked `revocation_id`s. Loaded once at startup (OFFLINE
-    /// only — restart to update). Empty means no grant deny-list is configured.
-    pub revocation_list_paths: Vec<String>,
+    /// Everything this deployment asks for on the authorization axis.
+    pub authorization: AuthorizationRequest,
     /// PKCS#11 module (provider `.so`/`.dylib`) path. Required when
     /// `key_source == Pkcs11` (issue #4034).
     pub pkcs11_module: Option<String>,

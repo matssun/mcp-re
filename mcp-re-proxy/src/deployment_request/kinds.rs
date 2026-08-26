@@ -134,5 +134,17 @@ pub enum AuthzKind {
     /// No authorization policy.
     Off,
     /// The reference signed-authorization profile.
+    ///
+    /// Retained and refused rather than deleted: it names the profile ADR-MCPRE-050's
+    /// carrier change retired, and an operator who set it needs to be told that rather
+    /// than told the flag is a typo.
     Reference,
+    /// The carried PDP decision (ADR-MCPRE-065 §8) — the production authority.
+    ///
+    /// Selecting it is a claim that authorization is an ACTIVE control here, so a request
+    /// carrying no applicable decision is refused (§7.1: `NoPolicyConfigured` is not
+    /// available to a deployment that configured an authority). There is deliberately no
+    /// permissive variant; a migration posture would be a separately named deployment
+    /// posture with its own audit semantics, not a weaker reading of this one.
+    PdpDecision,
 }

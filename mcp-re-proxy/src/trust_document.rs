@@ -131,9 +131,128 @@ pub fn load_trust(bytes: &[u8]) -> Result<InMemoryTrustResolver, String> {
     Ok(resolver)
 }
 
+/// The `kid -> key` map for keys this file enrols as AUTHORIZATION AUTHORITIES.
+///
+/// The mirror image of [`load_trust_request_signers`], over the slot that file already
+/// reserved. Here `slots` absent means the entry is a request signer and NOT an
+/// authorization authority: the historical default narrows in this direction, so no
+/// existing trust file acquires a policy authority by being left alone. *This key signs
+/// requests* and *this key decides permission* are different authorities (ADR-MCPRE-065
+/// §8), and an operator enrols the second deliberately or not at all.
+///
+/// `response_kid` is excluded for the same reason it is excluded there: the deployment's
+/// own issuer key must never be presentable as someone else's authority.
+///
+/// Keyed by `key_id` because a decision resolves its issuer by `kid` alone — the JWS
+/// header and the claims agree on it, and the signer coordinate plays no part. A duplicate
+/// `key_id` across two signers is refused rather than silently resolved to whichever came
+/// last, on the same reasoning as `load_trust`'s duplicate rule.
+pub fn load_authorization_issuers(
+    bytes: &[u8],
+    response_kid: &str,
+) -> Result<HashMap<String, VerificationKey>, String> {
+    let value: Value = serde_json::from_slice(bytes).map_err(|e| format!("trust file: {e}"))?;
+    let array = value.as_array().ok_or("trust file must be a JSON array")?;
+    let mut out = HashMap::new();
+    for entry in array {
+        let key_id = entry["key_id"]
+            .as_str()
+            .ok_or("trust entry missing key_id")?;
+        if key_id == response_kid {
+            continue;
+        }
+        let Some(slots) = entry.get("slots").and_then(Value::as_array) else {
+            continue;
+        };
+        if !slots
+            .iter()
+            .any(|slot| slot.as_str() == Some("authorization-issuer"))
+        {
+            continue;
+        }
+        let pk = entry["public_key"]
+            .as_str()
+            .ok_or("trust entry missing public_key")?;
+        let key = VerificationKey::from_b64url(pk)
+            .map_err(|_| format!("trust entry {key_id}: invalid public_key"))?;
+        if out.insert(key_id.to_string(), key).is_some() {
+            return Err(format!(
+                "trust file: duplicate authorization-issuer key_id {key_id} (last-write-wins                  authority substitution refused)"
+            ));
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A trust file with one request signer and one authorization authority.
+    fn two_slot_file(request_key: &str, authority_key: &str) -> String {
+        format!(
+            r#"[{{"signer":"did:example:agent-1","key_id":"key-1","public_key":"{request_key}",
+                  "slots":["request"]}},
+                {{"signer":"did:example:pdp","key_id":"pdp-1","public_key":"{authority_key}",
+                  "slots":["authorization-issuer"]}}]"#
+        )
+    }
+
+    fn key_b64(seed: u8) -> String {
+        SigningKey::from_seed_bytes(&[seed; 32])
+            .public_key()
+            .to_b64url()
+    }
+
+    #[test]
+    fn an_authority_key_is_not_a_request_signer_and_a_request_signer_is_not_an_authority() {
+        let json = two_slot_file(&key_b64(1), &key_b64(2));
+        let signers = load_trust_request_signers(json.as_bytes(), "response-kid").expect("load");
+        let issuers = load_authorization_issuers(json.as_bytes(), "response-kid").expect("load");
+        assert_eq!(signers.keys().collect::<Vec<_>>(), vec!["key-1"]);
+        assert_eq!(issuers.keys().collect::<Vec<_>>(), vec!["pdp-1"]);
+    }
+
+    #[test]
+    fn a_slotless_entry_is_a_request_signer_only() {
+        // The historical default narrows toward request signing. An existing trust file
+        // must not acquire a policy authority by being left alone.
+        let json = format!(
+            r#"[{{"signer":"s","key_id":"key-1","public_key":"{}"}}]"#,
+            key_b64(3)
+        );
+        assert!(load_authorization_issuers(json.as_bytes(), "response-kid")
+            .expect("load")
+            .is_empty());
+        assert!(!load_trust_request_signers(json.as_bytes(), "response-kid")
+            .expect("load")
+            .is_empty());
+    }
+
+    #[test]
+    fn the_deployments_own_issuer_key_is_never_an_authorization_authority() {
+        let json = format!(
+            r#"[{{"signer":"s","key_id":"response-kid","public_key":"{}",
+                  "slots":["authorization-issuer"]}}]"#,
+            key_b64(4)
+        );
+        assert!(load_authorization_issuers(json.as_bytes(), "response-kid")
+            .expect("load")
+            .is_empty());
+    }
+
+    #[test]
+    fn a_duplicate_authority_kid_is_refused_rather_than_resolved_by_file_order() {
+        let json = format!(
+            r#"[{{"signer":"a","key_id":"pdp-1","public_key":"{}","slots":["authorization-issuer"]}},
+                {{"signer":"b","key_id":"pdp-1","public_key":"{}","slots":["authorization-issuer"]}}]"#,
+            key_b64(5),
+            key_b64(6)
+        );
+        let err = load_authorization_issuers(json.as_bytes(), "response-kid")
+            .expect_err("a substitutable authority must be refused");
+        assert!(err.contains("duplicate authorization-issuer"), "{err}");
+    }
     use mcp_re_core::SigningKey;
     use mcp_re_core::TrustResolver;
     #[test]

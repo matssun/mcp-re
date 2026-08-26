@@ -41,6 +41,11 @@ REPO = Path(__file__).resolve().parent.parent
 
 CLI_MODULE = "mcp-re-proxy/src/cli.rs"
 
+# Flag literals also live in `cli.rs`'s own child modules: a family parsed behind one
+# delegating arm states its spellings there, and a gate reading only `cli.rs` would report
+# every one of those flags as non-existent. The set is the parser, wherever the parser is.
+CLI_MODULE_DIR = "mcp-re-proxy/src/cli"
+
 # Documentation roots. `docs/archive/` is history by definition and records the surface as
 # it was; `docs/security/round-*/` holds captured gate logs, not instructions.
 #
@@ -168,6 +173,8 @@ def check(repo: Path, skipped: list[str] | None = None, floors: bool = True) -> 
     """
     skipped = skipped if skipped is not None else []
     cli = (repo / CLI_MODULE).read_text(encoding="utf-8")
+    for child in sorted((repo / CLI_MODULE_DIR).glob("*.rs")):
+        cli += child.read_text(encoding="utf-8")
     known = known_cli_flags(cli)
     if len(known) < 20:
         return [

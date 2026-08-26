@@ -90,12 +90,12 @@ fn x2b(tls_custody: Option<&TlsCustodyState>, config: &DeploymentRequest) -> Vec
 
 /// X6: a deny-list no authorization profile will consult enforces nothing.
 ///
-/// `Authz` is degenerate — only `Off` is reachable — so this relation is currently
-/// unconditional. It is still a relation rather than a `Trust` column: the list becomes
-/// meaningful the moment an authorization profile exists to read it, and nothing about
-/// trust configuration changes then.
+/// `Authz` is no longer degenerate — `--authz pdp-decision` is deployable — but no
+/// reachable profile READS a grant deny-list, so this relation is still unconditional. It
+/// is a relation rather than a `Trust` column: the list becomes meaningful the moment a
+/// profile exists that consults one, and nothing about trust configuration changes then.
 fn x6(config: &DeploymentRequest) -> Vec<String> {
-    unenforceable_revocation_list_refusal(&config.revocation_list_paths)
+    unenforceable_revocation_list_refusal(&config.authorization.revocation_list_paths)
         .into_iter()
         .collect()
 }
@@ -162,10 +162,12 @@ pub fn validate_tls_signing_exclusivity(
 ///
 /// `Some(diagnostic)` means it cannot. Today that is unconditional whenever paths are
 /// supplied: the deny-list is consumed by `LiveTrustResolver::resolve_with_revocation_id`,
-/// which only runs under an authorization profile, and no configuration installs one — the
-/// ADR-MCPRE-065 PDP evaluator exists but nothing constructs it, and `--authz reference` is
-/// itself refused. So a supplied list could only be silently ignored, and an operator would
-/// believe a compromised grant was revoked while it kept being authorized.
+/// which no installed profile calls. `--authz pdp-decision` authenticates a CARRIED
+/// decision and consults no grant deny-list, and `--authz reference` — the profile that
+/// would have read one — is refused. So a supplied list could only be silently ignored, and
+/// an operator would believe a compromised grant was revoked while it kept being
+/// authorized. Withdrawing a PDP authority is done by removing its `authorization-issuer`
+/// entry from `--trust` and restarting.
 ///
 /// Refused rather than accepted-and-ignored (security-boundary §2: never surface a
 /// capability that is not delivered). v0.16 deliberately REFUSES rather than implementing
@@ -181,8 +183,8 @@ pub fn validate_tls_signing_exclusivity(
 pub(crate) fn unenforceable_revocation_list_refusal(paths: &[String]) -> Option<String> {
     (!paths.is_empty()).then(|| {
         "--revocation-list supplies a policy-layer deny-list (ADR-MCPS-013), but it is \
-         consulted only by an authorization profile and no configuration installs one \
-         (--authz is always off), so the list would enforce NOTHING. Remove \
+         consulted only by the retired reference profile, which is refused, and never by \
+         --authz pdp-decision, so the list would enforce NOTHING. Remove \
          --revocation-list; use the trust store and --revocation-tier for key \
          revocation on the request path."
             .to_string()
@@ -255,11 +257,11 @@ mod tests {
     #[test]
     fn a_deny_list_no_profile_will_read_is_refused() {
         assert!(relations(|_| {}).x6_unenforceable_deny_list.is_empty());
-        assert!(
-            !relations(|c| c.revocation_list_paths = vec!["/deny.json".to_string()])
-                .x6_unenforceable_deny_list
-                .is_empty()
-        );
+        assert!(!relations(
+            |c| c.authorization.revocation_list_paths = vec!["/deny.json".to_string()]
+        )
+        .x6_unenforceable_deny_list
+        .is_empty());
     }
 
     /// CF-09 holding, asserted rather than assumed: the epoch posture is decided by the

@@ -89,6 +89,8 @@ pub enum StartupEvent {
     /// The admission-currency gate's enforcement level — `required`, `optional`, or
     /// `off`.
     AdmissionCurrency { enforcement: String },
+    /// Whether an authorization authority decides MAY-ACT for this deployment.
+    Authorization { enforced: bool },
     /// The fleet bound its listener and is serving. Startup finished.
     FleetServing,
     /// The fleet drained cleanly after a stop signal.
@@ -396,6 +398,15 @@ fn normalize(line: &str) -> Option<StartupEvent> {
         };
         return Some(StartupEvent::AdmissionCurrency {
             enforcement: enforcement.to_string(),
+        });
+    }
+    if l.contains("authorization = ") {
+        return Some(StartupEvent::Authorization {
+            enforced: match () {
+                () if l.contains("authorization = PDP-DECISION enforced") => true,
+                () if l.contains("authorization = OFF") => false,
+                () => unknown_state("authorization", &l),
+            },
         });
     }
     if l.contains("async fleet serving on") {

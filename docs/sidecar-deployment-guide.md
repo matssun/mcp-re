@@ -114,12 +114,39 @@ Hardening Guide and the Helm chart's `keySource: gcpKms` path.
 entries (public key Base64URL-no-pad). It carries both request-signer keys and
 authorization-issuer keys. A bad key fails startup closed.
 
-### Authorization (Phase 5)
+### Authorization (ADR-MCPRE-065)
 
 | Flag | Meaning |
 | --- | --- |
-| `--authz off` (default) | No authorization policy. The only value that starts. |
-| `--authz reference` | **Refused.** The Reference Signed Authorization Profile (ADR-MCPS-013) is never the production authority, and authorization is not wired on the RFC 9421 serving path at all. |
+| `--authz off` (default) | No authorization authority. The proxy answers **who signed this** and **which channel it arrived on**, never **may-act**; authorization must be enforced upstream. This is a posture, not a silence: the startup transcript declares it. |
+| `--authz pdp-decision` | Enforce carried PDP decisions. An external authority signs a decision, the client carries it bound into the signed request, and this proxy authenticates and enforces it. **Strict:** a request carrying no applicable decision is refused. |
+| `--authz-decision-scope principal\|credential` | Required with `pdp-decision`. Which actor scope a decision is accepted at: `principal` survives a client signing-key rotation, `credential` does not. The deployment declares what it ACCEPTS; the decision declares what it IS. |
+| `--authz-max-decision-age-secs <n>` | Required with `pdp-decision`. How stale a decision this enforcement point will still act on, independently of the issuer's own `exp`. |
+| `--authz reference` | **Refused.** The Reference Signed Authorization Profile (ADR-MCPS-013) is never the production authority, and it was bound to the object carrier this release retired. |
+
+Both `pdp-decision` parameters are refused beside any other `--authz` value: a scope
+or staleness bound that selects nothing reads to an auditor as authorization being
+configured.
+
+**Trust material.** A decision's issuer is resolved through the `--trust` document's
+`authorization-issuer` slot — a separate authority from the request-signer slot, because
+*this key signs requests* and *this key decides permission* are different roles:
+
+```json
+[
+  { "signer": "did:example:agent-1", "key_id": "key-1", "public_key": "...", "slots": ["request"] },
+  { "signer": "did:example:pdp",     "key_id": "pdp-1", "public_key": "...", "slots": ["authorization-issuer"] }
+]
+```
+
+An entry with no `slots` is a request signer only, so an existing trust file never
+acquires a policy authority by being left alone. `--authz pdp-decision` with no
+`authorization-issuer` entry **refuses to start** rather than serving a deployment that
+would 403 every call while announcing enforcement.
+
+**Withdrawing an authority needs a restart.** Authorization authorities are read once at
+startup; `--trust-reload-secs` refreshes request signers, not these. The startup line says
+so.
 
 ### Transport binding (Phase 6)
 

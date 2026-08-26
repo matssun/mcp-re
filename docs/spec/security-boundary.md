@@ -166,18 +166,19 @@ This is the complete positive surface; nothing outside it should be implied.
   ([ADR-MCPS-006](https://github.com/matssun/mcp-re/discussions/355)). The
   durable replay cache is **single-node** — multi-node replay protection is
   forbidden (Section 2).
-- **Delegated authorization — NOT LIVE, and the reason has changed.** The reference
+- **Delegated authorization — SELECTABLE, and off unless selected.** The reference
   signed-authorization profile (Phase 5,
   [ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362)) was bound to the
   retired object carrier, and `--authz reference` is **refused at configuration
-  validation**. A production mechanism has since been built on HTTP-profile request
-  evidence — the carried PDP decision of
-  [ADR-MCPRE-065](https://github.com/matssun/mcp-re/discussions/629), enforced by an
-  authorization stage the dispatch structurally depends on — but **no configuration value
-  installs it**: the composition root attaches no evaluator, so every deployment still
-  runs with authorization off and MCP-RE answers **who signed this** and **which channel
-  it arrived on**, never **may-act**. Authorization must be enforced upstream of the
-  proxy. The preserved vectors at
+  validation**. The production mechanism is the carried PDP decision of
+  [ADR-MCPRE-065](https://github.com/matssun/mcp-re/discussions/629): an external
+  authority signs the decision, the client carries it bound into the signed request, and
+  `--authz pdp-decision` installs the evaluator that authenticates and enforces it. That
+  posture is **strict** — a request carrying no applicable decision is refused — and it is
+  what a deployment must select. With `--authz off`, the default, MCP-RE answers **who
+  signed this** and **which channel it arrived on**, never **may-act**, and authorization
+  must be enforced upstream of the proxy. The startup transcript states which of the two a
+  deployment is running. The preserved vectors at
   `mcp-re-policy/tests/vectors/phase5_vectors.json` specify non-live semantics for a
   future profile and are not evidence about any release; nothing executes them.
 - **Rust-native mTLS transport termination + transport binding + v1 revocation
@@ -213,13 +214,13 @@ These are independent proofs and must not be conflated:
 A valid mTLS peer is not automatically a valid message signer. Both live checks are
 required, and neither substitutes for the other.
 
-**Delegated authorization — whether that signer may act — is not currently a third
-live check.** The reference authorization profile was bound to the retired object
-carrier and `--authz reference` is refused during configuration validation. The
-ADR-MCPRE-065 PDP-decision mechanism is implemented and enforced by the serving path,
-but no configuration constructs or installs it, so no released deployment enforces
-authorization at all. Installing that mechanism is what would add a third check.
-Today there are two; authorization must be enforced upstream of the proxy.
+**Delegated authorization — whether that signer may act — is a third live check only
+where a deployment installs one.** The reference authorization profile was bound to the
+retired object carrier and `--authz reference` is refused during configuration
+validation. The ADR-MCPRE-065 PDP-decision mechanism is implemented, enforced by the
+serving path, and selectable with `--authz pdp-decision`; a deployment that selects it
+has three live checks, and one that does not has two. The proxy never infers the third
+from the first two, and its startup transcript names which posture is running.
 
 ---
 

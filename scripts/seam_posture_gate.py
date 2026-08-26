@@ -46,6 +46,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 POSTURE_MODULE = "mcp-re-proxy/src/startup_posture.rs"
+# The enum may live in a child module of the posture module — one type per file. The gate
+# reads the whole module, not one file of it: a gate anchored on a path rather than on the
+# declaration stops measuring the moment the type is moved, and reports that as a crash
+# rather than as a pass, which is why this is the correction and not a skip.
+POSTURE_MODULE_DIR = "mcp-re-proxy/src/startup_posture"
 # The composition root. Declarations live at the decision sites, which are all here.
 DECLARING_MODULE = "mcp-re-proxy/src/app.rs"
 
@@ -77,6 +82,8 @@ def check(root: Path) -> list[str]:
             return [f"missing {path.relative_to(root)}"]
 
     posture_src = posture_path.read_text(encoding="utf-8")
+    for child in sorted((root / POSTURE_MODULE_DIR).glob("*.rs")):
+        posture_src += child.read_text(encoding="utf-8")
     declaring_src = declaring_path.read_text(encoding="utf-8")
 
     variants = ENUM_VARIANT.findall(

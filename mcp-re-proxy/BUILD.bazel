@@ -53,6 +53,7 @@ _PROXY_LIB_SRCS = [
     "src/authorization/evaluator.rs",
     "src/authorization/grant.rs",
     "src/authorization/audit.rs",
+    "src/authorization/capability.rs",
     "src/authorization/posture.rs",
     "src/authorization/request.rs",
     "src/authorization/serving.rs",
@@ -118,6 +119,7 @@ _PROXY_LIB_SRCS = [
     "src/communication_assurance/certificate_peer_identity_evidence.rs",
     "src/communication_assurance/peer_identity_value.rs",
     "src/cli.rs",
+    "src/cli/authorization_flags.rs",
     # Wall-clock acquisition — the module boundary.clock names, kept small so the
     # declared trust boundary is exactly as wide as the code exercising the authority.
     "src/clock.rs",
@@ -127,6 +129,7 @@ _PROXY_LIB_SRCS = [
     # The classified legal deployment state — layer A of the configuration state atlas.
     # One classifier/validator per configuration machine, and the value they produce.
     "src/config_state/admission.rs",
+    "src/config_state/authorization.rs",
     "src/config_state/client_credential_window.rs",
     "src/config_state/continuation_control.rs",
     "src/config_state/cross_machine.rs",
@@ -150,9 +153,11 @@ _PROXY_LIB_SRCS = [
     # Layer A's boundary: assembly, report-all, and the refusal-precedence contract.
     "src/config_state/validation/mod.rs",
     # The ownerless layer-A rules, enumerated so the remaining work is countable.
+    "src/config_state/validation/machine_violations.rs",
     "src/config_state/validation/residue.rs",
     # The CLI-neutral request model. Both the argument parser and the configuration state
     # model depend on it; neither depends on the other.
+    "src/deployment_request/authorization.rs",
     "src/deployment_request/kinds.rs",
     "src/deployment_request/mod.rs",
     "src/deployment_request/secret_string.rs",
@@ -266,6 +271,7 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-056 §5.4: the optional-capability posture vocabulary — every seam
     # states ON or OFF, and an undeclared seam fails the debug build. Crate-internal.
     "src/startup_posture.rs",
+    "src/startup_posture/seam.rs",
     # ADR-MCPRE-056 §10: the assembled runtime — owns every resource with a teardown
     # obligation and enforces drain -> transition -> reclaim. Crate-internal.
     "src/materialized_runtime.rs",
@@ -337,6 +343,7 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-051 §3: the production async inner plane — pooled hyper client to
     # stateless Streamable-HTTP inner backends.
     "src/http_inner.rs",
+    "src/inner_plane_bound.rs",
     # MCPRE-117 (ADR-MCPRE-051 §4): the async Redis authoritative replay backend
     # (SET NX PX over the tokio async client). #[cfg(feature = "redis_replay")] —
     # cfg'd out of the default build; the ext flavor + the cargo redis lane link it,
