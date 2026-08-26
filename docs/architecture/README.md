@@ -59,6 +59,7 @@ investigation: it answers the twelve questions and records an outcome — decomp
 - [`components/scitt-transparency.md`](components/scitt-transparency.md) — `scitt.rs` (1629), MCPRE-139 / #575. **Outcome: decomposition.** Seven authorities in one file, and four types that admit values their documented invariants forbid.
 - [`components/transport-binding.md`](components/transport-binding.md) — `transport.rs` (1268, not the 1305 this index carried), MCPRE-140 / #576. **Outcome: decompose along the reachability boundary.** Five authorities, of which one is live and one — 72% of the file — is deferred capability no validated deployment can reach.
 - [`components/online-ocsp.md`](components/online-ocsp.md) — `ocsp.rs` (1271), MCPRE-141 / #577. **Outcome: extract one general control, give the trust chain a success product, then §14 for the protocol remainder.** The RFC 6960 implementation is one coherent authority; a 336-line outbound-fetch/SSRF policy that is not OCSP is living inside it.
+- [`components/cli-and-materialization.md`](components/cli-and-materialization.md) — `cli.rs` (1170, not the 1177 this index carried), MCPRE-142 / #578. **Outcome: move capability materialization out; `parse_args` keeps its ADR-058 exception.** Three authorities of which two — argv transport and key-custody materialization — never call each other.
 
 These are first-pass architectural documents, not declarations that every boundary is already final. The shallow-module census and subsequent investigation may refine the tree. Refinement must preserve the governing rule: **one authority, narrow facade, private subordinate implementation tree**.
 
@@ -151,22 +152,27 @@ size orders the queue while §8 question 2 decides the outcome:
 | 1629 | 25 | 12 | 70 | `mcp-re-http-profile/src/scitt.rs` — **census complete**, outcome *decompose* ([`components/scitt-transparency.md`](components/scitt-transparency.md)) |
 | 1268 | 25 | 21 | 73 | `mcp-re-proxy/src/transport.rs` — **census complete**, outcome *decompose along reachability* ([`components/transport-binding.md`](components/transport-binding.md)). Was 1305 before ADR-064 Slice 4 removed `MappedBinding` |
 | 1271 | 14 | 3 | 91 | `mcp-re-proxy/src/ocsp.rs` — **census complete**, outcome *extract, then §14* ([`components/online-ocsp.md`](components/online-ocsp.md)) |
-| 1177 | 6 | 0 | 184 | `mcp-re-proxy/src/cli.rs` — **unreviewed**; ADR-058 ruled on `parse_args`, not on the file |
+| 1170 | 6 | 0 | 184 | `mcp-re-proxy/src/cli.rs` — **census complete**, outcome *move materialization out* ([`components/cli-and-materialization.md`](components/cli-and-materialization.md)). ADR-058's `parse_args` exception stands and was treated as evidence for neither side |
 | 1149 | 5 | 7 | 105 | `mcp-re-proxy/src/gcp_kms_keysource.rs` |
 | 1114 | 32 | 12 | 44 | `mcp-re-client-core/src/response.rs` — band 3, no blueprint yet |
 | 1037 | 3 | 0 | 31 | `mcp-re-proxy/src/app.rs` — **reviewed-action-required**; census complete, disposition *decompose first* ([EX-002](review-dispositions.md), remediation #592) |
 
-**Three** band-3 hotspots still have no component blueprint: `cli.rs`, `response.rs`, and
-the two KMS key sources — one census covering both backends, since the question there is the
-shared authority structure. They are named here so their absence is a recorded gap rather
-than an implied claim of coverage. `scitt.rs`, `transport.rs` and `ocsp.rs` were the first
-three of the six, and the three reached their dispositions for three different reasons —
-semantic ownership, reachability, and a general control hiding inside a protocol module.
+**Two** band-3 hotspots still have no component blueprint: `response.rs` and the two KMS key
+sources — one census covering both backends, since the question there is the shared authority
+structure. They are named here so their absence is a recorded gap rather than an implied
+claim of coverage.
+
+`scitt.rs`, `transport.rs`, `ocsp.rs` and `cli.rs` were the first four of the six, and the
+four reached their dispositions for four different reasons — semantic ownership;
+reachability; a general control hiding inside a protocol module; and a pipeline whose first
+and last stages never call each other.
 
 `cli.rs` was previously left off this list as a reviewed exception. It was not one: ADR-058
-ruled on the `parse_args` function, and the file states of itself that it carries three
-pipeline responsibilities — CLI parsing, the Layer-A validation boundary, and key-source
-materialization. Review granularity equals exception granularity, so it re-joins the queue.
+ruled on the `parse_args` function. Review granularity equals exception granularity, so it
+re-joined the queue and its census is
+[`components/cli-and-materialization.md`](components/cli-and-materialization.md) — which
+found the file's own three-responsibility self-description to be one-third stale: the
+Layer-A boundary moved to `config_state::validation` and the module doc still claims it.
 
 ## Existing ADRs this hierarchy composes
 

@@ -107,9 +107,10 @@ review_ref = "EX-006 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/cli.rs"
-baseline_prod_loc = 1177
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
+baseline_prod_loc = 1170
+baseline_sha = "7ec8f92"
+status = "reviewed-action-required"
+review_ref = "EX-007 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/gcp_kms_keysource.rs"
