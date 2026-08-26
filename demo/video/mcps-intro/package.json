@@ -19,7 +19,7 @@
     "@motion-canvas/ffmpeg": "^3.17.2",
     "@motion-canvas/ui": "^3.17.2",
     "@motion-canvas/vite-plugin": "^3.17.2",
-    "vite": "^8.2.1"
+    "vite": "^8.2.2"
   },
   "devDependencies": {
     "typescript": "^7.0.2"
