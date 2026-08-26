@@ -278,13 +278,24 @@ mod tests {
 
     /// A decision about the harness actor, at the deployment's accepted scope.
     fn decision(outcome: PdpDecisionOutcome, target: &str) -> String {
+        decision_identified(outcome, target, "decision-1", "2026-08-01")
+    }
+
+    /// The same, with the authority's own decision id and policy version chosen by the
+    /// caller — the two knobs the provenance controls turn independently.
+    fn decision_identified(
+        outcome: PdpDecisionOutcome,
+        target: &str,
+        jti: &str,
+        policy_version: &str,
+    ) -> String {
         let claims = PdpDecisionClaims {
             iss: "did:example:pdp".into(),
             issuer_kid: "pdp-1".into(),
             iat: crate::clock::now_unix(),
             nbf: crate::clock::now_unix() - 5,
             exp: crate::clock::now_unix() + 300,
-            jti: "decision-1".into(),
+            jti: jti.into(),
             aud: Audience::One("verifier-1".into()),
             mcp_re_profile: mcp_re_http_profile::PROFILE_TAG.into(),
             mcp_re_decided_actor: DecidedActor::Principal {
@@ -294,7 +305,7 @@ mod tests {
             mcp_re_decided_operation: "tools/call".into(),
             mcp_re_decided_target: Some(target.into()),
             mcp_re_decision: outcome,
-            mcp_re_policy_version: "2026-08-01".into(),
+            mcp_re_policy_version: policy_version.into(),
         };
         let key = pdp_key();
         issue_authorization_decision(&claims, |input| {
@@ -302,6 +313,12 @@ mod tests {
                 .map_err(|_| mcp_re_http_profile::HttpProfileError::InvalidSignature)
         })
         .expect("the fixture authority issues")
+    }
+
+    /// The digest algorithm the evidence binding declares, read off the binding producer
+    /// the request itself uses rather than restated as a literal.
+    fn binding_alg() -> String {
+        ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, b"any").digest_alg
     }
 
     /// A verified request carrying `decision`, bound to it in the evidence form.
@@ -373,6 +390,119 @@ mod tests {
         assert!(
             authorize(Some(installed().as_ref()), &verified, CALL, None).is_err(),
             "an undecorated request must not pass an installed authority"
+        );
+    }
+
+    /// Two documents, one `jti`: the evidence identity separates them.
+    ///
+    /// The poison pill for conflating the two coordinates. An issuer can put one `jti` on
+    /// two decisions, deliberately or by accident. If the record's evidence identity were
+    /// derived from the authenticated claims — or if it were the `jti` under another name —
+    /// both enforcements would be indistinguishable afterwards, and the cross-audit chain
+    /// would be an illusion.
+    #[test]
+    fn changing_the_document_changes_the_evidence_identity_even_under_one_decision_id() {
+        let read = decision_identified(PdpDecisionOutcome::Permit, "read", "same-jti", "v1");
+        let other = decision_identified(PdpDecisionOutcome::Permit, "read", "same-jti", "v2");
+        assert_ne!(read, other, "the fixture must produce different bytes");
+
+        let evaluator = installed();
+        let first = authorize(
+            Some(evaluator.as_ref()),
+            &request_carrying(Some(&read)),
+            CALL,
+            None,
+        )
+        .expect("permit")
+        .authorized()
+        .expect("authorized")
+        .clone();
+        let second = authorize(
+            Some(evaluator.as_ref()),
+            &request_carrying(Some(&other)),
+            CALL,
+            None,
+        )
+        .expect("permit")
+        .authorized()
+        .expect("authorized")
+        .clone();
+
+        assert_eq!(
+            first.granted().authority_decision_id(),
+            second.granted().authority_decision_id(),
+            "the fixture holds the authority's decision id constant"
+        );
+        assert_ne!(
+            first.decision_evidence(),
+            second.decision_evidence(),
+            "different decision bytes must not share an evidence identity"
+        );
+    }
+
+    /// One document, two `jti`s: the evidence identity follows the bytes, not the claims.
+    ///
+    /// The other half of the pill. Changing the authority's identifier changes the bytes
+    /// too, so this asserts the direction that matters: an identity computed over the SAME
+    /// document is the same identity whatever the claims say, which is what makes it a
+    /// content coordinate rather than a second copy of the identifier.
+    #[test]
+    fn the_evidence_identity_is_a_function_of_the_document_alone() {
+        let d = decision(PdpDecisionOutcome::Permit, "read");
+        let evaluator = installed();
+        let once = authorize(
+            Some(evaluator.as_ref()),
+            &request_carrying(Some(&d)),
+            CALL,
+            None,
+        )
+        .expect("permit")
+        .authorized()
+        .expect("authorized")
+        .decision_evidence()
+        .clone();
+        // A second request carrying the SAME document, with its own binding computed
+        // independently by the harness.
+        let again = authorize(
+            Some(evaluator.as_ref()),
+            &request_carrying(Some(&d)),
+            CALL,
+            None,
+        )
+        .expect("permit")
+        .authorized()
+        .expect("authorized")
+        .decision_evidence()
+        .clone();
+        assert_eq!(once, again);
+        assert_ne!(
+            once.rendered(),
+            "decision-1",
+            "the evidence identity must not be the authority's decision id under another name"
+        );
+        assert_eq!(once.alg(), binding_alg());
+    }
+
+    /// Both coordinates reach the audit record, under their own names.
+    #[test]
+    fn the_audit_record_answers_which_decision_and_which_evidence_separately() {
+        let d = decision(PdpDecisionOutcome::Permit, "read");
+        let facet = authorize(
+            Some(installed().as_ref()),
+            &request_carrying(Some(&d)),
+            CALL,
+            None,
+        )
+        .expect("permit")
+        .audit_facet();
+        let line = facet.audit_fields();
+        assert!(
+            line.contains("authz_decision_id=decision-1"),
+            "the authority's decision id must be recorded: {line}"
+        );
+        assert!(
+            line.contains(&format!("authz_decision_evidence={}:", binding_alg())),
+            "the evidence identity must be recorded, algorithm included: {line}"
         );
     }
 

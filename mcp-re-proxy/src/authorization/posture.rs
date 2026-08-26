@@ -22,6 +22,8 @@
 
 use super::audit::AuthorizationAttribution;
 use super::audit::AuthorizationFacet;
+use super::decision_evidence::DecisionEvidenceIdentity;
+use super::evaluator::AuthorizedDecision;
 use super::grant::GrantAttribution;
 use super::request::AuthorizationRequest;
 
@@ -33,13 +35,18 @@ use super::request::AuthorizationRequest;
 #[derive(Debug, Clone)]
 pub struct AuthorizedRequestFacts {
     request: AuthorizationRequest,
-    granted: GrantAttribution,
+    decision: AuthorizedDecision,
 }
 
 impl AuthorizedRequestFacts {
     /// Only [`super::decide::authorize`] constructs one, and only from an evaluator's `Ok`.
-    pub(super) fn new(request: AuthorizationRequest, granted: GrantAttribution) -> Self {
-        AuthorizedRequestFacts { request, granted }
+    ///
+    /// The decision arrives WHOLE, as the mechanism produced it. Taking the attribution and
+    /// the evidence identity as two parameters would let a caller pair one decision's
+    /// attribution with another's evidence, which is the relation this type is supposed to
+    /// be evidence of.
+    pub(super) fn new(request: AuthorizationRequest, decision: AuthorizedDecision) -> Self {
+        AuthorizedRequestFacts { request, decision }
     }
 
     /// The verified facts the decision was taken over — who, what, and under which
@@ -48,9 +55,18 @@ impl AuthorizedRequestFacts {
         &self.request
     }
 
-    /// The policy authority and version that permitted it.
+    /// The policy authority, version, and authority-side decision identifier that
+    /// permitted it.
     pub fn granted(&self) -> &GrantAttribution {
-        &self.granted
+        self.decision.grant()
+    }
+
+    /// The exact decision evidence the mechanism authenticated and acted upon.
+    ///
+    /// A separate projection from [`granted`](Self::granted) because it answers a separate
+    /// question: *which bytes*, not *which decision the authority says this was*.
+    pub fn decision_evidence(&self) -> &DecisionEvidenceIdentity {
+        self.decision.evidence()
     }
 
     /// What an audit record may say about this authorization (ADR-MCPRE-066 Slice 1).
@@ -60,8 +76,10 @@ impl AuthorizedRequestFacts {
     /// is satisfied by there being exactly one call, not by the caller being careful.
     pub fn audit_attribution(&self) -> AuthorizationAttribution {
         AuthorizationAttribution {
-            authority: self.granted.authority().to_owned(),
-            version: self.granted.version().to_owned(),
+            authority: self.granted().authority().to_owned(),
+            version: self.granted().version().to_owned(),
+            authority_decision_id: self.granted().authority_decision_id().to_owned(),
+            decision_evidence: self.decision_evidence().clone(),
             action: self.request.action().clone(),
             attributable_to: self.request.evidence().clone(),
         }
@@ -102,7 +120,7 @@ impl AuthorizationPosture {
         match self {
             AuthorizationPosture::NoPolicyConfigured => AuthorizationFacet::NotConfigured,
             AuthorizationPosture::Authorized(facts) => {
-                AuthorizationFacet::Authorized(facts.audit_attribution())
+                AuthorizationFacet::Authorized(Box::new(facts.audit_attribution()))
             }
         }
     }

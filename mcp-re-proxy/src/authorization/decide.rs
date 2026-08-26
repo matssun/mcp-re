@@ -110,8 +110,8 @@ pub fn authorize(
         return Ok(AuthorizationPosture::NoPolicyConfigured);
     };
     match evaluator.evaluate(&request) {
-        Ok(granted) => Ok(AuthorizationPosture::Authorized(Box::new(
-            AuthorizedRequestFacts::new(request, granted),
+        Ok(decision) => Ok(AuthorizationPosture::Authorized(Box::new(
+            AuthorizedRequestFacts::new(request, decision),
         ))),
         Err(e) => Err(AuthorizationRefusal::PolicyRefused(e)),
     }
@@ -126,7 +126,9 @@ mod tests {
     use crate::authorization::action_harness::verified_over;
     use crate::authorization::audit::AuthorizationFacet;
     use crate::authorization::audit::AuthorizationRefusalFacet;
+    use crate::authorization::decision_evidence::DecisionEvidenceIdentity;
     use crate::authorization::evaluator::AuthorizationEvaluator;
+    use crate::authorization::evaluator::AuthorizedDecision;
     use crate::authorization::grant::GrantAttribution;
     use crate::authorization::request::AuthorizationRequest;
     use crate::authorization::verified_action::AuthorizationActionRefusal;
@@ -135,9 +137,12 @@ mod tests {
     struct Always(Result<&'static str, PolicyError>);
 
     impl AuthorizationEvaluator for Always {
-        fn evaluate(&self, _: &AuthorizationRequest) -> Result<GrantAttribution, PolicyError> {
+        fn evaluate(&self, _: &AuthorizationRequest) -> Result<AuthorizedDecision, PolicyError> {
             match &self.0 {
-                Ok(authority) => Ok(GrantAttribution::new(*authority, "1")),
+                Ok(authority) => Ok(AuthorizedDecision::new(
+                    GrantAttribution::new(*authority, "1", "decision-1"),
+                    DecisionEvidenceIdentity::from_verified_binding("sha-256", "fixture"),
+                )),
                 Err(e) => Err(e.clone()),
             }
         }

@@ -793,6 +793,19 @@ async fn an_authorized_request_records_which_policy_permitted_what() {
         !a.attributable_to.digest_value.is_empty(),
         "the record names the exchange the decision was taken for"
     );
+    // Decision provenance, through the real serving path: WHICH decision the authority
+    // says this was, and WHICH exact evidence this proxy authenticated. The first is the
+    // authenticated `jti`; the second is the digest the request's binding committed to,
+    // and neither stands in for the other.
+    assert_eq!(a.authority_decision_id, "decision-1");
+    let bound = ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, d.as_bytes());
+    assert_eq!(a.decision_evidence.alg(), bound.digest_alg);
+    assert_eq!(a.decision_evidence.value(), bound.digest_value);
+    assert_ne!(
+        a.decision_evidence.rendered(),
+        a.authority_decision_id,
+        "the two coordinates must not be one value under two names"
+    );
     // Invariant 7: naming the evidence costs no byte of the decision document.
     assert!(!format!("{a:?}").contains(&d));
 }

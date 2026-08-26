@@ -49,10 +49,12 @@ _PROXY_LIB_SRCS = [
     # the mechanism seam, the honest posture, and the body only a decision can release.
     "src/authorization/mod.rs",
     "src/authorization/decide.rs",
+    "src/authorization/decision_evidence.rs",
     "src/authorization/dispatch.rs",
     "src/authorization/evaluator.rs",
     "src/authorization/grant.rs",
     "src/authorization/audit.rs",
+    "src/authorization/audit/fields.rs",
     "src/authorization/capability.rs",
     "src/authorization/posture.rs",
     "src/authorization/request.rs",

@@ -13,6 +13,7 @@ use mcp_re_policy::PolicyError;
 use super::policy::PdpDecisionPolicy;
 use super::refusal::PdpRelationRefusal;
 use crate::authorization::evaluator::AuthorizationEvaluator;
+use crate::authorization::evaluator::AuthorizedDecision;
 use crate::authorization::grant::GrantAttribution;
 use crate::authorization::request::AuthorizationRequest;
 use crate::authorization::verified_action::AuthorizationTarget;
@@ -89,7 +90,7 @@ impl PdpDecisionEvaluator {
     fn decide(
         &self,
         request: &AuthorizationRequest,
-    ) -> Result<GrantAttribution, PdpRelationRefusal> {
+    ) -> Result<AuthorizedDecision, PdpRelationRefusal> {
         let evidence = request
             .decision_evidence()
             .map_err(PdpRelationRefusal::EvidenceNotBound)?
@@ -122,9 +123,11 @@ impl PdpDecisionEvaluator {
         // LAST. Everything above establishes that this decision is ABOUT this request; only
         // the decision itself says whether the request may proceed.
         match claims.mcp_re_decision {
-            PdpDecisionOutcome::Permit => Ok(GrantAttribution::new(
-                claims.iss,
-                claims.mcp_re_policy_version,
+            // The evidence identity comes from `evidence`, which established it while
+            // proving the correspondence — not from the document, and not from the claims.
+            PdpDecisionOutcome::Permit => Ok(AuthorizedDecision::new(
+                GrantAttribution::new(claims.iss, claims.mcp_re_policy_version, claims.jti),
+                evidence.identity().clone(),
             )),
             PdpDecisionOutcome::Deny => Err(PdpRelationRefusal::ExplicitDeny),
         }
@@ -132,7 +135,7 @@ impl PdpDecisionEvaluator {
 }
 
 impl AuthorizationEvaluator for PdpDecisionEvaluator {
-    fn evaluate(&self, request: &AuthorizationRequest) -> Result<GrantAttribution, PolicyError> {
+    fn evaluate(&self, request: &AuthorizationRequest) -> Result<AuthorizedDecision, PolicyError> {
         self.decide(request).map_err(|r| r.wire_code())
     }
 }

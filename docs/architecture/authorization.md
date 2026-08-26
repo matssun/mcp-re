@@ -525,12 +525,39 @@ states that rather than leaving an operator to assume the trust-store cadence co
 A configured profile whose trust document enrols no authority **refuses to start**: it
 would otherwise refuse every call while its transcript announced enforcement.
 
-### 11.3 Mechanism-specific evidence identity is still deferred
+### 11.3 Decision provenance — two coordinates, delivered
 
-ADR-MCPRE-066 Slice 1 records no decision-evidence identity in `Authorized` attribution,
-noting that the first production mechanism might supply one. It does not yet:
-`BoundDecisionEvidence` is sealed over the decision DOCUMENT and does not retain the digest
-its binding committed to, so projecting one would mean recomputing it or reopening the
-request's evidence block at the audit site — re-derivation, which invariant 5 forbids. The
-authenticated `jti` claim is the honest candidate, and taking it would widen the §5 seam's
-success product (`GrantAttribution`). That is an ADR decision, not a wiring one.
+ADR-MCPRE-066 §4.4 deferred decision-evidence identity until a mechanism could establish
+one. The carried PDP decision can, and it establishes **two** facts, which the success
+product now carries separately:
+
+```text
+AuthorizedRequestFacts
+    request
+    grant
+        authority                 iss
+        version                   policy version
+        authority_decision_id     jti — WHICH DECISION the authority says this was
+    decision_evidence
+        <alg>:<digest>            WHICH EXACT EVIDENCE this deployment authenticated
+```
+
+`jti` is authenticated and authority-owned, and the profile defines it as tying the
+decision to the authority's own record for cross-audit. It is **not** a content identity:
+an issuer can put one `jti` on two documents, and then it cannot say which was enforced.
+The digest can, so the two are separate fields and neither is named `evidence_id`.
+
+The digest is **preserved, not recomputed**. `BoundDecisionEvidence` used to verify the
+binding's digest against the document and then discard it; it now keeps it, so the identity
+in the record is the value the binding committed to, kept by the authority that verified the
+correspondence. Recomputing it downstream would substitute *an identity derived from bytes*
+for *the identity the binding committed to* — the same value only while the check relating
+them holds, which is precisely what that type exists to have decided already.
+
+Two controls pin the separation: changing the document under one `jti` must change the
+evidence identity, and the identity over one document must not be the `jti` under another
+name.
+
+The mechanism seam's success product is therefore `AuthorizedDecision` — grant and evidence
+identity as ONE value, because the mechanism established them together and a seam handing
+back two would let a caller pair one decision's attribution with another's evidence.

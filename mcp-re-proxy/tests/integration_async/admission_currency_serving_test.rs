@@ -351,7 +351,7 @@ impl mcp_re_proxy::authorization::AuthorizationEvaluator for RefusesEverything {
     fn evaluate(
         &self,
         _: &mcp_re_proxy::authorization::AuthorizationRequest,
-    ) -> Result<mcp_re_proxy::authorization::GrantAttribution, mcp_re_policy::PolicyError> {
+    ) -> Result<mcp_re_proxy::authorization::AuthorizedDecision, mcp_re_policy::PolicyError> {
         Err(mcp_re_policy::PolicyError::AuthorizationScopeDenied)
     }
 }
