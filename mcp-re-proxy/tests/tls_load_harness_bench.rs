@@ -97,6 +97,12 @@ use mcp_re_client_core::StaticRevocationList;
 use mcp_re_core::b64url_encode;
 use mcp_re_core::SigningKey;
 use mcp_re_core::VerificationKey;
+use mcp_re_http_profile::pdp_decision::issue_authorization_decision;
+use mcp_re_http_profile::pdp_decision::DecidedActor;
+use mcp_re_http_profile::pdp_decision::PdpDecisionClaims;
+use mcp_re_http_profile::pdp_decision::PdpDecisionOutcome;
+use mcp_re_http_profile::Audience;
+use mcp_re_http_profile::PROFILE_TAG;
 use mcp_re_proxy::config_state::transport::MAX_CLIENT_CERT_LIFETIME;
 
 use rcgen::BasicConstraints;
@@ -959,6 +965,43 @@ fn signed_request(nonce: &str) -> SignedRequest {
     .expect("client signs RFC 9421 request")
 }
 
+/// The same request, carrying a PDP authorization decision the client binds into the
+/// signature — the SDK path (`with_authorization_decision`), not a hand-built block.
+fn signed_request_with_decision(nonce: &str, decision: &str) -> SignedRequest {
+    let nonce = &format!("{nonce}-padded-to-the-128-bit-floor");
+    let now = now_unix();
+    let audience = AudienceTuple {
+        audience_id: AUDIENCE.to_string(),
+        target_uri: TARGET_URI.to_string(),
+        route: None,
+    };
+    let binding = ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, DPOP_TOKEN.as_bytes());
+    let inputs = RequestSigningInputs::new(
+        SIGNER_A_KEY_ID,
+        audience,
+        vec![binding],
+        nonce,
+        now,
+        now + 300,
+    )
+    .with_headers(vec![(
+        "Authorization".to_string(),
+        format!("Bearer {DPOP_TOKEN}"),
+    )])
+    .with_authorization_decision(decision);
+    let mut params = Map::new();
+    params.insert("text".to_string(), Value::String("hello".to_string()));
+    build_signed_request(
+        &Value::String("req-1".to_string()),
+        "echo",
+        params,
+        TARGET_URI,
+        &inputs,
+        &signer_a_key(),
+    )
+    .expect("client signs RFC 9421 request with a carried decision")
+}
+
 /// The server actor resolver for verifying the signed response (Response slot).
 fn server_resolve(kid: &str, slot: SignerSlot) -> Option<ResolvedActor> {
     if slot == SignerSlot::Response && kid == SERVER_KEY_ID {
@@ -1720,4 +1763,314 @@ fn tls_load_harness_bench() {
         cfg.requests,
         "every issued request must be accounted for",
     );
+}
+
+// ---------------------------------------------------------------------------------------
+// ADR-MCPRE-065 acceptance: the authorization authority, through the production path
+// ---------------------------------------------------------------------------------------
+//
+// Every other authorization control in this repository drives either the evaluator or
+// `HttpProfileProxy::handle` with a proxy a test assembled. This one drives real argv
+// through `mcp_re_proxy::app::run` — the orchestration `main` runs — and reaches it over a
+// real mTLS connection with a real signed request, so the chain it measures is:
+//
+//     CLI/config -> trust document -> authorization-issuer slot -> capability ->
+//     with_authorization -> RFC 9421 verification -> decision binding ->
+//     decision authentication -> actor + action relation -> Permit -> dispatch
+//
+// It answers the one question no unit or handler-level control can: does a DEPLOYMENT
+// enforce what the mechanism decides. Note the lane — this file is
+// `#![cfg(feature = "redis_replay")]`, so `cargo test --workspace` compiles it to zero
+// tests and only the feature lane runs it.
+
+/// The authorization authority's signing key for the acceptance deployment.
+fn acceptance_pdp_key() -> SigningKey {
+    SigningKey::from_seed_bytes(&[91u8; 32])
+}
+
+const ACCEPTANCE_PDP_KID: &str = "pdp-acceptance-1";
+
+/// A trust document enrolling the request signer AND one authorization authority.
+///
+/// Written here rather than by `write_material` because the enrolment is part of what is
+/// being measured: the request-signer slot and the authorization-issuer slot are different
+/// authorities, and a fixture that always carried both would prove neither.
+fn acceptance_trust_file(material: &Material, enrol_authority: bool) -> std::path::PathBuf {
+    let mut entries = vec![json!({
+        "signer": SUBJECT_A,
+        "key_id": SIGNER_A_KEY_ID,
+        "public_key": signer_a_key().public_key().to_b64url(),
+        "slots": ["request"],
+    })];
+    if enrol_authority {
+        entries.push(json!({
+            "signer": "did:example:pdp",
+            "key_id": ACCEPTANCE_PDP_KID,
+            "public_key": acceptance_pdp_key().public_key().to_b64url(),
+            "slots": ["authorization-issuer"],
+        }));
+    }
+    let path = tmp(&format!(
+        "acceptance-trust-{}.json",
+        u8::from(enrol_authority)
+    ));
+    std::fs::write(&path, serde_json::to_vec(&entries).expect("serialize")).expect("write");
+    let _ = material;
+    path
+}
+
+/// A decision about this deployment's client, issued by the enrolled authority.
+///
+/// Every knob a matrix row turns is a parameter: the outcome, the decided operation, the
+/// subject, the issuing key (to make the authority untrusted), and the validity window (to
+/// make it stale).
+#[allow(clippy::too_many_arguments)]
+fn acceptance_decision(
+    outcome: PdpDecisionOutcome,
+    operation: &str,
+    subject: &str,
+    key: &SigningKey,
+    kid: &str,
+    issued_at: i64,
+) -> String {
+    let claims = PdpDecisionClaims {
+        iss: "did:example:pdp".into(),
+        issuer_kid: kid.into(),
+        iat: issued_at,
+        nbf: issued_at - 5,
+        exp: issued_at + 3600,
+        jti: "acceptance-decision-1".into(),
+        aud: Audience::One(AUDIENCE.into()),
+        mcp_re_profile: PROFILE_TAG.into(),
+        mcp_re_decided_actor: DecidedActor::Principal {
+            trust_domain: TRUST_DOMAIN.into(),
+            subject: subject.into(),
+        },
+        // The harness client signs `{"method":"echo","params":{"text":...}}`, so the
+        // action coordinate the PEP reads from the SIGNED BODY is the operation `echo`
+        // with no target. A decision must be about exactly that.
+        mcp_re_decided_operation: operation.into(),
+        mcp_re_decided_target: None,
+        mcp_re_decision: outcome,
+        mcp_re_policy_version: "acceptance-v1".into(),
+    };
+    issue_authorization_decision(&claims, |input| {
+        mcp_re_core::b64url_decode(&key.sign(input))
+            .map_err(|_| mcp_re_http_profile::HttpProfileError::InvalidSignature)
+    })
+    .expect("the enrolled authority issues")
+}
+
+/// The whole ADR-MCPRE-065 chain, through `app::run`, over mTLS.
+///
+/// | row | expectation |
+/// |---|---|
+/// | trusted issuer + correct actor/action + Permit | dispatch |
+/// | Deny | refused, backend untouched |
+/// | no decision carried | refused |
+/// | decision for another action | refused |
+/// | decision about another actor | refused |
+/// | issuer this deployment does not enrol | refused |
+/// | stale decision | refused |
+///
+/// `--authz off` and the startup refusal for a profile with no enrolled authority are
+/// measured in the default lane (`app_startup_characterization_test`), which is where they
+/// belong: neither needs a listener.
+#[test]
+fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
+    let redis = RedisFleet::start();
+    let material = write_material();
+    let backend = spawn_http_echo_backend();
+    let trust = acceptance_trust_file(&material, true);
+
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("free port")
+        .local_addr()
+        .expect("addr")
+        .port();
+    let bind = format!("127.0.0.1:{port}");
+    let inner_url = format!("http://{backend}/mcp");
+    let seed = material.seed_path.to_string_lossy().into_owned();
+    let scert = material.server_cert_path.to_string_lossy().into_owned();
+    let skey = material.server_key_path.to_string_lossy().into_owned();
+    let cca = material.client_ca_path.to_string_lossy().into_owned();
+    let trust_arg = trust.to_string_lossy().into_owned();
+    let cert_lifetime = MAX_CLIENT_CERT_LIFETIME.as_secs().to_string();
+    let redis_url = redis.url();
+    let argv: Vec<String> = [
+        "--bind",
+        bind.as_str(),
+        "--audience",
+        AUDIENCE,
+        "--server-signer",
+        SERVER,
+        "--server-key-id",
+        SERVER_KEY_ID,
+        "--key-source",
+        "file",
+        "--signing-key-seed",
+        &seed,
+        "--delegated-trust-epoch",
+        "epoch-1",
+        "--tls-cert",
+        &scert,
+        "--tls-key",
+        &skey,
+        "--client-ca",
+        &cca,
+        "--trust",
+        &trust_arg,
+        "--target-uri",
+        TARGET_URI,
+        "--trust-domain",
+        TRUST_DOMAIN,
+        "--max-client-cert-lifetime",
+        &cert_lifetime,
+        "--replay-redis-url",
+        &redis_url,
+        "--replay-durability-tier",
+        "redis-wait-quorum:2:2000",
+        "--cores",
+        "1",
+        "--inner-http-url",
+        &inner_url,
+        // The subject of this test: the authorization authority, selected from the CLI.
+        "--authz",
+        "pdp-decision",
+        "--authz-decision-scope",
+        "principal",
+        "--authz-max-decision-age-secs",
+        "600",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+
+    let config = mcp_re_proxy::cli::parse_args(&argv).expect("parse config");
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let sd = Arc::clone(&shutdown);
+    let handle = std::thread::spawn(move || {
+        let _ = mcp_re_proxy::app::run(config, sd);
+    });
+
+    let addr: SocketAddr = bind.parse().expect("bind addr");
+    let mut up = false;
+    for _ in 0..200 {
+        if TcpStream::connect(addr).is_ok() {
+            up = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert!(
+        up,
+        "app::run did not bind {addr} under --authz pdp-decision"
+    );
+
+    let now = now_unix();
+    let serve = |nonce: &str, request: &SignedRequest| {
+        cold_round_trip(addr, build_client_config(&material.client_ca), request)
+            .unwrap_or_else(|e| panic!("round trip {nonce}: {e}"))
+    };
+
+    // Row 1 — a Permit from the enrolled authority, about this actor and this action.
+    let permit = acceptance_decision(
+        PdpDecisionOutcome::Permit,
+        "echo",
+        SUBJECT_A,
+        &acceptance_pdp_key(),
+        ACCEPTANCE_PDP_KID,
+        now,
+    );
+    let ok = serve(
+        "authz-permit",
+        &signed_request_with_decision("authz-permit", &permit),
+    );
+    assert!(
+        is_success(&ok.body),
+        "a Permit from the enrolled authority must reach the backend: {}",
+        String::from_utf8_lossy(&ok.body)
+    );
+
+    // Every remaining row must be refused. Each names the flaw it introduces, and the
+    // deployment is identical across all of them — only the decision changes.
+    let refusals: Vec<(&str, Option<String>)> = vec![
+        (
+            "authz-deny",
+            Some(acceptance_decision(
+                PdpDecisionOutcome::Deny,
+                "echo",
+                SUBJECT_A,
+                &acceptance_pdp_key(),
+                ACCEPTANCE_PDP_KID,
+                now,
+            )),
+        ),
+        // A configured profile refuses an undecorated request. §7.1: a deployment that
+        // configured an authority has left the not-configured posture.
+        ("authz-absent", None),
+        (
+            "authz-other-action",
+            Some(acceptance_decision(
+                PdpDecisionOutcome::Permit,
+                "tools/call",
+                SUBJECT_A,
+                &acceptance_pdp_key(),
+                ACCEPTANCE_PDP_KID,
+                now,
+            )),
+        ),
+        (
+            "authz-other-actor",
+            Some(acceptance_decision(
+                PdpDecisionOutcome::Permit,
+                "echo",
+                "did:example:someone-else",
+                &acceptance_pdp_key(),
+                ACCEPTANCE_PDP_KID,
+                now,
+            )),
+        ),
+        // A well-formed decision from an authority this trust document does not enrol.
+        (
+            "authz-untrusted-issuer",
+            Some(acceptance_decision(
+                PdpDecisionOutcome::Permit,
+                "echo",
+                SUBJECT_A,
+                &SigningKey::from_seed_bytes(&[92u8; 32]),
+                "pdp-not-enrolled",
+                now,
+            )),
+        ),
+        // Inside its own validity window, and older than this enforcement point accepts.
+        (
+            "authz-stale",
+            Some(acceptance_decision(
+                PdpDecisionOutcome::Permit,
+                "echo",
+                SUBJECT_A,
+                &acceptance_pdp_key(),
+                ACCEPTANCE_PDP_KID,
+                now - 5_000,
+            )),
+        ),
+    ];
+
+    for (nonce, decision) in &refusals {
+        let request = match decision {
+            Some(d) => signed_request_with_decision(nonce, d),
+            None => signed_request(nonce),
+        };
+        let response = serve(nonce, &request);
+        assert!(
+            !is_success(&response.body),
+            "{nonce} must be refused by the installed authority: {}",
+            String::from_utf8_lossy(&response.body)
+        );
+    }
+
+    shutdown.store(true, Ordering::SeqCst);
+    let _ = handle.join();
+    let _ = std::fs::remove_file(&trust);
 }
