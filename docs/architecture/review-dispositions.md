@@ -835,3 +835,86 @@ therefore holds in one non-gating nightly lane and nowhere else.
 **Do not delete, and do not wire up.** Both prohibitions stand (`AGENT_INSTRUCTIONS` §9).
 The recommended work makes the retained implementation better *as retained code* and moves
 it no step closer to being selectable.
+
+## EX-007 — `mcp-re-proxy/src/cli.rs` — **census complete, disposition: move the materialization out**
+
+**Status:** `reviewed-action-required`. **Measured:** 1170 production lines on `main` @
+`7ec8f92` — the registry and the campaign index both said 1177, before the ADR-MCPRE-065 §11
+authorization-flag family moved to its own child module. **Component blueprint:**
+[`components/cli-and-materialization.md`](components/cli-and-materialization.md).
+**Census issue:** [#578](https://github.com/matssun/mcp-re/issues/578) (MCPRE-142).
+
+**ADR-MCPRE-058's ruling on `parse_args` was treated as evidence for neither side.** It is
+function-granular, it remains valid, and it is not reopened here. What this census examined
+is what shares `parse_args`'s file.
+
+### §8 question 2 — how many independently describable authorities?
+
+**Three**, and they are the three the census issue asked to be told apart:
+
+| authority | lines |
+|---|---:|
+| **A — argv transport**: `parse_args`, `parse_timeout`, `parse_cert_lifetime`, `second_admission_limit` | 817 |
+| **B — legality residue**: `key_file_mode_is_insecure` | 14 |
+| **C — capability materialization**: `read_pkcs11_pin`, `build_attested_ingress_binding`, `build_key_source`, `build_ocsp_checker` | 297 |
+
+**A and C never call each other.** The Layer-A boundary and `app::run` sit between them, so
+separating them costs no locality — there is none to lose. A module named `cli` that reads a
+PKCS#11 PIN off the filesystem and constructs KMS-backed key sources is not a CLI module,
+and C's input is a *decided* `CustodyState` rather than an argument list.
+
+### §8 question 6 — does the parser re-decide what `config_state::*` owns?
+
+**No, and that is this unit's genuine strength.** The census went looking for the classic
+drift and did not find it: `InFlightLimitRequest::Unspecified` is carried rather than
+defaulted, the delegated-signing rotation defaults are `DelegatedSigning`'s constants,
+`has_delegated_tls` carries a comment explicitly disclaiming itself as a check, and
+`build_key_source` matches on `CustodyState::material()` instead of re-reading the request.
+An earlier round of this campaign did that work and it holds.
+
+### §8 question 7 — the proof is created, discarded, and recreated
+
+`parse_args` ends with `ValidatedDeployment::try_from(config).map(into_inner)` — it
+validates, then unwraps. `app::run` calls `try_from` **again**, recomputing every state
+machine. `into_inner`'s own doc says the wrapper exists so it *"cannot be reconstructed
+around an unchecked `DeploymentRequest`"*: the seal is earned in `parse_args` and opened one
+line later.
+
+**This is not a hole** — `app::run` re-validates, so the path fails closed however the
+request was built. The cost is representational, and the double validation is its observable
+consequence. The census deliberately does **not** rule on whether `parse_args` should return
+a `ValidatedDeployment`: there is a real counter-argument (`app::run` must stay callable by
+an embedder that never met a parser), and that is a design decision, not a census finding.
+
+### §8 question 11 — requiredness is a parser-only rule over public fields
+
+The `require` closure enforces eleven required flags; those fields are public `String`s on
+`DeploymentRequest`, and the boundary does not re-check emptiness for the identity
+coordinates. The file states the consequence in its own test comment — *"an embedder or a
+test that builds the struct reaches the serving path with an empty coordinate and no parser
+runs"* — and argues the exposure is bounded, since nothing dereferences those coordinates.
+
+That argument is sound and it belongs in a disposition record rather than in a test comment.
+`--client-ocsp`, `--revocation-list` and `--authz reference` were all moved to the boundary
+for exactly this reason; requiredness was not.
+
+### §8 question 12 — the three lanes, counted separately
+
+158 unit tests, classified by what each one calls: **119 prove parsing**, **23 prove
+legality** (through `unsafe_config_violations`, i.e. testing `config_state::validation` from
+inside `cli.rs`), **6 prove materialization**, 10 are helpers. Six tests for 297 lines of
+key-custody construction, against 119 for argv transport — C is the least-tested authority
+in the file by an order of magnitude, and it is the one that builds key custody.
+
+### Disposition
+
+1. **Move C** — capability materialization — beside the other materializers
+   (`signing_plane`, `trust_plane`, `serving_capabilities`), not beside a parser.
+2. **Move B** — `key_file_mode_is_insecure` — to whichever owner performs the permission
+   check.
+3. **Record requiredness** as a parser-only rule: either it moves to the boundary like its
+   three predecessors, or the fields stop being public `String`s.
+4. **The discarded validation proof is recorded, not ruled.**
+
+`parse_args` keeps its ADR-058 exception. `cli.rs` stays `reviewed-action-required` until the
+moves land and this census is re-run.
