@@ -116,7 +116,8 @@ review_ref = "EX-007 in docs/architecture/review-dispositions.md"
 path = "mcp-re-proxy/src/gcp_kms_keysource.rs"
 baseline_prod_loc = 1149
 baseline_sha = "d1fc5fa"
-status = "unreviewed"
+status = "reviewed-action-required"
+review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-client-core/src/response.rs"
@@ -214,7 +215,8 @@ status = "unreviewed"
 path = "mcp-re-proxy/src/aws_kms_keysource.rs"
 baseline_prod_loc = 694
 baseline_sha = "d1fc5fa"
-status = "unreviewed"
+status = "reviewed-action-required"
+review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/trust_plane.rs"
@@ -442,7 +444,8 @@ status = "unreviewed"
 path = "mcp-re-proxy/src/key_source.rs"
 baseline_prod_loc = 362
 baseline_sha = "d1fc5fa"
-status = "unreviewed"
+status = "reviewed-action-required"
+review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-client-proxy/src/manifest_floor.rs"
@@ -606,7 +609,8 @@ status = "unreviewed"
 path = "mcp-re-proxy/src/kms_keysource.rs"
 baseline_prod_loc = 230
 baseline_sha = "1b31c60"
-status = "unreviewed"
+status = "reviewed-action-required"
+review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-http-profile/src/ids.rs"
