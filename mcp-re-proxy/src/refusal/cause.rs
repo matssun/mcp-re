@@ -34,14 +34,12 @@ pub(crate) enum RefusalCause {
 ///
 /// Three arms rather than one `McpReError` because each producer's own error type says
 /// strictly more than the token it renders to, and Slice 0's whole job is to stop discarding
-/// that on the way to the audit boundary. All three already carry a total mapping onto the
-/// frozen Core taxonomy — `every_wire_code_is_a_frozen_core_token` machine-checks the
-/// carrier's — so this arm never invents a token, it only remembers who spoke.
+/// that on the way to the audit boundary.
 ///
-/// An exhaustive typed projection of these onto `McpReError` is legitimate and wanted, but it
-/// belongs where `HttpProfileError::wire_code` can be derived from it rather than duplicated
-/// beside it. That is ADR-MCPRE-066 Slice 2's structural-containment work, and doing it here
-/// would put a second copy of the mapping in the tree until then.
+/// Each carries an exhaustive typed projection onto `McpReError`, and each derives its own
+/// `wire_code` from that projection rather than keeping a second table beside it
+/// (ADR-MCPRE-066 Slice 2). So this arm never invents a token and never chooses one — it
+/// only remembers who spoke, and asks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CoreVerdict {
     /// The frozen taxonomy itself, named directly by the serving path.
@@ -53,13 +51,22 @@ pub(crate) enum CoreVerdict {
 }
 
 impl CoreVerdict {
-    /// The frozen public token, asked of the producer rather than chosen here.
-    pub(crate) fn wire_code(&self) -> &'static str {
+    /// The Core verdict this producer reached, in the frozen taxonomy.
+    ///
+    /// Total, because every producer on this arm owns an exhaustive projection. This is what
+    /// the audit boundary consumes: it takes an `McpReError`, so a producer that cannot
+    /// name one cannot reach it.
+    pub(crate) fn error(&self) -> McpReError {
         match self {
-            CoreVerdict::Taxonomy(e) => e.wire_code(),
-            CoreVerdict::Carrier(e) => e.wire_code(),
-            CoreVerdict::Dispatch(e) => e.wire_code(),
+            CoreVerdict::Taxonomy(e) => e.clone(),
+            CoreVerdict::Carrier(e) => McpReError::from(e),
+            CoreVerdict::Dispatch(e) => McpReError::from(e),
         }
+    }
+
+    /// The frozen public token, derived from the verdict rather than chosen here.
+    pub(crate) fn wire_code(&self) -> &'static str {
+        self.error().wire_code()
     }
 }
 
@@ -85,6 +92,23 @@ impl RefusalCause {
     /// is the only one that can tell *no verdict was reached* from *a policy denied*.
     ///
     /// This composes; it does not decide. Neither authority's vocabulary is read here.
+    /// The Core verdict this refusal is recorded under, or `None` where Core reached none.
+    ///
+    /// `None` has exactly one cause and it is not an omission: an authorization policy
+    /// decided, and a policy denial is not a Core verdict. Core states nothing rather than
+    /// borrowing a token, and the record's authorization coordinate says what did happen.
+    ///
+    /// The action arm DOES project: a body that is not the signed body really is a digest
+    /// mismatch, and a body naming no operation really is a malformed envelope. Those are
+    /// Core's own statements about the request, which is why ADR-MCPRE-065 rendered them as
+    /// Core tokens in the first place.
+    pub(crate) fn core_verdict(&self) -> Option<McpReError> {
+        match self {
+            RefusalCause::Core(v) => Some(v.error()),
+            RefusalCause::Authorization(r) => r.core_verdict(),
+        }
+    }
+
     pub(crate) fn authorization_facet(&self) -> AuthorizationFacet {
         match self {
             RefusalCause::Core(_) => {
@@ -198,6 +222,45 @@ mod tests {
                 PolicyError::AuthorizationScopeDenied
             ))
         );
+    }
+
+    #[test]
+    fn a_policy_denial_has_no_core_verdict_to_be_recorded_under() {
+        // Invariants 8 and 9, as one value. Core reached no verdict, so Core states none —
+        // and because the audit boundary takes an `McpReError`, there is no route by which
+        // the policy's token could be written into Core's `reason` instead. That was #637.
+        let c = RefusalCause::from(AuthorizationRefusal::PolicyRefused(
+            PolicyError::AuthorizationScopeDenied,
+        ));
+        assert_eq!(c.core_verdict(), None);
+        // The client still receives the policy's own code: this is a wire no-op.
+        assert_eq!(c.wire_code(), "mcp-re.authorization_scope_denied");
+    }
+
+    #[test]
+    fn an_unreadable_action_coordinate_is_a_core_verdict_after_all() {
+        // The other authorization arm DOES project. A body that is not the signed body is a
+        // digest mismatch — Core's own statement about the request — which is why
+        // ADR-MCPRE-065 rendered these as Core tokens rather than minting authorization
+        // ones. Only the policy arm has nothing of Core's to say.
+        let c = RefusalCause::from(AuthorizationRefusal::ActionNotVerifiable(
+            AuthorizationActionRefusal::BodyIsNotTheSignedBody,
+        ));
+        assert_eq!(c.core_verdict(), Some(McpReError::DigestMismatch));
+    }
+
+    #[test]
+    fn every_core_producer_names_a_verdict_and_the_token_follows_from_it() {
+        // The derivation, end to end: the producer states which Core verdict it is, and the
+        // wire token is that verdict's own rather than a second table's copy of it.
+        for c in [
+            RefusalCause::from(McpReError::ReplayDetected),
+            RefusalCause::from(HttpProfileError::InvalidSignature),
+            RefusalCause::from(ProxyDispatchError::NoDeclaredReplayTier),
+        ] {
+            let verdict = c.core_verdict().expect("a Core producer reached a verdict");
+            assert_eq!(c.wire_code(), verdict.wire_code());
+        }
     }
 
     #[test]

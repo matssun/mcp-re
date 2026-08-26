@@ -828,6 +828,16 @@ async fn a_policy_denial_is_recorded_as_a_policy_denial_and_not_merely_as_a_reje
         ),
         "a policy decided and denied: {authorization:?}"
     );
+
+    // ADR-MCPRE-066 Slice 2: and Core's own field is EMPTY, because Core reached no
+    // verdict. This is the end of #637 — the policy's token is in the authorization
+    // coordinate and nowhere else, so a reader can no longer mistake it for a Core one.
+    assert_eq!(
+        rejected.event().reason,
+        None,
+        "a policy denial is not a Core verdict, so Core must state none"
+    );
+    assert_eq!(rejected.event().event_type, "mcp-re.request.rejected");
 }
 
 #[tokio::test]
@@ -856,5 +866,39 @@ async fn a_request_refused_before_any_policy_ran_is_not_attributed_to_one() {
         authorization,
         &AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy),
         "the configured profile reached a verdict; the record must not say none did"
+    );
+    assert_eq!(rejected.event().reason, None, "still not a Core verdict");
+}
+
+#[tokio::test]
+async fn a_core_verification_failure_still_records_its_frozen_core_reason() {
+    // The other side of Slice 2, and the reason it is not merely "stop writing a reason":
+    // where Core DID reach a verdict, the record carries that verdict's frozen token
+    // exactly as before. Only the case Core has nothing to say about goes quiet.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let d = issue(&decision_for(Some("read"), "tools/call"), &pdp_key());
+    let mut req = signed_call("read", "n-audit-core", Some(&d));
+    req.body.extend_from_slice(b" ");
+    let (status, records) = serve_recorded(proxy(Arc::clone(&calls)), req).await;
+    assert_eq!(status, 403);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+    let rejected = records
+        .iter()
+        .find(|r| r.event().event_type == "mcp-re.request.rejected")
+        .expect("the refusal is recorded");
+    assert_eq!(
+        rejected.event().reason,
+        Some("mcp-re.digest_mismatch"),
+        "Core reached this verdict and the record says which one"
+    );
+    // And the authorization coordinate says no policy ever ran, which is true: the request
+    // never got that far.
+    let mcp_re_proxy::AuditSubject::Request { authorization, .. } = &rejected.subject else {
+        panic!("a request record");
+    };
+    assert_eq!(
+        authorization,
+        &AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy)
     );
 }

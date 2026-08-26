@@ -334,7 +334,7 @@ mod tests {
         });
         sink.record(&AuditRecord {
             subject: AuditSubject::request(
-                AuditEvent::request_rejected_code("mcp-re.replay_detected"),
+                AuditEvent::request_rejected(&mcp_re_core::McpReError::ReplayDetected),
                 AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy),
             ),
             actor_id: None,
@@ -503,7 +503,7 @@ mod tests {
         });
         StderrAuditSink.record(&AuditRecord {
             subject: AuditSubject::request(
-                AuditEvent::request_rejected_code("mcp-re.replay_detected"),
+                AuditEvent::request_rejected(&mcp_re_core::McpReError::ReplayDetected),
                 AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy),
             ),
             actor_id: None,

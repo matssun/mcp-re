@@ -70,15 +70,21 @@ nt_rust_test(
         "//mcp-re-core:src/error.rs",
         "//mcp-re-core:src/audit.rs",
         "//mcp-re-http-profile:src/error.rs",
+        "//mcp-re-http-profile:src/error/core_projection.rs",
         "//mcp-re-proxy:src/http_profile_dispatch.rs",
+        "//mcp-re-proxy:src/http_profile_dispatch/core_projection.rs",
     ],
     edition = "2021",
     env = {
         "MCP_RE_CORE_SRC_ERROR": "$(rlocationpath //mcp-re-core:src/error.rs)",
         "MCP_RE_CORE_SRC_AUDIT": "$(rlocationpath //mcp-re-core:src/audit.rs)",
         "MCP_RE_PROFILE_SRC_ERROR": "$(rlocationpath //mcp-re-http-profile:src/error.rs)",
-        # The third producer feeding `request_rejected_code`: the replay-tier gate.
+        # ADR-MCPRE-066 Slice 2: where the carrier's Core verdicts are decided, and from
+        # which its wire token is derived rather than spelled a second time.
+        "MCP_RE_PROFILE_SRC_PROJECTION": "$(rlocationpath //mcp-re-http-profile:src/error/core_projection.rs)",
+        # The replay-tier gate, a third producer of audit rejection reasons.
         "MCP_RE_PROXY_SRC_DISPATCH": "$(rlocationpath //mcp-re-proxy:src/http_profile_dispatch.rs)",
+        "MCP_RE_PROXY_SRC_DISPATCH_PROJECTION": "$(rlocationpath //mcp-re-proxy:src/http_profile_dispatch/core_projection.rs)",
     },
     deps = [
         "//mcp-re-test-paths:mcp_re_test_paths",

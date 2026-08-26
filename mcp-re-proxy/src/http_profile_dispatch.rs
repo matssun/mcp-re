@@ -77,16 +77,7 @@ pub enum ProxyDispatchError {
     Dispatch(DispatchError),
 }
 
-impl ProxyDispatchError {
-    /// The frozen `mcp-re.*` wire token this failure maps to.
-    pub fn wire_code(&self) -> &'static str {
-        match self {
-            ProxyDispatchError::SubMinimumReplayTier(_)
-            | ProxyDispatchError::NoDeclaredReplayTier => "mcp-re.replay_cache_unavailable",
-            ProxyDispatchError::Dispatch(e) => e.wire_code(),
-        }
-    }
-}
+mod core_projection;
 
 /// Drive a verified full-profile request through the replay-tier gate and then the
 /// pure dispatcher.

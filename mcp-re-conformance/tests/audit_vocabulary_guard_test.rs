@@ -16,7 +16,10 @@
 //!   4. an audit `event_type` collides with a frozen `wire_code()` token (a
 //!      rejection sub-name masquerading as an event type);
 //!   5. an `authorization_hash_mismatch` notion reappears as an audit reason
-//!      (Core binds, never interprets — ADR-MCPS-013).
+//!      (Core binds, never interprets — ADR-MCPS-013);
+//!   6. any producer OUTSIDE `mcp-re-core/src/error.rs` mints an `mcp-re.*` token of its
+//!      own instead of naming a Core verdict and deriving the token from it
+//!      (ADR-MCPRE-066 Slice 2).
 //!
 //! Both source files are delivered through Bazel `data` runfiles and read from
 //! DISK at test time (resolved via `$(rlocationpath)` against
@@ -296,49 +299,70 @@ fn no_authorization_hash_mismatch_audit_reason() {
     );
 }
 
-/// Sanity: the guard actually parsed real content from both files, so a silent
-/// empty-set false-pass (e.g. a renamed env var resolving to an empty file)
-/// cannot masquerade as "no drift". The frozen taxonomy has 20 variants today,
-/// so we expect a healthy lower bound; the audit module mentions at least the
-/// four event_types.
-/// C086: the guard used to check only that `audit.rs`'s own literals are frozen wire
-/// codes — a closed loop, since nothing emitted them. The serving path now DOES emit,
-/// carrying `HttpProfileError::wire_code()` straight into
-/// `AuditEvent::request_rejected_code`, so the reasons that actually reach an audit log
-/// are this taxonomy. Assert it is contained in the frozen one, which is what makes
-/// "a rejection reason is always a frozen wire code" true of the real producer rather
-/// than of a vocabulary in isolation.
+/// ADR-MCPRE-066 Slice 2 — **no producer outside Core mints a wire token.**
+///
+/// This test used to check set CONTAINMENT: it parsed the `mcp-re.*` string literals out of
+/// each producer's own `wire_code` table and asserted they were a subset of the frozen
+/// taxonomy's. That was the right check while the sink took a string, and it had the defect
+/// its own subject describes — its scope was a hand-maintained list of files, so it
+/// described yesterday's producer set on exactly the day a producer moved (ADR-MCPRE-066
+/// §2.1). #637 found a fourth producer it had never been told about.
+///
+/// Slice 2 removed the string-taking constructors, so the containment is now a type
+/// property and the interesting claim changed with it: not *are the carriers' strings a
+/// subset*, but **do the carriers have strings at all**. A producer that mints one has
+/// re-created the parallel namespace, whether or not the token happens to be a frozen
+/// member today, because a string is what let one authority's verdict pass for another's.
+///
+/// So: exactly one file in the workspace decides what an `mcp-re.*` token says, and it is
+/// `mcp-re-core/src/error.rs`. Every carrier states which Core verdict it IS, with an
+/// exhaustive `From<&_> for McpReError`, and derives its token from that.
 #[test]
-fn every_serving_path_wire_code_is_a_frozen_wire_code() {
+fn no_producer_outside_core_mints_a_wire_token() {
+    for (env_key, who) in [
+        ("MCP_RE_PROFILE_SRC_ERROR", "HttpProfileError"),
+        (
+            "MCP_RE_PROFILE_SRC_PROJECTION",
+            "the HttpProfileError projection",
+        ),
+        ("MCP_RE_PROXY_SRC_DISPATCH", "ProxyDispatchError"),
+        (
+            "MCP_RE_PROXY_SRC_DISPATCH_PROJECTION",
+            "the ProxyDispatchError projection",
+        ),
+    ] {
+        let src = read(env_key);
+        let production = match src.find("#[cfg(test)]") {
+            Some(idx) => &src[..idx],
+            None => src.as_str(),
+        };
+        let minted = mcp_re_string_literals(production);
+        assert!(
+            minted.is_empty(),
+            "{who} mints its own mcp-re.* token(s) {minted:?} instead of naming a Core              verdict and deriving the token from it. Exactly one file decides what these              strings say (mcp-re-core/src/error.rs); a second table is the parallel              namespace ADR-MCPRE-066 Slice 2 removed."
+        );
+    }
+
+    // Positive control on the parser and the runfiles wiring: the ONE file that is
+    // supposed to mint them still does, so an empty result above means "no tokens here"
+    // rather than "this test reads nothing".
     let frozen = frozen_wire_codes(&read("MCP_RE_CORE_SRC_ERROR"));
-    let profile = frozen_wire_codes(&read("MCP_RE_PROFILE_SRC_ERROR"));
     assert!(
-        !profile.is_empty(),
-        "no wire codes parsed from the http-profile error taxonomy — did `fn wire_code` move?"
-    );
-    let strays: Vec<&String> = profile.difference(&frozen).collect();
-    assert!(
-        strays.is_empty(),
-        "these HttpProfileError wire codes are emitted as audit reasons but are NOT \
-         members of the frozen McpReError taxonomy: {strays:?}"
+        frozen.len() >= 15,
+        "the sole minting authority parsed {} tokens — the runfiles wiring is broken, and          every assertion above is then vacuous",
+        frozen.len()
     );
 
-    // THE THIRD PRODUCER. `HttpProfileProxy::rejection` / `response_rejection` are fed
-    // by three `wire_code()` sources, not one: `HttpProfileError` (above),
-    // `McpReError` (trivially contained — it IS the taxonomy), and
-    // `ProxyDispatchError`, which the replay-tier gate raises. Scanning only the first
-    // left the tier gate's tokens unchecked, so a token minted there could reach an
-    // audit log without ever meeting this guard.
-    let dispatch = frozen_wire_codes(&read("MCP_RE_PROXY_SRC_DISPATCH"));
+    // And the projection really is where the carrier's verdicts are decided, so the file
+    // being scanned above is the one that replaced the table rather than an empty stub.
+    let projection = read("MCP_RE_PROFILE_SRC_PROJECTION");
     assert!(
-        !dispatch.is_empty(),
-        "no wire codes parsed from the proxy dispatch taxonomy — did `fn wire_code` move?"
+        projection.contains("impl From<&HttpProfileError> for McpReError"),
+        "the carrier's Core projection is not where this guard is looking"
     );
-    let strays: Vec<&String> = dispatch.difference(&frozen).collect();
     assert!(
-        strays.is_empty(),
-        "these ProxyDispatchError wire codes reach the audit stream but are NOT \
-         members of the frozen McpReError taxonomy: {strays:?}"
+        !projection.contains("_ =>"),
+        "the carrier's Core projection has a wildcard arm — a new failure would inherit a          verdict instead of naming one"
     );
 }
 

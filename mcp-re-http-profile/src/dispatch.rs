@@ -34,6 +34,7 @@
 //! spliced continuation, or lacks the evidence to build a replay key never burns
 //! a legitimate nonce.
 
+use mcp_re_core::McpReError;
 use mcp_re_core::ReplayCache;
 use mcp_re_core::ReplayCacheError;
 use mcp_re_core::ReplayDecision;
@@ -96,14 +97,11 @@ pub enum DispatchError {
 
 impl DispatchError {
     /// The frozen `mcp-re.*` wire token this failure maps to.
+    ///
+    /// Derived from [`crate::error::core_projection`], which owns this crate's whole
+    /// statement of what its failures mean in Core's terms. Never chosen here.
     pub fn wire_code(&self) -> &'static str {
-        match self {
-            DispatchError::ReplayDetected => "mcp-re.replay_detected",
-            DispatchError::ReplayCacheUnavailable | DispatchError::NonSharedReplayTier => {
-                "mcp-re.replay_cache_unavailable"
-            }
-            DispatchError::Profile(e) => e.wire_code(),
-        }
+        McpReError::from(self).wire_code()
     }
 }
 

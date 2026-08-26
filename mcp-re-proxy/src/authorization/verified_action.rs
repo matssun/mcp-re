@@ -47,6 +47,7 @@
 //! Law A-1 rules out, running the other way. So the missing target is REPORTED, as its own
 //! state, and a policy that cares denies it.
 
+use mcp_re_core::McpReError;
 use mcp_re_http_profile::mcp_name_source::mcp_name_source;
 use mcp_re_http_profile::VerifiedMcpRequest;
 use serde_json::Value;
@@ -133,6 +134,28 @@ pub enum AuthorizationActionRefusal {
     /// request and is refused before this authority runs. Kept because this operation is
     /// total over its inputs and must not depend on an ordering it cannot see.
     NoOperation,
+}
+
+/// The exhaustive projection onto the frozen Core taxonomy (ADR-MCPRE-066 Slice 2).
+///
+/// These are Core's own statements about the request, which is why ADR-MCPRE-065 rendered
+/// them as Core tokens rather than minting authorization ones: a body that is not the signed
+/// body IS a digest mismatch, and a body naming no operation IS a malformed envelope. This
+/// authority is entitled to say so — and *only* to say so, in Core's existing words.
+///
+/// Exhaustive, with no wildcard: a new way for a coordinate to be unreadable is a compile
+/// error here until it says which Core verdict it is. The variant that used to hide behind a
+/// `_` was `BodyIsNotJson`, and a wildcard that already covers two unlike facts is exactly
+/// how a third joins them unnoticed.
+impl From<&AuthorizationActionRefusal> for McpReError {
+    fn from(e: &AuthorizationActionRefusal) -> McpReError {
+        match e {
+            AuthorizationActionRefusal::BodyIsNotTheSignedBody => McpReError::DigestMismatch,
+            AuthorizationActionRefusal::BodyIsNotJson | AuthorizationActionRefusal::NoOperation => {
+                McpReError::MalformedEnvelope
+            }
+        }
+    }
 }
 
 /// Read the action coordinate out of the request's signed body.

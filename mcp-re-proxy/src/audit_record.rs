@@ -167,7 +167,7 @@ mod tests {
         // authorization field; neither appears in the other.
         let r = AuditRecord {
             subject: AuditSubject::request(
-                AuditEvent::request_rejected_code("mcp-re.digest_mismatch"),
+                AuditEvent::request_rejected(&mcp_re_core::McpReError::DigestMismatch),
                 AuthorizationFacet::Refused(AuthorizationRefusalFacet::ByPolicy(
                     PolicyError::AuthorizationScopeDenied,
                 )),

@@ -39,19 +39,29 @@ pub enum AuthorizationRefusal {
 impl AuthorizationRefusal {
     /// The frozen wire token this refusal is served as.
     ///
-    /// The action arm renders EXISTING core tokens rather than minting authorization ones:
-    /// a body that is not the signed body is a digest mismatch, and a body that names no
-    /// operation is a malformed envelope. Both are true statements about the request that
-    /// this slice is not entitled to restate in a vocabulary ADR-MCPS-035 freezes.
+    /// The action arm renders EXISTING core tokens rather than minting authorization ones,
+    /// derived from the exhaustive projection that owns the mapping
+    /// (`From<&AuthorizationActionRefusal> for McpReError`). Both arms state true things
+    /// about the request that this authority is not entitled to restate in a vocabulary
+    /// ADR-MCPS-035 freezes.
     pub fn wire_code(&self) -> &'static str {
         match self {
-            AuthorizationRefusal::ActionNotVerifiable(
-                AuthorizationActionRefusal::BodyIsNotTheSignedBody,
-            ) => McpReError::DigestMismatch.wire_code(),
-            AuthorizationRefusal::ActionNotVerifiable(_) => {
-                McpReError::MalformedEnvelope.wire_code()
-            }
+            AuthorizationRefusal::ActionNotVerifiable(a) => McpReError::from(a).wire_code(),
             AuthorizationRefusal::PolicyRefused(e) => e.wire_code(),
+        }
+    }
+
+    /// The Core verdict this refusal is recorded under, or `None` where Core reached none
+    /// (ADR-MCPRE-066 Slice 2).
+    ///
+    /// The asymmetry is the whole finding. The action arm has a Core verdict because the
+    /// defect it names is a Core one; the policy arm does not, because a denial is not
+    /// something Core decided — and rather than borrow a token, the record says nothing in
+    /// Core's field and everything in the authorization coordinate.
+    pub fn core_verdict(&self) -> Option<McpReError> {
+        match self {
+            AuthorizationRefusal::ActionNotVerifiable(a) => Some(McpReError::from(a)),
+            AuthorizationRefusal::PolicyRefused(_) => None,
         }
     }
 

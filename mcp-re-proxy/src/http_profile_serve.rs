@@ -38,6 +38,7 @@ use std::sync::Arc;
 use mcp_re_core::McpReError;
 
 use crate::refusal::Refusal;
+use crate::refusal::RefusalCause;
 use crate::refusal::RefusalPosture;
 use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::build_delegated_rejection;
@@ -552,7 +553,7 @@ impl HttpProfileProxy {
         if refusal.posture == RefusalPosture::AfterAdmission {
             return self.response_rejection(
                 ex.http_req,
-                refusal.wire_code(),
+                &refusal.cause,
                 refusal.status,
                 ex.now,
                 bound,
@@ -563,12 +564,11 @@ impl HttpProfileProxy {
         }
         self.rejection(
             ex.http_req,
-            refusal.wire_code(),
+            &refusal.cause,
             refusal.status,
             ex.now,
             bound,
             actor,
-            refusal.cause.authorization_facet(),
             execution,
             ex.key.clone(),
         )
@@ -645,7 +645,7 @@ impl HttpProfileProxy {
             }
             Err(e) => self.response_rejection(
                 http_req,
-                e.wire_code(),
+                &RefusalCause::from(e),
                 500,
                 now,
                 Some(verified.evidence()),
@@ -1347,12 +1347,11 @@ impl HttpProfileProxy {
             Err(refusal) => {
                 return self.rejection(
                     &http_req,
-                    refusal.wire_code(),
+                    &refusal.cause,
                     refusal.status,
                     now,
                     None,
                     None,
-                    refusal.cause.authorization_facet(),
                     Self::disposition(&progress),
                     None,
                 )
@@ -1700,7 +1699,7 @@ impl HttpProfileProxy {
                 );
                 Some(self.response_rejection(
                     request,
-                    McpReError::EvidenceRetentionIndeterminate.wire_code(),
+                    &RefusalCause::from(McpReError::EvidenceRetentionIndeterminate),
                     500,
                     now,
                     bound,
@@ -1727,25 +1726,37 @@ impl HttpProfileProxy {
     fn rejection(
         &self,
         request: &HttpRequest,
-        wire_code: &'static str,
+        cause: &RefusalCause,
         status: u16,
         now: i64,
         bound: Option<&RequestEvidence>,
         actor_id: Option<String>,
-        authorization: crate::authorization::AuthorizationFacet,
         execution: ExecutionDisposition,
         snapshot: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
     ) -> ServedHttpResponse {
         self.audit(
             crate::audit_record::AuditSubject::request(
-                mcp_re_core::audit::AuditEvent::request_rejected_code(wire_code),
-                authorization,
+                match cause.core_verdict() {
+                    Some(e) => mcp_re_core::audit::AuditEvent::request_rejected(&e),
+                    // Core reached no verdict: a policy did. Its token belongs in the
+                    // authorization coordinate below, never in Core's `reason`.
+                    None => mcp_re_core::audit::AuditEvent::request_rejected_elsewhere(),
+                },
+                cause.authorization_facet(),
             ),
             actor_id,
             status,
             now,
         );
-        self.signed_rejection(request, wire_code, status, now, bound, execution, snapshot)
+        self.signed_rejection(
+            request,
+            cause.wire_code(),
+            status,
+            now,
+            bound,
+            execution,
+            snapshot,
+        )
     }
 
     /// A POST-ACCEPTANCE rejection — recorded as `mcp-re.response.rejected`.
@@ -1761,7 +1772,7 @@ impl HttpProfileProxy {
     fn response_rejection(
         &self,
         request: &HttpRequest,
-        wire_code: &'static str,
+        cause: &RefusalCause,
         status: u16,
         now: i64,
         bound: Option<&RequestEvidence>,
@@ -1770,14 +1781,23 @@ impl HttpProfileProxy {
         snapshot: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
     ) -> ServedHttpResponse {
         self.audit(
-            crate::audit_record::AuditSubject::response(
-                mcp_re_core::audit::AuditEvent::response_rejected_code(wire_code),
-            ),
+            crate::audit_record::AuditSubject::response(match cause.core_verdict() {
+                Some(e) => mcp_re_core::audit::AuditEvent::response_rejected(&e),
+                None => mcp_re_core::audit::AuditEvent::response_rejected_elsewhere(),
+            }),
             actor_id,
             status,
             now,
         );
-        self.signed_rejection(request, wire_code, status, now, bound, execution, snapshot)
+        self.signed_rejection(
+            request,
+            cause.wire_code(),
+            status,
+            now,
+            bound,
+            execution,
+            snapshot,
+        )
     }
 
     /// Build a signed rejection receipt bound to `request` (or preflight-unbound),
