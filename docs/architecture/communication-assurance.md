@@ -1629,7 +1629,7 @@ Every candidate consumer is deferred by an accepted decision, not by omission:
 
 | candidate | what defers it |
 |---|---|
-| **authorization** | `--authz reference` is REFUSED at validation (ADR-MCPS-013: the reference profile is not the production authority, and it was bound to the retired object carrier). ADR-MCPRE-065 has since built the production mechanism on RFC 9421 request evidence, but no configuration installs it — the composition root attaches no evaluator |
+| **authorization** | `--authz reference` is REFUSED at validation (ADR-MCPS-013: the reference profile is not the production authority, and it was bound to the retired object carrier). ADR-MCPRE-065's carried PDP decision is the production mechanism and `--authz pdp-decision` installs it; what a channel fact would consume is a decision INPUT, which is an ADR-MCPRE-065 change and not a wiring one |
 | **the security audit record** | ADR-MCPS-035 §3 freezes the success-event allowlist. The serving path already names a gap it refused to close "by quietly widening a pinned vocabulary" — a degraded-mode serve is indistinguishable from a confirmed one |
 | **the inner-plane verified context** | `VerifiedContext` is `#[serde(deny_unknown_fields)]` and its shape is committed to by `verified_context_commitment` in the transparency record. Adding channel facts is a wire change and a commitment change |
 

@@ -589,6 +589,28 @@ fn run_validated(
         target_uri: values.target_uri.clone(),
         route: values.route.clone(),
     };
+    // ADR-MCPRE-056 §5.4: from here on, every optional capability states its posture in
+    // BOTH directions through `posture`. `assert_complete` below refuses to start — in
+    // every build profile — if any seam is left silent.
+    let mut posture = PostureLog::new();
+
+    // ADR-MCPRE-065 §8: the authorization authority — MAY-ACT, the question neither the
+    // signature nor the channel answers. DECIDED HERE, beside the trust plane whose
+    // document enrols it, and before the first networked store is opened: an authority
+    // that cannot be built is a startup refusal, and an operator reads it without first
+    // waiting on a replay backend. The evaluator itself is installed further down, once
+    // the proxy it decides for exists; `Established` keeps the artifact and the posture
+    // together so the two cannot come from different readings.
+    let (authorization, authorization_state) = crate::authorization::capability::evaluator(
+        config.state().authorization(),
+        config.state().trust_document(),
+        &response_kid,
+        &values.audience,
+        config.state().freshness().verifier_skew_secs(),
+    )?
+    .into_parts();
+    posture.declare(Seam::Authorization, authorization_state);
+
     // Mode-A transport binding and the certificate field the connection seam reads the
     // identity from, both derived from the ONE state `config_state::transport` recognised.
     let ChannelBindingEffects {
@@ -686,11 +708,6 @@ fn run_validated(
     let identity_strategy =
         crate::startup_plan::identity_strategy(config.state().channel_binding());
 
-    // ADR-MCPRE-056 §5.4: from here on, every optional capability states its posture in
-    // BOTH directions through `posture`. `assert_complete` below refuses to start — in
-    // every build profile — if any seam is left silent.
-    let mut posture = PostureLog::new();
-
     // #4030 ONLINE OCSP client-cert revocation. Attached to `ServerOptions` below rather
     // than to the PEP, because revocation is decided during the TLS handshake.
     let (ocsp_checker, ocsp_state) = crate::serving_capabilities::online_ocsp().into_parts();
@@ -738,35 +755,11 @@ fn run_validated(
         "mcp-re-proxy: HTTP inner backends {:?}",
         values.inner_http_urls
     );
-    // The pool is PROCESS-WIDE (one instance behind the `Arc` every core shares), so
-    // its in-flight bound must not sit below the fleet's aggregate admission ceiling.
-    // If it did, requests that passed every security gate would be answered with a
-    // signed `inner server unavailable` at a capacity cliff no configured flag names —
-    // and the shedding decision would move from the admission gate, where it is
-    // deliberate, to the inner pool, where it is an accident of core count.
-    // The RULE is pure and lives in the plan; the core count is the environment reading it
-    // needs, and the wiring is this function's business.
-    let cores =
-        crate::async_fleet::resolve_core_count(config.state().shard_topology().shards_or_auto());
-    let ceiling = crate::startup_plan::inner_plane_ceiling(
-        in_flight_limit.per_core(),
-        in_flight_limit.fleet_total(),
-        cores,
+    let pool = crate::inner_plane_bound::raised_to_fleet_ceiling(
+        pool,
+        in_flight_limit,
+        config.state().shard_topology(),
     );
-    let pool = match crate::startup_plan::inner_plane_raise(
-        ceiling,
-        crate::http_inner::DEFAULT_MAX_IN_FLIGHT,
-    ) {
-        Some(raised) => {
-            eprintln!(
-                "mcp-re-proxy: inner-plane in-flight bound raised to {raised} to stay at or \
-                 above the fleet admission ceiling ({cores} cores); the admission gate sheds, \
-                 not the inner pool."
-            );
-            pool.with_max_in_flight(raised)
-        }
-        None => pool,
-    };
 
     // Response-signing custody (ADR-MCPRE-056 §8; ADR-MCPRE-052). The plane owns the
     // root issuer, the delegated snapshot and the worker that maintains it; what comes
@@ -870,6 +863,10 @@ fn run_validated(
         );
     }
     posture.declare(Seam::MrtrContinuationStore, continuation_state);
+
+    if let Some(evaluator) = authorization {
+        proxy = proxy.with_authorization(evaluator);
+    }
 
     let (admission, admission_state) = crate::serving_capabilities::admission_currency(
         config.state().admission(),

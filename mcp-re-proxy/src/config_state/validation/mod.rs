@@ -19,10 +19,12 @@
 //! It lives beside `config_state` rather than in `cli` because the request it judges can be
 //! built without a parser — that was the bypass this boundary exists to close.
 
+mod machine_violations;
 mod residue;
 
 use crate::config_state::DeploymentConfigState;
 use crate::deployment_request::DeploymentRequest;
+use machine_violations::MachineViolations;
 
 /// A [`DeploymentRequest`] whose PURE guards have been checked.
 ///
@@ -158,6 +160,8 @@ pub fn validate_configuration(
         crate::config_state::trust_revocation::classify_and_validate(config);
     let (admission, admission_violations) =
         crate::config_state::admission::classify_and_validate(config);
+    let (authorization, authorization_violations) =
+        crate::config_state::authorization::classify_and_validate(config);
     let (channel_binding, binding_violations) =
         crate::config_state::transport::classify_and_validate_binding(config);
     let (crl_revocation, crl_violations) =
@@ -198,6 +202,7 @@ pub fn validate_configuration(
     );
     let decided = MachineViolations {
         admission: admission_violations,
+        authorization: authorization_violations,
         channel_binding: binding_violations,
         continuation_control: continuation_violations,
         crl_revocation: crl_violations,
@@ -248,6 +253,9 @@ pub fn validate_configuration(
     let Some(admission) = admission else {
         return Err(unrecognised("admission"));
     };
+    let Some(authorization) = authorization else {
+        return Err(unrecognised("authorization"));
+    };
     let Some(custody) = custody else {
         return Err(unrecognised("custody"));
     };
@@ -270,6 +278,7 @@ pub fn validate_configuration(
         crate::config_state::RecognisedStates {
             admission,
             audit,
+            authorization,
             channel_binding,
             client_credential_window,
             freshness,
@@ -293,25 +302,6 @@ pub fn validate_configuration(
     ))
 }
 
-/// What the two passes decided, kept apart by owner so the clause list can splice each
-/// where it has always been read.
-struct MachineViolations {
-    admission: Vec<String>,
-    channel_binding: Vec<String>,
-    continuation_control: Vec<String>,
-    crl_revocation: Vec<String>,
-    custody: Vec<String>,
-    delegated_signing: Vec<String>,
-    freshness: Vec<String>,
-    replay: Vec<String>,
-    trust_document: Vec<String>,
-    client_credential_window: Vec<String>,
-    server_identity: Vec<String>,
-    tls_custody: Vec<String>,
-    trust_revocation: Vec<String>,
-    cross: crate::config_state::cross_machine::CrossMachineViolations,
-}
-
 /// The clause list, in the order an operator reads it.
 ///
 /// Nothing here decides anything about a machine that has one: `decided` arrives already
@@ -332,6 +322,9 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // Third instance of the same shape. This one was not a bypass — the composition root
     // refused it too — but it was stated twice, in two places, with two messages.
     violations.extend(residue::authz_profile_violations(config));
+    // The `Authorization` machine, immediately after the selector's own refusal: an
+    // operator who set a decision parameter beside no authority reads both facts together.
+    violations.extend(decided.authorization);
     // X2b — TlsCustody × Tls. A delegated handshake key and an exported copy of it are
     // contradictory rather than redundant, and the contradiction is between two machines,
     // so it is decided in pass 2 and only placed here.

@@ -22,13 +22,15 @@ use crate::communication_assurance::RequestPeerBindingFacts;
 /// still runs, still reads the action coordinate, and reports
 /// [`AuthorizationPosture::NoPolicyConfigured`] — never an allow.
 ///
-/// A production mechanism exists — [`PdpDecisionEvaluator`](super::pdp::PdpDecisionEvaluator),
-/// ADR-MCPRE-065 §8 — but **no configuration installs it**. The composition root
-/// (`app::run_validated`) never calls
-/// [`with_authorization`](crate::HttpProfileProxy::with_authorization), so this seam is
-/// reachable only by a caller that constructs an evaluator itself. `--authz reference`
-/// remains refused by Layer-A validation, and it names the retired reference profile rather
-/// than this one. A test needing an allow path does not promote one to production authority.
+/// The production mechanism is [`PdpDecisionEvaluator`](super::pdp::PdpDecisionEvaluator)
+/// (ADR-MCPRE-065 §8), and `--authz pdp-decision` installs it: the composition root builds
+/// it in [`capability`](super::capability) and attaches it through
+/// [`with_authorization`](crate::HttpProfileProxy::with_authorization). A deployment that
+/// selects nothing holds `None` here.
+///
+/// `--authz reference` remains refused by Layer-A validation; it names the retired
+/// object-carrier profile, not this one. A test evaluator is not thereby promoted to
+/// production authority either: the only production producer is the capability.
 #[derive(Default, Clone)]
 pub(crate) struct AuthorizationStage {
     evaluator: Option<Arc<dyn AuthorizationEvaluator>>,

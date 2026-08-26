@@ -67,44 +67,9 @@
 //! the moment an operator most needs it. The emission ORDER is therefore the decision
 //! order, and it is observable behavior (ADR-MCPRE-056 §K1).
 
-/// An optional capability whose presence or absence changes what this deployment
-/// enforces, stores or attributes.
-///
-/// A seam belongs here when an operator can be surprised by it being off. Capabilities
-/// that are always on, and configuration that only tunes an always-on capability, do
-/// not — this is the set of *questions a transcript reader can have*, not an inventory
-/// of flags.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Seam {
-    /// ADR-MCPS-035: the per-request accepted/rejected/signed attribution record.
-    SecurityAuditRecord,
-    /// ADR-MCPRE-054: retention of the full request and response of accepted calls.
-    EvidenceRetention,
-    /// #415 §10: whether the PEP writes its resolved actor into the forwarded body.
-    VerifiedContextCarrier,
-    /// §4.1: required MCP transport headers and `Mcp-Name` / `params.name` agreement.
-    McpTransportContract,
-    /// #4030: online OCSP client-certificate revocation.
-    OnlineOcspClientRevocation,
-    /// ADR-MCPS-047: the shared store that makes multi-round-trip flows cross-replica.
-    MrtrContinuationStore,
-    /// MCPRE-493 §7: the admission-currency gate over the shared authoritative record.
-    AdmissionCurrency,
-}
+mod seam;
 
-impl Seam {
-    /// Every seam, in no particular order — `assert_complete` checks membership, and
-    /// the transcript order is the decision order at the call sites.
-    pub const ALL: &'static [Seam] = &[
-        Seam::SecurityAuditRecord,
-        Seam::EvidenceRetention,
-        Seam::VerifiedContextCarrier,
-        Seam::McpTransportContract,
-        Seam::OnlineOcspClientRevocation,
-        Seam::MrtrContinuationStore,
-        Seam::AdmissionCurrency,
-    ];
-}
+pub use seam::Seam;
 
 /// Whether a seam is running, and the operator-facing line that says so.
 ///

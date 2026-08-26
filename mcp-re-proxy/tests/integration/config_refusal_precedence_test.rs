@@ -147,8 +147,8 @@ fn the_boundary_refuses_in_this_order() {
     // fixture can only provoke the value's own clause. The dangling clause needs a mode
     // that reads none, and is pinned in `the_trust_and_fleet_clauses_keep_their_places`.
     config.ocsp_responder_url = Some(String::new());
-    config.revocation_list_paths = vec!["/deny.json".to_string()];
-    config.authz = AuthzKind::Reference;
+    config.authorization.revocation_list_paths = vec!["/deny.json".to_string()];
+    config.authorization.kind = AuthzKind::Reference;
     config.pkcs11_tls_key_label = Some("tls".to_string()); // with tls_key set: XOR violated
     config.target_uri = String::new();
     config.trust_domain = String::new();
@@ -296,7 +296,7 @@ fn the_trust_and_fleet_clauses_keep_their_places() {
 #[test]
 fn the_boundary_reports_every_violation_not_the_first() {
     let mut config = legal();
-    config.authz = AuthzKind::Reference;
+    config.authorization.kind = AuthzKind::Reference;
     config.identity_source = IdentityPolicy::CnLegacy;
     config.replay_durability_tier = None;
 

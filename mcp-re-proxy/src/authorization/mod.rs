@@ -59,13 +59,17 @@
 //! requirement here. No Biscuit, UCAN, OPA or Cedar is in this tree. The mechanism chosen
 //! UNDER this architecture is the carried PDP decision ([`pdp`], ADR-MCPRE-065 §8).
 //!
-//! What is absent is its INSTALLATION: no configuration value selects it, and the
-//! composition root never attaches an evaluator, so every deployment serves with
-//! [`AuthorizationPosture::NoPolicyConfigured`] — which claims nothing, and is not an allow.
+//! It is INSTALLED by configuration: `--authz pdp-decision` builds it in [`capability`]
+//! from the deployment's accepted scope, staleness bound and `authorization-issuer` trust
+//! material, and the composition root attaches it. A deployment that selects nothing serves
+//! at [`AuthorizationPosture::NoPolicyConfigured`] — which claims nothing, and is not an
+//! allow — and one that selects the authority has left that posture for good: §7.1 gives
+//! authorization three postures, and *configured but not enforced here* is not among them.
 
 #[cfg(test)]
 pub(crate) mod action_harness;
 pub mod audit;
+pub(crate) mod capability;
 pub mod decide;
 pub(crate) mod dispatch;
 pub mod evaluator;

@@ -23,9 +23,9 @@
 //! this tree and no dependency to preserve.
 //!
 //! The mechanism chosen UNDER this architecture is the carried PDP decision
-//! ([`super::pdp`], ADR-MCPRE-065 §8). It implements this trait and is enforced end to end
-//! by the serving controls — but no configuration constructs it, so a deployment installs
-//! nothing today.
+//! ([`super::pdp`], ADR-MCPRE-065 §8). It implements this trait, and `--authz pdp-decision`
+//! installs it at the composition root — so a deployment can select it, and one that does
+//! refuses any request no decision permits.
 //!
 //! A deployment that attaches no evaluator is not authorizing anything, and
 //! [`AuthorizationPosture`](super::posture::AuthorizationPosture) says exactly that rather

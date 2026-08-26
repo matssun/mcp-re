@@ -340,7 +340,7 @@ fn a_programmatic_config_cannot_carry_a_deny_list_nothing_enforces() {
 
     // What an in-code caller can write; `parse_args` refuses the flag, so this is the only
     // shape the configuration can take.
-    config.revocation_list_paths = vec!["/tmp/deny-list.json".to_string()];
+    config.authorization.revocation_list_paths = vec!["/tmp/deny-list.json".to_string()];
 
     let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
         .expect_err("a revocation control nothing enforces must be refused however it was built");
@@ -374,7 +374,7 @@ fn a_programmatic_config_cannot_enable_an_unaccepted_authz_profile() {
     let m = serving_fixtures::write_material();
     let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
 
-    config.authz = mcp_re_proxy::deployment_request::AuthzKind::Reference;
+    config.authorization.kind = mcp_re_proxy::deployment_request::AuthzKind::Reference;
 
     let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
         .expect_err("an unaccepted authorization profile must be refused however it was built");
@@ -1174,5 +1174,150 @@ fn a_programmatic_config_cannot_mint_an_unboundedly_long_lived_delegated_credent
     assert!(
         !err.contains("refuses unsafe configuration"),
         "a TTL at the ceiling is admissible and must not be refused, got: {err}"
+    );
+}
+
+// --- ADR-MCPRE-065 production wiring: the authority the composition root installs -----
+//
+// These drive `app::run`, which is the point: the mechanism, the serving stage and the
+// end-to-end controls all existed before this slice, and none of them said whether a
+// DEPLOYMENT could select the mechanism. That question is only answerable here.
+
+/// A trust document carrying one authorization authority beside the request signer.
+///
+/// Written by the test rather than by `serving_fixtures`, because the enrolment is the
+/// subject: the slot is what separates a key that signs requests from a key that decides
+/// permission, and a fixture that always carried both would prove neither.
+fn trust_with_authority(m: &Material, authority_slot: bool) -> std::path::PathBuf {
+    let signer = std::fs::read_to_string(&m.trust_path).expect("the fixture trust file");
+    let mut entries: Vec<serde_json::Value> =
+        serde_json::from_str(&signer).expect("the fixture trust file is an array");
+    let key = mcp_re_core::SigningKey::from_seed_bytes(&[42u8; 32])
+        .public_key()
+        .to_b64url();
+    let slots = if authority_slot {
+        vec!["authorization-issuer"]
+    } else {
+        vec!["request"]
+    };
+    entries.push(serde_json::json!({
+        "signer": "did:example:pdp",
+        "key_id": "pdp-1",
+        "public_key": key,
+        "slots": slots,
+    }));
+    let path = std::env::temp_dir().join(format!(
+        "mcp-re-authz-trust-{}-{}.json",
+        u8::from(authority_slot),
+        std::process::id()
+    ));
+    std::fs::write(&path, serde_json::to_vec(&entries).expect("serialize")).expect("write");
+    path
+}
+
+/// The PDP flags a deployment that enforces authorization supplies.
+fn pdp_flags(trust: &std::path::Path) -> Vec<String> {
+    [
+        "--authz",
+        "pdp-decision",
+        "--authz-decision-scope",
+        "principal",
+        "--authz-max-decision-age-secs",
+        "600",
+        "--trust",
+        &trust.to_string_lossy(),
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+/// A deployment can now SELECT the authorization authority, and the transcript says so.
+///
+/// Before this slice every deployment reported the same posture whatever it configured,
+/// because no configuration reached `with_authorization` at all.
+#[test]
+fn a_deployment_can_install_the_authorization_authority_and_the_transcript_declares_it() {
+    let m = serving_fixtures::write_material();
+    let trust = trust_with_authority(&m, true);
+    let mut args = base_args(&m);
+    args.extend(pdp_flags(&trust));
+    let t = startup_transcript::capture(&args);
+    let _ = std::fs::remove_file(&trust);
+
+    assert!(
+        t.has(&startup_transcript::StartupEvent::Authorization { enforced: true }),
+        "an installed authority must be declared:\n{}",
+        t.dump()
+    );
+}
+
+/// A deployment that installs nothing declares that too, rather than staying silent.
+///
+/// The seam is only honest if BOTH answers are stated: a transcript that mentions
+/// authorization only when it is on lets an operator read its absence as an oversight in
+/// the logging rather than as the deployment's actual posture.
+#[test]
+fn a_deployment_with_no_authority_declares_the_off_posture() {
+    let m = serving_fixtures::write_material();
+    let t = startup_transcript::capture(&base_args(&m));
+
+    assert!(
+        t.has(&startup_transcript::StartupEvent::Authorization { enforced: false }),
+        "the OFF posture must be declared, not omitted:\n{}",
+        t.dump()
+    );
+}
+
+/// A configured profile with no enrolled authority fails closed at BOOT.
+///
+/// Such a deployment would refuse every call while its transcript announced enforcement.
+/// Refusing at startup is the difference between an operator reading one diagnostic and an
+/// operator debugging a fleet that 403s everything.
+#[test]
+fn a_configured_profile_with_no_enrolled_authority_refuses_to_start() {
+    let m = serving_fixtures::write_material();
+    // The same key, enrolled for the REQUEST slot: present in the file, and not an
+    // authority. This is the shape that would silently "work" if the slot were ignored.
+    let trust = trust_with_authority(&m, false);
+    let mut args = base_args(&m);
+    args.extend(pdp_flags(&trust));
+    let t = startup_transcript::capture(&args);
+    let _ = std::fs::remove_file(&trust);
+
+    let startup_transcript::Outcome::Exited { success, refused } = &t.outcome else {
+        panic!(
+            "a profile with no authority must exit, not serve:\n{}",
+            t.dump()
+        );
+    };
+    assert!(!success, "startup must fail:\n{}", t.dump());
+    let refused = refused.as_deref().unwrap_or_default();
+    assert!(
+        refused.contains("authorization-issuer"),
+        "the refusal must name the slot the operator has to fill, got: {refused}"
+    );
+}
+
+/// A decision parameter beside no authority is refused at the validation boundary.
+///
+/// `authorization` is a public `DeploymentRequest` field, so this drives `app::run` rather
+/// than the parser: a caller that never meets a parser must meet the same rule.
+#[test]
+fn a_programmatic_config_cannot_carry_a_decision_scope_that_selects_nothing() {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    let m = serving_fixtures::write_material();
+    let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
+    config.authorization.decision_scope =
+        Some(mcp_re_http_profile::pdp_decision::DecisionScope::Principal);
+
+    let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
+        .expect_err("a parameter that selects nothing must be refused however it was built");
+
+    assert!(
+        err.contains("--authz-decision-scope"),
+        "the refusal must name the offending setting, got: {err}"
     );
 }

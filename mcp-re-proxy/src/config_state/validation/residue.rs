@@ -73,7 +73,7 @@ fn target_uri_violation(uri: &str) -> Option<String> {
 /// - the reference profile is a CONFORMANCE implementation, never accepted as the production
 ///   authority (ADR-MCPS-013), and it was bound to the object carrier ADR-MCPRE-050 retired;
 /// - it names no mechanism this build can install: the production mechanism is the carried
-///   PDP decision (ADR-MCPRE-065 §8), which no configuration value selects today.
+///   PDP decision (ADR-MCPRE-065 §8), which `--authz pdp-decision` selects instead.
 ///
 /// Either alone is sufficient to refuse. A configured policy that would silently not
 /// enforce is the forbidden-claim shape (security-boundary §2).
@@ -88,8 +88,8 @@ fn unaccepted_authz_profile_refusal(authz: AuthzKind) -> Option<String> {
         "--authz reference selects the reference/conformance signed-authorization \
          profile, which is NOT accepted as the production authorization authority \
          (ADR-MCPS-013) and was bound to the object carrier this release retired. The \
-         production mechanism is the carried PDP decision (ADR-MCPRE-065), which this \
-         value does not select and which no configuration installs today. Run --authz off."
+         production mechanism is the carried PDP decision, selected with \
+         --authz pdp-decision (ADR-MCPRE-065). Run that, or --authz off."
             .to_string()
     })
 }
@@ -193,7 +193,7 @@ pub(super) fn ocsp_responder_url_violations(config: &DeploymentRequest) -> Vec<S
 /// **Why no narrower owner.** A LOCAL degenerate-posture refusal. X6 mentions `Authz` only because `Authz` is degenerate; colocating there would let a local refusal acquire cross-machine relation semantics.
 pub(super) fn authz_profile_violations(config: &DeploymentRequest) -> Vec<String> {
     let mut out = Vec::new();
-    if let Some(refusal) = unaccepted_authz_profile_refusal(config.authz) {
+    if let Some(refusal) = unaccepted_authz_profile_refusal(config.authorization.kind) {
         out.push(refusal);
     }
     out

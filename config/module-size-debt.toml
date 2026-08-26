@@ -597,12 +597,6 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-proxy/src/startup_posture.rs"
-baseline_prod_loc = 233
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
 # The RFC 8410 Ed25519 invariant left for its owner; what remains is the facade rendering
 # that owner's refusal into the KMS key vocabulary.
 path = "mcp-re-proxy/src/kms_keysource.rs"
