@@ -138,3 +138,17 @@ graph BT
     THM_0025 --> THM_0026
     THM_0026 --> THM_0027
 ```
+
+## Component 12
+
+```mermaid
+graph BT
+    THM_0035["THM-0035<br/>A successfully classified trust-revocation state carries the witnesses its own state form requires"]
+    THM_0036["THM-0036<br/>A networked trust-epoch source is handed over as a paired locator and key, or not at all"]
+    THM_0037["THM-0037<br/>A trust plan's reload cadence is a projection of the revocation posture, never a second value"]
+    THM_0038["THM-0038<br/>The composition root consumes trust as owner projections and re-reads no trust field from the request"]
+    THM_0035 --> THM_0036
+    THM_0035 --> THM_0037
+    THM_0035 --> THM_0038
+    THM_0037 --> THM_0038
+```

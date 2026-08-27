@@ -44,6 +44,9 @@ attestations this view cannot see.
 | unit://proxy.request_peer_binding | source, contracts or evidence | THM-0034 | _no consumer_ |
 | unit://proxy.runtime_lifecycle | source, contracts or evidence | THM-0012 | _no consumer_ |
 | unit://proxy.tls_listener_state | source, contracts or evidence | _no theorem_ | proxy.credential_currency (COMPILE_DEPENDENCY) |
+| unit://proxy.trust_composition_root | source, contracts or evidence | THM-0038 | _no consumer_ |
+| unit://proxy.trust_configuration_state | source, contracts or evidence | THM-0035, THM-0036 | _no consumer_ |
+| unit://proxy.trust_plan | source, contracts or evidence | THM-0037 | _no consumer_ |
 
 ## Theorems
 
@@ -82,6 +85,10 @@ attestations this view cannot see.
 | THM-0032 | statement, consequence, scope or review requirement | specification review | THM-0033 |
 | THM-0033 | statement, consequence, scope or review requirement | specification review | THM-0034 |
 | THM-0034 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0035 | statement, consequence, scope or review requirement | specification review | THM-0036, THM-0037, THM-0038 |
+| THM-0036 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0037 | statement, consequence, scope or review requirement | specification review | THM-0038 |
+| THM-0038 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 
 ## Assumptions
 
