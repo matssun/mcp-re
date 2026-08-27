@@ -369,6 +369,8 @@ _PROXY_LIB_SRCS = [
     # MCPS-84 (ADR-MCPS-049 W2): trust-epoch invalidation source (Redis reader is
     # redis_replay-gated inside the module).
     "src/trust_epoch.rs",
+    # MCPRE-148: the trust plan lives with its owner; `startup_plan` re-exports it.
+    "src/trust_plan.rs",
 ]
 
 # ADR-MCPRE-051 (MCPRE-118): the async serving path is now UNCONDITIONAL — the proxy

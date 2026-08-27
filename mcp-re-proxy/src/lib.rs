@@ -296,10 +296,10 @@ pub mod continuation_store;
 pub mod redis_admission_source;
 #[cfg(feature = "redis_replay")]
 pub mod redis_continuation_store;
-// MCPS-84 (ADR-MCPS-049 W2): trust-epoch invalidation source for the ADR-021 Push
-// tier. Core epoch->event logic is always compiled (and unit-tested); the Redis
-// reader is `redis_replay`-gated inside the module.
+// trust_epoch: core epoch->event logic always compiled, Redis reader `redis_replay`-gated
+// inside. trust_plan: the trust subtree's own projection of its validated state (MCPRE-148).
 pub mod trust_epoch;
+pub mod trust_plan;
 // ADR-MCPS-021: bounded trust-propagation cache (Tier 1). Caching is a caller
 // concern (mcp-re-core does not cache); this wraps the injected TrustResolver with
 // the bounded-`T` window + negative-cache classification + fail-closed rules.
