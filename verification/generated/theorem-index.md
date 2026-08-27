@@ -50,6 +50,10 @@ derives, and it is not shown here because this view cannot see the attestations.
 | THM-0032 | Per-request credential currency is decided from the credential the mechanism accepted, and reports which of its five facts refused | proxy.credential_currency | unit://proxy.credential_currency | live |
 | THM-0033 | A current authenticated peer's currency is evaluated against the credential that same peer authenticated with | proxy.current_authenticated_peer | unit://proxy.current_authenticated_peer | live |
 | THM-0034 | A request is bound to its relationship by relating the authenticated peer to the resolved actor's SUBJECT, never to the composite actor id | proxy.request_peer_binding | unit://proxy.request_peer_binding | live |
+| THM-0035 | A successfully classified trust-revocation state carries the witnesses its own state form requires | proxy.trust_configuration_state | unit://proxy.trust_configuration_state | live |
+| THM-0036 | A networked trust-epoch source is handed over as a paired locator and key, or not at all | proxy.trust_configuration_state | unit://proxy.trust_configuration_state | live |
+| THM-0037 | A trust plan's reload cadence is a projection of the revocation posture, never a second value | proxy.trust_plan | unit://proxy.trust_plan | live |
+| THM-0038 | The composition root consumes trust as owner projections and re-reads no trust field from the request | proxy.trust_composition_root | unit://proxy.trust_composition_root | live |
 
 ## Claims in full
 
@@ -422,3 +426,49 @@ derives, and it is not shown here because this view cannot see the attestations.
 **Review requirement.** Owner security-specification review
 
 **Depends on.** THM-0031, THM-0033
+
+### THM-0035 — A successfully classified trust-revocation state carries the witnesses its own state form requires
+
+**Statement.** If `config_state::trust_revocation::classify_and_validate` returns a state, then for the deployment supplied: the state form was reachable under the request, and every witness that form's Required column names is HELD BY THE STATE rather than left in the request beside it. Three of the four forms require a reload cadence, so those three cannot be constructed without one. `BoundedCache` carries the cadence as an `Option` because its column makes the cadence optional, and the ABSENCE is itself a sub-posture rather than a missing value. The state is the only route to these facts. There is no public constructor that takes the witnesses directly, so possessing the state means the classification ran.
+
+**Security consequence.** Planning cannot project "read the document once at startup" from a tier whose whole claim is that the store is re-read. That projection would silently contradict the revocation posture an operator selected: a key removed from the trust document would keep resolving until every replica restarted, while the deployment reported the tier that promises otherwise. A zero cadence — a spinning reloader — is refused in every state form rather than in the parser alone, so a programmatically built request cannot reach it either.
+
+**Scope — what this does NOT establish.** It says NOTHING about the trust document itself: not that the locator names an existing file, not that the file is readable, not that it parses, and not that it holds any key this deployment would trust. Those are observations, and they belong to materialization. It does not establish that the cadence is HONOURED at runtime — only that the state carries one and that the value is legal. Whether a reloader actually re-reads on that cadence is the trust plane's, and is outside this claim. It is not a claim about revocation REACHING a peer. A cadence bounds how stale the local document may be; it says nothing about propagation to other replicas, which is the epoch mechanism's concern (THM-0036) and is separately unproved end to end.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0036 — A networked trust-epoch source is handed over as a paired locator and key, or not at all
+
+**Statement.** If `TrustRevocationState::epoch_source` returns a source, then for the state supplied: both the counter's locator and the key holding it are present, both were validated together, and both are projected together by `EpochSource`. Neither half is separately reachable. `EpochSource` borrows the state and exposes `url()` and `key()`; there is no path that yields one without the other, and no public constructor that assembles one from parts. The key is resolved against its default HERE, once. Two consumers — the trust cache and delegated signing — read the same resolved value rather than each defaulting for itself.
+
+**Security consequence.** A counter read from the right store under the wrong key reports an epoch that never advances: a revocation channel that silently stops revoking while reporting itself configured. Pairing the two makes that combination unconstructible rather than merely unlikely. Two consumers defaulting the key independently agreed only because they happened to spell the same fallback. Nothing made them, and a deployment could have had its trust cache watching one key while delegated signing minted under another.
+
+**Scope — what this does NOT establish.** It does not establish that the counter EXISTS at that locator, that the store is reachable, that the key holds a number, or that anything ever increments it. The source is a validated request fact, not an observation. It does not establish that a build can USE the source. A configured Redis epoch source in a build without the `redis_replay` feature is refused at planning by `TrustEpochPlan::unsupported_by_build`, which is a layer-B fact and outside this claim. It says nothing about propagation LATENCY, nor that an operator's increment reaches every replica within any bound.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0035
+
+### THM-0037 — A trust plan's reload cadence is a projection of the revocation posture, never a second value
+
+**Statement.** For every `TrustPlan`, `reload()` is DERIVED from the plan's own revocation state on demand. This is a structural claim about the representation, and the operative fact is an ABSENCE: `TrustPlan` has no reload field. There is nothing to set, nothing to copy, and no constructor, builder or projection through which a caller could supply a cadence beside a state that disagrees with it. Deleting a check elsewhere cannot bring a contradictory inhabitant into existence, because the contradictory inhabitant is not representable. The plan likewise cannot become the authority for the two values it is HANDED — the response issuer kid and the shared epoch mechanism. Both are constructor arguments, and a plan built with a value the configuration does not name carries that value, which is only possible because nothing inside re-derives them (CF-09).
+
+**Security consequence.** A stored copy is a second value that can disagree with the first, and this one had already drifted: a test fixture named a 30-second reload beside a state carrying 5. A consumer reading the copy would act on a cadence the revocation posture never authorized — reporting a tier that promises frequent re-reads while re-reading on someone else's schedule. Because the plan cannot re-derive the issuer kid, a deployment cannot be told it is chaining to one issuer while another is excluded from the request-signer set.
+
+**Scope — what this does NOT establish.** It does not establish that any reload HAPPENS, on that cadence or at all. `reload()` reports what the posture decided; performing it is the trust plane's, and a plane that never re-reads would not violate this claim. It does not establish anything about the trust document — see THM-0035's scope. A plan holds a locator; it does not know whether the locator names a file. It does not establish that the epoch mechanism it carries WORKS, only that the plan did not invent it.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0035
+
+### THM-0038 — The composition root consumes trust as owner projections and re-reads no trust field from the request
+
+**Statement.** After layer A has classified a deployment, the composition root reads from `ValidatedDeployment::config()` only fields on a pinned inventory of ORDINARY validated parameters — ones whose value, changing while every owner state stays unchanged, cannot change a security-sensitive decision or effect. No trust field is on that inventory. The trust locator, the revocation tier, the reload cadence and the epoch coordinates all left it when they acquired owners, so trust reaches materialization only as `TrustDocumentSource`, `TrustRevocationState` and the `TrustPlan` that composes them. The evidence is a source-text inventory checked against the file it describes, and its own detection is part of what is measured: the guard includes a control that a NEW raw read would fail it. A rule that cannot detect the thing it forbids passes vacuously.
+
+**Security consequence.** The original request stops being a semantic authority once it has been classified. Without this, a consumer could re-derive a trust posture from the raw request and reach a different answer than the one layer A established — the same fact with two authorities, which is what CF-09 exists to prevent — and the disagreement would be invisible because both readings would look principled.
+
+**Scope — what this does NOT establish.** It is narrow in three ways, and each matters. It claims nothing else about `app.rs`. The composition root has other responsibilities and this theorem reaches none of them; it is a statement about trust consumption only. It is a SOURCE-TEXT property, not a runtime one. It establishes which fields the root reads in the code as written, not that any particular execution took a particular value. A raw read introduced through an alias, a helper in another file, or a macro is outside what the guard measures. It does not establish that PLANES do not reach back — that is a different failure with its own control (`plane_config_reachback_test`), because the root is entitled to read the request and a plane is not. And it establishes nothing about the trust document's existence or contents.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0035, THM-0037

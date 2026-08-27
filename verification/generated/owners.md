@@ -40,3 +40,6 @@ not an omission to hide.
 | proxy.request_peer_binding | V0 | THM-0034 | 0 |
 | proxy.runtime_lifecycle | V0 | THM-0012 | 0 |
 | proxy.tls_listener_state | V0 | _none_ | 0 |
+| proxy.trust_composition_root | V0 | THM-0038 | 0 |
+| proxy.trust_configuration_state | V0 | THM-0035, THM-0036 | 0 |
+| proxy.trust_plan | V0 | THM-0037 | 0 |
