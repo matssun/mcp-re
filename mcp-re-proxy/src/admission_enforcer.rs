@@ -1,18 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The §7 admission gate's collaborators — ADR-MCPRE-053.
+//! The §7 admission gate — ADR-MCPRE-053.
 //!
-//! Moved out of `http_profile_serve` by ADR-MCPRE-064 Slice 5. The serving file holds the
-//! PIPELINE — the ordered stages and the exchange machine that governs them — and this is
-//! not a stage. It is the deployment's admission posture and the degraded-window arithmetic
-//! over it: a cohesive unit with its own name, its own invariant, and no dependence on the
+//! Not a serving stage: this is the deployment's admission posture and the degraded-window
+//! arithmetic over it, with its own name, its own invariant, and no dependence on the
 //! request being served.
 //!
-//! The split is the threshold rule working as intended. Slice 5 needed a handful of
-//! production lines in the serving file to carry the binding prerequisite, the file is a
-//! documented ADR-MCPRE-061 §14 exception already at its debt baseline, and a ratcheted file
-//! may not grow whatever its status. The choice was decompose or strip the reasoning out of
-//! the comments to fit a number — and the latter is exactly the distortion the rule exists
-//! to prevent.
+//! The four collaborators enter through [`AdmissionEnforcer::new`], the representation is
+//! private, and the degraded-window arithmetic has no caller outside this module: holding
+//! an enforcer means holding a gate that never treated its own startup as a confirmation.
 
 use std::sync::Arc;
 
@@ -36,18 +31,19 @@ pub enum AdmissionEnforcement {
 }
 
 /// The §7 admission gate's collaborators, held together because none of them is
-/// meaningful alone.
+/// meaningful alone. The representation is private, so [`AdmissionEnforcer::new`] is the
+/// only producer.
 pub(crate) struct AdmissionEnforcer {
     /// The authoritative state this PEP consults per call.
-    pub(crate) source: Arc<dyn AsyncAdmissionSource>,
+    source: Arc<dyn AsyncAdmissionSource>,
     /// The N/P/TTL freshness budget and the degraded-mode opt-in (§5.2).
-    pub(crate) policy: AdmissionPolicy,
+    policy: AdmissionPolicy,
     /// What an admission-free request means here.
-    pub(crate) enforcement: AdmissionEnforcement,
+    enforcement: AdmissionEnforcement,
     /// Resolves an assertion's `issuer_kid` to the admission authority's root key.
     /// A kid never introduces trust: an assertion signed by an unresolvable issuer
     /// is refused, exactly as an unknown request keyid is.
-    pub(crate) resolve_authority: AdmissionAuthorityResolver,
+    resolve_authority: AdmissionAuthorityResolver,
     /// When the authoritative source was last READ successfully, in unix seconds.
     ///
     /// P bounds how long this PEP may serve on last-known state while the authority is
@@ -61,11 +57,30 @@ pub(crate) struct AdmissionEnforcer {
     ///
     /// `i64::MIN` until the first successful read: a replica that has never reached the
     /// authority has no last-known state to serve on, so it fails closed rather than
-    /// treating startup as a confirmation.
-    pub(crate) last_authoritative_read: std::sync::atomic::AtomicI64,
+    /// treating startup as a confirmation. The sole producer establishes it, so it
+    /// holds for every enforcer that exists rather than for the ones built correctly.
+    last_authoritative_read: std::sync::atomic::AtomicI64,
 }
 
 impl AdmissionEnforcer {
+    /// Assemble the gate from its four collaborators. The fifth field is not one of
+    /// them: a caller able to supply `last_authoritative_read` could hand a fresh replica
+    /// a degraded window it never earned.
+    pub(crate) fn new(
+        source: Arc<dyn AsyncAdmissionSource>,
+        policy: AdmissionPolicy,
+        enforcement: AdmissionEnforcement,
+        resolve_authority: AdmissionAuthorityResolver,
+    ) -> Self {
+        Self {
+            source,
+            policy,
+            enforcement,
+            resolve_authority,
+            last_authoritative_read: std::sync::atomic::AtomicI64::new(i64::MIN),
+        }
+    }
+
     /// Decide §7 admission for one verified request.
     ///
     /// `Ok(())` means this deployment accepts the admission the call acts under, or that a
@@ -154,7 +169,7 @@ impl AdmissionEnforcer {
     /// Note that the authoritative record was read at `now`.
     ///
     /// A definitive negative counts: the authority answered, which is what P measures.
-    pub(crate) fn record_authoritative_read(&self, now: i64) {
+    fn record_authoritative_read(&self, now: i64) {
         self.last_authoritative_read
             .fetch_max(now, std::sync::atomic::Ordering::Relaxed);
     }
@@ -163,7 +178,7 @@ impl AdmissionEnforcer {
     ///
     /// True also when it has never been reachable, and whenever degraded mode is not
     /// enabled at all — in both cases there is no window to be inside of.
-    pub(crate) fn degraded_window_exhausted(&self, now: i64) -> bool {
+    fn degraded_window_exhausted(&self, now: i64) -> bool {
         if !self.policy.allow_degraded_mode {
             return true;
         }
@@ -178,5 +193,79 @@ impl AdmissionEnforcer {
                 .policy
                 .degraded_propagation_bound
                 .saturating_add(self.policy.max_clock_skew)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Every enforcer under test is built the only way one can be built, so these
+    // assertions are about the type rather than about a representation assembled here.
+    fn enforcer(bound: i64, skew: i64, allow_degraded: bool) -> AdmissionEnforcer {
+        AdmissionEnforcer::new(
+            Arc::new(crate::admission_source::InMemoryAdmissionSource::new()),
+            AdmissionPolicy {
+                max_assertion_age: 300,
+                max_clock_skew: skew,
+                degraded_propagation_bound: bound,
+                allow_degraded_mode: allow_degraded,
+            },
+            AdmissionEnforcement::Required,
+            Arc::new(|_kid: &str| None),
+        )
+    }
+
+    /// A replica that has never reached the authority has no last-known state to serve
+    /// on, so startup is not a confirmation.
+    #[test]
+    fn a_replica_that_never_reached_the_authority_has_no_window() {
+        assert!(enforcer(60, 5, true).degraded_window_exhausted(1_000));
+    }
+
+    /// R7-C093: the degraded window is elapsed OUTAGE time, not assertion freshness.
+    ///
+    /// The revocation channel is the store, so during a store outage the issuer never
+    /// learns of a revocation and keeps minting assertions with a current `iat`. A
+    /// caller that simply keeps fetching them was therefore served for the whole
+    /// outage, however long, while the operator was told degraded serving is bounded
+    /// by P. Nothing the caller can do moves this clock.
+    #[test]
+    fn the_degraded_window_closes_p_after_the_last_successful_read() {
+        let enforcer = enforcer(60, 5, true);
+        enforcer.record_authoritative_read(1_000);
+
+        assert!(
+            !enforcer.degraded_window_exhausted(1_060),
+            "inside P + skew the last-known state is still usable"
+        );
+        assert!(
+            !enforcer.degraded_window_exhausted(1_065),
+            "the skew allowance is on the same clock"
+        );
+        assert!(
+            enforcer.degraded_window_exhausted(1_066),
+            "past P + skew an unreachable authority fails closed, however fresh the \
+             assertion the caller presents"
+        );
+    }
+
+    /// The clock only moves forward: a stale read cannot re-open a window a later one
+    /// closed.
+    #[test]
+    fn an_out_of_order_read_does_not_rewind_the_window() {
+        let enforcer = enforcer(60, 0, true);
+        enforcer.record_authoritative_read(2_000);
+        enforcer.record_authoritative_read(1_000);
+        assert!(!enforcer.degraded_window_exhausted(2_050));
+    }
+
+    /// Degraded mode is opt-in; without it an unreachable authority fails closed at
+    /// once, whatever was last read.
+    #[test]
+    fn without_the_opt_in_there_is_no_window_at_all() {
+        let enforcer = enforcer(3_600, 30, false);
+        enforcer.record_authoritative_read(1_000);
+        assert!(enforcer.degraded_window_exhausted(1_001));
     }
 }

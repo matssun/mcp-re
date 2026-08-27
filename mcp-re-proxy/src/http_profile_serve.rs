@@ -474,13 +474,12 @@ impl HttpProfileProxy {
         enforcement: AdmissionEnforcement,
         resolve_authority: AdmissionAuthorityResolver,
     ) -> Self {
-        self.admission = Some(AdmissionEnforcer {
+        self.admission = Some(AdmissionEnforcer::new(
             source,
             policy,
             enforcement,
             resolve_authority,
-            last_authoritative_read: std::sync::atomic::AtomicI64::new(i64::MIN),
-        });
+        ));
         self
     }
 
@@ -2012,79 +2011,6 @@ fn unsigned_error(status: u16, wire_code: &str, execution: ExecutionDisposition)
             "id": serde_json::Value::Null,
         }))
         .unwrap_or_default(),
-    }
-}
-
-#[cfg(test)]
-mod admission_window_tests {
-    use super::*;
-
-    fn enforcer(bound: i64, skew: i64, allow_degraded: bool) -> AdmissionEnforcer {
-        AdmissionEnforcer {
-            source: Arc::new(crate::admission_source::InMemoryAdmissionSource::new()),
-            policy: AdmissionPolicy {
-                max_assertion_age: 300,
-                max_clock_skew: skew,
-                degraded_propagation_bound: bound,
-                allow_degraded_mode: allow_degraded,
-            },
-            enforcement: AdmissionEnforcement::Required,
-            resolve_authority: Arc::new(|_kid: &str| None),
-            last_authoritative_read: std::sync::atomic::AtomicI64::new(i64::MIN),
-        }
-    }
-
-    /// A replica that has never reached the authority has no last-known state to serve
-    /// on, so startup is not a confirmation.
-    #[test]
-    fn a_replica_that_never_reached_the_authority_has_no_window() {
-        assert!(enforcer(60, 5, true).degraded_window_exhausted(1_000));
-    }
-
-    /// R7-C093: the degraded window is elapsed OUTAGE time, not assertion freshness.
-    ///
-    /// The revocation channel is the store, so during a store outage the issuer never
-    /// learns of a revocation and keeps minting assertions with a current `iat`. A
-    /// caller that simply keeps fetching them was therefore served for the whole
-    /// outage, however long, while the operator was told degraded serving is bounded
-    /// by P. Nothing the caller can do moves this clock.
-    #[test]
-    fn the_degraded_window_closes_p_after_the_last_successful_read() {
-        let enforcer = enforcer(60, 5, true);
-        enforcer.record_authoritative_read(1_000);
-
-        assert!(
-            !enforcer.degraded_window_exhausted(1_060),
-            "inside P + skew the last-known state is still usable"
-        );
-        assert!(
-            !enforcer.degraded_window_exhausted(1_065),
-            "the skew allowance is on the same clock"
-        );
-        assert!(
-            enforcer.degraded_window_exhausted(1_066),
-            "past P + skew an unreachable authority fails closed, however fresh the \
-             assertion the caller presents"
-        );
-    }
-
-    /// The clock only moves forward: a stale read cannot re-open a window a later one
-    /// closed.
-    #[test]
-    fn an_out_of_order_read_does_not_rewind_the_window() {
-        let enforcer = enforcer(60, 0, true);
-        enforcer.record_authoritative_read(2_000);
-        enforcer.record_authoritative_read(1_000);
-        assert!(!enforcer.degraded_window_exhausted(2_050));
-    }
-
-    /// Degraded mode is opt-in; without it an unreachable authority fails closed at
-    /// once, whatever was last read.
-    #[test]
-    fn without_the_opt_in_there_is_no_window_at_all() {
-        let enforcer = enforcer(3_600, 30, false);
-        enforcer.record_authoritative_read(1_000);
-        assert!(enforcer.degraded_window_exhausted(1_001));
     }
 }
 
