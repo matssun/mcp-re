@@ -98,13 +98,51 @@ Registry: [`verification/policy/theorems.toml`](../../../verification/policy/the
 | proposition | scope | evidence/unit | status |
 |---|---|---|---|
 | No validated deployment enables online OCSP client-certificate revocation | configuration legality | THM-0013 · `unit://proxy.online_ocsp_reachability` | in registry |
-| **Successful `TrustRevocationState` construction implies its required witnesses hold** | local | sealed constructor + `classify_and_validate` | **structural, no registry entry** |
-| **Networked epoch state always carries a paired URL and key** | local | `EpochSource<'a>` projects `url()` and `key()` together; neither is separately reachable | **structural, no registry entry** |
-| **`TrustPlan` reload is a projection, never a second authority** | relation | `TrustPlan::reload()` calls `trust_reload_plan(&self.revocation)` | **structural, no registry entry** |
-| **Trust materialization consumes only owner projections** | composition | `tests/integration/composition_raw_read_test.rs` | tested, no registry entry |
-| **Verification resolves actors only through the materialized trust authority** | system | none | **gap** |
+| **Successful `TrustRevocationState` construction implies its required witnesses hold** | local | **THM-0035** · `unit://proxy.trust_configuration_state` | **in registry** |
+| **Networked epoch state always carries a paired URL and key** | local | **THM-0036** · `unit://proxy.trust_configuration_state` | **in registry** |
+| **`TrustPlan` reload is a projection, never a second authority** | relation | **THM-0037** · `unit://proxy.trust_plan` | **in registry** |
+| **Trust materialization consumes only owner projections** | composition | **THM-0038** · `unit://proxy.trust_composition_root` | **in registry** |
+| **Verification resolves actors only through the materialized trust authority** | system | none | **gap — still open** |
 
-Four of six are true by construction and unstated. `TrustRevocationState`'s sealing is the reason the first three hold; a theorem would add the *scope sentence* — what each does **not** establish — which is where this project has previously over-claimed.
+The four local and relational propositions were stated in MCPRE-146 / #582. What the entries
+added is not the truth of the properties — the sealing already gives that — but the **scope
+sentence**: what each does *not* establish. Every one of the four states, explicitly, that it
+says nothing about the trust document existing, being readable, parsing, or holding a key this
+deployment trusts. Layer A establishes legal trust **configuration**; materialization
+establishes environmental facts, and the boundary between them is now written into the claims
+rather than assumed by their readers.
+
+Two of the four are worth reading for their *shape* rather than their content:
+
+- **THM-0037's operative fact is an absence.** `TrustPlan` has no reload field, so there is
+  nothing to set and no constructor through which a caller could supply a cadence beside a
+  state that disagrees with it. The ADR-061 §11 operational test applies: deleting a check
+  elsewhere cannot bring a contradictory inhabitant into existence, because the contradictory
+  inhabitant is not representable. This one had already drifted once — a fixture naming a 30s
+  reload beside a state carrying 5s — which is why it is stated as a structural claim and not
+  a tested one.
+- **THM-0038's evidence includes its own detection.** The composition guard is a source-text
+  inventory, and `the_rule_would_catch_a_new_raw_read` is part of the declared battery: a rule
+  that cannot detect the thing it forbids passes vacuously. Its scope says plainly that it is a
+  source-text property and not a runtime one, and that a raw read reached through an alias, a
+  helper in another file, or a macro is outside what it measures.
+
+### The system-level proposition is still a gap, and was re-checked
+
+*Verification resolves actors only through the materialized trust authority* has **no theorem
+and no evidence**, re-confirmed against `main` at the time of writing. `http_profile_serve`
+takes `resolve_actor: ActorResolver` as an injected seam, `app.rs` supplies one from
+`build_actor_resolver`, and **no control in any default lane establishes that the resolver the
+serving path receives is the one the materialized trust authority produced.** The only test in
+the tree that touches `resolve_actor` at all is
+`tests/integration_ext/redis_trust_epoch_e2e_test.rs`, which requires a live Redis and is
+therefore not evidence a default lane can cite.
+
+**The four entries above do not close it, and must not be read as narrowing it.** Each is
+local, relational or composition-scoped; none reaches the wiring. Recording the obligation is
+the honest outcome — a theorem whose evidence does not exist is precisely what the registry
+exists to prevent — and closing it is implementation work that needs its own review, not a
+by-product of this one.
 
 ## 9. Test/evidence inventory
 

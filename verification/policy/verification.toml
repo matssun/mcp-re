@@ -1408,3 +1408,87 @@ tested_symbols = [
   "lib#communication_assurance::authenticated_channel_peer::tests::both_arms_agree_on_who_the_peer_is_and_disagree_on_what_was_checked",
 ]
 pilot = "verus-candidate"
+
+# ---------------------------------------------------------------------------
+# The trust subtree — MCPRE-146 / #582
+# ---------------------------------------------------------------------------
+#
+# Three units, not one, because the evidence provenance differs and the graph must not
+# look more precise than the measurement. The classifier's witnesses and the epoch pairing
+# are proved by the lib battery in `config_state`; the plan's reload projection by the lib
+# battery that moved with the type in MCPRE-148; the composition root's trust consumption
+# by a source-text guard that runs in the `integration` target and nowhere else.
+#
+# All three are class V0. There is no `ensures` over any of them: the properties are held
+# structurally — by sealed construction, by a paired projection, and by the absence of a
+# field — and by test batteries. Nothing above them may say otherwise.
+
+[[unit]]
+id = "proxy.trust_configuration_state"
+class = "V0"
+description = "The trust-revocation classifier and the trust-document locator: which revocation posture a deployment requests, which witnesses each state requires, and where the request-signer document is read from. Claims nothing about the document's existence, readability, contents, or the keys it holds — those are materialization's, not layer A's."
+paths = [
+  "mcp-re-proxy/src/config_state/trust_revocation.rs",
+  "mcp-re-proxy/src/config_state/trust_document.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/trust/revocation_state_witnesses",
+  "test://proxy/trust/epoch_source_pairing",
+]
+# No new premise. The states and the locator are classified from an already-validated
+# request; nothing here is trusted that the boundary did not establish.
+assumptions = []
+# Both directions of each witness rule: the states that REQUIRE a cadence carry one and are
+# refused without it, and the one state whose cadence is OPTIONAL keeps both postures — so
+# a green lane cannot mean the witness rule was over-applied.
+tested_symbols = [
+  "lib#config_state::trust_revocation::tests::live_and_push_require_a_cadence",
+  "lib#config_state::trust_revocation::tests::bounded_cache_does_not_require_a_cadence",
+  "lib#config_state::trust_revocation::tests::each_state_holds_the_cadence_to_the_window_it_claims",
+  "lib#config_state::trust_revocation::tests::every_legal_state_form_is_classified_and_accepted",
+  "lib#config_state::trust_revocation::tests::a_zero_cadence_is_a_spinning_reloader_in_every_state",
+  "lib#config_state::trust_revocation::tests::a_programmatic_config_cannot_spin_the_trust_reloader",
+  "lib#config_state::trust_revocation::tests::the_epoch_source_is_what_splits_push_in_two",
+  "lib#config_state::trust_revocation::tests::an_epoch_source_under_a_tier_that_cannot_consume_it_is_refused",
+  "lib#config_state::trust_revocation::tests::an_epoch_key_without_an_epoch_store_is_refused",
+  "lib#config_state::trust_revocation::tests::push_networked_requires_its_url_to_be_a_url",
+  "lib#config_state::trust_document::tests::a_locator_that_names_nothing_resolves_no_source",
+  "lib#config_state::trust_document::tests::the_stored_path_is_the_operators_string_verbatim",
+  "lib#config_state::trust_document::tests::the_public_constructor_validates_too",
+]
+
+[[unit]]
+id = "proxy.trust_plan"
+class = "V0"
+description = "The trust subtree's projection of its own validated state: the classified revocation posture, the document locator, the excluded response issuer, and the shared epoch mechanism it is HANDED. Its reload cadence is derived from the posture rather than stored, so no second reload value exists to disagree with the first."
+paths = ["mcp-re-proxy/src/trust_plan.rs"]
+exported_contracts = []
+evidence = ["test://proxy/trust/reload_is_a_projection"]
+assumptions = []
+# The reload rule in both directions, plus the CF-09 property that the shared values are
+# INPUTS: a plan built with a value the configuration does not name carries that value,
+# which is only possible because nothing inside re-derives it.
+tested_symbols = [
+  "lib#trust_plan::tests::a_reload_bearing_state_cannot_be_projected_to_read_once",
+  "lib#trust_plan::tests::bounded_cache_keeps_both_refresh_postures",
+  "lib#trust_plan::tests::the_trust_plan_carries_the_retained_classification",
+  "lib#trust_plan::tests::the_shared_values_are_inputs_the_trust_plan_cannot_re_derive",
+]
+
+[[unit]]
+id = "proxy.trust_composition_root"
+class = "V0"
+description = "The composition root's TRUST consumption only: after layer A classifies, the root passes owner projections and re-reads no trust field from the validated request. Deliberately narrow — it claims nothing else about `app.rs`, whose other responsibilities are outside this unit."
+paths = ["mcp-re-proxy/src/app.rs"]
+exported_contracts = []
+evidence = ["test://proxy/trust/composition_reads_only_projections"]
+assumptions = []
+# The guard is a source-text inventory, so its own self-check is part of the evidence: a
+# rule that cannot detect a new raw read is a rule that passes vacuously. It runs in the
+# `integration` target and nowhere else — a lane identity, not a detail.
+tested_symbols = [
+  "tests/integration#composition_raw_read_test::the_composition_root_reads_only_ordinary_validated_parameters",
+  "tests/integration#composition_raw_read_test::the_rule_would_catch_a_new_raw_read",
+  "tests/integration#composition_raw_read_test::every_ordinary_field_states_why_it_is_ordinary",
+]
