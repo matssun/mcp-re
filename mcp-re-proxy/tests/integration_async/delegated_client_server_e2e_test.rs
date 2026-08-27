@@ -860,6 +860,11 @@ fn revoked_server_delegated_key_is_refused_by_client() {
     let err = proxy
         .handle("r1", &plain_request(), &params("nonce-e2e-revoked"))
         .expect_err("delegated-required client refuses a revoked delegated key");
+    // Still `delegation_revoked`, and the contrast with the ROOT-revocation rows is the
+    // point. A revoked DELEGATED KEY is caught by the revocation seam AFTER the issuer
+    // resolved and the credential verified, so the precise reason survives. A revoked
+    // ROOT is refused by `resolve_issuer` BEFORE any of that, and reports
+    // `delegation_issuer_untrusted`. Two different revocations, two different mechanisms.
     assert_eq!(
         err.wire_code(),
         Some("mcp-re.delegation_revoked"),
@@ -912,6 +917,11 @@ fn a_manifest_revoked_root_fails_the_round_trip_closed() {
     // variant proving both seams are wired from the ONE set (C064/C065): the reason is
     // delegation_revoked, which only the revocation seam can produce.
     let floor = FloorPath::new("revoke");
+    // MCPRE-172: root revocation reports `delegation_issuer_untrusted`. The proposition
+    // is unchanged — a revoked root invalidates every descendant credential at once — but
+    // `resolve_issuer` now fails closed before the signature is reached, so a revoked root
+    // cannot produce a usable actor through any public interface. See
+    // `tests/common/mod.rs` for the full rationale.
     let issuers = issuers_from_signed_manifest(&floor.0, 1, true);
     let proxy = client_proxy_anchored(build_server(), issuers);
     let err = proxy
@@ -919,7 +929,7 @@ fn a_manifest_revoked_root_fails_the_round_trip_closed() {
         .expect_err("a manifest-revoked root must fail closed");
     assert_eq!(
         err.wire_code(),
-        Some("mcp-re.delegation_revoked"),
+        Some("mcp-re.delegation_issuer_untrusted"),
         "revoking the ROOT in the manifest invalidates the delegated credential under it"
     );
 }
@@ -960,7 +970,7 @@ fn a_manifest_revoked_root_refuses_the_notification_acknowledgement_too() {
             &params("nonce-anchored-202-rev"),
         )
         .expect_err("a revoked root must not acknowledge a notification");
-    assert_eq!(err.wire_code(), Some("mcp-re.delegation_revoked"));
+    assert_eq!(err.wire_code(), Some("mcp-re.delegation_issuer_untrusted"));
 }
 
 #[test]
@@ -980,7 +990,7 @@ fn a_replayed_older_manifest_cannot_un_revoke_a_root() {
             .handle("r1", &plain_request(), &params("nonce-rollback-1"))
             .expect_err("v2 revoked the root")
             .wire_code(),
-        Some("mcp-re.delegation_revoked"),
+        Some("mcp-re.delegation_issuer_untrusted"),
     );
 
     // The replay: v1 (root not revoked), offered to a FRESH floor handle reading the

@@ -31,13 +31,16 @@ use mcp_re_client_core::ActorIdentity;
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::ArtifactType;
 use mcp_re_client_core::AudienceTuple;
+use mcp_re_client_core::CompositeResponseTrust;
 use mcp_re_client_core::DelegatedOutcome;
+use mcp_re_client_core::DelegatedResponseTrust;
 use mcp_re_client_core::DelegationPolicy;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResolvedActor;
 use mcp_re_client_core::ResponseExpectation;
 use mcp_re_client_core::SignedRequest;
 use mcp_re_client_core::SignerSlot;
+use mcp_re_client_core::StaticRevocationList;
 use mcp_re_client_core::TrustedIssuerSet;
 
 use mcp_re_core::SigningKey;
@@ -293,8 +296,8 @@ fn revoked_issuer_invalidates_all_descendants_before_exp() {
         .revoke(ROOT_A_KID);
     assert_eq!(
         verify_with(&resp_a, &signed, &set, NOW).unwrap_err(),
-        HttpProfileError::DelegationRevoked,
-        "revoking the issuer_kid rejects the credential as REVOKED (not merely untrusted), before its exp, without touching the delegated key"
+        HttpProfileError::DelegationIssuerUntrusted,
+        "revoking the issuer_kid rejects the credential before its exp, without touching the delegated key. The reason is UNTRUSTED rather than REVOKED because `resolve_issuer` fails closed on a revoked root before the credential's signature is reached — the structural refusal, bought at the cost of the more precise diagnostic"
     );
 }
 
@@ -310,7 +313,7 @@ fn revoking_one_root_does_not_disturb_the_other() {
         .revoke(ROOT_A_KID);
     assert_eq!(
         verify_with(&resp_a, &signed, &set, NOW).unwrap_err(),
-        HttpProfileError::DelegationRevoked
+        HttpProfileError::DelegationIssuerUntrusted
     );
     assert_eq!(
         verify_with(&resp_b, &signed, &set, NOW).unwrap(),
@@ -342,15 +345,22 @@ fn revoking_one_root_does_not_disturb_the_other() {
 ///
 /// # What holds now
 ///
-/// The verifier takes ONE `DelegatedResponseTrust`. `response_resolver` is gone: there is
-/// no way to obtain a resolver divorced from the revocation state of the same authority,
-/// so the mis-wiring above **does not compile**. The `compile_fail` doctest in
-/// `mcp-re-client-core` pins that; this test pins the behaviour.
+/// The verifier takes ONE `DelegatedResponseTrust`, and TWO doors are shut, not one.
 ///
-/// Note the reason: `DelegationRevoked`, not `DelegationIssuerUntrusted`. Because the
-/// pairing cannot be wrong, the resolver no longer has to refuse a revoked root
-/// defensively, so the credential's signature is checked and the rejection carries the
-/// honest cause instead of masking a revocation as an unknown issuer.
+/// `response_resolver` is gone, and `resolve_root` — the raw lifecycle lookup, which
+/// answers rotation and still returns a revoked root's actor — is `pub(crate)`. Both
+/// forms of the mis-wiring therefore **do not compile**; two `compile_fail` doctests in
+/// `mcp-re-client-core` pin that.
+///
+/// What remains public is `resolve_issuer`, and it fails closed on a revoked issuer
+/// WITHOUT consulting the caller's revocation half. So the last reachable reconstruction
+/// — compose it beside an empty revocation source — also fails, which is the second
+/// assertion below.
+///
+/// The refusal reads `delegation_issuer_untrusted` rather than `delegation_revoked`,
+/// because the credential's signature is never reached. A structural guarantee is worth
+/// more than the more precise diagnostic, and the precise one was only available while a
+/// caller could still get the pairing wrong.
 #[test]
 fn a_revoked_root_fails_closed_and_the_split_seam_is_gone() {
     let signed = signed_request();
@@ -362,8 +372,26 @@ fn a_revoked_root_fails_closed_and_the_split_seam_is_gone() {
     // The set is BOTH halves of the trust picture, and it is passed once.
     assert_eq!(
         verify_with(&resp_a, &signed, &set, NOW).unwrap_err(),
-        HttpProfileError::DelegationRevoked,
-        "a credential under a revoked root must fail closed, with the honest reason"
+        HttpProfileError::DelegationIssuerUntrusted,
+        "a credential under a revoked root must fail closed"
+    );
+
+    // The reconstruction attempt. `resolve_issuer` is the only public resolution
+    // interface left, so this is the closest a caller can now get to the old split: take
+    // it, compose it beside a revocation source that knows NOTHING, and verify.
+    //
+    // It still fails, and it fails for a structural reason rather than a cooperative
+    // one: `resolve_issuer` refuses a revoked issuer without consulting the caller's
+    // revocation half at all. The empty half is not merely overruled — it is never asked.
+    let resolve = |kid: &str, slot: SignerSlot, now: i64| set.resolve_issuer(kid, slot, now);
+    let knows_nothing = StaticRevocationList::new();
+    let recomposed = CompositeResponseTrust::new(&resolve, &knows_nothing);
+    assert_eq!(
+        verify_delegated_response(&resp_a, &recomposed, &expectation(&signed), &policy(), NOW)
+            .map(|v| v.outcome)
+            .unwrap_err(),
+        HttpProfileError::DelegationIssuerUntrusted,
+        "the split seam cannot be rebuilt through the remaining public API"
     );
 
     // The same set with the revocation removed accepts it — so the refusal above is the

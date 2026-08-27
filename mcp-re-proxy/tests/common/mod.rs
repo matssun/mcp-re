@@ -14,6 +14,7 @@
 
 use mcp_re_client_core::load_signed_manifest;
 use mcp_re_client_core::sign_manifest;
+use mcp_re_client_core::DelegatedResponseTrust;
 use mcp_re_client_core::ManifestIssuer;
 use mcp_re_client_core::RetiringIssuer;
 use mcp_re_client_core::RevocationSource;
@@ -33,6 +34,7 @@ use mcp_re_http_profile::DelegationClaims;
 use mcp_re_http_profile::DelegationHeader;
 use mcp_re_http_profile::DelegationVerifyParams;
 use mcp_re_http_profile::HttpProfileError;
+use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::DELEGATION_ALG;
 use mcp_re_http_profile::DELEGATION_TYP;
 use mcp_re_http_profile::JWK_CRV_ED25519;
@@ -213,8 +215,11 @@ fn verify_credential_under_manifest(
     verify_delegation_credential(
         compact_jws,
         &verify_params(now),
+        // MCPRE-172: the public resolution interface, which already fails closed on a
+        // revoked issuer. The raw lifecycle lookup is no longer reachable from here.
         |issuer_kid| {
-            set.resolve_root(issuer_kid, now)
+            set.resolve_issuer(issuer_kid, SignerSlot::Response, now)
+                .resolved()
                 .map(|a| a.verification_key)
         },
         |id| set.is_revoked(id),
@@ -222,6 +227,21 @@ fn verify_credential_under_manifest(
     .map(|_| ())
 }
 
+/// # A note on the refusal CODE, for every root-revocation row below
+///
+/// Root revocation reports `delegation_issuer_untrusted`, not `delegation_revoked`.
+///
+/// The PROPOSITION is unchanged and is what these rows protect: revoking a root
+/// invalidates every descendant delegated credential at once, before their own exp,
+/// without chasing each delegated key. What changed under MCPRE-172 is where the refusal
+/// happens. `TrustedIssuerSet::resolve_issuer` — the only public resolution interface —
+/// fails closed on a revoked issuer BEFORE the credential's signature is reached, so a
+/// revoked root can no longer yield a usable actor through any public path and cannot be
+/// composed beside an empty revocation source.
+///
+/// The more precise code was only reachable while that composition was still possible.
+/// A structural guarantee outranks a diagnostic distinction.
+///
 /// THE shared scenario: given two roots and an org manifest-signing key, drive the
 /// full trust-anchor rotation — A-only → A+B overlap → B-only(A retired) → A revoked —
 /// through SIGNED manifests, asserting acceptance/rejection at each phase. Run
@@ -300,7 +320,7 @@ pub fn run_rotation_scenario(root_a: &RootAuthority, root_b: &RootAuthority, org
     let s3 = sign_manifest(&m3, org_key, ORG_KID);
     assert_eq!(
         verify_credential_under_manifest(&cred_a, &s3, org_key, 3, now).unwrap_err(),
-        HttpProfileError::DelegationRevoked,
+        HttpProfileError::DelegationIssuerUntrusted,
         "revoking Root A invalidates its credential immediately, before exp"
     );
     verify_credential_under_manifest(&cred_b, &s3, org_key, 3, now)

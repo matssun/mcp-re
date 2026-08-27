@@ -26,6 +26,7 @@
 #![forbid(unsafe_code)]
 pub mod binding_spec;
 mod delegated_evidence;
+mod delegated_trust;
 pub mod request;
 pub mod request_signing_inputs;
 pub mod response;
@@ -37,6 +38,8 @@ pub use binding_spec::BindingSpec;
 pub use binding_spec::BindingSpecRefusal;
 pub use binding_spec::ProvidedAuthorization;
 pub use delegated_evidence::DelegatedResponseEvidence;
+pub use delegated_trust::CompositeResponseTrust;
+pub use delegated_trust::DelegatedResponseTrust;
 pub use request::build_signed_notification;
 pub use request::build_signed_notification_with_signer;
 pub use request::build_signed_request;
@@ -52,9 +55,7 @@ pub use response::verify_delegated_accepted_202;
 pub use response::verify_delegated_response;
 pub use response::verify_signed_response;
 pub use response::ClassifiedResponse;
-pub use response::CompositeResponseTrust;
 pub use response::DelegatedOutcome;
-pub use response::DelegatedResponseTrust;
 pub use response::DelegationPolicy;
 pub use response::ExecutionContract;
 pub use response::ExecutionStatus;

@@ -477,7 +477,7 @@ mod tests {
         let snapshot = AnchorSnapshot::new(initial.issuers);
         let mut expires_at = initial.expires_at;
         assert!(
-            snapshot.load().resolve_root(ROOT_KID, NOW).is_some(),
+            snapshot.load().trusts(ROOT_KID, NOW),
             "the root is live under v1"
         );
 
@@ -513,7 +513,7 @@ mod tests {
             "unexpected: {outcome:?}"
         );
         assert!(
-            snapshot.load().resolve_root(ROOT_KID, NOW).is_some(),
+            snapshot.load().trusts(ROOT_KID, NOW),
             "a transient read failure does not withdraw a published trust picture"
         );
     }
@@ -542,7 +542,7 @@ mod tests {
             }
         );
         assert!(
-            snapshot.load().resolve_root(ROOT_KID, later).is_none(),
+            !snapshot.load().trusts(ROOT_KID, later),
             "an expired trust picture must stop verifying, not keep serving"
         );
 
@@ -553,7 +553,7 @@ mod tests {
             RefreshOutcome::Published { version: 2 }
         );
         assert!(
-            snapshot.load().resolve_root(ROOT_KID, later).is_some(),
+            snapshot.load().trusts(ROOT_KID, later),
             "a repaired manifest restores service in place"
         );
     }

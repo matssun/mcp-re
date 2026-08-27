@@ -18,6 +18,7 @@
 //! the network.
 
 use crate::delegated_evidence::DelegatedResponseEvidence;
+use crate::delegated_trust::DelegatedResponseTrust;
 use mcp_re_http_profile::DelegationExpectations;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
@@ -298,87 +299,6 @@ impl RevocationSource for StaticRevocationList {
     }
 }
 
-/// The delegated-response TRUST AUTHORITY: one value that answers both *which root
-/// issuer resolves* and *which identifiers are revoked* (MCPRE-172, from the #580
-/// census).
-///
-/// # Why this is one trait and not two arguments
-///
-/// The public verifier used to take a root resolver and a [`RevocationSource`] as
-/// INDEPENDENT arguments. A caller could then derive a resolver from a
-/// [`TrustedIssuerSet`] and pair it with an unrelated — or empty — revocation source,
-/// and verify a delegated credential beneath a root **that same set marks REVOKED**.
-/// Nothing indicated the revocation was inert.
-///
-/// Revocation of a trust anchor is the one decisive action that invalidates every
-/// descendant delegated credential at once. It must not depend on remembering to pass a
-/// value twice, so the two facts are supplied by one authority and the bad pairing is
-/// not expressible.
-///
-/// [`RevocationSource`] is the supertrait rather than a duplicated method: an
-/// implementation already answering revocation keeps doing so, and gains the resolution
-/// half it was always meant to be paired with.
-///
-/// A deployment whose resolution and revocation genuinely come from different systems —
-/// a live directory plus a separately maintained denylist — uses
-/// [`CompositeResponseTrust`], which owns both internally and is itself one authority.
-/// # The pairing this replaced does not compile
-///
-/// `TrustedIssuerSet` no longer hands out a resolver on its own, so a resolver cannot be
-/// divorced from the revocation state of the authority it came from:
-///
-/// ```compile_fail
-/// use mcp_re_client_core::TrustedIssuerSet;
-/// let set = TrustedIssuerSet::new();
-/// // `response_resolver` is gone: there is no resolver to pair with a foreign
-/// // revocation source, which is what made verifying under a REVOKED root possible.
-/// let _resolver = set.response_resolver(0);
-/// ```
-pub trait DelegatedResponseTrust: RevocationSource {
-    /// Resolve `issuer_kid` for `slot` at `now`.
-    ///
-    /// Rebuilt per verification with the caller's `now`, so a trust-anchor overlap
-    /// window is honoured without the pure verifier ever reading a clock.
-    fn resolve_issuer(&self, issuer_kid: &str, slot: SignerSlot, now: i64) -> ResolverOutcome;
-}
-
-/// A [`DelegatedResponseTrust`] assembled from genuinely separate resolution and
-/// revocation systems — a live directory plus an independently fed denylist.
-///
-/// The two sources are owned INTERNALLY. The verifier still receives one authority, so
-/// this is a legitimate composition rather than a way back to the two free arguments:
-/// building one is an explicit statement that these two systems are the trust picture,
-/// not an accident of argument order.
-pub struct CompositeResponseTrust<'a> {
-    resolver: &'a (dyn Fn(&str, SignerSlot, i64) -> ResolverOutcome + Send + Sync),
-    revocation: &'a dyn RevocationSource,
-}
-
-impl<'a> CompositeResponseTrust<'a> {
-    /// Compose a resolver and a revocation source into one trust authority.
-    pub fn new(
-        resolver: &'a (dyn Fn(&str, SignerSlot, i64) -> ResolverOutcome + Send + Sync),
-        revocation: &'a dyn RevocationSource,
-    ) -> Self {
-        CompositeResponseTrust {
-            resolver,
-            revocation,
-        }
-    }
-}
-
-impl RevocationSource for CompositeResponseTrust<'_> {
-    fn is_revoked(&self, identifier: &str) -> bool {
-        self.revocation.is_revoked(identifier)
-    }
-}
-
-impl DelegatedResponseTrust for CompositeResponseTrust<'_> {
-    fn resolve_issuer(&self, issuer_kid: &str, slot: SignerSlot, now: i64) -> ResolverOutcome {
-        (self.resolver)(issuer_kid, slot, now)
-    }
-}
-
 /// The client-side TRUST-ANCHOR lifecycle (ADR-MCPRE-052 root rotation + revocation)
 /// — which ROOT issuers the verifier trusts to anchor a delegation credential, and
 /// for how long. This is the MASTER-key analogue of [`StaticRevocationList`] (which
@@ -483,17 +403,27 @@ impl TrustedIssuerSet {
             .is_some_and(|expires_at| now > expires_at)
     }
 
-    /// Resolve an `issuer_kid` to its trusted ROOT actor AT `now`: a current root, or
-    /// a retired root still inside its overlap window (`now <= valid_until`). A
-    /// retired root past its window, an unknown issuer, or ANY issuer once the
-    /// publishing document's [`manifest_expires_at`](Self::manifest_expires_at) has
-    /// passed, resolves to `None` (→ `delegation_issuer_untrusted`).
+    /// Whether this set vouches for `issuer_kid` at `now` — the public yes/no.
     ///
-    /// A revoked-but-still-current/retired root DOES resolve here on purpose: the
-    /// credential's signature is then checked and the [`RevocationSource`] impl
-    /// rejects it as `delegation_revoked` (the honest reason), rather than masking a
-    /// revocation as an untrusted-issuer error.
-    pub fn resolve_root(&self, issuer_kid: &str, now: i64) -> Option<ResolvedActor> {
+    /// Fails closed on revocation, on a retired root past its overlap deadline, on an
+    /// unknown issuer, and on an expired publishing document. It is the only trust
+    /// question this type answers in public, and it answers it whole.
+    pub fn trusts(&self, issuer_kid: &str, now: i64) -> bool {
+        !self.is_revoked(issuer_kid) && self.resolve_root(issuer_kid, now).is_some()
+    }
+
+    /// The LIFECYCLE lookup: a current root, or a retired root still inside its overlap
+    /// window (`now <= valid_until`). A retired root past its window, an unknown issuer,
+    /// or ANY issuer once the publishing document's
+    /// [`manifest_expires_at`](Self::manifest_expires_at) has passed, resolves to `None`.
+    ///
+    /// **It answers rotation, not revocation, and it is `pub(crate)` for that reason.** A
+    /// revoked-but-still-current root resolves here, so this is not a trust verdict and
+    /// must never be exposed as one: a caller holding it could pair it with an empty
+    /// revocation source and verify a credential beneath a root this very set marks
+    /// REVOKED. The public verdict is [`resolve_issuer`](DelegatedResponseTrust::resolve_issuer),
+    /// which fails closed, and [`trusts`](Self::trusts) for a plain yes/no.
+    pub(crate) fn resolve_root(&self, issuer_kid: &str, now: i64) -> Option<ResolvedActor> {
         // The whole picture has a deadline, and it outranks any individual root's:
         // past the publishing document's `expires_at` nothing in it resolves, so a
         // verifier that never refreshes fails closed instead of serving forever on
@@ -518,21 +448,23 @@ impl DelegatedResponseTrust for TrustedIssuerSet {
     /// Resolve the credential's root issuer for the RESPONSE slot at `now`. The Request
     /// slot is never resolved on the response-verification path.
     ///
-    /// It DOES resolve a REVOKED root that is otherwise current or in its overlap
-    /// window. That is safe here and it is the point of this trait: the verifier takes
-    /// ONE value, so the same set is guaranteed to be answering
-    /// [`is_revoked`](RevocationSource::is_revoked) as well. The credential's signature
-    /// is therefore checked and the revocation seam rejects it as `delegation_revoked` —
-    /// the honest reason — instead of masking a revocation as an untrusted issuer.
+    /// **A REVOKED issuer resolves to nothing here, structurally.** This is the only
+    /// public resolution interface on the type, so a revoked root cannot yield a usable
+    /// [`ResolvedActor`] through any public path — including one composed into a
+    /// [`CompositeResponseTrust`] beside an empty revocation source. The refusal does not
+    /// depend on which revocation half the caller supplied, because it does not consult
+    /// the caller's half at all.
     ///
-    /// The predecessor of this impl was a public `response_resolver` that had to refuse a
-    /// revoked issuer defensively, because a resolver handed out on its own could not
-    /// know whether the caller had ALSO wired the set in as the revocation argument.
-    /// That defence is no longer needed, because the pairing it was defending is no
-    /// longer expressible.
+    /// The cost is the error's precision: the rejection reads `delegation_issuer_untrusted`
+    /// rather than `delegation_revoked`, because the credential's signature is never
+    /// reached. That is the right trade. A diagnostic distinction is worth less than a
+    /// structural guarantee, and the honest reason was only available while a caller
+    /// could still get the pairing wrong.
     fn resolve_issuer(&self, issuer_kid: &str, slot: SignerSlot, now: i64) -> ResolverOutcome {
         match slot {
-            SignerSlot::Response => self.resolve_root(issuer_kid, now).into(),
+            SignerSlot::Response if !self.is_revoked(issuer_kid) => {
+                self.resolve_root(issuer_kid, now).into()
+            }
             _ => ResolverOutcome::NotTrusted,
         }
     }
