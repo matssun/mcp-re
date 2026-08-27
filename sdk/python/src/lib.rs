@@ -10,6 +10,9 @@
 //! raw seed (software custody), and `sign_request_with_signer` takes only a sign
 //! callback, so the private key never enters the SDK (non-exporting custody).
 
+mod trust;
+use trust::pinned_root_resolver;
+
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
@@ -20,10 +23,10 @@ use mcp_re_client_core::build_signed_request;
 use mcp_re_client_core::build_signed_request_with_signer;
 use mcp_re_client_core::verify_delegated_accepted_202;
 use mcp_re_client_core::verify_delegated_response;
-use mcp_re_client_core::ActorIdentity;
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::ArtifactType;
 use mcp_re_client_core::AudienceTuple;
+use mcp_re_client_core::CompositeResponseTrust;
 use mcp_re_client_core::DelegationPolicy;
 use mcp_re_client_core::HttpContinuation;
 use mcp_re_client_core::HttpProfileError;
@@ -33,9 +36,7 @@ use mcp_re_client_core::ProvidedAuthorization;
 use mcp_re_client_core::RequestEvidence;
 use mcp_re_client_core::RequestEvidenceDigest;
 use mcp_re_client_core::RequestSigningInputs;
-use mcp_re_client_core::ResolvedActor;
 use mcp_re_client_core::ResponseExpectation;
-use mcp_re_client_core::SignerSlot;
 use mcp_re_client_core::StaticRevocationList;
 use mcp_re_client_core::PROFILE_TAG;
 use mcp_re_core::SigningKey;
@@ -553,21 +554,13 @@ fn verify_accepted_202(
 ) -> PyResult<PyAcceptedResult> {
     let issuer_pub = VerificationKey::from_b64url(issuer_pubkey_b64url)
         .map_err(|_| pyo3::exceptions::PyValueError::new_err("invalid issuer public key"))?;
-    let ikid = issuer_key_id.to_owned();
-    let iident = ActorIdentity {
-        role: issuer_role.to_owned(),
-        trust_domain: issuer_trust_domain.to_owned(),
-        subject: issuer_subject.to_owned(),
-        keyid: issuer_key_id.to_owned(),
-    };
-    let resolve = move |kid: &str, slot: SignerSlot| match slot {
-        SignerSlot::Response if kid == ikid => Some(ResolvedActor {
-            identity: iident.clone(),
-            verification_key: issuer_pub.clone(),
-            slot,
-        }),
-        _ => None,
-    };
+    let resolve = pinned_root_resolver(
+        issuer_key_id,
+        issuer_role,
+        issuer_trust_domain,
+        issuer_subject,
+        issuer_pub,
+    );
     let response = HttpResponse {
         status,
         headers: resp_headers,
@@ -586,9 +579,9 @@ fn verify_accepted_202(
         max_clock_skew,
     );
     let revocation = StaticRevocationList::from_identifiers(revoked_identifiers);
+    let trust = CompositeResponseTrust::new(&resolve, &revocation);
     let actor =
-        verify_delegated_accepted_202(&response, &request, &resolve, &policy, &revocation, now)
-            .map_err(err)?;
+        verify_delegated_accepted_202(&response, &request, &trust, &policy, now).map_err(err)?;
     Ok(PyAcceptedResult {
         ok: true,
         server_keyid: actor.identity.keyid,
@@ -691,23 +684,13 @@ fn verify_response(
 ) -> PyResult<PyVerifyResult> {
     let issuer_pub = VerificationKey::from_b64url(issuer_pubkey_b64url)
         .map_err(|_| pyo3::exceptions::PyValueError::new_err("invalid issuer public key"))?;
-    let ikid = issuer_key_id.to_owned();
-    // The trusted ROOT ISSUER anchor for the Response slot: the credential chains to
-    // it. The delegated key itself is authorized by the credential, never enrolled.
-    let iident = ActorIdentity {
-        role: issuer_role.to_owned(),
-        trust_domain: issuer_trust_domain.to_owned(),
-        subject: issuer_subject.to_owned(),
-        keyid: issuer_key_id.to_owned(),
-    };
-    let resolve = move |kid: &str, slot: SignerSlot| match slot {
-        SignerSlot::Response if kid == ikid => Some(ResolvedActor {
-            identity: iident.clone(),
-            verification_key: issuer_pub.clone(),
-            slot,
-        }),
-        _ => None,
-    };
+    let resolve = pinned_root_resolver(
+        issuer_key_id,
+        issuer_role,
+        issuer_trust_domain,
+        issuer_subject,
+        issuer_pub,
+    );
     let response = HttpResponse {
         status,
         headers: resp_headers,
@@ -731,9 +714,9 @@ fn verify_response(
         max_clock_skew,
     );
     let revocation = StaticRevocationList::from_identifiers(revoked_identifiers);
+    let trust = CompositeResponseTrust::new(&resolve, &revocation);
     let verified =
-        verify_delegated_response(&response, &resolve, &expectation, &policy, &revocation, now)
-            .map_err(err)?;
+        verify_delegated_response(&response, &trust, &expectation, &policy, now).map_err(err)?;
     // A verified rejection receipt is genuine evidence but NOT an acceptance — surface
     // the outcome so the caller does not read a signed replay/trust rejection as a
     // success. (An unsigned / direct-root / forged answer never reaches here: it fails

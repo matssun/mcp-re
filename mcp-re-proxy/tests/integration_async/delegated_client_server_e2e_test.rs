@@ -45,9 +45,11 @@ use mcp_re_proxy::HttpProfileProxy;
 use mcp_re_client_core::verify_delegated_response;
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::ArtifactType;
+use mcp_re_client_core::CompositeResponseTrust;
 use mcp_re_client_core::DelegatedOutcome;
 use mcp_re_client_core::DelegationPolicy;
 use mcp_re_client_core::ManifestVersionFloor;
+use mcp_re_client_core::ResolverOutcome;
 use mcp_re_client_core::ResponseExpectation;
 use mcp_re_client_core::RevocationSource;
 use mcp_re_client_core::StaticRevocationList;
@@ -273,6 +275,20 @@ fn delegation_policy() -> DelegationPolicy {
 
 /// The client's trust seam: the ROOT issuer key for the Response slot (the credential
 /// chains to it). The delegated key is authorized by the credential, never enrolled.
+/// The client's trust authority: the test root plus an empty delegated-identifier
+/// revocation set (MCPRE-172 — one value, both halves).
+fn client_trust() -> CompositeResponseTrust<'static> {
+    // `Box::leak` keeps the composed halves alive for the whole test binary. A test
+    // fixture, not a pattern for production wiring.
+    let resolve: &'static (dyn Fn(&str, SignerSlot, i64) -> ResolverOutcome + Send + Sync) =
+        Box::leak(Box::new(|kid: &str, slot: SignerSlot, _now: i64| {
+            client_resolver()(kid, slot)
+        }));
+    let revocation: &'static StaticRevocationList =
+        Box::leak(Box::new(StaticRevocationList::new()));
+    CompositeResponseTrust::new(resolve, revocation)
+}
+
 fn client_resolver() -> mcp_re_client_proxy::route::RouteActorResolver {
     Box::new(move |key_id: &str, slot: SignerSlot| {
         match (key_id, slot) {
@@ -579,10 +595,9 @@ fn a_pin_on_the_root_issuer_kid_verifies() {
     let (signed, response) = one_exchange(&server, &rt, "nonce-pin-ok", NOW);
     let verified = verify_delegated_response(
         &response,
-        client_resolver().as_ref(),
+        &client_trust(),
         &expectation_with_pin(&signed, Some(ROOT_KID)),
         &delegation_policy(),
-        &StaticRevocationList::new(),
         NOW,
     )
     .expect("a pin on the issuer kid is the coordinate that verifies");
@@ -605,10 +620,9 @@ fn a_pin_on_the_wrong_issuer_kid_fails_closed() {
     let (signed, response) = one_exchange(&server, &rt, "nonce-pin-wrong", NOW);
     let err = verify_delegated_response(
         &response,
-        client_resolver().as_ref(),
+        &client_trust(),
         &expectation_with_pin(&signed, Some("some-other-root")),
         &delegation_policy(),
-        &StaticRevocationList::new(),
         NOW,
     )
     .expect_err("a pin naming a different root must fail closed");
@@ -660,10 +674,9 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
     let (signed_a, response_a) = one_exchange(&server, &rt, "nonce-pin-rot-1", NOW);
     verify_delegated_response(
         &response_a,
-        client_resolver().as_ref(),
+        &client_trust(),
         &expectation_with_pin(&signed_a, Some(ROOT_KID)),
         &delegation_policy(),
-        &StaticRevocationList::new(),
         NOW,
     )
     .expect("verifies before rotation");
@@ -686,10 +699,9 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
     let (signed_b, response_b) = one_exchange(&server, &rt, "nonce-pin-rot-2", ROTATED_AT);
     let verified = verify_delegated_response(
         &response_b,
-        client_resolver().as_ref(),
+        &client_trust(),
         &expectation_with_pin(&signed_b, Some(ROOT_KID)),
         &delegation_policy(),
-        &StaticRevocationList::new(),
         ROTATED_AT,
     )
     .expect("the SAME issuer pin still verifies after rotation — this is why it is the coordinate");

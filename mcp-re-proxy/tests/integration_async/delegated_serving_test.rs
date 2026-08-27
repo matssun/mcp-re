@@ -89,6 +89,22 @@ fn audience() -> AudienceTuple {
 /// key for the Request slot, and the ROOT key (by its `issuer_kid`) for the Response
 /// slot — the credential's issuer is resolved for the Response slot. The DELEGATED
 /// key is never enrolled; it is authorized by the credential alone.
+/// The client's trust authority for the 202 legs: this test's resolver plus an empty
+/// delegated-identifier revocation set (MCPRE-172 — one value, both halves).
+fn client_trust_202() -> mcp_re_client_core::CompositeResponseTrust<'static> {
+    // `Box::leak` keeps the composed halves alive for the whole test binary. A fixture,
+    // not a pattern for production wiring.
+    let resolve: &'static (dyn Fn(&str, SignerSlot, i64) -> mcp_re_client_core::ResolverOutcome
+                  + Send
+                  + Sync) = Box::leak(Box::new(|kid: &str, slot: SignerSlot, _now: i64| {
+        resolver()(kid, slot).into()
+    }));
+    let revocation: &'static mcp_re_client_core::StaticRevocationList = Box::leak(Box::new(
+        mcp_re_client_core::StaticRevocationList::from_identifiers(Vec::<String>::new()),
+    ));
+    mcp_re_client_core::CompositeResponseTrust::new(resolve, revocation)
+}
+
 fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + Send + Sync + Clone {
     move |key_id: &str, slot: SignerSlot| {
         let (role, key) = match (key_id, slot) {
@@ -627,7 +643,6 @@ async fn the_client_facing_crate_can_verify_the_202_the_server_emits() {
     // posture MCP-RE exists to remove. This drives the client-facing entry point.
     use mcp_re_client_core::verify_delegated_accepted_202 as client_verify_202;
     use mcp_re_client_core::DelegationPolicy;
-    use mcp_re_client_core::StaticRevocationList;
 
     let signer = Arc::new(DelegatedServerSigner::new());
     let mut rotor = make_rotor(Arc::clone(&signer));
@@ -644,16 +659,8 @@ async fn the_client_facing_crate_can_verify_the_202_the_server_emits() {
         vec![EPOCH.to_string()],
         60,
     );
-    let r = resolver();
-    let actor = client_verify_202(
-        &ack,
-        &note,
-        &move |k: &str, s| r(k, s),
-        &policy,
-        &StaticRevocationList::from_identifiers(Vec::<String>::new()),
-        NOW,
-    )
-    .expect("the client-facing crate verifies the server's 202");
+    let actor = client_verify_202(&ack, &note, &client_trust_202(), &policy, NOW)
+        .expect("the client-facing crate verifies the server's 202");
     assert_ne!(
         actor.identity.keyid, ROOT_KID,
         "delegated key, not the root"
@@ -667,17 +674,8 @@ async fn the_client_facing_crate_can_verify_the_202_the_server_emits() {
         vec!["epoch-999".to_string()],
         60,
     );
-    let r = resolver();
     assert!(
-        client_verify_202(
-            &ack,
-            &note,
-            &move |k: &str, s| r(k, s),
-            &stale,
-            &StaticRevocationList::from_identifiers(Vec::<String>::new()),
-            NOW,
-        )
-        .is_err(),
+        client_verify_202(&ack, &note, &client_trust_202(), &stale, NOW).is_err(),
         "a 202 minted under an epoch the client does not accept must not verify"
     );
 }
@@ -733,18 +731,16 @@ async fn the_client_cores_own_notification_envelope_earns_a_202() {
     );
 
     let ack = http_response(served);
-    let r = resolver();
     mcp_re_client_core::verify_delegated_accepted_202(
         &ack,
         &note,
-        &move |k: &str, s| r(k, s),
+        &client_trust_202(),
         &mcp_re_client_core::DelegationPolicy::new(
             vec![VERIFIER_AUD.to_string()],
             AUD_SCOPE,
             vec![EPOCH.to_string()],
             60,
         ),
-        &mcp_re_client_core::StaticRevocationList::from_identifiers(Vec::<String>::new()),
         NOW,
     )
     .expect("the client core verifies the acknowledgement its own notification earned");
