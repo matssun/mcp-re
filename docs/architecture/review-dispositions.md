@@ -918,3 +918,109 @@ in the file by an order of magnitude, and it is the one that builds key custody.
 
 `parse_args` keeps its ADR-058 exception. `cli.rs` stays `reviewed-action-required` until the
 moves land and this census is re-run.
+
+## EX-008 — the KMS key-custody axis — **census complete, disposition: one common owner, no per-provider split**
+
+**Status:** `reviewed-action-required` on all four units. **Measured** on `main` @ `7ec8f92`:
+`gcp_kms_keysource.rs` 1149, `aws_kms_keysource.rs` 694, `key_source.rs` 362,
+`kms_keysource.rs` 230 — **2435 production lines**. **Component blueprint:**
+[`components/kms-key-custody.md`](components/kms-key-custody.md). **Census issue:**
+[#579](https://github.com/matssun/mcp-re/issues/579) (MCPRE-143), run as **one conceptual
+census over both backends**.
+
+### §8 question 2 — three authorities, and the top two are already right
+
+**Two providers is not two authorities.** The axis has a custody seam (`key_source.rs`), a
+**provider-agnostic KMS protocol mapping** (`kms_keysource.rs`) whose own doc states the
+principle — *"the protocol mapping is IDENTICAL across providers … a provider differs ONLY
+in the `KmsEd25519Backend` network client"* — and the two cloud transports.
+
+That structure is correct. The finding is that the transports did not stay inside it.
+
+### §8 question 10 — the question that decides this census
+
+Five duplications between the backends, of which four are pure copies
+(`ED25519_SIGNATURE_LEN` — in **three** files, `NETWORK_TIMEOUT`, `MAX_ERROR_BODY_BYTES` +
+`read_error_body`, and the local-key test-transport pattern) and one is a **security
+classifier**.
+
+The two `quota_verdict` functions share a structure, consume the same shared types
+(`RemoteSignerFailure`, `QuotaVerdict`), call the same shared helpers, and carry
+**near-identical doc comments describing the same historical defect** — the
+`format!("{error:?}")`-and-`contains` classifier that a rewording upstream silently
+disarmed. They differ in two data points: a JSON path and a token list.
+
+**One semantic rule, two data tables, written twice.** A third provider would arrive with a
+third copy, and a correction would have to be made in three places — which is how the
+original defect survived as long as it did.
+
+### §8 questions 4 and 5 — what the census looked for and did not find
+
+No reconstruction of facts owned elsewhere: both backends consume `CustodyState` decisions,
+delegate Ed25519 key interpretation to `Ed25519PublicKeyValue`, and consume the shared
+failure vocabulary rather than re-deriving it from prose. The products are **better sealed
+than anywhere else in this campaign** — private backends, public key fetched and validated
+as Ed25519 at construction. The configs have public fields and that is correct: they are
+requests, not products.
+
+The residual is the seam itself: `sign_raw_ed25519 -> Vec<u8>` and
+`public_key_spki_der -> Vec<u8>` state their contracts in prose.
+
+### §8 question 6 — root and delegated signing are different propositions sharing a type
+
+Both backends implement `KmsEd25519Backend` (response-evidence signing) **and**
+`RawEd25519TlsSigner` (TLS handshake signing) — an RFC 9421 signature base and a TLS 1.3
+CertificateVerify transcript, over one type.
+
+In production they are two different keys, and the separation is real: `--aws-kms-tls-key-id`
+/ `--gcp-kms-tls-key-version` are separate selectors, relation X2a refuses a dangling one,
+and `cli.rs::build_key_source` constructs a **second backend instance** for the TLS role.
+
+**The guarantee lives in `build_key_source` — the function EX-007 ruled should move.** The
+two remediations touch the same code, and whichever owner receives it inherits the
+role-separation guarantee. That must be preserved explicitly, not by accident.
+
+### §8 question 3 — what a `KeySource` establishes, and what it cannot say
+
+> *This process can produce Ed25519 signatures under a named key, and — for the KMS
+> implementations — the private key is not in this process's address space.*
+
+The second clause is the point of the whole axis and **the trait cannot express it**:
+`FileKeySource`, `EnvKeySource` and `KmsKeySource` satisfy one trait, so a consumer holding
+a `Box<dyn KeySource>` cannot distinguish a non-exporting custodian from a seed file. The
+distinction is carried by `CustodyState` and the startup posture — a fact about
+configuration standing in for a property of the value.
+
+Recorded, **not acted on**: changing it is an ADR-MCPS-028 question about the seam.
+
+### §8 question 12 — offline twins and live cloud, already separated
+
+This axis has the artefact EX-006 wished for:
+[`docs/security/cloud-kms-claims-map.md`](../security/cloud-kms-claims-map.md) states per
+runner the trigger, whether it blocks, and what it contains. 39 + 14 + 6 offline unit tests
+and a 12-test IRSA **offline twin** run in the blocking CI job; the genuine live-cloud lanes
+(`gcp_kms_live_test`, `aws_kms_live_test`) run nightly, non-blocking, and only when that
+backend's secrets are present.
+
+**And they fail loudly when unconfigured** — `gcp_kms_live_test`'s doc says so in as many
+words. That is the exact opposite of the OCSP e2e test EX-006 flagged for self-skipping to
+green, and it is the pattern to copy.
+
+**`key_source.rs` has zero tests** — 362 lines, the seam every custodian implements, against
+the repository's own rule that every file carries a test module.
+
+### Disposition
+
+**No per-provider split, and no merge of the backends.** Instead:
+
+1. a **common private owner for `quota_verdict`**, taking `(json path, token set,
+   name-suffix rule)` as backend-supplied data;
+2. lift the four pure duplications into the provider-agnostic owner;
+3. **typed operands at the KMS seam** in place of `Vec<u8>` in both directions;
+4. **record, do not act on**, the two representation questions — `KeySource`'s unexpressed
+   custody clause, and the role separation held by `build_key_source`;
+5. a test module for `key_source.rs`.
+
+Re-measure after 1–3. `gcp_kms_keysource.rs` will stay over the threshold, and its remaining
+bulk is one provider's genuine access-token mechanism — a candidate for its own §14
+discussion, which this census does not pre-empt.
