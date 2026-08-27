@@ -63,6 +63,13 @@ on:
       # controls, and encoding v4 digests those sources, not only their names.
       - "mcp-re-proxy/tests/integration/**"
       - "mcp-re-proxy/tests/integration.rs"
+      # MCPRE-146/148: the three trust units declared with the four theorems — the
+      # revocation posture and trust-document state, the plan projected from them, and
+      # the composition root that consumes those projections without re-reading trust.
+      - "mcp-re-proxy/src/config_state/trust_revocation.rs"
+      - "mcp-re-proxy/src/config_state/trust_document.rs"
+      - "mcp-re-proxy/src/trust_plan.rs"
+      - "mcp-re-proxy/src/app.rs"
       # The build inputs every ReviewFingerprint reads. A dependency bump moves
       # Cargo.lock, which dirties every declared unit — so a lane that did not
       # re-run on it would leave `main` carrying attestations over a dependency
@@ -110,6 +117,13 @@ on:
       # controls, and encoding v4 digests those sources, not only their names.
       - "mcp-re-proxy/tests/integration/**"
       - "mcp-re-proxy/tests/integration.rs"
+      # MCPRE-146/148: the three trust units declared with the four theorems — the
+      # revocation posture and trust-document state, the plan projected from them, and
+      # the composition root that consumes those projections without re-reading trust.
+      - "mcp-re-proxy/src/config_state/trust_revocation.rs"
+      - "mcp-re-proxy/src/config_state/trust_document.rs"
+      - "mcp-re-proxy/src/trust_plan.rs"
+      - "mcp-re-proxy/src/app.rs"
       # The build inputs every ReviewFingerprint reads. A dependency bump moves
       # Cargo.lock, which dirties every declared unit — so a lane that did not
       # re-run on it would leave `main` carrying attestations over a dependency
