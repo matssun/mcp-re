@@ -273,3 +273,128 @@ fn write_report() {
     ));
     let _ = std::fs::write(path, out);
 }
+#[cfg(test)]
+mod tests {
+    // This module is the file's test region: `scripts/module_size_gate.py` opens it at the
+    // `#[cfg(test)]` above and stops counting production lines here. The note lives INSIDE
+    // the region rather than above it, because a comment above the marker is a production
+    // line, and this file is registered in `config/module-size-debt.toml` — where the
+    // ratchet only turns one way.
+    use super::*;
+
+    /// Every [`Stage`]. Declared INSIDE the test module on purpose: a `#[cfg(test)]` item
+    /// at file scope opens a region `scripts/module_size_gate.py` reads to the end of the
+    /// file, which silently removed 24 production lines from this file's measurement.
+    const ALL_STAGES: [Stage; STAGES] = [
+        Stage::Admission,
+        Stage::BodyRead,
+        Stage::Handler,
+        Stage::ReplayInsert,
+        Stage::InnerDispatch,
+        Stage::Total,
+        Stage::SchedulerLatency,
+        Stage::Verify,
+        Stage::Sign,
+        Stage::ReplayPrep,
+        Stage::ReplaySet,
+        Stage::ReplayWait,
+    ];
+
+    /// Every [`Stage`] is a valid index into the parallel arrays.
+    ///
+    /// The discriminants are written by hand and used directly as subscripts into
+    /// `nanos`, `count` and `NAMES`. A variant added without widening `STAGES` would
+    /// index out of bounds on the serving path; one added with a duplicate discriminant
+    /// would silently add its time to another stage's total.
+    #[test]
+    fn every_stage_indexes_within_the_accumulator() {
+        for stage in ALL_STAGES {
+            assert!(
+                (stage as usize) < STAGES,
+                "{stage:?} indexes past the accumulator"
+            );
+        }
+    }
+
+    /// The discriminants are dense and distinct: each stage owns exactly one slot.
+    ///
+    /// Two stages sharing a slot would fold two measurements into one column, and the
+    /// report would read as a plausible number rather than as an error.
+    #[test]
+    fn stage_discriminants_are_distinct_and_cover_every_slot() {
+        let mut seen = [false; STAGES];
+        for stage in ALL_STAGES {
+            let i = stage as usize;
+            assert!(!seen[i], "{stage:?} shares slot {i} with another stage");
+            seen[i] = true;
+        }
+        assert!(
+            seen.iter().all(|&s| s),
+            "a report column has no stage writing to it"
+        );
+    }
+
+    /// The name table is exactly as wide as the slot count it labels.
+    ///
+    /// `write_report` walks `NAMES` and subscripts the accumulators with the same index,
+    /// so a short table would silently drop the last stages from every report.
+    #[test]
+    fn the_name_table_covers_every_slot() {
+        assert_eq!(NAMES.len(), STAGES);
+    }
+
+    /// Each stage's slot carries that stage's name. The mapping is positional, so a
+    /// reordering of either list mis-attributes every row after it.
+    #[test]
+    fn each_stage_slot_carries_its_own_name() {
+        assert_eq!(NAMES[Stage::Admission as usize], "admission");
+        assert_eq!(NAMES[Stage::BodyRead as usize], "body_read");
+        assert_eq!(NAMES[Stage::Handler as usize], "handler");
+        assert_eq!(NAMES[Stage::ReplayInsert as usize], "replay_insert");
+        assert_eq!(NAMES[Stage::InnerDispatch as usize], "inner_dispatch");
+        assert_eq!(NAMES[Stage::Total as usize], "total");
+        assert_eq!(NAMES[Stage::SchedulerLatency as usize], "scheduler_latency");
+        assert_eq!(NAMES[Stage::Verify as usize], "verify");
+        assert_eq!(NAMES[Stage::Sign as usize], "sign");
+        assert_eq!(NAMES[Stage::ReplayPrep as usize], "replay_prep");
+        assert_eq!(NAMES[Stage::ReplaySet as usize], "replay_set");
+        assert_eq!(NAMES[Stage::ReplayWait as usize], "replay_wait");
+    }
+
+    /// With timing off, a timer takes no clock reading at all.
+    ///
+    /// The module's whole claim is that the off path costs one relaxed atomic load per
+    /// stage. `started` staying `None` is what makes that true, and it is also what keeps
+    /// `Drop` from recording into a report nobody asked for. This asserts the state, not
+    /// a duration, because a duration would measure the machine.
+    #[test]
+    fn a_timer_started_while_disabled_reads_no_clock() {
+        if enabled() {
+            return; // MCP_RE_STAGE_TIMERS is set in this process; the off path is not under test.
+        }
+        assert!(Timed::start(Stage::Total).started.is_none());
+    }
+
+    /// With timing off, the in-flight counter is never entered — so `Drop` has nothing to
+    /// decrement, and the occupancy gauge cannot be driven negative by an unbalanced
+    /// pair. The guard carries the flag that makes its own drop a no-op.
+    #[test]
+    fn an_inflight_guard_taken_while_disabled_is_inert() {
+        if enabled() {
+            return;
+        }
+        assert!(!InFlight::enter().0);
+    }
+
+    /// The rewrite period is non-zero, checked at COMPILE time.
+    ///
+    /// `Drop` calls `is_multiple_of(REPORT_EVERY_N_REQUESTS)` on every completed request,
+    /// and zero would make that a division by zero on the serving path — a panic in a
+    /// diagnostic that is supposed to be free when off and harmless when on. A `const`
+    /// block states it where a runtime assert could only observe it: the build fails
+    /// rather than the test.
+    #[test]
+    fn the_rewrite_period_cannot_divide_by_zero() {
+        const { assert!(REPORT_EVERY_N_REQUESTS > 0) }
+    }
+}

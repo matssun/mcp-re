@@ -411,7 +411,7 @@ Four axes were multiplied into a flat function list: floor vs full, request vs r
 
 2. **`ResolvedActor` is deliberately unsealed and must stay that way.** It looks like a verdict — *the trust layer authorized this actor for this slot* — but the trust seam is a caller-supplied resolver, so every in-process and test resolver is a legitimate producer. `sealed-owners.md` records the measurement and the rule: sealing it would relocate ceremony without moving authority. Any decomposition here must not "fix" it.
 
-3. **`chain.rs` has no test module** (660 production lines, 660 total). Its properties are established from `tests/chain_reconstruction_test.rs` only. Not necessarily wrong — but it is a `CLAUDE.md` testing-requirement deviation and should be recorded rather than discovered again.
+3. ~~**`chain.rs` has no test module**~~ — **CLOSED** by MCPRE-152 / #588. It now carries 11 tests over the types it defines, covering the four `submitted_commitment` identity properties (response status and signature are part of the submitted identity; field boundaries cannot be shifted, which is what the length prefixes buy; header order and non-signature headers are not), the hop-count commitment, and the §9.3 rule that an unrecognized `resultType` is never folded into terminal. `tests/chain_reconstruction_test.rs` remains the integration lane; these are local and move with the type.
 
 ## 12. Completion criteria
 

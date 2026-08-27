@@ -197,7 +197,7 @@ Open:
 
 3. **The §5 refusal-coverage question is unanswered.** No inventory says which production refusals occur before machine construction, so "every meaningful refusal belongs to the exchange model" is currently an aspiration rather than a measured property.
 
-4. **`stage_timers.rs` and `http_profile_dispatch.rs` have no test module** (275/275 and 188/188 lines — no `#[cfg(test)]` region at all). A `CLAUDE.md` testing-requirement deviation; recorded so it is not rediscovered.
+4. ~~**`stage_timers.rs` and `http_profile_dispatch.rs` have no test module**~~ — **CLOSED** by MCPRE-152 / #588. `stage_timers.rs` gained 7 tests pinning the discriminant↔slot↔name correspondence (the hand-written discriminants are used directly as array subscripts, so a duplicate silently folds two stages into one report column) and the off-path's no-clock-read property. `http_profile_dispatch.rs` gained 5, including a witness cache that makes *refused before the store is touched* observable, and the #308 AT4 case: a deployment declaring `Linearizable` while wiring a single-process store is still refused by the core gate beneath.
 
 ## 12. Completion criteria
 

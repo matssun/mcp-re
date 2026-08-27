@@ -177,3 +177,250 @@ pub async fn dispatch_request_with_async_tier(
         continuation_verified,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    // This module is the file's test region: `scripts/module_size_gate.py` opens it at the
+    // `#[cfg(test)]` above and stops counting production lines here.
+    use super::*;
+    use mcp_re_core::ReplayCacheError;
+    use mcp_re_core::ReplayDurabilityClass;
+    use mcp_re_http_profile::ActorIdentity;
+    use mcp_re_http_profile::AudienceTuple;
+    use mcp_re_http_profile::CryptographicFloorVerifiedRequest;
+    use mcp_re_http_profile::HttpRequestEvidenceBlock;
+    use mcp_re_http_profile::RequestEvidence;
+    use mcp_re_http_profile::ResolvedActor;
+    use mcp_re_http_profile::SignerSlot;
+    use std::cell::Cell;
+
+    /// A cache that records whether the dispatcher ever reached it.
+    ///
+    /// The tier gate's whole claim is that it refuses BEFORE the store is touched. A stub
+    /// that merely returns a decision could not tell a refusal-before from a
+    /// refusal-after; this one makes the side effect observable.
+    struct WitnessCache {
+        touched: Cell<bool>,
+        class: ReplayDurabilityClass,
+    }
+
+    impl WitnessCache {
+        /// Self-reports the volatile reference class, as the default `durability_class`
+        /// does — so the core gate beneath the tier gate refuses it under fleet-strict.
+        fn new() -> Self {
+            WitnessCache {
+                touched: Cell::new(false),
+                class: ReplayDurabilityClass::SingleProcessReference,
+            }
+        }
+
+        /// Self-reports the durable class, so only the DEPLOYMENT tier gate is under test.
+        fn durable() -> Self {
+            WitnessCache {
+                touched: Cell::new(false),
+                class: ReplayDurabilityClass::Durable,
+            }
+        }
+    }
+
+    impl ReplayCache for WitnessCache {
+        fn check_and_insert(
+            &self,
+            _signer: &str,
+            _audience: &str,
+            _nonce: &str,
+            _expires_at_unix: i64,
+        ) -> Result<ReplayDecision, ReplayCacheError> {
+            self.touched.set(true);
+            Ok(ReplayDecision::Fresh)
+        }
+
+        fn durability_class(&self) -> ReplayDurabilityClass {
+            self.class
+        }
+    }
+
+    fn audience() -> AudienceTuple {
+        AudienceTuple {
+            audience_id: "aud".into(),
+            target_uri: "https://example.test/mcp".into(),
+            route: None,
+        }
+    }
+
+    fn verified() -> VerifiedMcpRequest {
+        VerifiedMcpRequest {
+            floor: CryptographicFloorVerifiedRequest {
+                profile_id: "p".into(),
+                signature_label: "mcpre".into(),
+                resolved_actor: ResolvedActor {
+                    identity: ActorIdentity {
+                        role: "client".into(),
+                        trust_domain: "example.org".into(),
+                        subject: "did:example:agent-1".into(),
+                        keyid: "key-a".into(),
+                    },
+                    verification_key: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32])
+                        .public_key(),
+                    slot: SignerSlot::Request,
+                },
+                evidence: RequestEvidence::from_signature_base(b"base"),
+                request_signature_base: b"base".to_vec(),
+                content_digest: mcp_re_http_profile::content_digest_sha256(b"{}"),
+                created: 1,
+                expires: 2,
+                nonce: "n".into(),
+                key_id: "key-a".into(),
+            },
+            audience: audience(),
+            audience_hash: audience().audience_hash(),
+            request_block: HttpRequestEvidenceBlock {
+                profile: "p".into(),
+                audience: audience(),
+                artifact_bindings: Vec::new(),
+                continuation: None,
+                admission: None,
+                admission_assertion: None,
+                authorization_decision: None,
+            },
+        }
+    }
+
+    /// A fleet-strict deployment that declared NO shared durability tier is refused
+    /// WITHOUT the store being consulted.
+    ///
+    /// Refusing at all is the documented posture; refusing before any side effect is what
+    /// makes it fail-closed rather than fail-after-admitting. Asserting only the error
+    /// would leave a reordering that admits the nonce first indistinguishable from this.
+    #[test]
+    fn an_undeclared_tier_is_refused_before_the_store_is_touched() {
+        let cache = WitnessCache::new();
+        let err = dispatch_request_with_tier_gate(
+            &verified(),
+            &cache,
+            None,
+            &ProxyDispatchConfig {
+                fleet_strict: true,
+                tier: None,
+            },
+        )
+        .expect_err("fleet-strict with no declared tier must refuse");
+
+        assert_eq!(err, ProxyDispatchError::NoDeclaredReplayTier);
+        assert!(
+            !cache.touched.get(),
+            "the store was consulted before refusal"
+        );
+    }
+
+    /// A declared tier BELOW the strict-production minimum is refused, also without
+    /// touching the store, and the refusal names the tier the operator declared.
+    #[test]
+    fn a_sub_minimum_tier_is_refused_before_the_store_is_touched() {
+        for tier in [
+            ReplayDurabilityTier::RedisAsyncBounded,
+            ReplayDurabilityTier::SingleStoreFailClosed,
+        ] {
+            let cache = WitnessCache::new();
+            let err = dispatch_request_with_tier_gate(
+                &verified(),
+                &cache,
+                None,
+                &ProxyDispatchConfig {
+                    fleet_strict: true,
+                    tier: Some(tier.clone()),
+                },
+            )
+            .expect_err("a sub-minimum tier must refuse under fleet-strict");
+
+            assert_eq!(err, ProxyDispatchError::SubMinimumReplayTier(tier));
+            assert!(
+                !cache.touched.get(),
+                "the store was consulted before refusal"
+            );
+        }
+    }
+
+    /// The tier gate is only meaningful under fleet-strict: a non-fleet deployment with no
+    /// declared tier passes it and reaches the dispatcher beneath.
+    ///
+    /// This is the negative control for the two above — without it they would also pass if
+    /// the gate refused unconditionally, which would be a different bug.
+    #[test]
+    fn the_tier_gate_does_not_fire_outside_fleet_strict() {
+        let cache = WitnessCache::new();
+        let outcome = dispatch_request_with_tier_gate(
+            &verified(),
+            &cache,
+            None,
+            &ProxyDispatchConfig {
+                fleet_strict: false,
+                tier: None,
+            },
+        );
+
+        assert!(
+            !matches!(
+                outcome,
+                Err(ProxyDispatchError::NoDeclaredReplayTier)
+                    | Err(ProxyDispatchError::SubMinimumReplayTier(_))
+            ),
+            "the deployment tier gate fired without fleet-strict"
+        );
+        assert!(
+            cache.touched.get(),
+            "the dispatcher beneath was not reached"
+        );
+    }
+
+    /// A tier that MEETS the strict minimum passes the DEPLOYMENT gate and reaches the
+    /// dispatcher, provided the wired store also self-reports a durable class.
+    #[test]
+    fn a_strict_minimum_tier_over_a_durable_store_reaches_the_dispatcher() {
+        let cache = WitnessCache::durable();
+        let _ = dispatch_request_with_tier_gate(
+            &verified(),
+            &cache,
+            None,
+            &ProxyDispatchConfig {
+                fleet_strict: true,
+                tier: Some(ReplayDurabilityTier::Linearizable),
+            },
+        );
+        assert!(
+            cache.touched.get(),
+            "a strict-minimum tier over a durable store did not reach the dispatcher"
+        );
+    }
+
+    /// The two gates are complementary, not redundant (#308 AT4): a deployment that
+    /// DECLARES the strongest tier while wiring a single-process reference cache is still
+    /// refused — by the core gate beneath, on the cache's own self-report.
+    ///
+    /// This is the case the module documentation calls defense in depth, and it is the one
+    /// a declaration-only check would admit: the operator's declaration is strong and the
+    /// object actually holding the nonces cannot prevent a cross-node replay.
+    #[test]
+    fn a_strong_declared_tier_does_not_excuse_a_single_process_store() {
+        let cache = WitnessCache::new();
+        let err = dispatch_request_with_tier_gate(
+            &verified(),
+            &cache,
+            None,
+            &ProxyDispatchConfig {
+                fleet_strict: true,
+                tier: Some(ReplayDurabilityTier::Linearizable),
+            },
+        )
+        .expect_err("a single-process store must be refused beneath the tier gate");
+
+        assert!(
+            matches!(err, ProxyDispatchError::Dispatch(_)),
+            "the refusal came from the tier gate, not the core gate beneath it"
+        );
+        assert!(
+            !cache.touched.get(),
+            "the store was consulted before refusal"
+        );
+    }
+}
