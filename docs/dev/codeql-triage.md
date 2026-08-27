@@ -47,6 +47,45 @@ the redaction: `a_secret_string_does_not_print_its_value_or_length` asserts the 
 `Debug` contains neither the fixture value nor its length. The fixture is test-only and
 unreachable at runtime.
 
+### Why a batch can arrive with no code change
+
+On 2026-08-27 the rust job on `main` went from **zero** new alerts at 08:07Z to **22** at
+12:06Z with no source change: every flagged sink was 2--6 weeks old. What changed was the
+analyzer. The 08:07Z run used CodeQL **2.26.3** from the runner toolcache; the 12:06Z run
+downloaded **2.26.4**.
+
+The extractor logs measure it directly:
+
+| CodeQL | `macro expansion failed` warnings | rust job |
+|---|---|---|
+| 2.26.3 | **3916** (1599 `assert_eq`, 1239 `assert`, 359 `format`, 295 `vec`, ...) | 2m38s |
+| 2.26.4 | **0** | 6m10s |
+
+`rust/cleartext-logging` fires on format-macro arguments. Until 2.26.4 the extractor could
+not expand ~3900 of this repo's `assert!` / `eprintln!` / `format!` sites, so those sinks
+were invisible to the query; expanding them made the whole population visible at once and
+tripled the job's runtime. A batch that appears overnight is therefore not evidence of new
+logging -- check the CodeQL version in the run log and `git log -L` the sink before
+treating it as a regression.
+
+That batch also introduced a **third taint source** alongside `Config::tls_cert`:
+`cert_der` in `ocsp.rs`, the DER of a **public** certificate. It is Shape B wherever it
+appears (test assert messages), and the same reasoning applies -- a public certificate is
+not key material.
+
+### The one alert that was not just dismissed
+
+`app.rs`'s inner-backend startup line was a Shape A false positive like the rest -- the
+taint came from `tls_cert`, not from the URLs. But it was the only production sink echoing
+an operator-supplied string verbatim, and a URL's authority is a place credentials ride
+along. It now prints
+[`RedactedBackendUrls`](../../mcp-re-proxy/src/deployment_request/inner_backend_display.rs),
+a projection owned next to `SecretString` under `deployment_request`, whose sole
+constructor drops any `userinfo` and reports only that it was present.
+
+Dismissing an alert is a statement about the *taint path*. It is not a reason to leave a
+sink that would be worth narrowing on its own merits.
+
 ### Triaging a new batch
 
 Confirm each alert fits Shape A or Shape B — read the sink and check the logged

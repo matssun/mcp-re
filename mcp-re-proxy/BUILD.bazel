@@ -160,6 +160,9 @@ _PROXY_LIB_SRCS = [
     # The CLI-neutral request model. Both the argument parser and the configuration state
     # model depend on it; neither depends on the other.
     "src/deployment_request/authorization.rs",
+    # The operator-facing projection of the request's inner-backend URLs: the startup
+    # line that names the backends prints coordinates, never the configured string.
+    "src/deployment_request/inner_backend_display.rs",
     "src/deployment_request/kinds.rs",
     "src/deployment_request/mod.rs",
     "src/deployment_request/secret_string.rs",
