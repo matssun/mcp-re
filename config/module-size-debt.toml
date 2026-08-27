@@ -37,10 +37,14 @@
 # Re-measure with
 # `python3 scripts/module_size_gate.py --emit-registry`; never hand-edit a count upward.
 
+# MCPRE-150 sealed `AdmissionEnforcer` and moved its degraded-window tests to it, and the
+# serving file fell to 2024. The registered 2056 was already stale by 30 lines before that:
+# it is re-established at the measurement rather than left as headroom nobody paid for, and
+# the SHA moves with the number to the commit that establishes it.
 [[debt]]
 path = "mcp-re-proxy/src/http_profile_serve.rs"
-baseline_prod_loc = 2056
-baseline_sha = "d1fc5fa"
+baseline_prod_loc = 2024
+baseline_sha = "ae40fff"
 status = "unreviewed"
 
 [[debt]]
