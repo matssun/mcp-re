@@ -41,9 +41,15 @@
 # serving file fell to 2024. The registered 2056 was already stale by 30 lines before that:
 # it is re-established at the measurement rather than left as headroom nobody paid for, and
 # the SHA moves with the number to the commit that establishes it.
+#
+# MCPRE-151 gave the serving path an owner subtree: `http_profile_serve.rs` became
+# `http_profile_serve/mod.rs` so its subordinates are declared by the owner rather than as
+# further flat modules in a crate that already has ~100. The debt moves WITH the file —
+# dropping the entry because the path changed would launder 2023 registered lines as
+# progress.
 [[debt]]
-path = "mcp-re-proxy/src/http_profile_serve.rs"
-baseline_prod_loc = 2024
+path = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+baseline_prod_loc = 2023
 baseline_sha = "ae40fff"
 status = "unreviewed"
 

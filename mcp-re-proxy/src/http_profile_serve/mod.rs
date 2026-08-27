@@ -40,6 +40,9 @@ use mcp_re_core::McpReError;
 use crate::refusal::Refusal;
 use crate::refusal::RefusalCause;
 use crate::refusal::RefusalPosture;
+
+/// The validity a signed response may advertise — obtained here, derived only there.
+pub(crate) mod signing_window;
 use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::build_delegated_rejection;
 use mcp_re_http_profile::build_delegated_rejection_preflight;
@@ -96,6 +99,7 @@ use crate::exchange_state::RetrySemantics;
 use crate::http_profile_dispatch::dispatch_request_with_async_tier;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
 use crate::request_stages::ReadyForDispatch;
+use signing_window::SigningWindow;
 use crate::request_stages::RetentionDisposition;
 use crate::transport::TransportBinding;
 
@@ -593,21 +597,21 @@ impl HttpProfileProxy {
     async fn answer_notification(
         &self,
         http_req: &HttpRequest,
-        a: &Arc<mcp_re_http_profile::ActiveDelegatedKey>,
+        window: &SigningWindow,
         now: i64,
-        expires: i64,
         verified: &mcp_re_http_profile::VerifiedMcpRequest,
         actor_id: String,
         retention: &RetentionDisposition,
         execution: ExecutionDisposition,
     ) -> ServedHttpResponse {
+        let a = window.key();
         match sign_delegated_accepted_202(
             http_req,
             &a.credential,
             a.key.as_ref(),
             &a.delegated_kid,
             now,
-            expires,
+            window.expires(),
         ) {
             Ok(ack) => {
                 // Retention covers this exit on the SAME terms as the bodied reply.
@@ -623,7 +627,7 @@ impl HttpProfileProxy {
                         actor_id.clone(),
                         retention,
                         execution,
-                        Some(Arc::clone(a)),
+                        Some(window.shared()),
                     )
                     .await
                 {
@@ -650,7 +654,7 @@ impl HttpProfileProxy {
                 Some(verified.evidence()),
                 Some(actor_id),
                 execution,
-                Some(Arc::clone(a)),
+                Some(window.shared()),
             ),
         }
     }
@@ -885,23 +889,15 @@ impl HttpProfileProxy {
     /// Asked BEFORE the two irreversible steps. Discovering a missing key only at signing
     /// time meant the tool call had already executed and the client got a 503 — a
     /// transient-looking status it retries, so the action runs twice.
-    ///
-    /// The returned window never outlives the credential authorizing it: `sig_ttl_secs`
-    /// alone would let a response claim a validity the verifier refuses seconds later.
-    fn answerable_stage(
-        &self,
-        ex: &Exchange<'_>,
-    ) -> Result<Established<(Arc<mcp_re_http_profile::ActiveDelegatedKey>, i64)>, Refusal> {
-        match self.signer.current(ex.now) {
-            // The snapshot is taken ONCE and signs the reply below: `now` is fixed for the
-            // whole request, so a key valid here is valid there.
-            Some(a) => {
-                let expires = (ex.now + self.sig_ttl_secs).min(a.exp);
-                Ok(Established::new(
-                    (a, expires),
-                    ExchangeEvent::DelegatedKeySnapshotted,
-                ))
-            }
+    fn answerable_stage(&self, ex: &Exchange<'_>) -> Result<Established<SigningWindow>, Refusal> {
+        // The snapshot is taken ONCE and signs the reply below: `now` is fixed for the
+        // whole request, so a key valid here is valid there. The window it opens is what
+        // the reply may advertise — this stage does not compute that, the window is it.
+        match SigningWindow::open(&self.signer, ex.now, self.sig_ttl_secs) {
+            Some(window) => Ok(Established::new(
+                window,
+                ExchangeEvent::DelegatedKeySnapshotted,
+            )),
             None => Err(Refusal::before_admission(
                 McpReError::DelegatedSigningUnavailable,
                 503,
@@ -1413,14 +1409,14 @@ impl HttpProfileProxy {
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         }
 
-        let (a, expires) = match self.answerable_stage(&ex) {
-            Ok(pair) => progress.establish(pair),
+        let window = match self.answerable_stage(&ex) {
+            Ok(established) => progress.establish(established),
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         };
         // Carried on the exchange so every refusal below signs with the key the reply
         // itself would have used, rather than re-asking a signer that may have been
         // retired in between and degrading to an unsigned error.
-        ex.key = Some(Arc::clone(&a));
+        ex.key = Some(window.shared());
 
         match self
             .retire_continuation_stage(prep.answer_key.as_ref())
@@ -1507,14 +1503,14 @@ impl HttpProfileProxy {
         // says so: it cannot be built without them, and the dispatch consumes it. Past this
         // line no exit can claim nothing happened — which is why every one of them is a
         // `response_rejection` rather than a `rejection`.
-        let ready = ReadyForDispatch::new(authorized.release(forwarded), a, expires, retention);
+        let ready = ReadyForDispatch::new(authorized.release(forwarded), window, retention);
         // BEFORE the await, not after it. Once the request is committed to the backend the
         // exchange must read as possibly-executed, whatever the dispatch goes on to return:
         // a state entered only on the way out would leave a cancelled or panicking dispatch
         // claiming nothing happened.
         progress.advance(ExchangeEvent::BackendDispatched);
         let outcome = self.inner_async.dispatch(ready.forwarded()).await;
-        let (outcome, a, expires, retention) = ready.dispatched(outcome).into_parts();
+        let (outcome, window, retention) = ready.dispatched(outcome).into_parts();
 
         // NOTIFICATION — a one-way message with no JSON-RPC `id` is answered with a signed
         // bodyless 202 rather than a bodied reply (#424 / #418). The branch is here because
@@ -1544,9 +1540,8 @@ impl HttpProfileProxy {
             return self
                 .answer_notification(
                     &http_req,
-                    &a,
+                    &window,
                     now,
-                    expires,
                     &verified,
                     actor_id,
                     &retention,
@@ -1583,7 +1578,8 @@ impl HttpProfileProxy {
             ReplyClass::Open(_) => OpenLeg::Required,
         });
 
-        let response_base = match self.sign_reply_stage(&ex, &mut response, a.as_ref(), expires) {
+        let response_base =
+            match self.sign_reply_stage(&ex, &mut response, window.key(), window.expires()) {
             Ok(base) => progress.establish(base),
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         };
@@ -1835,12 +1831,15 @@ impl HttpProfileProxy {
             format!("mcp-re http-profile proxy rejected: {wire_code}"),
         )
         .with_execution(execution);
-        let resp = match snapshot.or_else(|| self.signer.current(now)) {
-            Some(a) => {
-                // Never advertise validity past the credential that authorizes the
-                // signature: a verifier refuses the whole receipt once the delegated
-                // credential's own window closes.
-                let expires = (now + self.sig_ttl_secs).min(a.exp);
+        // The exchange's own snapshot when it reached one, so a refusal signs with the key
+        // the reply itself would have used rather than re-asking a signer that may have been
+        // retired in between. Either way the window is derived once, by its owner.
+        let resp = match snapshot
+            .map(|a| SigningWindow::over(a, now, self.sig_ttl_secs))
+            .or_else(|| SigningWindow::open(&self.signer, now, self.sig_ttl_secs))
+        {
+            Some(w) => {
+                let (a, expires) = (w.key(), w.expires());
                 let built = match bound {
                     Some(ev) => build_delegated_rejection(
                         request,

@@ -148,7 +148,7 @@ size orders the queue while §8 question 2 decides the outcome:
 
 | prod | pub fn | pub ty | priv fn | unit |
 |---:|---:|---:|---:|---|
-| 2127 | 11 | 2 | 44 | `mcp-re-proxy/src/http_profile_serve.rs` — the only band-4 unit |
+| 2023 | 11 | 2 | 44 | `mcp-re-proxy/src/http_profile_serve/mod.rs` — the only band-4 unit; the serving path became an owner subtree in MCPRE-151 |
 | 1907 | 23 | 9 | 100 | `mcp-re-proxy/src/tls.rs` |
 | 1640 | 23 | 4 | 15 | `mcp-re-http-profile/src/verify.rs` — **the ruled first component** |
 | 1629 | 25 | 12 | 70 | `mcp-re-http-profile/src/scitt.rs` — **census complete**, outcome *decompose* ([`components/scitt-transparency.md`](components/scitt-transparency.md)) |
