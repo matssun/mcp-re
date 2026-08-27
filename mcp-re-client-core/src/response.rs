@@ -18,6 +18,7 @@
 //! the network.
 
 use crate::delegated_evidence::DelegatedResponseEvidence;
+use crate::delegated_trust::DelegatedResponseTrust;
 use mcp_re_http_profile::DelegationExpectations;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
@@ -326,7 +327,8 @@ impl RevocationSource for StaticRevocationList {
 /// its two existing seams — the `resolve_root` actor resolver (current + in-window
 /// retired) and the `is_revoked` revocation source (revoked issuers). Because the
 /// resolver is rebuilt per verification with the caller's injected `now`
-/// ([`TrustedIssuerSet::response_resolver`]), the overlap window is enforced without
+/// (the [`DelegatedResponseTrust`] impl takes `now` per call), the overlap window is
+/// enforced without
 /// the pure verifier ever reading a clock.
 #[derive(Debug, Clone, Default)]
 pub struct TrustedIssuerSet {
@@ -401,17 +403,27 @@ impl TrustedIssuerSet {
             .is_some_and(|expires_at| now > expires_at)
     }
 
-    /// Resolve an `issuer_kid` to its trusted ROOT actor AT `now`: a current root, or
-    /// a retired root still inside its overlap window (`now <= valid_until`). A
-    /// retired root past its window, an unknown issuer, or ANY issuer once the
-    /// publishing document's [`manifest_expires_at`](Self::manifest_expires_at) has
-    /// passed, resolves to `None` (→ `delegation_issuer_untrusted`).
+    /// Whether this set vouches for `issuer_kid` at `now` — the public yes/no.
     ///
-    /// A revoked-but-still-current/retired root DOES resolve here on purpose: the
-    /// credential's signature is then checked and the [`RevocationSource`] impl
-    /// rejects it as `delegation_revoked` (the honest reason), rather than masking a
-    /// revocation as an untrusted-issuer error.
-    pub fn resolve_root(&self, issuer_kid: &str, now: i64) -> Option<ResolvedActor> {
+    /// Fails closed on revocation, on a retired root past its overlap deadline, on an
+    /// unknown issuer, and on an expired publishing document. It is the only trust
+    /// question this type answers in public, and it answers it whole.
+    pub fn trusts(&self, issuer_kid: &str, now: i64) -> bool {
+        !self.is_revoked(issuer_kid) && self.resolve_root(issuer_kid, now).is_some()
+    }
+
+    /// The LIFECYCLE lookup: a current root, or a retired root still inside its overlap
+    /// window (`now <= valid_until`). A retired root past its window, an unknown issuer,
+    /// or ANY issuer once the publishing document's
+    /// [`manifest_expires_at`](Self::manifest_expires_at) has passed, resolves to `None`.
+    ///
+    /// **It answers rotation, not revocation, and it is `pub(crate)` for that reason.** A
+    /// revoked-but-still-current root resolves here, so this is not a trust verdict and
+    /// must never be exposed as one: a caller holding it could pair it with an empty
+    /// revocation source and verify a credential beneath a root this very set marks
+    /// REVOKED. The public verdict is [`resolve_issuer`](DelegatedResponseTrust::resolve_issuer),
+    /// which fails closed, and [`trusts`](Self::trusts) for a plain yes/no.
+    pub(crate) fn resolve_root(&self, issuer_kid: &str, now: i64) -> Option<ResolvedActor> {
         // The whole picture has a deadline, and it outranks any individual root's:
         // past the publishing document's `expires_at` nothing in it resolves, so a
         // verifier that never refreshes fails closed instead of serving forever on
@@ -430,47 +442,30 @@ impl TrustedIssuerSet {
         }
         self.current.get(issuer_kid).cloned()
     }
+}
 
-    /// A `resolve_actor` closure for [`verify_delegated_response`] that anchors the
-    /// RESPONSE slot in this set at `now`. The Request slot is never resolved on the
-    /// response-verification path, so it returns `None`. Rebuild it per verification
-    /// with the current `now` so the overlap window is honoured.
+impl DelegatedResponseTrust for TrustedIssuerSet {
+    /// Resolve the credential's root issuer for the RESPONSE slot at `now`. The Request
+    /// slot is never resolved on the response-verification path.
     ///
-    /// This resolver REFUSES a revoked issuer (`None` → `delegation_issuer_untrusted`)
-    /// even though [`resolve_root`](Self::resolve_root) resolves one. A resolver handed
-    /// to the verifier alone cannot know whether the caller ALSO wired this set in as
-    /// the `revocation` argument, and if they did not, resolving a revoked root would
-    /// verify its descendant credentials — revocation silently not applying because a
-    /// value had to be passed twice to take effect. Refusing here makes the raw seam
-    /// safe standing on its own.
+    /// **A REVOKED issuer resolves to nothing here, structurally.** This is the only
+    /// public resolution interface on the type, so a revoked root cannot yield a usable
+    /// [`ResolvedActor`] through any public path — including one composed into a
+    /// [`CompositeResponseTrust`] beside an empty revocation source. The refusal does not
+    /// depend on which revocation half the caller supplied, because it does not consult
+    /// the caller's half at all.
     ///
-    /// Prefer [`verify_delegated_response_anchored`], which takes the set ONCE, wires
-    /// both seams itself, and can therefore afford to resolve a revoked root so the
-    /// rejection carries the honest `delegation_revoked` reason instead of
-    /// `delegation_issuer_untrusted`.
-    pub fn response_resolver(
-        &self,
-        now: i64,
-    ) -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + '_ {
-        move |kid: &str, slot: SignerSlot| match slot {
-            SignerSlot::Response if !self.is_revoked(kid) => self.resolve_root(kid, now),
-            _ => None,
-        }
-    }
-
-    /// The resolver used by [`verify_delegated_response_anchored`], which pairs it with
-    /// this same set as the revocation source. It DOES resolve a revoked root, so the
-    /// credential's signature is checked and the revocation seam produces
-    /// `delegation_revoked` — the honest reason — rather than masking a revocation as
-    /// an untrusted issuer. Private: it is only safe because the caller is this
-    /// module, which wires both seams together by construction.
-    fn anchored_resolver(
-        &self,
-        now: i64,
-    ) -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + '_ {
-        move |kid: &str, slot: SignerSlot| match slot {
-            SignerSlot::Response => self.resolve_root(kid, now),
-            _ => None,
+    /// The cost is the error's precision: the rejection reads `delegation_issuer_untrusted`
+    /// rather than `delegation_revoked`, because the credential's signature is never
+    /// reached. That is the right trade. A diagnostic distinction is worth less than a
+    /// structural guarantee, and the honest reason was only available while a caller
+    /// could still get the pairing wrong.
+    fn resolve_issuer(&self, issuer_kid: &str, slot: SignerSlot, now: i64) -> ResolverOutcome {
+        match slot {
+            SignerSlot::Response if !self.is_revoked(issuer_kid) => {
+                self.resolve_root(issuer_kid, now).into()
+            }
+            _ => ResolverOutcome::NotTrusted,
         }
     }
 }
@@ -712,16 +707,18 @@ pub struct VerifiedDelegatedResponse {
 /// preflight-unbound receipt — NEVER accepting an unbound receipt as a bound success.
 /// On total failure the (more specific) bound error is surfaced, fail-closed.
 ///
-/// `resolve_actor` is the client's trust seam; `revocation` is the client-side
-/// [`RevocationSource`] consulted with the credential's `delegated_kid`, `issuer_kid`,
-/// and `jti` (an empty [`StaticRevocationList`] is the explicit TTL-only posture — the
-/// deployment relies on short delegated-key TTLs alone).
-pub fn verify_delegated_response<R: Into<ResolverOutcome>>(
+/// `trust` is the client's [`DelegatedResponseTrust`] authority: ONE value answering both
+/// which root issuer resolves and which identifiers are revoked. It is consulted for
+/// revocation with each identifier the credential carries — its `delegated_kid`, its
+/// `issuer_kid`, and its `jti`. A [`TrustedIssuerSet`] is one; so is a
+/// [`CompositeResponseTrust`] over a directory and a separate denylist. A trust authority
+/// whose revocation half is empty is the explicit TTL-only posture — the deployment
+/// relies on short delegated-key TTLs alone.
+pub fn verify_delegated_response(
     response: &HttpResponse,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
+    trust: &dyn DelegatedResponseTrust,
     expectation: &ResponseExpectation,
     policy: &DelegationPolicy,
-    revocation: &dyn RevocationSource,
     now: i64,
 ) -> Result<VerifiedDelegatedResponse, HttpProfileError> {
     let audiences: Vec<&str> = policy
@@ -737,10 +734,13 @@ pub fn verify_delegated_response<R: Into<ResolverOutcome>>(
         accepted_epochs: &epochs,
         max_clock_skew: policy.bounded_clock_skew(),
     };
-    // Adapt the revocation seam to the http-profile verifier's closure form. The
-    // verifier consults it with each identifier the credential carries.
-    let is_revoked = |identifier: &str| revocation.is_revoked(identifier);
+    // Adapt the one trust authority to the http-profile verifier's two closure forms.
+    // Both halves come from the SAME value, so a resolver that answers cannot be paired
+    // with a revocation source that does not.
+    let is_revoked = |identifier: &str| trust.is_revoked(identifier);
     let is_revoked = &is_revoked;
+    let resolve_actor = |kid: &str, slot: SignerSlot| trust.resolve_issuer(kid, slot, now);
+    let resolve_actor = &resolve_actor;
 
     // A SUCCESS must be request-bound. The server only ever signs success responses
     // with the `;req` binding, and a stripped-`;req` "success" changes the signature
@@ -808,82 +808,6 @@ pub fn verify_delegated_response<R: Into<ResolverOutcome>>(
             }
         }
     }
-}
-
-/// Verify a DELEGATED-required response anchored in a [`TrustedIssuerSet`] — the same
-/// verification as [`verify_delegated_response`], with the trust-anchor set supplied
-/// ONCE.
-///
-/// The set feeds two seams the verifier treats as independent: the root RESOLVER
-/// (current + in-window retired) and the REVOCATION source (revoked issuers). Passing
-/// it through [`verify_delegated_response`] means passing the same value in two
-/// argument positions, and getting that wrong fails in the permissive direction — a
-/// caller who builds the resolver from the set but passes an empty revocation list
-/// verifies credentials under a root they have marked REVOKED, with nothing to
-/// indicate the revocation is inert. Revocation of a trust anchor is the one decisive
-/// action that invalidates every descendant delegated credential at once, so it must
-/// not depend on remembering to say it twice.
-///
-/// Use this whenever the trust anchors come from a [`TrustedIssuerSet`] (including one
-/// loaded from a signed trust-anchor manifest). Reach for
-/// [`verify_delegated_response`] only when the resolver and the revocation source are
-/// genuinely different objects — e.g. a resolver backed by a live directory plus a
-/// separately-fed denylist.
-pub fn verify_delegated_response_anchored(
-    response: &HttpResponse,
-    expectation: &ResponseExpectation,
-    policy: &DelegationPolicy,
-    issuers: &TrustedIssuerSet,
-    now: i64,
-) -> Result<VerifiedDelegatedResponse, HttpProfileError> {
-    let resolver = issuers.anchored_resolver(now);
-    verify_delegated_response(response, &resolver, expectation, policy, issuers, now)
-}
-
-/// Verify a delegated-signed bodyless **202** anchored in a [`TrustedIssuerSet`] — the
-/// same verification as [`verify_delegated_accepted_202`], with the trust-anchor set
-/// supplied ONCE.
-///
-/// The pairing argument is [`verify_delegated_response_anchored`]'s, and it applies with
-/// the same force here: the set is both the root resolver and the revocation source, and
-/// a caller who builds the resolver from it but passes an empty revocation list
-/// acknowledges notifications under a root they have marked revoked.
-///
-/// Anchored routes had no 202 verifier at all, so a notification sent over one could
-/// only be refused. Refusing was the right answer while nothing could check the
-/// acknowledgement — but it left the trust-anchor lifecycle, the mode a signed manifest
-/// distributes, unable to carry one-way messages that the raw seam has verified since
-/// #424.
-pub fn verify_delegated_accepted_202_anchored(
-    response: &HttpResponse,
-    request: &HttpRequest,
-    policy: &DelegationPolicy,
-    issuers: &TrustedIssuerSet,
-    now: i64,
-) -> Result<ResolvedActor, HttpProfileError> {
-    verify_delegated_accepted_202_anchored_pinned(response, request, policy, issuers, None, now)
-}
-
-/// [`verify_delegated_accepted_202_anchored`] with the route's PINNED root issuer
-/// enforced — the anchored form of [`verify_delegated_accepted_202_pinned`].
-pub fn verify_delegated_accepted_202_anchored_pinned(
-    response: &HttpResponse,
-    request: &HttpRequest,
-    policy: &DelegationPolicy,
-    issuers: &TrustedIssuerSet,
-    expected_issuer_kid: Option<&str>,
-    now: i64,
-) -> Result<ResolvedActor, HttpProfileError> {
-    let resolver = issuers.anchored_resolver(now);
-    verify_delegated_accepted_202_pinned(
-        response,
-        request,
-        &resolver,
-        policy,
-        issuers,
-        expected_issuer_kid,
-        now,
-    )
 }
 
 /// The server's frozen wire code and its ADR-MCPRE-058 §10 execution/retry contract,
@@ -992,26 +916,18 @@ fn check_unbound_receipt_is_about_this_request(
 /// bytes — so a client may read a verified 202 as proof that THIS transmission reached
 /// the boundary, not merely that identical content did at some unspecified time.
 ///
-/// Same trust inputs as [`verify_delegated_response`]: the ROOT ISSUER anchor comes
-/// through `resolve_actor` for the `Response` slot, and the credential must satisfy
-/// `policy` (audience scope, accepted epochs, skew) and clear `revocation`.
-pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
+/// Same trust input as [`verify_delegated_response`]: one [`DelegatedResponseTrust`]
+/// authority supplies both the ROOT ISSUER anchor for the `Response` slot and the
+/// revocation decision, and the credential must satisfy `policy` (audience scope,
+/// accepted epochs, skew).
+pub fn verify_delegated_accepted_202(
     response: &HttpResponse,
     request: &HttpRequest,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
+    trust: &dyn DelegatedResponseTrust,
     policy: &DelegationPolicy,
-    revocation: &dyn RevocationSource,
     now: i64,
 ) -> Result<ResolvedActor, HttpProfileError> {
-    verify_delegated_accepted_202_pinned(
-        response,
-        request,
-        resolve_actor,
-        policy,
-        revocation,
-        None,
-        now,
-    )
+    verify_delegated_accepted_202_pinned(response, request, trust, policy, None, now)
 }
 
 /// [`verify_delegated_accepted_202`] with the route's PINNED server signer enforced.
@@ -1030,13 +946,11 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
 /// is refused), the root signature covers the JWS header, and the credential verifier
 /// requires `header.kid == claims.issuer_kid` — so the value read here is the anchor
 /// the response provably chained to, not a self-asserted label.
-#[allow(clippy::too_many_arguments)]
-pub fn verify_delegated_accepted_202_pinned<R: Into<ResolverOutcome>>(
+pub fn verify_delegated_accepted_202_pinned(
     response: &HttpResponse,
     request: &HttpRequest,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
+    trust: &dyn DelegatedResponseTrust,
     policy: &DelegationPolicy,
-    revocation: &dyn RevocationSource,
     expected_issuer_kid: Option<&str>,
     now: i64,
 ) -> Result<ResolvedActor, HttpProfileError> {
@@ -1053,11 +967,12 @@ pub fn verify_delegated_accepted_202_pinned<R: Into<ResolverOutcome>>(
         accepted_epochs: &epochs,
         max_clock_skew: policy.bounded_clock_skew(),
     };
-    let is_revoked = |identifier: &str| revocation.is_revoked(identifier);
+    let is_revoked = |identifier: &str| trust.is_revoked(identifier);
+    let resolve_actor = |kid: &str, slot: SignerSlot| trust.resolve_issuer(kid, slot, now);
     let actor = mcp_re_http_profile::verify_delegated_accepted_202(
         response,
         request,
-        &Verifier::new(&verifier_policy, resolve_actor),
+        &Verifier::new(&verifier_policy, &resolve_actor),
         &expect,
         &is_revoked,
         now,
@@ -1158,6 +1073,32 @@ mod delegated_tests {
             b"access-token-under-test",
         )]
     }
+    /// One [`DelegatedResponseTrust`] over the test root plus a chosen revocation set.
+    ///
+    /// The tests used to pass a resolver and a revocation list as two arguments. They
+    /// cannot any more, and that is the point of MCPRE-172: the pairing a caller could
+    /// get wrong is no longer expressible, in a test or in production.
+    struct TestTrust {
+        revoked: StaticRevocationList,
+    }
+
+    impl RevocationSource for TestTrust {
+        fn is_revoked(&self, identifier: &str) -> bool {
+            self.revoked.is_revoked(identifier)
+        }
+    }
+
+    impl DelegatedResponseTrust for TestTrust {
+        fn resolve_issuer(&self, issuer_kid: &str, slot: SignerSlot, _now: i64) -> ResolverOutcome {
+            resolver()(issuer_kid, slot).into()
+        }
+    }
+
+    /// The test root, with `revoked` as the delegated-identifier revocation half.
+    fn trust_with(revoked: StaticRevocationList) -> TestTrust {
+        TestTrust { revoked }
+    }
+
     /// The client's trust seam: the ROOT issuer key (by its issuer kid) for the
     /// Response slot. The delegated key is authorized by the credential alone.
     fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> {
@@ -1256,10 +1197,9 @@ mod delegated_tests {
             .expect("server delegated-signs the success response");
         let out = verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &expectation(&signed),
             &policy(),
-            &StaticRevocationList::new(),
             NOW,
         )
         .expect("client verifies delegated success");
@@ -1295,10 +1235,9 @@ mod delegated_tests {
         // No pin: verifies exactly as before (no behaviour change for the normal path).
         let ok = verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &expectation(&signed),
             &policy(),
-            &StaticRevocationList::new(),
             NOW,
         )
         .expect("an unpinned delegated success still verifies");
@@ -1311,10 +1250,9 @@ mod delegated_tests {
         // delegated-key rotation.
         let pinned = verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &expectation(&signed).with_expected_server_signer(ROOT_KID),
             &policy(),
-            &StaticRevocationList::new(),
             NOW,
         )
         .expect("a pin naming the root issuer verifies");
@@ -1323,10 +1261,9 @@ mod delegated_tests {
         // Any other root fails closed.
         let err = verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &expectation(&signed).with_expected_server_signer("some-other-root-kid"),
             &policy(),
-            &StaticRevocationList::new(),
             NOW,
         )
         .expect_err("a pin naming a different root must fail closed");
@@ -1338,10 +1275,9 @@ mod delegated_tests {
         assert_ne!(delegated_kid, ROOT_KID);
         let err = verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &expectation(&signed).with_expected_server_signer(&delegated_kid),
             &policy(),
-            &StaticRevocationList::new(),
             NOW,
         )
         .expect_err("the pin binds to the issuer, not to the rotating delegated kid");
@@ -1372,19 +1308,17 @@ mod delegated_tests {
         .expect("server builds bound delegated rejection");
         verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &expectation(&signed).with_expected_server_signer(ROOT_KID),
             &policy(),
-            &StaticRevocationList::new(),
             NOW,
         )
         .expect("a receipt whose credential chains to the pinned root verifies");
         let err = verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &expectation(&signed).with_expected_server_signer("some-other-root-kid"),
             &policy(),
-            &StaticRevocationList::new(),
             NOW,
         )
         .expect_err("a pin naming a different root must fail closed on a receipt too");
@@ -1413,10 +1347,9 @@ mod delegated_tests {
         .expect("server builds bound delegated rejection");
         let out = verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &expectation(&signed),
             &policy(),
-            &StaticRevocationList::new(),
             NOW,
         )
         .expect("client verifies bound rejection");
@@ -1450,10 +1383,9 @@ mod delegated_tests {
         .expect("server builds preflight delegated rejection");
         let out = verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &expectation(&signed),
             &policy(),
-            &StaticRevocationList::new(),
             NOW,
         )
         .expect("client verifies preflight rejection unbound");
@@ -1523,10 +1455,9 @@ mod delegated_tests {
         // arriving as an authoritative denial of a call that may already have run.
         let err = verify_delegated_response(
             &spliced,
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &expectation(&mine),
             &policy(),
-            &StaticRevocationList::new(),
             NOW,
         )
         .expect_err("a receipt about another request must not answer this one");
@@ -1548,10 +1479,9 @@ mod delegated_tests {
         .expect("server builds a preflight rejection for this request");
         let out = verify_delegated_response(
             &mine_receipt,
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &expectation(&mine),
             &policy(),
-            &StaticRevocationList::new(),
             NOW,
         )
         .expect("the receipt for this request's bytes still verifies");
@@ -1581,10 +1511,9 @@ mod delegated_tests {
         .expect("server builds a receipt with no request context");
         let err = verify_delegated_response(
             &generic,
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &expectation(&signed),
             &policy(),
-            &StaticRevocationList::new(),
             NOW,
         )
         .expect_err("a receipt about no request must not answer this one");
@@ -1619,10 +1548,9 @@ mod delegated_tests {
         .expect("server builds a post-dispatch rejection");
         let out = verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &expectation(&signed),
             &policy(),
-            &StaticRevocationList::new(),
             NOW,
         )
         .expect("client verifies the receipt");
@@ -1655,10 +1583,9 @@ mod delegated_tests {
         .expect("server builds an approval-spent rejection");
         let out = verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &expectation(&signed),
             &policy(),
-            &StaticRevocationList::new(),
             NOW,
         )
         .expect("client verifies the receipt");
@@ -1727,10 +1654,9 @@ mod delegated_tests {
         .expect("server builds a retention-indeterminate rejection");
         let out = verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &expectation(&signed),
             &policy(),
-            &StaticRevocationList::new(),
             NOW,
         )
         .expect("client verifies the receipt");
@@ -1771,10 +1697,9 @@ mod delegated_tests {
         .expect("server directly root-signs");
         let err = verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &expectation(&signed),
             &policy(),
-            &StaticRevocationList::new(),
             NOW,
         )
         .unwrap_err();
@@ -1799,11 +1724,10 @@ mod delegated_tests {
         };
         assert!(verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &expectation(&signed),
             &policy(),
-            &StaticRevocationList::new(),
-            NOW,
+            NOW
         )
         .is_err());
     }
@@ -1833,11 +1757,10 @@ mod delegated_tests {
         resp.status = 200;
         assert!(verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &expectation(&signed),
             &policy(),
-            &StaticRevocationList::new(),
-            NOW,
+            NOW
         )
         .is_err());
     }
@@ -1863,10 +1786,9 @@ mod delegated_tests {
         let revoked = StaticRevocationList::new().revoke(kid);
         let err = verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(revoked),
             &expectation(&signed),
             &policy(),
-            &revoked,
             NOW,
         )
         .unwrap_err();
@@ -1889,10 +1811,9 @@ mod delegated_tests {
         let revoked = StaticRevocationList::new().revoke(ROOT_KID);
         let err = verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(revoked),
             &expectation(&signed),
             &policy(),
-            &revoked,
             NOW,
         )
         .unwrap_err();
@@ -1925,10 +1846,9 @@ mod delegated_tests {
         let revoked = StaticRevocationList::new().revoke(jti);
         let err = verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(revoked),
             &expectation(&signed),
             &policy(),
-            &revoked,
             NOW,
         )
         .unwrap_err();
@@ -1956,10 +1876,9 @@ mod delegated_tests {
         assert!(!revoked.is_empty());
         let out = verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(revoked),
             &expectation(&signed),
             &policy(),
-            &revoked,
             NOW,
         )
         .expect("verifies — this credential is not on the denylist");
@@ -1992,10 +1911,9 @@ mod delegated_tests {
         let revoked = StaticRevocationList::new().revoke(snap.delegated_kid.clone());
         let err = verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(revoked),
             &expectation(&signed),
             &policy(),
-            &revoked,
             NOW,
         )
         .unwrap_err();
@@ -2072,10 +1990,9 @@ mod delegated_tests {
         // past `exp` and this verification succeeds.
         let err = verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &expectation(&signed),
             &a_week,
-            &StaticRevocationList::new(),
             late,
         )
         .expect_err("a week of skew must not honour a credential 3300s past exp");
@@ -2131,30 +2048,24 @@ mod delegated_tests {
         let live = TrustedIssuerSet::new().with_current(root.clone());
         // A hand-assembled set has no document behind it and no deadline to enforce.
         assert!(live.manifest_expires_at().is_none());
-        verify_delegated_response_anchored(&resp, &expectation(&signed), &policy(), &live, NOW)
+        verify_delegated_response(&resp, &live, &expectation(&signed), &policy(), NOW)
             .expect("a set with no expiry verifies");
 
         let published = TrustedIssuerSet::new()
             .with_current(root)
             .with_manifest_expiry(NOW + 60);
         assert!(published.resolve_root(ROOT_KID, NOW).is_some());
-        verify_delegated_response_anchored(
-            &resp,
-            &expectation(&signed),
-            &policy(),
-            &published,
-            NOW,
-        )
-        .expect("inside the document's window it verifies exactly as before");
+        verify_delegated_response(&resp, &published, &expectation(&signed), &policy(), NOW)
+            .expect("inside the document's window it verifies exactly as before");
 
         // One second past the document's own deadline nothing in it resolves.
         assert!(published.is_expired(NOW + 61));
         assert!(published.resolve_root(ROOT_KID, NOW + 61).is_none());
-        let err = verify_delegated_response_anchored(
+        let err = verify_delegated_response(
             &resp,
+            &published,
             &expectation(&signed),
             &policy(),
-            &published,
             NOW + 61,
         )
         .expect_err("an expired trust picture must not verify a response");
@@ -2208,9 +2119,8 @@ mod delegated_tests {
         verify_delegated_accepted_202_pinned(
             &ack,
             notification.request(),
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &policy(),
-            &StaticRevocationList::new(),
             None,
             NOW,
         )
@@ -2220,9 +2130,8 @@ mod delegated_tests {
         verify_delegated_accepted_202_pinned(
             &ack,
             notification.request(),
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &policy(),
-            &StaticRevocationList::new(),
             Some(ROOT_KID),
             NOW,
         )
@@ -2232,9 +2141,8 @@ mod delegated_tests {
         let err = verify_delegated_accepted_202_pinned(
             &ack,
             notification.request(),
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &policy(),
-            &StaticRevocationList::new(),
             Some("some-other-root-kid"),
             NOW,
         )
@@ -2246,9 +2154,8 @@ mod delegated_tests {
         let err = verify_delegated_accepted_202_pinned(
             &ack,
             notification.request(),
-            &resolver(),
+            &trust_with(StaticRevocationList::new()),
             &policy(),
-            &StaticRevocationList::new(),
             Some(&snap.delegated_kid),
             NOW,
         )
@@ -2301,10 +2208,9 @@ mod delegated_tests {
         let revoked = StaticRevocationList::new().revoke(kid1);
         let out = verify_delegated_response(
             &resp,
-            &resolver(),
+            &trust_with(revoked),
             &expectation(&signed),
             &policy(),
-            &revoked,
             rot,
         )
         .expect("response on the rotated key verifies while the old key is revoked");

@@ -492,9 +492,19 @@ fn a_published_revocation_reaches_the_running_listener() {
     let reply = post(sidecar.addr, "/route/r1", CALL);
     assert_eq!(reply.status, 502, "an unverifiable reply is not a result");
     let error: serde_json::Value = serde_json::from_str(&reply.body).expect("error body");
+    // The proposition this row protects is unchanged: revoking the ROOT invalidates every
+    // descendant delegated credential at once, through a running listener, on the next
+    // request. What changed under MCPRE-172 is the CODE, not the outcome.
+    //
+    // `TrustedIssuerSet::resolve_issuer` now fails closed on a revoked issuer before the
+    // credential's signature is reached, so the refusal is `delegation_issuer_untrusted`
+    // rather than `delegation_revoked`. That is the price of the structural guarantee: a
+    // revoked root can no longer produce a usable actor through ANY public interface, so
+    // it can no longer be composed beside an empty revocation source. The more precise
+    // diagnostic was only reachable while that composition was still possible.
     assert_eq!(
         error["error"]["data"]["mcp_re_error"]["wire_code"],
-        serde_json::json!("mcp-re.delegation_revoked"),
+        serde_json::json!("mcp-re.delegation_issuer_untrusted"),
         "revoking the ROOT invalidates every descendant delegated credential at once"
     );
     assert!(

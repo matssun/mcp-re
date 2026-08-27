@@ -18,10 +18,9 @@ use mcp_re_client_core::build_signed_notification;
 use mcp_re_client_core::build_signed_request;
 use mcp_re_client_core::classify_result;
 use mcp_re_client_core::continuation_state;
-use mcp_re_client_core::response::verify_delegated_accepted_202_anchored_pinned;
 use mcp_re_client_core::response::verify_delegated_accepted_202_pinned;
 use mcp_re_client_core::verify_delegated_response;
-use mcp_re_client_core::verify_delegated_response_anchored;
+use mcp_re_client_core::CompositeResponseTrust;
 use mcp_re_client_core::DelegatedOutcome;
 use mcp_re_client_core::ExecutionContract;
 use mcp_re_client_core::HttpProfileError;
@@ -29,6 +28,7 @@ use mcp_re_client_core::HttpResponse;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResponseExpectation;
 use mcp_re_client_core::ResultClass;
+use mcp_re_client_core::SignerSlot;
 use mcp_re_core::SigningKey;
 use serde_json::json;
 use serde_json::Map;
@@ -247,14 +247,13 @@ impl ClientProxy {
             // credential's delegated_kid / issuer_kid / jti; an empty static list is
             // the explicit TTL-only posture, never a silent default.
             ClientVerification::DelegatedRequired(policy, resolve_actor, revocation) => {
-                verify_delegated_response(
-                    &response,
-                    resolve_actor.as_ref(),
-                    &expectation,
-                    policy,
-                    revocation.as_ref(),
-                    params.now_unix,
-                )?
+                // Two genuinely different systems, composed into ONE trust authority
+                // before the verifier sees them (MCPRE-172). The route's resolver takes
+                // no `now` — that is the documented limitation of this variant, and why
+                // an overlap window needs `DelegatedAnchored`.
+                let resolve = |kid: &str, slot: SignerSlot, _now: i64| resolve_actor(kid, slot);
+                let trust = CompositeResponseTrust::new(&resolve, revocation.as_ref());
+                verify_delegated_response(&response, &trust, &expectation, policy, params.now_unix)?
             }
             // Trust-anchor lifecycle: the set is BOTH the root resolver and the
             // revocation source, evaluated at THIS request's `now` so a retiring root's
@@ -262,11 +261,11 @@ impl ClientProxy {
             ClientVerification::DelegatedAnchored(policy, anchors) => {
                 // Read the CURRENT set, so a refreshed manifest that revoked a root
                 // takes effect on the next request rather than the next restart.
-                verify_delegated_response_anchored(
+                verify_delegated_response(
                     &response,
+                    &*anchors.load(),
                     &expectation,
                     policy,
-                    &anchors.load(),
                     params.now_unix,
                 )?
             }
@@ -367,12 +366,13 @@ impl ClientProxy {
         let pin = route.expected_server_keyid.as_deref();
         match &route.verification {
             ClientVerification::DelegatedRequired(policy, resolve_actor, revocation) => {
+                let resolve = |kid: &str, slot: SignerSlot, _now: i64| resolve_actor(kid, slot);
+                let trust = CompositeResponseTrust::new(&resolve, revocation.as_ref());
                 verify_delegated_accepted_202_pinned(
                     response,
                     signed.request(),
-                    resolve_actor.as_ref(),
+                    &trust,
                     policy,
-                    revocation.as_ref(),
                     pin,
                     params.now_unix,
                 )?;
@@ -381,11 +381,11 @@ impl ClientProxy {
             // bodied path reads it, so a manifest that revoked a root refuses the next
             // acknowledgement rather than the next restart.
             ClientVerification::DelegatedAnchored(policy, anchors) => {
-                verify_delegated_accepted_202_anchored_pinned(
+                verify_delegated_accepted_202_pinned(
                     response,
                     signed.request(),
+                    &*anchors.load(),
                     policy,
-                    &anchors.load(),
                     pin,
                     params.now_unix,
                 )?;

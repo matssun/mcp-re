@@ -21,7 +21,6 @@ use mcp_re_client_core::build_signed_request;
 use mcp_re_client_core::build_signed_request_with_signer;
 use mcp_re_client_core::verify_delegated_accepted_202;
 use mcp_re_client_core::verify_delegated_response;
-use mcp_re_client_core::ActorIdentity;
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::ArtifactType;
 use mcp_re_client_core::AudienceTuple;
@@ -34,9 +33,11 @@ use mcp_re_client_core::ProvidedAuthorization;
 use mcp_re_client_core::RequestEvidence;
 use mcp_re_client_core::RequestEvidenceDigest;
 use mcp_re_client_core::RequestSigningInputs;
-use mcp_re_client_core::ResolvedActor;
 use mcp_re_client_core::ResponseExpectation;
-use mcp_re_client_core::SignerSlot;
+mod trust;
+use trust::pinned_root_resolver;
+
+use mcp_re_client_core::CompositeResponseTrust;
 use mcp_re_client_core::StaticRevocationList;
 use mcp_re_client_core::PROFILE_TAG;
 use mcp_re_core::SigningKey;
@@ -515,21 +516,13 @@ pub fn verify_accepted_202(
 ) -> napi::Result<AcceptedResultJs> {
     let issuer_pub = VerificationKey::from_b64url(&issuer_pubkey_b64url)
         .map_err(|_| napi::Error::from_reason("invalid issuer public key"))?;
-    let ikid = issuer_key_id.clone();
-    let iident = ActorIdentity {
-        role: issuer_role,
-        trust_domain: issuer_trust_domain,
-        subject: issuer_subject,
-        keyid: issuer_key_id,
-    };
-    let resolve = move |kid: &str, slot: SignerSlot| match slot {
-        SignerSlot::Response if kid == ikid => Some(ResolvedActor {
-            identity: iident.clone(),
-            verification_key: issuer_pub.clone(),
-            slot,
-        }),
-        _ => None,
-    };
+    let resolve = pinned_root_resolver(
+        issuer_key_id,
+        issuer_role,
+        issuer_trust_domain,
+        issuer_subject,
+        issuer_pub,
+    );
     let to_pairs =
         |hs: Vec<HttpHeader>| hs.into_iter().map(|h| (h.key, h.value)).collect::<Vec<_>>();
     let response = HttpResponse {
@@ -550,15 +543,9 @@ pub fn verify_accepted_202(
         max_clock_skew as i64,
     );
     let revocation = StaticRevocationList::from_identifiers(revoked_identifiers);
-    let actor = verify_delegated_accepted_202(
-        &response,
-        &request,
-        &resolve,
-        &policy,
-        &revocation,
-        now as i64,
-    )
-    .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
+    let trust = CompositeResponseTrust::new(&resolve, &revocation);
+    let actor = verify_delegated_accepted_202(&response, &request, &trust, &policy, now as i64)
+        .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
     Ok(AcceptedResultJs {
         ok: true,
         server_keyid: actor.identity.keyid,
@@ -636,23 +623,13 @@ pub fn verify_response(
 ) -> napi::Result<VerifyResultJs> {
     let issuer_pub = VerificationKey::from_b64url(&issuer_pubkey_b64url)
         .map_err(|_| napi::Error::from_reason("invalid issuer public key"))?;
-    let ikid = issuer_key_id.clone();
-    // The trusted ROOT ISSUER anchor for the Response slot: the credential chains to
-    // it. The delegated key itself is authorized by the credential, never enrolled.
-    let iident = ActorIdentity {
-        role: issuer_role,
-        trust_domain: issuer_trust_domain,
-        subject: issuer_subject,
-        keyid: issuer_key_id,
-    };
-    let resolve = move |kid: &str, slot: SignerSlot| match slot {
-        SignerSlot::Response if kid == ikid => Some(ResolvedActor {
-            identity: iident.clone(),
-            verification_key: issuer_pub.clone(),
-            slot,
-        }),
-        _ => None,
-    };
+    let resolve = pinned_root_resolver(
+        issuer_key_id,
+        issuer_role,
+        issuer_trust_domain,
+        issuer_subject,
+        issuer_pub,
+    );
     let to_pairs =
         |hs: Vec<HttpHeader>| hs.into_iter().map(|h| (h.key, h.value)).collect::<Vec<_>>();
     let response = HttpResponse {
@@ -678,15 +655,9 @@ pub fn verify_response(
         max_clock_skew as i64,
     );
     let revocation = StaticRevocationList::from_identifiers(revoked_identifiers);
-    let verified = verify_delegated_response(
-        &response,
-        &resolve,
-        &expectation,
-        &policy,
-        &revocation,
-        now as i64,
-    )
-    .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
+    let trust = CompositeResponseTrust::new(&resolve, &revocation);
+    let verified = verify_delegated_response(&response, &trust, &expectation, &policy, now as i64)
+        .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
     // A verified rejection receipt is genuine evidence but NOT an acceptance — surface
     // the outcome so the caller does not read a signed replay/trust rejection as a
     // success. (An unsigned / direct-root / forged answer never reaches here: it fails
