@@ -81,7 +81,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 REFUSAL = ["mcp-re-proxy/src/refusal/mod.rs", "mcp-re-proxy/src/refusal/cause.rs"]
-SERVING = "mcp-re-proxy/src/http_profile_serve.rs"
+SERVING = "mcp-re-proxy/src/http_profile_serve/mod.rs"
 RECORD = "mcp-re-proxy/src/audit_record.rs"
 CORE_AUDIT = "mcp-re-core/src/audit.rs"
 

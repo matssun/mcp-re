@@ -203,7 +203,7 @@ the proof quantifies over whatever record the caller supplied. Generations are s
 integers and collide across workloads by construction. The security consequence above
 therefore rests on a caller obligation this claim does not discharge: the enforcement
 point must look the record up under the very `binding.admission_id` that was checked. The
-serving path satisfies it today at `http_profile_serve.rs:600`, which passes
+serving path satisfies it today at `admission_enforcer.rs:121`, which passes
 `&binding.admission_id` to `AsyncAdmissionSource::current`; nothing in the type forbids a
 future caller from deriving that id from a header, a session field, or a cache instead.
 """

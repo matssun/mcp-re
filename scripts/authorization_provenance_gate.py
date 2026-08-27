@@ -62,7 +62,7 @@ REPO = Path(__file__).resolve().parent.parent
 AUTHORITY_DIR = "mcp-re-proxy/src/authorization"
 
 #: The serving path that consults it, and the machine that orders the decision.
-SERVING = "mcp-re-proxy/src/http_profile_serve.rs"
+SERVING = "mcp-re-proxy/src/http_profile_serve/mod.rs"
 VALIDATION = "mcp-re-proxy/src/config_state/validation/residue.rs"
 
 #: Certificate / TLS / transport-identity vocabulary. Peer identity reaches authorization as
