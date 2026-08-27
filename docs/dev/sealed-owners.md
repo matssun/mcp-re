@@ -65,7 +65,7 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `TrustDocumentSource` | `config_state/trust_document.rs` | `path()` |
 | `ClientCredentialWindow` | `config_state/client_credential_window.rs` | `cert_lifetime()`, `connection_age()`, `exposure_window()` |
 | `ShardTopologyRequest` | `config_state/topology.rs` | `shards()`, `workers_per_shard()`, `shards_or_auto()`, `workers_per_shard_or_auto()` |
-| `TrustPlan` | `startup_plan.rs` | `revocation()`, `document_path()`, `response_kid()`, `reload()`, `epoch()` |
+| `TrustPlan` | `trust_plan.rs` | `revocation()`, `document_path()`, `response_kid()`, `reload()`, `epoch()` |
 | `TlsListenerSecurityState` | `tls_listener_state/` (a module TREE) | `epoch()`, `build_exported_key_config()`, `build_delegated_config()`, `build_delegated_resolver_config()` |
 | `PeerIdentityValue` | `communication_assurance/peer_identity_value.rs` | `as_str()` |
 | `CertificatePeerIdentityEvidence` | `communication_assurance/certificate_peer_identity_evidence.rs` | `value()`, `source()` |
@@ -78,6 +78,19 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 A plan produced by an owner lives **with that owner**, not in `startup_plan.rs`.
 `startup_plan` re-exports it. The plan is the owner's projection of its own validated
 state, so building it in the planner was the planner restating the owner's semantics.
+
+`TrustPlan` was the last entry still contradicting that rule, and MCPRE-148 moved it to
+`trust_plan.rs` beside the rest of the trust subtree. Two details of the move are worth
+keeping:
+
+- **`TrustEpochPlan` deliberately did NOT move.** It is shared with `SigningPlan`, so
+  relocating it into a trust-only module would make trust the authority over a fact
+  signing also consumes — the CF-09 defect this tree already closed. It stays in
+  `startup_plan` as the shared composition input, and `TrustPlan` takes it as an argument.
+- **The move made the seal bite.** A `startup_plan` test was reading `trust.epoch` and
+  `trust.response_kid` directly; once the fields were private to the owner's module that
+  stopped compiling, and the test now relates the two plans through `epoch()` and
+  `response_kid()`. The compile error was the boundary detector working.
 
 ### `TlsListenerSecurityState` — the projections ARE the operations (MCPRE-137)
 
