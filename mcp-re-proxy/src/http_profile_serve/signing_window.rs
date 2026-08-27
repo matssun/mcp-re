@@ -39,7 +39,9 @@ impl SigningWindow {
     /// has no valid delegated key — the fail-closed posture, since delegated signing is
     /// the only response-signing mode there is.
     pub(crate) fn open(signer: &DelegatedServerSigner, now: i64, ttl_secs: i64) -> Option<Self> {
-        signer.current(now).map(|key| Self::over(key, now, ttl_secs))
+        signer
+            .current(now)
+            .map(|key| Self::over(key, now, ttl_secs))
     }
 
     /// Open a window over a credential already snapshotted earlier in this exchange.

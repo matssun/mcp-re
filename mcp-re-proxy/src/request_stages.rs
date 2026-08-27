@@ -37,7 +37,6 @@
 //! the boundary and everything else stays ordinary control flow, because only this one
 //! boundary has an invariant the compiler can hold.
 
-
 use crate::async_inner::InnerOutcome;
 use crate::authorization::AuthorizedRequestBody;
 use crate::http_profile_serve::signing_window::SigningWindow;

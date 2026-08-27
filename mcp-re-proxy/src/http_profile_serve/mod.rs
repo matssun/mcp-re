@@ -99,9 +99,9 @@ use crate::exchange_state::RetrySemantics;
 use crate::http_profile_dispatch::dispatch_request_with_async_tier;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
 use crate::request_stages::ReadyForDispatch;
-use signing_window::SigningWindow;
 use crate::request_stages::RetentionDisposition;
 use crate::transport::TransportBinding;
+use signing_window::SigningWindow;
 
 /// Default lifetime of a recorded MRTR continuation in the shared correlation store
 /// (ADR-MCPS-047): long enough for a client to answer an `InputRequiredResult`,
@@ -1580,9 +1580,9 @@ impl HttpProfileProxy {
 
         let response_base =
             match self.sign_reply_stage(&ex, &mut response, window.key(), window.expires()) {
-            Ok(base) => progress.establish(base),
-            Err(refusal) => return self.refuse(&ex, refusal, &progress),
-        };
+                Ok(base) => progress.establish(base),
+                Err(refusal) => return self.refuse(&ex, refusal, &progress),
+            };
 
         match &class {
             ReplyClass::Terminal => progress.advance(ExchangeEvent::ContinuationNotRequired),
