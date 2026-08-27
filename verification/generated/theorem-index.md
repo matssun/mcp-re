@@ -69,11 +69,11 @@ derives, and it is not shown here because this view cannot see the attestations.
 
 ### THM-0002 — RFC 3339 parsing is total and range-bounded
 
-**Statement.** parse_rfc3339_utc terminates without panicking on arbitrary input, and every timestamp it accepts denotes an instant within the representable civil range [-62167219200, 253402387199].
+**Statement.** parse_rfc3339_utc terminates without panicking on arbitrary input, and every timestamp it accepts denotes an instant within the parser's ADMITTED four-digit civil range 0000-01-01T00:00:00Z through 9999-12-31T23:59:59Z, that is [-62167219200, 253402300799]. Both bounds are TIGHT: each is attained by an accepted timestamp, so neither can be narrowed. RFC 3339 defines the era as 0000AD through 9999AD; MCP-RE admits a stricter UTC-only four-digit-year subset of it, and the grammar's four-digit year together with the refusal of leap seconds is what makes 9999-12-31T23:59:59Z the maximum value the function can return.
 
 **Security consequence.** A timestamp in an evidence artifact can neither crash the verifier nor denote an instant the rest of the system cannot represent.
 
-**Scope — what this does NOT establish.** The two halves are established differently and a reviewer must not look for one conjunct. The range half is the postcondition. Totality is discharged by the absence of a precondition together with the prover's panic-freedom obligation, not by an ensures clause. The theorem says nothing about which grammar variants are accepted beyond that what is accepted is in range.
+**Scope — what this does NOT establish.** The two halves are established differently and a reviewer must not look for one conjunct. The range half is the postcondition. Totality is discharged by the absence of a precondition together with the prover's panic-freedom obligation, not by an ensures clause. The theorem says nothing about which grammar variants are accepted beyond that what is accepted is in range. It does not establish that every instant in the range is REACHABLE by some accepted timestamp — only that nothing outside it is. The two endpoints specifically are reachable, and are pinned by boundary controls at their exact Unix seconds, but the claim is containment. It says nothing about the inverse direction: that format_rfc3339_utc round-trips a value in this range is a different proposition with its own evidence.
 
 **Review requirement.** Owner security-specification review
 
