@@ -1,0 +1,13 @@
+{
+  "axis": "specification",
+  "subject": "THM-0002",
+  "reviewed_fingerprint": "sha256:8f620c3a3aaf30db92277c9211a2c2b4de19de5dfda9c064542d531d6f4a2da6",
+  "components": {
+    "theorem_id": "THM-0002",
+    "theorem_claim": "sha256:a7deb03381e65ac310ba6afe35d9bbe081aeb8a4e9f4e80415585fed83a23803",
+    "theorem_dependencies": {},
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "reviewer": "mats@sundvall.name",
+  "notes": "Owner ruling on the second review packet, issue #540. The first packet was returned NEEDS CHANGE because the stated upper bound 253402387199 was one day looser than the parser admits; the repair tightened parse_rfc3339_utc to 253402300799 and the days_from_civil helper postcondition to 2932896, and both bounds are now attained by an accepted timestamp and pinned by boundary controls. The title is deliberately unchanged: it summarises at identifier level and the statement carries the tighter result."
+}

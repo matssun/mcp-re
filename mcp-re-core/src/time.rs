@@ -102,7 +102,7 @@ fn parse_fixed_digits(bytes: &[u8], start: usize, n: usize) -> Option<i64> {
         1 <= month, month <= 12,
         1 <= day, day <= 31,
     ensures
-        -719528 <= days, days <= 2932897,
+        -719528 <= days, days <= 2932896,
 ))]
 fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     // Shift the year so that March is the first month: this places the leap day
@@ -130,14 +130,14 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 //   * the function is TOTAL on it — no index is out of bounds and no arithmetic
 //     overflows, for any byte string whatsoever, so a hostile timestamp in an
 //     evidence artifact cannot panic the parser;
-//   * every admitted value lies inside the representable civil range, so a caller
-//     comparing it against a freshness boundary is comparing a real instant.
+//   * every admitted value lies inside the parser's ADMITTED four-digit civil range
+//     (THM-0002 states it exactly; `boundary_*` below pins both ends).
 //
 // Totality is the stronger of the two here: it is a property of ALL inputs, which
 // no finite test suite establishes.
 #[cfg_attr(feature = "verify", verus_spec(out =>
     ensures
-        out matches Ok(v) ==> -62167219200 <= v && v <= 253402387199,
+        out matches Ok(v) ==> -62167219200 <= v && v <= 253402300799,
 ))]
 pub fn parse_rfc3339_utc(s: &str) -> Result<i64, McpReError> {
     let bytes = s.as_bytes();
@@ -256,6 +256,47 @@ mod tests {
     #[test]
     fn epoch_zero_parses_to_zero() {
         assert_eq!(parse_rfc3339_utc("1970-01-01T00:00:00Z"), Ok(0));
+    }
+
+    /// The LOWEST instant the grammar admits, at its exact Unix second.
+    ///
+    /// RFC 3339 defines the era as 0000AD through 9999AD, and the four-digit year field
+    /// admits `"0000"`, so this end is reachable rather than theoretical. It is the exact
+    /// lower bound of the `parse_rfc3339_utc` postcondition, and pinning it here is what
+    /// makes that bound a measured claim rather than a remembered one.
+    #[test]
+    fn boundary_lowest_admitted_instant() {
+        assert_eq!(
+            parse_rfc3339_utc("0000-01-01T00:00:00Z"),
+            Ok(-62167219200),
+            "0000-01-01T00:00:00Z is the era's first instant"
+        );
+    }
+
+    /// The HIGHEST instant the grammar admits, at its exact Unix second.
+    ///
+    /// The four-digit year caps the era at 9999, and seconds stop at 59 because leap
+    /// seconds are refused — so this is the maximum value the parser can return, and the
+    /// exact upper bound of its postcondition.
+    ///
+    /// The bound used to be `253402387199`, one day higher, which denotes an instant in
+    /// year 10000 that no accepted timestamp can produce. The postcondition was true but
+    /// looser than the claim it carried; tightening it was MCPRE-129's disposition on
+    /// THM-0002, and this control is what stops the slack returning unnoticed.
+    #[test]
+    fn boundary_highest_admitted_instant() {
+        assert_eq!(
+            parse_rfc3339_utc("9999-12-31T23:59:59Z"),
+            Ok(253402300799),
+            "9999-12-31T23:59:59Z is the last instant the four-digit grammar admits"
+        );
+    }
+
+    /// A year outside the four-digit era is not admitted at all, so nothing above the
+    /// bound is reachable by widening the year field.
+    #[test]
+    fn boundary_a_five_digit_year_is_refused() {
+        assert!(parse_rfc3339_utc("10000-01-01T00:00:00Z").is_err());
     }
 
     #[test]
