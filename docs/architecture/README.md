@@ -60,6 +60,7 @@ investigation: it answers the twelve questions and records an outcome — decomp
 - [`components/transport-binding.md`](components/transport-binding.md) — `transport.rs` (1268, not the 1305 this index carried), MCPRE-140 / #576. **Outcome: decompose along the reachability boundary.** Five authorities, of which one is live and one — 72% of the file — is deferred capability no validated deployment can reach.
 - [`components/online-ocsp.md`](components/online-ocsp.md) — `ocsp.rs` (1271), MCPRE-141 / #577. **Outcome: extract one general control, give the trust chain a success product, then §14 for the protocol remainder.** The RFC 6960 implementation is one coherent authority; a 336-line outbound-fetch/SSRF policy that is not OCSP is living inside it.
 - [`components/cli-and-materialization.md`](components/cli-and-materialization.md) — `cli.rs` (1170, not the 1177 this index carried), MCPRE-142 / #578. **Outcome: move capability materialization out; `parse_args` keeps its ADR-058 exception.** Three authorities of which two — argv transport and key-custody materialization — never call each other.
+- [`components/client-response-verification.md`](components/client-response-verification.md) — `mcp-re-client-core/src/response.rs` (1105), MCPRE-144 / #580. **Outcome: decomposition.** Eight authorities, three of them — the trust-anchor lifecycle, the execution/retry contract and the revocation seam — independent of response verification. The resolver/revocation pairing that keeps a revoked root from verifying its descendants is protected by convention, not by a type; and no theorem in the registry references this crate.
 - [`components/kms-key-custody.md`](components/kms-key-custody.md) — the KMS custody axis (2435 lines over four files), MCPRE-143 / #579, **one census over both backends**. **Outcome: a common owner for the one rule both providers implement twice; no per-provider split.** The provider-agnostic mapping already exists and is correct; what escaped it is a quota classifier, four constants and a test-transport pattern.
 
 These are first-pass architectural documents, not declarations that every boundary is already final. The shallow-module census and subsequent investigation may refine the tree. Refinement must preserve the governing rule: **one authority, narrow facade, private subordinate implementation tree**.
@@ -155,16 +156,22 @@ size orders the queue while §8 question 2 decides the outcome:
 | 1271 | 14 | 3 | 91 | `mcp-re-proxy/src/ocsp.rs` — **census complete**, outcome *extract, then §14* ([`components/online-ocsp.md`](components/online-ocsp.md)) |
 | 1170 | 6 | 0 | 184 | `mcp-re-proxy/src/cli.rs` — **census complete**, outcome *move materialization out* ([`components/cli-and-materialization.md`](components/cli-and-materialization.md)). ADR-058's `parse_args` exception stands and was treated as evidence for neither side |
 | 1149 | 5 | 7 | 105 | `mcp-re-proxy/src/gcp_kms_keysource.rs` — **census complete** (joint with AWS), outcome *common owner, no split* ([`components/kms-key-custody.md`](components/kms-key-custody.md)) |
-| 1114 | 32 | 12 | 44 | `mcp-re-client-core/src/response.rs` — band 3, no blueprint yet |
+| 1105 | 32 | 12 | 44 | `mcp-re-client-core/src/response.rs` — **census complete**, outcome *decompose* ([`components/client-response-verification.md`](components/client-response-verification.md)). Was measured 1114 by this index; the gate's counter reports 1105 at `def5de1` |
 | 1037 | 3 | 0 | 31 | `mcp-re-proxy/src/app.rs` — **reviewed-action-required**; census complete, disposition *decompose first* ([EX-002](review-dispositions.md), remediation #592) |
 
-**One** band-3 hotspot still has no component blueprint: `mcp-re-client-core/src/response.rs`.
-It is named here so its absence is a recorded gap rather than an implied claim of coverage.
+Every band-3 hotspot now has a component blueprint. The `response.rs` gap this index carried is
+closed by [`components/client-response-verification.md`](components/client-response-verification.md).
 
-Five of the six censuses are complete, and the five reached their dispositions for five
-different reasons — semantic ownership; reachability; a general control hiding inside a
-protocol module; a pipeline whose first and last stages never call each other; and one rule
-implemented twice behind a boundary that was already correct.
+All six censuses are complete, and the six reached their dispositions for six different
+reasons — semantic ownership; reachability; a general control hiding inside a protocol module;
+a pipeline whose first and last stages never call each other; one rule implemented twice behind
+a boundary that was already correct; and now a verification unit carrying three authorities that
+are not about verification at all.
+
+The sixth also produced the campaign's first **evidence** finding rather than a structural one:
+`response.rs` makes seven independent security decisions and `verification/policy/theorems.toml`
+references its crate zero times. Its cryptographic floor is fully covered — by theorems over the
+profile verifier it calls — while everything it adds on top of that floor is a registry gap.
 
 `cli.rs` was previously left off this list as a reviewed exception. It was not one: ADR-058
 ruled on the `parse_args` function. Review granularity equals exception granularity, so it
