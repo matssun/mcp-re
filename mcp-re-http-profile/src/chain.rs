@@ -656,3 +656,186 @@ fn incomplete(
         submitted_commitment,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    // This module is the file's test region: `scripts/module_size_gate.py` opens it at the
+    // `#[cfg(test)]` above and stops counting production lines here. The note lives INSIDE
+    // the region rather than above it, because a comment above the marker is a production
+    // line, and this file is registered in `config/module-size-debt.toml` — where the
+    // ratchet only turns one way.
+    use super::*;
+
+    fn hop(status: u16, body: &str) -> RetainedHop {
+        RetainedHop {
+            request: HttpRequest {
+                method: "POST".to_string(),
+                target_uri: "https://mcp.example.com/mcp".to_string(),
+                headers: vec![("signature".to_string(), "sig=:AAAA:".to_string())],
+                body: br#"{"jsonrpc":"2.0","id":1}"#.to_vec(),
+            },
+            response: HttpResponse {
+                status,
+                headers: vec![("signature".to_string(), "sig=:BBBB:".to_string())],
+                body: body.as_bytes().to_vec(),
+            },
+        }
+    }
+
+    /// Two submissions that differ only in the response STATUS are different submissions.
+    ///
+    /// The commitment is what a Layer 5 receipt binds to, so a refusal and a success over
+    /// identical bodies must not share an identity.
+    #[test]
+    fn the_response_status_is_part_of_the_submitted_identity() {
+        assert_ne!(
+            submitted_commitment(&[hop(200, "{}")]),
+            submitted_commitment(&[hop(400, "{}")])
+        );
+    }
+
+    /// Two submissions of the SAME JSON under different signatures are different
+    /// submissions. Without this the commitment would identify the content rather than
+    /// the act of submitting it.
+    #[test]
+    fn the_signature_is_part_of_the_submitted_identity() {
+        let mut other = hop(200, "{}");
+        other.response.headers = vec![("signature".to_string(), "sig=:CCCC:".to_string())];
+        assert_ne!(
+            submitted_commitment(&[hop(200, "{}")]),
+            submitted_commitment(&[other])
+        );
+    }
+
+    /// The length prefixes are load-bearing: moving a byte across a field boundary must
+    /// change the digest. Without them `("ab", "")` and `("a", "b")` would hash the same
+    /// concatenation and two distinct submissions would share one identity.
+    #[test]
+    fn field_boundaries_cannot_be_shifted_without_changing_the_commitment() {
+        let mut left = hop(200, "{}");
+        left.request.method = "POSTX".to_string();
+        left.request.target_uri = "https://mcp.example.com/mcp".to_string();
+
+        let mut right = hop(200, "{}");
+        right.request.method = "POST".to_string();
+        right.request.target_uri = "Xhttps://mcp.example.com/mcp".to_string();
+
+        assert_ne!(
+            submitted_commitment(&[left]),
+            submitted_commitment(&[right])
+        );
+    }
+
+    /// Signature headers are sorted before hashing, so header ORDER is not part of the
+    /// identity — the same submission observed through two transports commits equally.
+    #[test]
+    fn signature_header_order_does_not_change_the_commitment() {
+        let mut a = hop(200, "{}");
+        a.request.headers = vec![
+            ("signature".to_string(), "sig1=:AA:".to_string()),
+            ("signature".to_string(), "sig2=:BB:".to_string()),
+        ];
+        let mut b = hop(200, "{}");
+        b.request.headers = vec![
+            ("signature".to_string(), "sig2=:BB:".to_string()),
+            ("signature".to_string(), "sig1=:AA:".to_string()),
+        ];
+        assert_eq!(submitted_commitment(&[a]), submitted_commitment(&[b]));
+    }
+
+    /// Only `signature` headers contribute. A hop-by-hop header a proxy added is not part
+    /// of what was submitted, so it must not change the identity.
+    #[test]
+    fn non_signature_headers_are_outside_the_submitted_identity() {
+        let mut with_extra = hop(200, "{}");
+        with_extra
+            .request
+            .headers
+            .push(("x-forwarded-for".to_string(), "10.0.0.1".to_string()));
+        assert_eq!(
+            submitted_commitment(&[hop(200, "{}")]),
+            submitted_commitment(&[with_extra])
+        );
+    }
+
+    /// The hop COUNT is committed, so a chain is not confusable with a prefix of a longer
+    /// one carrying the same hops.
+    #[test]
+    fn the_hop_count_is_part_of_the_submitted_identity() {
+        assert_ne!(
+            submitted_commitment(&[hop(200, "{}")]),
+            submitted_commitment(&[hop(200, "{}"), hop(200, "{}")])
+        );
+    }
+
+    /// An unrecognized `resultType` is NEVER folded into terminal. Doing so would label a
+    /// truncated chain COMPLETE when its last hop carried an extension's non-terminal
+    /// type — the laundering §9.3 forbids.
+    #[test]
+    fn an_unrecognized_result_type_is_not_terminal() {
+        let outcome = classify_verified_response(
+            br#"{"result":{"resultType":"something/nobody/registered"}}"#,
+        );
+        assert_eq!(outcome, HopOutcome::Unrecognized);
+        assert_ne!(outcome, HopOutcome::Terminal);
+    }
+
+    /// An `InputRequiredResult` announces that the turn expects a continuation.
+    ///
+    /// Built from the profile's own constant rather than a literal, so this test cannot
+    /// pass while disagreeing with the single discriminator every other reader shares.
+    #[test]
+    fn an_input_required_result_expects_a_continuation() {
+        let body = format!(
+            r#"{{"result":{{"resultType":"{}"}}}}"#,
+            crate::result_class::INPUT_REQUIRED_RESULT_TYPE
+        );
+        assert_eq!(
+            classify_verified_response(body.as_bytes()),
+            HopOutcome::InputRequired
+        );
+    }
+
+    /// An explicit terminal `resultType` ends the call, from the same constant.
+    #[test]
+    fn an_explicit_complete_result_type_is_terminal() {
+        let body = format!(
+            r#"{{"result":{{"resultType":"{}"}}}}"#,
+            crate::result_class::COMPLETE_RESULT_TYPE
+        );
+        assert_eq!(
+            classify_verified_response(body.as_bytes()),
+            HopOutcome::Terminal
+        );
+    }
+
+    /// An absent `resultType` is terminal, as MCP 2026-07-28 requires of readers.
+    #[test]
+    fn an_absent_result_type_is_terminal() {
+        assert_eq!(
+            classify_verified_response(br#"{"result":{"content":[]}}"#),
+            HopOutcome::Terminal
+        );
+    }
+
+    /// `is_complete` is true of exactly one label. An incomplete chain never reports as a
+    /// complete record, whatever broke it or where.
+    #[test]
+    fn only_the_complete_label_reports_complete() {
+        assert!(ChainLabel::Complete.is_complete());
+        for reason in [
+            IncompleteReason::MissingContinuation,
+            IncompleteReason::ContinuationDoesNotLink,
+            IncompleteReason::NonTerminalExpected,
+            IncompleteReason::TerminalExpected,
+            IncompleteReason::UnrecognizedResultType,
+            IncompleteReason::EmptyChain,
+            IncompleteReason::HopAfterAuditInstant,
+        ] {
+            assert!(
+                !ChainLabel::Incomplete { hop: 0, reason }.is_complete(),
+                "an incomplete chain reported as a complete record"
+            );
+        }
+    }
+}
