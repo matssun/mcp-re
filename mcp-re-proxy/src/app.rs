@@ -752,8 +752,8 @@ fn run_validated(
     // instead would mean carrying the URLs through serving purely to print them, and the
     // fleet does not forward — it accepts.
     eprintln!(
-        "mcp-re-proxy: HTTP inner backends {:?}",
-        values.inner_http_urls
+        "mcp-re-proxy: HTTP inner backends {}",
+        crate::deployment_request::RedactedBackendUrls::of(&values.inner_http_urls)
     );
     let pool = crate::inner_plane_bound::raised_to_fleet_ceiling(
         pool,

@@ -17,10 +17,12 @@
 //! run, and must be able to: refusing a state requires representing it first.
 
 mod authorization;
+mod inner_backend_display;
 mod kinds;
 mod secret_string;
 
 pub use authorization::AuthorizationRequest;
+pub(crate) use inner_backend_display::RedactedBackendUrls;
 pub use kinds::{
     AdmissionKind, AuditSinkKind, AuthzKind, BindingKind, KeySourceKind, OcspKind,
     VerifiedContextKind,
