@@ -537,11 +537,11 @@ fn bind_and_listen(fd: std::os::fd::RawFd, addr: SocketAddr, backlog: i32) -> st
 /// every failure — an unavailable syscall, a restricted cgroup cpuset — is ignored.
 #[cfg(target_os = "linux")]
 fn pin_current_thread_to_core(core_index: usize) {
-    let online = online_cpu_count();
-    if online == 0 {
+    // `checked_rem`, so the guard and the operation are ONE statement. `online_cpu_count`
+    // returns 0 only if every fallback in it failed, and nothing can be pinned to then.
+    let Some(cpu) = core_index.checked_rem(online_cpu_count()) else {
         return;
-    }
-    let cpu = core_index % online;
+    };
     // SAFETY: `cpu_set` is a zeroed, fully-owned `cpu_set_t`; `CPU_SET` sets one valid
     // bit in it; `sched_setaffinity(0, ...)` applies it to the calling thread and does
     // not retain the pointer. Return value is ignored (best-effort).

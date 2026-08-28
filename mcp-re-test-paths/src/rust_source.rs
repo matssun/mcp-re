@@ -46,11 +46,7 @@ fn brace_significant(line: &str) -> String {
     let mut in_string = false;
     while let Some(c) = chars.next() {
         if in_string {
-            if c == '\\' {
-                chars.next();
-            } else if c == '"' {
-                in_string = false;
-            }
+            in_string = still_in_string(c, &mut chars);
             continue;
         }
         match c {
@@ -60,6 +56,21 @@ fn brace_significant(line: &str) -> String {
         }
     }
     out
+}
+
+/// Whether the scan is still inside a string literal after consuming `c`.
+///
+/// A backslash escapes exactly one following character and never ends the string, so the
+/// escaped character is consumed here rather than examined by the caller.
+fn still_in_string(c: char, chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> bool {
+    match c {
+        '\\' => {
+            chars.next();
+            true
+        }
+        '"' => false,
+        _ => true,
+    }
 }
 
 /// The lines of `source`, 1-indexed, that lie outside every test region.
@@ -74,8 +85,12 @@ pub fn production_lines(source: &str) -> Vec<(usize, &str)> {
     while i < lines.len() {
         let Some(line) = lines.get(i) else { break };
         if !opens_test_region(line) {
-            kept.push((i + 1, line));
-            i += 1;
+            // `saturating_add`, not `+`: the line NUMBER is 1-indexed and `i` is bounded by
+            // `lines.len()`, so overflow is unreachable — but "unreachable" is the sort of
+            // claim ADR-MCPRE-061 §6.4 asks to be written down rather than assumed, and
+            // saturating is the honest algebra for a display index.
+            kept.push((i.saturating_add(1), line));
+            i = i.saturating_add(1);
             continue;
         }
         i = end_of_region(&lines, i);
