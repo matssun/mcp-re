@@ -54,17 +54,15 @@ mod body_boundary;
 /// The ADR-MCPS-047 continuation plane: a human's approval opened, read without being
 /// spent, spent exactly once, and recorded so any replica can answer it.
 mod continuation;
+
+/// What the backend's reply IS: read once, here, so no later authority re-reads it.
+mod reply;
 pub use body_boundary::extract_request_state;
 use body_boundary::ForwardedBody;
 use continuation::Retirement;
 use mcp_re_core::VerificationKey;
-use mcp_re_http_profile::parse_response_body;
-use mcp_re_http_profile::result_class::classify_result_type;
-use mcp_re_http_profile::result_class::input_required_state_of;
-use mcp_re_http_profile::result_class::ResultTypeClass;
 use mcp_re_http_profile::sign_delegated_accepted_202;
 use mcp_re_http_profile::sign_delegated_response_full;
-use mcp_re_http_profile::validate_response_envelope;
 use mcp_re_http_profile::AdmissionPolicy;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::AudienceTuple;
@@ -80,6 +78,8 @@ use mcp_re_http_profile::VerifiedContextPolicy;
 use mcp_re_http_profile::VerifiedMcpRequest;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
+use reply::ReplyClass;
+use reply::ValidatedReply;
 
 use crate::admission_enforcer::AdmissionEnforcement;
 use crate::admission_enforcer::AdmissionEnforcer;
@@ -923,85 +923,6 @@ impl HttpProfileProxy {
         }
     }
 
-    /// RESPONSE-VALIDATED — the JSON-RPC control envelope must be legal before anything
-    /// treats these bytes as a response.
-    ///
-    /// ```text
-    /// ensures   Ok  => syntax, `jsonrpc`, `id` correlation and `result` XOR `error` all hold
-    ///           Err => 502, bound
-    /// refusal   NOT free — the action already ran
-    /// ```
-    ///
-    /// Unconditional, which is the whole change (ruling D2). This used to happen only inside
-    /// the MRTR open-leg recorder, so whether MCP-RE refused a malformed protocol response
-    /// depended on whether an operator had wired Redis — a capability with no relationship
-    /// to protocol legality. A deployment without it signed unparseable bodies as opaque
-    /// payload and the client's own verifier then rejected a message the enforcement
-    /// boundary had vouched for.
-    ///
-    /// Stops at the control envelope. Everything inside `result` beyond the MCP lifecycle
-    /// members is application data that MCP-RE carries and signs without reading.
-    fn validate_envelope_stage(
-        &self,
-        response: &HttpResponse,
-        outstanding: &mcp_re_http_profile::OutstandingId,
-    ) -> Result<Established<serde_json::Value>, Refusal> {
-        let invalid = |clause| {
-            Refusal::after_admission(HttpProfileError::UpstreamResponseInvalid(clause), 502)
-        };
-        let parsed = parse_response_body(&response.body).map_err(|e| match e {
-            HttpProfileError::UpstreamResponseInvalid(clause) => invalid(clause),
-            _ => invalid("response body"),
-        })?;
-        match validate_response_envelope(&parsed, outstanding) {
-            Ok(_) => Ok(Established::new(parsed, ExchangeEvent::EnvelopeValidated)),
-            Err(HttpProfileError::UpstreamResponseInvalid(clause)) => Err(invalid(clause)),
-            Err(e) => Err(Refusal::after_admission(e, 502)),
-        }
-    }
-
-    /// RESPONSE-CLASSIFIED — which MCP lifecycle transition is this reply?
-    ///
-    /// ```text
-    /// ensures   Ok  => the reply is a terminal answer, or an open leg with usable state
-    ///           Err => 502, bound
-    /// refusal   NOT free — the action already ran
-    /// ```
-    ///
-    /// The state this stage separates from validation is the point of having two: a
-    /// perfectly well-formed JSON-RPC response can still be one whose MCP meaning this
-    /// reader cannot determine. MCP 2026-07-28 closes the `resultType` set and requires an
-    /// unrecognized one be considered invalid — signing it anyway would produce a verifiable
-    /// message whose continuation semantics nobody can read, and a client failing closed on
-    /// it would be told the PEP had vouched for it.
-    ///
-    /// A JSON-RPC error classifies as [`ReplyClass::Terminal`]: it is a legal terminal
-    /// protocol response, not a malformed one and not a transport failure.
-    fn classify_reply_stage(
-        &self,
-        parsed: &serde_json::Value,
-    ) -> Result<Established<ReplyClass>, Refusal> {
-        let classified = |c: ReplyClass| Established::new(c, ExchangeEvent::ResponseClassified);
-        let result = parsed.get("result");
-        match classify_result_type(result) {
-            ResultTypeClass::Complete => Ok(classified(ReplyClass::Terminal)),
-            ResultTypeClass::Unrecognized => Err(Refusal::after_admission(
-                HttpProfileError::UnrecognizedResultType,
-                502,
-            )),
-            ResultTypeClass::InputRequired => match input_required_state_of(result) {
-                Ok(Some(state)) => Ok(classified(ReplyClass::Open(state))),
-                // Classified as non-terminal and then failed to yield its state: the two
-                // arms cannot both be right, and the only safe reading is that the message
-                // is invalid.
-                _ => Err(Refusal::after_admission(
-                    HttpProfileError::UpstreamResponseInvalid("input_required requestState"),
-                    502,
-                )),
-            },
-        }
-    }
-
     /// RESPONSE-SIGNED — the enforcement boundary puts its signature on the reply.
     ///
     /// ```text
@@ -1295,13 +1216,18 @@ impl HttpProfileProxy {
             body: inner_bytes,
         };
 
-        let parsed = match self.validate_envelope_stage(&response, &outstanding) {
-            Ok(parsed) => progress.establish(parsed),
+        let validated = match ValidatedReply::of(&response, &outstanding) {
+            Ok(validated) => progress.establish(Established::new(
+                validated,
+                ExchangeEvent::EnvelopeValidated,
+            )),
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         };
 
-        let class = match self.classify_reply_stage(&parsed) {
-            Ok(class) => progress.establish(class),
+        let class = match validated.classify() {
+            Ok(class) => {
+                progress.establish(Established::new(class, ExchangeEvent::ResponseClassified))
+            }
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         };
         // The obligation is incurred HERE, before the reply is signed and long before it is
@@ -1450,21 +1376,6 @@ impl HttpProfileProxy {
             }
         }
     }
-}
-
-/// Which MCP lifecycle transition a validated reply is.
-///
-/// Carries the `requestState` for an open leg because the classifier is the only place that
-/// reads it out of the body, and passing the body along instead would invite a second reader
-/// to walk the same JSON and reach its own conclusion.
-///
-/// A JSON-RPC error is [`Terminal`](ReplyClass::Terminal): a legal terminal protocol
-/// response, distinct from a malformed one and from a transport failure.
-enum ReplyClass {
-    /// The exchange ends here — an ordinary result, or a JSON-RPC error.
-    Terminal,
-    /// An `InputRequiredResult`. The state is the one an answer leg re-presents.
-    Open(String),
 }
 
 /// Wrap a fully-built [`HttpResponse`] as a [`ServedHttpResponse`].
