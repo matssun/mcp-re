@@ -121,6 +121,8 @@ pub mod kms_keysource;
 // links no HTTP client and stays byte-for-byte unchanged.
 #[cfg(feature = "online_ocsp")]
 pub mod ocsp;
+// EX-006: the outbound-fetch/SSRF authority, not RFC 6960's. Unconditional.
+pub mod outbound_fetch;
 // Issue #4034: the PKCS#11-backed response-signing key source (the real,
 // non-exporting backend behind the #3838 delegation seam — the response-signing
 // key never leaves the token). Compiled ONLY under the non-default
@@ -344,13 +346,14 @@ pub use key_source::ResponseSigner;
 pub use kms_keysource::KmsEd25519Backend;
 pub use kms_keysource::KmsKeySource;
 pub use kms_keysource::KmsResponseSigner;
-// Issue #4030: the online OCSP revocation checker (feature-gated).
+// Issue #4030: the online OCSP revocation checker (feature-gated). Grouped under ONE
+// `cfg`, unlike the one-per-line re-exports around it: six items behind the same gate
+// spelled twelve lines is twelve places for the gate to disagree with itself.
 #[cfg(feature = "online_ocsp")]
-pub use ocsp::CertRevocationStatus;
-#[cfg(feature = "online_ocsp")]
-pub use ocsp::OcspChecker;
-#[cfg(feature = "online_ocsp")]
-pub use ocsp::OcspError;
+pub use ocsp::{
+    CertRevocationStatus, NotEstablished, OcspChecker, OcspError, RevocationEvidence,
+    TrustedRevocationAnswer,
+};
 // Issue #4034: the PKCS#11 key source (feature-gated).
 pub use http_profile_serve::ActorResolver;
 pub use http_profile_serve::HttpProfileProxy;

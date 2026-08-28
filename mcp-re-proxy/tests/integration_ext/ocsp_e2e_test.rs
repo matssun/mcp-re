@@ -83,6 +83,7 @@
 
 use mcp_re_proxy::CertRevocationStatus;
 use mcp_re_proxy::OcspChecker;
+use mcp_re_proxy::RevocationEvidence;
 
 /// Read the responder URL + the three DER paths; `None` (skip) unless
 /// `MCP_RE_TEST_OCSP_RESPONDER_URL` is set. The DER paths default to files in the
@@ -129,22 +130,31 @@ fn live_responder_reports_good_and_revoked_without_restart() {
     // depend on the leaf carrying an AIA entry (though the recipe bakes one in).
     let checker = OcspChecker::new(Some(url.clone()), false);
 
-    let good_status = checker
+    let good = checker
         .check(&good_der, &issuer_der)
         .unwrap_or_else(|e| panic!("OCSP check of known-good cert against {url}: {e}"));
+    // `Answered`, not merely `Good`: the live responder was reached, its signature
+    // verified, and the answer bound to the CertID we asked about. A `Good` that nothing
+    // earned is not constructible, which is what makes this assertion mean anything.
+    let RevocationEvidence::Answered(good_answer) = good else {
+        panic!("the live responder must produce an ANSWER, not an unestablished result");
+    };
     assert_eq!(
-        good_status,
+        good_answer.status(),
         CertRevocationStatus::Good,
         "the known-good certificate must be reported Good by the live responder"
     );
 
     // SAME checker, SAME responder, no restart in between: the revoked cert must
     // now come back Revoked from the responder's index.
-    let revoked_status = checker
+    let revoked = checker
         .check(&revoked_der, &issuer_der)
         .unwrap_or_else(|e| panic!("OCSP check of known-revoked cert against {url}: {e}"));
+    let RevocationEvidence::Answered(revoked_answer) = revoked else {
+        panic!("the live responder must produce an ANSWER, not an unestablished result");
+    };
     assert_eq!(
-        revoked_status,
+        revoked_answer.status(),
         CertRevocationStatus::Revoked,
         "the known-revoked certificate must be reported Revoked by the live responder \
          (mid-session, without a proxy restart)"
