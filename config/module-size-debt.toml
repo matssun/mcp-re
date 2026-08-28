@@ -54,11 +54,12 @@
 # 1674-line serving root.
 #
 # Authority E's continuation half then left for the `continuation/` subtree: 1674 -> 1478,
-# and authority H — what the backend's reply IS — for `reply.rs`: 1478 -> 1389.
+# authority H — what the backend's reply IS — for `reply.rs`: 1478 -> 1389; and the backend
+# seam with the reading of its outcomes for `inner_plane.rs`: 1389 -> 1278.
 [[debt]]
 path = "mcp-re-proxy/src/http_profile_serve/mod.rs"
-baseline_prod_loc = 1389
-baseline_sha = "d7372b8"
+baseline_prod_loc = 1278
+baseline_sha = "55f8d5f"
 status = "unreviewed"
 
 [[debt]]
