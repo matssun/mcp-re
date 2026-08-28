@@ -82,14 +82,6 @@ const ORDINARY: &[(&str, &str)] = &[
     ),
 ];
 
-/// The composition root's source, with its test module removed.
-fn production_half(source: &str) -> String {
-    match source.split_once("#[cfg(test)]") {
-        Some((production, _)) => production.to_string(),
-        None => source.to_string(),
-    }
-}
-
 /// Every `values.<field>` the production half of `app.rs` reads.
 ///
 /// `values` is the root's binding for `config.config()`, so this is exactly the set of raw
@@ -98,9 +90,11 @@ fn production_half(source: &str) -> String {
 /// the one-shot form is caught too, since it also spells `.config()`.
 fn raw_reads(source: &str) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
-    let production = production_half(source);
+    let production = mcp_re_test_paths::rust_source::production_half(source);
     for (index, _) in production.match_indices("values.") {
-        let rest = &production[index + "values.".len()..];
+        let rest = production
+            .get(index + "values.".len()..)
+            .unwrap_or_default();
         let field: String = rest
             .chars()
             .take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_')
@@ -157,6 +151,14 @@ fn the_rule_would_catch_a_new_raw_read() {
     assert!(
         raw_reads("#[cfg(test)]\nmod tests { let _ = values.audience; }").is_empty(),
         "test code is out of scope, so a fixture cannot make the gate fail or pass"
+    );
+    // The control the truncating form could not pass: production below a test module is
+    // still production. `app.rs` may grow one at any time, and a scan that stopped at the
+    // first `#[cfg(test)]` would have reported a clean inventory over unread code.
+    assert!(
+        raw_reads("#[cfg(test)]\nmod tests {\n    let _ = values.audience;\n}\nfn late() { let _ = values.max_clock_skew; }\n")
+            .contains("max_clock_skew"),
+        "a raw read below the test module must still be seen"
     );
 }
 

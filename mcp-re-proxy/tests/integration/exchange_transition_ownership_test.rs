@@ -114,12 +114,10 @@ fn events_named_in(source: &str, call: &str) -> BTreeSet<String> {
 }
 
 /// The serving path's production half. A fixture in a test module must not be able to make
-/// this gate pass or fail.
-fn production_half(source: &str) -> &str {
-    match source.find("\n#[cfg(test)]") {
-        Some(at) => &source[..at],
-        None => source,
-    }
+/// this gate pass or fail — and production below a test module must still be measured, so
+/// the region definition is [`mcp_re_test_paths::rust_source`]'s rather than a truncation.
+fn production_half(source: &str) -> String {
+    mcp_re_test_paths::rust_source::production_half(source)
 }
 
 fn serving_source() -> String {
@@ -132,6 +130,7 @@ fn serving_source() -> String {
 fn no_transition_a_stage_establishes_is_also_advanced_by_the_serving_path() {
     let source = serving_source();
     let production = production_half(&source);
+    let production = production.as_str();
     let by_stages = events_named_in(production, "Established::new(");
     let by_assembly = events_named_in(production, ".advance(");
 
@@ -155,7 +154,7 @@ fn no_transition_a_stage_establishes_is_also_advanced_by_the_serving_path() {
 fn the_serving_path_states_only_the_assembly_s_own_transitions() {
     let source = serving_source();
     let declared: BTreeSet<String> = ASSEMBLY_OWNED.iter().map(|(e, _)| e.to_string()).collect();
-    let actual = events_named_in(production_half(&source), ".advance(");
+    let actual = events_named_in(&production_half(&source), ".advance(");
 
     let undeclared: Vec<&String> = actual.difference(&declared).collect();
     assert!(
@@ -199,11 +198,22 @@ fn the_rule_would_catch_a_reintroduced_advance() {
 
     assert!(
         events_named_in(
-            production_half("fn f() {}\n#[cfg(test)]\nmod tests { progress.advance(ExchangeEvent::ReplayAdmitted); }"),
+            &production_half("fn f() {}\n#[cfg(test)]\nmod tests { progress.advance(ExchangeEvent::ReplayAdmitted); }"),
             ".advance(",
         )
         .is_empty(),
         "test code is out of scope, so a fixture cannot make the gate fail or pass"
+    );
+    // And the other direction: an advance reintroduced BELOW the test module is production
+    // and must be seen. A truncating split reported a clean pass over every line after the
+    // first `#[cfg(test)]`, which in this file is not the test module at all.
+    assert!(
+        events_named_in(
+            &production_half("#[cfg(test)]\nmod tests {\n}\nfn late() { progress.advance(ExchangeEvent::ReplayAdmitted); }\n"),
+            ".advance(",
+        )
+        .contains("ReplayAdmitted"),
+        "an advance below the test module must still be seen"
     );
 }
 

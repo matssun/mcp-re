@@ -3,7 +3,8 @@
 """Lifecycle-purity gate — the state machines that are values depend on no production module.
 
 WHAT THIS PROVES, exactly: in the production half of each module named in `TARGETS`
-(everything above its `#[cfg(test)]` module), every path root and every `use` target
+(every line outside a `#[cfg(test)]`-family region — NOT everything above the first one,
+which discards production items below a test module), every path root and every `use` target
 resolves either inside the module itself or to an explicitly allowed standard-library
 path. It computes the module's external dependency set and asserts it is empty of
 production modules.
@@ -70,8 +71,14 @@ TARGETS = (
     REPO_ROOT / "mcp-re-proxy" / "src" / "exchange_state.rs",
 )
 
-#: Where the production half ends. Tests legitimately `use super::*`.
-TEST_MARKER = "#[cfg(test)]"
+#: Opens a test region. Tests legitimately `use super::*`.
+#:
+#: Both `#[cfg(test)]` and `#[cfg(all(test, ...))]` open one, and a region CLOSES with the
+#: item its attribute introduces — the same definition `scripts/module_size_gate.py` uses.
+#: Truncating at the first marker instead would state "test code begins here and never
+#: ends", which Rust does not say: an inline `#[cfg(test)]` helper may sit far above the
+#: test module, and production items may follow it.
+TEST_ATTR = re.compile(r"^#\[cfg\((all\()?test\b")
 
 #: Standard-library paths the relation may depend on, each with the reason it cannot
 #: introduce behaviour. Adding an entry is a deliberate edit, which is the point.
@@ -95,15 +102,25 @@ PATH_ROOT = re.compile(r"(?<![:\w])(?P<root>\w+)::")
 
 
 def production_half(text: str) -> list[tuple[int, str]]:
-    """Lines above the test module, 1-indexed, comments and blanks dropped.
+    """Every line outside a test region, 1-indexed, comments and blanks dropped.
 
     Comments are dropped because the module's doc comments reference `crate::app` in prose
     and rustdoc links. The gate is about code.
+
+    A test region runs from its `#[cfg(test)]`-family attribute to the end of the item that
+    attribute introduces, tracked by brace depth, and counting RESUMES afterwards. A file
+    may contain several. This is the definition, not "lines before the first test module":
+    that rule reports a clean pass over every production item written below the tests.
     """
+    raw = text.splitlines()
     lines: list[tuple[int, str]] = []
-    for number, line in enumerate(text.splitlines(), start=1):
-        if TEST_MARKER in line:
-            break
+    i = 0
+    while i < len(raw):
+        if TEST_ATTR.match(raw[i].lstrip()):
+            i = _end_of_test_region(raw, i)
+            continue
+        number, line = i + 1, raw[i]
+        i += 1
         stripped = line.strip()
         if not stripped or stripped.startswith("//"):
             continue
@@ -111,6 +128,26 @@ def production_half(text: str) -> list[tuple[int, str]]:
         if code.strip():
             lines.append((number, code))
     return lines
+
+
+def _end_of_test_region(lines: list[str], start: int) -> int:
+    """The index just past the region opened at `start`.
+
+    A braced item ends at its matching close; an attributed `;`-terminated item — the
+    `#[cfg(test)] use super::*;` form — ends at that semicolon.
+    """
+    depth, opened, i = 0, False, start
+    while i < len(lines):
+        code = re.sub(r"//.*", "", re.sub(r'"(?:\\.|[^"\\])*"', '""', lines[i]))
+        depth += code.count("{") - code.count("}")
+        if "{" in code:
+            opened = True
+        i += 1
+        if opened and depth <= 0:
+            return i
+        if not opened and code.rstrip().endswith(";"):
+            return i
+    return i
 
 
 def local_names(text: str, body: list[tuple[int, str]]) -> set[str]:
@@ -241,6 +278,34 @@ def selftest() -> int:
             "pub enum S { A }\n#[cfg(test)]\nmod tests { use super::*; use tokio; }\n",
             False,
             "the test module, which is out of scope",
+        ),
+        (
+            # The control the truncating form could not pass. Rust puts no constraint on
+            # where a test module sits, so a scan that stopped at the first `#[cfg(test)]`
+            # reported a clean pass over every line below it.
+            "pub enum S { A }\n#[cfg(test)]\nmod tests { use super::*; }\n"
+            "fn later() { let _: tokio::sync::Mutex<u8>; }\n",
+            True,
+            "an external dependency BELOW the test module",
+        ),
+        (
+            # And the shape that made truncation worst in practice: the attribute the scan
+            # stopped at was an inline helper, not the test module at all.
+            "pub enum S { A }\n#[cfg(test)]\nfn helper() {}\n"
+            "fn later() { let _: tokio::sync::Mutex<u8>; }\n",
+            True,
+            "an external dependency below an INLINE #[cfg(test)] helper",
+        ),
+        (
+            "pub enum S { A }\n#[cfg(all(test, unix))]\nmod tests { use tokio; }\n"
+            "pub enum T { B }\n",
+            False,
+            "the wide #[cfg(all(test, ...))] attribute also opens a region",
+        ),
+        (
+            "pub enum S { A }\n#[cfg(test)]\nuse tokio::sync::Mutex;\npub enum T { B }\n",
+            False,
+            "an attributed `use ...;` is a one-line region",
         ),
     ]
     failures = 0
