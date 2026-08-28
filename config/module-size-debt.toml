@@ -57,11 +57,12 @@
 # authority H — what the backend's reply IS — for `reply.rs`: 1478 -> 1389; and the backend
 # seam with the reading of its outcomes for `inner_plane.rs`: 1389 -> 1278; and the
 # ADR-MCPRE-054 retention obligation for `retention.rs`: 1278 -> 1221; and request
-# admission for `request_admission.rs`: 1221 -> 1146.
+# admission for `request_admission.rs`: 1221 -> 1146; and the reply signature joined the
+# response-signing authority that already owned the refusal half: 1146 -> 1108.
 [[debt]]
 path = "mcp-re-proxy/src/http_profile_serve/mod.rs"
-baseline_prod_loc = 1146
-baseline_sha = "b7a71db"
+baseline_prod_loc = 1108
+baseline_sha = "f0fc5d8"
 status = "unreviewed"
 
 [[debt]]
