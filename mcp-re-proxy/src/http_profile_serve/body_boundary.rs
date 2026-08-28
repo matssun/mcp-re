@@ -167,7 +167,10 @@ mod tests {
         assert_eq!(extract_request_state(b"not json"), None);
         assert_eq!(extract_request_state(br#"{"params":{}}"#), None);
         assert_eq!(extract_request_state(br#"{"requestState":"s-1"}"#), None);
-        assert_eq!(extract_request_state(br#"{"params":{"requestState":7}}"#), None);
+        assert_eq!(
+            extract_request_state(br#"{"params":{"requestState":7}}"#),
+            None
+        );
     }
 
     #[test]
@@ -177,7 +180,10 @@ mod tests {
         // is only observable on a body carrying an application entry.
         let body = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":{"app.trace":"t-1"}}}"#;
         let (stripped, seeded) = strip_pep_owned(body).expect("a well-formed body strips");
-        assert!(!seeded, "no reserved key was present, so nothing was attempted");
+        assert!(
+            !seeded,
+            "no reserved key was present, so nothing was attempted"
+        );
         let v: serde_json::Value = serde_json::from_slice(&stripped).expect("json out");
         assert_eq!(
             v["params"]["_meta"]["app.trace"], "t-1",
