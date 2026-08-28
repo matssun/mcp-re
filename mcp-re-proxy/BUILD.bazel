@@ -253,6 +253,11 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-052 §4: the validity a signed response may advertise, bounded by the
     # credential that authorizes it.
     "src/http_profile_serve/signing_window.rs",
+    # ADR-MCPRE-052 §4 / ADR-MCPS-035 §9: what the proxy asserts under its own credential
+    # when it refuses — the posture, the record it is, and how the artifact is built.
+    "src/http_profile_serve/receipt/mod.rs",
+    "src/http_profile_serve/receipt/audit_event.rs",
+    "src/http_profile_serve/receipt/artifact.rs",
     "src/app.rs",
     # ADR-MCPRE-057 §9 / ADR-MCPRE-058 §14: the owner of a partly-built runtime —
     # lifecycle state cannot advance beyond the ownership it describes. Crate-internal.

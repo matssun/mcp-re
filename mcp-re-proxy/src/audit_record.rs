@@ -132,6 +132,29 @@ impl AuditRecord {
 
 // Everything below is test code. The `#[cfg(test)]` marker lives HERE because it is the
 // region `scripts/module_size_gate.py` reads.
+/// Deliver one record, if a sink is installed.
+///
+/// The one place that turns "a sink may or may not be installed" into an emission, so no
+/// emitter carries its own copy of that conditional. `subject` decides which authorities
+/// the record carries; the caller that knows which half of the exchange it is reporting
+/// makes that choice, and the type refuses the other combination.
+pub(crate) fn record_to(
+    audit: &crate::audit_sink::MaybeAuditSink,
+    subject: AuditSubject,
+    actor_id: Option<String>,
+    status: u16,
+    now: i64,
+) {
+    if let Some(sink) = audit {
+        sink.record(&AuditRecord {
+            subject,
+            actor_id,
+            status,
+            at_unix: now,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
