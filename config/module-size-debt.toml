@@ -228,7 +228,7 @@ status = "unreviewed"
 [[debt]]
 path = "mcp-re-http-profile/src/bodyless/mod.rs"
 baseline_prod_loc = 707
-baseline_sha = "PLACEHOLDER"
+baseline_sha = "c744e2a"
 status = "unreviewed"
 
 [[debt]]
