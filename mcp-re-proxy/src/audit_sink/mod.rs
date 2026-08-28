@@ -21,6 +21,10 @@
 //! `docs/spec/security-boundary.md` S9; `log_sink` is the proxy's inner-plane
 //! diagnostic channel.
 
+/// Discharging the writer's teardown obligation at shutdown, and saying which of the two
+/// things happened. Holds the bound, the wait, and the outcome — they are one authority.
+pub(crate) mod drain;
+
 use std::sync::Arc;
 
 use crate::audit_record::AuditRecord;
@@ -72,7 +76,7 @@ pub trait AuditSink: Send + Sync {
 ///   ends in silence still says so.
 ///
 /// What none of that changes: records still in the queue at process exit are lost unless
-/// the shutdown path calls [`flush_stderr_audit`].
+/// the shutdown path calls [`drain::at_shutdown`].
 #[derive(Debug, Default)]
 pub struct StderrAuditSink;
 
@@ -173,25 +177,6 @@ fn report_drops(stderr: &mut impl std::io::Write, counter: &std::sync::atomic::A
              the gaps in it)"
         );
     }
-}
-
-/// Write out everything already handed to the stderr audit writer, then return.
-///
-/// The writer thread is detached and cannot be joined, so a process that exits with
-/// records still queued loses them silently — a shutdown under load drops precisely the
-/// decisions taken last. A shutdown path calls this to make the drain happen; it gives up
-/// after `timeout` rather than letting a stalled log collector hold the process open,
-/// returning whether the drain was acknowledged.
-pub fn flush_stderr_audit(timeout: std::time::Duration) -> bool {
-    let Some(queue) = STDERR_AUDIT_WRITER.get() else {
-        // Nothing ever recorded, so there is nothing to drain.
-        return true;
-    };
-    let (ack, acked) = std::sync::mpsc::sync_channel(1);
-    if queue.try_send(AuditMessage::Flush(ack)).is_err() {
-        return false;
-    }
-    acked.recv_timeout(timeout).is_ok()
 }
 
 impl AuditSink for StderrAuditSink {
@@ -515,8 +500,9 @@ mod tests {
             first + 2,
             "each record takes the next number, whether or not it survives the queue"
         );
-        assert!(
-            flush_stderr_audit(std::time::Duration::from_secs(5)),
+        assert_eq!(
+            drain::flush_for_test(std::time::Duration::from_secs(5)),
+            drain::AuditDrain::Drained,
             "a queued record must be drainable at shutdown rather than lost with the \
              detached writer"
         );

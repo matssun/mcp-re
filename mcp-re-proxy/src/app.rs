@@ -271,65 +271,8 @@ pub fn run(
     // one of three exits is the shape the rest of this round keeps finding.
     let outcome = crate::config_state::validation::ValidatedDeployment::try_from(config)
         .and_then(|validated| run_validated(&validated, shutdown));
-    drain_audit_stream(audits_to_stderr);
+    crate::audit_sink::drain::at_shutdown(audits_to_stderr);
     outcome
-}
-
-/// How long shutdown waits for the audit writer to write out what it was already handed.
-///
-/// Bounded because the writer owns a file descriptor the proxy does not control: a log
-/// collector applying backpressure, a full volume or a stalled pipe reader must cost a
-/// bounded shutdown delay and a stated uncertainty, never a process that will not exit.
-const AUDIT_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
-
-/// Discharge the audit writer's teardown obligation, and SAY which of the two things
-/// happened.
-///
-/// [`crate::audit_sink::flush_stderr_audit`] exists because the writer thread is detached
-/// and cannot be joined: without this call a process that exits with records still queued
-/// loses them, and a shutdown under load loses precisely the decisions taken last.
-///
-/// The two outcomes are reported as different facts on purpose. "Drained" means every
-/// record handed to the writer reached stderr. A timeout does NOT mean records were lost —
-/// it means nobody can say either way, because the acknowledgement that would have settled
-/// it never came. Collapsing those two into one "shutdown complete" line would destroy
-/// exactly the distinction an audit stream exists to preserve, so the timeout line states
-/// the uncertainty as uncertainty rather than as either outcome.
-///
-/// A timeout is deliberately NOT turned into a non-zero result. The serving outcome is
-/// what the caller asked about, and reporting a clean shutdown as failed because a log
-/// collector was slow would make an observability fault look like a serving fault — the
-/// inversion the sink's own "audit must never fail a request" rule rejects on the hot path.
-fn drain_audit_stream(report: bool) {
-    let drained = crate::audit_sink::flush_stderr_audit(AUDIT_FLUSH_TIMEOUT);
-    if let Some(line) = audit_drain_line(drained, report) {
-        eprintln!("{line}");
-    }
-}
-
-/// What shutdown says about the audit drain, or `None` when this deployment does not write
-/// its audit stream to stderr and so has nothing to say about it.
-///
-/// Separated from the drain itself so the one property that matters here — that the two
-/// outcomes never read as the same fact — is assertable without stalling a log collector.
-fn audit_drain_line(drained: bool, report: bool) -> Option<String> {
-    if !report {
-        return None;
-    }
-    Some(if drained {
-        "mcp-re-proxy: audit stream drained at shutdown: every record handed to the audit \
-         writer reached stderr"
-            .to_string()
-    } else {
-        format!(
-            "mcp-re-proxy: WARNING: the audit stream did NOT acknowledge its drain within {}s. \
-             This is NOT a report that records were lost and NOT a clean shutdown of the audit \
-             stream: whether the decisions recorded last reached stderr is UNKNOWN. Their seq \
-             numbers are the gap to look for, and the writer's backing channel (a stalled log \
-             collector, a full volume) is what to check.",
-            AUDIT_FLUSH_TIMEOUT.as_secs()
-        )
-    })
 }
 
 /// What a recognised [`ChannelBindingState`] installs on the serving path.
@@ -1360,8 +1303,12 @@ mod tests {
     /// decisions taken last. That is the did-it-get-recorded-or-not collapse — the
     /// records are neither present nor reported missing, because the drop counter only
     /// counts what the QUEUE refused, not what the process exited on top of.
-    /// `flush_stderr_audit` exists to close it and, until this call site, had no
-    /// production caller at all.
+    /// [`crate::audit_sink::drain`] exists to close it, and this is its production
+    /// caller.
+    ///
+    /// The drain owner's own tests assert what the two outcomes MEAN. This one asserts
+    /// something only the composition root can: that `run` discharges the obligation on
+    /// every route out of it.
     ///
     /// # Why a child process
     ///
@@ -1456,44 +1403,6 @@ mod tests {
             "shutdown must STATE which of the two audit outcomes happened, and this run \
              drained: {stderr}"
         );
-    }
-
-    /// R8-C123, second half: a drain that TIMED OUT must never read as a drain that
-    /// completed.
-    ///
-    /// The bounded wait exists so a stalled log collector cannot hold the process open,
-    /// which means the timeout is a reachable outcome in production and not an error path.
-    /// What it must not become is a quiet one: "the queue was drained" and "nobody can say
-    /// whether the queue was drained" are different facts about the audit stream, and an
-    /// operator reading the shutdown transcript has to be able to tell which they got.
-    ///
-    /// The broken implementation this catches: reporting both as one shutdown-complete
-    /// line, or reporting only the success and leaving the timeout silent.
-    #[test]
-    fn a_timed_out_audit_drain_never_reads_as_a_completed_one() {
-        let drained = super::audit_drain_line(true, true).expect("stderr audit states its drain");
-        let timed_out =
-            super::audit_drain_line(false, true).expect("a timeout is stated, not swallowed");
-
-        assert_ne!(drained, timed_out);
-        assert!(
-            !drained.contains("WARNING") && drained.contains("drained"),
-            "a completed drain must read as one: {drained}"
-        );
-        assert!(
-            timed_out.contains("WARNING") && timed_out.contains("UNKNOWN"),
-            "a timeout must state the uncertainty AS uncertainty — not as loss, and not as \
-             a clean shutdown: {timed_out}"
-        );
-        assert!(
-            !timed_out.contains("drained at shutdown"),
-            "the timeout line must not carry the completed line's claim: {timed_out}"
-        );
-        // A deployment whose audit goes nowhere says nothing about a stream it does not
-        // write; without this control the two assertions above would also hold for a
-        // function that always spoke.
-        assert!(super::audit_drain_line(true, false).is_none());
-        assert!(super::audit_drain_line(false, false).is_none());
     }
 
     /// C117: a faulted host clock is only a warning while it costs nothing but
