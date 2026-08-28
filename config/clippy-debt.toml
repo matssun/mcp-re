@@ -156,7 +156,7 @@ count = 46
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "excessive_nesting"
-count = 108
+count = 107
 
 [[debt]]
 crate = "mcp-re-proxy"
