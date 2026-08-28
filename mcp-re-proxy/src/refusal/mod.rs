@@ -18,6 +18,24 @@
 //! the ADR needs could not be built at all, because `BeforePolicy` and `ByPolicy` had already
 //! been flattened into one string.
 //!
+//! ## Placement, ruled (MCPRE-151, ADR-MCPRE-061 §8 authority C)
+//!
+//! The refusal vocabulary is a **neutral semantic product owned here**, and it stays here.
+//! It was a live question whether it should move under the response-signing receipt
+//! authority, which is its largest consumer; the answer is no, and the reason is a
+//! separation the receipt owner itself depends on.
+//!
+//! `receipt::ResponseSigning` consumes a refusal and decides how it is REPRESENTED and
+//! SIGNED — which credential, which posture, which audit event. It does not own the
+//! semantic fact that some other authority refused, and it is not the only consumer:
+//! admission, authorization, transport binding, the continuation plane, the inner plane and
+//! the retention obligation all name refusals, and none of them signs one. Forcing refusal
+//! construction through the signer would make every one of those authorities depend on the
+//! response-signing credential in order to say *no*.
+//!
+//! What DID change is width: constructors and visibility are as narrow as the real producer
+//! set permits. That is the part of authority C worth acting on.
+//!
 //! ## Closed over owners, deliberately
 //!
 //! [`RefusalCause`] does not hold "the error". It holds *whose* error, and the distinction is
