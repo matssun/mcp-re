@@ -16,7 +16,7 @@ pub(super) struct MachineViolations {
     pub(super) trust_document: Vec<String>,
     pub(super) client_credential_window: Vec<String>,
     pub(super) server_identity: Vec<String>,
-    pub(super) tls_custody: Vec<String>,
+    pub(super) channel_credential_custody: Vec<String>,
     pub(super) trust_revocation: Vec<String>,
     pub(super) cross: crate::config_state::cross_machine::CrossMachineViolations,
 }
@@ -44,7 +44,7 @@ mod tests {
             trust_document: Vec::new(),
             client_credential_window: Vec::new(),
             server_identity: Vec::new(),
-            tls_custody: Vec::new(),
+            channel_credential_custody: Vec::new(),
             trust_revocation: Vec::new(),
             cross: crate::config_state::cross_machine::CrossMachineViolations::default(),
         };

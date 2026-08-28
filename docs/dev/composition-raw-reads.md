@@ -68,12 +68,15 @@ Removing it retires 4 of the 39 raw reads on its own.
 
 ## Bucket 2 — ORDINARY VALIDATED PARAMETER
 
-`tls_cert`, `client_ca`, `inner_http_urls`, `bind` (as the listen address), `route`,
-`target_uri`, `audience`, `trust_domain`, `limits`, `workers_per_shard`.
+`channel_credential` (for its credential-chain locator), `peer_trust_anchors`,
+`inner_http_urls`, `bind` (as the listen address), `route`, `target_uri`, `audience`,
+`trust_domain`, `limits`, `workers_per_shard`.
 
-`tls_cert` and `client_ca` are the argued case: `build_key_source`'s own documentation
+The two credential locators are the argued case: `build_key_source`'s own documentation
 states they belong to no custody machine — all five states consume them, and shared use is
 not semantic ownership. They are strings whose *interpretation* the custody state decides.
+WHICH custody holds the channel key is not read raw: that is
+`ChannelCredentialCustodyState`'s, and the root consumes its projection.
 
 ## Corrections from executing the swaps
 
@@ -104,7 +107,7 @@ via the forwarded-identity path" — was false, contradicted by `SECURITY.md` in
 With that claim corrected there was no declared contract on either side.
 
 Owner ruling: delete. The flag, the `DeploymentRequest` fields, relation X7, the provider,
-the XFCC/RFC2253 parsers and the `IdentityStrategy::ReverseProxyHeader` variant are gone.
+the XFCC/RFC2253 parsers and the `PeerIdentityProvenance::ReverseProxyHeader` variant are gone.
 The strongest evidence that the seam really was header-shaped is that
 `tls::resolve_identity` and `resolve_identity_from_leaf` no longer take `&RequestHeaders` at
 all: no strategy can derive a transport identity from a request header, and the signature
@@ -163,7 +166,7 @@ authenticated it"*, and compared `max_connection_age` against the ceiling **cons
 never against the configured lifetime. `--max-client-cert-lifetime 600
 --max-connection-age-secs 3000` was therefore accepted: a connection served requests for
 forty minutes past the expiry of the certificate that authenticated it, while the startup
-transcript reported `exposure_window=600s`. `TlsPlan` then carried both values on as
+transcript reported `exposure_window=600s`. `ChannelEstablishmentPlan` then carried both values on as
 `Option<Duration>` under a comment saying their relation "was settled at layer A".
 
 `ClientCredentialWindow` owns both durations and enforces the relation at construction, so
@@ -192,8 +195,9 @@ sentence saying why it is ordinary. A new raw read fails the gate. The fix is no
 find the owner, not to add an entry — six fields that looked ordinary on the first pass
 were not, and two of those were holding live defects.
 
-The remaining nine are locators and coordinates: `bind`, `tls_cert`, `client_ca`,
-`inner_http_urls`, `route`, `target_uri`, `audience`, `trust_domain`, `limits`.
+The remaining nine are locators and coordinates: `bind`, `channel_credential`,
+`peer_trust_anchors`, `inner_http_urls`, `route`, `target_uri`, `audience`,
+`trust_domain`, `limits`.
 
 `app.rs` went **29 raw reads → 13**; `startup_plan.rs` **10 → 3**.
 

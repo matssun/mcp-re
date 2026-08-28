@@ -23,8 +23,8 @@ check can honestly enforce.
 
 ## Why it carries a registry of families not yet migrated
 
-`DeploymentRequest` still has Redis, etcd, OCSP, CRL and TLS siblings. Those are ADR
-Phases 3-5 and are listed in `NOT_YET_MIGRATED` with the phase that owns them. The gate
+`DeploymentRequest` still has Redis, etcd, OCSP and CRL siblings. Those are ADR Phases 4
+and 5 and are listed in `NOT_YET_MIGRATED` with the phase that owns them. The gate
 therefore states what it does NOT check, rather than passing silently over it: an
 unlisted family is refused, and a family whose fields have all left must be removed from
 the registry — so the list can only shrink, and finishing a phase is a visible edit here.
@@ -61,6 +61,11 @@ MIGRATED: dict[str, str] = {
     "spiffe": "no mechanism payload exists; a new one must not start as a sibling field",
     "spire": "no mechanism payload exists; a new one must not start as a sibling field",
     "rustls": "a library name is never a request coordinate",
+    "tls": (
+        "ADR-MCPRE-067 Phase 3 — ChannelCredentialRequest carries the credential chain "
+        "and the tagged ChannelKeyRequest"
+    ),
+    "x509": "ADR-MCPRE-067 Phase 3 — a certificate format is never a request coordinate",
     "cose": "no mechanism payload exists; a new one must not start as a sibling field",
     "jose": "no mechanism payload exists; a new one must not start as a sibling field",
     "jws": "no mechanism payload exists; a new one must not start as a sibling field",
@@ -75,7 +80,7 @@ NOT_YET_MIGRATED: dict[str, str] = {
     "cpstore": "Phase 4 — replay, continuity and storage",
     "ocsp": "Phase 5 — revocation",
     "crl": "Phase 5 — revocation",
-    "tls": "Phase 3 — communication credential custody",
+    "mtls": "Phase 6 — the ingress-assertion inputs, which no proving slice has reached",
 }
 
 FIELD = re.compile(r"^\s*pub ([a-z][a-z0-9_]*)\s*:", re.MULTILINE)
@@ -151,22 +156,28 @@ def selftest() -> int:
         "pub struct DeploymentRequest {\n"
         "    /// doc\n"
         "    pub aws_kms_region: Option<String>,\n"
+        "    pub tls_key: String,\n"
         "    pub client_crl_paths: Vec<String>,\n"
         "    pub replay_redis_url: Option<String>,\n"
         "    pub cpstore_etcd_endpoint: Option<String>,\n"
         "    pub client_ocsp: OcspKind,\n"
-        "    pub tls_cert: String,\n"
+        "    pub ingress_pinned_mtls: bool,\n"
         "}\n"
     )
     problems, known = check(regressed)
     if not any("aws_kms_region" in p for p in problems):
         print("selftest FAIL: a re-added AWS sibling field was accepted")
         failures += 1
+    if not any("tls_key" in p for p in problems):
+        print("selftest FAIL: a re-added channel-credential sibling field was accepted")
+        failures += 1
     if not any("client_crl_paths" in k for k in known):
         print("selftest FAIL: an outstanding Phase-5 field was not reported as known")
         failures += 1
 
-    clean = regressed.replace("    pub aws_kms_region: Option<String>,\n", "")
+    clean = regressed.replace("    pub aws_kms_region: Option<String>,\n", "").replace(
+        "    pub tls_key: String,\n", ""
+    )
     problems, _ = check(clean)
     if problems:
         print(f"selftest FAIL: a clean request was refused: {problems}")

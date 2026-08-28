@@ -119,6 +119,7 @@ _PROXY_LIB_SRCS = [
     "src/communication_assurance/certificate_identity_policy.rs",
     "src/communication_assurance/certificate_identity_refusal.rs",
     "src/communication_assurance/certificate_peer_identity_evidence.rs",
+    "src/communication_assurance/peer_identity_provenance.rs",
     "src/communication_assurance/peer_identity_value.rs",
     "src/cli.rs",
     "src/cli/authorization_flags.rs",
@@ -153,7 +154,8 @@ _PROXY_LIB_SRCS = [
     # assemble independently from the same primitives.
     "src/config_state/server_identity.rs",
     "src/config_state/mod.rs",
-    "src/config_state/tls_custody.rs",
+    "src/config_state/channel_credential_custody.rs",
+    "src/config_state/channel_key_material.rs",
     "src/config_state/topology.rs",
     "src/config_state/transport.rs",
     "src/config_state/trust_document.rs",

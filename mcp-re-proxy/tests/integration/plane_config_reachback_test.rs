@@ -84,7 +84,7 @@ const PROJECTED_PLANES: &[Plane] = &[
     },
     Plane {
         env: "MCP_RE_TLS_PLANE_SRC",
-        why: "tls_plane establishes the posture in TlsPlan (ADR-MCPRE-056 §8)",
+        why: "tls_plane establishes the posture in ChannelEstablishmentPlan (ADR-MCPRE-056 §8)",
         // NOT `max_client_cert_lifetime`, and no longer for the old reason. It used to be
         // "a validated INPUT, not a state layer A classified"; it IS classified now, as
         // half of `ClientCredentialWindow`, and the plan carries the window rather than

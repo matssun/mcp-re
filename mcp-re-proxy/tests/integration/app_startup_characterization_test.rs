@@ -707,67 +707,18 @@ fn a_programmatic_config_cannot_carry_delegated_custody_the_rotor_cannot_honour(
         .expect("a valid delegated custody policy must be admitted");
 }
 
-/// The fifth member of the parser-only family: contradictory TLS-key custody.
-///
-/// `validate_tls_signing_exclusivity` refuses a config that asserts BOTH a delegated,
-/// non-exporting TLS key and an exported one. Until now it was called from `parse_args`
-/// and nowhere else, so a `DeploymentRequest` built in code could assert both and reach the serving
-/// path — and nothing downstream would notice, because `build_key_source` dispatches on
-/// `key_source` and simply ignores a selector belonging to another source.
-///
-/// The state it refuses is not an operator typo. It means the TLS handshake key is
-/// custodied in a device it is supposed never to leave, while a copy of it also sits in
-/// a file on the pod — which is the whole property the delegated custody modes exist to
-/// provide, quietly false. That is the "believes no key material lands in the pod while
-/// it does" shape the key-file permission work already chased once.
-///
-/// The broken implementation this catches: reverting the refusal to a parse-time-only
-/// check, which is where every other member of this family started.
-#[test]
-fn a_programmatic_config_cannot_assert_both_delegated_and_exported_tls_custody() {
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
-
-    let m = serving_fixtures::write_material();
-    let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
-
-    // The base config custodies the TLS key in a FILE. Asserting a token-resident TLS
-    // key on top of it is the contradiction: the parser would have refused the pair, and
-    // setting it afterwards is the only shape an in-code caller has.
-    let mut config = parsed.clone();
-    assert!(
-        !config.tls_key.is_empty(),
-        "the fixture must start with an exported TLS key for the contradiction to exist"
-    );
-    config.channel_credential.delegated = Some(
-        mcp_re_proxy::deployment_request::DelegatedChannelKeyRequest::Pkcs11(
-            mcp_re_proxy::deployment_request::Pkcs11ChannelKeyRequest {
-                key_label: "tls-key-on-the-token".to_string(),
-            },
-        ),
-    );
-
-    let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
-        .expect_err("contradictory TLS custody must be refused however the config was built");
-    assert!(
-        err.contains("refuses unsafe configuration"),
-        "it must be refused at the validation boundary, got: {err}"
-    );
-    assert!(
-        err.to_lowercase().contains("tls"),
-        "the refusal must name the contradiction, got: {err}"
-    );
-
-    // Negative control: the SAME config without the contradictory selector must not be
-    // refused for TLS custody. Without this, a boundary that refused every config would
-    // satisfy the assertion above.
-    let err = mcp_re_proxy::app::run(parsed, Arc::new(AtomicBool::new(true)))
-        .expect_err("this fixture stops at an environmental step, not a custody one");
-    assert!(
-        !err.contains("refuses unsafe configuration"),
-        "an exported TLS key alone is a supported custody and must not be refused, got: {err}"
-    );
-}
+// The fifth member of the parser-only family — contradictory channel-key custody — has no
+// test here any more, and its absence is the result rather than a gap.
+//
+// It asserted that a `DeploymentRequest` built in code could name BOTH a delegated,
+// non-exporting channel key and an exported file copy of it, and that the validation
+// boundary refused the pair (relation X2b). ADR-MCPRE-067 Phase 3 made the pair
+// unconstructible: `channel_credential.key` is the tagged `ChannelKeyRequest`, and naming
+// one arm is how the other is unnamed. The test cannot be written, because the code it
+// would have to write does not compile.
+//
+// What remains of the rule is argv-shaped — a flat command line CAN still say both — and
+// it is answered by the CLI adapter, with the same sentence, tested beside the parser.
 
 /// ADR-MCPRE-058 §8.3 — the request-target reconstruction check cannot be disabled by
 /// building the config in code.
@@ -1093,13 +1044,14 @@ fn a_programmatic_config_cannot_carry_a_dangling_custody_or_ingress_selector() {
             "--aws-kms-tls-key-id",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.channel_credential.delegated = Some(
-                        mcp_re_proxy::deployment_request::DelegatedChannelKeyRequest::AwsKms(
-                            mcp_re_proxy::deployment_request::AwsKmsChannelKeyRequest {
-                                key_id: "alias/tls".to_string(),
-                            },
-                        ),
-                    )
+                    c.channel_credential.key =
+                        mcp_re_proxy::deployment_request::ChannelKeyRequest::Delegated(
+                            mcp_re_proxy::deployment_request::DelegatedChannelKeyRequest::AwsKms(
+                                mcp_re_proxy::deployment_request::AwsKmsChannelKeyRequest {
+                                    key_id: "alias/tls".to_string(),
+                                },
+                            ),
+                        )
                 },
             ),
         ),
@@ -1107,13 +1059,14 @@ fn a_programmatic_config_cannot_carry_a_dangling_custody_or_ingress_selector() {
             "--gcp-kms-tls-key-version",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.channel_credential.delegated = Some(
-                        mcp_re_proxy::deployment_request::DelegatedChannelKeyRequest::GcpKms(
-                            mcp_re_proxy::deployment_request::GcpKmsChannelKeyRequest {
-                                key_version: "projects/p/..".to_string(),
-                            },
-                        ),
-                    )
+                    c.channel_credential.key =
+                        mcp_re_proxy::deployment_request::ChannelKeyRequest::Delegated(
+                            mcp_re_proxy::deployment_request::DelegatedChannelKeyRequest::GcpKms(
+                                mcp_re_proxy::deployment_request::GcpKmsChannelKeyRequest {
+                                    key_version: "projects/p/..".to_string(),
+                                },
+                            ),
+                        )
                 },
             ),
         ),

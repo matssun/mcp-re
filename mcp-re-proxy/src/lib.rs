@@ -379,7 +379,7 @@ pub use trust_plane::PushInvalidationTrustCache;
 pub use blocking_mtls_harness::serve;
 pub use blocking_mtls_harness::serve_once;
 pub use blocking_mtls_harness::serve_once_with_assertion;
-pub use tls::IdentityStrategy;
+pub use communication_assurance::peer_identity_provenance::PeerIdentityProvenance;
 pub use tls::ServerLimits;
 pub use tls::ServerOptions;
 pub use tls::TlsError;

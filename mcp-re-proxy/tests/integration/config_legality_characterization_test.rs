@@ -177,11 +177,13 @@ fn refused_at_the_boundary() {
         ),
         (
             "tls_cert",
-            Box::new(|c: &mut DeploymentRequest| c.tls_cert = String::new()),
+            Box::new(|c: &mut DeploymentRequest| {
+                c.channel_credential.credential_chain = String::new()
+            }),
         ),
         (
             "client_ca",
-            Box::new(|c: &mut DeploymentRequest| c.client_ca = String::new()),
+            Box::new(|c: &mut DeploymentRequest| c.peer_trust_anchors = String::new()),
         ),
         (
             "trust_path",

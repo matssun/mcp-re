@@ -154,8 +154,8 @@ pub fn validate_configuration(
     let (delegated_signing, delegated_signing_violations) =
         crate::config_state::delegated_signing::classify_and_validate(config);
     let (replay, replay_violations) = crate::config_state::replay::classify_and_validate(config);
-    let (tls_custody, tls_custody_violations) =
-        crate::config_state::tls_custody::classify_and_validate(config);
+    let (channel_credential_custody, channel_custody_violations) =
+        crate::config_state::channel_credential_custody::classify_and_validate(config);
     let (trust_revocation, trust_violations) =
         crate::config_state::trust_revocation::classify_and_validate(config);
     let (admission, admission_violations) =
@@ -194,11 +194,7 @@ pub fn validate_configuration(
     let (topology, shard_topology) = crate::config_state::topology::classify(config);
     // PASS 2 — the relations between machines, asked of the RECOGNISED states rather than
     // of the fields again.
-    let cross = crate::config_state::cross_machine::validate(
-        tls_custody.as_ref(),
-        trust_revocation.as_ref(),
-        config,
-    );
+    let cross = crate::config_state::cross_machine::validate(trust_revocation.as_ref(), config);
     let decided = MachineViolations {
         admission: admission_violations,
         authorization: authorization_violations,
@@ -212,7 +208,7 @@ pub fn validate_configuration(
         trust_document: trust_document_violations,
         client_credential_window: credential_window_violations,
         server_identity: server_identity_violations,
-        tls_custody: tls_custody_violations,
+        channel_credential_custody: channel_custody_violations,
         trust_revocation: trust_violations,
         cross,
     };
@@ -258,7 +254,7 @@ pub fn validate_configuration(
     let Some(custody) = custody else {
         return Err(unrecognised("custody"));
     };
-    let Some(tls_custody) = tls_custody else {
+    let Some(channel_credential_custody) = channel_credential_custody else {
         return Err(unrecognised("tls-custody"));
     };
     let Some(server_identity) = server_identity else {
@@ -292,7 +288,7 @@ pub fn validate_configuration(
             retention,
             server_identity,
             shard_topology,
-            tls_custody,
+            channel_credential_custody,
             topology,
             trust_document,
             trust_revocation,
@@ -327,7 +323,6 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // X2b — TlsCustody × Tls. A delegated handshake key and an exported copy of it are
     // contradictory rather than redundant, and the contradiction is between two machines,
     // so it is decided in pass 2 and only placed here.
-    violations.extend(decided.cross.x2b_exclusive_tls_custody);
     // The `ChannelBinding` machine: which binding kinds are deployments at all, and which
     // identity source names a live state. Its `binding == none` and `== lb-assertion`
     // clauses used to sit at the END of this list; they are emitted here now, which is a
@@ -392,7 +387,7 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // backend, so which one is legal depends on the custody state.
     violations.extend(decided.cross.x2a_delegated_selector);
     // The `TlsCustody` machine's own column: the exported state has no key without one.
-    violations.extend(decided.tls_custody);
+    violations.extend(decided.channel_credential_custody);
     // Ingress-assertion coherence: whether the operator's belief about a request-binding
     // ingress control matches what runs.
     if let Some(refusal) = crate::config_state::transport::ingress_assertion_violation(config) {

@@ -174,7 +174,7 @@ file-level census below is what those needed.
 | A | `run` / `run_validated` — the assembly | the order of effects, and the scope in which failure reclaims | the composition root itself; case-B, substantiated at the item |
 | B | `build_actor_resolver` | which resolver answers which `SignerSlot` | composition — it wires owner-provided seams; R-COMPOSE permits it |
 | C | `check_key_file_perms` / `process_gids` | nothing — `KeyFileAccessPolicy::violation` decides; this performs the `stat` and supplies the process gids | I/O the owner cannot perform; stays |
-| D | `key_files_read_from_disk` | nothing — a pure projection over `CustodyState` + `TlsCustodyState` | stays; already pure and separately tested |
+| D | `key_files_read_from_disk` | nothing — a pure projection over `CustodyState` + `ChannelCredentialCustodyState` | stays; already pure and separately tested |
 | E | `faulted_clock_refusal` | nothing — composes `CrlRevocationState::is_enforced()` with `startup_plan::host_clock_is_faulted` | composition; stays |
 | F | `channel_binding_effects` | nothing — a total function of the recognised `ChannelBindingState` | stays |
 | **G** | **`drain_audit_stream` / `audit_drain_line` / `AUDIT_FLUSH_TIMEOUT`** | **how long teardown waits, and whether the outcome is "drained" or "nobody can say"** | **separable — see below** |
@@ -457,7 +457,7 @@ Eight. Size ordered the investigation; this count decides the outcome.
 | C | Offline CRL evidence and freshness posture (`CrlFreshness`, `crl_freshness`, `CrlPosture`, `load_client_crls`) | whether revocation evidence may be relied on | ~230 |
 | D | Identity extraction (`extract_identity`, `resolve_identity*`, `leaf_facts`) | which certificate field IS the peer's identity | ~180 |
 | E | Connection-rejection classification (`connection_rejection*`, `cert_lifetime_rejection*`, `chain_issuers_*`, `ocsp_rejection`, `routing_header_rejection`, `assertion_header`) | the refusal token a peer is told | ~330 |
-| F | Serving limits and options vocabulary (`ServerLimits`, `ServerOptions`, `IdentityStrategy`) | the DoS ceilings and the identity strategy | ~230 |
+| F | Serving limits and options vocabulary (`ServerLimits`, `ServerOptions`, `PeerIdentityProvenance`) | the DoS ceilings and where a peer identity comes from | ~230 |
 | G | **The blocking HTTP/1 harness** (`serve*`, `serve_connection`, `DeadlineStream`, `read_http_request`, `write_http_response`, framing helpers) | nothing security-relevant — it is a test harness | ~420 |
 | H | Wall clock (`wall_clock_unix`) | the instant every validity check reads | ~28 |
 

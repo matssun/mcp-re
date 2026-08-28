@@ -34,7 +34,10 @@ mod pkcs11_source;
 mod response_role;
 
 pub use aws_kms_source::{AwsKmsChannelKeyRequest, AwsKmsSigningSourceRequest};
-pub use channel_role::{ChannelCredentialRequest, DelegatedChannelKeyRequest};
+pub use channel_role::{
+    ChannelCredentialRequest, ChannelKeyRequest, DelegatedChannelKeyRequest,
+    ExportedChannelKeyRequest,
+};
 pub use environment_source::EnvironmentSigningSourceRequest;
 pub use file_source::FileSigningSourceRequest;
 pub use gcp_kms_source::{GcpKmsChannelKeyRequest, GcpKmsSigningSourceRequest};

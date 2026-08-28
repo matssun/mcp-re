@@ -24,6 +24,10 @@
 //! separate ROLES, so it reaches the request whatever `--key-source` says, and X2a reports
 //! a mismatch at the boundary alongside every other violation rather than cutting the parse
 //! short at the first one.
+//!
+//! What the family DOES answer about the channel is which custody holds its key, because
+//! `--tls-key` and a delegated key object are the two arms of one tagged value — see
+//! [`channel_role`].
 
 mod channel_role;
 mod endpoint_guard;
@@ -36,7 +40,7 @@ use mechanism::{mechanism, Mechanism};
 #[cfg(feature = "dev_env_key_source")]
 use crate::deployment_request::EnvironmentSigningSourceRequest;
 use crate::deployment_request::{
-    AwsKmsSigningSourceRequest, ChannelCredentialRequest, FileSigningSourceRequest,
+    AwsKmsSigningSourceRequest, ChannelKeyRequest, FileSigningSourceRequest,
     GcpKmsSigningSourceRequest, Pkcs11SigningSourceRequest, ResponseSigningRequest,
     SigningSourceRequest,
 };
@@ -51,6 +55,7 @@ pub(super) struct SigningSourceFlags {
     aws_channel_key_id: Option<String>,
     gcp: GcpKmsSigningSourceRequest,
     gcp_channel_key_version: Option<String>,
+    tls_key: Option<String>,
 }
 
 impl SigningSourceFlags {
@@ -66,6 +71,7 @@ impl SigningSourceFlags {
             aws_channel_key_id: None,
             gcp: GcpKmsSigningSourceRequest::default(),
             gcp_channel_key_version: None,
+            tls_key: None,
         }
     }
 
@@ -88,6 +94,7 @@ impl SigningSourceFlags {
                 | "--gcp-kms-key-version"
                 | "--gcp-kms-endpoint"
                 | "--gcp-kms-tls-key-version"
+                | "--tls-key"
         )
     }
 
@@ -111,6 +118,7 @@ impl SigningSourceFlags {
             "--aws-sts-endpoint" => self.aws.sts_endpoint = Some(guarded_endpoint(flag, value)?),
             "--gcp-kms-key-version" => self.gcp.key_version = held(),
             "--gcp-kms-endpoint" => self.gcp.endpoint = Some(guarded_endpoint(flag, value)?),
+            "--tls-key" => self.tls_key = held(),
             _ => self.gcp_channel_key_version = held(),
         }
         Ok(())
@@ -133,13 +141,9 @@ impl SigningSourceFlags {
     /// no seed field at all — so an operator is no longer asked to provision an Ed25519
     /// root seed into every pod in exactly the mode chosen because no key should land in
     /// the pod.
-    pub(super) fn finish(
-        self,
-    ) -> Result<(ResponseSigningRequest, ChannelCredentialRequest), String> {
+    pub(super) fn finish(self) -> Result<(ResponseSigningRequest, ChannelKeyRequest), String> {
         self.stray_value_refusal()?;
-        let channel = ChannelCredentialRequest {
-            delegated: self.channel_key(),
-        };
+        let channel = self.channel_key_request()?;
         let source = match self.mechanism {
             Mechanism::File => SigningSourceRequest::File(FileSigningSourceRequest {
                 seed_path: self.required_seed()?,

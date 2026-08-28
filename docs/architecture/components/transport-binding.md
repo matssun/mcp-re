@@ -43,7 +43,7 @@ async_serve ──▶ RequestHeaders ──┬──▶ routing_header_rejection
 http_profile_serve ──▶ TransportBinding::bind(peer, subject) ──▶ bind_request_to_peer (ADR-064)
 ```
 
-Everything in the left column is live. `ServedHttpRequest.assertion` is populated only under `IdentityStrategy::LbAssertion`, which no validated deployment can select — see §4 Q9.
+Everything in the left column is live. `ServedHttpRequest.assertion` is populated only under `PeerIdentityProvenance::IngressAssertion`, which no validated deployment can select — see §4 Q9.
 
 ## 4. The twelve questions (ADR-061 §8)
 

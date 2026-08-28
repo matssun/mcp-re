@@ -59,7 +59,7 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `TrustRevocationState` | `config_state/trust_revocation.rs` | `epoch_source() -> Option<EpochSource<'_>>`, `reload_cadence()`, `tier()`, `declared_window_secs()`, `push_channel_is_inert()`, `has_networked_epoch()` |
 | `CrlRevocationState` | `config_state/transport.rs` | `client_revocation_plan()`, `paths()`, `reload_cadence_secs()`, `is_enforced()` |
 | `ClientRevocationPlan` | `config_state/transport.rs` | `paths()`, `reload_cadence_secs()`, `is_enforced()` |
-| `TlsCustodyState` | `config_state/tls_custody.rs` | `exported_key_path()`, `delegated_pkcs11_label()`, `delegated_aws_key_id()`, `delegated_gcp_key_version()`, `is_delegated()` |
+| `ChannelCredentialCustodyState` | `config_state/channel_credential_custody.rs` | `exposure()`, `material()` |
 | `CustodyState` | `config_state/custody.rs` | `material() -> CustodyMaterial<'_>`, `disk_secret_paths()`, `locators_are_filesystem_paths()`, `is_non_exporting_device()` |
 | `FreshnessWindow` | `config_state/freshness.rs` | `verifier_skew_secs()`, `replay_retain_until()`, `verifier_accepts_until()` |
 | `TrustDocumentSource` | `config_state/trust_document.rs` | `path()` |
@@ -205,7 +205,7 @@ against the configured `max_client_cert_lifetime`. So this deployment was accept
 
 Both halves are individually inside the ceiling; together they mean a connection serves
 requests for forty minutes after the certificate that authenticated it expired, while the
-startup transcript reports `exposure_window=600s`. `TlsPlan` then carried the two values on
+startup transcript reports `exposure_window=600s`. `ChannelEstablishmentPlan` then carried the two values on
 as `Option<Duration>` fields under a doc comment stating their relation "was settled at
 layer A" — the relation was stated three times and checked nowhere.
 
