@@ -52,10 +52,17 @@
 # body — left for `body_boundary.rs`, and the serving file fell to 1674. The SHA moves with
 # the number: it records where a measurement was ESTABLISHED, and ae40fff never contained a
 # 1674-line serving root.
+#
+# Authority E's continuation half then left for the `continuation/` subtree: 1674 -> 1478,
+# authority H — what the backend's reply IS — for `reply.rs`: 1478 -> 1389; and the backend
+# seam with the reading of its outcomes for `inner_plane.rs`: 1389 -> 1278; and the
+# ADR-MCPRE-054 retention obligation for `retention.rs`: 1278 -> 1221; and request
+# admission for `request_admission.rs`: 1221 -> 1146; and the reply signature joined the
+# response-signing authority that already owned the refusal half: 1146 -> 1108.
 [[debt]]
 path = "mcp-re-proxy/src/http_profile_serve/mod.rs"
-baseline_prod_loc = 1674
-baseline_sha = "bb24777"
+baseline_prod_loc = 1108
+baseline_sha = "f0fc5d8"
 status = "unreviewed"
 
 [[debt]]

@@ -50,21 +50,33 @@ pub(crate) mod receipt;
 /// The PEP's read/write boundary inside the client's JSON-RPC body: what it reads out,
 /// what it strips because it owns it, and what it writes because it is entitled to.
 mod body_boundary;
+
+/// The ADR-MCPS-047 continuation plane: a human's approval opened, read without being
+/// spent, spent exactly once, and recorded so any replica can answer it.
+mod continuation;
+
+/// What the backend's reply IS: read once, here, so no later authority re-reads it.
+mod reply;
+
+/// The backend seam, and what the exchange may claim about execution given what it
+/// managed to do.
+mod inner_plane;
+
+/// Durable responsibility for a served exchange: taken before the side effects run, and
+/// discharged with what was actually served.
+mod retention;
+
+/// What makes an inbound message a request this deployment reads at all: whose it is,
+/// whether it is addressed here, and whether it is legal MCP.
+mod request_admission;
 pub use body_boundary::extract_request_state;
 use body_boundary::ForwardedBody;
+use continuation::Retirement;
 use mcp_re_core::VerificationKey;
-use mcp_re_http_profile::parse_response_body;
-use mcp_re_http_profile::result_class::classify_result_type;
-use mcp_re_http_profile::result_class::input_required_state_of;
-use mcp_re_http_profile::result_class::ResultTypeClass;
 use mcp_re_http_profile::sign_delegated_accepted_202;
-use mcp_re_http_profile::sign_delegated_response_full;
-use mcp_re_http_profile::validate_response_envelope;
 use mcp_re_http_profile::AdmissionPolicy;
-use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::ExecutionDisposition;
-use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RequestEvidence;
@@ -73,14 +85,14 @@ use mcp_re_http_profile::RetainedContinuation;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedContextPolicy;
 use mcp_re_http_profile::VerifiedMcpRequest;
-use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
+use reply::ReplyClass;
+use reply::ValidatedReply;
 
 use crate::admission_enforcer::AdmissionEnforcement;
 use crate::admission_enforcer::AdmissionEnforcer;
 use crate::admission_source::AsyncAdmissionSource;
 use crate::async_inner::AsyncInnerServer;
-use crate::async_inner::InnerOutcome;
 use crate::async_serve::ServedHttpRequest;
 use crate::async_serve::ServedHttpResponse;
 use crate::authorization::AuthorizationEvaluator;
@@ -88,16 +100,13 @@ use crate::authorization::AuthorizationPosture;
 use crate::authorization::AuthorizationStage;
 use crate::communication_assurance::request_peer_binding::http_profile_adapter::verified_request_subject;
 use crate::communication_assurance::RequestPeerBindingFacts;
-use crate::continuation_store::continuation_key;
 use crate::continuation_store::AsyncContinuationStore;
-use crate::continuation_store::RetainedBases;
 use crate::delegated_server_signer::DelegatedServerSigner;
 use crate::exchange_state::ContinuationState;
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
 use crate::exchange_state::ExchangeProgress;
 use crate::exchange_state::OpenLeg;
-use crate::exchange_state::ResponseOrigin;
 use crate::exchange_state::RetrySemantics;
 use crate::http_profile_dispatch::dispatch_request_with_async_tier;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
@@ -111,14 +120,6 @@ use signing_window::SigningWindow;
 /// bounded so an unanswered continuation does not linger. Overridable via
 /// [`HttpProfileProxy::with_continuation_store`].
 pub const DEFAULT_CONTINUATION_TTL_SECS: i64 = 300;
-
-/// How many times the CONTINUATION-RECORDED open-leg record is attempted before the leg is failed.
-///
-/// Bounded and small: the shared tier answered the replay admission moments earlier,
-/// so the only failure this can absorb is a transient one, and retrying past that
-/// would put an unbounded stall in front of a response the backend has already
-/// produced.
-const CONTINUATION_RECORD_ATTEMPTS: usize = 3;
 
 /// The trust seam: resolve a presented keyid FOR a signing slot to a structured
 /// actor (identity + verification key). A key not trusted for `slot` resolves to
@@ -159,59 +160,6 @@ pub(super) struct Exchange<'a> {
     key: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
 }
 
-/// What CONTINUATION-PREPARED recovered.
-///
-/// The owned `retained` and `answer_state` outlive the borrowed [`RetainedContinuation`]
-/// handed to replay admission, which is why the borrow is produced on demand by
-/// [`ContinuationPrep::binding`] rather than stored.
-struct ContinuationPrep {
-    answer_state: Option<String>,
-    answer_key: Option<String>,
-    retained: Option<RetainedBases>,
-}
-
-impl ContinuationPrep {
-    /// The binding to check the answer leg against, when there is one to check.
-    ///
-    /// `None` covers every way the bases can be absent — no store, no `requestState`, a
-    /// store miss, an expired or already-answered entry, a store outage — because the
-    /// dispatcher must fail closed on `continuation_binding_failed` in all of them. A
-    /// continuation that was signed but cannot be bound is never admitted.
-    fn binding(&self) -> Option<RetainedContinuation<'_>> {
-        match (&self.retained, &self.answer_state) {
-            (Some(bases), Some(state)) => Some(RetainedContinuation {
-                previous_request_base: &bases.previous_request_base,
-                input_required_response_base: &bases.input_required_response_base,
-                request_state: state.as_bytes(),
-            }),
-            _ => None,
-        }
-    }
-}
-
-/// What the shared tier reported when this exchange tried to retire the approval it
-/// answers.
-///
-/// Four values, because the store's `Err` is not the store's `Ok(false)`. A `DEL` whose
-/// reply was never read may well have executed, so "there was definitely nothing to
-/// retire" and "the entry may or may not be gone" are different facts about a human's
-/// approval: they warrant different wire codes, and — the load-bearing part — different
-/// claims about whether an ordinary retry can still succeed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Retirement {
-    /// This deployment runs no store, or this request answers nothing. No approval is at
-    /// stake.
-    NotInvolved,
-    /// THIS call removed the live entry. **The approval is spent.**
-    Retired,
-    /// The store ANSWERED, and there was no live entry to remove: already answered,
-    /// expired, or a splice. A statement about the caller.
-    AlreadyAnswered,
-    /// The store did not answer. The entry may or may not be gone, and nothing downstream
-    /// can find out — the answer leg is the only thing that would have consumed it.
-    Indeterminate,
-}
-
 /// The RFC 9421 server-side PEP run by the async fleet (ADR-MCPRE-051).
 ///
 /// Holds ONLY the RFC 9421 serving state — the verifier, signer, and evidence all
@@ -219,11 +167,9 @@ enum Retirement {
 /// (MCPRE-111): one instance is
 /// shared across all per-core runtimes.
 pub struct HttpProfileProxy {
-    /// Trust resolution for request (client) and response (server) signing slots.
-    resolve_actor: ActorResolver,
-    /// The verifier's expected audience tuple (audience id + `@target-uri` + route);
-    /// `target_uri` must equal the request `@target-uri` (enforced in verify).
-    expected_audience: AudienceTuple,
+    /// Who may speak, to whom, and under what acceptance policy — the three inputs that
+    /// decide whether an inbound message is a request this deployment reads at all.
+    requests: request_admission::RequestAdmission,
     /// The response-signing authority: the delegated credential, the configured validity,
     /// and the receipt a refusal is served as. Held as one owner so the reply path and the
     /// refusal path cannot drift apart in what they sign under.
@@ -232,33 +178,23 @@ pub struct HttpProfileProxy {
     replay_async: crate::async_replay::AsyncReplayTier,
     /// Deployment replay-durability posture (fleet-strict + declared tier).
     dispatch_cfg: ProxyDispatchConfig,
-    /// The async inner-plane client to the stateless Streamable-HTTP backend.
-    inner_async: Box<dyn AsyncInnerServer>,
+    /// The backend seam, and the reading of every answer it can give.
+    inner_async: inner_plane::InnerPlane,
     /// Optional Mode-A transport binding: bind the verified request actor to the
     /// mTLS peer identity. `None` disables the channel binding.
     transport_binding: Option<TransportBinding>,
     /// What this deployment decides authorization with (ADR-MCPRE-065). Deciding with
     /// nothing is one of its states, and it claims nothing rather than permitting.
     authorization: AuthorizationStage,
-    /// Optional MRTR continuation correlation store (ADR-MCPS-047) — the fleet-shared
-    /// tier that carries a multi-round-trip continuation across a replica switch.
-    /// `None` disables MRTR: an `InputRequiredResult` is still returned, but a later
-    /// answer leg carrying a continuation fails closed (no retained bases). A fleet
-    /// wires the Redis store; single-replica runs may wire the in-memory one.
-    continuation_store: Option<Arc<dyn AsyncContinuationStore>>,
-    /// Lifetime of a recorded continuation (seconds); see
-    /// [`DEFAULT_CONTINUATION_TTL_SECS`].
-    continuation_ttl_secs: i64,
+    /// The ADR-MCPS-047 continuation plane: the shared correlation tier and the bounded
+    /// lifetime its entries run under, held as one owner so a TTL never outlives the
+    /// question of whether there is a store to apply it to.
+    continuations: continuation::ContinuationPlane,
     /// Whether to carry verified context to the inner server (#415 rev 2 §10).
     /// Default `Disabled`: the context is the PEP's conclusion, unsigned by
     /// design, so it is only meaningful over a channel the PEP alone can write to
     /// — an operator asserts that, and nothing here can check it.
     verified_context_policy: VerifiedContextPolicy,
-    /// The verifier-local acceptance policy: algorithm registry, bounded skew, and
-    /// the optional MCP transport/version contract (§4.1, §5.1, §13.1). Default is
-    /// `VerifierPolicy::default()` — Ed25519, 30s skew, no transport contract — so
-    /// serving behaves as before unless a deployment attaches a stricter policy.
-    verifier_policy: VerifierPolicy,
     /// The ADR-MCPS-035 security-audit sink. `None` is the explicit no-emission
     /// posture; a sink failure never fails a request (see [`crate::audit_sink`]).
     audit: crate::audit_sink::MaybeAuditSink,
@@ -271,7 +207,7 @@ pub struct HttpProfileProxy {
     /// retained BEFORE the response is handed back, and a retention failure refuses the
     /// exchange — a deployment that has turned this on is asserting it can account for
     /// what it served.
-    retention: Option<Arc<crate::transparency::EvidenceRetention>>,
+    retention: retention::Retention,
 }
 
 impl HttpProfileProxy {
@@ -297,7 +233,7 @@ impl HttpProfileProxy {
         mut self,
         retention: Arc<crate::transparency::EvidenceRetention>,
     ) -> Self {
-        self.retention = Some(retention);
+        self.retention = retention::Retention::to(retention);
         self
     }
 
@@ -319,21 +255,18 @@ impl HttpProfileProxy {
         delegated_signer: Arc<DelegatedServerSigner>,
     ) -> Self {
         HttpProfileProxy {
-            resolve_actor,
-            expected_audience,
+            requests: request_admission::RequestAdmission::new(resolve_actor, expected_audience),
             responses: receipt::ResponseSigning::new(delegated_signer, sig_ttl_secs),
             replay_async,
             dispatch_cfg,
-            inner_async,
+            inner_async: inner_plane::InnerPlane::over(inner_async),
             transport_binding: None,
-            continuation_store: None,
-            continuation_ttl_secs: DEFAULT_CONTINUATION_TTL_SECS,
+            continuations: continuation::ContinuationPlane::disabled(),
             verified_context_policy: VerifiedContextPolicy::default(),
-            verifier_policy: VerifierPolicy::default(),
             authorization: AuthorizationStage::default(),
             audit: None,
             admission: None,
-            retention: None,
+            retention: retention::Retention::none(),
         }
     }
 
@@ -342,7 +275,7 @@ impl HttpProfileProxy {
     /// passes `VerifierPolicy::default().with_mcp_transport(McpTransportPolicy::mcp_2026_07_28(&["2026-07-28"]))`
     /// to enforce required-header presence and version policy on the served path.
     pub fn with_verifier_policy(mut self, policy: VerifierPolicy) -> Self {
-        self.verifier_policy = policy;
+        self.requests.under(policy);
         self
     }
 
@@ -431,8 +364,7 @@ impl HttpProfileProxy {
         store: Arc<dyn AsyncContinuationStore>,
         ttl_secs: i64,
     ) -> Self {
-        self.continuation_store = Some(store);
-        self.continuation_ttl_secs = ttl_secs;
+        self.continuations = continuation::ContinuationPlane::wired(store, ttl_secs);
         self
     }
 
@@ -500,7 +432,7 @@ impl HttpProfileProxy {
             .decide(
                 ex.verified,
                 ex.actor_id,
-                &self.expected_audience.audience_id,
+                self.requests.audience_id(),
                 ex.now,
             )
             .await
@@ -650,69 +582,6 @@ impl HttpProfileProxy {
     // Refusals take their retry contract from the machine, never from their own position:
     // every one of them passes `Self::disposition(progress)`.
 
-    /// VERIFIED — RFC 9421 + RFC 9530 + the evidence block.
-    ///
-    /// ```text
-    /// ensures   Ok  => the signature verified and an actor is resolved
-    ///           Err => 403, signed UNBOUND (no trustworthy request hash exists yet)
-    /// forbids   any effect on the request's behalf
-    /// refusal   free — nothing has happened
-    /// ```
-    ///
-    /// DPoP artifact bindings derive their credential from the covered Authorization
-    /// header, so no external material is supplied; a binding lacking one fails closed.
-    fn verify_stage(
-        &self,
-        http_req: &HttpRequest,
-        now: i64,
-    ) -> Result<Established<VerifiedMcpRequest>, Refusal> {
-        let no_material = |_b: &ArtifactBinding| None;
-        // Scoped so the timer covers the verification and nothing after it.
-        let verify_result = {
-            let _t = crate::stage_timers::Timed::start(crate::stage_timers::Stage::Verify);
-            Verifier::new(&self.verifier_policy, self.resolve_actor.as_ref()).verify_request(
-                http_req,
-                &self.expected_audience,
-                &no_material,
-                now,
-            )
-        };
-        // The request never verified, so there is no trustworthy request hash to bind to
-        // and no resolved actor to attribute the denial to.
-        verify_result
-            .map(|v| Established::new(v, ExchangeEvent::SignatureVerified))
-            .map_err(|e| Refusal::preflight(e, 403))
-    }
-
-    /// REQUEST-ENVELOPE-VALIDATED — is this body a legal JSON-RPC request at all?
-    ///
-    /// ```text
-    /// ensures   Ok  => the body is a legal JSON-RPC 2.0 request, and the outstanding id
-    ///                  it establishes is decided ONCE, here
-    ///           Err => 400, bound to the request via `;req`
-    /// forbids   any effect on the request's behalf
-    /// refusal   free — nothing has happened
-    /// ```
-    ///
-    /// Asked here, before anything reads the body for meaning, because everything below
-    /// does: the continuation stage reads `params.requestState`, the forwarded body strips
-    /// `_meta`, and the terminal arm is chosen by the presence of `id`. Deciding the shape
-    /// after admission would burn a nonce, spend an approval and write a durable retention
-    /// marker on behalf of a document that is not an MCP message.
-    ///
-    /// The returned [`OutstandingId`](mcp_re_http_profile::OutstandingId) is the exchange's
-    /// single answer to "what is this request": the notification arm and the response
-    /// envelope validator are both given this value rather than re-reading the body. Two
-    /// readers of one document can disagree, and the disagreement that mattered here is a
-    /// body dispatched as a request and acknowledged as a notification.
-    fn validate_request_stage(
-        &self,
-        http_req: &HttpRequest,
-    ) -> Result<mcp_re_http_profile::OutstandingId, Refusal> {
-        mcp_re_http_profile::validate_request_envelope(&http_req.body)
-            .map_err(|e| Refusal::before_admission(e, 400))
-    }
-
     /// TRANSPORT-BOUND — Mode-A: the verified request actor must be the mTLS peer.
     /// ```text
     /// ensures   Ok  => authenticated peer == resolved actor's SUBJECT (never `actor_id()`)
@@ -738,64 +607,6 @@ impl HttpProfileProxy {
             ));
         };
         Ok(Established::new(Some(bound), checked))
-    }
-
-    /// CONTINUATION-PREPARED — recover the retained open-leg bases for an ANSWER leg.
-    ///
-    /// ```text
-    /// ensures   Ok  => the continuation machine is NotInvolved or Peeked — never Consumed
-    ///           Err => 503, bound: the shared tier did not answer
-    /// forbids   consuming anything
-    /// refusal   free — `peek` has no side effect, so nothing is spent
-    /// ```
-    ///
-    /// Keyed by the actor the VERIFIER resolved, never by anything the request asserts, so
-    /// one peer cannot name another's continuation at all. `peek` has no side effect, which
-    /// is what lets a request that is about to be refused leave a live approval intact.
-    ///
-    /// A store MISS and a store OUTAGE are different facts and are refused differently. A
-    /// miss — never opened, expired, already answered — leaves no bases, and the binding
-    /// then fails closed `continuation_binding_failed`, which is a statement about the
-    /// CALLER. An outage is a statement about this DEPLOYMENT, so it is named as one:
-    /// flattening the two reports a forged continuation every time the shared tier blips,
-    /// and hides a genuine splice attempt inside an outage.
-    async fn prepare_continuation_stage(
-        &self,
-        ex: &Exchange<'_>,
-    ) -> Result<Established<ContinuationPrep>, Refusal> {
-        let has_continuation = ex.verified.request_block().continuation.is_some();
-        let answer_state = if has_continuation {
-            extract_request_state(&ex.http_req.body)
-        } else {
-            None
-        };
-        let answer_key = answer_state.as_ref().map(|state| {
-            continuation_key(
-                &self.expected_audience.audience_id,
-                ex.actor_id,
-                state.as_bytes(),
-            )
-        });
-        let retained = match (&self.continuation_store, &answer_key) {
-            (Some(store), Some(key)) => match store.peek(key).await {
-                Ok(bases) => bases,
-                Err(_) => {
-                    return Err(Refusal::before_admission(
-                        McpReError::ReplayCacheUnavailable,
-                        503,
-                    ))
-                }
-            },
-            _ => None,
-        };
-        Ok(Established::new(
-            ContinuationPrep {
-                answer_state,
-                answer_key,
-                retained,
-            },
-            ExchangeEvent::ContinuationPrepared,
-        ))
     }
 
     /// REPLAY-ADMITTED — async §4 replay admission plus the continuation binding.
@@ -855,31 +666,6 @@ impl HttpProfileProxy {
         }
     }
 
-    /// CONTINUATION-RETIRED — spend the approval, exactly once.
-    ///
-    /// ```text
-    /// ensures   what the shared tier reported, as a [`Retirement`]
-    /// forbids   running the backend
-    /// refusal   minted by the CALLER — see [`Retirement`]
-    /// ```
-    ///
-    /// One-shot is enforced here, by the store's atomic `consume`: of two concurrent answer
-    /// legs that both bound successfully, exactly one proceeds. The other three outcomes do
-    /// not proceed, and they are not the same fact, so the stage reports what happened and
-    /// the caller — which holds the continuation machine — decides both the refusal and
-    /// what the exchange may claim about the approval. A stage cannot do the second, and a
-    /// stage that refused without it would be stating a retry contract it cannot know.
-    async fn retire_continuation_stage(&self, answer_key: Option<&String>) -> Retirement {
-        let (Some(store), Some(key)) = (&self.continuation_store, answer_key) else {
-            return Retirement::NotInvolved;
-        };
-        match store.consume(key).await {
-            Ok(true) => Retirement::Retired,
-            Ok(false) => Retirement::AlreadyAnswered,
-            Err(_) => Retirement::Indeterminate,
-        }
-    }
-
     /// FORWARDED — strip the proxy-owned `_meta` so the backend sees clean MCP.
     ///
     /// ```text
@@ -904,343 +690,6 @@ impl HttpProfileProxy {
         Ok(Established::new(
             forwarded.into_bytes_for_inner(ex.actor_id),
             ExchangeEvent::ForwardBodyPrepared,
-        ))
-    }
-
-    /// RETENTION-RESERVED — take durable responsibility BEFORE the side effects run.
-    ///
-    /// ```text
-    /// ensures   Ok  => the crossing of the execution threshold is itself durable
-    ///           Err => 503, bound
-    /// forbids   running the backend
-    /// refusal   THE LAST FREE ONE — nothing between it and the dispatch can refuse, and
-    ///           past the dispatch no refusal can say nothing happened
-    /// ```
-    ///
-    /// Ordered AFTER the inner-plane question for that reason. The marker this writes is
-    /// durable and is erased only by `complete`, so a free refusal downstream of it would
-    /// leave on disk the record that a request crossed the execution threshold when it
-    /// provably never reached a backend — and one such file per refusal, in a store with
-    /// no expiry, for as long as the plane stays saturated.
-    ///
-    /// NOT a probe: it does not claim the later write will succeed, because nothing can —
-    /// the backend and the store share no transaction. The write runs on the retention
-    /// writer thread and this future AWAITS its acknowledgement, so the core keeps serving
-    /// while the fsync is in progress. Awaiting is not optional: dispatching before the
-    /// marker is durable would make the reservation a hint rather than a record.
-    ///
-    /// Returns a `RetentionDisposition`, not an `Option`: "this deployment retains nothing"
-    /// and "a reservation is missing" are different facts, and collapsing them is what used
-    /// to require a guard on the completion path to tell them apart (ADR-MCPRE-058 §9.6).
-    async fn reserve_retention_stage(
-        &self,
-        ex: &Exchange<'_>,
-    ) -> Result<Established<RetentionDisposition>, Refusal> {
-        let reserved =
-            |d: RetentionDisposition| Established::new(d, ExchangeEvent::RetentionReserved);
-        let Some(retention) = self.retention.as_ref() else {
-            return Ok(reserved(RetentionDisposition::NotConfigured));
-        };
-        match retention.reserve(ex.http_req).await {
-            Ok(reservation) => Ok(reserved(RetentionDisposition::Reserved(reservation))),
-            Err(e) => {
-                eprintln!(
-                    "evidence retention could not accept the exchange, refusing before \
-                     dispatch: {e}"
-                );
-                Err(Refusal::after_admission(
-                    McpReError::EvidenceRetentionUnavailable,
-                    503,
-                ))
-            }
-        }
-    }
-
-    /// INNER-PLANE-ACCEPTED — can a dispatch begin at all?
-    ///
-    /// ```text
-    /// ensures   Ok  => the inner plane has a permit and a live backend
-    ///           Err => 503, bound
-    /// forbids   transmitting anything
-    /// refusal   free, and free of DURABLE consequence — asked before the retention
-    ///           reservation, so a saturated plane leaves nothing behind on disk
-    /// ```
-    ///
-    /// Local saturation and a fully-ejected backend set are facts about THIS proxy, knowable
-    /// without putting a byte on the wire. Discovering them from the far side of the
-    /// threshold — which is what a seam returning only bytes forces — turned a
-    /// definitely-not-executed outage into an exchange that must claim `possibly_executed`
-    /// forever after, and served it as a signed HTTP 200 carrying an error body.
-    fn inner_plane_stage(&self) -> Result<Established<()>, Refusal> {
-        self.inner_async
-            .admit()
-            .map(|_| Established::new((), ExchangeEvent::InnerPlaneAccepted))
-            .map_err(|_| Refusal::after_admission(McpReError::InnerPlaneUnavailable, 503))
-    }
-
-    /// RESPONSE-OBSERVED — what did the inner plane actually manage to do?
-    ///
-    /// ```text
-    /// ensures   Ok  => bytes authored by the BACKEND
-    ///           Err => 503 / 504 / 502, bound, recorded as a RESPONSE-side fault
-    /// refusal   NOT free — every arm below reports possibly-executed
-    /// ```
-    ///
-    /// The three failing arms are three different facts and get three different codes. The
-    /// one that matters most is the middle: a timeout means the request was transmitted and
-    /// the answer never came, so whether the tool ran is genuinely unknown, and the previous
-    /// behaviour — a synthesized `-32603` signed at HTTP 200 — was the strongest available
-    /// statement that the exchange completed normally.
-    fn observe_inner_stage(
-        &self,
-        progress: &mut ExchangeProgress,
-        outcome: InnerOutcome,
-    ) -> Result<Established<Vec<u8>>, Refusal> {
-        match outcome {
-            InnerOutcome::Replied(bytes) => {
-                progress.observe_origin(ResponseOrigin::BackendReplied);
-                Ok(Established::new(bytes, ExchangeEvent::ResponseObserved))
-            }
-            // A lost race against `admit`: the last permit went to another core between the
-            // question and the dispatch. Reported as what it is, at the consequence the
-            // exchange has already crossed — the floor does not move back for a more
-            // precise late observation.
-            InnerOutcome::NotDispatched(_) => Err(Refusal::after_admission(
-                McpReError::InnerPlaneUnavailable,
-                503,
-            )),
-            InnerOutcome::Indeterminate(_) => {
-                progress.observe_origin(ResponseOrigin::DispatchIndeterminate);
-                Err(Refusal::after_admission(
-                    McpReError::InnerDispatchIndeterminate,
-                    504,
-                ))
-            }
-            InnerOutcome::InvalidUpstream(clause) => Err(Refusal::after_admission(
-                HttpProfileError::UpstreamResponseInvalid(clause),
-                502,
-            )),
-        }
-    }
-
-    /// NOTIFICATION-OBSERVED — may a 202 be minted for what the inner plane managed to do?
-    ///
-    /// ```text
-    /// ensures   Ok  => the backend RECEIVED the message
-    ///           Err => 503 (nothing was transmitted) / 504 (transmitted, no answer)
-    /// refusal   NOT free — the exchange has crossed the threshold either way
-    /// ```
-    ///
-    /// Two outcomes acknowledge and two refuse, split on whether the backend ANSWERED. The
-    /// 202 says the enforcement boundary authenticated and accepted the message and the
-    /// inner plane received it; it never says any action completed (#418). What the backend
-    /// answered is discarded unread, as JSON-RPC requires — but WHETHER it was reached is
-    /// not a detail of the answer, and a message that never left the proxy has been
-    /// accepted by nothing.
-    ///
-    /// [`InnerOutcome::InvalidUpstream`] acknowledges, and that is not a concession: a
-    /// conformant Streamable-HTTP backend answers a notification with `202 Accepted` and no
-    /// body, which carries no `application/json` content type and therefore arrives here as
-    /// an unusable answer FROM A BACKEND THAT RECEIVED THE MESSAGE
-    /// ([`crate::http_inner`]). The two refused outcomes are the two that say the message
-    /// did not get there, or may not have.
-    fn observe_notification_stage(
-        &self,
-        progress: &mut ExchangeProgress,
-        outcome: &InnerOutcome,
-    ) -> Result<Established<()>, Refusal> {
-        match outcome {
-            InnerOutcome::Replied(_) | InnerOutcome::InvalidUpstream(_) => {
-                progress.observe_origin(ResponseOrigin::BackendReplied);
-                Ok(Established::new(
-                    (),
-                    ExchangeEvent::NotificationAcknowledged,
-                ))
-            }
-            InnerOutcome::NotDispatched(_) => Err(Refusal::after_admission(
-                McpReError::InnerPlaneUnavailable,
-                503,
-            )),
-            InnerOutcome::Indeterminate(_) => {
-                progress.observe_origin(ResponseOrigin::DispatchIndeterminate);
-                Err(Refusal::after_admission(
-                    McpReError::InnerDispatchIndeterminate,
-                    504,
-                ))
-            }
-        }
-    }
-
-    /// RESPONSE-VALIDATED — the JSON-RPC control envelope must be legal before anything
-    /// treats these bytes as a response.
-    ///
-    /// ```text
-    /// ensures   Ok  => syntax, `jsonrpc`, `id` correlation and `result` XOR `error` all hold
-    ///           Err => 502, bound
-    /// refusal   NOT free — the action already ran
-    /// ```
-    ///
-    /// Unconditional, which is the whole change (ruling D2). This used to happen only inside
-    /// the MRTR open-leg recorder, so whether MCP-RE refused a malformed protocol response
-    /// depended on whether an operator had wired Redis — a capability with no relationship
-    /// to protocol legality. A deployment without it signed unparseable bodies as opaque
-    /// payload and the client's own verifier then rejected a message the enforcement
-    /// boundary had vouched for.
-    ///
-    /// Stops at the control envelope. Everything inside `result` beyond the MCP lifecycle
-    /// members is application data that MCP-RE carries and signs without reading.
-    fn validate_envelope_stage(
-        &self,
-        response: &HttpResponse,
-        outstanding: &mcp_re_http_profile::OutstandingId,
-    ) -> Result<Established<serde_json::Value>, Refusal> {
-        let invalid = |clause| {
-            Refusal::after_admission(HttpProfileError::UpstreamResponseInvalid(clause), 502)
-        };
-        let parsed = parse_response_body(&response.body).map_err(|e| match e {
-            HttpProfileError::UpstreamResponseInvalid(clause) => invalid(clause),
-            _ => invalid("response body"),
-        })?;
-        match validate_response_envelope(&parsed, outstanding) {
-            Ok(_) => Ok(Established::new(parsed, ExchangeEvent::EnvelopeValidated)),
-            Err(HttpProfileError::UpstreamResponseInvalid(clause)) => Err(invalid(clause)),
-            Err(e) => Err(Refusal::after_admission(e, 502)),
-        }
-    }
-
-    /// RESPONSE-CLASSIFIED — which MCP lifecycle transition is this reply?
-    ///
-    /// ```text
-    /// ensures   Ok  => the reply is a terminal answer, or an open leg with usable state
-    ///           Err => 502, bound
-    /// refusal   NOT free — the action already ran
-    /// ```
-    ///
-    /// The state this stage separates from validation is the point of having two: a
-    /// perfectly well-formed JSON-RPC response can still be one whose MCP meaning this
-    /// reader cannot determine. MCP 2026-07-28 closes the `resultType` set and requires an
-    /// unrecognized one be considered invalid — signing it anyway would produce a verifiable
-    /// message whose continuation semantics nobody can read, and a client failing closed on
-    /// it would be told the PEP had vouched for it.
-    ///
-    /// A JSON-RPC error classifies as [`ReplyClass::Terminal`]: it is a legal terminal
-    /// protocol response, not a malformed one and not a transport failure.
-    fn classify_reply_stage(
-        &self,
-        parsed: &serde_json::Value,
-    ) -> Result<Established<ReplyClass>, Refusal> {
-        let classified = |c: ReplyClass| Established::new(c, ExchangeEvent::ResponseClassified);
-        let result = parsed.get("result");
-        match classify_result_type(result) {
-            ResultTypeClass::Complete => Ok(classified(ReplyClass::Terminal)),
-            ResultTypeClass::Unrecognized => Err(Refusal::after_admission(
-                HttpProfileError::UnrecognizedResultType,
-                502,
-            )),
-            ResultTypeClass::InputRequired => match input_required_state_of(result) {
-                Ok(Some(state)) => Ok(classified(ReplyClass::Open(state))),
-                // Classified as non-terminal and then failed to yield its state: the two
-                // arms cannot both be right, and the only safe reading is that the message
-                // is invalid.
-                _ => Err(Refusal::after_admission(
-                    HttpProfileError::UpstreamResponseInvalid("input_required requestState"),
-                    502,
-                )),
-            },
-        }
-    }
-
-    /// RESPONSE-SIGNED — the enforcement boundary puts its signature on the reply.
-    ///
-    /// ```text
-    /// ensures   Ok  => `response` carries the delegated signature bound to THIS request,
-    ///                  and the returned bytes are its signature base
-    ///           Err => 500, bound
-    /// refusal   NOT free
-    /// ```
-    #[allow(clippy::too_many_arguments)]
-    fn sign_reply_stage(
-        &self,
-        ex: &Exchange<'_>,
-        response: &mut HttpResponse,
-        a: &mcp_re_http_profile::ActiveDelegatedKey,
-        expires: i64,
-    ) -> Result<Established<Vec<u8>>, Refusal> {
-        // Scoped so the timer covers the signature and nothing after it.
-        let sign_result = {
-            let _t = crate::stage_timers::Timed::start(crate::stage_timers::Stage::Sign);
-            sign_delegated_response_full(
-                response,
-                ex.http_req,
-                ex.verified.evidence(),
-                &a.server_signer,
-                &a.credential,
-                a.key.as_ref(),
-                &a.delegated_kid,
-                ex.now,
-                expires,
-            )
-        };
-        sign_result
-            .map(|base| Established::new(base, ExchangeEvent::ResponseSigned))
-            .map_err(|e| Refusal::after_admission(e, 500))
-    }
-
-    /// CONTINUATION-RECORDED — make an open leg answerable on any replica.
-    ///
-    /// ```text
-    /// ensures   Ok(true)  => the retained bases are in the shared tier
-    ///           Ok(false) => this reply opens no leg, so there is nothing to record
-    ///           Err       => 502 (unreadable reply) or 503 (shared tier), bound
-    /// refusal   NOT free
-    /// ```
-    ///
-    /// Retried briefly before failing the leg. Reaching here means the backend has ALREADY
-    /// run, and the shared tier answered the replay admission microseconds ago — so a
-    /// failure now is a transient blip rather than the outage REPLAY-ADMITTED already fails
-    /// closed on. Absorbing it is what keeps a retryable 503, which re-executes the tool
-    /// call, off a path that has side effects.
-    async fn record_open_leg_stage(
-        &self,
-        ex: &Exchange<'_>,
-        state: &str,
-        response_base: Vec<u8>,
-    ) -> Result<Established<()>, Refusal> {
-        // D3. A deployment with no shared store cannot make this leg answerable ON ANY
-        // REPLICA, and it has known that since startup. Serving the elicitation anyway
-        // hands the client a signed, verified instruction to continue an exchange nothing
-        // has been kept for — and the failure surfaces one leg later, as
-        // `continuation_binding_failed`, which on the wire reads like an attack signal.
-        //
-        // The dependent leg does fail closed either way. What it cannot do is fail closed
-        // in TIME, which is why the refusal belongs here.
-        let Some(store) = &self.continuation_store else {
-            return Err(Refusal::after_admission(
-                McpReError::ReplayCacheUnavailable,
-                503,
-            ));
-        };
-        let bases = RetainedBases {
-            previous_request_base: ex.verified.request_signature_base().to_vec(),
-            input_required_response_base: response_base,
-        };
-        let key = continuation_key(
-            &self.expected_audience.audience_id,
-            ex.actor_id,
-            state.as_bytes(),
-        );
-        for _ in 0..CONTINUATION_RECORD_ATTEMPTS {
-            if store
-                .store(&key, &bases, self.continuation_ttl_secs)
-                .await
-                .is_ok()
-            {
-                return Ok(Established::new((), ExchangeEvent::OpenLegRecorded));
-            }
-        }
-        Err(Refusal::after_admission(
-            McpReError::ReplayCacheUnavailable,
-            503,
         ))
     }
 
@@ -1272,7 +721,7 @@ impl HttpProfileProxy {
             body: req.body,
         };
 
-        let verified = match self.verify_stage(&http_req, now) {
+        let verified = match self.requests.verify(&http_req, now) {
             Ok(v) => progress.establish(v),
             // Signed inline rather than through `refuse`: there is no `Exchange` yet,
             // because nothing about the request is trusted.
@@ -1305,7 +754,7 @@ impl HttpProfileProxy {
 
         // What this request IS, decided once and carried: a legal JSON-RPC 2.0 request, and
         // the outstanding id that selects its terminal.
-        let outstanding = match self.validate_request_stage(&http_req) {
+        let outstanding = match self.requests.validate_envelope(&http_req) {
             Ok(id) => id,
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         };
@@ -1332,11 +781,15 @@ impl HttpProfileProxy {
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         };
 
-        let prep = match self.prepare_continuation_stage(&ex).await {
+        let prep = match self
+            .continuations
+            .prepare(&ex, self.requests.audience_id())
+            .await
+        {
             Ok(prep) => progress.establish(prep),
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         };
-        if prep.retained.is_some() {
+        if prep.was_peeked() {
             // A `peek`, so nothing is spent yet — a refusal from here is still an ordinary
             // retry, which is the whole reason the read is not a `consume`.
             progress.observe_continuation(ContinuationState::Peeked);
@@ -1356,10 +809,7 @@ impl HttpProfileProxy {
         // retired in between and degrading to an unsigned error.
         ex.key = Some(window.shared());
 
-        match self
-            .retire_continuation_stage(prep.answer_key.as_ref())
-            .await
-        {
+        match self.continuations.retire(prep.answer_key()).await {
             Retirement::NotInvolved => {}
             // The human's approval is now spent. Every refusal from here to the dispatch
             // must say so: the action did not run, but an ordinary retry cannot make it run
@@ -1427,11 +877,11 @@ impl HttpProfileProxy {
         // dispatch, and the relation says so: `RetentionReserved` is the last pre-dispatch
         // state, so a pipeline that asked in the other order would be refused rather than
         // recorded in whichever order the relation happened to prefer.
-        match self.inner_plane_stage() {
+        match self.inner_async.admit() {
             Ok(accepted) => progress.establish(accepted),
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         }
-        let retention = match self.reserve_retention_stage(&ex).await {
+        let retention = match self.retention.reserve(ex.http_req).await {
             Ok(disposition) => progress.establish(disposition),
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         };
@@ -1470,7 +920,10 @@ impl HttpProfileProxy {
             outstanding,
             mcp_re_http_profile::OutstandingId::Notification
         ) {
-            match self.observe_notification_stage(&mut progress, &outcome) {
+            match self
+                .inner_async
+                .observe_acknowledgement(&mut progress, &outcome)
+            {
                 Ok(acknowledged) => progress.establish(acknowledged),
                 Err(refusal) => return self.refuse(&ex, refusal, &progress),
             }
@@ -1489,7 +942,7 @@ impl HttpProfileProxy {
                 .await;
         }
 
-        let inner_bytes = match self.observe_inner_stage(&mut progress, outcome) {
+        let inner_bytes = match self.inner_async.observe_reply(&mut progress, outcome) {
             Ok(bytes) => progress.establish(bytes),
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         };
@@ -1500,13 +953,18 @@ impl HttpProfileProxy {
             body: inner_bytes,
         };
 
-        let parsed = match self.validate_envelope_stage(&response, &outstanding) {
-            Ok(parsed) => progress.establish(parsed),
+        let validated = match ValidatedReply::of(&response, &outstanding) {
+            Ok(validated) => progress.establish(Established::new(
+                validated,
+                ExchangeEvent::EnvelopeValidated,
+            )),
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         };
 
-        let class = match self.classify_reply_stage(&parsed) {
-            Ok(class) => progress.establish(class),
+        let class = match validated.classify() {
+            Ok(class) => {
+                progress.establish(Established::new(class, ExchangeEvent::ResponseClassified))
+            }
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         };
         // The obligation is incurred HERE, before the reply is signed and long before it is
@@ -1517,16 +975,19 @@ impl HttpProfileProxy {
             ReplyClass::Open(_) => OpenLeg::Required,
         });
 
-        let response_base =
-            match self.sign_reply_stage(&ex, &mut response, window.key(), window.expires()) {
-                Ok(base) => progress.establish(base),
-                Err(refusal) => return self.refuse(&ex, refusal, &progress),
-            };
+        let response_base = match self.responses.sign_reply(&ex, &mut response, &window) {
+            Ok(base) => progress.establish(base),
+            Err(refusal) => return self.refuse(&ex, refusal, &progress),
+        };
 
         match &class {
             ReplyClass::Terminal => progress.advance(ExchangeEvent::ContinuationNotRequired),
             ReplyClass::Open(state) => {
-                match self.record_open_leg_stage(&ex, state, response_base).await {
+                match self
+                    .continuations
+                    .record_open_leg(&ex, self.requests.audience_id(), state, response_base)
+                    .await
+                {
                     Ok(recorded) => {
                         progress.observe_open_leg(OpenLeg::Recorded);
                         progress.establish(recorded);
@@ -1615,52 +1076,25 @@ impl HttpProfileProxy {
         execution: ExecutionDisposition,
         snapshot: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
     ) -> Option<ServedHttpResponse> {
-        let reservation = match retention_owed {
-            RetentionDisposition::NotConfigured => return None,
-            RetentionDisposition::Reserved(reservation) => reservation,
+        let Err(refusal) = self
+            .retention
+            .complete(retention_owed, request, response)
+            .await
+        else {
+            return None;
         };
-        // A disposition can only be `Reserved` if `self.retention` was present when it was
-        // built, and the store is owned for the proxy's whole life.
-        let retention = self.retention.as_ref()?;
-        match retention.complete(reservation, request, response).await {
-            Ok(_) => None,
-            Err(e) => {
-                // The backend has already run. Answering 503 here is what made a
-                // transient store fault into repeated execution: 503 is the status
-                // clients retry, and the retry's fresh nonce passes replay admission.
-                eprintln!(
-                    "evidence retention failed AFTER the call executed; the exchange is \
-                     indeterminate and MUST NOT be blindly retried: {e}"
-                );
-                Some(self.responses.response_rejection(
-                    &self.audit,
-                    request,
-                    &RefusalCause::from(McpReError::EvidenceRetentionIndeterminate),
-                    500,
-                    now,
-                    bound,
-                    Some(actor_id),
-                    execution,
-                    snapshot,
-                ))
-            }
-        }
+        Some(self.responses.response_rejection(
+            &self.audit,
+            request,
+            &refusal.cause,
+            refusal.status,
+            now,
+            bound,
+            Some(actor_id),
+            execution,
+            snapshot,
+        ))
     }
-}
-
-/// Which MCP lifecycle transition a validated reply is.
-///
-/// Carries the `requestState` for an open leg because the classifier is the only place that
-/// reads it out of the body, and passing the body along instead would invite a second reader
-/// to walk the same JSON and reach its own conclusion.
-///
-/// A JSON-RPC error is [`Terminal`](ReplyClass::Terminal): a legal terminal protocol
-/// response, distinct from a malformed one and from a transport failure.
-enum ReplyClass {
-    /// The exchange ends here — an ordinary result, or a JSON-RPC error.
-    Terminal,
-    /// An `InputRequiredResult`. The state is the one an answer leg re-presents.
-    Open(String),
 }
 
 /// Wrap a fully-built [`HttpResponse`] as a [`ServedHttpResponse`].
