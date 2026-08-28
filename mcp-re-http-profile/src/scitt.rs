@@ -90,27 +90,46 @@ use crate::error::HttpProfileError;
 
 /// The MCP-RE evidence a receipt commits to (#415 §4.6), as HASH COMMITMENTS. Each
 /// field is a digest of externally-retained evidence, never the evidence itself.
+///
+/// # The two producers, both named
+///
+/// The census (EX-004 question 11) found all seven fields `pub`, so a `complete` label
+/// could be paired with handles from an unrelated call — a record asserting a whole chain
+/// while naming digests that were never folded together. The representation is now private
+/// and there are exactly two ways to obtain one:
+///
+/// 1. [`from_reconstruction`](Self::from_reconstruction) — DERIVED. Every field comes from
+///    one `ChainReconstruction`, so the label and the handles cannot disagree, because
+///    nothing chooses them separately.
+/// 2. `Deserialize` — RECEIVED. A statement read off the wire is a CLAIM by its issuer, and
+///    it is trusted only after the issuer's `COSE_Sign1` verifies over it. That is not a
+///    hole in the seal; it is what a received record is, and naming it here is the point.
+///
+/// What is gone is the third way: assembling one field by field in this process. The
+/// comparison that used to destructure seven fields at the call site is now
+/// [`corresponds_to`](Self::corresponds_to), so the rule for *when two commitments describe
+/// the same call* belongs to the value rather than to whoever remembered to write it out.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceCommitment {
     /// Digest over the request signature base (the request evidence handle).
-    pub request_evidence: String,
+    request_evidence: String,
     /// Digest over the response signature base (the response evidence handle).
-    pub response_evidence: String,
+    response_evidence: String,
     /// Digest over the canonical bytes of the artifact bindings, or `None` when
     /// the call carried none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bindings_commitment: Option<String>,
+    bindings_commitment: Option<String>,
     /// Digest over the verified-context the PEP produced, or `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub verified_context_commitment: Option<String>,
+    verified_context_commitment: Option<String>,
     /// The chain-reconstruction label this record commits to — complete, or
     /// incomplete naming the failing hop. Serialized as a string so a receipt
     /// distinguishes the two without re-running reconstruction.
-    pub chain_label: String,
+    chain_label: String,
     /// Digest over the ordered per-hop evidence handles the reconstruction
     /// produced — the commitment to the SHAPE of the retained chain.
-    pub chain_commitment: String,
+    chain_commitment: String,
     /// Digest over the SUBMITTED hop bytes, verified or not.
     ///
     /// The three fields above are all derived from the VERIFIED prefix, so a chain that
@@ -129,7 +148,7 @@ pub struct EvidenceCommitment {
     /// [`identifies_a_submission`](Self::identifies_a_submission) is how a reader tells
     /// the two apart.
     #[serde(default)]
-    pub submitted_commitment: String,
+    submitted_commitment: String,
 }
 
 impl EvidenceCommitment {
@@ -197,6 +216,84 @@ impl EvidenceCommitment {
     /// [`verify_retained_evidence`] — must consult this first.
     pub fn commits_to_verified_evidence(&self) -> bool {
         !self.request_evidence.is_empty() || !self.response_evidence.is_empty()
+    }
+
+    /// Whether `recomputed` — a commitment derived from retained bytes — describes the
+    /// same call as this one, or the reason it does not.
+    ///
+    /// This is [`verify_retained_evidence`]'s whole comparison, moved to the value it is
+    /// about. It used to be seven field reads at the call site, which is R-COMPOSE's
+    /// failure mode exactly: a security relation recreated by destructuring an owner's
+    /// representation, so adding a field to the record left the comparison silently
+    /// weaker until somebody remembered to extend it. Here a new field is a compile error
+    /// in one place.
+    ///
+    /// The `submitted_commitment` clause is deliberately asymmetric — see the comment on
+    /// it below.
+    pub(crate) fn corresponds_to(&self, recomputed: &Self) -> Result<(), HttpProfileError> {
+        if !self.commits_to_verified_evidence() || !recomputed.commits_to_verified_evidence() {
+            return Err(HttpProfileError::MalformedEvidence(
+                "a record with no verified hop commits to no call, so retained evidence cannot be bound to it",
+            ));
+        }
+        if recomputed.request_evidence != self.request_evidence {
+            return Err(HttpProfileError::MalformedEvidence(
+                "retained request evidence does not match the commitment",
+            ));
+        }
+        if recomputed.response_evidence != self.response_evidence {
+            return Err(HttpProfileError::MalformedEvidence(
+                "retained response evidence does not match the commitment",
+            ));
+        }
+        if recomputed.chain_commitment != self.chain_commitment {
+            return Err(HttpProfileError::MalformedEvidence(
+                "retained chain does not match the committed chain shape",
+            ));
+        }
+        if recomputed.chain_label != self.chain_label {
+            return Err(HttpProfileError::MalformedEvidence(
+                "retained chain label does not match the commitment",
+            ));
+        }
+        if recomputed.bindings_commitment != self.bindings_commitment {
+            return Err(HttpProfileError::MalformedEvidence(
+                "retained artifact bindings do not match the commitment",
+            ));
+        }
+        if recomputed.verified_context_commitment != self.verified_context_commitment {
+            return Err(HttpProfileError::MalformedEvidence(
+                "retained verified context does not match the commitment",
+            ));
+        }
+        // The SUBMISSION identity, which is the only field that covers the hops AFTER the
+        // verified prefix. Every field above is derived from that prefix, so on an
+        // Incomplete record — the records an auditor investigates — the unverified tail
+        // contributes to none of them: an archivist holding a statement about
+        // `[h0, h1, h2-tampered]` could present `[h0, h1, h2']`, and as long as `h2'` fails
+        // at the same hop index for the same reason the label and both digests still match.
+        if self.identifies_a_submission() {
+            if recomputed.submitted_commitment != self.submitted_commitment {
+                return Err(HttpProfileError::MalformedEvidence(
+                    "retained submission does not match the commitment",
+                ));
+            }
+        } else if recomputed.identifies_a_submission() {
+            // The record predates the submission identity, so the retained tail is bound
+            // only as far as the verified prefix reaches. Saying so is the point: this is a
+            // weaker result than the one above, and it must not be reported as the same.
+            return Err(HttpProfileError::MalformedEvidence(
+                "the statement carries no submission identity, so the retained submission cannot be bound to it",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The chain-reconstruction label this record commits to, as its receipt-embeddable
+    /// token. Read it through [`is_complete_record`](Self::is_complete_record) unless the
+    /// exact token is what is wanted — an auditor reading `incomplete:<hop>:<reason>`.
+    pub fn chain_label(&self) -> &str {
+        &self.chain_label
     }
 
     /// Whether this record identifies the SUBMISSION it was made about.
@@ -793,20 +890,64 @@ pub enum StatementLeafProfile {
     StatementDigest,
 }
 
-/// A resolved transparency service: the key its receipts are verified with, and the leaf
-/// profile its log uses.
+/// A resolved transparency service: the key its receipts are verified with, the leaf
+/// profile its log uses, and whether its receipts must carry a position commitment.
 ///
-/// The two travel together because they are two halves of one question — "how do I check
-/// this service's receipts" — and separating them into independent parameters would let a
-/// caller pair a pinned key with a profile nobody pinned.
+/// The three travel together because they are three parts of one question — "how do I check
+/// this service's receipts" — and as independent parameters a caller could pair a pinned key
+/// with a profile nobody pinned.
+///
+/// # What the private fields buy, and what they do NOT
+///
+/// They remove the struct literal, so every producer is NAMED and a call site says which
+/// one it is: [`pinned`](Self::pinned), where all three came from one operator-reviewed
+/// document, or [`stated`](Self::stated), where the caller is asserting them.
+///
+/// They do **not** make the census's illegal pairing unconstructible, and this record does
+/// not claim they do. `verify_receipt_offline` takes the service as a
+/// `Fn(&str) -> Option<ResolvedTransparencyService>` seam, so outside code is a legitimate
+/// producer — the in-process prototype log is one, with no pin to resolve from — and
+/// against a seam a private field only forces a constructor taking the same arguments with
+/// the same absence of checking. Ask ADR-MCPRE-061's question: *if this value is illegal,
+/// whose bug is it?* The answer here is "whoever implemented the resolver", so a seal would
+/// be ceremony. This is the same measurement `ResolvedActor` and the trust seam already
+/// produced (`docs/dev/sealed-owners.md`); what changes is that the two provenances now
+/// have names, not that one of them became impossible.
 #[derive(Debug, Clone)]
 pub struct ResolvedTransparencyService {
-    /// The key that verifies the service's receipt signatures.
-    pub key: CoseVerificationKey,
-    /// Which bytes this service's log hashes as the Merkle entry.
-    pub leaf_profile: StatementLeafProfile,
-    /// Whether this service's receipts must carry a position commitment.
-    pub position_profile: ReceiptPositionProfile,
+    key: CoseVerificationKey,
+    leaf_profile: StatementLeafProfile,
+    position_profile: ReceiptPositionProfile,
+}
+
+impl ResolvedTransparencyService {
+    /// The service a PIN resolves to: all three parts from one document an operator wrote
+    /// down and reviewed.
+    fn pinned(pin: &ScittServiceTrustPin) -> Self {
+        ResolvedTransparencyService {
+            key: pin.verification_key().clone(),
+            leaf_profile: pin.leaf_profile(),
+            position_profile: pin.position_profile(),
+        }
+    }
+
+    /// A service whose parts the CALLER states, because there is no pin to resolve from.
+    ///
+    /// The in-process [`PrototypeTransparencyService`] and the conformance corpora built
+    /// from it are the real cases. The name is the contract: this establishes only that
+    /// the caller said so, and in particular does not establish that the leaf and position
+    /// profiles are ones any operator pinned.
+    pub fn stated(
+        key: CoseVerificationKey,
+        leaf_profile: StatementLeafProfile,
+        position_profile: ReceiptPositionProfile,
+    ) -> Self {
+        ResolvedTransparencyService {
+            key,
+            leaf_profile,
+            position_profile,
+        }
+    }
 }
 
 /// An interior Merkle node hash (RFC 6962 node prefix `0x01`).
@@ -1014,13 +1155,30 @@ pub fn verify_receipt_offline(
 pub enum CoseVerificationKey {
     /// Ed25519, for `alg: EdDSA` (-8).
     Ed25519(VerificationKey),
-    /// ECDSA on NIST P-256, for `alg: ES256` (-7), as uncompressed affine coordinates.
-    EcdsaP256 {
-        /// The `x` coordinate, exactly 32 octets (COSE `EC2` key parameter -2).
-        x: [u8; 32],
-        /// The `y` coordinate, exactly 32 octets (COSE `EC2` key parameter -3).
-        y: [u8; 32],
-    },
+    /// ECDSA on NIST P-256, for `alg: ES256` (-7).
+    ///
+    /// The payload is a [`P256Point`], not the two coordinate arrays it is decoded from.
+    /// Two 32-octet arrays are a pair of numbers; most such pairs are not points on the
+    /// curve, and a struct-literal `EcdsaP256 { x, y }` could name one of those while the
+    /// variant's own name says otherwise.
+    EcdsaP256(P256Point),
+}
+
+/// A P-256 point PROVEN to be on the curve.
+///
+/// The representation is the DECODED verifying key, not the coordinates, and the decode is
+/// the proof: `p256::ecdsa::VerifyingKey::from_sec1_bytes` refuses anything off-curve, and
+/// there is no other way in. The operational test (ADR-MCPRE-061 §11) passes — delete the
+/// check and an invalid value is still unconstructible, because the check IS the
+/// constructor.
+///
+/// Before this, `from_ec2_p256` checked the point and then discarded the parsed key, so
+/// every verification re-decoded it and the invariant was carried by *"the only constructor
+/// happens to check"*. That is a statement about one call site; this is a statement about
+/// the type.
+#[derive(Debug, Clone)]
+pub struct P256Point {
+    verifying: p256::ecdsa::VerifyingKey,
 }
 
 impl From<VerificationKey> for CoseVerificationKey {
@@ -1039,31 +1197,38 @@ impl CoseVerificationKey {
     /// curve: an off-curve "public key" has no discrete log to verify against, and
     /// feeding one to a verifier is how invalid-curve attacks start.
     pub fn from_ec2_p256(x: &[u8], y: &[u8]) -> Result<Self, HttpProfileError> {
+        Ok(CoseVerificationKey::EcdsaP256(P256Point::from_ec2(x, y)?))
+    }
+}
+
+impl P256Point {
+    /// Decode COSE `EC2` affine coordinates into a point on the curve, or refuse.
+    ///
+    /// This is the type's SOLE producer, and everything the variant's name claims is
+    /// established here.
+    fn from_ec2(x: &[u8], y: &[u8]) -> Result<Self, HttpProfileError> {
         let x: [u8; 32] = x.try_into().map_err(|_| {
             HttpProfileError::MalformedEvidence("scitt ec2 p256 x coordinate width")
         })?;
         let y: [u8; 32] = y.try_into().map_err(|_| {
             HttpProfileError::MalformedEvidence("scitt ec2 p256 y coordinate width")
         })?;
-        let key = CoseVerificationKey::EcdsaP256 { x, y };
-        key.p256_public_key()?;
-        Ok(key)
-    }
-
-    /// Decode the P-256 point, refusing anything not on the curve.
-    fn p256_public_key(&self) -> Result<p256::ecdsa::VerifyingKey, HttpProfileError> {
-        let CoseVerificationKey::EcdsaP256 { x, y } = self else {
-            return Err(HttpProfileError::MalformedEvidence(
-                "scitt cose algorithm key mismatch",
-            ));
-        };
         // SEC1 uncompressed: 0x04 || X || Y.
         let mut sec1 = [0u8; 65];
         sec1[0] = 0x04;
-        sec1[1..33].copy_from_slice(x);
-        sec1[33..].copy_from_slice(y);
-        p256::ecdsa::VerifyingKey::from_sec1_bytes(&sec1)
-            .map_err(|_| HttpProfileError::MalformedEvidence("scitt ec2 p256 point not on curve"))
+        sec1[1..33].copy_from_slice(&x);
+        sec1[33..].copy_from_slice(&y);
+        let verifying = p256::ecdsa::VerifyingKey::from_sec1_bytes(&sec1).map_err(|_| {
+            HttpProfileError::MalformedEvidence("scitt ec2 p256 point not on curve")
+        })?;
+        Ok(P256Point { verifying })
+    }
+
+    /// The verifying key. INFALLIBLE, which is the whole point of the seal: possession of
+    /// a `P256Point` is possession of a decoded on-curve key, so there is nothing left for
+    /// a verification path to re-check or to get wrong.
+    fn verifying_key(&self) -> &p256::ecdsa::VerifyingKey {
+        &self.verifying
     }
 }
 
@@ -1109,9 +1274,9 @@ fn verify_cose_sign1_with_payload(
             }
             .map_err(|_| HttpProfileError::ReceiptInvalid)
         }
-        (iana::Algorithm::ES256, CoseVerificationKey::EcdsaP256 { .. }) => {
-            let verifying = key.p256_public_key()?;
-            let check = |sig: &[u8], data: &[u8]| verify_es256(&verifying, sig, data);
+        (iana::Algorithm::ES256, CoseVerificationKey::EcdsaP256(point)) => {
+            let verifying = point.verifying_key();
+            let check = |sig: &[u8], data: &[u8]| verify_es256(verifying, sig, data);
             if detached {
                 sign1.verify_detached_signature(payload, &[], check)
             } else {
@@ -1272,62 +1437,7 @@ pub fn verify_retained_evidence(
         bindings_commitment,
         verified_context_commitment,
     );
-    if !commitment.commits_to_verified_evidence() || !recomputed.commits_to_verified_evidence() {
-        return Err(HttpProfileError::MalformedEvidence(
-            "a record with no verified hop commits to no call, so retained evidence cannot be bound to it",
-        ));
-    }
-    if recomputed.request_evidence != commitment.request_evidence {
-        return Err(HttpProfileError::MalformedEvidence(
-            "retained request evidence does not match the commitment",
-        ));
-    }
-    if recomputed.response_evidence != commitment.response_evidence {
-        return Err(HttpProfileError::MalformedEvidence(
-            "retained response evidence does not match the commitment",
-        ));
-    }
-    if recomputed.chain_commitment != commitment.chain_commitment {
-        return Err(HttpProfileError::MalformedEvidence(
-            "retained chain does not match the committed chain shape",
-        ));
-    }
-    if recomputed.chain_label != commitment.chain_label {
-        return Err(HttpProfileError::MalformedEvidence(
-            "retained chain label does not match the commitment",
-        ));
-    }
-    if recomputed.bindings_commitment != commitment.bindings_commitment {
-        return Err(HttpProfileError::MalformedEvidence(
-            "retained artifact bindings do not match the commitment",
-        ));
-    }
-    if recomputed.verified_context_commitment != commitment.verified_context_commitment {
-        return Err(HttpProfileError::MalformedEvidence(
-            "retained verified context does not match the commitment",
-        ));
-    }
-    // The SUBMISSION identity, which is the only field that covers the hops AFTER the
-    // verified prefix. Every field above is derived from that prefix, so on an
-    // Incomplete record — the records an auditor investigates — the unverified tail
-    // contributes to none of them: an archivist holding a statement about
-    // `[h0, h1, h2-tampered]` could present `[h0, h1, h2']`, and as long as `h2'` fails
-    // at the same hop index for the same reason the label and both digests still match.
-    if commitment.identifies_a_submission() {
-        if recomputed.submitted_commitment != commitment.submitted_commitment {
-            return Err(HttpProfileError::MalformedEvidence(
-                "retained submission does not match the commitment",
-            ));
-        }
-    } else if recomputed.identifies_a_submission() {
-        // The record predates the submission identity, so the retained tail is bound only
-        // as far as the verified prefix reaches. Saying so is the point: this is a weaker
-        // result than the one above, and it must not be reported as the same.
-        return Err(HttpProfileError::MalformedEvidence(
-            "the statement carries no submission identity, so the retained submission cannot be bound to it",
-        ));
-    }
-    Ok(())
+    commitment.corresponds_to(&recomputed)
 }
 
 /// A pinned transparency-service verification key, recorded from a discovery document
@@ -1346,38 +1456,42 @@ pub fn verify_retained_evidence(
 /// receives the pinned artifact. That split is the point of the offline property: once
 /// pinned, verification contacts nobody, which is exactly what an auditor holding
 /// only the archived bytes can reproduce.
+/// The pin AS WRITTEN — the wire record, before anything about it is checked.
+///
+/// Private, and it is the only thing `serde` ever sees. A `ScittServiceTrustPin` is what
+/// you get once this document has been shown to name a key of the algorithm it declares.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ScittServiceTrustPin {
+struct PinDocument {
     /// The schema token, so a reader of the artifact knows what it is holding.
-    pub schema: String,
+    schema: String,
     /// How the deployment names this service — free-form, for humans reading a corpus.
-    pub service_identifier: String,
+    service_identifier: String,
     /// How the key was discovered (for example `well-known-scitt-keys`).
-    pub discovery_method: String,
+    discovery_method: String,
     /// The exact URI the key came from.
-    pub discovery_uri: String,
+    discovery_uri: String,
     /// When it was fetched, RFC 3339. Not a validity claim: keys rotate, and a pin is
     /// a record of one moment rather than a promise about later ones.
-    pub fetched_at: String,
+    fetched_at: String,
     /// The `kid` the receipt names and this key answers to.
-    pub kid: String,
+    kid: String,
     /// The COSE algorithm this key is for — `EdDSA` or `ES256`.
-    pub algorithm: String,
+    algorithm: String,
     /// The public key: `x`/`y` base64url for `ES256`, `x` alone for `EdDSA`.
-    pub public_key: PinnedPublicKey,
+    public_key: PinnedPublicKey,
     /// SHA-256 over the canonical COSE_Key (RFC 9679 thumbprint), base64url. A short
     /// value a human can compare across a corpus, a report and a log.
-    pub public_key_thumbprint: String,
+    public_key_thumbprint: String,
     /// SHA-256 over the discovery document's exact bytes, base64url — so a later reader
     /// can tell whether the document it fetches is the one the pin was cut from.
-    pub discovery_document_digest: String,
+    discovery_document_digest: String,
     /// Which bytes this service's log hashes as the Merkle entry. Absent means the
     /// default: the statement's own octets. Recorded in the PIN because it cannot be
     /// inferred from a receipt, and because an operator should have to write it down
     /// before MCP-RE will fold a service's log any other way.
     #[serde(default)]
-    pub leaf_profile: StatementLeafProfile,
+    leaf_profile: StatementLeafProfile,
     /// Whether this service's receipts must carry a position commitment. Absent means
     /// the default, `unbound` — the pre-v2 contract, where `tree_size` and `leaf_index`
     /// are unauthenticated hints.
@@ -1386,7 +1500,93 @@ pub struct ScittServiceTrustPin {
     /// that cannot be inferred from the receipt under attack, and requiring it must be a
     /// thing an operator wrote down.
     #[serde(default)]
-    pub position_profile: ReceiptPositionProfile,
+    position_profile: ReceiptPositionProfile,
+}
+
+/// A pin whose `(algorithm, public_key)` PAIR has been shown to name one key.
+///
+/// # What the seal removes
+///
+/// The census (EX-004 question 11) found `ScittServiceTrustPin` with every field `pub`, so
+/// an `EdDSA` pin carrying an `ES256` `y` coordinate — an ES256 key mislabelled, or a pin
+/// cut by something that did not know which curve it had — was CONSTRUCTIBLE, and refused
+/// only if somebody later called `verification_key`. The illegal state was not the
+/// algorithm and not the key; it was the PAIR, which is why the seal belongs here and not
+/// on [`PinnedPublicKey`], a wire record with no invariant of its own.
+///
+/// Deserialization is the only producer, and it goes through [`PinDocument`] and
+/// `TryFrom`, so **every inhabitant has had its pair checked** — including the P-256
+/// on-curve check, since the key is decoded once here and kept. `verification_key` is
+/// therefore infallible: it returns what construction proved.
+///
+/// A pin is still only a record of one moment (see the type-level notes above). The seal
+/// says the document names a key; it says nothing about whether the service deserves trust.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "PinDocument", into = "PinDocument")]
+pub struct ScittServiceTrustPin {
+    document: PinDocument,
+    /// Decoded once, at construction, from `document.algorithm` and `document.public_key`.
+    key: CoseVerificationKey,
+}
+
+impl TryFrom<PinDocument> for ScittServiceTrustPin {
+    type Error = String;
+
+    fn try_from(document: PinDocument) -> Result<Self, Self::Error> {
+        let key = pinned_key(&document).map_err(|e| format!("{e:?}"))?;
+        Ok(ScittServiceTrustPin { document, key })
+    }
+}
+
+impl From<ScittServiceTrustPin> for PinDocument {
+    fn from(pin: ScittServiceTrustPin) -> Self {
+        pin.document
+    }
+}
+
+/// The verification key a pin document names, or a refusal.
+///
+/// The algorithm comes from the DOCUMENT, never from a receipt: the pin is what the
+/// operator recorded and reviewed, and letting an incoming receipt nominate the algorithm
+/// to verify itself with is the confusion this whole seam avoids.
+fn pinned_key(document: &PinDocument) -> Result<CoseVerificationKey, HttpProfileError> {
+    if document.schema != TRUST_PIN_SCHEMA {
+        return Err(HttpProfileError::MalformedEvidence(
+            "scitt trust pin schema",
+        ));
+    }
+    let x = b64url_decode(&document.public_key.x)
+        .map_err(|_| HttpProfileError::MalformedEvidence("scitt trust pin key encoding"))?;
+    match document.algorithm.as_str() {
+        "ES256" => {
+            let y = document
+                .public_key
+                .y
+                .as_deref()
+                .ok_or(HttpProfileError::MalformedEvidence("scitt trust pin ec2 y"))?;
+            let y = b64url_decode(y)
+                .map_err(|_| HttpProfileError::MalformedEvidence("scitt trust pin key encoding"))?;
+            CoseVerificationKey::from_ec2_p256(&x, &y)
+        }
+        "EdDSA" => {
+            // An `EdDSA` pin carrying a `y` is not an Ed25519 key with a harmless extra
+            // field — it is an ES256 key mislabelled, or a pin built by something that did
+            // not know which curve it had. This used to be reachable only if somebody
+            // asked; now such a document does not become a pin at all.
+            if document.public_key.y.is_some() {
+                return Err(HttpProfileError::MalformedEvidence(
+                    "scitt trust pin eddsa carries an ec2 y coordinate",
+                ));
+            }
+            let key = VerificationKey::from_b64url(&document.public_key.x)
+                .map_err(|_| HttpProfileError::MalformedEvidence("scitt trust pin ed25519"))?;
+            let _ = &x;
+            Ok(CoseVerificationKey::Ed25519(key))
+        }
+        _ => Err(HttpProfileError::MalformedEvidence(
+            "scitt trust pin unsupported algorithm",
+        )),
+    }
 }
 
 /// The key material inside a pin.
@@ -1406,47 +1606,31 @@ pub const TRUST_PIN_SCHEMA: &str = "mcp-re-scitt-service-trust-pin/v1";
 impl ScittServiceTrustPin {
     /// The verification key this pin holds.
     ///
-    /// The algorithm comes from the PIN, never from the receipt: the pin is what the
-    /// operator recorded and reviewed, and letting an incoming receipt nominate the
-    /// algorithm to verify itself with is the confusion this whole seam avoids.
-    pub fn verification_key(&self) -> Result<CoseVerificationKey, HttpProfileError> {
-        if self.schema != TRUST_PIN_SCHEMA {
-            return Err(HttpProfileError::MalformedEvidence(
-                "scitt trust pin schema",
-            ));
-        }
-        let x = b64url_decode(&self.public_key.x)
-            .map_err(|_| HttpProfileError::MalformedEvidence("scitt trust pin key encoding"))?;
-        match self.algorithm.as_str() {
-            "ES256" => {
-                let y = self
-                    .public_key
-                    .y
-                    .as_deref()
-                    .ok_or(HttpProfileError::MalformedEvidence("scitt trust pin ec2 y"))?;
-                let y = b64url_decode(y).map_err(|_| {
-                    HttpProfileError::MalformedEvidence("scitt trust pin key encoding")
-                })?;
-                CoseVerificationKey::from_ec2_p256(&x, &y)
-            }
-            "EdDSA" => {
-                // An `EdDSA` pin carrying a `y` is not an Ed25519 key with a harmless
-                // extra field — it is an ES256 key mislabelled, or a pin built by
-                // something that did not know which curve it had.
-                if self.public_key.y.is_some() {
-                    return Err(HttpProfileError::MalformedEvidence(
-                        "scitt trust pin eddsa carries an ec2 y coordinate",
-                    ));
-                }
-                let key = VerificationKey::from_b64url(&self.public_key.x)
-                    .map_err(|_| HttpProfileError::MalformedEvidence("scitt trust pin ed25519"))?;
-                let _ = &x;
-                Ok(CoseVerificationKey::Ed25519(key))
-            }
-            _ => Err(HttpProfileError::MalformedEvidence(
-                "scitt trust pin unsupported algorithm",
-            )),
-        }
+    /// INFALLIBLE. The algorithm/key pair was resolved at construction, so this returns
+    /// what the seal proved rather than re-deciding it — and there is no inhabitant for
+    /// which it could fail.
+    pub fn verification_key(&self) -> &CoseVerificationKey {
+        &self.key
+    }
+
+    /// The `kid` this pin answers for.
+    pub fn kid(&self) -> &str {
+        &self.document.kid
+    }
+
+    /// How the deployment names this service.
+    pub fn service_identifier(&self) -> &str {
+        &self.document.service_identifier
+    }
+
+    /// Which bytes this service's log hashes as the Merkle entry.
+    pub fn leaf_profile(&self) -> StatementLeafProfile {
+        self.document.leaf_profile
+    }
+
+    /// Whether this service's receipts must carry a position commitment.
+    pub fn position_profile(&self) -> ReceiptPositionProfile {
+        self.document.position_profile
     }
 
     /// Resolve `kid` against this pin, for [`verify_receipt_offline`].
@@ -1454,14 +1638,7 @@ impl ScittServiceTrustPin {
     /// A `kid` that does not match returns nothing: a pin answers for the one key it
     /// pinned, and a receipt naming a different key has not been pinned at all.
     pub fn resolve(&self, kid: &str) -> Option<ResolvedTransparencyService> {
-        (kid == self.kid)
-            .then(|| self.verification_key().ok())
-            .flatten()
-            .map(|key| ResolvedTransparencyService {
-                key,
-                leaf_profile: self.leaf_profile,
-                position_profile: self.position_profile,
-            })
+        (kid == self.document.kid).then(|| ResolvedTransparencyService::pinned(self))
     }
 }
 
@@ -2806,8 +2983,9 @@ mod tests {
     // Trust pins — which key an interoperability run actually used.
     // -----------------------------------------------------------------------
 
-    fn pin(algorithm: &str, x: &str, y: Option<&str>) -> ScittServiceTrustPin {
-        ScittServiceTrustPin {
+    /// A pin DOCUMENT — the wire record, which may or may not be a legal pin.
+    fn pin_document(algorithm: &str, x: &str, y: Option<&str>) -> PinDocument {
+        PinDocument {
             schema: TRUST_PIN_SCHEMA.to_owned(),
             service_identifier: "test-service".into(),
             discovery_method: "well-known-scitt-keys".into(),
@@ -2829,6 +3007,12 @@ mod tests {
             discovery_document_digest: "unused-by-this-test".into(),
             leaf_profile: StatementLeafProfile::StatementBytes,
         }
+    }
+
+    /// A pin. There is no struct literal for this type, so a test builds one the only way
+    /// anything does: by showing a document names a key.
+    fn pin(algorithm: &str, x: &str, y: Option<&str>) -> ScittServiceTrustPin {
+        ScittServiceTrustPin::try_from(pin_document(algorithm, x, y)).expect("a legal pin")
     }
 
     /// A pinned ES256 key verifies a real ES256 receipt, resolved by `kid`.
@@ -2854,37 +3038,57 @@ mod tests {
         assert!(pinned.resolve("some-other-kid").is_none());
     }
 
-    /// A pin whose schema, algorithm or key material is wrong yields no key at all,
-    /// rather than a key that happens to parse. The pin is the reviewed artifact; if it
-    /// is not the shape that was reviewed, it is not usable.
+    /// A document whose schema, algorithm or key material is wrong **never becomes a pin**.
+    ///
+    /// This is the seal, stated as the ADR-MCPRE-061 §11 operational test. The check used
+    /// to live in `verification_key`, so each of these documents WAS a
+    /// `ScittServiceTrustPin` and was refused only if somebody asked it for a key — and
+    /// question 11 of the EX-004 census found exactly that. Both halves are asserted: the
+    /// typed reason, and that no inhabitant carrying it exists.
     #[test]
-    fn a_malformed_pin_yields_no_key() {
+    fn a_malformed_pin_document_never_becomes_a_pin() {
         let x = b64url_encode(&[7u8; 32]);
 
-        let mut wrong_schema = pin("EdDSA", &x, None);
+        let mut wrong_schema = pin_document("EdDSA", &x, None);
         wrong_schema.schema = "something-else/v1".into();
-        assert_eq!(
-            wrong_schema.verification_key().unwrap_err(),
-            HttpProfileError::MalformedEvidence("scitt trust pin schema"),
-        );
 
-        assert_eq!(
-            pin("RS256", &x, None).verification_key().unwrap_err(),
-            HttpProfileError::MalformedEvidence("scitt trust pin unsupported algorithm"),
-        );
-
-        assert_eq!(
-            pin("ES256", &x, None).verification_key().unwrap_err(),
-            HttpProfileError::MalformedEvidence("scitt trust pin ec2 y"),
-        );
-
-        // An Ed25519 pin carrying a y coordinate is a mislabelled EC2 key, not an
-        // Ed25519 key with a spare field.
-        assert_eq!(
-            pin("EdDSA", &x, Some(&x)).verification_key().unwrap_err(),
-            HttpProfileError::MalformedEvidence(
-                "scitt trust pin eddsa carries an ec2 y coordinate"
+        for (document, reason) in [
+            (wrong_schema, "scitt trust pin schema"),
+            (
+                pin_document("RS256", &x, None),
+                "scitt trust pin unsupported algorithm",
             ),
+            (pin_document("ES256", &x, None), "scitt trust pin ec2 y"),
+            // An Ed25519 pin carrying a y coordinate is a mislabelled EC2 key, not an
+            // Ed25519 key with a spare field.
+            (
+                pin_document("EdDSA", &x, Some(&x)),
+                "scitt trust pin eddsa carries an ec2 y coordinate",
+            ),
+        ] {
+            assert_eq!(
+                pinned_key(&document).unwrap_err(),
+                HttpProfileError::MalformedEvidence(reason),
+            );
+            assert!(
+                ScittServiceTrustPin::try_from(document).is_err(),
+                "{reason}: the document must not become a pin at all",
+            );
+        }
+    }
+
+    /// A pin read from JSON is validated on the way in, so the artifact an operator ships
+    /// is where an illegal pair is caught — not a later call that happens to ask.
+    #[test]
+    fn an_illegal_pin_document_is_refused_at_deserialization() {
+        let x = b64url_encode(&ts().public_key().to_bytes());
+        let legal = serde_json::to_string(&pin_document("EdDSA", &x, None)).expect("json");
+        serde_json::from_str::<ScittServiceTrustPin>(&legal).expect("a legal document parses");
+
+        let illegal = serde_json::to_string(&pin_document("EdDSA", &x, Some(&x))).expect("json");
+        assert!(
+            serde_json::from_str::<ScittServiceTrustPin>(&illegal).is_err(),
+            "an EdDSA pin carrying an ec2 y must not deserialize",
         );
     }
 

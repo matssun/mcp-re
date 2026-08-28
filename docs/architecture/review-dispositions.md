@@ -771,6 +771,47 @@ question 11. `scitt.rs` stays `reviewed-action-required` until that work lands a
 census is re-run. The remediation issues are not opened by this census — ADR-061 orders the
 campaign, and a census recommends and stops.
 
+### Slice 1 (MCPRE-155) — the four question-11 types, answered
+
+Ruling 1 of [#657](https://github.com/matssun/mcp-re/issues/657) puts the seals before the
+file boundaries, because *file boundaries do not by themselves remove a single constructible
+illegal value*. Three of the four are now unconstructible; the fourth turned out not to be
+sealable, and saying so is the result rather than a shortfall.
+
+| type | before | after |
+|---|---|---|
+| `CoseVerificationKey::EcdsaP256` | `{ x: [u8;32], y: [u8;32] }` — a struct literal could name two numbers that are not a point, and `from_ec2_p256` checked and then discarded the parsed key | carries a **`P256Point`** whose representation IS the decoded `VerifyingKey`. The decode is the proof; §11's operational test passes |
+| `ScittServiceTrustPin` | every field `pub`; an `EdDSA` pin carrying an `ES256` `y` was constructible and refused only if somebody called `verification_key` | private representation behind a private `PinDocument` + `TryFrom`, so the `(algorithm, public_key)` PAIR is checked on the way in and `verification_key` is **infallible** |
+| `EvidenceCommitment` | seven `pub` fields, so a `complete` label could be paired with an unrelated call's handles | private, **two named producers**: `from_reconstruction` (derived from one reconstruction) and `Deserialize` (a received CLAIM, trusted only after the issuer's COSE_Sign1 verifies) |
+| `ResolvedTransparencyService` | all three `pub` while its own doc says they "travel together" | **not sealable** — see below |
+
+`ResolvedTransparencyService` reaches `verify_receipt_offline` through a
+`Fn(&str) -> Option<ResolvedTransparencyService>` seam, and there is a real second producer
+with no pin behind it: the in-process `PrototypeTransparencyService` the conformance corpora
+are built from. Against a seam, a private field only forces a constructor taking the same
+arguments with the same absence of checking — ADR-061's *if this value is illegal, whose bug
+is it?* answers "whoever implemented the resolver". The fields are private and the two
+producers are NAMED (`pinned`, and `stated` whose name is its contract), which buys
+legibility at every call site and not unconstructibility. That is the third measurement of
+the rule in [`docs/dev/sealed-owners.md`](../dev/sealed-owners.md), and the first where the
+seam's second producer is a shipped type rather than a test.
+
+**Two things the seal changed elsewhere, both of them the boundary detector working:**
+
+- `verify_retained_evidence`'s seven-field comparison became
+  `EvidenceCommitment::corresponds_to`. Destructuring an owner to recreate a security
+  relation is R-COMPOSE's failure mode, and it was live here: adding a field to the record
+  left the comparison silently weaker until somebody remembered to extend it. It is now a
+  compile error in one place.
+- The conformance negative fixtures stopped mutating a parsed pin and now edit the pin
+  **document** before parsing. That is the more faithful test: a pin an operator could ship
+  by mistake, rather than a value that could only ever have existed in memory. The committed
+  interop verdict tokens are unchanged, because both corpora pin `EdDSA` keys and the edits
+  stay legal documents.
+
+`scitt.rs` stays `reviewed-action-required`: the decomposition is the next slice, and this
+record is not a re-census.
+
 ## EX-005 — `mcp-re-proxy/src/transport.rs` — **census complete, disposition: decompose along the reachability boundary**
 
 **Status:** `reviewed-action-required`. **Measured:** 1268 production lines on `main` @
