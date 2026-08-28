@@ -941,11 +941,13 @@ pub fn verify_delegated_accepted_202(
 /// one-way notifications, so an operator's configured control read as enabled and did
 /// not run on half the traffic.
 ///
-/// The kid is read from the credential AFTER the full verification succeeds: the
-/// credential header is a COVERED component of the 202's signature (an uncovered one
-/// is refused), the root signature covers the JWS header, and the credential verifier
-/// requires `header.kid == claims.issuer_kid` — so the value read here is the anchor
-/// the response provably chained to, not a self-asserted label.
+/// The kid is taken from the VERIFIED product, never re-read from the wire: the credential
+/// header is a COVERED component of the 202's signature (an uncovered one is refused), the
+/// root signature covers the JWS header, and the credential verifier requires
+/// `header.kid == claims.issuer_kid` — so
+/// [`AcknowledgedDelegation::issuer_kid`](mcp_re_http_profile::AcknowledgedDelegation::issuer_kid)
+/// is the anchor the response provably chained to, and there is no second reader of the
+/// raw bytes to disagree with the first.
 pub fn verify_delegated_accepted_202_pinned(
     response: &HttpResponse,
     request: &HttpRequest,
@@ -969,7 +971,7 @@ pub fn verify_delegated_accepted_202_pinned(
     };
     let is_revoked = |identifier: &str| trust.is_revoked(identifier);
     let resolve_actor = |kid: &str, slot: SignerSlot| trust.resolve_issuer(kid, slot, now);
-    let actor = mcp_re_http_profile::verify_delegated_accepted_202(
+    let acknowledged = mcp_re_http_profile::verify_delegated_accepted_202(
         response,
         request,
         &Verifier::new(&verifier_policy, &resolve_actor),
@@ -977,45 +979,16 @@ pub fn verify_delegated_accepted_202_pinned(
         &is_revoked,
         now,
     )?;
+    // The pin is compared against the VERIFIED product's anchor. This used to re-parse the
+    // response's own credential header — untrusted bytes read to answer a question the
+    // verifier had just answered — so the pin depended on the second reader agreeing with
+    // the first about which of two credential headers to believe.
     if let Some(pinned) = expected_issuer_kid {
-        if delegation_issuer_kid(response)? != pinned {
+        if acknowledged.issuer_kid() != pinned {
             return Err(HttpProfileError::ResponseBindingMismatch);
         }
     }
-    Ok(actor)
-}
-
-/// The ROOT issuer kid of the delegation credential a response carries.
-///
-/// Read from the compact-JWS header's `kid`, which the credential verifier has already
-/// required to equal the root-signed `issuer_kid` claim. Call it only on a response
-/// whose credential has verified: on its own this parses an untrusted header.
-///
-/// A REPEATED credential header is a protocol error here as it is in the verifier, so
-/// the pin reads the same one the verification did rather than whichever the two
-/// happen to pick first.
-fn delegation_issuer_kid(response: &HttpResponse) -> Result<String, HttpProfileError> {
-    let mut found: Option<&str> = None;
-    for (name, value) in &response.headers {
-        if name.eq_ignore_ascii_case(mcp_re_http_profile::MCP_RE_DELEGATION_HEADER) {
-            if found.is_some() {
-                return Err(HttpProfileError::DuplicateHeader(
-                    mcp_re_http_profile::MCP_RE_DELEGATION_HEADER,
-                ));
-            }
-            found = Some(value.as_str());
-        }
-    }
-    let credential = found.ok_or(HttpProfileError::DelegationCredentialMissing)?;
-    let header_seg = credential
-        .split('.')
-        .next()
-        .ok_or(HttpProfileError::MalformedEvidence("delegation header"))?;
-    let decoded = mcp_re_core::b64url_decode(header_seg)
-        .map_err(|_| HttpProfileError::MalformedEvidence("delegation header"))?;
-    let header: mcp_re_http_profile::DelegationHeader = serde_json::from_slice(&decoded)
-        .map_err(|_| HttpProfileError::MalformedEvidence("delegation header"))?;
-    Ok(header.kid)
+    Ok(acknowledged.into_actor())
 }
 
 #[cfg(test)]

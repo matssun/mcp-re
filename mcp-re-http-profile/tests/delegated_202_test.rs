@@ -211,7 +211,7 @@ fn a_delegated_202_verifies_via_the_credential_chain() {
         NOW,
     )
     .expect("the client verifies the delegated acknowledgement");
-    assert_eq!(actor.identity.keyid, DELEGATED_KID);
+    assert_eq!(actor.actor().identity.keyid, DELEGATED_KID);
 }
 
 // --- negatives the ruling requires -------------------------------------------

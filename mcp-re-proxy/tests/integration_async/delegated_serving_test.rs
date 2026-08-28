@@ -623,8 +623,15 @@ async fn a_notification_is_served_a_verifiable_delegated_202() {
     )
     .expect("the client verifies the delegated 202");
     assert_ne!(
-        actor.identity.keyid, ROOT_KID,
+        actor.actor().identity.keyid,
+        ROOT_KID,
         "signed by the delegated key, not the root"
+    );
+    assert_eq!(
+        actor.issuer_kid(),
+        ROOT_KID,
+        "and the anchor it chained to comes from the VERIFIED product, not a re-parse of \
+         the response's own credential header"
     );
 
     // The root issuer was touched only at issuance — the 202 path is delegated too.
