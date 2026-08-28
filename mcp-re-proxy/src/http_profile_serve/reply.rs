@@ -176,13 +176,20 @@ mod tests {
 
     #[test]
     fn an_open_leg_yields_the_state_its_answer_re_presents() {
-        let validated = ValidatedReply::of(
-            &reply(
-                r#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"input_required","requestState":"s-1"}}"#,
-            ),
-            &OutstandingId::Id(serde_json::json!(1)),
-        )
-        .expect("a legal envelope");
+        // The discriminator comes from the canonical constant rather than a literal: a
+        // rename in the final SEP-2322 text must fail the value guard once, not leave a
+        // sixth reader silently classifying continuations as terminal.
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "resultType": mcp_re_http_profile::result_class::INPUT_REQUIRED_RESULT_TYPE,
+                "requestState": "s-1",
+            },
+        })
+        .to_string();
+        let validated = ValidatedReply::of(&reply(&body), &OutstandingId::Id(serde_json::json!(1)))
+            .expect("a legal envelope");
         match validated.classify().expect("a legal classification") {
             ReplyClass::Open(state) => assert_eq!(state, "s-1"),
             ReplyClass::Terminal => panic!("an input_required reply opens a leg"),
