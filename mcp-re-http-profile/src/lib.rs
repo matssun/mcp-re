@@ -117,7 +117,6 @@ pub use bodyless::sign_delegated_accepted_202;
 pub use bodyless::verify_accepted_202;
 pub use bodyless::verify_bodyless_request;
 pub use bodyless::verify_delegated_accepted_202;
-pub use bodyless::AcknowledgedDelegation;
 pub use chain::reconstruct_chain;
 pub use chain::ChainAudit;
 pub use chain::ChainLabel;

@@ -220,10 +220,15 @@ baseline_prod_loc = 719
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
+# MCPRE-172 item 2 gave the bodyless verifier an owner subtree: `bodyless.rs` became
+# `bodyless/mod.rs` so the acknowledgement's verified product is declared by its producer
+# rather than added to a file the ratchet holds at 712. The debt moves WITH the file —
+# dropping the entry because the path changed would launder 712 registered lines as
+# progress — and the number falls to 707 because the actor projection left with it.
 [[debt]]
-path = "mcp-re-http-profile/src/bodyless.rs"
-baseline_prod_loc = 712
-baseline_sha = "d1fc5fa"
+path = "mcp-re-http-profile/src/bodyless/mod.rs"
+baseline_prod_loc = 707
+baseline_sha = "PLACEHOLDER"
 status = "unreviewed"
 
 [[debt]]

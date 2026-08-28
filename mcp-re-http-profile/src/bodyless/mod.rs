@@ -53,6 +53,9 @@
 use mcp_re_core::McpReError;
 
 use crate::block::ResolvedActor;
+
+/// What a verified bodyless acknowledgement establishes.
+mod acknowledged;
 use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::digest::content_digest_sha256;
@@ -77,6 +80,7 @@ use crate::sigbase::signature_base;
 use crate::sigbase::CoveredComponent;
 use crate::sigbase::SignatureParams;
 use crate::sigbase::SourceMessage;
+pub use acknowledged::AcknowledgedDelegation;
 
 /// Fail closed if a bodyless message carries content metadata or content.
 ///
@@ -550,60 +554,7 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
     )
     .map_err(|_| HttpProfileError::DelegationKeyMismatch)?;
 
-    Ok(AcknowledgedDelegation {
-        actor: ResolvedActor {
-            identity: crate::block::ActorIdentity {
-                role: "server".to_owned(),
-                trust_domain: String::new(),
-                subject: verified.server_signer.clone(),
-                keyid: verified.delegated_kid.clone(),
-            },
-            verification_key: verified.delegated_key,
-            slot: SignerSlot::Response,
-        },
-        issuer_kid: verified.issuer_kid,
-    })
-}
-
-/// What a verified bodyless acknowledgement establishes.
-///
-/// Two facts, and they are handed out together because the second one used to be
-/// recovered by re-parsing the response's own headers AFTER verification had already
-/// proved it. That re-parse read untrusted bytes to answer a question the verifier had
-/// answered: the credential header is a COVERED component of the 202's signature (an
-/// uncovered one is refused), the root signature covers the JWS header, and the credential
-/// verifier requires `header.kid == claims.issuer_kid` — so the anchor is a verified
-/// product, not a self-asserted label, and only this type may say so.
-///
-/// The representation is private and this module is its only producer. A caller pinning a
-/// route's expected server signer therefore compares against the anchor the response
-/// PROVABLY chained to, with no second reader of the wire bytes to disagree with the first.
-#[derive(Debug)]
-pub struct AcknowledgedDelegation {
-    /// The delegated server actor the acknowledgement is attributed to.
-    actor: ResolvedActor,
-    /// The ROOT issuer kid of the delegation credential — the trust anchor this response
-    /// chained to, as the credential verifier established it.
-    issuer_kid: String,
-}
-
-impl AcknowledgedDelegation {
-    /// The delegated server actor this acknowledgement is attributed to.
-    pub fn actor(&self) -> &ResolvedActor {
-        &self.actor
-    }
-
-    /// Take the actor, discarding the anchor.
-    pub fn into_actor(self) -> ResolvedActor {
-        self.actor
-    }
-
-    /// The ROOT issuer kid the credential chains to — the coordinate a route pins.
-    ///
-    /// Not the delegated kid, which rotates every TTL.
-    pub fn issuer_kid(&self) -> &str {
-        &self.issuer_kid
-    }
+    Ok(AcknowledgedDelegation::established(verified))
 }
 
 /// Read the `mcp_re_server_signer` claim from a compact-JWS credential's payload
