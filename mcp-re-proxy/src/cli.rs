@@ -21,8 +21,8 @@ use std::time::Duration;
 use mcp_re_core::VerificationKey;
 
 use crate::deployment_request::{
-    AdmissionKind, AuditSinkKind, BindingKind, DeploymentRequest, OcspKind,
-    SecretString, VerifiedContextKind,
+    AdmissionKind, AuditSinkKind, BindingKind, DeploymentRequest, OcspKind, SecretString,
+    VerifiedContextKind,
 };
 
 #[cfg(feature = "aws_kms_keysource")]
@@ -1084,12 +1084,12 @@ mod tests {
     use super::Duration;
     use super::IdentityPolicy;
     use super::OcspKind;
+    use crate::config_state::validation::unsafe_config_violations;
+    use crate::deployment_request::AuthzKind;
     use crate::deployment_request::{
         AwsKmsSigningSourceRequest, GcpKmsSigningSourceRequest, Pkcs11SigningSourceRequest,
         SigningSourceRequest,
     };
-    use crate::config_state::validation::unsafe_config_violations;
-    use crate::deployment_request::AuthzKind;
     use mcp_re_core::SigningKey;
 
     fn args(list: &[&str]) -> Vec<String> {
@@ -1124,7 +1124,9 @@ mod tests {
     }
 
     /// The delegated channel key object a parse produced, if any.
-    fn channel_key(config: &DeploymentRequest) -> Option<&crate::deployment_request::DelegatedChannelKeyRequest> {
+    fn channel_key(
+        config: &DeploymentRequest,
+    ) -> Option<&crate::deployment_request::DelegatedChannelKeyRequest> {
         config.channel_credential.delegated.as_ref()
     }
 
@@ -2686,7 +2688,10 @@ mod tests {
         a.splice(0..0, pkcs11_flags());
         let config = parse_args(&a).expect("parse");
         let token = token_payload(&config);
-        assert_eq!(token.module.as_deref(), Some("/opt/pkcs11/libmock_pkcs11.so"));
+        assert_eq!(
+            token.module.as_deref(),
+            Some("/opt/pkcs11/libmock_pkcs11.so")
+        );
         assert_eq!(
             token.pin_file.as_deref(),
             Some("/etc/mcp-re/pkcs11-pin"),
@@ -2924,10 +2929,7 @@ mod tests {
         let config = parse_args(&a).expect("parse");
         let kms = aws_payload(&config);
         assert_eq!(kms.region.as_deref(), Some("us-east-1"));
-        assert_eq!(
-            kms.key_id.as_deref(),
-            Some("alias/mcp-re-response-signing")
-        );
+        assert_eq!(kms.key_id.as_deref(), Some("alias/mcp-re-response-signing"));
     }
 
     #[test]
@@ -4606,15 +4608,15 @@ mod tests {
                 );
             }
             assert_eq!(
-                hostile_endpoint_refusals(
-                    SigningSourceRequest::AwsKms(AwsKmsSigningSourceRequest {
+                hostile_endpoint_refusals(SigningSourceRequest::AwsKms(
+                    AwsKmsSigningSourceRequest {
                         region: Some("eu-north-1".to_string()),
                         key_id: Some("alias/k".to_string()),
                         endpoint: Some(endpoint.to_string()),
                         use_web_identity: true,
                         sts_endpoint: Some(endpoint.to_string()),
-                    })
-                )
+                    }
+                ))
                 .len(),
                 2,
                 "{endpoint}: both AWS endpoint fields must be held to the rule"
@@ -4675,7 +4677,8 @@ mod tests {
             "--gcp-kms-endpoint",
         ] {
             for endpoint in legitimate {
-                let admitted = crate::config_state::kms_endpoint::validated_kms_endpoint(flag, endpoint);
+                let admitted =
+                    crate::config_state::kms_endpoint::validated_kms_endpoint(flag, endpoint);
                 assert!(
                     admitted.is_ok(),
                     "{flag} {endpoint} is an endpoint an operator sets and must be accepted, \

@@ -122,6 +122,7 @@ _PROXY_LIB_SRCS = [
     "src/communication_assurance/peer_identity_value.rs",
     "src/cli.rs",
     "src/cli/authorization_flags.rs",
+    "src/cli/signing_source_flags/channel_role.rs",
     "src/cli/signing_source_flags/endpoint_guard.rs",
     "src/cli/signing_source_flags/mechanism.rs",
     "src/cli/signing_source_flags/mod.rs",

@@ -1323,11 +1323,7 @@ mod tests {
         if std::env::var_os(CHILD_MARKER).is_some() {
             // A config the validation boundary refuses, so `run` returns without opening a
             // socket. The route out does not matter — the drain is on all of them.
-            let mut config = config_with(
-                "file",
-                "/seed",
-                "/tls.key",
-            );
+            let mut config = config_with("file", "/seed", "/tls.key");
             config.target_uri = String::new();
 
             // Attributed records, so the unattributed ceiling cannot drop any of them and
@@ -1486,11 +1482,7 @@ mod tests {
                 IdentitySource::DnsSan,
             ),
         ] {
-            let mut config = config_with(
-                "file",
-                "/seed",
-                "/key",
-            );
+            let mut config = config_with("file", "/seed", "/key");
             config.identity_source = source;
             let (state, refusals) = classify_and_validate_binding(&config);
             assert!(refusals.is_empty(), "{source:?} refused: {refusals:?}");
@@ -1514,11 +1506,7 @@ mod tests {
             );
         }
 
-        let mut config = config_with(
-            "file",
-            "/seed",
-            "/key",
-        );
+        let mut config = config_with("file", "/seed", "/key");
         config.identity_source = IdentityPolicy::CnLegacy;
         assert!(
             classify_and_validate_binding(&config).0.is_none(),
@@ -1532,11 +1520,7 @@ mod tests {
     /// this point would hide whether the operator chose it or the host did.
     #[test]
     fn the_fleet_config_carries_the_topology_and_resolves_the_bind() {
-        let config = config_with(
-            "file",
-            "/seed",
-            "/key",
-        );
+        let config = config_with("file", "/seed", "/key");
         let basis = crate::config_state::in_flight_limit::classify(&config);
         let (_, shard_topology) = crate::config_state::topology::classify(&config);
         let fleet = super::fleet_config(&config, shard_topology, basis)
@@ -1566,11 +1550,7 @@ mod tests {
     /// about which of several address-shaped settings was rejected.
     #[test]
     fn an_unresolvable_bind_is_refused_and_names_the_flag() {
-        let mut config = config_with(
-            "file",
-            "/seed",
-            "/key",
-        );
+        let mut config = config_with("file", "/seed", "/key");
         config.bind = "missing-a-port".to_string();
 
         let refusal = super::fleet_config(

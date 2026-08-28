@@ -48,16 +48,56 @@ impl SigningSourceFlags {
     /// hostile authority is refused whatever mechanism the command line selects.
     fn values_by_owner(&self) -> [(bool, &'static str, Mechanism); 10] {
         [
-            (self.pkcs11.module.is_some(), "--pkcs11-module", Mechanism::Pkcs11),
-            (self.pkcs11.pin_file.is_some(), "--pkcs11-pin-file", Mechanism::Pkcs11),
-            (self.pkcs11.token_label.is_some(), "--pkcs11-token-label", Mechanism::Pkcs11),
-            (self.pkcs11.key_label.is_some(), "--pkcs11-key-label", Mechanism::Pkcs11),
-            (self.aws.region.is_some(), "--aws-kms-region", Mechanism::AwsKms),
-            (self.aws.key_id.is_some(), "--aws-kms-key-id", Mechanism::AwsKms),
-            (self.aws.use_web_identity, "--aws-kms-use-web-identity", Mechanism::AwsKms),
-            (self.gcp.key_version.is_some(), "--gcp-kms-key-version", Mechanism::GcpKms),
-            (self.gcp.use_metadata, "--gcp-kms-use-metadata", Mechanism::GcpKms),
-            (self.aws.sts_endpoint.is_some(), "--aws-sts-endpoint", Mechanism::AwsKms),
+            (
+                self.pkcs11.module.is_some(),
+                "--pkcs11-module",
+                Mechanism::Pkcs11,
+            ),
+            (
+                self.pkcs11.pin_file.is_some(),
+                "--pkcs11-pin-file",
+                Mechanism::Pkcs11,
+            ),
+            (
+                self.pkcs11.token_label.is_some(),
+                "--pkcs11-token-label",
+                Mechanism::Pkcs11,
+            ),
+            (
+                self.pkcs11.key_label.is_some(),
+                "--pkcs11-key-label",
+                Mechanism::Pkcs11,
+            ),
+            (
+                self.aws.region.is_some(),
+                "--aws-kms-region",
+                Mechanism::AwsKms,
+            ),
+            (
+                self.aws.key_id.is_some(),
+                "--aws-kms-key-id",
+                Mechanism::AwsKms,
+            ),
+            (
+                self.aws.use_web_identity,
+                "--aws-kms-use-web-identity",
+                Mechanism::AwsKms,
+            ),
+            (
+                self.gcp.key_version.is_some(),
+                "--gcp-kms-key-version",
+                Mechanism::GcpKms,
+            ),
+            (
+                self.gcp.use_metadata,
+                "--gcp-kms-use-metadata",
+                Mechanism::GcpKms,
+            ),
+            (
+                self.aws.sts_endpoint.is_some(),
+                "--aws-sts-endpoint",
+                Mechanism::AwsKms,
+            ),
         ]
     }
 }
@@ -65,6 +105,14 @@ impl SigningSourceFlags {
 #[cfg(test)]
 mod tests {
     use super::super::SigningSourceFlags;
+
+    /// The flag a case must name in its refusal, the value-taking flags that provoke it,
+    /// and the valueless ones.
+    type Case = (
+        &'static str,
+        &'static [(&'static str, &'static str)],
+        &'static [&'static str],
+    );
 
     /// Read a signing-source command line and assemble it.
     fn parse(pairs: &[(&str, &str)], switches: &[&str]) -> Result<(), String> {
@@ -85,7 +133,7 @@ mod tests {
     /// one must still be an error rather than a value that quietly disappears.
     #[test]
     fn a_value_belonging_to_an_unselected_mechanism_is_refused() {
-        let cases: &[(&str, &[(&str, &str)], &[&str])] = &[
+        let cases: &[Case] = &[
             (
                 "--pkcs11-module",
                 &[
@@ -111,7 +159,10 @@ mod tests {
             ),
             (
                 "--aws-kms-region",
-                &[("--key-source", "gcp-kms"), ("--aws-kms-region", "eu-north-1")],
+                &[
+                    ("--key-source", "gcp-kms"),
+                    ("--aws-kms-region", "eu-north-1"),
+                ],
                 &[],
             ),
             (

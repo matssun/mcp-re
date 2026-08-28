@@ -279,9 +279,9 @@ impl CustodyState {
             CustodyKind::FileSeed { .. } | CustodyKind::EnvSeed { .. } => {
                 PrivateKeyExposure::ProcessReadable
             }
-            CustodyKind::Pkcs11 { .. } | CustodyKind::AwsKms { .. } | CustodyKind::GcpKms { .. } => {
-                PrivateKeyExposure::NonExporting
-            }
+            CustodyKind::Pkcs11 { .. }
+            | CustodyKind::AwsKms { .. }
+            | CustodyKind::GcpKms { .. } => PrivateKeyExposure::NonExporting,
         }
     }
 }
@@ -951,5 +951,4 @@ mod tests {
         };
         assert_eq!(endpoint, Some("https://cloudkms.googleapis.com"));
     }
-
 }

@@ -47,23 +47,20 @@ pub(crate) struct CrossMachineViolations {
 /// without its region has no custody STATE, and still has a mechanism selection that a
 /// PKCS#11 channel key does not belong to — so asking this of the state would drop the
 /// diagnostic exactly when a configuration is wrong in two ways at once.
-fn x2a(
-    source: &SigningSourceRequest,
-    channel: Option<&DelegatedChannelKeyRequest>,
-) -> Vec<String> {
+fn x2a(source: &SigningSourceRequest, channel: Option<&DelegatedChannelKeyRequest>) -> Vec<String> {
     let Some(channel) = channel else {
         return Vec::new();
     };
     let mismatch = |flag: &str, required: &str| {
-        vec![format!("{flag} has no effect without --key-source {required}")]
+        vec![format!(
+            "{flag} has no effect without --key-source {required}"
+        )]
     };
     match (channel, source) {
         (DelegatedChannelKeyRequest::Pkcs11(_), SigningSourceRequest::Pkcs11(_))
         | (DelegatedChannelKeyRequest::AwsKms(_), SigningSourceRequest::AwsKms(_))
         | (DelegatedChannelKeyRequest::GcpKms(_), SigningSourceRequest::GcpKms(_)) => Vec::new(),
-        (DelegatedChannelKeyRequest::Pkcs11(_), _) => {
-            mismatch("--pkcs11-tls-key-label", "pkcs11")
-        }
+        (DelegatedChannelKeyRequest::Pkcs11(_), _) => mismatch("--pkcs11-tls-key-label", "pkcs11"),
         (DelegatedChannelKeyRequest::AwsKms(_), _) => mismatch("--aws-kms-tls-key-id", "aws-kms"),
         (DelegatedChannelKeyRequest::GcpKms(_), _) => {
             mismatch("--gcp-kms-tls-key-version", "gcp-kms")
@@ -255,11 +252,7 @@ mod tests {
         mutate(&mut config);
         let (tls_custody, _) = crate::config_state::tls_custody::classify_and_validate(&config);
         let (trust, _) = crate::config_state::trust_revocation::classify_and_validate(&config);
-        validate(
-            tls_custody.as_ref(),
-            trust.as_ref(),
-            &config,
-        )
+        validate(tls_custody.as_ref(), trust.as_ref(), &config)
     }
 
     #[test]

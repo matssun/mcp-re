@@ -25,6 +25,7 @@
 //! a mismatch at the boundary alongside every other violation rather than cutting the parse
 //! short at the first one.
 
+mod channel_role;
 mod endpoint_guard;
 mod mechanism;
 mod stray_value;
@@ -35,10 +36,9 @@ use mechanism::{mechanism, Mechanism};
 #[cfg(feature = "dev_env_key_source")]
 use crate::deployment_request::EnvironmentSigningSourceRequest;
 use crate::deployment_request::{
-    AwsKmsChannelKeyRequest, AwsKmsSigningSourceRequest, ChannelCredentialRequest,
-    DelegatedChannelKeyRequest, FileSigningSourceRequest, GcpKmsChannelKeyRequest,
-    GcpKmsSigningSourceRequest, Pkcs11ChannelKeyRequest, Pkcs11SigningSourceRequest,
-    ResponseSigningRequest, SigningSourceRequest,
+    AwsKmsSigningSourceRequest, ChannelCredentialRequest, FileSigningSourceRequest,
+    GcpKmsSigningSourceRequest, Pkcs11SigningSourceRequest, ResponseSigningRequest,
+    SigningSourceRequest,
 };
 
 /// The signing-source inputs, as they accumulate across the argument list.
@@ -126,14 +126,6 @@ impl SigningSourceFlags {
         true
     }
 
-    /// Whether a non-exporting channel key object was named for the selected mechanism.
-    ///
-    /// What it decides in the parser is whether `--tls-key` names a file this deployment
-    /// reads. Whether the two channel custodies may be asserted together is relation X2b's.
-    pub(super) fn has_delegated_channel_key(&self) -> bool {
-        self.channel_key().is_some()
-    }
-
     /// The two roles, as the request carries them.
     ///
     /// The seed is required only where it is READ. Under a non-exporting mechanism the
@@ -141,7 +133,9 @@ impl SigningSourceFlags {
     /// no seed field at all — so an operator is no longer asked to provision an Ed25519
     /// root seed into every pod in exactly the mode chosen because no key should land in
     /// the pod.
-    pub(super) fn finish(self) -> Result<(ResponseSigningRequest, ChannelCredentialRequest), String> {
+    pub(super) fn finish(
+        self,
+    ) -> Result<(ResponseSigningRequest, ChannelCredentialRequest), String> {
         self.stray_value_refusal()?;
         let channel = ChannelCredentialRequest {
             delegated: self.channel_key(),
@@ -161,34 +155,6 @@ impl SigningSourceFlags {
             Mechanism::GcpKms => SigningSourceRequest::GcpKms(self.gcp.clone()),
         };
         Ok((ResponseSigningRequest { source }, channel))
-    }
-
-    /// The channel key object this command line names, if any.
-    ///
-    /// Read WITHOUT consulting the response-signing selection, deliberately. The two are
-    /// separate roles, so nothing here forces them to agree — and whether the named key
-    /// object lives in a backend this deployment reaches is relation X2a's, at the
-    /// configuration boundary, where it is reported alongside every other violation
-    /// instead of cutting the parse short. A programmatically built request can state the
-    /// same mismatch, and it passes through the same boundary.
-    ///
-    /// Two key objects at once picks the first in this fixed order, and that choice is
-    /// never observed: such a command line has at least one that does not match its
-    /// response-signing mechanism, so X2a refuses it.
-    fn channel_key(&self) -> Option<DelegatedChannelKeyRequest> {
-        if let Some(key_label) = self.pkcs11_channel_key_label.clone() {
-            return Some(DelegatedChannelKeyRequest::Pkcs11(Pkcs11ChannelKeyRequest {
-                key_label,
-            }));
-        }
-        if let Some(key_id) = self.aws_channel_key_id.clone() {
-            return Some(DelegatedChannelKeyRequest::AwsKms(AwsKmsChannelKeyRequest {
-                key_id,
-            }));
-        }
-        self.gcp_channel_key_version.clone().map(|key_version| {
-            DelegatedChannelKeyRequest::GcpKms(GcpKmsChannelKeyRequest { key_version })
-        })
     }
 
     /// The seed under a mechanism that reads one.

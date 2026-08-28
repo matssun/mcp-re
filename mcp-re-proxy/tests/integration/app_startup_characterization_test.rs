@@ -855,7 +855,10 @@ fn a_programmatic_config_cannot_disable_the_request_target_reconstruction_check(
 /// naming one means selecting AWS. That is the point — a GCP deployment can no longer
 /// carry an AWS endpoint at all — and it does not weaken this test, whose subject is
 /// whether the boundary holds an endpoint a config built in code names.
-fn aws_endpoint(config: &mut mcp_re_proxy::deployment_request::DeploymentRequest, endpoint: String) {
+fn aws_endpoint(
+    config: &mut mcp_re_proxy::deployment_request::DeploymentRequest,
+    endpoint: String,
+) {
     config.response_signing.source = mcp_re_proxy::deployment_request::SigningSourceRequest::AwsKms(
         mcp_re_proxy::deployment_request::AwsKmsSigningSourceRequest {
             region: Some("eu-north-1".to_string()),
@@ -868,7 +871,10 @@ fn aws_endpoint(config: &mut mcp_re_proxy::deployment_request::DeploymentRequest
 
 /// Select AWS KMS response signing with `endpoint` as its STS endpoint override, under the
 /// web-identity mode that endpoint parameterizes.
-fn sts_endpoint(config: &mut mcp_re_proxy::deployment_request::DeploymentRequest, endpoint: String) {
+fn sts_endpoint(
+    config: &mut mcp_re_proxy::deployment_request::DeploymentRequest,
+    endpoint: String,
+) {
     config.response_signing.source = mcp_re_proxy::deployment_request::SigningSourceRequest::AwsKms(
         mcp_re_proxy::deployment_request::AwsKmsSigningSourceRequest {
             region: Some("eu-north-1".to_string()),
@@ -881,7 +887,10 @@ fn sts_endpoint(config: &mut mcp_re_proxy::deployment_request::DeploymentRequest
 }
 
 /// Select GCP Cloud KMS response signing with `endpoint` as its endpoint override.
-fn gcp_endpoint(config: &mut mcp_re_proxy::deployment_request::DeploymentRequest, endpoint: String) {
+fn gcp_endpoint(
+    config: &mut mcp_re_proxy::deployment_request::DeploymentRequest,
+    endpoint: String,
+) {
     config.response_signing.source = mcp_re_proxy::deployment_request::SigningSourceRequest::GcpKms(
         mcp_re_proxy::deployment_request::GcpKmsSigningSourceRequest {
             key_version: Some(
@@ -953,7 +962,10 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
             "userinfo",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    gcp_endpoint(c, "https://cloudkms.googleapis.com@evil.example.com".to_string())
+                    gcp_endpoint(
+                        c,
+                        "https://cloudkms.googleapis.com@evil.example.com".to_string(),
+                    )
                 },
             ),
         ),
@@ -971,7 +983,10 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
             "userinfo",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    aws_endpoint(c, "https://kms.us-east-1.amazonaws.com@evil.example.com".to_string())
+                    aws_endpoint(
+                        c,
+                        "https://kms.us-east-1.amazonaws.com@evil.example.com".to_string(),
+                    )
                 },
             ),
         ),
@@ -989,7 +1004,10 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
             "userinfo",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    sts_endpoint(c, "https://sts.eu-north-1.amazonaws.com@evil.example.com".to_string())
+                    sts_endpoint(
+                        c,
+                        "https://sts.eu-north-1.amazonaws.com@evil.example.com".to_string(),
+                    )
                 },
             ),
         ),
@@ -1023,8 +1041,7 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
         "http://localhost",
     ] {
         for select in [
-            aws_endpoint
-                as fn(&mut mcp_re_proxy::deployment_request::DeploymentRequest, String),
+            aws_endpoint as fn(&mut mcp_re_proxy::deployment_request::DeploymentRequest, String),
             gcp_endpoint,
             sts_endpoint,
         ] {
@@ -1076,12 +1093,13 @@ fn a_programmatic_config_cannot_carry_a_dangling_custody_or_ingress_selector() {
             "--aws-kms-tls-key-id",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.channel_credential.delegated =
-                        Some(mcp_re_proxy::deployment_request::DelegatedChannelKeyRequest::AwsKms(
+                    c.channel_credential.delegated = Some(
+                        mcp_re_proxy::deployment_request::DelegatedChannelKeyRequest::AwsKms(
                             mcp_re_proxy::deployment_request::AwsKmsChannelKeyRequest {
                                 key_id: "alias/tls".to_string(),
                             },
-                        ))
+                        ),
+                    )
                 },
             ),
         ),
@@ -1089,12 +1107,13 @@ fn a_programmatic_config_cannot_carry_a_dangling_custody_or_ingress_selector() {
             "--gcp-kms-tls-key-version",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.channel_credential.delegated =
-                        Some(mcp_re_proxy::deployment_request::DelegatedChannelKeyRequest::GcpKms(
+                    c.channel_credential.delegated = Some(
+                        mcp_re_proxy::deployment_request::DelegatedChannelKeyRequest::GcpKms(
                             mcp_re_proxy::deployment_request::GcpKmsChannelKeyRequest {
                                 key_version: "projects/p/..".to_string(),
                             },
-                        ))
+                        ),
+                    )
                 },
             ),
         ),
