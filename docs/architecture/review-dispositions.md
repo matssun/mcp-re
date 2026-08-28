@@ -133,7 +133,30 @@ because there is no subordinate: the file is deep, not wide.
 
 **Status:** `reviewed-action-required` — the census is complete and the disposition is
 *decompose first*. **Remediation:** [#592](https://github.com/matssun/mcp-re/issues/592).
-**Measured:** 1037 production lines on `main` @ `a735e8c`.
+**Measured:** 1037 production lines on `main` @ `a735e8c`; **977 after the authority-A
+relocation** (MCPRE-154).
+
+### Update — authority A relocated (MCPRE-154)
+
+The shutdown-drain authority has left this file. `AUDIT_FLUSH_TIMEOUT`, the bounded wait
+and the reported outcome now live in `crate::audit_sink::drain`, together with
+`flush_stderr_audit`, which moved to join them: the bound, the wait and the meaning of the
+result are one authority and the composition root held two thirds of it.
+
+The relocation also replaced the `bool` the wait returned with a two-case `AuditDrain`.
+`false` there meant *the acknowledgement never came*, which is not the negation of
+*drained* — it invited a reader to treat the unknown case as the failure case, and that
+collapse is what an audit stream exists to prevent.
+
+`app.rs` now calls one operation and reinterprets nothing. The teardown-ordering test
+stays here on purpose: it asserts that `run` discharges the obligation on **every route
+out of it**, which is a property of the composition root and not of the drain owner. The
+owner's own tests assert what the two outcomes mean.
+
+**The file-level §8 census has NOT been re-run**, so this record's remaining findings stand
+as written and the status stays `reviewed-action-required`. Whether another separable
+authority remains is exactly the question the re-census must answer, and predetermining it
+here would be the thing this register exists to prevent.
 
 This record exists because the registry may not be changed on the strength of a
 function-level ruling. `app.rs` carries a well-substantiated **function** exception for

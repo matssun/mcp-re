@@ -82,7 +82,7 @@ ALLOWED = {
         "the client binary's SIGTERM bridge, the same process-lifetime signal thread as "
         "the proxy's — it belongs to the process, not to a runtime"
     )),
-    "mcp-re-proxy/src/audit_sink.rs": (1, (
+    "mcp-re-proxy/src/audit_sink/mod.rs": (1, (
         "the stderr audit writer drains a `static` OnceLock channel and is scoped to the "
         "PROCESS by construction; there is no runtime whose lifetime it could take"
     )),

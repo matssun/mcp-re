@@ -214,7 +214,9 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPS-035: the serving path's audit emission seam (admitted actor, rejection
     # wire code, response signing key). Pure std, no feature gate — always compiled.
     "src/audit_record.rs",
-    "src/audit_sink.rs",
+    "src/audit_sink/mod.rs",
+    # The writer's teardown obligation: the bound, the wait, and the two-valued outcome.
+    "src/audit_sink/drain.rs",
     # Inner-server lifecycle logging seam (transport-agnostic; used by the async
     # dispatch path). Split out of inner_launch so it stays in the PEP when the
     # stdio subprocess machinery relocates to mcp-re-stdio-bridge.
