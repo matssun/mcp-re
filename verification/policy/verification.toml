@@ -129,7 +129,27 @@ class = "V0"
 description = "The seven public verifier operations and the products they return, including the facts two authorization paths share: what a SUCCESSFUL return of each establishes."
 paths = [
   "mcp-re-http-profile/src/verifier.rs",
-  "mcp-re-http-profile/src/verify.rs",
+  "mcp-re-http-profile/src/verify/floor/components.rs",
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
+  "mcp-re-http-profile/src/verify/floor/params.rs",
+  "mcp-re-http-profile/src/verify/floor/request.rs",
+  "mcp-re-http-profile/src/verify/floor/response.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  "mcp-re-http-profile/src/verify/floor/signature.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+  "mcp-re-http-profile/src/verify/floor/trust_slot.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/bound.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/credential_chain.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/expectations.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/mod.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/unbound.rs",
+  "mcp-re-http-profile/src/verify/full/mod.rs",
+  "mcp-re-http-profile/src/verify/full/request.rs",
+  "mcp-re-http-profile/src/verify/full/response.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
   "mcp-re-http-profile/src/verified_request/mod.rs",
   "mcp-re-http-profile/src/verified_request/floor.rs",
   "mcp-re-http-profile/src/verified_response/mod.rs",
@@ -489,14 +509,24 @@ id = "http_profile.freshness_window"
 class = "V1"
 description = "RFC 9421 freshness admission (§5.1): admission implies now lies inside the skew-widened window, the window is non-degenerate, and its width is within policy."
 paths = [
-  "mcp-re-http-profile/src/verify.rs",
-  # `check_params` is now reached through the facade, which owns the policy the
-  # postcondition quantifies over.
+  # `check_params` owns this postcondition and now has its own module. The two modules
+  # BELOW it in the parse order are listed with it: the parameters the theorem quantifies
+  # over are what `signature_parameters` produced out of what `sf_dictionary` read, so an
+  # edit to either changes what the postcondition is about while `params.rs` stands still.
+  "mcp-re-http-profile/src/verify/floor/params.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  # `check_params` is reached through the facade, which owns the policy the postcondition
+  # quantifies over.
   "mcp-re-http-profile/src/verifier.rs",
   "mcp-re-http-profile/src/policy.rs",
   "mcp-re-http-profile/src/ids.rs",
   "mcp-re-http-profile/src/verus_std_specs.rs",
 ]
+# The contract URI is an IDENTITY, not a path, and eight `assumptions.toml` entries name
+# it. `check_params` moved to `verify/floor/params.rs`; renaming the URI to follow would
+# change what those entries refer to in exchange for cosmetic agreement with a file path.
 exported_contracts = ["contract://http_profile/verify/check_params"]
 evidence = [
   "test://http_profile/verify/freshness_window_vectors",
@@ -515,7 +545,7 @@ tested_symbols = [
   "tests/proof_path_test#degenerate_window_fails_closed_regardless_of_skew",
   "tests/proof_path_test#the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not",
 ]
-proved_symbols = ["mcp_re_http_profile::verify::check_params"]
+proved_symbols = ["mcp_re_http_profile::verify::floor::params::check_params"]
 features = ["verify"]
 pilot = "verus-pilot"
 
@@ -652,7 +682,11 @@ description = "MCPRE-102 dispatch preparation: a request whose evidence block ca
 paths = [
   "mcp-re-http-profile/src/dispatch.rs",
   "mcp-re-http-profile/src/block.rs",
-  "mcp-re-http-profile/src/verify.rs",
+  # The product this postcondition is about is built by the full-profile request stage,
+  # over the floor stage's result. Both, not the whole `verify/` subtree: the delegated and
+  # response stages cannot reach a `VerifiedMcpRequest`.
+  "mcp-re-http-profile/src/verify/full/request.rs",
+  "mcp-re-http-profile/src/verify/floor/request.rs",
   # The postcondition reads `verified.request_block` on the product type, so the type's
   # own module is part of what the proof depends on. A path set narrower than the
   # dependency set does not go red when the gap matters — it stops asking.

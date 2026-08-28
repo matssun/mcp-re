@@ -64,7 +64,7 @@ use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 use crate::policy::VerifierPolicy;
 use crate::verifier::Verifier;
-use crate::verify::parse_signature_input_for;
+use crate::verify::floor::signature_input::parse_signature_input_for;
 use crate::verify::DelegationExpectations;
 
 /// The retained evidence for ONE hop (§9.2): the complete request and response

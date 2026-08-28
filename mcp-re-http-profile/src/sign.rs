@@ -108,7 +108,7 @@ pub(crate) fn conditional_request_components(
     headers: &[(String, String)],
 ) -> Result<Vec<CoveredComponent>, HttpProfileError> {
     let mut components = Vec::new();
-    for header in crate::verify::conditionally_covered_request_headers() {
+    for header in crate::verify::floor::components::conditionally_covered_request_headers() {
         if single_header(headers, header)?.is_some() {
             components.push(CoveredComponent::new(header));
         }

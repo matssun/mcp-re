@@ -334,6 +334,84 @@ trust-resolution rule are two places for it to drift, and the mutation probe mad
 concrete: a single slot mutation in the shared `chain_to_root` now breaks all 12 delegated
 controls at once, where before it took two mutations to reach the same set.
 
+### EX-003 re-census after the hierarchy work
+
+The disposition is implemented. `verify.rs` no longer exists: 1373 production lines became
+**21 modules** under `verify/`, every one of them under the 200-line threshold, so the debt
+entry is REMOVED rather than moved — a debt that is paid leaves the registry.
+
+| | prod | what single fact it owns |
+|---|---:|---|
+| `verify/mod.rs` | 50 | the assembly, and the two-proposition argument |
+| `floor/mod.rs` | 55 | *these bytes are what a trusted key signed, window current* |
+| `floor/sf_dictionary.rs` | 138 | RFC 8941: one spelling, one value per label |
+| `floor/signature_input.rs` | 66 | RFC 9421: the member value's shape |
+| `floor/covered_components.rs` | 111 | the closed identifier set, each named once |
+| `floor/signature_parameters.rs` | 179 | the closed, ORDERED parameter set |
+| `floor/components.rs` | 80 | what the signature must cover |
+| `floor/transport_headers.rs` | 64 | §4.1: a covered routing claim may not lie about the body |
+| `floor/params.rs` | 107 | what this verifier ACCEPTS vs what the signer SAID (THM-0001) |
+| `floor/trust_slot.rs` | 45 | the keyid was vouched for THIS slot |
+| `floor/signature.rs` | 70 | the allowlisted algorithm is the one that runs |
+| `floor/request.rs` | 147 | the request floor (THM-0014) |
+| `floor/response.rs` | 140 | the response floors, bound and unbound (THM-0016/0017) |
+| `full/mod.rs` | 30 | *…and it is an MCP-RE statement to act on* |
+| `full/request.rs` | 122 | block validation, audience/target, artifact binding (THM-0015) |
+| `full/response.rs` | 67 | signer correspondence and evidence agreement (THM-0018) |
+| `full/delegated/mod.rs` | 49 | why delegated does not inherit the direct claims |
+| `full/delegated/expectations.rs` | 27 | what the deployment expects of the CREDENTIAL |
+| `full/delegated/credential_chain.rs` | 91 | the credential chains to a trusted root (§3 2–7) |
+| `full/delegated/bound.rs` | 158 | …and answers THIS request (THM-0019) |
+| `full/delegated/unbound.rs` | 140 | …and claims no binding, `;req` refused (THM-0020) |
+
+The sum rose from 1373 to 1936. That is 21 module headers each stating the one fact its
+module owns — precisely what the census found missing when four axes were multiplied into a
+flat function list — and it is not headroom: no entry is left in the registry to grow into,
+and a new file over 200 fails outright.
+
+**The strongest evidence that the split followed the authority boundaries is the probe
+registry, and it was not planned for.** Each of the 26 `verify.rs` mutation probes anchors
+on the exact text of the check its conjunct names. Re-pointing them was mechanical — every
+anchor resolved to **exactly one** of the new modules, and every one landed in the module
+its conjunct is about: `M27-algorithm-allowlist` in `params.rs`, `M13-chain-to-root-issuer-slot-seam`
+in `credential_chain.rs`, the six `M18…M24` unbound-delegated probes in `unbound.rs`. A
+decomposition that had cut across the security argument would have produced anchors matching
+zero files, or two.
+
+`tools/verification/verify-mutations` then reports **PASS — 58 probes, each turning a
+declared control red**, so no conjunct lost its protection in the move.
+
+### What was deliberately NOT done
+
+- **The four response paths keep their duplicated preamble.** `floor_bound_response`,
+  `floor_unbound_response`, `delegated_bound_response` and `delegated_unbound_response` each
+  repeat content-encoding, media-type, content-digest, parse, components and params. Folding
+  them into one helper is the obvious LOC win and it would collapse **eight separately
+  probed conjuncts into two** — M25/M12/M20 (content-digest ×3), M07/M11/M16/M19 (signature
+  ×4), M10/M18 (`;req` refusal ×2) — trading the isolation the whole V0 argument rests on
+  for a smaller diff. The registry already records one such coarse probe as *a coverage
+  fact, not an isolation one*; manufacturing seven more would be the reverse of what this
+  campaign is for.
+- **`ResolvedActor` is still unsealed** (deviation 2), and `sigbase` is still a public
+  module: the conformance KAT oracle reconstructs the exact RFC 9421 signature base through
+  it, which is a consumer contract and not an accident of layering. Deviation 6 predicted
+  it would become subordinate "when the floor gets its own module" — the floor now has one,
+  and the answer is that `sigbase` is a subordinate of the floor in the DEPENDENCY sense
+  while remaining public in the API sense. Those are different questions and only the first
+  one moved.
+- **No theorem was touched.** THM-0008 stays as it is, no claim was added, and no scope
+  sentence changed. Paths in `verification.toml` and `mutation-probes.toml` moved because
+  the sources did, which is maintenance of a measurement, not a claim.
+
+### Disposition after the re-census
+
+`verify.rs` is gone and no successor is over the threshold, so there is nothing left for
+this record to hold `reviewed-action-required` over. §8 question 2 now answers **one** for
+every module in the table — that was the test, and the twenty-one one-line answers above are
+the result. The remaining EX-003 obligation is unchanged and is not structural: the owner
+security-specification review of the THM-0014 … THM-0022 family, which this campaign was
+instructed not to perform.
+
 ### What the census found that the issue did not anticipate
 
 - The Verus postcondition for THM-0009 was **guarded by the assurance ambiguity**:
