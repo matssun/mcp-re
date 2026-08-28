@@ -46,7 +46,7 @@ authority boundary. This one needs seven.
 | **B** | Result classification / continuation | `ResultClass`, `ClassifiedResponse`, `verify_and_classify_response`, `classify_result`, `continuation_state` | ~80 | A (one call) |
 | **C** | Delegated-credential revocation seam | `RevocationSource`, `StaticRevocationList` | ~60 | no |
 | **D** | **Trust-anchor lifecycle** — root rotation, overlap window, root revocation, manifest expiry | `TrustedIssuerSet` (four states, two resolver forms, `is_expired`, retirement-wins) | ~215 | no |
-| **E** | Delegation policy + clock-skew bounding | `DelegationPolicy`, `bounded_clock_skew`, `verifier_policy` | ~90 | no |
+| **E** | Delegation policy + clock-skew bounding — **EXTRACTED** to `delegation_policy.rs` | `DelegationPolicy`, `bounded_clock_skew`, `verifier_policy`, `with_expectations` | ~90 | no |
 | **F** | **Execution/retry contract** (ADR-MCPRE-058 §10) | `ExecutionStatus`, `RetrySafety`, `ExecutionContract`, `rejection_receipt` | ~165 | **no — reads a verified body, performs no verification** |
 | **G** | Delegated response verification orchestration | `DelegatedOutcome`, `VerifiedDelegatedResponse`, `verify_delegated_response`, `_anchored`, `check_unbound_receipt_is_about_this_request`, `RECEIVED_DIGEST_ALG` | ~230 | C, D, E, F |
 | **H** | 202 acknowledgement verification | `verify_delegated_accepted_202{,_pinned,_anchored,_anchored_pinned}`, `delegation_issuer_kid` | ~145 | C, D, E |
@@ -75,8 +75,11 @@ supplies expectations and consumes verdicts.
 
 ### Q5 — What does it merely transport?
 
-`DelegationPolicy`'s fields into `DelegationExpectations`; the verified `VerifiedMcpResponse`
-out to the caller; the verbatim disposition tokens in `ExecutionContract`.
+~~`DelegationPolicy`'s fields into `DelegationExpectations`~~ — it no longer transports them:
+the fields are private in `delegation_policy.rs` and `with_expectations` is the single
+projection, so this module receives the built expectations rather than the representation.
+Still transported: the verified `VerifiedMcpResponse` out to the caller, and the verbatim
+disposition tokens in `ExecutionContract`.
 
 ### Q6 — What facts does it reconstruct that another owner already decided?
 
@@ -150,9 +153,9 @@ response-signing mode**, which makes A's future an open question rather than dea
 ### Q10 — What facts are represented more than once?
 
 - The **root issuer kid**, per Q6 — from the verified product and from a raw header re-parse.
-- The **clock skew**, as configured (`DelegationPolicy::max_clock_skew`, `pub`) and as applied
-  (`bounded_clock_skew()`). The type deliberately keeps both and documents that only the second
-  is ever used; this is the honest shape, but it means the public field is a value no gate reads.
+- ~~The **clock skew**, as configured (`DelegationPolicy::max_clock_skew`, `pub`) and as applied
+  (`bounded_clock_skew()`)~~ — **CLOSED.** It is represented once. `new` clamps and the field is
+  private, so there is no configured-but-unapplied value left to read.
 - **`TrustedIssuerSet` is both a resolver and a `RevocationSource`** — one object, two seams, and
   Q7.1 is the consequence.
 
@@ -160,9 +163,11 @@ response-signing mode**, which makes A's future an open question rather than dea
 
 **All three carrier types have fully public fields, and one says so explicitly.**
 
-- `DelegationPolicy::max_clock_skew` — its own doc: *"the field is `pub`, so nothing can guarantee
-  it was ever validated, and both windows read the bounded value rather than this one."* This is a
-  self-documented R-SEAL violation, mitigated by clamping at every read.
+- ~~`DelegationPolicy::max_clock_skew`~~ — **CLOSED.** `new` clamps, every field is private, and
+  the type lives in its own module so the clamp binds the verifier next door rather than only
+  callers outside the crate. `clippy::partial_pub_fields` is what forced the last step: sealing
+  one field beside three `pub` siblings tells a reader which field somebody sealed, not which one
+  carries an invariant.
 - `ResponseExpectation` — `request`, `request_evidence` and `expected_server_signer_keyid` are all
   `pub`, so an expectation can pair one exchange's request with another's evidence handle. THM-0018's
   own caveat covers this: a caller supplying a handle from the wrong exchange gets a verified

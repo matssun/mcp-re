@@ -19,6 +19,7 @@
 
 use crate::delegated_evidence::DelegatedResponseEvidence;
 use crate::delegated_trust::DelegatedResponseTrust;
+use crate::delegation_policy::DelegationPolicy;
 use mcp_re_http_profile::DelegationExpectations;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
@@ -168,96 +169,6 @@ pub fn verify_and_classify_response<R: Into<ResolverOutcome>>(
 
 // ---- ADR-MCPRE-052 delegated-required client verification (MCPRE-122) --------
 
-/// The deployment policy the client applies when verifying a DELEGATED-key-signed
-/// response (ADR-MCPRE-052 §3) — the owned, client-side mirror of
-/// [`mcp_re_http_profile::DelegationExpectations`]. The trusted ROOT issuer is
-/// injected through the actor resolver (the credential's `issuer_kid` resolved for
-/// the `Response` slot); this carries the audience-scope, epoch, and skew policy the
-/// credential must satisfy.
-#[derive(Debug, Clone)]
-pub struct DelegationPolicy {
-    /// This client's accepted verifier audience identifier(s); the credential's
-    /// `aud` must name one.
-    pub verifier_audiences: Vec<String>,
-    /// The audience-scope hash the delegated key must be scoped to (the request's
-    /// audience hash the deployment coordinates).
-    pub expected_audience_hash: String,
-    /// The accepted trust-epoch set (default `{ current }`, optionally
-    /// `{ current, previous }` in a bounded rollout window).
-    pub accepted_epochs: Vec<String>,
-    /// Clock-skew tolerance, seconds, ALREADY bounded to the profile's
-    /// `0..=MAX_CLOCK_SKEW_BOUND` range.
-    ///
-    /// Private, and that is the whole change: the field used to be `pub` and its own
-    /// documentation said so — *nothing can guarantee it was ever validated*. The clamp
-    /// lived in [`bounded_clock_skew`](Self::bounded_clock_skew), which every reader had to
-    /// remember to call, and a reader that took the field directly got the unbounded
-    /// number. Now [`new`](Self::new) is the only producer and it clamps, so the bound is a
-    /// property of every inhabitant rather than of the call sites somebody checked.
-    ///
-    /// It governs BOTH the credential's `nbf`/`exp` window and the RFC 9421
-    /// response-signature freshness gate, and the two must be the same number: a
-    /// deployment that widened the skew for a real clock spread and got it on one
-    /// window only is running two different notions of "close enough" on one message.
-    clock_skew: i64,
-}
-
-impl DelegationPolicy {
-    /// The clock-skew tolerance this policy actually applies: the configured value
-    /// clamped to the profile's `0..=MAX_CLOCK_SKEW_BOUND` range.
-    ///
-    /// The bound is the profile's, not this crate's ([`VerifierPolicy::new`] refuses
-    /// anything outside it), and it has to be applied HERE because the delegation
-    /// credential's freshness check consumes the number raw: `DelegationExpectations`
-    /// carries it straight through to `DelegationVerifyParams.max_clock_skew`, which
-    /// widens `nbf`/`exp` with no cap of its own. Passing the configured value there
-    /// while the signature gate silently clamped it meant a policy of 604800 accepted a
-    /// delegated credential a week past its `exp` — the TTL is the primary bound on a
-    /// compromised delegated key, so that window has to stay bounded (DEL-4).
-    ///
-    /// Clamping rather than rejecting keeps a misconfiguration from turning every
-    /// response unverifiable, and unlike the previous fallback it leaves the two windows
-    /// equal: one number, bounded, on both gates.
-    ///
-    /// [`VerifierPolicy::new`]: mcp_re_http_profile::VerifierPolicy::new
-    fn bounded_clock_skew(&self) -> i64 {
-        self.clock_skew
-    }
-
-    /// The RFC 9421 signature-acceptance policy this delegation policy implies.
-    ///
-    /// Built from [`bounded_clock_skew`](Self::bounded_clock_skew), so the construction
-    /// can no longer fail on the skew argument; the fallback remains only because
-    /// `new` is fallible in its algorithm argument too.
-    fn verifier_policy(&self) -> mcp_re_http_profile::VerifierPolicy {
-        mcp_re_http_profile::VerifierPolicy::new(&["ed25519"], self.bounded_clock_skew())
-            .unwrap_or_default()
-    }
-
-    /// Build a delegation policy, bounding the configured clock skew as it goes.
-    ///
-    /// The clamp is HERE and nowhere else. A configured 604800 accepted a delegated
-    /// credential a week past its `exp` while the signature gate silently clamped the same
-    /// number — the TTL is the primary bound on a compromised delegated key, so that window
-    /// has to stay bounded (DEL-4). Applying it at construction is what makes *both gates
-    /// read one bounded number* true of every policy rather than of the paths that
-    /// remembered to ask for the bounded projection.
-    pub fn new(
-        verifier_audiences: Vec<String>,
-        expected_audience_hash: impl Into<String>,
-        accepted_epochs: Vec<String>,
-        max_clock_skew: i64,
-    ) -> Self {
-        DelegationPolicy {
-            verifier_audiences,
-            expected_audience_hash: expected_audience_hash.into(),
-            accepted_epochs,
-            clock_skew: max_clock_skew
-                .clamp(0, mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND),
-        }
-    }
-}
-
 /// The verified-response outcome the client hands its caller (ADR-MCPRE-052): a
 /// success, or a delegated REJECTION receipt (request-bound or preflight-unbound)
 /// carrying the server's frozen wire code and its execution/retry contract.
@@ -316,19 +227,24 @@ pub fn verify_delegated_response(
     policy: &DelegationPolicy,
     now: i64,
 ) -> Result<VerifiedDelegatedResponse, HttpProfileError> {
-    let audiences: Vec<&str> = policy
-        .verifier_audiences
-        .iter()
-        .map(String::as_str)
-        .collect();
-    let epochs: Vec<&str> = policy.accepted_epochs.iter().map(String::as_str).collect();
-    let verifier_policy = policy.verifier_policy();
-    let expect = DelegationExpectations {
-        verifier_audiences: &audiences,
-        expected_audience_hash: policy.expected_audience_hash.as_str(),
-        accepted_epochs: &epochs,
-        max_clock_skew: policy.bounded_clock_skew(),
-    };
+    policy.with_expectations(|expect, verifier_policy| {
+        verify_delegated_response_under(response, trust, expectation, expect, verifier_policy, now)
+    })
+}
+
+/// The verification itself, once the policy has projected its expectations.
+///
+/// Separate from the public entry point only because [`DelegationPolicy::with_expectations`]
+/// hands the borrowed expectations to a closure; the split keeps the algorithm at one
+/// indentation level rather than inside one.
+fn verify_delegated_response_under(
+    response: &HttpResponse,
+    trust: &dyn DelegatedResponseTrust,
+    expectation: &ResponseExpectation,
+    expect: &DelegationExpectations<'_>,
+    verifier_policy: &mcp_re_http_profile::VerifierPolicy,
+    now: i64,
+) -> Result<VerifiedDelegatedResponse, HttpProfileError> {
     // Adapt the one trust authority to the http-profile verifier's two closure forms.
     // Both halves come from the SAME value, so a resolver that answers cannot be paired
     // with a revocation source that does not.
@@ -340,13 +256,13 @@ pub fn verify_delegated_response(
     // A SUCCESS must be request-bound. The server only ever signs success responses
     // with the `;req` binding, and a stripped-`;req` "success" changes the signature
     // base so no valid delegated signature can cover it — so this is a hard floor.
-    let verifier = Verifier::new(&verifier_policy, resolve_actor);
+    let verifier = Verifier::new(verifier_policy, resolve_actor);
     if (200..300).contains(&response.status) {
         let verified = verifier.verify_delegated_bound_response(
             response,
             &expectation.request,
             &expectation.request_evidence,
-            &expect,
+            expect,
             is_revoked,
             now,
         )?;
@@ -364,7 +280,7 @@ pub fn verify_delegated_response(
         response,
         &expectation.request,
         &expectation.request_evidence,
-        &expect,
+        expect,
         is_revoked,
         now,
     ) {
@@ -380,7 +296,7 @@ pub fn verify_delegated_response(
             })
         }
         Err(bound_err) => {
-            match verifier.verify_delegated_unbound_response(response, &expect, is_revoked, now) {
+            match verifier.verify_delegated_unbound_response(response, expect, is_revoked, now) {
                 Ok(verified) => {
                     check_expected_server_signer(expectation, &verified.delegation_issuer_kid)?;
                     // The unbound signature binds nothing about the request, so a receipt
@@ -526,29 +442,18 @@ pub fn verify_delegated_accepted_202_pinned(
     expected_issuer_kid: Option<&str>,
     now: i64,
 ) -> Result<ResolvedActor, HttpProfileError> {
-    let audiences: Vec<&str> = policy
-        .verifier_audiences
-        .iter()
-        .map(String::as_str)
-        .collect();
-    let epochs: Vec<&str> = policy.accepted_epochs.iter().map(String::as_str).collect();
-    let verifier_policy = policy.verifier_policy();
-    let expect = DelegationExpectations {
-        verifier_audiences: &audiences,
-        expected_audience_hash: policy.expected_audience_hash.as_str(),
-        accepted_epochs: &epochs,
-        max_clock_skew: policy.bounded_clock_skew(),
-    };
     let is_revoked = |identifier: &str| trust.is_revoked(identifier);
     let resolve_actor = |kid: &str, slot: SignerSlot| trust.resolve_issuer(kid, slot, now);
-    let acknowledged = mcp_re_http_profile::verify_delegated_accepted_202(
-        response,
-        request,
-        &Verifier::new(&verifier_policy, &resolve_actor),
-        &expect,
-        &is_revoked,
-        now,
-    )?;
+    let acknowledged = policy.with_expectations(|expect, verifier_policy| {
+        mcp_re_http_profile::verify_delegated_accepted_202(
+            response,
+            request,
+            &Verifier::new(verifier_policy, &resolve_actor),
+            expect,
+            &is_revoked,
+            now,
+        )
+    })?;
     // The pin is compared against the VERIFIED product's anchor. This used to re-parse the
     // response's own credential header — untrusted bytes read to answer a question the
     // verifier had just answered — so the pin depended on the second reader agreeing with
@@ -559,54 +464,6 @@ pub fn verify_delegated_accepted_202_pinned(
         }
     }
     Ok(acknowledged.into_actor())
-}
-
-#[cfg(test)]
-mod policy_seal_tests {
-    //! MCPRE-172 item 6 — the clock-skew carrier is sealed at construction.
-
-    use super::*;
-
-    #[test]
-    fn a_configured_skew_beyond_the_profile_bound_is_not_constructible() {
-        // The operational test for a seal: can the check be deleted and still leave an
-        // invalid value unconstructible? The clamp used to live in the projection every
-        // reader had to remember to call, and a reader taking the field got 604800 — a
-        // delegated credential accepted a week past its `exp`. There is now no inhabitant
-        // carrying it.
-        let policy = DelegationPolicy::new(
-            vec!["aud".to_owned()],
-            "hash",
-            vec!["epoch".to_owned()],
-            604_800,
-        );
-        assert_eq!(
-            policy.bounded_clock_skew(),
-            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND
-        );
-    }
-
-    #[test]
-    fn a_negative_skew_narrows_to_zero_rather_than_skewing_the_window_backwards() {
-        let policy =
-            DelegationPolicy::new(vec!["aud".to_owned()], "hash", vec!["epoch".to_owned()], -1);
-        assert_eq!(policy.bounded_clock_skew(), 0);
-    }
-
-    #[test]
-    fn both_gates_read_the_same_bounded_number() {
-        // The property the field's own documentation states: the credential window and the
-        // RFC 9421 signature window must be one number. The verifier policy is built from
-        // the same bounded value the credential expectations carry.
-        let policy = DelegationPolicy::new(
-            vec!["aud".to_owned()],
-            "hash",
-            vec!["epoch".to_owned()],
-            120,
-        );
-        assert_eq!(policy.verifier_policy().max_clock_skew(), 120);
-        assert_eq!(policy.bounded_clock_skew(), 120);
-    }
 }
 
 #[cfg(test)]
@@ -1594,22 +1451,11 @@ mod delegated_tests {
         .expect_err("a week of skew must not honour a credential 3300s past exp");
         assert_eq!(err, HttpProfileError::DelegationCredentialExpired);
 
-        assert_eq!(
-            a_week.bounded_clock_skew(),
-            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
-            "the configured value is clamped, not passed through",
-        );
-        // And the same clamped number reaches the signature gate, so the two windows
-        // are one policy rather than 30s on one and a week on the other.
-        assert_eq!(
-            a_week.verifier_policy().max_clock_skew(),
-            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
-        );
-        // A negative configured value clamps to zero rather than narrowing asymmetrically.
-        assert_eq!(
-            DelegationPolicy::new(vec![], "", vec![], -5).bounded_clock_skew(),
-            0
-        );
+        // The accessor assertions that used to follow are the OWNER's, and they are its
+        // `policy_seal_tests` — a clamp is a property of the policy, and asserting it from
+        // here would mean this module could read the representation. What belongs here is
+        // exactly what is above: the end-to-end BEHAVIOUR, that a week of configured
+        // tolerance does not honour a credential 3300s past `exp`.
     }
 
     // ---- the trust picture's own expiry -------------------------------------
