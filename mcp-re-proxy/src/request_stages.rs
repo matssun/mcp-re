@@ -37,12 +37,10 @@
 //! the boundary and everything else stays ordinary control flow, because only this one
 //! boundary has an invariant the compiler can hold.
 
-use std::sync::Arc;
-
 use crate::async_inner::InnerOutcome;
 use crate::authorization::AuthorizedRequestBody;
+use crate::http_profile_serve::signing_window::SigningWindow;
 use crate::transparency::RetentionReservation;
-use mcp_re_http_profile::ActiveDelegatedKey;
 
 /// What this exchange owes the evidence store, as a closed set.
 ///
@@ -91,14 +89,15 @@ pub(crate) struct ReadyForDispatch {
     /// decision has nothing to pass here, and the failure is a compile error at the
     /// dispatch rather than a proxy that quietly serves unjudged requests.
     forwarded: AuthorizedRequestBody,
-    /// The delegated key this reply will be signed with, snapshotted BEFORE the backend
-    /// runs. Taken early on purpose: discovering a missing key at signing time meant the
-    /// tool call had already executed and the client got a retryable 503, so the action
-    /// ran twice (ADR-MCPRE-052 §6).
-    signing_key: Arc<ActiveDelegatedKey>,
-    /// The signature window, already reconciled against the credential's own `exp` so the
-    /// response never advertises a validity the verifier refuses.
-    expires: i64,
+    /// The credential this reply will be signed with and the validity it authorizes,
+    /// snapshotted BEFORE the backend runs. Taken early on purpose: discovering a missing
+    /// key at signing time meant the tool call had already executed and the client got a
+    /// retryable 503, so the action ran twice (ADR-MCPRE-052 §6).
+    ///
+    /// One value rather than a key beside a number, because the two are related: the
+    /// window never outlives the credential. A pair can be split and half of it replaced;
+    /// a [`SigningWindow`] carries the relation wherever it goes.
+    window: SigningWindow,
     /// The retention obligation this exchange carries across the dispatch.
     retention: RetentionDisposition,
 }
@@ -107,14 +106,12 @@ impl ReadyForDispatch {
     /// Assemble the ready state. Every argument is a completed pre-dispatch stage.
     pub(crate) fn new(
         forwarded: AuthorizedRequestBody,
-        signing_key: Arc<ActiveDelegatedKey>,
-        expires: i64,
+        window: SigningWindow,
         retention: RetentionDisposition,
     ) -> Self {
         ReadyForDispatch {
             forwarded,
-            signing_key,
-            expires,
+            window,
             retention,
         }
     }
@@ -133,8 +130,7 @@ impl ReadyForDispatch {
     pub(crate) fn dispatched(self, outcome: InnerOutcome) -> DispatchedExchange {
         DispatchedExchange {
             outcome,
-            signing_key: self.signing_key,
-            expires: self.expires,
+            window: self.window,
             retention: self.retention,
         }
     }
@@ -147,28 +143,22 @@ impl ReadyForDispatch {
 /// of them can claim nothing happened.
 pub(crate) struct DispatchedExchange {
     outcome: InnerOutcome,
-    signing_key: Arc<ActiveDelegatedKey>,
-    expires: i64,
+    window: SigningWindow,
     retention: RetentionDisposition,
 }
 
 impl DispatchedExchange {
     /// What the inner plane managed to do, taken out with the obligations that outlive it.
-    pub(crate) fn into_parts(
-        self,
-    ) -> (
-        InnerOutcome,
-        Arc<ActiveDelegatedKey>,
-        i64,
-        RetentionDisposition,
-    ) {
-        (self.outcome, self.signing_key, self.expires, self.retention)
+    pub(crate) fn into_parts(self) -> (InnerOutcome, SigningWindow, RetentionDisposition) {
+        (self.outcome, self.window, self.retention)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mcp_re_http_profile::ActiveDelegatedKey;
+    use std::sync::Arc;
 
     /// The §9.6 acceptance test for the state model, stated as an assertion about the
     /// type rather than about a run.
@@ -221,17 +211,18 @@ mod tests {
             // Through the ONE producer. There is no other way to obtain a dispatchable
             // body, which is the property this type now carries.
             crate::authorization::AuthorizationPosture::NoPolicyConfigured.release(b"{}".to_vec()),
-            key,
-            1_700_000_000,
+            SigningWindow::over(key, 1_699_999_000, 60),
             RetentionDisposition::NotConfigured,
         );
         assert_eq!(ready.forwarded(), b"{}");
 
         let exchange = ready.dispatched(InnerOutcome::Replied(b"{\"result\":{}}".to_vec()));
         // `ready` is gone here — the compiler enforces it, which is the assertion.
-        let (outcome, _key, expires, retention) = exchange.into_parts();
+        let (outcome, window, retention) = exchange.into_parts();
         assert_eq!(outcome, InnerOutcome::Replied(b"{\"result\":{}}".to_vec()));
-        assert_eq!(expires, 1_700_000_000);
+        // The window crosses the boundary intact — the reply is signed under the
+        // credential the exchange snapshotted before the backend ran.
+        assert_eq!(window.expires(), 1_699_999_060);
         assert!(matches!(retention, RetentionDisposition::NotConfigured));
     }
 }

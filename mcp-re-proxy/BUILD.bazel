@@ -249,7 +249,10 @@ _PROXY_LIB_SRCS = [
     "src/http_profile_dispatch/core_projection.rs",
     # ADR-MCPRE-050 production RFC 9421 serving handler + the App runner that wires
     # the fleet (serving path / replay tier / transport binding), extracted from main.
-    "src/http_profile_serve.rs",
+    "src/http_profile_serve/mod.rs",
+    # ADR-MCPRE-052 §4: the validity a signed response may advertise, bounded by the
+    # credential that authorizes it.
+    "src/http_profile_serve/signing_window.rs",
     "src/app.rs",
     # ADR-MCPRE-057 §9 / ADR-MCPRE-058 §14: the owner of a partly-built runtime —
     # lifecycle state cannot advance beyond the ownership it describes. Crate-internal.
@@ -705,7 +708,7 @@ nt_rust_test(
         ":mcp_re_proxy_cli",
         "src/app.rs",
         "src/delegated_wiring.rs",
-        "src/http_profile_serve.rs",
+        "src/http_profile_serve/mod.rs",
         "src/replay_plane.rs",
         "src/signing_plane.rs",
         "src/tls_plane.rs",
@@ -716,7 +719,7 @@ nt_rust_test(
         "MCP_RE_SIDECAR_GUIDE": "$(rlocationpath //docs:sidecar-deployment-guide.md)",
         "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_cli)",
         "MCP_RE_APP_SRC": "$(rlocationpath src/app.rs)",
-        "MCP_RE_HTTP_PROFILE_SERVE_SRC": "$(rlocationpath src/http_profile_serve.rs)",
+        "MCP_RE_HTTP_PROFILE_SERVE_SRC": "$(rlocationpath src/http_profile_serve/mod.rs)",
         "MCP_RE_DELEGATED_WIRING_SRC": "$(rlocationpath src/delegated_wiring.rs)",
         "MCP_RE_REPLAY_PLANE_SRC": "$(rlocationpath src/replay_plane.rs)",
         "MCP_RE_SIGNING_PLANE_SRC": "$(rlocationpath src/signing_plane.rs)",
