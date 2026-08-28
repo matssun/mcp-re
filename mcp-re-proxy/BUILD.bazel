@@ -122,6 +122,11 @@ _PROXY_LIB_SRCS = [
     "src/communication_assurance/peer_identity_value.rs",
     "src/cli.rs",
     "src/cli/authorization_flags.rs",
+    "src/cli/signing_source_flags/channel_role.rs",
+    "src/cli/signing_source_flags/endpoint_guard.rs",
+    "src/cli/signing_source_flags/mechanism.rs",
+    "src/cli/signing_source_flags/mod.rs",
+    "src/cli/signing_source_flags/stray_value.rs",
     # Wall-clock acquisition — the module boundary.clock names, kept small so the
     # declared trust boundary is exactly as wide as the code exercising the authority.
     "src/clock.rs",
@@ -140,6 +145,7 @@ _PROXY_LIB_SRCS = [
     "src/config_state/evidence.rs",
     "src/config_state/freshness.rs",
     "src/config_state/in_flight_limit.rs",
+    "src/config_state/kms_endpoint.rs",
     "src/config_state/key_file_access.rs",
     "src/config_state/mcp_transport_contract.rs",
     "src/config_state/replay.rs",
@@ -166,6 +172,14 @@ _PROXY_LIB_SRCS = [
     "src/deployment_request/kinds.rs",
     "src/deployment_request/mod.rs",
     "src/deployment_request/secret_string.rs",
+    "src/deployment_request/signing_source/aws_kms_source.rs",
+    "src/deployment_request/signing_source/channel_role.rs",
+    "src/deployment_request/signing_source/environment_source.rs",
+    "src/deployment_request/signing_source/file_source.rs",
+    "src/deployment_request/signing_source/gcp_kms_source.rs",
+    "src/deployment_request/signing_source/mod.rs",
+    "src/deployment_request/signing_source/pkcs11_source.rs",
+    "src/deployment_request/signing_source/response_role.rs",
     # ADR-MCPS-028 §C: native GCP Cloud KMS Ed25519 response signer (blocking ureq
     # HTTPS + OAuth2 bearer; behind #[cfg(feature = "gcp_kms_keysource")], cfg'd out
     # of the default build). No async google-cloud SDK (ADR-MCPS-018 lean-sync).

@@ -1013,15 +1013,13 @@ mod tests {
     /// drift from what the CLI actually produces. An empty `tls_key` is how the parser
     /// represents delegated TLS, so it is passed through rather than defaulted.
     fn config_with(
-        source: crate::deployment_request::KeySourceKind,
+        source: &str,
         seed: &str,
         tls_key: &str,
     ) -> crate::deployment_request::DeploymentRequest {
-        use crate::deployment_request::KeySourceKind;
         let (name, mut extra): (&str, Vec<&str>) = match source {
-            KeySourceKind::File => ("file", vec![]),
-            KeySourceKind::Env => ("env", vec![]), // unreachable outside dev_env_key_source
-            KeySourceKind::Pkcs11 => (
+            "file" => ("file", vec![]),
+            "pkcs11" => (
                 "pkcs11",
                 vec![
                     "--pkcs11-module",
@@ -1034,7 +1032,7 @@ mod tests {
                     "/etc/mcp-re/pin",
                 ],
             ),
-            KeySourceKind::AwsKms => (
+            "aws-kms" => (
                 "aws-kms",
                 vec![
                     "--aws-kms-region",
@@ -1043,13 +1041,14 @@ mod tests {
                     "alias/k",
                 ],
             ),
-            KeySourceKind::GcpKms => (
+            "gcp-kms" => (
                 "gcp-kms",
                 vec![
                     "--gcp-kms-key-version",
                     "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
                 ],
             ),
+            other => panic!("no fixture for --key-source {other}"),
         };
         let mut argv: Vec<&str> = vec![
             "--bind",
@@ -1127,9 +1126,7 @@ mod tests {
     #[test]
     fn the_pkcs11_pin_file_is_permission_checked() {
         use crate::app::key_files_read_from_disk;
-        use crate::deployment_request::KeySourceKind;
-
-        let config = config_with(KeySourceKind::Pkcs11, "", "/tls.key");
+        let config = config_with("pkcs11", "", "/tls.key");
         let (custody, tls_custody) = custody_states(&config);
         let files = key_files_read_from_disk(&custody, &tls_custody);
         assert!(
@@ -1137,7 +1134,7 @@ mod tests {
             "the PIN file must be checked; got {files:?}"
         );
         // And it is NOT claimed for a source that reads no PIN.
-        let file_config = config_with(KeySourceKind::File, "/seed", "/tls.key");
+        let file_config = config_with("file", "/seed", "/tls.key");
         let (custody, tls_custody) = custody_states(&file_config);
         assert!(
             !key_files_read_from_disk(&custody, &tls_custody)
@@ -1210,28 +1207,22 @@ mod tests {
     #[test]
     fn the_tls_key_is_checked_under_every_custody_mode() {
         use crate::app::key_files_read_from_disk;
-        use crate::deployment_request::KeySourceKind;
 
-        // `Env` is omitted: it is rejected by the parser outside a
+        // `env` is omitted: it is rejected by the parser outside a
         // `dev_env_key_source` build, so it cannot be constructed here.
-        for source in [
-            KeySourceKind::File,
-            KeySourceKind::Pkcs11,
-            KeySourceKind::AwsKms,
-            KeySourceKind::GcpKms,
-        ] {
+        for source in ["file", "pkcs11", "aws-kms", "gcp-kms"] {
             let config = config_with(source, "/seed", "/tls.key");
             let (custody, tls_custody) = custody_states(&config);
             let checked = key_files_read_from_disk(&custody, &tls_custody);
             assert!(
                 checked.contains(&"/tls.key"),
-                "{source:?}: the TLS key lands on disk and must be permission-checked"
+                "{source}: the TLS key lands on disk and must be permission-checked"
             );
             // The SEED is read only where custody is file-based.
             assert_eq!(
                 checked.contains(&"/seed"),
-                source == KeySourceKind::File,
-                "{source:?}: the seed is checked iff it is actually read"
+                source == "file",
+                "{source}: the seed is checked iff it is actually read"
             );
         }
     }
@@ -1241,9 +1232,8 @@ mod tests {
     #[test]
     fn a_delegated_tls_key_contributes_no_file_to_check() {
         use crate::app::key_files_read_from_disk;
-        use crate::deployment_request::KeySourceKind;
 
-        let config = config_with(KeySourceKind::GcpKms, "", "");
+        let config = config_with("gcp-kms", "", "");
         let (custody, tls_custody) = custody_states(&config);
         assert!(
             key_files_read_from_disk(&custody, &tls_custody).is_empty(),
@@ -1333,11 +1323,7 @@ mod tests {
         if std::env::var_os(CHILD_MARKER).is_some() {
             // A config the validation boundary refuses, so `run` returns without opening a
             // socket. The route out does not matter — the drain is on all of them.
-            let mut config = config_with(
-                crate::deployment_request::KeySourceKind::File,
-                "/seed",
-                "/tls.key",
-            );
+            let mut config = config_with("file", "/seed", "/tls.key");
             config.target_uri = String::new();
 
             // Attributed records, so the unattributed ceiling cannot drop any of them and
@@ -1496,11 +1482,7 @@ mod tests {
                 IdentitySource::DnsSan,
             ),
         ] {
-            let mut config = config_with(
-                crate::deployment_request::KeySourceKind::File,
-                "/seed",
-                "/key",
-            );
+            let mut config = config_with("file", "/seed", "/key");
             config.identity_source = source;
             let (state, refusals) = classify_and_validate_binding(&config);
             assert!(refusals.is_empty(), "{source:?} refused: {refusals:?}");
@@ -1524,11 +1506,7 @@ mod tests {
             );
         }
 
-        let mut config = config_with(
-            crate::deployment_request::KeySourceKind::File,
-            "/seed",
-            "/key",
-        );
+        let mut config = config_with("file", "/seed", "/key");
         config.identity_source = IdentityPolicy::CnLegacy;
         assert!(
             classify_and_validate_binding(&config).0.is_none(),
@@ -1542,11 +1520,7 @@ mod tests {
     /// this point would hide whether the operator chose it or the host did.
     #[test]
     fn the_fleet_config_carries_the_topology_and_resolves_the_bind() {
-        let config = config_with(
-            crate::deployment_request::KeySourceKind::File,
-            "/seed",
-            "/key",
-        );
+        let config = config_with("file", "/seed", "/key");
         let basis = crate::config_state::in_flight_limit::classify(&config);
         let (_, shard_topology) = crate::config_state::topology::classify(&config);
         let fleet = super::fleet_config(&config, shard_topology, basis)
@@ -1576,11 +1550,7 @@ mod tests {
     /// about which of several address-shaped settings was rejected.
     #[test]
     fn an_unresolvable_bind_is_refused_and_names_the_flag() {
-        let mut config = config_with(
-            crate::deployment_request::KeySourceKind::File,
-            "/seed",
-            "/key",
-        );
+        let mut config = config_with("file", "/seed", "/key");
         config.bind = "missing-a-port".to_string();
 
         let refusal = super::fleet_config(

@@ -20,14 +20,20 @@ mod authorization;
 mod inner_backend_display;
 mod kinds;
 mod secret_string;
+mod signing_source;
 
 pub use authorization::AuthorizationRequest;
 pub(crate) use inner_backend_display::RedactedBackendUrls;
 pub use kinds::{
-    AdmissionKind, AuditSinkKind, AuthzKind, BindingKind, KeySourceKind, OcspKind,
-    VerifiedContextKind,
+    AdmissionKind, AuditSinkKind, AuthzKind, BindingKind, OcspKind, VerifiedContextKind,
 };
 pub use secret_string::SecretString;
+pub use signing_source::{
+    AwsKmsChannelKeyRequest, AwsKmsSigningSourceRequest, ChannelCredentialRequest,
+    DelegatedChannelKeyRequest, EnvironmentSigningSourceRequest, FileSigningSourceRequest,
+    GcpKmsChannelKeyRequest, GcpKmsSigningSourceRequest, Pkcs11ChannelKeyRequest,
+    Pkcs11SigningSourceRequest, ResponseSigningRequest, SigningSourceRequest,
+};
 
 use std::time::Duration;
 
@@ -69,10 +75,13 @@ pub struct DeploymentRequest {
     pub trust_domain: String,
     /// Optional audience route/tenant discriminator.
     pub route: Option<String>,
-    /// Where key material is read from.
-    pub key_source: KeySourceKind,
-    /// Location (path or env var) of the Base64URL Ed25519 signing-key seed.
-    pub signing_key_seed: String,
+    /// Which key signs this deployment's responses, and the mechanism holding it.
+    ///
+    /// One tagged value rather than a selector beside every provider's parameters: an AWS
+    /// selection has nowhere to put a GCP or PKCS#11 value, so the nine "belongs to a
+    /// different custody source" refusals that explained the flat shape no longer have a
+    /// configuration to refuse (ADR-MCPRE-067 §7).
+    pub response_signing: ResponseSigningRequest,
     /// Location of the PEM TLS server certificate chain.
     pub tls_cert: String,
     /// Location of the PEM TLS server private key.
@@ -290,90 +299,14 @@ pub struct DeploymentRequest {
     pub ingress_pinned_mtls: bool,
     /// Everything this deployment asks for on the authorization axis.
     pub authorization: AuthorizationRequest,
-    /// PKCS#11 module (provider `.so`/`.dylib`) path. Required when
-    /// `key_source == Pkcs11` (issue #4034).
-    pub pkcs11_module: Option<String>,
-    /// Path the PKCS#11 token User PIN is read from. Required when
-    /// `key_source == Pkcs11`.
+    /// Which key establishes this deployment's communication channel.
     ///
-    /// The PIN itself is deliberately NOT a field here. Two reasons, and the config
-    /// carrying the path rather than the value answers both:
-    ///
-    /// * There is no way to pass it on argv. A process's command line is world-readable
-    ///   on every platform this runs on (`ps`, `/proc/<pid>/cmdline`), so
-    ///   `--pkcs11-pin <pin>` published the credential that unlocks the token holding
-    ///   the response-signing (and optionally TLS) private keys to every local user for
-    ///   the lifetime of the process.
-    /// * [`DeploymentRequest`] derives `Debug` and is cloned freely, so a PIN stored here would
-    ///   ride along into any structured log, panic message, or debug print. Keeping only
-    ///   the path means there is nothing to redact.
-    ///
-    /// The file is read once, at key-source construction, into a short-lived
-    /// [`SecretString`], and is held to the same permission floor as the other key files
-    /// (`key_file_mode_is_insecure`) — the PIN is protected by the same mechanism as the
-    /// keys it unlocks.
-    pub pkcs11_pin_file: Option<String>,
-    /// PKCS#11 token label selecting the slot whose token holds the signing key
-    /// (token labels are stable across reboots; slot ids are not). Required when
-    /// `key_source == Pkcs11`.
-    pub pkcs11_token_label: Option<String>,
-    /// CKA_LABEL of the Ed25519 signing-key object on the token. Required when
-    /// `key_source == Pkcs11`.
-    pub pkcs11_key_label: Option<String>,
-    /// CKA_LABEL of the Ed25519 TLS-key object on the token (issue #59,
-    /// ADR-MCPS-028 §G). OPTIONAL and independent of `pkcs11_key_label` — a separate
-    /// security principal. When `Some`, the TLS handshake is DELEGATED to the
-    /// token-resident TLS key (the TLS private key never leaves the device) and an
-    /// exported `--tls-key` is rejected by [`validate_tls_signing_exclusivity`].
-    /// `None` keeps the file-backed TLS path (issue #4034). Only meaningful when
-    /// `key_source == Pkcs11`.
-    pub pkcs11_tls_key_label: Option<String>,
-    /// AWS region for the AWS KMS key source. Required when `key_source == AwsKms`
-    /// (ADR-MCPS-028 §B).
-    pub aws_kms_region: Option<String>,
-    /// AWS KMS key id / ARN / alias. Required when `key_source == AwsKms`.
-    pub aws_kms_key_id: Option<String>,
-    /// Optional AWS KMS endpoint override (emulator/test endpoint).
-    pub aws_kms_endpoint: Option<String>,
-    /// AWS KMS key id / ARN / alias of the SECOND, DISTINCT Ed25519 KMS key that
-    /// custodies the TLS server key (issue #60, ADR-MCPS-028 §G). OPTIONAL and
-    /// independent of `aws_kms_key_id` (the object-signing key) — a separate
-    /// security principal the operator SHOULD scope with a distinct authz policy.
-    /// When `Some`, the TLS handshake is DELEGATED to KMS (the TLS private key never
-    /// leaves KMS) and an exported `--tls-key` is rejected by
-    /// [`validate_tls_signing_exclusivity`]; `None` keeps the file-backed TLS path.
-    /// Only meaningful when `key_source == AwsKms` (reuses `--aws-kms-region` /
-    /// `--aws-kms-endpoint`).
-    pub aws_kms_tls_key_id: Option<String>,
-    /// Take the AWS KMS credentials from **IRSA** — exchange the projected
-    /// service-account token at `AWS_WEB_IDENTITY_TOKEN_FILE` for temporary
-    /// credentials via STS — instead of the static `AWS_ACCESS_KEY_ID` /
-    /// `AWS_SECRET_ACCESS_KEY` pair. The AWS counterpart of
-    /// `--gcp-kms-use-metadata`, and the flag that lets an EKS deployment hold no
-    /// long-lived IAM key material at all.
-    pub aws_kms_use_web_identity: bool,
-    /// Optional STS endpoint override for the IRSA exchange (tests/emulators).
-    /// Defaults to the REGIONAL `https://sts.<region>.amazonaws.com`.
-    pub aws_sts_endpoint: Option<String>,
-    /// GCP Cloud KMS key-version resource path
-    /// (`projects/.../cryptoKeyVersions/N`). Required when `key_source == GcpKms`
-    /// (ADR-MCPS-028 §C).
-    pub gcp_kms_key_version: Option<String>,
-    /// Optional GCP Cloud KMS endpoint override (emulator/test endpoint).
-    pub gcp_kms_endpoint: Option<String>,
-    /// GCP Cloud KMS key-version resource path of the SECOND, DISTINCT
-    /// `EC_SIGN_ED25519` key version that custodies the TLS server key (issue #61,
-    /// ADR-MCPS-028 §G). OPTIONAL and independent of `gcp_kms_key_version` (the
-    /// object-signing key) — a separate security principal the operator SHOULD scope
-    /// with a distinct IAM policy. When `Some`, the TLS handshake is DELEGATED to
-    /// Cloud KMS (the TLS private key never leaves KMS) and an exported `--tls-key`
-    /// is rejected by [`validate_tls_signing_exclusivity`]; `None` keeps the
-    /// file-backed TLS path. Only meaningful when `key_source == GcpKms` (reuses
-    /// `--gcp-kms-endpoint` / `--gcp-kms-use-metadata`).
-    pub gcp_kms_tls_key_version: Option<String>,
-    /// Use the GCE/GKE metadata server (workload identity) for the GCP KMS OAuth2
-    /// token instead of an operator-supplied `MCP_RE_GCP_ACCESS_TOKEN`.
-    pub gcp_kms_use_metadata: bool,
+    /// A separate role from [`response_signing`](Self::response_signing), and separate
+    /// structurally: the delegated channel key object is not reachable from the
+    /// response-signing selection and cannot be read where that key was meant
+    /// (ADR-MCPRE-067 §10). Absent means the exported posture, where the channel private
+    /// key is read from `tls_key`.
+    pub channel_credential: ChannelCredentialRequest,
     /// Connection resource limits (DoS defense).
     pub limits: ServerLimits,
     /// Maximum client-certificate lifetime (v1 revocation posture). Defaults to

@@ -195,7 +195,6 @@ pub fn validate_configuration(
     // PASS 2 — the relations between machines, asked of the RECOGNISED states rather than
     // of the fields again.
     let cross = crate::config_state::cross_machine::validate(
-        config.key_source,
         tls_custody.as_ref(),
         trust_revocation.as_ref(),
         config,

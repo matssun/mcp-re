@@ -149,7 +149,14 @@ fn the_boundary_refuses_in_this_order() {
     config.ocsp_responder_url = Some(String::new());
     config.authorization.revocation_list_paths = vec!["/deny.json".to_string()];
     config.authorization.kind = AuthzKind::Reference;
-    config.pkcs11_tls_key_label = Some("tls".to_string()); // with tls_key set: XOR violated
+    // With tls_key set: XOR violated.
+    config.channel_credential.delegated = Some(
+        mcp_re_proxy::deployment_request::DelegatedChannelKeyRequest::Pkcs11(
+            mcp_re_proxy::deployment_request::Pkcs11ChannelKeyRequest {
+                key_label: "tls".to_string(),
+            },
+        ),
+    );
     config.target_uri = String::new();
     config.trust_domain = String::new();
     config.audience = String::new();

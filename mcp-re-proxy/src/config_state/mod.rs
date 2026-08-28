@@ -66,6 +66,7 @@ pub mod evidence;
 pub mod freshness;
 pub mod in_flight_limit;
 pub mod key_file_access;
+pub(crate) mod kms_endpoint;
 pub mod mcp_transport_contract;
 pub mod replay;
 pub mod server_identity;
@@ -80,7 +81,7 @@ pub use admission::{AdmissionAvailability, AdmissionPosture, AdmissionState, Enf
 pub use authorization::{AuthorizationState, EnforcedAuthorization};
 pub use client_credential_window::ClientCredentialWindow;
 pub use continuation_control::ContinuationControlState;
-pub use custody::{AwsCredentialMode, CustodyMaterial, CustodyState};
+pub use custody::{AwsCredentialMode, CustodyMaterial, CustodyState, PrivateKeyExposure};
 pub use delegated_signing::DelegatedSigningFacts;
 pub use evidence::{AuditState, RetentionState, VerifiedContextState};
 pub use freshness::FreshnessWindow;
@@ -454,7 +455,13 @@ pub(crate) mod test_support {
     pub(crate) fn tls_custody_delegated_pkcs11(key_label: &str) -> super::TlsCustodyState {
         let mut config = legal_config();
         config.tls_key = String::new();
-        config.pkcs11_tls_key_label = Some(key_label.to_string());
+        config.channel_credential.delegated = Some(
+            crate::deployment_request::DelegatedChannelKeyRequest::Pkcs11(
+                crate::deployment_request::Pkcs11ChannelKeyRequest {
+                    key_label: key_label.to_string(),
+                },
+            ),
+        );
         super::tls_custody::classify_and_validate(&config)
             .0
             .expect("a delegated PKCS#11 TLS key names a state")
@@ -472,12 +479,14 @@ pub(crate) mod test_support {
     /// The custody state a deployment holding the signing key on a PKCS#11 token reaches.
     pub(crate) fn custody_pkcs11() -> super::CustodyState {
         let mut config = legal_config();
-        config.key_source = crate::deployment_request::KeySourceKind::Pkcs11;
-        config.signing_key_seed = String::new();
-        config.pkcs11_module = Some("/lib/softhsm.so".to_string());
-        config.pkcs11_pin_file = Some("/pin".to_string());
-        config.pkcs11_token_label = Some("token".to_string());
-        config.pkcs11_key_label = Some("signing".to_string());
+        config.response_signing.source = crate::deployment_request::SigningSourceRequest::Pkcs11(
+            crate::deployment_request::Pkcs11SigningSourceRequest {
+                module: Some("/lib/softhsm.so".to_string()),
+                pin_file: Some("/pin".to_string()),
+                token_label: Some("token".to_string()),
+                key_label: Some("signing".to_string()),
+            },
+        );
         super::custody::classify_and_validate(&config)
             .0
             .expect("a complete PKCS#11 custody configuration names a state")
@@ -597,7 +606,7 @@ mod tests {
             verified_context: VerifiedContextState::Trusted,
         });
         assert!(state.trust_revocation().has_networked_epoch());
-        assert!(state.custody().is_non_exporting_device());
+        assert_eq!(state.custody().exposure(), PrivateKeyExposure::NonExporting);
         assert!(state.tls_custody().is_delegated());
         // CF-12's negative control, at the level of the value itself: a linearizable
         // replay store and a shared continuation store are independently expressible.

@@ -14,14 +14,15 @@
 //! module: the configuration state machines read a request without depending on the parser.
 
 mod authorization_flags;
+mod signing_source_flags;
 
 use std::time::Duration;
 
 use mcp_re_core::VerificationKey;
 
 use crate::deployment_request::{
-    AdmissionKind, AuditSinkKind, BindingKind, DeploymentRequest, KeySourceKind, OcspKind,
-    SecretString, VerifiedContextKind,
+    AdmissionKind, AuditSinkKind, BindingKind, DeploymentRequest, OcspKind, SecretString,
+    VerifiedContextKind,
 };
 
 #[cfg(feature = "aws_kms_keysource")]
@@ -57,8 +58,8 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     let mut target_uri: Option<String> = None;
     let mut trust_domain: Option<String> = None;
     let mut route: Option<String> = None;
-    let mut key_source = KeySourceKind::File;
-    let mut signing_key_seed = None;
+    let mut signing_source = signing_source_flags::SigningSourceFlags::new();
+    let mut allow_group_readable_key_files = false;
     let mut tls_cert = None;
     let mut tls_key = None;
     let mut client_ca = None;
@@ -121,31 +122,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     let mut authorization = authorization_flags::AuthorizationFlags::new();
     // #4034 PKCS#11 key source: module path, User PIN (sensitive), token label,
     // and signing-key object label. Required only when `--key-source pkcs11`.
-    let mut pkcs11_module: Option<String> = None;
-    let mut pkcs11_pin_file: Option<String> = None;
-    let mut pkcs11_token_label: Option<String> = None;
-    let mut pkcs11_key_label: Option<String> = None;
-    // #59 PKCS#11 delegated TLS: optional SECOND token object holding the Ed25519
-    // TLS key. When set, TLS signing is delegated to the token (no exported key).
-    let mut pkcs11_tls_key_label: Option<String> = None;
-    // ADR-MCPS-028 §B AWS KMS: region + key id required when `--key-source aws-kms`;
-    // endpoint optional (emulator). Credentials come from AWS_* env vars.
-    let mut aws_kms_region: Option<String> = None;
-    let mut aws_kms_key_id: Option<String> = None;
-    let mut allow_group_readable_key_files = false;
-    let mut aws_kms_endpoint: Option<String> = None;
-    let mut aws_kms_tls_key_id: Option<String> = None;
-    // IRSA off by default (static AWS_* pair); opt in with
-    // `--aws-kms-use-web-identity`, the AWS twin of `--gcp-kms-use-metadata`.
-    let mut aws_kms_use_web_identity = false;
-    let mut aws_sts_endpoint: Option<String> = None;
-    // ADR-MCPS-028 §C GCP Cloud KMS: key-version resource path required when
-    // `--key-source gcp-kms`; endpoint optional; metadata-server token off by default
-    // (operator MCP_RE_GCP_ACCESS_TOKEN), opt in with `--gcp-kms-use-metadata`.
-    let mut gcp_kms_key_version: Option<String> = None;
-    let mut gcp_kms_endpoint: Option<String> = None;
-    let mut gcp_kms_tls_key_version: Option<String> = None;
-    let mut gcp_kms_use_metadata = false;
     let mut limits = ServerLimits::default();
     // v1 revocation posture: short-lived client certs, proxy-enforced. The default IS the
     // ceiling — an omitted flag lands on the strictest lifetime the boundary permits — so
@@ -169,19 +145,10 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     let mut i = 0;
     while i < args.len() {
         let flag = args[i].as_str();
-        // Valueless boolean flag (ADR-MCPS-028 §C): use the GCE/GKE metadata server
-        // (workload identity) for the GCP Cloud KMS OAuth2 token instead of an
-        // operator-supplied `MCP_RE_GCP_ACCESS_TOKEN`.
-        if flag == "--gcp-kms-use-metadata" {
-            gcp_kms_use_metadata = true;
-            i += 1;
-            continue;
-        }
-        // Valueless boolean flag (ADR-MCPS-028 §B): take the AWS KMS credentials from
-        // IRSA — exchange the projected service-account token for temporary ones —
-        // instead of a static AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY pair.
-        if flag == "--aws-kms-use-web-identity" {
-            aws_kms_use_web_identity = true;
+        // The signing-source family's two valueless flags: the GCE/GKE metadata server
+        // for the Cloud KMS OAuth2 token, and IRSA for the AWS KMS credentials. Both
+        // parameterize a mechanism payload, so the family reads them.
+        if signing_source.take_switch(flag) {
             i += 1;
             continue;
         }
@@ -232,29 +199,12 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
             "--target-uri" => target_uri = Some(value.clone()),
             "--trust-domain" => trust_domain = Some(value.clone()),
             "--route" => route = Some(value.clone()),
-            "--key-source" => {
-                key_source = match value.as_str() {
-                    "file" => KeySourceKind::File,
-                    // Env key material is a dev/CI-only security downgrade (visible to
-                    // the process tree). It EXISTS ONLY in a build with the
-                    // `dev_env_key_source` feature — a production build has no `env`
-                    // option at all, so there is no runtime knob to enable it.
-                    #[cfg(feature = "dev_env_key_source")]
-                    "env" => KeySourceKind::Env,
-                    "pkcs11" => KeySourceKind::Pkcs11,
-                    "aws-kms" => KeySourceKind::AwsKms,
-                    "gcp-kms" => KeySourceKind::GcpKms,
-                    other => {
-                        return Err(format!(
-                            "unknown --key-source '{other}' (file|pkcs11|aws-kms|gcp-kms)"
-                        ))
-                    }
-                }
+            // The signing-source family: the mechanism selection and every mechanism's
+            // parameters, assembled into the two typed role requests rather than carried
+            // on as provider-qualified siblings (ADR-MCPRE-067 §16).
+            flag if signing_source_flags::SigningSourceFlags::owns(flag) => {
+                signing_source.take(flag, value)?
             }
-            // #4034 PKCS#11 key source.
-            "--pkcs11-module" => pkcs11_module = Some(value.clone()),
-            // The PIN is read from a FILE, never argv. See `DeploymentRequest::pkcs11_pin_file`.
-            "--pkcs11-pin-file" => pkcs11_pin_file = Some(value.clone()),
             // Still recognised, only to REFUSE it with the reason and the replacement.
             // Falling through to "unknown flag" would be a worse error for the one
             // operator who most needs to understand what changed — and worse, it would
@@ -272,19 +222,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
                         .to_string(),
                 )
             }
-            "--pkcs11-token-label" => pkcs11_token_label = Some(value.clone()),
-            "--pkcs11-key-label" => pkcs11_key_label = Some(value.clone()),
-            "--pkcs11-tls-key-label" => pkcs11_tls_key_label = Some(value.clone()),
-            // ADR-MCPS-028 §B AWS KMS / §C GCP Cloud KMS key-source parameters.
-            "--aws-kms-region" => aws_kms_region = Some(value.clone()),
-            "--aws-kms-key-id" => aws_kms_key_id = Some(value.clone()),
-            "--aws-kms-endpoint" => aws_kms_endpoint = Some(value.clone()),
-            "--aws-kms-tls-key-id" => aws_kms_tls_key_id = Some(value.clone()),
-            "--aws-sts-endpoint" => aws_sts_endpoint = Some(value.clone()),
-            "--gcp-kms-key-version" => gcp_kms_key_version = Some(value.clone()),
-            "--gcp-kms-endpoint" => gcp_kms_endpoint = Some(value.clone()),
-            "--gcp-kms-tls-key-version" => gcp_kms_tls_key_version = Some(value.clone()),
-            "--signing-key-seed" => signing_key_seed = Some(value.clone()),
             "--tls-cert" => tls_cert = Some(value.clone()),
             "--tls-key" => tls_key = Some(value.clone()),
             "--client-ca" => client_ca = Some(value.clone()),
@@ -614,13 +551,12 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
 
     let require =
         |opt: Option<String>, name: &str| opt.ok_or_else(|| format!("missing required {name}"));
-    // #59/#60/#61: a delegated TLS selector makes the handshake key device-resident, and
+    // #59/#60/#61: a delegated channel key makes the handshake key device-resident, and
     // that decides whether `--tls-key` names a file this deployment reads. Read here
     // because it is what the struct literal below needs, not as a check: whether the two
     // custodies may be asserted together is relation X2b's.
-    let has_delegated_tls = pkcs11_tls_key_label.is_some()
-        || aws_kms_tls_key_id.is_some()
-        || gcp_kms_tls_key_version.is_some();
+    let has_delegated_tls = signing_source.has_delegated_channel_key();
+    let (response_signing, channel_credential) = signing_source.finish()?;
 
     // ADR-MCPRE-052 §4: the rotation window an operator did not state. Applying it is the
     // CLI's job — a default is what an omitted flag means — but choosing the values is not,
@@ -648,23 +584,7 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
         // with every other install that also never set it.
         trust_domain: require(trust_domain, "--trust-domain")?,
         route,
-        key_source,
-        // Required only where the seed is actually READ. Under a non-exporting
-        // custody (PKCS#11 / AWS KMS / GCP KMS) the response-signing key never leaves
-        // the device, and those sources thread this path only into the FileKeySource
-        // they use for TLS material — the seed accessor is never called. Requiring it
-        // there made every operator provision an Ed25519 root seed into every pod in
-        // exactly the mode chosen because no key should land in the pod, so a
-        // deployment's most sensitive file existed only to satisfy an argument parser.
-        // An explicitly-supplied path is still accepted and still permission-checked.
-        signing_key_seed: match key_source {
-            KeySourceKind::File | KeySourceKind::Env => {
-                require(signing_key_seed, "--signing-key-seed")?
-            }
-            KeySourceKind::Pkcs11 | KeySourceKind::AwsKms | KeySourceKind::GcpKms => {
-                signing_key_seed.unwrap_or_default()
-            }
-        },
+        response_signing,
         tls_cert: require(tls_cert, "--tls-cert")?,
         // #59: on the DELEGATED TLS path the TLS key is token-resident and never
         // read from disk, so an exported `--tls-key` is not merely optional — it is
@@ -711,22 +631,8 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
         ingress_audience,
         ingress_pinned_mtls,
         authorization: authorization.finish(),
-        pkcs11_module,
-        pkcs11_pin_file,
-        pkcs11_token_label,
-        pkcs11_key_label,
-        pkcs11_tls_key_label,
-        aws_kms_region,
-        aws_kms_key_id,
+        channel_credential,
         allow_group_readable_key_files,
-        aws_kms_endpoint,
-        aws_kms_tls_key_id,
-        aws_kms_use_web_identity,
-        aws_sts_endpoint,
-        gcp_kms_key_version,
-        gcp_kms_endpoint,
-        gcp_kms_tls_key_version,
-        gcp_kms_use_metadata,
         limits,
         max_client_cert_lifetime,
         fleet,
@@ -1177,14 +1083,51 @@ mod tests {
     use super::DeploymentRequest;
     use super::Duration;
     use super::IdentityPolicy;
-    use super::KeySourceKind;
     use super::OcspKind;
     use crate::config_state::validation::unsafe_config_violations;
     use crate::deployment_request::AuthzKind;
+    use crate::deployment_request::{
+        AwsKmsSigningSourceRequest, GcpKmsSigningSourceRequest, Pkcs11SigningSourceRequest,
+        SigningSourceRequest,
+    };
     use mcp_re_core::SigningKey;
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// The PKCS#11 payload a parse produced, or a panic naming what it produced instead.
+    ///
+    /// Reading the selection through a match rather than through a `key_source` field
+    /// beside it IS the property under test: the mechanism and its material are one value.
+    fn token_payload(config: &DeploymentRequest) -> &Pkcs11SigningSourceRequest {
+        match &config.response_signing.source {
+            SigningSourceRequest::Pkcs11(token) => token,
+            other => panic!("expected a PKCS#11 selection, got {other:?}"),
+        }
+    }
+
+    /// The AWS KMS payload a parse produced.
+    fn aws_payload(config: &DeploymentRequest) -> &AwsKmsSigningSourceRequest {
+        match &config.response_signing.source {
+            SigningSourceRequest::AwsKms(kms) => kms,
+            other => panic!("expected an AWS KMS selection, got {other:?}"),
+        }
+    }
+
+    /// The GCP Cloud KMS payload a parse produced.
+    fn gcp_payload(config: &DeploymentRequest) -> &GcpKmsSigningSourceRequest {
+        match &config.response_signing.source {
+            SigningSourceRequest::GcpKms(kms) => kms,
+            other => panic!("expected a GCP Cloud KMS selection, got {other:?}"),
+        }
+    }
+
+    /// The delegated channel key object a parse produced, if any.
+    fn channel_key(
+        config: &DeploymentRequest,
+    ) -> Option<&crate::deployment_request::DelegatedChannelKeyRequest> {
+        config.channel_credential.delegated.as_ref()
     }
 
     /// The admission-limit request holds `NonZeroUsize`, because both flags refuse 0.
@@ -2213,7 +2156,10 @@ mod tests {
             mcp_re_http_profile::VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW
         );
         assert!(config.mcp_protocol_versions.is_empty());
-        assert_eq!(config.key_source, KeySourceKind::File);
+        assert!(matches!(
+            config.response_signing.source,
+            SigningSourceRequest::File(_)
+        ));
         assert_eq!(config.binding, BindingKind::Exact);
         // Safe defaults: URI SAN identity, bounded resources.
         assert_eq!(config.identity_source, IdentityPolicy::UriSan);
@@ -2741,21 +2687,18 @@ mod tests {
         let mut a = minimal_durable();
         a.splice(0..0, pkcs11_flags());
         let config = parse_args(&a).expect("parse");
-        assert_eq!(config.key_source, KeySourceKind::Pkcs11);
+        let token = token_payload(&config);
         assert_eq!(
-            config.pkcs11_module.as_deref(),
+            token.module.as_deref(),
             Some("/opt/pkcs11/libmock_pkcs11.so")
         );
         assert_eq!(
-            config.pkcs11_pin_file.as_deref(),
+            token.pin_file.as_deref(),
             Some("/etc/mcp-re/pkcs11-pin"),
-            "the config carries the PIN's PATH; the PIN itself is not a DeploymentRequest field"
+            "the payload carries the PIN's PATH; the PIN itself is not a request field"
         );
-        assert_eq!(config.pkcs11_token_label.as_deref(), Some("mcp-re-test"));
-        assert_eq!(
-            config.pkcs11_key_label.as_deref(),
-            Some("mcp-re-response-signing")
-        );
+        assert_eq!(token.token_label.as_deref(), Some("mcp-re-test"));
+        assert_eq!(token.key_label.as_deref(), Some("mcp-re-response-signing"));
     }
 
     #[test]
@@ -2913,7 +2856,10 @@ mod tests {
         let mut a = minimal_durable();
         a.splice(0..0, pkcs11_flags());
         let config = parse_args(&a).expect("parse");
-        assert_eq!(config.key_source, KeySourceKind::Pkcs11);
+        assert!(matches!(
+            config.response_signing.source,
+            SigningSourceRequest::Pkcs11(_)
+        ));
         let err = key_source_from(&config)
             .err()
             .expect("default build must refuse a pkcs11 key source");
@@ -2948,7 +2894,10 @@ mod tests {
     #[test]
     fn file_key_source_is_always_constructible() {
         let config = parse_args(&minimal_durable()).expect("parse");
-        assert_eq!(config.key_source, KeySourceKind::File);
+        assert!(matches!(
+            config.response_signing.source,
+            SigningSourceRequest::File(_)
+        ));
         assert!(key_source_from(&config).is_ok());
     }
 
@@ -2978,12 +2927,9 @@ mod tests {
         let mut a = minimal_durable();
         a.splice(0..0, aws_kms_flags());
         let config = parse_args(&a).expect("parse");
-        assert_eq!(config.key_source, KeySourceKind::AwsKms);
-        assert_eq!(config.aws_kms_region.as_deref(), Some("us-east-1"));
-        assert_eq!(
-            config.aws_kms_key_id.as_deref(),
-            Some("alias/mcp-re-response-signing")
-        );
+        let kms = aws_payload(&config);
+        assert_eq!(kms.region.as_deref(), Some("us-east-1"));
+        assert_eq!(kms.key_id.as_deref(), Some("alias/mcp-re-response-signing"));
     }
 
     #[test]
@@ -3052,13 +2998,16 @@ mod tests {
         a.push("http://127.0.0.1:8080/mcp".to_string());
         a.extend(durable_replay());
         let config = parse_args(&a).expect("delegated TLS path parses without --tls-key");
-        assert_eq!(config.key_source, KeySourceKind::AwsKms);
-        assert_eq!(
-            config.aws_kms_tls_key_id.as_deref(),
-            Some("alias/mcp-re-tls-signing"),
-        );
-        // Distinct credential: the TLS key id differs from the object-signing key id.
-        assert_ne!(config.aws_kms_tls_key_id, config.aws_kms_key_id);
+        let response_key_id = aws_payload(&config).key_id.clone();
+        let Some(crate::deployment_request::DelegatedChannelKeyRequest::AwsKms(channel)) =
+            channel_key(&config)
+        else {
+            panic!("an AWS channel key was named and must be recorded as one");
+        };
+        assert_eq!(channel.key_id, "alias/mcp-re-tls-signing");
+        // Distinct credential: the channel key id differs from the response-signing one,
+        // and they are now two values of two types rather than two sibling options.
+        assert_ne!(Some(channel.key_id.clone()), response_key_id);
     }
 
     /// IRSA is OFF unless asked for. A deployment that did not name it must not get
@@ -3078,13 +3027,13 @@ mod tests {
         let mut a = minimal();
         a.splice(0..0, durable.clone());
         a.splice(0..0, aws_kms_flags());
-        assert!(!parse_args(&a).unwrap().aws_kms_use_web_identity);
+        assert!(!aws_payload(&parse_args(&a).unwrap()).use_web_identity);
 
         let mut a = minimal();
         a.splice(0..0, durable);
         a.splice(0..0, aws_kms_flags());
         a.splice(0..0, args(&["--aws-kms-use-web-identity"]));
-        assert!(parse_args(&a).unwrap().aws_kms_use_web_identity);
+        assert!(aws_payload(&parse_args(&a).unwrap()).use_web_identity);
     }
 
     /// A dangling `--aws-kms-use-web-identity` on another key source would silently
@@ -3147,13 +3096,13 @@ mod tests {
         let mut a = minimal_durable();
         a.splice(0..0, gcp_kms_flags());
         let config = parse_args(&a).expect("parse");
-        assert_eq!(config.key_source, KeySourceKind::GcpKms);
-        assert!(config
-            .gcp_kms_key_version
+        let kms = gcp_payload(&config);
+        assert!(kms
+            .key_version
             .as_deref()
-            .unwrap()
+            .expect("the GCP fixture names a key version")
             .ends_with("cryptoKeyVersions/1"));
-        assert!(!config.gcp_kms_use_metadata);
+        assert!(!kms.use_metadata);
     }
 
     #[test]
@@ -3220,14 +3169,19 @@ mod tests {
         a.push("http://127.0.0.1:8080/mcp".to_string());
         a.extend(durable_replay());
         let config = parse_args(&a).expect("delegated TLS path parses without --tls-key");
-        assert_eq!(config.key_source, KeySourceKind::GcpKms);
+        let response_key_version = gcp_payload(&config).key_version.clone();
+        let Some(crate::deployment_request::DelegatedChannelKeyRequest::GcpKms(channel)) =
+            channel_key(&config)
+        else {
+            panic!("a GCP channel key was named and must be recorded as one");
+        };
         assert_eq!(
-            config.gcp_kms_tls_key_version.as_deref(),
-            Some("projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/2"),
+            channel.key_version,
+            "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/2"
         );
-        // Distinct credential: the TLS key version differs from the object-signing
-        // key version.
-        assert_ne!(config.gcp_kms_tls_key_version, config.gcp_kms_key_version);
+        // Distinct credential: the channel key version differs from the response-signing
+        // one, and they are now two values of two types rather than two sibling options.
+        assert_ne!(Some(channel.key_version.clone()), response_key_version);
     }
 
     /// #61 / #58: `--gcp-kms-tls-key-version` (delegated) PLUS an exported
@@ -3291,7 +3245,10 @@ mod tests {
         let mut a = minimal_durable();
         a.splice(0..0, aws_kms_flags());
         let config = parse_args(&a).expect("parse");
-        assert_eq!(config.key_source, KeySourceKind::AwsKms);
+        assert!(matches!(
+            config.response_signing.source,
+            SigningSourceRequest::AwsKms(_)
+        ));
         let err = key_source_from(&config)
             .err()
             .expect("default build must refuse an aws-kms key source");
@@ -3308,7 +3265,10 @@ mod tests {
         let mut a = minimal_durable();
         a.splice(0..0, gcp_kms_flags());
         let config = parse_args(&a).expect("parse");
-        assert_eq!(config.key_source, KeySourceKind::GcpKms);
+        assert!(matches!(
+            config.response_signing.source,
+            SigningSourceRequest::GcpKms(_)
+        ));
         let err = key_source_from(&config)
             .err()
             .expect("default build must refuse a gcp-kms key source");
@@ -3411,9 +3371,14 @@ mod tests {
 
             let config =
                 parse_args(&a).unwrap_or_else(|e| panic!("{source} must not require a seed: {e}"));
-            assert_eq!(
-                config.signing_key_seed, "",
-                "{source}: an unsupplied seed stays empty rather than naming a phantom file"
+            // Stronger than "the seed stayed empty": a non-exporting mechanism's payload
+            // has no seed field at all, so there is no phantom file to name.
+            assert!(
+                !matches!(
+                    config.response_signing.source,
+                    SigningSourceRequest::File(_) | SigningSourceRequest::Environment(_)
+                ),
+                "{source}: a non-exporting selection must not be a seed-bearing one"
             );
         }
     }
@@ -4488,8 +4453,16 @@ mod tests {
         a.extend(durable_replay());
         let config = parse_args(&with_inner_http_url(a))
             .expect("delegated TLS path parses without --tls-key");
-        assert_eq!(config.pkcs11_tls_key_label.as_deref(), Some("mcp-re-tls"));
-        assert_eq!(config.key_source, super::KeySourceKind::Pkcs11);
+        let Some(crate::deployment_request::DelegatedChannelKeyRequest::Pkcs11(channel)) =
+            channel_key(&config)
+        else {
+            panic!("a PKCS#11 channel key was named and must be recorded as one");
+        };
+        assert_eq!(channel.key_label, "mcp-re-tls");
+        assert!(matches!(
+            config.response_signing.source,
+            SigningSourceRequest::Pkcs11(_)
+        ));
     }
 
     /// #59 / #58: `--pkcs11-tls-key-label` (delegated) PLUS an exported `--tls-key`
@@ -4609,7 +4582,7 @@ mod tests {
             "--gcp-kms-endpoint",
         ] {
             for endpoint in hostile {
-                let err = crate::config_state::custody::validated_kms_endpoint(flag, endpoint)
+                let err = crate::config_state::kms_endpoint::validated_kms_endpoint(flag, endpoint)
                     .expect_err("an authority carrying userinfo must be refused");
                 assert!(
                     err.contains(flag) && err.contains("userinfo"),
@@ -4619,8 +4592,13 @@ mod tests {
             }
         }
         // And through the two boundaries a config actually crosses: the argv match arms,
-        // and `kms_endpoint_refusals` for a `DeploymentRequest` built in code — the three fields are
-        // public, and an embedder reaches key-source construction without a parser.
+        // and `kms_endpoint_refusals` for a `DeploymentRequest` built in code — the payload
+        // fields are public, and an embedder reaches key-source construction without a
+        // parser.
+        //
+        // Three endpoint fields, examined across the two selections that can carry them:
+        // one request can no longer hold all three, because AWS and GCP are alternatives
+        // rather than siblings.
         for endpoint in hostile {
             for flag in ["--aws-kms-endpoint", "--gcp-kms-endpoint"] {
                 let err = with_kms_endpoint(flag, endpoint).expect_err("refused at parse");
@@ -4629,19 +4607,40 @@ mod tests {
                     "got {err:?}"
                 );
             }
-            let mut config =
-                with_kms_endpoint("--gcp-kms-endpoint", "https://kms.example.internal")
-                    .expect("the base config parses");
-            config.aws_kms_endpoint = Some(endpoint.to_string());
-            config.aws_sts_endpoint = Some(endpoint.to_string());
-            config.gcp_kms_endpoint = Some(endpoint.to_string());
-            let refusals = crate::config_state::custody::kms_endpoint_refusals(&config);
             assert_eq!(
-                refusals.len(),
-                3,
-                "{endpoint}: every endpoint field must be held to the rule, got {refusals:?}"
+                hostile_endpoint_refusals(SigningSourceRequest::AwsKms(
+                    AwsKmsSigningSourceRequest {
+                        region: Some("eu-north-1".to_string()),
+                        key_id: Some("alias/k".to_string()),
+                        endpoint: Some(endpoint.to_string()),
+                        use_web_identity: true,
+                        sts_endpoint: Some(endpoint.to_string()),
+                    }
+                ))
+                .len(),
+                2,
+                "{endpoint}: both AWS endpoint fields must be held to the rule"
+            );
+            assert_eq!(
+                hostile_endpoint_refusals(SigningSourceRequest::GcpKms(
+                    GcpKmsSigningSourceRequest {
+                        key_version: Some("projects/p/..".to_string()),
+                        endpoint: Some(endpoint.to_string()),
+                        use_metadata: false,
+                    }
+                ))
+                .len(),
+                1,
+                "{endpoint}: the GCP endpoint field must be held to the rule"
             );
         }
+    }
+
+    /// The endpoint refusals a programmatically built request produces for `source`.
+    fn hostile_endpoint_refusals(source: SigningSourceRequest) -> Vec<String> {
+        let mut config = parse_args(&minimal_durable()).expect("the base config parses");
+        config.response_signing.source = source;
+        crate::config_state::kms_endpoint::kms_endpoint_refusals(&config)
     }
 
     /// POSITIVE CONTROL for both refusals above, on all three flags.
@@ -4678,7 +4677,8 @@ mod tests {
             "--gcp-kms-endpoint",
         ] {
             for endpoint in legitimate {
-                let admitted = crate::config_state::custody::validated_kms_endpoint(flag, endpoint);
+                let admitted =
+                    crate::config_state::kms_endpoint::validated_kms_endpoint(flag, endpoint);
                 assert!(
                     admitted.is_ok(),
                     "{flag} {endpoint} is an endpoint an operator sets and must be accepted, \
@@ -4697,16 +4697,29 @@ mod tests {
                     "{flag} {endpoint} must parse"
                 );
             }
-            let mut config =
-                with_kms_endpoint("--gcp-kms-endpoint", "https://kms.example.internal")
-                    .expect("the base config parses");
-            config.aws_kms_endpoint = Some(endpoint.to_string());
-            config.aws_sts_endpoint = Some(endpoint.to_string());
-            config.gcp_kms_endpoint = Some(endpoint.to_string());
             assert_eq!(
-                crate::config_state::custody::kms_endpoint_refusals(&config),
+                hostile_endpoint_refusals(SigningSourceRequest::AwsKms(
+                    AwsKmsSigningSourceRequest {
+                        region: Some("eu-north-1".to_string()),
+                        key_id: Some("alias/k".to_string()),
+                        endpoint: Some(endpoint.to_string()),
+                        use_web_identity: true,
+                        sts_endpoint: Some(endpoint.to_string()),
+                    }
+                )),
                 Vec::<String>::new(),
-                "{endpoint} must be admissible on all three fields"
+                "{endpoint} must be admissible on both AWS endpoint fields"
+            );
+            assert_eq!(
+                hostile_endpoint_refusals(SigningSourceRequest::GcpKms(
+                    GcpKmsSigningSourceRequest {
+                        key_version: Some("projects/p/..".to_string()),
+                        endpoint: Some(endpoint.to_string()),
+                        use_metadata: false,
+                    }
+                )),
+                Vec::<String>::new(),
+                "{endpoint} must be admissible on the GCP endpoint field"
             );
         }
     }

@@ -8,16 +8,18 @@
 //! | `Exported` | `tls_key` | every delegated selector | — |
 //! | `Delegated` | the selector matching `Custody` (X2a) | a non-empty `tls_key` (X2b) |
 //!
-//! Separate from `Custody` because the two keys are separate: a deployment may hold its
-//! response-signing key in a KMS while its TLS key is a file, and the reverse. What ties
-//! them is that the delegated selector is expressed per custody backend, which is why
-//! X2a is a relation between the machines rather than a column inside either.
+//! Separate from `Custody` because the two keys are separate ROLES: a deployment may hold
+//! its response-signing key in a KMS while its TLS key is a file, and the reverse. What
+//! ties them is that a delegated key object names a backend this deployment must already
+//! reach, which is why X2a is a relation between the machines rather than a column inside
+//! either — and why the request models the two roles as two values rather than reusing one
+//! provider discriminator for both (ADR-MCPRE-067 §10).
 //!
 //! The forbidden cell of `Delegated` is the one that matters: a configuration asserting
 //! both custodies says the handshake key never leaves the device AND that a file copy of
 //! it exists — the exact belief the delegated modes are chosen to make true, being false.
 
-use crate::deployment_request::DeploymentRequest;
+use crate::deployment_request::{DelegatedChannelKeyRequest, DeploymentRequest};
 
 /// Which key object a delegated handshake signature is made with.
 ///
@@ -132,23 +134,16 @@ impl TlsCustodyState {
 /// `classify_and_validate` refuses below. `Delegated` is never fallible: the selector whose
 /// presence names the state IS the material it needs.
 ///
-/// Two selectors at once picks the first in this fixed order, and that choice is never
-/// observed: a configuration naming two of them has at least one that does not match its
-/// `Custody` source, so X2a refuses it and the state is discarded with the refusal.
+/// The request names at most ONE delegated key object, so there is no order to pick from:
+/// [`DelegatedChannelKeyRequest`] is a tagged union, and a configuration that once named
+/// two selectors at once no longer has two places to name them.
 fn classify(config: &DeploymentRequest) -> Option<TlsCustodyState> {
-    let delegated = |selector| {
-        Some(TlsCustodyState {
-            kind: TlsCustodyKind::Delegated { selector },
-        })
-    };
-    if let Some(key_label) = config.pkcs11_tls_key_label.clone() {
-        return delegated(DelegatedTlsKey::Pkcs11 { key_label });
-    }
-    if let Some(key_id) = config.aws_kms_tls_key_id.clone() {
-        return delegated(DelegatedTlsKey::AwsKms { key_id });
-    }
-    if let Some(key_version) = config.gcp_kms_tls_key_version.clone() {
-        return delegated(DelegatedTlsKey::GcpKms { key_version });
+    if let Some(delegated) = config.channel_credential.delegated.as_ref() {
+        return Some(TlsCustodyState {
+            kind: TlsCustodyKind::Delegated {
+                selector: selector_of(delegated),
+            },
+        });
     }
     if config.tls_key.is_empty() {
         return None;
@@ -158,6 +153,21 @@ fn classify(config: &DeploymentRequest) -> Option<TlsCustodyState> {
             key_path: config.tls_key.clone(),
         },
     })
+}
+
+/// Read the requested channel key object into this machine's own representation.
+fn selector_of(request: &DelegatedChannelKeyRequest) -> DelegatedTlsKey {
+    match request {
+        DelegatedChannelKeyRequest::Pkcs11(token) => DelegatedTlsKey::Pkcs11 {
+            key_label: token.key_label.clone(),
+        },
+        DelegatedChannelKeyRequest::AwsKms(kms) => DelegatedTlsKey::AwsKms {
+            key_id: kms.key_id.clone(),
+        },
+        DelegatedChannelKeyRequest::GcpKms(kms) => DelegatedTlsKey::GcpKms {
+            key_version: kms.key_version.clone(),
+        },
+    }
 }
 
 /// Classify the requested TLS-custody state and check its local columns.
@@ -185,7 +195,21 @@ pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<TlsCustodySt
 mod tests {
     use super::*;
     use crate::config_state::test_support::legal_config;
-    use crate::deployment_request::KeySourceKind;
+    use crate::deployment_request::{
+        AwsKmsChannelKeyRequest, GcpKmsChannelKeyRequest, Pkcs11ChannelKeyRequest,
+    };
+
+    /// Name a delegated channel key object. Which response-signing mechanism it must
+    /// accompany is relation X2a's, not this machine's.
+    fn delegate(config: &mut DeploymentRequest, key: DelegatedChannelKeyRequest) {
+        config.channel_credential.delegated = Some(key);
+    }
+
+    fn pkcs11_channel_key(label: &str) -> DelegatedChannelKeyRequest {
+        DelegatedChannelKeyRequest::Pkcs11(Pkcs11ChannelKeyRequest {
+            key_label: label.to_string(),
+        })
+    }
 
     /// A selector this machine must record, and the configuration that requests it.
     type Form = (DelegatedTlsKey, fn(&mut DeploymentRequest));
@@ -206,8 +230,9 @@ mod tests {
         assert!(violations.is_empty(), "{violations:?}");
     }
 
-    /// One machine, three selectors — and the state now says WHICH one delegated it, so
-    /// nothing downstream tests three `Option`s to find out.
+    /// One machine, three key objects — and the state says WHICH one delegated it, so
+    /// nothing downstream tests three `Option`s to find out. The request no longer has
+    /// three either: [`DelegatedChannelKeyRequest`] is one tagged value.
     #[test]
     fn any_backends_selector_names_the_same_state_and_records_itself() {
         let cases: Vec<Form> = vec![
@@ -215,18 +240,19 @@ mod tests {
                 DelegatedTlsKey::Pkcs11 {
                     key_label: "tls".to_string(),
                 },
-                |c| {
-                    c.key_source = KeySourceKind::Pkcs11;
-                    c.pkcs11_tls_key_label = Some("tls".to_string());
-                },
+                |c| delegate(c, pkcs11_channel_key("tls")),
             ),
             (
                 DelegatedTlsKey::AwsKms {
                     key_id: "alias/tls".to_string(),
                 },
                 |c| {
-                    c.key_source = KeySourceKind::AwsKms;
-                    c.aws_kms_tls_key_id = Some("alias/tls".to_string());
+                    delegate(
+                        c,
+                        DelegatedChannelKeyRequest::AwsKms(AwsKmsChannelKeyRequest {
+                            key_id: "alias/tls".to_string(),
+                        }),
+                    );
                 },
             ),
             (
@@ -234,8 +260,12 @@ mod tests {
                     key_version: "projects/p/..".to_string(),
                 },
                 |c| {
-                    c.key_source = KeySourceKind::GcpKms;
-                    c.gcp_kms_tls_key_version = Some("projects/p/..".to_string());
+                    delegate(
+                        c,
+                        DelegatedChannelKeyRequest::GcpKms(GcpKmsChannelKeyRequest {
+                            key_version: "projects/p/..".to_string(),
+                        }),
+                    );
                 },
             ),
         ];
@@ -285,8 +315,7 @@ mod tests {
     fn the_delegated_state_does_not_want_that_key() {
         let (state, violations) = run(|c| {
             c.tls_key = String::new();
-            c.key_source = KeySourceKind::Pkcs11;
-            c.pkcs11_tls_key_label = Some("tls".to_string());
+            delegate(c, pkcs11_channel_key("tls"));
         });
         assert!(state.is_some_and(|s| s.is_delegated()));
         assert!(violations.is_empty(), "{violations:?}");

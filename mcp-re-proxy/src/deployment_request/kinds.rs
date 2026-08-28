@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The selector vocabulary a deployment request is written in.
 //!
-//! Each enum names the alternatives for one deployment question — where key material is
-//! kept, whether admission is enforced, what the transport binds. They are the request's
+//! Each enum names the alternatives for one deployment question — whether admission is
+//! enforced, what the transport binds, where the security record goes. They are the request's
 //! own vocabulary rather than the CLI's: an option spelling maps ONTO one of these, and
 //! nothing here knows that a command line exists. That is what lets the configuration
 //! state model read a request without depending on the parser that usually builds one.
@@ -10,35 +10,6 @@
 //! Not every variant is a deployment a `ValidatedDeployment` can be in. [`BindingKind`]
 //! has three the boundary refuses outright; they are input forms the model must be able to
 //! REPRESENT in order to refuse, which is a different thing from admitting them.
-
-/// Where key material is read from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeySourceKind {
-    /// Files on disk (locations are paths).
-    File,
-    /// Environment variables (locations are variable names).
-    Env,
-    /// PKCS#11 token (issue #4034): the Ed25519 response-signing key lives on a
-    /// hardware/software token and is exercised only via `C_Sign` — it never
-    /// leaves the device. The TLS cert/key/CA still come from files in this
-    /// build. Honored ONLY in a build with the `pkcs11_keysource` feature; a
-    /// default build parses it but FAILS CLOSED at construction (mirrors `Env`).
-    Pkcs11,
-    /// AWS KMS (ADR-MCPS-028 §B): the Ed25519 response-signing key lives in AWS KMS
-    /// and is exercised only via `Sign` — it never leaves KMS. The TLS cert/key/CA
-    /// still come from files in this build (`--signing-key-seed` is accepted but
-    /// UNUSED, as with `Pkcs11`). Credentials come from the standard AWS env vars.
-    /// Honored ONLY in a build with the `aws_kms_keysource` feature; a default build
-    /// parses it but FAILS CLOSED at construction (mirrors `Pkcs11`).
-    AwsKms,
-    /// GCP Cloud KMS (ADR-MCPS-028 §C): the Ed25519 response-signing key lives in
-    /// Cloud KMS and is exercised only via `asymmetricSign`. TLS material is from
-    /// files (`--signing-key-seed` accepted but UNUSED). The OAuth2 bearer comes
-    /// from `MCP_RE_GCP_ACCESS_TOKEN` or the metadata server (`--gcp-kms-use-metadata`).
-    /// Honored ONLY in a build with the `gcp_kms_keysource` feature; a default build
-    /// parses it but FAILS CLOSED at construction.
-    GcpKms,
-}
 
 /// Replay-cache backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
