@@ -135,12 +135,16 @@ baseline_prod_loc = 1108
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
+# MCPRE-154 relocated the shutdown-drain authority and the EX-002 census was re-run on the
+# result: one authority remains and it is the composition root itself, so the disposition
+# moves `reviewed-action-required` -> `reviewed-exception`. An exception is not a licence to
+# grow — the ratchet applies to this entry exactly as it does to an unreviewed one.
 [[debt]]
 # MCPRE-154 relocated the audit-drain authority (EX-002 authority A): 1037 -> 977.
 path = "mcp-re-proxy/src/app.rs"
 baseline_prod_loc = 977
 baseline_sha = "d1fc5fa"
-status = "reviewed-action-required"
+status = "reviewed-exception"
 review_ref = "EX-002 in docs/architecture/review-dispositions.md"
 
 [[debt]]

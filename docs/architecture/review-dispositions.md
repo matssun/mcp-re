@@ -209,6 +209,63 @@ that 290 of those are code and the rest is the exception argument. A file-level 
 therefore a poor proxy for a file-level authority count here — which is ADR-061 §7 in one
 unit: **size ordered this investigation; it did not decide it.**
 
+### EX-002 re-census after MCPRE-154 — **disposition changes to `reviewed-exception`**
+
+The census this record declined to close is re-run, on the post-relocation tree, at **977**
+production lines. Authority G has left for `crate::audit_sink::drain` with its constant, its
+bounded wait and its two-valued outcome, and `app.rs` now calls one operation and
+reinterprets nothing.
+
+### §8 question 2 — how many independently describable authorities?
+
+**One**, and it is the composition root itself.
+
+| # | unit | decides | verdict |
+|---|---|---|---|
+| A | `run` / `run_validated` / `fleet_config` / `serve_fleet` | the order of effects, and the scope in which failure reclaims | **the composition root**; case-B, substantiated at `run_validated` |
+| B | `build_actor_resolver` | which resolver answers which `SignerSlot` | composition — wires owner-provided seams; R-COMPOSE permits it |
+| C | `check_key_file_perms` / `process_gids` | nothing — `KeyFileAccessPolicy::violation` decides | I/O the owner cannot perform |
+| D | `key_files_read_from_disk` | nothing — a pure projection over two custody states | already pure and separately tested |
+| E | `faulted_clock_refusal` | nothing — composes two owners' answers | composition |
+| F | `channel_binding_effects` | nothing — a total function of the recognised `ChannelBindingState` | composition |
+
+B through F were closed by the original census and are not re-argued. What changed is that
+the one row that was **not** composition is gone, so the answer to question 2 is no longer
+greater than one.
+
+### Why this is now a B-case
+
+The original record's reason for declining was specific and it has been discharged: *an
+authority with its own constant, its own two-valued semantics, its own tests, and an
+existing owner next door is not a unit deliberately kept intact — it is one nobody has
+moved.* It has been moved.
+
+What remains is a composition root and five thin projections over it, and R-COMPOSE
+explicitly permits a root to combine owner-provided facts. Decomposing further would
+relocate flat authority rather than remove it — the shape ADR-MCPRE-061 §3.4 warns against
+— because there is no second authority left to give the pieces to.
+
+**Size did not decide this.** 977 lines is not the argument, and it is worth saying why the
+number is a poor proxy here: `run_validated` is 531 of them and its own comment records that
+290 are code and the rest is the exception argument it carries at the item. A file-level line
+count that is 55% one function's justification text is measuring documentation.
+
+### What the exception does NOT cover
+
+Review granularity equals exception granularity, in both directions. This record grants a
+**file-level** exception to `app.rs`; it does not extend to any function inside it, and
+`run_validated` keeps its own separately-substantiated item-level exception on
+`clippy::too_many_lines`. Neither licenses growth: the ratchet applies to a
+`reviewed-exception` entry exactly as it does to an unreviewed one.
+
+One item is recorded as INBOUND rather than outbound: EX-007's disposition moves
+`key_file_mode_is_insecure` **to** whichever owner performs the permission check, which is
+authority C here. That is a cli.rs slice, and it will make this file's composition slightly
+larger rather than smaller.
+
+**Remediation [#592](https://github.com/matssun/mcp-re/issues/592) is complete.**
+
+
 ---
 
 ## EX-003 — `mcp-re-http-profile/src/verify.rs` — **census complete, disposition: decompose first**
