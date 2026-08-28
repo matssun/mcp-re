@@ -524,6 +524,9 @@ paths = [
   "mcp-re-http-profile/src/ids.rs",
   "mcp-re-http-profile/src/verus_std_specs.rs",
 ]
+# The contract URI is an IDENTITY, not a path, and eight `assumptions.toml` entries name
+# it. `check_params` moved to `verify/floor/params.rs`; renaming the URI to follow would
+# change what those entries refer to in exchange for cosmetic agreement with a file path.
 exported_contracts = ["contract://http_profile/verify/check_params"]
 evidence = [
   "test://http_profile/verify/freshness_window_vectors",
@@ -542,7 +545,7 @@ tested_symbols = [
   "tests/proof_path_test#degenerate_window_fails_closed_regardless_of_skew",
   "tests/proof_path_test#the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not",
 ]
-proved_symbols = ["mcp_re_http_profile::verify::check_params"]
+proved_symbols = ["mcp_re_http_profile::verify::floor::params::check_params"]
 features = ["verify"]
 pilot = "verus-pilot"
 
