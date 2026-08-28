@@ -39,7 +39,7 @@ use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 
-use crate::response::TrustedIssuerSet;
+use crate::delegated_trust::TrustedIssuerSet;
 
 /// A ROOT issuer listed in a manifest (a trust anchor): its `issuer_kid`, its raw
 /// Ed25519 public key (base64url-no-pad), and the actor identity it anchors.

@@ -8,7 +8,16 @@
 use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::SignerSlot;
 
-use crate::response::RevocationSource;
+/// Which ROOT issuers anchor a credential, and for how long — the other half.
+mod anchors;
+/// The trust document's own lifetime, which outranks every root inside it.
+mod manifest_validity;
+/// Which credential identifiers are revoked — one half of the authority.
+mod revocation;
+
+pub use anchors::TrustedIssuerSet;
+pub use revocation::RevocationSource;
+pub use revocation::StaticRevocationList;
 
 /// The delegated-response TRUST AUTHORITY: one value that answers both *which root
 /// issuer resolves* and *which identifiers are revoked* (MCPRE-172, from the #580
