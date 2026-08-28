@@ -61,6 +61,10 @@ mod reply;
 /// The backend seam, and what the exchange may claim about execution given what it
 /// managed to do.
 mod inner_plane;
+
+/// Durable responsibility for a served exchange: taken before the side effects run, and
+/// discharged with what was actually served.
+mod retention;
 pub use body_boundary::extract_request_state;
 use body_boundary::ForwardedBody;
 use continuation::Retirement;
@@ -209,7 +213,7 @@ pub struct HttpProfileProxy {
     /// retained BEFORE the response is handed back, and a retention failure refuses the
     /// exchange — a deployment that has turned this on is asserting it can account for
     /// what it served.
-    retention: Option<Arc<crate::transparency::EvidenceRetention>>,
+    retention: retention::Retention,
 }
 
 impl HttpProfileProxy {
@@ -235,7 +239,7 @@ impl HttpProfileProxy {
         mut self,
         retention: Arc<crate::transparency::EvidenceRetention>,
     ) -> Self {
-        self.retention = Some(retention);
+        self.retention = retention::Retention::to(retention);
         self
     }
 
@@ -270,7 +274,7 @@ impl HttpProfileProxy {
             authorization: AuthorizationStage::default(),
             audit: None,
             admission: None,
-            retention: None,
+            retention: retention::Retention::none(),
         }
     }
 
@@ -760,55 +764,6 @@ impl HttpProfileProxy {
         ))
     }
 
-    /// RETENTION-RESERVED — take durable responsibility BEFORE the side effects run.
-    ///
-    /// ```text
-    /// ensures   Ok  => the crossing of the execution threshold is itself durable
-    ///           Err => 503, bound
-    /// forbids   running the backend
-    /// refusal   THE LAST FREE ONE — nothing between it and the dispatch can refuse, and
-    ///           past the dispatch no refusal can say nothing happened
-    /// ```
-    ///
-    /// Ordered AFTER the inner-plane question for that reason. The marker this writes is
-    /// durable and is erased only by `complete`, so a free refusal downstream of it would
-    /// leave on disk the record that a request crossed the execution threshold when it
-    /// provably never reached a backend — and one such file per refusal, in a store with
-    /// no expiry, for as long as the plane stays saturated.
-    ///
-    /// NOT a probe: it does not claim the later write will succeed, because nothing can —
-    /// the backend and the store share no transaction. The write runs on the retention
-    /// writer thread and this future AWAITS its acknowledgement, so the core keeps serving
-    /// while the fsync is in progress. Awaiting is not optional: dispatching before the
-    /// marker is durable would make the reservation a hint rather than a record.
-    ///
-    /// Returns a `RetentionDisposition`, not an `Option`: "this deployment retains nothing"
-    /// and "a reservation is missing" are different facts, and collapsing them is what used
-    /// to require a guard on the completion path to tell them apart (ADR-MCPRE-058 §9.6).
-    async fn reserve_retention_stage(
-        &self,
-        ex: &Exchange<'_>,
-    ) -> Result<Established<RetentionDisposition>, Refusal> {
-        let reserved =
-            |d: RetentionDisposition| Established::new(d, ExchangeEvent::RetentionReserved);
-        let Some(retention) = self.retention.as_ref() else {
-            return Ok(reserved(RetentionDisposition::NotConfigured));
-        };
-        match retention.reserve(ex.http_req).await {
-            Ok(reservation) => Ok(reserved(RetentionDisposition::Reserved(reservation))),
-            Err(e) => {
-                eprintln!(
-                    "evidence retention could not accept the exchange, refusing before \
-                     dispatch: {e}"
-                );
-                Err(Refusal::after_admission(
-                    McpReError::EvidenceRetentionUnavailable,
-                    503,
-                ))
-            }
-        }
-    }
-
     /// RESPONSE-SIGNED — the enforcement boundary puts its signature on the reply.
     ///
     /// ```text
@@ -1033,7 +988,7 @@ impl HttpProfileProxy {
             Ok(accepted) => progress.establish(accepted),
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         }
-        let retention = match self.reserve_retention_stage(&ex).await {
+        let retention = match self.retention.reserve(ex.http_req).await {
             Ok(disposition) => progress.establish(disposition),
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         };
@@ -1234,36 +1189,24 @@ impl HttpProfileProxy {
         execution: ExecutionDisposition,
         snapshot: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
     ) -> Option<ServedHttpResponse> {
-        let reservation = match retention_owed {
-            RetentionDisposition::NotConfigured => return None,
-            RetentionDisposition::Reserved(reservation) => reservation,
+        let Err(refusal) = self
+            .retention
+            .complete(retention_owed, request, response)
+            .await
+        else {
+            return None;
         };
-        // A disposition can only be `Reserved` if `self.retention` was present when it was
-        // built, and the store is owned for the proxy's whole life.
-        let retention = self.retention.as_ref()?;
-        match retention.complete(reservation, request, response).await {
-            Ok(_) => None,
-            Err(e) => {
-                // The backend has already run. Answering 503 here is what made a
-                // transient store fault into repeated execution: 503 is the status
-                // clients retry, and the retry's fresh nonce passes replay admission.
-                eprintln!(
-                    "evidence retention failed AFTER the call executed; the exchange is \
-                     indeterminate and MUST NOT be blindly retried: {e}"
-                );
-                Some(self.responses.response_rejection(
-                    &self.audit,
-                    request,
-                    &RefusalCause::from(McpReError::EvidenceRetentionIndeterminate),
-                    500,
-                    now,
-                    bound,
-                    Some(actor_id),
-                    execution,
-                    snapshot,
-                ))
-            }
-        }
+        Some(self.responses.response_rejection(
+            &self.audit,
+            request,
+            &refusal.cause,
+            refusal.status,
+            now,
+            bound,
+            Some(actor_id),
+            execution,
+            snapshot,
+        ))
     }
 }
 

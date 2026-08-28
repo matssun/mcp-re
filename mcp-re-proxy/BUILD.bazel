@@ -260,6 +260,7 @@ _PROXY_LIB_SRCS = [
     "src/http_profile_serve/continuation/open_leg.rs",
     "src/http_profile_serve/inner_plane.rs",
     "src/http_profile_serve/reply.rs",
+    "src/http_profile_serve/retention.rs",
     "src/http_profile_serve/signing_window.rs",
     # ADR-MCPRE-052 §4 / ADR-MCPS-035 §9: what the proxy asserts under its own credential
     # when it refuses — the posture, the record it is, and how the artifact is built.
