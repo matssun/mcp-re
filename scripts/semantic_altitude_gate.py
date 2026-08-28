@@ -23,8 +23,8 @@ check can honestly enforce.
 
 ## Why it carries a registry of families not yet migrated
 
-`DeploymentRequest` still has OCSP and CRL siblings. Those are ADR Phase 5 and are listed
-in `NOT_YET_MIGRATED` with the phase that owns them. The gate
+`DeploymentRequest` still has one ingress sibling, `ingress_pinned_mtls`. It is ADR Phase 6
+and is listed in `NOT_YET_MIGRATED` with the phase that owns it. The gate
 therefore states what it does NOT check, rather than passing silently over it: an
 unlisted family is refused, and a family whose fields have all left must be removed from
 the registry — so the list can only shrink, and finishing a phase is a visible edit here.
@@ -60,6 +60,11 @@ MIGRATED: dict[str, str] = {
     "irsa": "ADR-MCPRE-067 Phase 2 — AwsKmsSigningSourceRequest::use_web_identity",
     "spiffe": "no mechanism payload exists; a new one must not start as a sibling field",
     "spire": "no mechanism payload exists; a new one must not start as a sibling field",
+    "ocsp": (
+        "ADR-MCPRE-067 Phase 5 — OcspResponderRequest, inside "
+        "OnlineRevocationEvidenceRequest::Required"
+    ),
+    "crl": "ADR-MCPRE-067 Phase 5 — RevocationListRequest, inside PeerRevocationRequest",
     "redis": (
         "ADR-MCPRE-067 Phase 4 — RedisStoreRequest, inside the role's own storage request"
     ),
@@ -80,12 +85,76 @@ MIGRATED: dict[str, str] = {
 #: Fields matching these are reported as KNOWN and not refused. The registry may only
 #: shrink: a family with no matching field left must be deleted from it.
 NOT_YET_MIGRATED: dict[str, str] = {
-    "ocsp": "Phase 5 — revocation",
-    "crl": "Phase 5 — revocation",
     "mtls": "Phase 6 — the ingress-assertion inputs, which no proving slice has reached",
 }
 
 FIELD = re.compile(r"^\s*pub ([a-z][a-z0-9_]*)\s*:", re.MULTILINE)
+
+#: The semantic layers. Nothing here may depend on a mechanism adapter: the arrows run
+#: semantic -> mechanism, never back (ADR-MCPRE-067 §20). This is the property a name is a
+#: proxy for, and it is checked structurally rather than by spelling.
+SEMANTIC_LAYERS = (
+    Path("mcp-re-proxy/src/deployment_request"),
+    Path("mcp-re-proxy/src/config_state"),
+    Path("mcp-re-proxy/src/communication_assurance"),
+    Path("mcp-re-proxy/src/authorization"),
+)
+
+#: Crate modules that ARE mechanism adapters. A semantic module importing one has inverted
+#: the dependency direction — the check is on the import, not on any word in a name.
+MECHANISM_MODULES = frozenset(
+    {
+        "aws_kms_keysource",
+        "aws_sigv4",
+        "aws_sts",
+        "gcp_kms_keysource",
+        "pkcs11_keysource",
+        "pkcs11_native",
+        "kms_keysource",
+        "key_source",
+        "ocsp",
+        "outbound_fetch",
+        "redis_store",
+        "async_redis_store",
+        "etcd_store",
+        "async_etcd_store",
+        "tls_plane",
+        "tls_listener_state",
+        "delegated_tls",
+        "trust_plane",
+        "signing_plane",
+        "http_profile_dispatch",
+    }
+)
+
+IMPORT = re.compile(r"^\s*use crate::([a-z][a-z0-9_]*)", re.MULTILINE)
+
+
+def dependency_direction_problems() -> list[str]:
+    """Semantic modules importing a mechanism adapter, if any.
+
+    A count of zero is the Phase-1 measurement holding, not an unexamined boundary: the
+    scope is printed on success, and an empty scope is itself a failure.
+    """
+    problems: list[str] = []
+    examined = 0
+    for layer in SEMANTIC_LAYERS:
+        for source in sorted((REPO / layer).rglob("*.rs")):
+            examined += 1
+            text = source.read_text(encoding="utf-8")
+            for module in sorted(set(IMPORT.findall(text)) & MECHANISM_MODULES):
+                problems.append(
+                    f"{source.relative_to(REPO)} imports the mechanism adapter "
+                    f"`crate::{module}`. The semantic layers depend on mechanisms only "
+                    f"through an injected seam; the arrow runs one way "
+                    f"(ADR-MCPRE-067 §20)"
+                )
+    if not examined:
+        problems.append(
+            "the dependency-direction check examined ZERO files — the semantic layers "
+            "moved and the scope was not updated, so this gate is measuring nothing"
+        )
+    return problems
 
 
 def request_fields(text: str) -> list[str]:
@@ -160,9 +229,9 @@ def selftest() -> int:
         "    pub aws_kms_region: Option<String>,\n"
         "    pub tls_key: String,\n"
         "    pub client_crl_paths: Vec<String>,\n"
+        "    pub ingress_pinned_mtls: bool,\n"
         "    pub replay_redis_url: Option<String>,\n"
         "    pub client_ocsp: OcspKind,\n"
-        "    pub ingress_pinned_mtls: bool,\n"
         "}\n"
     )
     problems, known = check(regressed)
@@ -175,14 +244,19 @@ def selftest() -> int:
     if not any("replay_redis_url" in p for p in problems):
         print("selftest FAIL: a re-added storage sibling field was accepted")
         failures += 1
-    if not any("client_crl_paths" in k for k in known):
-        print("selftest FAIL: an outstanding Phase-5 field was not reported as known")
+    if not any("client_crl_paths" in p for p in problems):
+        print("selftest FAIL: a re-added revocation sibling field was accepted")
+        failures += 1
+    if not any("ingress_pinned_mtls" in k for k in known):
+        print("selftest FAIL: an outstanding Phase-6 field was not reported as known")
         failures += 1
 
     clean = (
         regressed.replace("    pub aws_kms_region: Option<String>,\n", "")
         .replace("    pub tls_key: String,\n", "")
         .replace("    pub replay_redis_url: Option<String>,\n", "")
+        .replace("    pub client_crl_paths: Vec<String>,\n", "")
+        .replace("    pub client_ocsp: OcspKind,\n", "")
     )
     problems, _ = check(clean)
     if problems:
@@ -190,10 +264,16 @@ def selftest() -> int:
         failures += 1
 
     # A family whose fields have all gone must leave the registry.
-    emptied = clean.replace("    pub client_ocsp: OcspKind,\n", "")
+    emptied = clean.replace("    pub ingress_pinned_mtls: bool,\n", "")
     problems, _ = check(emptied)
-    if not any("`ocsp` is registered" in p for p in problems):
+    if not any("`mtls` is registered" in p for p in problems):
         print("selftest FAIL: a stale NOT_YET_MIGRATED entry was accepted")
+        failures += 1
+
+    # The dependency-direction half must be alive: it fails on an inverted import, and it
+    # refuses to report a clean scope it never examined.
+    if dependency_direction_problems():
+        print("selftest FAIL: the dependency-direction check is red on a clean tree")
         failures += 1
 
     # Substring matching would make `sts` fire on a field it does not qualify.
@@ -216,6 +296,8 @@ def main() -> int:
         print(f"semantic-altitude gate: FAIL — {REQUEST} does not exist")
         return 1
     problems, known = check(source.read_text(encoding="utf-8"))
+    direction = dependency_direction_problems()
+    problems.extend(direction)
 
     if problems:
         print(f"semantic-altitude gate: FAIL — {len(problems)} problem(s)")
@@ -229,7 +311,9 @@ def main() -> int:
 
     print(
         f"semantic-altitude gate: OK — {REQUEST_TYPE} carries no sibling field for a "
-        f"migrated mechanism family ({', '.join(sorted(MIGRATED))})."
+        f"migrated mechanism family ({', '.join(sorted(MIGRATED))}), and no module under "
+        f"{', '.join(str(layer.name) for layer in SEMANTIC_LAYERS)} imports one of "
+        f"{len(MECHANISM_MODULES)} mechanism adapters."
     )
     print(f"  Still outstanding, by the phase that owns each ({len(known)} field(s)):")
     for entry in known:

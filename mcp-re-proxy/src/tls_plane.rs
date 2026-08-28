@@ -53,6 +53,7 @@ use std::time::Duration;
 
 use crate::client_revocation;
 use crate::config_snapshot;
+use crate::config_state::CredentialCurrencyBound;
 use crate::config_state::PrivateKeyExposure;
 use crate::managed_worker::WorkerSet;
 use crate::tls;
@@ -626,24 +627,28 @@ pub(crate) fn revocation_posture_lines(
 ///   open does not escape a republished index;
 /// - a CRL without a cadence: the CRL's own `nextUpdate`, or a restart.
 ///
-/// One `match` over the classified posture, where it was three parameters and two nested
-/// conditionals. The arms are the states, so a fourth posture would not compile until it
-/// stated its own bound — which is the property this claim most needs, since a posture
-/// falling through to another's sentence is exactly how an operator gets a number that
-/// nothing enforces.
+/// One `match` over [`CredentialCurrencyBound`], the semantic posture. The arms ARE the
+/// postures, so a new mechanism would not compile until it stated its own bound — a posture
+/// falling through to another's sentence is exactly how an operator gets a number nothing
+/// enforces. The posture is generic and this rendering is not, deliberately: the sentence
+/// names CRLs because CRLs are what it tells an operator to configure.
 pub fn fleet_crl_bound(plan: &crate::startup_plan::ChannelEstablishmentPlan) -> String {
-    if !plan.client_revocation.is_enforced() {
-        let window = plan.credential_window.exposure_window().as_secs();
-        return format!("short-lived-cert only (exposure_window {window}s); no client CRL");
-    }
-    match plan.client_revocation.reload_cadence_secs() {
-        Some(cadence_secs) => format!(
+    match crate::config_state::credential_currency_bound(
+        &plan.client_revocation,
+        &plan.credential_window,
+    ) {
+        CredentialCurrencyBound::CredentialLifetime { window_secs } => {
+            format!("short-lived-cert only (exposure_window {window_secs}s); no client CRL")
+        }
+        CredentialCurrencyBound::PublicationRefresh { cadence_secs } => format!(
             "bounded {cadence_secs}s (the --client-crl-reload-secs cadence), enforced per \
              request on established connections as well as at the handshake"
         ),
-        None => "the CRL nextUpdate / a restart (no --client-crl-reload-secs) — a fleet's \
+        CredentialCurrencyBound::PublicationValidity => {
+            "the CRL nextUpdate / a restart (no --client-crl-reload-secs) — a fleet's \
              CRL-rollout window"
-            .to_string(),
+                .to_string()
+        }
     }
 }
 

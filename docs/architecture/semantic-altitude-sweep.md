@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# ADR-MCPRE-067 Phase 1 — the semantic-altitude sweep
+# ADR-MCPRE-067 — the semantic-altitude sweep, and what each phase did to it
 
 The Phase-1 census record for the ontology-neutral-spine campaign
 ([ADR-MCPRE-067](https://github.com/matssun/mcp-re/discussions/668), tracker
@@ -76,8 +76,8 @@ is a genuine violation by the replacement test; none is Phase 2's.
 | ~~`startup_plan::TlsPlan`~~ | what must hold to establish authenticated channels | **3 — done** |
 | `materializing_runtime::install_tls` / `tls` | ruled a mechanism leaf: it installs a `TlsPlane`, and a rustls plane is entitled to say so | **3 — ruled** |
 | ~~`DeploymentRequest`'s 5 Redis/etcd locator fields~~ | where shared replay, continuation, admission and trust-epoch state live | **4 — done** |
-| `config_state::transport::CrlRevocationState`, `crl_posture`, `crl_plan` | the credential-currency posture and its latency bound | 5 |
-| `deployment_request::OcspKind`, `config_state::validation::residue::ocsp_*` | whether online revocation evidence is required | 5 |
+| ~~`config_state::transport::CrlRevocationState`, `crl_posture`, `crl_plan`~~ | the credential-currency posture and its latency bound | **5 — done**, and the posture is now its own type; the CRL state stays CRL-named below it |
+| ~~`deployment_request::OcspKind`, `config_state::validation::residue::ocsp_*`~~ | whether online revocation evidence is required | **5 — done** |
 | `key_source::KeySource`'s `tls_server_cert_chain` / `tls_server_key` / `client_ca_roots` | ruled a mechanism leaf in Phase 3: the trait returns rustls types to a rustls listener, so its proposition genuinely IS "a rustls signing key used by a TLS listener". Only its LOCATION moves | 8 |
 
 `scripts/semantic_altitude_gate.py` carries the same list as its `NOT_YET_MIGRATED`
@@ -124,6 +124,48 @@ with the sentences the boundary used to.
 
 `SharedStoreRequest` is a one-variant enum on purpose: it is the seam a second backend
 arrives at, and its three consumers already read a selection rather than a Redis URL.
+
+### B.5 — what Phase 5 produced
+
+CRL and OCSP are two mechanisms, and they stay two. Nothing here merges an implementation
+to look generic; what was added is the layer above them that consumers actually read.
+
+| before | after |
+|---|---|
+| `client_crl_paths` + `client_crl_reload_secs` + `client_ocsp` + `ocsp_responder_url` | `peer_revocation: PeerRevocationRequest { lists, online }` |
+| `OcspKind { Off, Require }` | `OnlineRevocationEvidenceRequest { NotRequired, Required(OcspResponderRequest) }` — the semantic selection, with the protocol payload inside it |
+| `fleet_crl_bound`'s three inline arms | `CredentialCurrencyBound { CredentialLifetime, PublicationRefresh, PublicationValidity }`, projected by `credential_currency_bound`; `fleet_crl_bound` renders it |
+| the "responder has no effect without `--client-ocsp require`" clause | **deleted** — the responder travels inside `Required`; the argv form is `cli::revocation_flags`' |
+
+**`PeerRevocationRequest` is a struct, not a tagged union**, and that is a decision rather
+than an omission: holding a revocation list does not make an online check meaningless, or
+the reverse. Forcing a union would have encoded a mutual exclusion the domain does not have.
+
+**Online OCSP remains unselectable.** `online_ocsp_refusal` is unchanged and still refuses
+`Required` unconditionally, because the production data plane performs no responder round
+trip. The variant exists so the request can state what is being refused.
+
+**`TrustedRevocationAnswer` was not renamed and needs no new projection.** The generic fact
+its consumer needs — whether the credential is admissible on revocation grounds — is
+already `OcspChecker::allows`, over a `RevocationEvidence` that ALREADY separates
+*a verified responder said `unknown`* (`Answered(TrustedRevocationAnswer)` carrying
+`CertRevocationStatus::Unknown`) from *no trusted answer was established*
+(`NotEstablished`). Adding a second generic type above it would have duplicated an
+authority the tree already has. The RFC 6960 leaf keeps its EX-006 disposition and was not
+touched.
+
+### B.5.1 — the dormant trust findings, classified
+
+Classified, not wired. None is a security control a deployment currently believes is active.
+
+| unit | classification | why |
+|---|---|---|
+| `LiveTrustResolver::revocation` (the secondary `RevocationSource`) | **intentionally dormant** | no production path installs one, and no deployment can believe otherwise: relation X6 refuses `--revocation-list` paths unconditionally, so a configured deny-list is a startup refusal rather than a silent no-op. The seam is the ADR-MCPS-021 elaboration a networked revocation feed would use |
+| `t_exceeds_recommended_max` | **intentionally dormant; wiring is a behaviour change** | an ADVISORY with no caller. The operator is told the actual window on the tier's `startup_audit_line`; what is missing is the annotation that it exceeds five minutes. Nothing claims the advisory fires, so no false belief exists. Connecting it adds a startup warning, which is a behaviour change this phase was told not to make on its own |
+| `strictest_applicable_t` | **Phase-6 input needed** | it has no INPUT, not merely no caller: the deployment surface carries no per-sensitivity-class window, so `class_windows` is always empty and the function is the identity. The semantic requirement is clear and the request model cannot express it, so it is carried forward rather than given an input invented here |
+
+No item met the "required live security control that current deployments falsely claim to
+enforce" condition, so this phase did not stop.
 
 ### C — mechanism-selection boundary (legitimate; a provider name is correct here)
 
@@ -176,12 +218,19 @@ names say nothing about who signs.
 ## Counts
 
 ```text
-semantic spine violation          3 fixed (A) + 7 deferred (B)
+semantic spine violation          3 fixed in Phase 2 (A)
+                                + 7 deferred (B), of which 6 are now done
+                                  (Phases 3-5) and 1 was ruled a mechanism leaf
 mechanism-selection boundary      7 (C)
 legitimate mechanism leaf        ~20 modules (D)
 ambiguous, ruled                  3 (E)
 dependency-direction violation    0
+dormant control, classified       3 (B.5.1) — 2 intentionally dormant,
+                                  1 needing a Phase-6 input; 0 falsely claimed
 ```
+
+After Phase 5 the semantic-altitude gate's `NOT_YET_MIGRATED` registry holds ONE entry,
+`mtls`, for the single remaining field: `ingress_pinned_mtls`, which Phase 6 owns.
 
 Per the tracker's one rule, no issue was opened per finding. Section B is the phase list
 the ADR already carries; section A is the work this campaign did.

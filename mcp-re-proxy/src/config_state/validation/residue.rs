@@ -20,7 +20,7 @@
 //! Nothing here decides precedence. `legality_violations` calls each of these at the
 //! position its clauses already occupied.
 
-use crate::deployment_request::{AuthzKind, DeploymentRequest, OcspKind};
+use crate::deployment_request::{AuthzKind, DeploymentRequest, OnlineRevocationEvidenceRequest};
 
 /// The `--target-uri` shape the request-target reconstruction check depends on, as a pure
 /// rule over the configured value.
@@ -114,8 +114,8 @@ fn unaccepted_authz_profile_refusal(authz: AuthzKind) -> Option<String> {
 /// `DeploymentRequest` meets. Two copies is how the two drifted in the first place: the
 /// parser refused, the validation boundary did not, and a caller that skipped the parser
 /// reached the serving path with the claim intact.
-fn online_ocsp_refusal(client_ocsp: OcspKind) -> Option<String> {
-    (client_ocsp == OcspKind::Require).then(|| {
+fn online_ocsp_refusal(online: &OnlineRevocationEvidenceRequest) -> Option<String> {
+    online.is_required().then(|| {
         "--client-ocsp require cannot be honored: online OCSP is implemented only on \
          the blocking serve loop, while the production data plane is the per-core \
          async fleet, which performs no OCSP revocation check. Accepting it would \
@@ -134,42 +134,38 @@ fn online_ocsp_refusal(client_ocsp: OcspKind) -> Option<String> {
 /// value; a responder no mode will read is a defect in the combination, and only the second
 /// depends on `client_ocsp`.
 ///
-/// The second clause matters even though [`online_ocsp_refusal`] refuses `require`
-/// unconditionally: the surviving case is a responder configured beside `--client-ocsp off`,
-/// which no clause reaches, and which leaves an operator believing a revocation authority is
-/// configured while every certificate is admitted unchecked.
+/// The second clause is GONE and its absence is the result. It refused a responder beside
+/// `--client-ocsp off` — an authority nothing would ever ask, left where an operator could
+/// believe one was configured. The responder now travels inside
+/// [`OnlineRevocationEvidenceRequest::Required`], so the combination cannot be built
+/// (ADR-MCPRE-067 §7); the argv form is answered by `cli::revocation_flags`.
+///
+/// What survives is the clause about the VALUE, which is intra-mechanism: a responder that
+/// names nothing replaces a resolvable authority with none.
 fn ocsp_responder_violations(config: &DeploymentRequest) -> Vec<String> {
-    let Some(url) = config.ocsp_responder_url.as_deref() else {
+    let Some(url) = config.peer_revocation.online.responder_override() else {
         return Vec::new();
     };
-    let mut out = Vec::new();
     if url.trim().is_empty() {
-        out.push(
+        return vec![
             "--ocsp-responder-url is empty: it overrides the responder named by the \
              certificate's AIA extension, so an empty value replaces a resolvable authority \
              with none"
                 .to_string(),
-        );
+        ];
     }
-    if config.client_ocsp != OcspKind::Require {
-        out.push(
-            "--ocsp-responder-url has no effect without --client-ocsp require: nothing \
-             consults a responder in this mode, so the deployment would carry a revocation \
-             authority it never asks"
-                .to_string(),
-        );
-    }
-    out
+    Vec::new()
 }
 
 /// `--client-ocsp require` cannot be honored.
 ///
-/// **Why layer A enforces it.** `client_ocsp` is a public field, so a request built in code reaches the serving path announcing revocation checking that never happens.
+/// **Why layer A enforces it.** The selection is a public field, so a request built in
+/// code reaches the serving path announcing revocation checking that never happens.
 ///
 /// **Why no narrower owner.** It is client-certificate revocation, but CRL and OCSP are different mechanisms: if CRL support were removed tomorrow this rule would still hold, because the async data plane performs no responder round trip. `CrlRevocation` is therefore not its owner, and no OCSP state exists because every OCSP posture is excluded.
 pub(super) fn ocsp_mode_violations(config: &DeploymentRequest) -> Vec<String> {
     let mut out = Vec::new();
-    if let Some(refusal) = online_ocsp_refusal(config.client_ocsp) {
+    if let Some(refusal) = online_ocsp_refusal(&config.peer_revocation.online) {
         out.push(refusal);
     }
     out
@@ -403,8 +399,10 @@ mod tests {
     /// is the point — a deployment cannot buy online OCSP by rebuilding with the backend.
     #[test]
     fn no_build_admits_the_online_ocsp_mode() {
-        let refusal = online_ocsp_refusal(OcspKind::Require)
-            .expect("--client-ocsp require is refused in every build");
+        let refusal = online_ocsp_refusal(&OnlineRevocationEvidenceRequest::Required(
+            crate::deployment_request::OcspResponderRequest::default(),
+        ))
+        .expect("--client-ocsp require is refused in every build");
         assert!(
             refusal.contains("--client-ocsp require cannot be honored"),
             "the refusal must name the flag it refuses, got: {refusal}"
@@ -414,7 +412,7 @@ mod tests {
             "and it must name the mechanism that does work on the async plane: {refusal}"
         );
         assert!(
-            online_ocsp_refusal(OcspKind::Off).is_none(),
+            online_ocsp_refusal(&OnlineRevocationEvidenceRequest::NotRequired).is_none(),
             "the OFF posture is the one the legality model admits"
         );
     }
@@ -432,7 +430,9 @@ mod tests {
             ocsp_mode_violations(&config).is_empty(),
             "the legal fixture does not request online OCSP"
         );
-        config.client_ocsp = OcspKind::Require;
+        config.peer_revocation.online = OnlineRevocationEvidenceRequest::Required(
+            crate::deployment_request::OcspResponderRequest::default(),
+        );
         let violations = ocsp_mode_violations(&config);
         assert_eq!(
             violations.len(),

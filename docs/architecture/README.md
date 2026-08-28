@@ -41,7 +41,7 @@ flowchart TD
 - [`audit-composition.md`](audit-composition.md) — the ADR-066 companion blueprint: the two-authority ruling, the invariants it must satisfy, and the candidate compositions. Characterization in issue #637.
 - [`implementation-blueprint.md`](implementation-blueprint.md) — current execution method for the refactoring campaign.
 - [`component-blueprint-template.md`](component-blueprint-template.md) — standard anatomy for subordinate component design documents.
-- [`semantic-altitude-sweep.md`](semantic-altitude-sweep.md) — the ADR-MCPRE-067 Phase-1 census: every mechanism/provider name in the semantic, request, state and composition layers, classified by the replacement test into spine violations, mechanism-selection boundaries and legitimate leaves.
+- [`semantic-altitude-sweep.md`](semantic-altitude-sweep.md) — the ADR-MCPRE-067 Phase-1 census and the running record of what each phase did to it: every mechanism/provider name in the semantic, request, state and composition layers, classified by the replacement test into spine violations, mechanism-selection boundaries and legitimate leaves, plus the dormant controls Phase 5 classified.
 - [`review-dispositions.md`](review-dispositions.md) — the ADR-061 §14 review dispositions: the records `config/module-size-debt.toml`'s `review_ref` fields point at, granted and declined alike, and the disposition lifecycle they move through.
 
 ## Initial component blueprints
