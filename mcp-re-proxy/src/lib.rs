@@ -175,7 +175,7 @@ pub mod revocation_tier;
 /// Per-request client-certificate revocation — what makes a warm connection safe to
 /// keep, since rustls consults the CRLs at the handshake and never again.
 pub mod client_revocation;
-pub mod live_trust;
+pub(crate) mod live_trust;
 /// The re-readable trust store the revocation tiers resolve against — what makes
 /// "the store is consulted on every verification" a true statement about a running
 /// proxy rather than about a map frozen at boot.
@@ -187,7 +187,7 @@ pub mod tls_listener_state;
 // ADR-MCPS-021 Tier 3: push-invalidation trust cache — bounded-`T` caching plus an
 // injected invalidation channel that evicts revoked entries immediately, with a
 // bounded-`T` fallback when the channel is unhealthy (never a zero-window claim).
-pub mod push_trust;
+pub(crate) mod push_trust;
 // Issue #3837: shared, server-side-atomic replay cache for horizontally-scaled
 // replay safety (the backend-agnostic core + the in-memory reference store).
 pub mod shared_replay;
@@ -299,7 +299,7 @@ pub mod redis_continuation_store;
 // trust_epoch: core epoch->event logic always compiled, Redis reader `redis_replay`-gated
 // inside. trust_plan: the trust subtree's own projection of its validated state (MCPRE-148).
 pub mod trust_epoch;
-pub mod trust_plan;
+pub(crate) mod trust_plan;
 // ADR-MCPS-021: bounded trust-propagation cache (Tier 1). Caching is a caller
 // concern (mcp-re-core does not cache); this wraps the injected TrustResolver with
 // the bounded-`T` window + negative-cache classification + fail-closed rules.
