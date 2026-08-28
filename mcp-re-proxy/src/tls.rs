@@ -42,11 +42,9 @@ use crate::communication_assurance::credential_currency::CredentialCurrencyRefus
 use crate::communication_assurance::current_authenticated_peer::current_authenticated_peer;
 use crate::communication_assurance::current_authenticated_peer::CurrentPeerRefusal;
 use crate::communication_assurance::AuthenticatedChannelPeer;
-use crate::communication_assurance::CertificateChainEvidence;
 use crate::communication_assurance::MechanismVerifiedCredentialEvidence;
 use crate::transport::IdentityPolicy;
 use crate::transport::RequestHeaders;
-use crate::transport::TransportIdentity;
 
 /// Resource limits applied to every served connection — the blocking server's
 /// defense against slow-loris, oversized-request, and connection-exhaustion
@@ -448,33 +446,6 @@ pub(crate) fn validated_delegated_resolver(
             )
         },
     )
-}
-
-/// Extract the verified client identity from a leaf certificate (DER) using the
-/// authoritative field named by `policy`.
-///
-/// **Compatibility facade.** The semantics live in the certificate identity authority
-/// (ADR-MCPRE-063 Slice 1): this function converts the historical vocabulary in and out
-/// and owns nothing. It parses no certificate, selects no field, validates no value, and
-/// decides no fallback — deleting the authority's checks would break it, and no check
-/// deleted here could let an invalid identity through, because there is none here to
-/// delete.
-///
-/// The `Option` return is the historical shape, and it is lossy: the authority
-/// distinguishes an absent peer certificate, an unreadable one, a missing configured
-/// field, and a malformed configured value, and all four arrive here as `None`. Callers
-/// that need the reason should consume
-/// [`CertificateChainEvidence::interpret_identity`](crate::communication_assurance::CertificateChainEvidence::interpret_identity)
-/// directly; this facade exists so the transport-binding consumers can migrate one at a
-/// time rather than in this slice.
-pub fn extract_identity(leaf_der: &[u8], policy: IdentityPolicy) -> Option<TransportIdentity> {
-    let evidence = CertificateChainEvidence::from_leaf_der(leaf_der)
-        .interpret_identity(policy.into())
-        .ok()?;
-    Some(TransportIdentity::new(
-        evidence.value().as_str(),
-        evidence.source().into(),
-    ))
 }
 
 /// The authenticated channel peer of this relationship, with whatever currency assurance
@@ -1128,6 +1099,7 @@ mod delegated_credential_key_correspondence_tests {
     use crate::communication_assurance::ed25519_public_key::Rfc8410SpkiRefusal;
     use crate::communication_assurance::signing_key_evidence::SigningKeyExportEvidence;
     use crate::communication_assurance::signing_key_evidence::SigningKeyRefusal;
+    use crate::communication_assurance::CertificateChainEvidence;
     use rcgen::CertificateParams;
     use rcgen::KeyPair;
     use rcgen::PKCS_ED25519;

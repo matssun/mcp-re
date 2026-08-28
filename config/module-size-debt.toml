@@ -92,8 +92,8 @@ status = "unreviewed"
 # ESTABLISHED and c81df3e never contained a 1013-line tls.rs.
 [[debt]]
 path = "mcp-re-proxy/src/tls.rs"
-baseline_prod_loc = 1013
-baseline_sha = "1b31c60"
+baseline_prod_loc = 867
+baseline_sha = "94fcc0a"
 status = "reviewed-action-required"
 review_ref = "EX-004 in docs/architecture/review-dispositions.md"
 
@@ -113,10 +113,23 @@ review_ref = "EX-004 in docs/architecture/review-dispositions.md"
 
 # Same migration, same rule: 1305 -> 1274 when the identity-value invariant moved to its
 # owner and the historical vocabulary moved to `asserted_identity_facade`.
+# MCPRE-156 implemented EX-005's disposition: `transport.rs` split at the REACHABILITY
+# boundary into the live channel-binding authority and the deferred ingress-attestation
+# capability. The debt moves WITH the two halves, and the sum rises from 1268 to 1350
+# because each half now carries the module note stating which reachability rule governs it
+# — which is precisely what the census found missing, and is not headroom: neither entry
+# may grow from here.
 [[debt]]
-path = "mcp-re-proxy/src/transport.rs"
-baseline_prod_loc = 1268
-baseline_sha = "dc9f1c1"
+path = "mcp-re-proxy/src/transport/mod.rs"
+baseline_prod_loc = 338
+baseline_sha = "94fcc0a"
+status = "reviewed-action-required"
+review_ref = "EX-005 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = "mcp-re-proxy/src/transport/ingress.rs"
+baseline_prod_loc = 1012
+baseline_sha = "94fcc0a"
 status = "reviewed-action-required"
 review_ref = "EX-005 in docs/architecture/review-dispositions.md"
 

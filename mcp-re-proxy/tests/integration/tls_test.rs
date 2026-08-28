@@ -220,8 +220,8 @@ fn uri_san_policy_reads_the_uri_san() {
         true,
     );
     let id = extract_identity(leaf.as_ref(), IdentityPolicy::UriSan).expect("identity");
-    assert_eq!(id.value, "spiffe://example.org/agent-1");
-    assert_eq!(id.source, IdentitySource::UriSan);
+    assert_eq!(id.value(), "spiffe://example.org/agent-1");
+    assert_eq!(id.source(), IdentitySource::UriSan);
 }
 
 #[test]
@@ -237,8 +237,8 @@ fn dns_san_policy_reads_the_dns_san() {
         true,
     );
     let id = extract_identity(leaf.as_ref(), IdentityPolicy::DnsSan).expect("identity");
-    assert_eq!(id.value, "agent.example.org");
-    assert_eq!(id.source, IdentitySource::DnsSan);
+    assert_eq!(id.value(), "agent.example.org");
+    assert_eq!(id.source(), IdentitySource::DnsSan);
 }
 
 #[test]
@@ -246,8 +246,8 @@ fn cn_legacy_policy_reads_the_common_name() {
     let ca = make_ca();
     let (leaf, _key) = make_leaf(&ca, vec![], Some("agent-cn"), true);
     let id = extract_identity(leaf.as_ref(), IdentityPolicy::CnLegacy).expect("identity");
-    assert_eq!(id.value, "agent-cn");
-    assert_eq!(id.source, IdentitySource::CommonName);
+    assert_eq!(id.value(), "agent-cn");
+    assert_eq!(id.source(), IdentitySource::CommonName);
 }
 
 #[test]
@@ -291,15 +291,20 @@ fn multiple_uri_sans_select_first_deterministically() {
     );
     let first = extract_identity(leaf.as_ref(), IdentityPolicy::UriSan).expect("identity");
     assert_eq!(
-        first.value, "spiffe://example.org/agent-FIRST",
+        first.value(),
+        "spiffe://example.org/agent-FIRST",
         "the FIRST URI SAN (find_map order) must win"
     );
-    assert_eq!(first.source, IdentitySource::UriSan);
+    assert_eq!(first.source(), IdentitySource::UriSan);
     // Determinism: repeated extraction over the SAME cert yields the SAME value.
     for _ in 0..8 {
         let again = extract_identity(leaf.as_ref(), IdentityPolicy::UriSan).expect("identity");
-        assert_eq!(again.value, first.value, "selection must be deterministic");
-        assert_eq!(again.source, first.source);
+        assert_eq!(
+            again.value(),
+            first.value(),
+            "selection must be deterministic"
+        );
+        assert_eq!(again.source(), first.source());
     }
 }
 
@@ -316,13 +321,18 @@ fn multiple_dns_sans_select_first_deterministically() {
     );
     let first = extract_identity(leaf.as_ref(), IdentityPolicy::DnsSan).expect("identity");
     assert_eq!(
-        first.value, "first.example.org",
+        first.value(),
+        "first.example.org",
         "the FIRST DNS SAN (find_map order) must win"
     );
-    assert_eq!(first.source, IdentitySource::DnsSan);
+    assert_eq!(first.source(), IdentitySource::DnsSan);
     for _ in 0..8 {
         let again = extract_identity(leaf.as_ref(), IdentityPolicy::DnsSan).expect("identity");
-        assert_eq!(again.value, first.value, "selection must be deterministic");
+        assert_eq!(
+            again.value(),
+            first.value(),
+            "selection must be deterministic"
+        );
     }
 }
 
@@ -380,7 +390,7 @@ fn oversized_uri_san_fails_closed_at_the_same_bound_as_the_header_path() {
     let (leaf, _key) = make_leaf(&ca, vec![san], None, true);
     let id = extract_identity(leaf.as_ref(), IdentityPolicy::UriSan)
         .expect("a value AT the bound must be admitted");
-    assert_eq!(id.value, at_bound);
+    assert_eq!(id.value(), at_bound);
 
     let over = format!("{prefix}{}", "a".repeat(pad + 1));
     let san: SanType = SanType::URI(over.as_str().try_into().expect("ascii is IA5"));
@@ -404,7 +414,8 @@ fn padded_uri_san_is_trimmed_to_the_same_value_as_the_header_path() {
     let (leaf, _key) = make_leaf(&ca, vec![san], None, true);
     let id = extract_identity(leaf.as_ref(), IdentityPolicy::UriSan).expect("identity");
     assert_eq!(
-        id.value, "spiffe://example.org/agent-1",
+        id.value(),
+        "spiffe://example.org/agent-1",
         "the extracted identity must be the trimmed value"
     );
 }
@@ -442,8 +453,8 @@ fn no_san_fails_closed_for_san_policies_cn_only_for_legacy() {
         "DnsSan must fail closed with no SAN"
     );
     let cn = extract_identity(leaf.as_ref(), IdentityPolicy::CnLegacy).expect("cn identity");
-    assert_eq!(cn.value, "legacy-cn");
-    assert_eq!(cn.source, IdentitySource::CommonName);
+    assert_eq!(cn.value(), "legacy-cn");
+    assert_eq!(cn.source(), IdentitySource::CommonName);
     // NOTE: a truly CN-less leaf is not mintable via these rcgen 0.14 helpers —
     // `self_signed`/`signed_by` inject a default CN ("rcgen self signed cert")
     // when no DN is supplied, so CnLegacy would read THAT, not None. That is a
