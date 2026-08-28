@@ -839,6 +839,56 @@ stated there — and **seal `TransportIdentity` and `AttestedIngressVerified`**.
 the part that changes what is provable. `transport.rs` stays `reviewed-action-required` until
 that work lands and this census is re-run.
 
+### EX-005 re-census after MCPRE-156
+
+The disposition is implemented. `transport.rs` no longer exists; the debt moved with the
+two halves and both entries carry this record.
+
+| unit | prod | what governs it |
+|---|---:|---|
+| `transport/mod.rs` | 338 | the LIVE channel-binding authority — on the served path of every deployment that binds |
+| `transport/ingress.rs` | 1012 | the DEFERRED ingress-attestation capability — unreachable in any validated deployment |
+
+The sum rose from 1268 to 1350. That is not headroom and it is not an accounting slip: each
+half now carries the module note stating which reachability rule governs it, which is
+exactly what this census found missing — *nothing in its shape or its module doc says which
+half governs served traffic*. Neither entry may grow from here.
+
+**Question 9 is now answered by the file layout rather than by a census.** A reader who opens
+`ingress.rs` is told in the first paragraph that nothing there can be reached from a serving
+path, that this is an intentional deployment fact, and that its own test suite is the only
+thing keeping it correct because no deployment exercises it.
+
+**Question 11 is closed.** Both types whose names were the claim are sealed:
+
+- `TransportIdentity` — private representation, exactly **two** producers, both
+  verifications, both NAMED. `extract_identity` moved out of `tls.rs` into the identity
+  module so the seal means something: a `pub(crate)` constructor beside a sibling producer
+  is not a boundary in a crate whose composition root is in the same crate. The second
+  producer, `attested_by_verified_ingress`, is `pub(super)` and belongs to the deferred
+  verifier — stated rather than hidden, because a producer that exists and is not stated is
+  how a seal becomes a story about the producers somebody remembered.
+- `AttestedIngressVerified` — private representation, `verify` the only producer, reached
+  only after eight checks. That is what lets its projections assert `Verified` and `Good`
+  without re-reading anything.
+
+**The open theorem stays open.** *Transport identity is derived only from the verified
+client certificate* is now TRUE of the live path and true by construction rather than by
+convention — but it is deliberately not written down. Ruling 5 of this record stands, and
+the campaign that did this work was instructed not to draft the transport theorem.
+
+**What was NOT done, and why.** `TransportBindingProvider` and `StaticIdentityProvider`
+have **zero production consumers** — nothing in the crate calls `verified_identity`. They
+are no longer a soundness problem, because the seal means the only identity they can carry
+is one a verification produced. Removing them is a public-API narrowing outside this
+slice's remit ("do not expand this into general transport cleanup"), so it is recorded here
+rather than done.
+
+**Status stays `reviewed-action-required`** on both halves. `ingress.rs` at 1012 lines is
+one authority with two protocol versions inside it, and whether that is a §14 exception is
+a question for whoever decides the Mode-C capability's future — not one this slice should
+pre-empt.
+
 ## EX-009 — `mcp-re-client-core/src/response.rs` — **census re-run, disposition: decompose the classification half**
 
 **Status:** `unreviewed` in the registry, and this record does not change that on its own —
