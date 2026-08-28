@@ -298,6 +298,8 @@ _PROXY_LIB_SRCS = [
     "src/trust_plane/mod.rs",
     "src/trust_plane/freshness.rs",
     "src/trust_plane/window_policy.rs",
+    "src/trust_plane/reload.rs",
+    "src/trust_plane/snapshot.rs",
     "src/trust_plane/invalidation_channel.rs",
     "src/trust_plane/delivered_window.rs",
     # ADR-MCPRE-056 §8 (ADR-MCPRE-052): the signing plane — root issuer, delegated

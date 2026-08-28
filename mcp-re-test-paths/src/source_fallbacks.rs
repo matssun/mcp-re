@@ -60,7 +60,7 @@ pub(super) const SOURCE_FALLBACKS: &[(&str, &str)] = &[
         "MCP_RE_HTTP_PROFILE_SERVE_SRC",
         "mcp-re-proxy/src/http_profile_serve/mod.rs",
     ),
-    ("MCP_RE_TRUST_PLANE_SRC", "mcp-re-proxy/src/trust_plane.rs"),
+    ("MCP_RE_TRUST_PLANE_SRC", "mcp-re-proxy/src/trust_plane/mod.rs"),
     ("MCP_RE_TLS_PLANE_SRC", "mcp-re-proxy/src/tls_plane.rs"),
     (
         "MCP_RE_REPLAY_PLANE_SRC",

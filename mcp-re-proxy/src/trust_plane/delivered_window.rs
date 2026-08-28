@@ -48,7 +48,7 @@ pub(super) fn store_change_cadence(reload: crate::startup_plan::TrustReloadPlan)
 /// Stated as arithmetic because every other surface prints the two numbers side by side and
 /// leaves the composition to a preposition, which an operator sizing an incident response
 /// reads as "the tighter of" rather than "add these".
-pub(super) fn delivered_revocation_window(
+pub(in crate::trust_plane) fn delivered_revocation_window(
     tier: &RevocationTier,
     reload: crate::startup_plan::TrustReloadPlan,
 ) -> String {
