@@ -173,9 +173,30 @@ def measure(root: Path, extra_args: list[str] | None = None) -> tuple[Counter, i
             continue
         crate = path.split("/")[0]
         counts[f"{crate}::{lint}"] += 1
-    if proc.returncode != 0 and messages == 0:
+    # A non-zero status means the workspace DID NOT COMPILE, and a clippy run that could
+    # not compile a crate has not measured that crate — it reports zero occurrences of
+    # every lint in it. The gate then says "down to 0 from a baseline of 40 — lower the
+    # baseline", which is the worst possible instruction: it would erase the debt register
+    # for a crate nobody linted.
+    #
+    # `messages == 0` is NOT the condition. Compile ERRORS are `compiler-message`s too, so
+    # a build that fails with `E0432` produces plenty of messages while measuring nothing.
+    # That is exactly how this was found: a `pub use` of a feature-gated item made
+    # `mcp-re-proxy` fail to build, and the gate reported three lints "down to 0" from
+    # baselines of 35, 40 and 12.
+    #
+    # LINT_FLAGS are all `-W`, so warnings alone never set a non-zero status.
+    if proc.returncode != 0:
+        errors = [
+            line
+            for line in proc.stderr.splitlines()
+            if line.startswith("error") or line.startswith("warning: build failed")
+        ]
         raise RuntimeError(
-            "clippy did not run:\n" + (proc.stderr[-4000:] or "(no stderr)")
+            "clippy did not compile the workspace, so it measured nothing "
+            f"(exit {proc.returncode}). A partial build reports ZERO occurrences for "
+            "every crate it could not lint.\n"
+            + ("\n".join(errors[:20]) or proc.stderr[-4000:] or "(no stderr)")
         )
     return counts, messages
 

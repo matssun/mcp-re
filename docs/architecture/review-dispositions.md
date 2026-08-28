@@ -1213,6 +1213,87 @@ therefore holds in one non-gating nightly lane and nowhere else.
 The recommended work makes the retained implementation better *as retained code* and moves
 it no step closer to being selectable.
 
+### EX-006 re-census after MCPRE-161 — actions 1 and 2 implemented
+
+`ocsp.rs` **1271 → 980** production lines, close to the 26% this census predicted for action
+1 alone. Action 3 — the §14 exception for the protocol remainder — is deliberately **not
+granted**, exactly as the disposition requires: it is the expected end state, not an assumed
+one, and it is a decision for whoever takes the remainder up.
+
+#### Action 1 — authority E extracted, and compiled unconditionally
+
+`mcp-re-proxy/src/outbound_fetch/` — 479 production lines across four modules, none over the
+threshold:
+
+| module | prod | the one fact it owns |
+|---|---:|---|
+| `mod.rs` | 135 | a destination has passed the guard its PROVENANCE requires |
+| `url.rs` | 57 | the scheme and host a URL names |
+| `address.rs` | 186 | whether an address or host is outside our own network |
+| `resolver.rs` | 101 | every address connected to has passed the address guard |
+
+**Provenance is carried in the TYPE, not in a bool or a caller's assertion.** The census
+found the guard applied by a caller matching on a `Copy` enum three lines above the fetch —
+correct, and correct only because those three lines are adjacent. There are now two
+CONSTRUCTORS:
+
+```text
+VettedDestination::certificate_derived  → attacker-influenced
+                                        → scheme allowlist + private-address block
+                                        + resolved-address vetting at connect time
+
+VettedDestination::operator_configured  → trusted configuration
+                                        → scheme allowlist
+```
+
+A caller cannot assert that a certificate's URL is operator-configured, cannot obtain a
+destination without passing the guard its constructor applies, and cannot turn the
+connect-time vetting off for one it built as certificate-derived — `VettedDestination::agent`
+hands out the configured HTTP client rather than a boolean, so the second half of the guard
+travels with the value that earned the first.
+
+**That removed a test-only kill switch rather than relocating it.** `OcspChecker` carried a
+`vet_resolved_addresses: bool` and a `new_allowing_loopback` constructor so the redirect
+control could fetch from `127.0.0.1`. With the provenance on the DESTINATION, that test says
+what is true — the loopback responder is operator-configured, which is exactly the case a
+certificate may not name and an operator may — and the switch is gone from the checker
+entirely.
+
+#### Action 2 — the §3.2 chain has a success product
+
+The census called this the sharpest instance the campaign has produced: *"the entire trust
+chain collapses into a value carrying no evidence of having been through it."*
+
+`verify_and_map_response` now returns a `TrustedRevocationAnswer` with a private field and no
+constructor taking a status. It is the sole producer, and it is reached only after all five
+§3.2 checks. `OcspChecker::allows` takes `RevocationEvidence`, so a `Good` that nothing
+earned cannot be handed to the admission decision — there is no way to make one.
+
+**Responder `Unknown` and local inability are now different values.** `RevocationEvidence`
+is `Answered(TrustedRevocationAnswer)` or `NotEstablished(NoResponderConfigured |
+DestinationRefused)`. A responder that answers *"I do not know"* was reached, verified and
+spoke; a check with no responder URL, or one whose destination the outbound guard refused,
+reached nothing. Both deny under hard-fail — that is the POLICY and it stays
+`OcspChecker::allows`'s — but only one of them is a statement about the certificate, and the
+audit trail can no longer report the second as the first.
+
+#### What the extraction surfaced that nothing had measured
+
+Compiling the authority unconditionally is what the census asked for, and it had an immediate
+consequence: the eight `clippy::indexing_slicing` sites in the `inet_aton` canonicalizer had
+never been counted, because `ocsp.rs` is behind a feature gate the ratchet's default lane does
+not enable. They were replaced by a slice pattern over `vals.as_slice()`, which states the
+ARITY and the field widths as one fact instead of two related by an `n` that has to stay in
+step — so the count did not move and the code is better for having been looked at.
+
+The same run found a defect **in the gate**: `clippy_ratchet_gate.py::measure` raised only
+when a failed clippy run produced NO messages, and compile ERRORS are messages. A `pub use`
+of a feature-gated item made `mcp-re-proxy` fail to build, and the gate reported
+`expect_used`, `indexing_slicing` and `too_many_lines` all *"down to 0"* from baselines of 35,
+40 and 12 — instructing the operator to erase the debt register for a crate nobody had
+linted. It now refuses on any non-zero status, and that refusal was verified by breaking the
+build on purpose.
+
 ## EX-007 — `mcp-re-proxy/src/cli.rs` — **census complete, disposition: move the materialization out**
 
 **Status:** `reviewed-action-required`. **Measured:** 1170 production lines on `main` @

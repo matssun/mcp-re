@@ -97,6 +97,8 @@ use x509_parser::extensions::ParsedExtension;
 use x509_parser::prelude::FromDer;
 use x509_parser::time::ASN1Time;
 
+use crate::outbound_fetch::VettedDestination;
+
 /// The `id-kp-OCSPSigning` extended-key-usage OID (`1.3.6.1.5.5.7.3.9`,
 /// RFC 6960 §4.2.2.2). A delegated responder certificate — one carried in the
 /// response's `certs` rather than being the issuer itself — MUST carry this EKU
@@ -141,19 +143,95 @@ const OID_SHA256: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.10
 /// enough not to starve the connection.
 const DEFAULT_OCSP_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The revocation status the responder reported for the client leaf certificate.
-/// This is the deterministic mapping of the OCSP `CertStatus` CHOICE; the
-/// allow/reject decision is made separately by [`OcspChecker::decision`].
+/// What a VERIFIED responder said about the client leaf certificate.
+///
+/// The deterministic mapping of the OCSP `CertStatus` CHOICE, and nothing more: it is not
+/// an admission decision, and on its own it is not evidence that anything was verified. A
+/// value of this type is only meaningful inside a [`TrustedRevocationAnswer`], which is
+/// what makes it earned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CertRevocationStatus {
     /// The responder asserts the certificate is NOT revoked (`good`).
     Good,
     /// The responder asserts the certificate IS revoked (`revoked`).
     Revoked,
-    /// The responder does not know the certificate's status (`unknown`), or no
-    /// responder URL is available — an indeterminate status that fails closed
-    /// unless soft-fail is configured.
+    /// The responder itself does not know the certificate's status (`unknown`).
+    ///
+    /// This is a RESPONDER VERDICT and is deliberately distinct from
+    /// [`RevocationEvidence::NotEstablished`] — a responder that answers "I do not know"
+    /// has been reached, verified, and has spoken, and a fetch that never happened has
+    /// not. Both fail closed, and conflating them would make the audit trail say the
+    /// responder answered when nothing did.
     Unknown,
+}
+
+/// The conclusion the RFC 6960 §3.2 trust chain reached — and the ONLY way to speak one.
+///
+/// # What the census found
+///
+/// EX-006 named this the sharpest instance the campaign has produced:
+///
+/// > `verify_and_map_response` performs all five §3.2 checks and returns a three-valued
+/// > `Copy` enum. `decide_allow(CertRevocationStatus::Good, false) == true` is reachable
+/// > from anywhere, with no responder, no signature and no freshness. **The entire trust
+/// > chain collapses into a value carrying no evidence of having been through it.**
+///
+/// The representation is private and [`verify_and_map_response`] is its sole producer, so
+/// possession of one means all five checks ran: the responder signature verified against
+/// the issuer or a delegated `id-kp-OCSPSigning` responder, the `responder_id` matched that
+/// signer, a present nonce echoed ours, a `SingleResponse` bound to the CertID we asked
+/// about, and that response was fresh. There is no constructor taking a status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrustedRevocationAnswer {
+    status: CertRevocationStatus,
+}
+
+impl TrustedRevocationAnswer {
+    /// What the verified responder said.
+    pub fn status(self) -> CertRevocationStatus {
+        self.status
+    }
+
+    /// A verified answer, for a test whose subject is the POLICY rather than the chain.
+    ///
+    /// `#[cfg(test)]`. The policy — `Revoked` always denies, `Good` allows, `Unknown`
+    /// denies unless soft-fail — is a different proposition from "the chain ran", and a
+    /// test of the first should not have to mint a signed OCSP response to state it. It
+    /// compiles to nothing outside the test build, so the seal holds against every
+    /// production path and against every other crate.
+    #[cfg(test)]
+    fn answered(status: CertRevocationStatus) -> Self {
+        TrustedRevocationAnswer { status }
+    }
+}
+
+/// What this proxy knows about a certificate's revocation, and whether it EARNED it.
+///
+/// The two are not the same fact and the census asked for them to stop being the same
+/// value. A responder that answered `unknown` was reached and verified; a check with no
+/// responder URL, or one whose destination the outbound guard refused, reached nothing.
+/// Both deny under hard-fail — that is the POLICY, and it is [`OcspChecker::allows`]'s —
+/// but only one of them is a statement about the certificate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RevocationEvidence {
+    /// A verified responder answered. See [`TrustedRevocationAnswer`].
+    Answered(TrustedRevocationAnswer),
+    /// No trusted result could be established locally. Never a responder verdict.
+    NotEstablished(NotEstablished),
+}
+
+/// Why no trusted revocation result could be established.
+///
+/// Local facts, every one of them: nothing here is anything a responder said.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotEstablished {
+    /// The leaf carries no AIA OCSP URL and no operator override was configured, so there
+    /// was nowhere to ask.
+    NoResponderConfigured,
+    /// A responder URL existed and the outbound-fetch guard refused it — a certificate
+    /// naming a private address or a scheme outside `http`/`https`. See
+    /// [`crate::outbound_fetch`].
+    DestinationRefused,
 }
 
 /// Errors performing an online OCSP check. Every variant is a fail-closed
@@ -213,6 +291,10 @@ pub struct OcspChecker {
     /// An explicit responder URL that OVERRIDES the leaf's AIA OCSP URL. `None`
     /// means "use the AIA URL from the leaf" (and a leaf without one yields
     /// `Unknown`).
+    ///
+    /// Held as the raw string rather than a [`VettedDestination`]: an override that fails
+    /// the scheme allowlist must produce `Unknown` for the connection being checked, not a
+    /// construction failure at startup for a deployment that may never reach this code.
     responder_url_override: Option<String>,
     /// When `true`, an indeterminate result (`Unknown`, unreachable responder,
     /// timeout, parse error, signature failure) ALLOWS the connection instead of
@@ -220,11 +302,6 @@ pub struct OcspChecker {
     soft_fail: bool,
     /// The mandatory HTTP fetch timeout (see [`DEFAULT_OCSP_TIMEOUT`]).
     timeout: Duration,
-    /// Whether the fetch resolver vets resolved addresses against the public-IP
-    /// predicates (the production SSRF / DNS-rebinding guard, #128). Always `true`
-    /// in production; a test-only constructor sets it `false` so a test can drive
-    /// the real fetch path against a loopback responder (e.g. the redirect test).
-    vet_resolved_addresses: bool,
 }
 
 impl OcspChecker {
@@ -238,20 +315,6 @@ impl OcspChecker {
             responder_url_override,
             soft_fail,
             timeout: DEFAULT_OCSP_TIMEOUT,
-            vet_resolved_addresses: true,
-        }
-    }
-
-    /// Test-only constructor that DISABLES resolved-address vetting so a test can
-    /// drive the real fetch path against a loopback responder. Production code
-    /// always uses [`OcspChecker::new`], which vets (the #128 guard).
-    #[cfg(test)]
-    fn new_allowing_loopback(responder_url_override: Option<String>, soft_fail: bool) -> Self {
-        OcspChecker {
-            responder_url_override,
-            soft_fail,
-            timeout: DEFAULT_OCSP_TIMEOUT,
-            vet_resolved_addresses: false,
         }
     }
 
@@ -278,32 +341,21 @@ impl OcspChecker {
         &self,
         leaf_der: &[u8],
         issuer_der: &[u8],
-    ) -> Result<CertRevocationStatus, OcspError> {
-        let (responder_url, source) = match self.resolve_responder_url(leaf_der) {
-            Some((url, source)) => {
-                // #4078 (M14): the AIA responder URL is attacker-influenced (it
-                // comes from the leaf), so an SSRF guard MUST run BEFORE any fetch.
-                // A cert-derived URL must be http/https AND must NOT target a
-                // loopback/link-local/private/unspecified/multicast host (no
-                // `file://`, `gopher://`, 169.254.169.254 metadata, 127/8, ::1,
-                // 10/8, 172.16/12, 192.168/16, …). An operator override is
-                // scheme-checked (http/https) but, by design, NOT private-IP
-                // blocked — an operator may legitimately run an internal responder.
-                // A rejected URL fails CLOSED exactly like a missing AIA URL: it is
-                // an indeterminate result (Unknown) that denies under hard-fail.
-                let safe = match source {
-                    ResponderUrlSource::CertAia => aia_responder_url_is_safe(&url),
-                    ResponderUrlSource::OperatorOverride => responder_scheme_allowed(&url),
-                };
-                if !safe {
-                    return Ok(CertRevocationStatus::Unknown);
-                }
-                (url, source)
-            }
-            // No override and no AIA OCSP URL on the leaf: the status is
-            // indeterminate (Unknown), which the policy treats as fail-closed
-            // unless soft-fail is set.
-            None => return Ok(CertRevocationStatus::Unknown),
+    ) -> Result<RevocationEvidence, OcspError> {
+        // The guard is `crate::outbound_fetch`'s and it runs at CONSTRUCTION: there is no
+        // way to reach `post_request` with a destination that did not pass the guard its
+        // provenance requires. A refused destination fails CLOSED exactly like a missing AIA
+        // URL — an indeterminate result (Unknown) that denies under hard-fail.
+        let Some(destination) = self.responder_destination(leaf_der) else {
+            return Ok(RevocationEvidence::NotEstablished(
+                if self.responder_url_override.is_some()
+                    || extract_ocsp_responder_url(leaf_der).is_some()
+                {
+                    NotEstablished::DestinationRefused
+                } else {
+                    NotEstablished::NoResponderConfigured
+                },
+            ));
         };
 
         // A fresh per-request CSPRNG nonce binds the response to THIS request: a
@@ -311,7 +363,7 @@ impl OcspChecker {
         // rejected (RFC 6960 §4.4.1 / RFC 8954). Drawn from the OS CSPRNG.
         let nonce = random_nonce()?;
         let request_der = build_ocsp_request_der_with_nonce(leaf_der, issuer_der, &nonce)?;
-        let response_der = self.post_request(&responder_url, &request_der, source)?;
+        let response_der = self.post_request(&destination, &request_der)?;
         // The expected CertID we requested — used to bind the SingleResponse.
         let expected_cert_id = build_cert_id(leaf_der, issuer_der)?;
         verify_and_map_response(
@@ -321,71 +373,46 @@ impl OcspChecker {
             &nonce,
             SystemTime::now(),
         )
+        .map(RevocationEvidence::Answered)
     }
 
-    /// Resolve the responder URL AND its provenance: the configured override wins
-    /// (and is tagged [`ResponderUrlSource::OperatorOverride`]); otherwise the AIA
-    /// OCSP URL is read from the leaf (tagged [`ResponderUrlSource::CertAia`]). The
-    /// provenance drives the #4078 SSRF guard — the attacker-influenced cert AIA
-    /// URL gets the full guard, the operator override only the scheme allowlist.
+    /// The destination to fetch from, guarded according to where it came from.
+    ///
+    /// The configured override wins and is OPERATOR-CONFIGURED; otherwise the AIA OCSP URL
+    /// is read from the leaf and is CERTIFICATE-DERIVED. Which constructor is called is the
+    /// whole of the provenance decision, and it is made HERE, once — the guard each one
+    /// applies belongs to [`crate::outbound_fetch`] and this module cannot choose between
+    /// them after the fact.
+    ///
+    /// `None` means either that there is no responder URL at all or that the one there is
+    /// did not pass. Both are indeterminate, and the caller treats them the same.
     /// Pure (no network) and unit-tested.
-    fn resolve_responder_url(&self, leaf_der: &[u8]) -> Option<(String, ResponderUrlSource)> {
+    fn responder_destination(&self, leaf_der: &[u8]) -> Option<VettedDestination> {
         match &self.responder_url_override {
-            Some(url) => Some((url.clone(), ResponderUrlSource::OperatorOverride)),
-            None => {
-                extract_ocsp_responder_url(leaf_der).map(|url| (url, ResponderUrlSource::CertAia))
-            }
+            Some(url) => VettedDestination::operator_configured(url.clone()),
+            None => extract_ocsp_responder_url(leaf_der)
+                .and_then(VettedDestination::certificate_derived),
         }
     }
 
-    /// POST a DER OCSP request to `url` with the mandatory timeout and return the
-    /// raw response body bytes. Any HTTP/timeout/transport error is `Err`.
+    /// POST a DER OCSP request to `destination` and return the raw response body bytes.
+    /// Any HTTP/timeout/transport error is `Err`.
     ///
-    /// `source` selects the SSRF posture, mirroring the pre-fetch guard in
-    /// [`OcspChecker::check`]: a cert-derived (attacker-influenced) URL gets the
-    /// resolved-address vetting (the #128 DNS-rebinding guard), while an operator
-    /// override is NOT IP-restricted — by design an operator may run an internal
-    /// responder — so it keeps the default resolver.
+    /// The SSRF posture is not decided here and cannot be: the agent comes from the
+    /// destination, which knows its own provenance. Redirects are disabled for every
+    /// provenance and the resolved-address vetting is installed for a certificate-derived
+    /// one — see [`crate::outbound_fetch::VettedDestination::agent`] for both arguments.
+    /// What this function still owns is the RESPONSE bound: a well-formed OCSP response is
+    /// well under a kilobyte, and a hostile responder streaming an unbounded body into the
+    /// serving thread is refused by the read cap rather than by the network.
     fn post_request(
         &self,
-        url: &str,
+        destination: &VettedDestination,
         request_der: &[u8],
-        source: ResponderUrlSource,
     ) -> Result<Vec<u8>, OcspError> {
-        // SSRF hardening: the responder host is guarded (`aia_responder_url_is_safe`
-        // → `host_is_public`) BEFORE this call, but that guard only inspects the
-        // FIRST URL. `ureq` follows HTTP 3xx redirects by default, so a hostile
-        // responder could `302 Location: http://169.254.169.254/` and the client
-        // would chase the redirect to an internal address that NEVER passed the
-        // guard. A revocation fetch has no legitimate need to chase redirects, so
-        // disable them (`redirects(0)`): a 3xx is then returned as-is, its body is
-        // not a valid OCSP response, and the path fails CLOSED (Unknown → deny under
-        // hard-fail) rather than reaching the redirect target.
-        // SSRF hardening (#128, DNS rebinding / TOCTOU): the pre-fetch guard
-        // (`aia_responder_url_is_safe` → `host_is_public`) inspects the URL string
-        // only — it blocks LITERAL private IPs and `localhost` but cannot defend a
-        // hostile PUBLIC hostname that RESOLVES to an internal address at fetch time
-        // (e.g. an attacker rebinds `ocsp.evil.test` to `169.254.169.254` between the
-        // guard and the connect). Install a custom resolver that re-applies the SAME
-        // public-IP predicates (`ipv4_is_public`/`ipv6_is_public`) to every RESOLVED
-        // address and connects ONLY to a vetted one: if ANY resolved address is
-        // non-public the resolve fails CLOSED (the fetch errors → Unknown → deny under
-        // hard-fail), so there is no TOCTOU re-resolve window to an internal IP.
-        // Vet resolved addresses for the attacker-influenced cert-AIA path only; an
-        // operator override is deliberately allowed to target an internal responder
-        // (it is scheme-checked, not IP-blocked, in `check`). `vet_resolved_addresses`
-        // is a test-only kill switch (default on) so the redirect test can fetch from
-        // a loopback responder.
-        let vet = self.vet_resolved_addresses && source == ResponderUrlSource::CertAia;
-        let builder = ureq::AgentBuilder::new().redirects(0);
-        let builder = if vet {
-            builder.resolver(VettingResolver::std())
-        } else {
-            builder
-        };
-        let agent = builder.build();
-        let response = agent
-            .post(url)
+        let response = destination
+            .agent(self.timeout)
+            .post(destination.url())
             .set("Content-Type", "application/ocsp-request")
             .set("Accept", "application/ocsp-response")
             .timeout(self.timeout)
@@ -403,12 +430,22 @@ impl OcspChecker {
         Ok(body)
     }
 
-    /// The allow/reject decision for a resolved status under this checker's
-    /// fail-closed posture. `Revoked` is ALWAYS rejected (even under soft-fail);
-    /// `Good` is allowed; `Unknown` is rejected UNLESS `soft_fail`. Pure and
-    /// unit-tested. Returns `true` to ALLOW the connection, `false` to REJECT.
-    pub fn allows(&self, status: CertRevocationStatus) -> bool {
-        decide_allow(status, self.soft_fail)
+    /// The allow/reject decision for the evidence a check produced, under this checker's
+    /// fail-closed posture.
+    ///
+    /// `Revoked` is ALWAYS rejected, even under soft-fail. `Good` is allowed. Everything
+    /// else — a responder that said `unknown`, and every reason no trusted result was
+    /// established — is rejected UNLESS `soft_fail`.
+    ///
+    /// It takes [`RevocationEvidence`], not a status: a `Good` that nothing earned cannot
+    /// be handed to this function, because there is no way to make one.
+    /// Returns `true` to ALLOW the connection, `false` to REJECT.
+    pub fn allows(&self, evidence: RevocationEvidence) -> bool {
+        match evidence {
+            RevocationEvidence::Answered(answer) => decide_allow(answer.status(), self.soft_fail),
+            // Not a responder verdict, and the policy treats it as indeterminate.
+            RevocationEvidence::NotEstablished(_) => self.soft_fail,
+        }
     }
 
     /// As [`OcspChecker::allows`] but for the error path: a transport/codec
@@ -441,344 +478,6 @@ pub fn extract_ocsp_responder_url(leaf_der: &[u8]) -> Option<String> {
         }
     }
     None
-}
-
-/// The provenance of a resolved OCSP responder URL, which selects how strictly the
-/// #4078 SSRF guard is applied: an attacker-influenced cert AIA URL gets the FULL
-/// guard (scheme allowlist + private-IP block); an operator-supplied override gets
-/// only the scheme allowlist (the operator may legitimately point at an internal
-/// responder).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ResponderUrlSource {
-    /// The URL came from the leaf certificate's AIA extension — attacker-influenced.
-    CertAia,
-    /// The URL came from the operator's `--ocsp-responder-url` override — trusted.
-    OperatorOverride,
-}
-
-/// Whether `url`'s scheme is on the OCSP responder allowlist (`http` or `https`).
-/// This is the SSRF-floor applied to EVERY responder URL — including the operator
-/// override — so a `file://`, `gopher://`, `ldap://`, `data:` … URL can never be
-/// fetched. Parsing is intentionally minimal (no URL crate dependency): the scheme
-/// is the ASCII run before the first `:`, compared case-insensitively. Pure.
-pub fn responder_scheme_allowed(url: &str) -> bool {
-    match url.split_once(':') {
-        Some((scheme, _rest)) => {
-            scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
-        }
-        None => false,
-    }
-}
-
-/// The #4078 (M14) SSRF guard for a CERT-supplied (attacker-influenced) AIA OCSP
-/// responder URL. Returns `true` only when the URL is SAFE to fetch:
-///
-///   * its scheme is `http`/`https` (via [`responder_scheme_allowed`]); AND
-///   * its host is NOT a literal loopback / link-local / private / unspecified /
-///     multicast IP, and is NOT the loopback hostname `localhost`.
-///
-/// A hostile leaf otherwise points the blocking serve thread at `file:///etc/passwd`,
-/// the cloud metadata endpoint `169.254.169.254`, `127.0.0.1`, `::1`, `10/8`,
-/// `172.16/12`, `192.168/16`, … . When this returns `false` the caller fails CLOSED
-/// (treats the responder as unavailable → `Unknown`, which denies under hard-fail),
-/// matching the existing "no AIA URL" handling. Pure (no network, no DNS). A
-/// hostname that is not a literal IP and not `localhost` is permitted at this layer
-/// (the host is reached over the network where the OS resolves it); literal private
-/// IPs and the loopback name — the practical SSRF vectors — are blocked outright.
-///
-/// This is a URL/host *syntactic and literal-IP* guard. The DNS-rebinding vector — a
-/// hostile PUBLIC hostname that later RESOLVES to an internal address at fetch time —
-/// is NOT handled here (this layer does no DNS) but IS closed at connect time by
-/// [`VettingResolver`], which re-applies `ipv4_is_public`/`ipv6_is_public` to every
-/// RESOLVED address and fails closed on a non-public one (issue #128). The redirect
-/// vector — a guarded first URL that `302`s to an internal address — is likewise
-/// closed: the OCSP fetch disables redirect-following (see `OcspChecker::post_request`).
-pub fn aia_responder_url_is_safe(url: &str) -> bool {
-    if !responder_scheme_allowed(url) {
-        return false;
-    }
-    match extract_url_host(url) {
-        Some(host) => host_is_public(&host),
-        // A scheme-prefixed URL with no recoverable host is not safe to fetch.
-        None => false,
-    }
-}
-
-/// Extract the host component (without port, without brackets for IPv6) from an
-/// `http`/`https` URL, using minimal parsing (no URL crate). Returns `None` if no
-/// authority is present. The authority is the run between `//` and the first `/`,
-/// `?`, or `#`; userinfo (`user@`) and the `:port` suffix are stripped; an IPv6
-/// literal in `[...]` is returned without its brackets. Pure.
-fn extract_url_host(url: &str) -> Option<String> {
-    let after_scheme = url.split_once("://")?.1;
-    // Authority ends at the first path/query/fragment delimiter.
-    let authority = after_scheme
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or(after_scheme);
-    // Drop any userinfo (everything up to and including the last '@').
-    let hostport = match authority.rsplit_once('@') {
-        Some((_userinfo, hp)) => hp,
-        None => authority,
-    };
-    if hostport.is_empty() {
-        return None;
-    }
-    // IPv6 literal: `[addr]` or `[addr]:port`.
-    if let Some(rest) = hostport.strip_prefix('[') {
-        let close = rest.find(']')?;
-        return Some(rest[..close].to_string());
-    }
-    // host or host:port — the host is everything before the first ':'.
-    let host = hostport.split(':').next().unwrap_or(hostport);
-    if host.is_empty() {
-        None
-    } else {
-        Some(host.to_string())
-    }
-}
-
-/// Whether `host` is safe to fetch from for an attacker-influenced URL: it is NOT
-/// syntactically malformed (no empty DNS label / trailing or doubled dot), NOT a
-/// literal non-public IP, and NOT the loopback name `localhost`. A literal IP is
-/// rejected when it is loopback, link-local, private (RFC 1918 / IPv6 ULA),
-/// unspecified, or multicast. A non-literal hostname (other than `localhost`) is
-/// permitted at this layer. Pure (no DNS).
-fn host_is_public(host: &str) -> bool {
-    use std::net::IpAddr;
-    // A trailing dot (`169.254.169.254.`), a leading dot, or a doubled dot
-    // (`a..b`) produces an EMPTY DNS label. std's `IpAddr` and the `inet_aton`
-    // canonicalizer below both REJECT such a string, so without this guard it
-    // falls through to the "treat as a real hostname → permit" branch — yet the
-    // OS resolver STRIPS a trailing root dot and resolves `169.254.169.254.` to
-    // the metadata IP, and `127.0.0.1.` to loopback. Reject any host with an
-    // empty label (and the empty host) OUTRIGHT rather than normalizing it: a
-    // syntactically malformed host is never a legitimate public responder.
-    if host.is_empty() || host.split('.').any(str::is_empty) {
-        return false;
-    }
-    // The loopback hostname is the most common non-literal SSRF target — block it.
-    if host.eq_ignore_ascii_case("localhost") {
-        return false;
-    }
-    match host.parse::<IpAddr>() {
-        Ok(IpAddr::V4(v4)) => return ipv4_is_public(&v4),
-        Ok(IpAddr::V6(v6)) => return ipv6_is_public(&v6),
-        // Not a STRICT dotted-decimal / canonical IPv6 literal — fall through.
-        Err(_) => {}
-    }
-    // SSRF hardening (#26): an attacker-influenced host may encode an IPv4 address
-    // in a non-dotted-decimal form that std's strict parser REJECTS but
-    // `inet_aton(3)` — and therefore the OS resolver / HTTP client at fetch time —
-    // ACCEPTS: octal (`0177.0.0.1`), hex (`0x7f.0.0.1`), a 32-bit integer
-    // (`2130706433`), or short forms (`127.1`). Without canonicalizing these they
-    // would slip past the dotted-decimal block as if they were hostnames and the
-    // fetch would still reach the internal address. Canonicalize and re-check; only
-    // a host that is NOT any IPv4 encoding is treated as a real hostname.
-    if let Some(v4) = parse_inet_aton_ipv4(host) {
-        return ipv4_is_public(&v4);
-    }
-    true
-}
-
-/// Parse an IPv4 address in the LOOSE `inet_aton(3)` forms that std's strict
-/// parser rejects but the OS resolver / HTTP clients accept (issue #26 SSRF
-/// guard). Each of 1–4 dot-separated parts may be decimal, octal (leading `0`), or
-/// hexadecimal (leading `0x`/`0X`); with fewer than 4 parts the final part is a
-/// wider field that absorbs the remaining low-order bytes (`a`; `a.b`; `a.b.c`).
-/// Returns the canonical address, or `None` if `host` is not such a form (e.g. a
-/// real hostname). Pure.
-fn parse_inet_aton_ipv4(host: &str) -> Option<std::net::Ipv4Addr> {
-    if host.is_empty() {
-        return None;
-    }
-    let parts: Vec<&str> = host.split('.').collect();
-    if parts.len() > 4 {
-        return None;
-    }
-    let vals: Vec<u64> = parts
-        .iter()
-        .map(|p| parse_inet_aton_part(p))
-        .collect::<Option<Vec<u64>>>()?;
-    let n = vals.len();
-    // Every part EXCEPT the last is a single byte (≤ 255).
-    if vals[..n - 1].iter().any(|v| *v > 0xff) {
-        return None;
-    }
-    // The last part is a "rest" field whose width depends on how many parts there
-    // are; reject it if it overflows that width.
-    let last = vals[n - 1];
-    let max_last: u64 = match n {
-        1 => 0xffff_ffff,
-        2 => 0x00ff_ffff,
-        3 => 0x0000_ffff,
-        4 => 0x0000_00ff,
-        _ => return None,
-    };
-    if last > max_last {
-        return None;
-    }
-    let addr: u32 = match n {
-        1 => last as u32,
-        2 => ((vals[0] as u32) << 24) | last as u32,
-        3 => ((vals[0] as u32) << 24) | ((vals[1] as u32) << 16) | last as u32,
-        4 => {
-            ((vals[0] as u32) << 24)
-                | ((vals[1] as u32) << 16)
-                | ((vals[2] as u32) << 8)
-                | last as u32
-        }
-        _ => return None,
-    };
-    Some(std::net::Ipv4Addr::from(addr))
-}
-
-/// Parse one `inet_aton(3)` numeric part: hex (`0x..`), octal (leading `0`), or
-/// decimal. Returns `None` for an empty or non-numeric part (so a real hostname
-/// label like `ocsp` makes the whole parse fail and the host is treated as a name).
-fn parse_inet_aton_part(part: &str) -> Option<u64> {
-    let (radix, digits) =
-        if let Some(hex) = part.strip_prefix("0x").or_else(|| part.strip_prefix("0X")) {
-            (16, hex)
-        } else if part.len() > 1 && part.starts_with('0') {
-            (8, &part[1..])
-        } else {
-            (10, part)
-        };
-    if digits.is_empty() {
-        return None;
-    }
-    // Reject any non-digit (incl. a leading sign) up front: `from_str_radix`
-    // tolerates a leading `+`, which `inet_aton` does not.
-    if !digits.bytes().all(|b| (b as char).is_digit(radix)) {
-        return None;
-    }
-    u64::from_str_radix(digits, radix).ok()
-}
-
-/// Whether an IPv4 literal is a PUBLIC (fetchable) address — i.e. NOT loopback
-/// (127/8), private (10/8, 172.16/12, 192.168/16), link-local (169.254/16,
-/// covering the 169.254.169.254 cloud-metadata endpoint), unspecified (0.0.0.0),
-/// broadcast (255.255.255.255), or multicast (224/4). Pure.
-fn ipv4_is_public(v4: &std::net::Ipv4Addr) -> bool {
-    !(v4.is_loopback()
-        || v4.is_private()
-        || v4.is_link_local()
-        || v4.is_unspecified()
-        || v4.is_broadcast()
-        || v4.is_multicast())
-}
-
-/// Whether an IPv6 literal is a PUBLIC (fetchable) address — i.e. NOT loopback
-/// (::1), unspecified (::), link-local (fe80::/10), multicast (ff00::/8), or
-/// unique-local (fc00::/7). IPv4-mapped/compatible embeddings are unwrapped and
-/// re-checked against the IPv4 rules so `::ffff:127.0.0.1` cannot bypass the guard.
-/// Pure.
-fn ipv6_is_public(v6: &std::net::Ipv6Addr) -> bool {
-    if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
-        return false;
-    }
-    // Unwrap an IPv4-mapped/compatible address and apply the IPv4 rules to it.
-    if let Some(v4) = v6.to_ipv4() {
-        return ipv4_is_public(&v4);
-    }
-    let segs = v6.segments();
-    // Link-local fe80::/10.
-    if (segs[0] & 0xffc0) == 0xfe80 {
-        return false;
-    }
-    // Unique-local fc00::/7 (fc00:: and fd00::).
-    if (segs[0] & 0xfe00) == 0xfc00 {
-        return false;
-    }
-    true
-}
-
-/// Whether a RESOLVED IP address is a public (fetchable) address, reusing the
-/// SAME predicates the literal-IP guard applies. The single chokepoint through
-/// which every resolved OCSP-fetch address must pass (see [`VettingResolver`]);
-/// it must never be weakened independently of `ipv4_is_public`/`ipv6_is_public`.
-fn resolved_ip_is_public(ip: &std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(v4) => ipv4_is_public(v4),
-        std::net::IpAddr::V6(v6) => ipv6_is_public(v6),
-    }
-}
-
-/// The DNS resolution seam ([`VettingResolver`] vets whatever this returns). The
-/// production implementation defers to the OS resolver via `std`'s
-/// `ToSocketAddrs`; tests inject a fixed-address implementation to exercise the
-/// rebinding-rejection path WITHOUT real DNS.
-trait BaseResolver: Send + Sync {
-    fn resolve(&self, netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>>;
-}
-
-/// The production base resolver: the OS resolver, exactly as `ureq`'s default
-/// `StdResolver` would use. The vetting wrapper is what makes it safe.
-struct StdBaseResolver;
-
-impl BaseResolver for StdBaseResolver {
-    fn resolve(&self, netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
-        use std::net::ToSocketAddrs;
-        netloc.to_socket_addrs().map(|iter| iter.collect())
-    }
-}
-
-/// A `ureq` [`Resolver`](ureq::Resolver) that closes the DNS-rebinding hole (#128).
-///
-/// `ureq` connects to whatever a resolver returns; by pinning that set to ONLY
-/// addresses that pass [`resolved_ip_is_public`] — and FAILING CLOSED (an
-/// `io::Error`, which surfaces as `OcspError::Http` → `Unknown` → deny under
-/// hard-fail) the instant ANY resolved address is non-public — there is no
-/// TOCTOU window in which a hostile public hostname can be re-resolved to an
-/// internal IP between the syntactic guard and the connect. Reuses the existing
-/// public-IP predicates (it does NOT duplicate or relax them). Consistent with
-/// the ADR-MCPS-018 lean-sync (blocking `ureq`) firewall: synchronous, no async
-/// runtime, no extra network round-trip beyond the resolve itself.
-struct VettingResolver {
-    base: Box<dyn BaseResolver>,
-}
-
-impl VettingResolver {
-    /// The production resolver: OS resolution, every address vetted.
-    fn std() -> Self {
-        Self {
-            base: Box::new(StdBaseResolver),
-        }
-    }
-
-    /// Resolve `netloc` and return ONLY the vetted addresses, or an error if the
-    /// host did not resolve or ANY resolved address is non-public (fail closed).
-    fn resolve_vetted(&self, netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
-        let addrs = self.base.resolve(netloc)?;
-        if addrs.is_empty() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::AddrNotAvailable,
-                "OCSP responder host did not resolve to any address",
-            ));
-        }
-        // Fail CLOSED on the WHOLE resolve if any address is non-public: an
-        // attacker who returns one internal + one public address must not be able
-        // to have the internal one connected to, and partial filtering would let a
-        // rebinding race pick the internal address. Reject the lot.
-        if let Some(bad) = addrs.iter().find(|sa| !resolved_ip_is_public(&sa.ip())) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                format!(
-                    "OCSP responder host resolved to a non-public address ({}); \
-                     refusing to connect (SSRF / DNS-rebinding guard, issue #128)",
-                    bad.ip()
-                ),
-            ));
-        }
-        Ok(addrs)
-    }
-}
-
-impl ureq::Resolver for VettingResolver {
-    fn resolve(&self, netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
-        self.resolve_vetted(netloc)
-    }
 }
 
 /// Build a DER-encoded OCSP request for `leaf_der` against `issuer_der`, using a
@@ -900,7 +599,7 @@ pub fn verify_and_map_response(
     expected_cert_id: &CertId,
     request_nonce: &[u8],
     now: SystemTime,
-) -> Result<CertRevocationStatus, OcspError> {
+) -> Result<TrustedRevocationAnswer, OcspError> {
     let response = OcspResponse::from_der(response_der)
         .map_err(|e| OcspError::DecodeResponse(e.to_string()))?;
     if response.response_status != OcspResponseStatus::Successful {
@@ -942,7 +641,12 @@ pub fn verify_and_map_response(
         ));
     }
 
-    Ok(map_cert_status(&single.cert_status))
+    // The ONLY construction of a `TrustedRevocationAnswer` in the crate, and it is here,
+    // after all five checks. Everything above this line is what possession of the returned
+    // value means.
+    Ok(TrustedRevocationAnswer {
+        status: map_cert_status(&single.cert_status),
+    })
 }
 
 /// Verify the `BasicOcspResponse` signature over its `tbs_response_data` and
@@ -1270,7 +974,7 @@ fn nonce_ok(basic: &BasicOcspResponse, request_nonce: &[u8]) -> bool {
 /// `false` to REJECT it. `Good` always allows; `Revoked` ALWAYS rejects (even
 /// under soft-fail — a known-revoked cert is never admitted); `Unknown` rejects
 /// unless `soft_fail`. Pure and unit-tested.
-pub fn decide_allow(status: CertRevocationStatus, soft_fail: bool) -> bool {
+fn decide_allow(status: CertRevocationStatus, soft_fail: bool) -> bool {
     match status {
         CertRevocationStatus::Good => true,
         CertRevocationStatus::Revoked => false,
@@ -1287,7 +991,11 @@ mod tests {
     use super::map_cert_status;
     use super::sha1_hash;
     use super::CertRevocationStatus;
+    use super::NotEstablished;
     use super::OcspChecker;
+    use super::RevocationEvidence;
+    use super::TrustedRevocationAnswer;
+    use crate::outbound_fetch::VettedDestination;
 
     use der::asn1::BitString;
     use der::Decode;
@@ -1518,23 +1226,24 @@ mod tests {
     // "not revoked" check. The no-URL path returns before any network I/O, so this
     // is fully offline.
     #[test]
-    fn check_without_responder_url_is_unknown_not_good() {
+    fn check_without_responder_url_establishes_nothing_and_is_not_good() {
         let key = KeyPair::generate().expect("key");
         let params = CertificateParams::new(vec!["no-aia.example".to_string()]).expect("params");
         let leaf = params.self_signed(&key).expect("self-signed").der().clone();
         let checker = OcspChecker::new(None, false); // no override, hard-fail
-        let status = checker
+        let evidence = checker
             .check(leaf.as_ref(), leaf.as_ref())
             .expect("the no-responder-URL path returns without network I/O");
+        // NOT a responder verdict of `Unknown` — nothing was asked. Keeping the two apart
+        // is the point: a check that could not run must not be recorded as a responder
+        // saying anything, and it must never be `Good`.
         assert_eq!(
-            status,
-            CertRevocationStatus::Unknown,
-            "a missing responder URL must be Unknown (fail closed)"
+            evidence,
+            RevocationEvidence::NotEstablished(NotEstablished::NoResponderConfigured),
         );
-        assert_ne!(
-            status,
-            CertRevocationStatus::Good,
-            "a check that could not run must never be recorded as Good"
+        assert!(
+            !checker.allows(evidence),
+            "a check that could not run must deny under hard-fail"
         );
     }
 
@@ -2089,15 +1798,25 @@ mod tests {
     #[test]
     fn checker_allows_methods_match_policy() {
         let hard = OcspChecker::new(None, false);
-        assert!(hard.allows(CertRevocationStatus::Good));
-        assert!(!hard.allows(CertRevocationStatus::Revoked));
-        assert!(!hard.allows(CertRevocationStatus::Unknown));
+        assert!(hard.allows(RevocationEvidence::Answered(
+            TrustedRevocationAnswer::answered(CertRevocationStatus::Good)
+        )));
+        assert!(!hard.allows(RevocationEvidence::Answered(
+            TrustedRevocationAnswer::answered(CertRevocationStatus::Revoked)
+        )));
+        assert!(!hard.allows(RevocationEvidence::Answered(
+            TrustedRevocationAnswer::answered(CertRevocationStatus::Unknown)
+        )));
         assert!(!hard.allows_on_error());
 
         let soft = OcspChecker::new(None, true);
-        assert!(soft.allows(CertRevocationStatus::Unknown));
+        assert!(soft.allows(RevocationEvidence::Answered(
+            TrustedRevocationAnswer::answered(CertRevocationStatus::Unknown)
+        )));
         assert!(soft.allows_on_error());
-        assert!(!soft.allows(CertRevocationStatus::Revoked));
+        assert!(!soft.allows(RevocationEvidence::Answered(
+            TrustedRevocationAnswer::answered(CertRevocationStatus::Revoked)
+        )));
     }
 
     // === #4078 (MCP-RE-MED-5, M14) — AIA responder-URL SSRF guard =============
@@ -2112,9 +1831,6 @@ mod tests {
     // is scheme-checked (http/https only) but, by design, NOT subject to the
     // private-IP block (an operator may legitimately run an internal responder).
 
-    use super::aia_responder_url_is_safe;
-    use super::responder_scheme_allowed;
-
     /// A disallowed scheme on the CERT-supplied AIA URL must be rejected before
     /// any fetch — `check()` short-circuits to `Ok(Unknown)` (fail-closed), never
     /// attempting the network. `file://` is the canonical SSRF/file-read vector.
@@ -2126,17 +1842,20 @@ mod tests {
         let checker = OcspChecker::new(None, false);
         // If the guard were absent the path would try to POST to `file:///...`
         // (ureq) and return Err(Http(..)); WITH the guard it short-circuits to
-        // Ok(Unknown) WITHOUT any fetch. Assert the fail-closed Unknown.
-        let status = checker
+        // NotEstablished WITHOUT any fetch — the destination was refused, which is a
+        // LOCAL fact and not something a responder said.
+        let evidence = checker
             .check(leaf.as_slice(), &issuer_der)
-            .expect("an unsafe-scheme AIA URL fails closed as Ok(Unknown), not Err");
+            .expect("an unsafe-scheme AIA URL fails closed, not Err");
         assert_eq!(
-            status,
-            CertRevocationStatus::Unknown,
-            "a file:// AIA responder URL must be rejected pre-fetch as Unknown"
+            evidence,
+            RevocationEvidence::NotEstablished(NotEstablished::DestinationRefused),
+            "a file:// AIA responder URL must be refused pre-fetch"
         );
-        // And Unknown under hard-fail denies.
-        assert!(!checker.allows(status), "Unknown under hard-fail must deny");
+        assert!(
+            !checker.allows(evidence),
+            "an unestablished result under hard-fail must deny"
+        );
     }
 
     /// A loopback host on the CERT-supplied AIA URL is an SSRF vector and must be
@@ -2150,8 +1869,11 @@ mod tests {
         let checker = OcspChecker::new(None, false);
         let status = checker
             .check(leaf.as_slice(), &issuer_der)
-            .expect("a loopback AIA URL fails closed as Ok(Unknown), not Err");
-        assert_eq!(status, CertRevocationStatus::Unknown);
+            .expect("a loopback AIA URL fails closed, not Err");
+        assert_eq!(
+            status,
+            RevocationEvidence::NotEstablished(NotEstablished::DestinationRefused)
+        );
     }
 
     /// `localhost` (a hostname, not a literal IP) is the loopback name and must
@@ -2163,227 +1885,11 @@ mod tests {
         let checker = OcspChecker::new(None, false);
         let status = checker
             .check(leaf.as_slice(), &issuer_der)
-            .expect("a localhost AIA URL fails closed as Ok(Unknown)");
-        assert_eq!(status, CertRevocationStatus::Unknown);
-    }
-
-    /// Positive control: a NORMAL public-hostname http AIA URL passes the guard
-    /// (so the guard does not over-block legitimate responders). The fetch itself
-    /// then fails (no responder listening), but as Err(Http) — proving the URL was
-    /// accepted by the guard and the path PROCEEDED to the network, not rejected
-    /// pre-fetch as Ok(Unknown).
-    #[test]
-    fn aia_guard_accepts_normal_public_url() {
-        assert!(
-            aia_responder_url_is_safe("http://ocsp.example.com/"),
-            "a normal public http responder URL must pass the AIA SSRF guard"
-        );
-        assert!(
-            aia_responder_url_is_safe("https://ocsp.digicert.com"),
-            "a normal public https responder URL must pass the AIA SSRF guard"
-        );
-    }
-
-    /// DNS-rebinding regression (#128): a hostile PUBLIC hostname that passes the
-    /// syntactic AIA guard but RESOLVES to an internal address at fetch time must be
-    /// rejected at resolve/connect time by [`super::VettingResolver`], which
-    /// re-applies the public-IP predicates to the RESOLVED address and fails CLOSED.
-    /// A fixed-address base resolver is injected (the test seam) so no real DNS is
-    /// used: each internal target (`127.0.0.1` loopback, `169.254.169.254` cloud
-    /// metadata) must yield an `Err`, while a public address must yield `Ok`.
-    ///
-    /// WITHOUT the guard (`VettingResolver` returning the addresses unfiltered) the
-    /// internal cases would return `Ok` and `ureq` would connect to the internal IP —
-    /// the very SSRF the fix closes; this asserts they are rejected instead.
-    #[test]
-    fn vetting_resolver_rejects_rebinding_to_internal_addresses() {
-        use super::{BaseResolver, VettingResolver};
-        use std::net::SocketAddr;
-
-        /// A base resolver that ignores the hostname and returns a fixed address —
-        /// the injectable seam standing in for a hostile/rebinding DNS answer.
-        struct FixedResolver(SocketAddr);
-        impl BaseResolver for FixedResolver {
-            fn resolve(&self, _netloc: &str) -> std::io::Result<Vec<SocketAddr>> {
-                Ok(vec![self.0])
-            }
-        }
-        fn resolver_for(addr: &str) -> VettingResolver {
-            VettingResolver {
-                base: Box::new(FixedResolver(addr.parse().expect("test addr"))),
-            }
-        }
-
-        // Loopback — the public hostname "rebinds" to 127.0.0.1.
-        assert!(
-            resolver_for("127.0.0.1:80")
-                .resolve_vetted("ocsp.evil.test:80")
-                .is_err(),
-            "a host resolving to 127.0.0.1 must be REJECTED at resolve time"
-        );
-        // Cloud metadata endpoint — the classic rebinding SSRF target.
-        assert!(
-            resolver_for("169.254.169.254:80")
-                .resolve_vetted("ocsp.evil.test:80")
-                .is_err(),
-            "a host resolving to 169.254.169.254 must be REJECTED at resolve time"
-        );
-        // IPv6 loopback, for completeness.
-        assert!(
-            resolver_for("[::1]:80")
-                .resolve_vetted("ocsp.evil.test:80")
-                .is_err(),
-            "a host resolving to ::1 must be REJECTED at resolve time"
-        );
-        // Positive control: a genuinely public resolved address is admitted, so the
-        // resolver does not over-block legitimate responders.
-        let ok = resolver_for("93.184.216.34:80").resolve_vetted("ocsp.example.com:80");
-        assert!(
-            ok.is_ok(),
-            "a host resolving to a public address must be admitted"
-        );
+            .expect("a localhost AIA URL fails closed");
         assert_eq!(
-            ok.unwrap(),
-            vec!["93.184.216.34:80".parse::<SocketAddr>().unwrap()],
-            "the vetted public address is pinned and returned for connect"
+            status,
+            RevocationEvidence::NotEstablished(NotEstablished::DestinationRefused)
         );
-        // Mixed answer: a public + an internal address must fail CLOSED on the whole
-        // resolve (no partial filtering that a rebinding race could exploit).
-        struct PairResolver;
-        impl BaseResolver for PairResolver {
-            fn resolve(&self, _netloc: &str) -> std::io::Result<Vec<SocketAddr>> {
-                Ok(vec![
-                    "93.184.216.34:80".parse().unwrap(),
-                    "169.254.169.254:80".parse().unwrap(),
-                ])
-            }
-        }
-        assert!(
-            VettingResolver {
-                base: Box::new(PairResolver)
-            }
-            .resolve_vetted("ocsp.evil.test:80")
-            .is_err(),
-            "a mixed public+internal resolve must fail CLOSED, not connect to the public half"
-        );
-    }
-
-    /// The AIA guard (cert-derived, attacker-influenced) blocks disallowed schemes
-    /// AND every private/loopback/link-local/unspecified/multicast literal IP.
-    #[test]
-    fn aia_guard_blocks_schemes_and_private_ranges() {
-        // Disallowed schemes.
-        for url in [
-            "file:///etc/passwd",
-            "gopher://evil/",
-            "ftp://host/x",
-            "ldap://host/",
-            "data:text/plain,x",
-            "not-a-url",
-            "",
-        ] {
-            assert!(
-                !aia_responder_url_is_safe(url),
-                "{url:?} has a disallowed/absent scheme and must be blocked"
-            );
-        }
-        // Private / loopback / link-local / unspecified / multicast literals.
-        for url in [
-            "http://127.0.0.1/",
-            "http://[::1]/",
-            "http://169.254.169.254/latest/meta-data/", // cloud metadata
-            "http://10.0.0.5/",
-            "http://172.16.0.1/",
-            "http://192.168.1.1/",
-            "http://0.0.0.0/",
-            "http://[::]/",
-            "http://localhost/",
-            "http://224.0.0.1/", // multicast
-            "http://[fe80::1]/", // IPv6 link-local
-            "http://[fc00::1]/", // IPv6 unique-local
-        ] {
-            assert!(
-                !aia_responder_url_is_safe(url),
-                "{url:?} resolves to a non-public address and must be blocked"
-            );
-        }
-    }
-
-    /// Issue #26: the SSRF guard must block NON-dotted-decimal IP encodings that
-    /// `inet_aton(3)` (and thus the OS resolver / HTTP client) resolves to the same
-    /// internal addresses — octal, hex, 32-bit integer, and short forms. Without
-    /// canonicalization these slip past the dotted-decimal block as "hostnames".
-    #[test]
-    fn aia_guard_blocks_alternate_ip_encodings() {
-        for url in [
-            // 127.0.0.1 (loopback) in every alternate encoding.
-            "http://0177.0.0.1/", // octal first octet
-            "http://0x7f.0.0.1/", // hex first octet
-            "http://0x7f000001/", // single hex 32-bit
-            "http://2130706433/", // single decimal 32-bit
-            "http://127.1/",      // short form (a.b)
-            "http://127.0.1/",    // short form (a.b.c)
-            // 169.254.169.254 (cloud metadata) alternate encodings.
-            "http://2852039166/",          // decimal 32-bit
-            "http://0xa9fea9fe/",          // hex 32-bit
-            "http://0251.0376.0251.0376/", // all-octal dotted
-            // 10.0.0.5 (RFC1918) as a 32-bit integer.
-            "http://167772165/",
-            // 0.0.0.0 (unspecified) as integer.
-            "http://0/",
-        ] {
-            assert!(
-                !aia_responder_url_is_safe(url),
-                "{url:?} canonicalizes to a non-public IP and must be blocked"
-            );
-        }
-    }
-
-    /// Positive control: a PUBLIC address in an alternate encoding must STILL be
-    /// allowed (the canonicalization must not over-block), and a genuine hostname
-    /// that merely looks numeric-ish is treated as a name, not mis-parsed.
-    #[test]
-    fn aia_guard_allows_public_alternate_encodings_and_hostnames() {
-        // 8.8.8.8 (public) as hex 32-bit and octal dotted — must pass.
-        assert!(aia_responder_url_is_safe("http://0x08080808/"));
-        // 8.8.8.8 in all-octal dotted form.
-        assert!(aia_responder_url_is_safe("http://010.010.010.010/"));
-        // A real hostname (non-numeric labels) is permitted at this layer.
-        assert!(aia_responder_url_is_safe("http://ocsp.example.com/"));
-    }
-
-    /// Stage-2 audit regression: a syntactically malformed host — trailing dot,
-    /// leading dot, doubled dot, or empty — produces an empty DNS label that std's
-    /// `IpAddr`/`inet_aton` parsers reject, so before the empty-label guard it fell
-    /// through to the "treat as hostname → permit" branch. The OS resolver, however,
-    /// STRIPS a trailing root dot, so `169.254.169.254.` / `127.0.0.1.` reach the
-    /// internal address. All such forms must now be blocked. A legitimate trailing-
-    /// dot FQDN is rejected too — an accepted hardening tradeoff for a revocation
-    /// fetcher (responder URLs do not need the root-dot form).
-    #[test]
-    fn aia_guard_blocks_malformed_empty_label_hosts() {
-        for url in [
-            "http://169.254.169.254./latest/meta-data/", // trailing-dot metadata bypass
-            "http://127.0.0.1./",                        // trailing-dot loopback bypass
-            "http://127.0.0.1../",                       // doubled trailing dot
-            "http://.169.254.169.254/",                  // leading dot
-            "http://example..com/",                      // doubled interior dot
-            "http://.../",                               // all-empty labels
-        ] {
-            assert!(
-                !aia_responder_url_is_safe(url),
-                "{url:?} has an empty DNS label and must be blocked (not normalized)"
-            );
-        }
-        // The malformed-host rejection is at the host layer, so it holds for the bare
-        // host too (the guard is what `aia_responder_url_is_safe` calls after host
-        // extraction).
-        assert!(!super::host_is_public("169.254.169.254."));
-        assert!(!super::host_is_public("127.0.0.1."));
-        assert!(!super::host_is_public("a..b"));
-        assert!(!super::host_is_public(""));
-        // A normal hostname (no empty label) still passes the host layer.
-        assert!(super::host_is_public("ocsp.example.com"));
     }
 
     /// Stage-2 audit regression: the responder-host SSRF guard only inspects the
@@ -2430,19 +1936,21 @@ mod tests {
             }
         });
 
-        // Loopback-allowing checker: this test deliberately fetches from a
-        // 127.0.0.1 responder, which the production #128 vetting resolver would
-        // (correctly) refuse; the test seam disables vetting to exercise the
-        // redirect-following property in isolation.
-        let checker = OcspChecker::new_allowing_loopback(None, false);
+        let checker = OcspChecker::new(None, false);
         let url = format!("http://{responder_addr}/ocsp");
         // The result itself is irrelevant (a 302 carries no valid OCSP body); the
         // security property is that NO request reaches the sentinel.
-        let _ = checker.post_request(
-            &url,
-            b"dummy-ocsp-request",
-            super::ResponderUrlSource::CertAia,
-        );
+        // OPERATOR-CONFIGURED, and that is the honest description: this responder is on
+        // 127.0.0.1, which is exactly the address a certificate may not name and an
+        // operator may. Saying so is also what removed the checker's test-only vetting
+        // kill switch — with the provenance on the DESTINATION, a test that needs a
+        // loopback responder states it at the destination instead of disabling a guard.
+        //
+        // Redirects are disabled for EVERY provenance, so this still exercises the
+        // property under test.
+        let destination = VettedDestination::operator_configured(url)
+            .expect("an http loopback URL is a legal operator-configured destination");
+        let _ = checker.post_request(&destination, b"dummy-ocsp-request");
 
         // Wait (bounded) for the responder thread to observe the connection so the test
         // can't false-pass due to a failed first request.
@@ -2465,57 +1973,6 @@ mod tests {
         }
     }
 
-    /// Unit-level proof that the loose parser canonicalizes each encoding to the
-    /// SAME address the dotted-decimal form denotes.
-    #[test]
-    fn inet_aton_parser_canonicalizes_each_encoding() {
-        use std::net::Ipv4Addr;
-        let loopback = Ipv4Addr::new(127, 0, 0, 1);
-        for form in [
-            "0177.0.0.1",
-            "0x7f.0.0.1",
-            "0x7f000001",
-            "2130706433",
-            "127.1",
-            "127.0.1",
-        ] {
-            assert_eq!(
-                super::parse_inet_aton_ipv4(form),
-                Some(loopback),
-                "{form:?} must canonicalize to 127.0.0.1"
-            );
-        }
-        assert_eq!(
-            super::parse_inet_aton_ipv4("2852039166"),
-            Some(Ipv4Addr::new(169, 254, 169, 254)),
-            "the cloud-metadata integer must canonicalize correctly"
-        );
-        // Non-IP hostnames and malformed numeric forms are NOT parsed as IPs.
-        assert_eq!(super::parse_inet_aton_ipv4("ocsp.example.com"), None);
-        assert_eq!(super::parse_inet_aton_ipv4("0x"), None); // empty hex digits
-        assert_eq!(super::parse_inet_aton_ipv4("256.0.0.1"), None); // octet overflow
-        assert_eq!(super::parse_inet_aton_ipv4("1.2.3.4.5"), None); // too many parts
-        assert_eq!(super::parse_inet_aton_ipv4("4294967296"), None); // > u32::MAX
-    }
-
-    /// The scheme allowlist (applied to BOTH cert AIA and operator override) admits
-    /// only http/https. The operator override is scheme-checked but NOT subject to
-    /// the private-IP block, so an operator-chosen internal responder still passes
-    /// the scheme gate.
-    #[test]
-    fn operator_override_scheme_checked_not_ip_blocked() {
-        assert!(responder_scheme_allowed("http://ocsp.internal/"));
-        assert!(responder_scheme_allowed("https://ocsp.internal/"));
-        assert!(!responder_scheme_allowed("file:///etc/passwd"));
-        assert!(!responder_scheme_allowed("gopher://x/"));
-        // An operator override pointing at an internal/private host passes the
-        // scheme gate (the private-IP block does NOT apply to the override).
-        assert!(responder_scheme_allowed("http://10.0.0.5:8080/ocsp"));
-        assert!(responder_scheme_allowed("http://localhost:8080/ocsp"));
-        // But the AIA (cert) guard WOULD block that same private host.
-        assert!(!aia_responder_url_is_safe("http://10.0.0.5:8080/ocsp"));
-    }
-
     #[test]
     fn check_with_no_url_is_unknown() {
         // No override and a leaf without AIA → check() short-circuits to Unknown
@@ -2527,8 +1984,11 @@ mod tests {
         let checker = OcspChecker::new(None, false);
         let status = checker
             .check(leaf.der().as_ref(), &issuer_der)
-            .expect("no-URL check is Ok(Unknown)");
-        assert_eq!(status, CertRevocationStatus::Unknown);
+            .expect("the no-URL check returns without network I/O");
+        assert_eq!(
+            status,
+            RevocationEvidence::NotEstablished(NotEstablished::NoResponderConfigured)
+        );
     }
 
     #[test]
@@ -2658,7 +2118,7 @@ mod tests {
             )
             .expect("a correctly-signed, fresh, bound Good must verify");
             assert_eq!(
-                status,
+                status.status(),
                 CertRevocationStatus::Good,
                 "a verified Good admits the connection"
             );
@@ -2687,16 +2147,16 @@ mod tests {
             )
             .expect("a correctly-signed, fresh, bound response must verify");
             assert_eq!(
-                status,
+                status.status(),
                 CertRevocationStatus::Revoked,
                 "a verified revoked wire status must reach the policy as Revoked"
             );
             assert!(
-                !decide_allow(status, false),
+                !decide_allow(status.status(), false),
                 "revoked denies under hard-fail"
             );
             assert!(
-                !decide_allow(status, true),
+                !decide_allow(status.status(), true),
                 "revoked denies under soft-fail"
             );
         }

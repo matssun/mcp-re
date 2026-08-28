@@ -231,6 +231,13 @@ _PROXY_LIB_SRCS = [
     # Issue #4030: online OCSP client-cert revocation (behind #[cfg(feature =
     # "online_ocsp")]; cfg'd out of the default build).
     "src/ocsp.rs",
+    # EX-006: the outbound-fetch / SSRF authority the OCSP census found inside `ocsp.rs`.
+    # UNCONDITIONAL, unlike the module it came from — nothing about it is specific to RFC
+    # 6960, and it was reachable only through a feature gate that has nothing to do with it.
+    "src/outbound_fetch/mod.rs",
+    "src/outbound_fetch/address.rs",
+    "src/outbound_fetch/resolver.rs",
+    "src/outbound_fetch/url.rs",
     # Issue #4028: Redis-backed shared atomic ReplayCache (behind #[cfg(feature =
     # "redis_replay")]; cfg'd out of the default build).
     "src/redis_store.rs",
