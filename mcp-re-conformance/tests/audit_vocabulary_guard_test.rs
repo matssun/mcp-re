@@ -87,15 +87,13 @@ fn frozen_wire_codes(error_rs: &str) -> BTreeSet<String> {
 /// into the success/rejection event types and confirm no other `mcp-re.*` token is
 /// minted as a reason that is not a frozen wire_code.
 fn audit_mcp_re_tokens(audit_rs: &str) -> BTreeSet<String> {
-    // Scan only the production region (above the first `#[cfg(test)]`), so the
-    // unit-test fixtures (which deliberately mention bogus tokens like the bare
-    // "authorization_hash_mismatch" they assert must NOT appear) do not pollute
-    // the vocabulary set.
-    let production = match audit_rs.find("#[cfg(test)]") {
-        Some(idx) => &audit_rs[..idx],
-        None => audit_rs,
-    };
-    mcp_re_string_literals(production)
+    // Scan only the production region, so the unit-test fixtures (which deliberately
+    // mention bogus tokens like the bare "authorization_hash_mismatch" they assert must
+    // NOT appear) do not pollute the vocabulary set. The region is every line outside a
+    // `#[cfg(test)]` item, not everything above the first one: a token minted below the
+    // test module is still minted.
+    let production = mcp_re_test_paths::rust_source::production_half(audit_rs);
+    mcp_re_string_literals(&production)
 }
 
 /// The body of a `pub const <NAME>: &[&str] = &[ ... ];` slice declared in
@@ -332,11 +330,8 @@ fn no_producer_outside_core_mints_a_wire_token() {
         ),
     ] {
         let src = read(env_key);
-        let production = match src.find("#[cfg(test)]") {
-            Some(idx) => &src[..idx],
-            None => src.as_str(),
-        };
-        let minted = mcp_re_string_literals(production);
+        let production = mcp_re_test_paths::rust_source::production_half(&src);
+        let minted = mcp_re_string_literals(&production);
         assert!(
             minted.is_empty(),
             "{who} mints its own mcp-re.* token(s) {minted:?} instead of naming a Core              verdict and deriving the token from it. Exactly one file decides what these              strings say (mcp-re-core/src/error.rs); a second table is the parallel              namespace ADR-MCPRE-066 Slice 2 removed."

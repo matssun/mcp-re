@@ -33,14 +33,30 @@ fn core_src_dir() -> PathBuf {
         .to_path_buf()
 }
 
-/// The non-test region of a source file: everything BEFORE the first `#[cfg(test)]`
-/// (unit tests live at file end by convention), so a method literal used only as a
-/// test fixture is not a production drift.
-fn non_test_region(text: &str) -> &str {
-    match text.find("#[cfg(test)]") {
-        Some(i) => &text[..i],
-        None => text,
-    }
+/// The non-test region of a source file, so a method literal used only as a test fixture
+/// is not a production drift.
+///
+/// NOT "everything before the first `#[cfg(test)]`". Unit tests live at file end by
+/// convention, and a convention is not the property this guard claims: a production item
+/// below a test module, or an inline `#[cfg(test)]` helper above one, both make truncation
+/// report a clean pass over code it never read. [`mcp_re_test_paths::rust_source`] owns the
+/// region definition, shared with every sibling source-scanning gate.
+fn non_test_region(text: &str) -> String {
+    mcp_re_test_paths::rust_source::production_half(text)
+}
+
+#[test]
+fn the_region_scan_looks_below_a_test_module() {
+    let source = "#[cfg(test)]\nmod tests {\n    let m = \"tools/call\";\n}\nconst LATE: &str = \"resources/list\";\n";
+    let production = non_test_region(source);
+    assert!(
+        !production.contains("tools/call"),
+        "a fixture inside the test module must stay out of scope"
+    );
+    assert!(
+        production.contains("resources/list"),
+        "production below the test module must still be scanned"
+    );
 }
 
 #[test]

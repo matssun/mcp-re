@@ -8,8 +8,14 @@
 //!
 //! New env keys must be added to [`SOURCE_FALLBACKS`] — the resolver fails
 //! loudly on unknown keys rather than silently returning an empty path.
+//!
+//! [`rust_source`] is the other half of the same job: the guards that resolve a source
+//! path here then scan its text need one shared, tested definition of which lines are
+//! production.
 
 mod source_fallbacks;
+
+pub mod rust_source;
 
 use source_fallbacks::SOURCE_FALLBACKS;
 

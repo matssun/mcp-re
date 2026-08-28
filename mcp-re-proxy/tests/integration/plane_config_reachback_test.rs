@@ -20,15 +20,29 @@
 //!
 //! # What this proves, and what it does not
 //!
-//! It proves that the production half of each module below — everything above its first
-//! `#[cfg(test)]` — mentions no configuration type by name. It does NOT prove semantic
-//! independence: a plane handed a closure that reads configuration, or a plan type that
-//! grew a `DeploymentRequest` field, would satisfy this and violate the property. Keeping the claim
-//! narrow is deliberate; a gate that overstates itself is what stops people looking.
+//! It proves that the production code of each module below mentions no configuration type
+//! by name. It does NOT prove semantic independence: a plane handed a closure that reads
+//! configuration, or a plan type that grew a `DeploymentRequest` field, would satisfy this
+//! and violate the property. Keeping the claim narrow is deliberate; a gate that overstates
+//! itself is what stops people looking.
 //!
 //! Test code is deliberately out of scope. A test may build a `ValidatedDeployment` to drive
 //! the production constructor — `trust_plane`'s own no-cadence teardown test does exactly
 //! that, and it is the more convincing test for being end-to-end.
+//!
+//! # "Production" means every line outside a test region
+//!
+//! It does NOT mean "above the first `#[cfg(test)]`", which is what this gate used to
+//! measure. Rust places no constraint on where a test module sits, so a reach-back written
+//! below one was invisible: the scan stopped at the attribute and reported a clean pass
+//! over code it never read — and an inline `#[cfg(test)]` helper sits hundreds of lines
+//! above the real test module in `trust_plane.rs`, `signing_plane.rs` and `tls_plane.rs`,
+//! so the truncation point was not even the test module in three of the five files here.
+//!
+//! [`mcp_re_test_paths::rust_source`] owns the region definition, shared with the sibling
+//! source-scanning gates and with `scripts/module_size_gate.py`, and
+//! [`the_rule_would_catch_a_reach_back_below_the_test_module`] is this gate's own control
+//! over it.
 
 /// A projected plane, and what it must not name.
 struct Plane {
@@ -153,41 +167,70 @@ fn is_comment(line: &str) -> bool {
     line.trim_start().starts_with("//")
 }
 
-/// The production half: everything above the first `#[cfg(test)]`.
-fn production_half(source: &str) -> &str {
-    match source.find("#[cfg(test)]") {
-        Some(at) => &source[..at],
-        None => source,
-    }
+/// A forbidden name found in production code: its line number, the name, and the line.
+struct Reach {
+    number: usize,
+    name: String,
+    line: String,
 }
 
-/// The production half of `plane`, read from its delivered source.
-fn production_source(plane: &Plane) -> (std::path::PathBuf, String) {
+/// Every forbidden name `source` reaches for from production code.
+///
+/// This is the gate itself, taken as a function of source TEXT so that the self-control
+/// below can run the real scan — region removal, comment filtering and whole-identifier
+/// matching together — over a synthetic module. A control that exercised only the region
+/// helper would leave the composition untested, which is the shape of bug this gate had.
+fn reaches_for(source: &str, names: &[&str]) -> Vec<Reach> {
+    let mut found = Vec::new();
+    for (number, line) in mcp_re_test_paths::rust_source::production_lines(source) {
+        if is_comment(line) {
+            continue;
+        }
+        for name in names {
+            if names_identifier(line, name) {
+                found.push(Reach {
+                    number,
+                    name: (*name).to_string(),
+                    line: line.trim().to_string(),
+                });
+            }
+        }
+    }
+    found
+}
+
+/// Every reach rendered one per line, so a plane with several is reported once rather than
+/// one test run per violation.
+fn report(found: &[Reach]) -> String {
+    found
+        .iter()
+        .map(|r| format!("  line {}: names {:?}\n    {}", r.number, r.name, r.line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `plane`'s delivered source, with the path it came from.
+fn plane_source(plane: &Plane) -> (std::path::PathBuf, String) {
     let path = mcp_re_test_paths::resolve_runfile(plane.env);
     let source =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    let half = production_half(&source).to_string();
-    (path, half)
+    (path, source)
 }
 
 #[test]
 fn a_projected_plane_names_no_configuration_type() {
     for plane in PROJECTED_PLANES {
-        let (path, source) = production_source(plane);
-        for (number, line) in source.lines().enumerate().filter(|(_, l)| !is_comment(l)) {
-            for name in CONFIGURATION_NAMES {
-                assert!(
-                    !names_identifier(line, name),
-                    "{}:{}: names {name:?} — {}. The plane establishes what its plan says; \
-                     if the plan does not carry what is needed here, widen the plan rather \
-                     than reading configuration past it.\n  {}",
-                    path.display(),
-                    number + 1,
-                    plane.why,
-                    line.trim()
-                );
-            }
-        }
+        let (path, source) = plane_source(plane);
+        let found = reaches_for(&source, CONFIGURATION_NAMES);
+        assert!(
+            found.is_empty(),
+            "{} — {}. The plane establishes what its plan says; if the plan does not carry \
+             what is needed here, widen the plan rather than reading configuration past \
+             it.\n{}",
+            path.display(),
+            plane.why,
+            report(&found)
+        );
     }
 }
 
@@ -200,21 +243,16 @@ fn a_projected_plane_names_no_configuration_type() {
 #[test]
 fn a_projected_plane_reconstructs_no_classified_state() {
     for plane in PROJECTED_PLANES {
-        let (path, source) = production_source(plane);
-        for (number, line) in source.lines().enumerate().filter(|(_, l)| !is_comment(l)) {
-            for name in plane.reconstructed {
-                assert!(
-                    !names_identifier(line, name),
-                    "{}:{}: names {name:?}, whose posture layer A classified — {}. Consume \
-                     the classified state the plan carries; a primitive here means the \
-                     plane is deciding again what has already been decided.\n  {}",
-                    path.display(),
-                    number + 1,
-                    plane.why,
-                    line.trim()
-                );
-            }
-        }
+        let (path, source) = plane_source(plane);
+        let found = reaches_for(&source, plane.reconstructed);
+        assert!(
+            found.is_empty(),
+            "{} — {}. Consume the classified state the plan carries; a primitive here means \
+             the plane is deciding again what has already been decided.\n{}",
+            path.display(),
+            plane.why,
+            report(&found)
+        );
     }
 }
 
@@ -226,7 +264,7 @@ fn the_rule_would_catch_a_reach_back() {
     let reaching = "fn materialize(plan: &TrustPlan) {\n    let _ = config.trust_path;\n}\n\
                     #[cfg(test)]\nmod tests {}\n";
     assert!(
-        !production_half(reaching).contains("ValidatedDeployment"),
+        reaches_for(reaching, CONFIGURATION_NAMES).is_empty(),
         "the fixture must not pass for the wrong reason"
     );
     for source in [
@@ -268,12 +306,87 @@ fn the_rule_would_catch_a_reach_back() {
     }
 }
 
-/// The production half is what is measured, so the split has to be right: a rule that
-/// stopped at the wrong line would scan test fixtures, where a `ValidatedDeployment` is
-/// legitimate, and report a violation that is not one.
+/// Test code is out of scope, so a fixture cannot make the gate fail.
+///
+/// A rule that stopped at the wrong line would scan test modules, where a
+/// `ValidatedDeployment` is legitimate, and report a violation that is not one.
 #[test]
-fn the_split_excludes_test_code() {
+fn the_scan_excludes_test_code() {
     let source = "fn materialize() {}\n#[cfg(test)]\nmod tests {\n    use crate::deployment_request::DeploymentRequest;\n}\n";
-    assert!(!production_half(source).contains("DeploymentRequest"));
-    assert!(production_half(source).contains("materialize"));
+    assert!(
+        reaches_for(source, CONFIGURATION_NAMES).is_empty(),
+        "a `ValidatedDeployment` inside a test module was read as a reach-back"
+    );
+}
+
+/// **The control this gate was missing.** A reach-back written BELOW the test module is
+/// caught.
+///
+/// The previous implementation measured "everything above the first `#[cfg(test)]`", which
+/// is not the property it claims. Rust permits production items after a test module, and
+/// three of the five modules scanned here carry an inline `#[cfg(test)]` helper hundreds of
+/// lines above their test module — so the truncation point was not even the test module,
+/// and every line below it was unexamined while the gate reported a clean pass.
+///
+/// This is a NEGATIVE control: it asserts the gate FIRES. Paired with
+/// [`the_scan_excludes_test_code`] above it pins both directions, which is what stops the
+/// fix from being "scan everything" — a rule that flagged the test module would be
+/// unsatisfiable and would get deleted.
+#[test]
+fn the_rule_would_catch_a_reach_back_below_the_test_module() {
+    let source = "fn materialize(plan: &TrustPlan) {}\n\
+                  #[cfg(test)]\n\
+                  mod tests {\n\
+                  \x20   use crate::deployment_request::DeploymentRequest;\n\
+                  }\n\
+                  fn rematerialize(config: &ValidatedDeployment) {}\n";
+    let found = reaches_for(source, CONFIGURATION_NAMES);
+    assert_eq!(
+        found.len(),
+        1,
+        "expected exactly the reach-back below the test module, got {:?}",
+        found
+            .iter()
+            .map(|r| (r.number, &r.name))
+            .collect::<Vec<_>>()
+    );
+    let reach = found.first().expect("one reach");
+    assert_eq!(reach.name, "ValidatedDeployment");
+    assert_eq!(
+        reach.number, 6,
+        "the violation must be reported at its real line, not at a filtered-copy offset"
+    );
+}
+
+/// The same control for the reconstruction check, whose name list is per-plane.
+///
+/// Both scans share `reaches_for`, so this is not a duplicate assertion about the same
+/// code path: it pins that the per-plane name list reaches the same corrected scan, and a
+/// future split of the two checks cannot silently take one of them back to truncation.
+#[test]
+fn the_reconstruction_rule_also_looks_below_the_test_module() {
+    let source = "fn materialize(plan: &TrustPlan) {}\n\
+                  #[cfg(test)]\n\
+                  mod tests {\n\
+                  \x20   let _ = revocation_tier;\n\
+                  }\n\
+                  fn later() { let _ = plan.revocation_tier; }\n";
+    let found = reaches_for(source, &["revocation_tier"]);
+    assert_eq!(found.len(), 1, "the region-aware scan saw the wrong lines");
+    assert_eq!(found.first().map(|r| r.number), Some(6));
+}
+
+/// An inline `#[cfg(test)]` helper above the test module does not end the scan.
+///
+/// This is the shape that made the old truncation worst in practice: the attribute the
+/// scan stopped at was not the test module at all, so the file's entire body went
+/// unexamined.
+#[test]
+fn an_inline_test_helper_does_not_end_the_scan() {
+    let source = "fn a() {}\n\
+                  #[cfg(test)]\n\
+                  fn helper() {}\n\
+                  fn materialize(config: &ValidatedDeployment) {}\n";
+    let found = reaches_for(source, CONFIGURATION_NAMES);
+    assert_eq!(found.first().map(|r| r.number), Some(4));
 }
