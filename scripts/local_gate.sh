@@ -99,6 +99,8 @@ stage_static() {
     && python3 scripts/startup_backedges.py --selftest \
     && python3 scripts/module_map.py --selftest \
     && python3 scripts/bazel_srcs_gate.py \
+    && python3 scripts/semantic_altitude_gate.py --selftest \
+    && python3 scripts/semantic_altitude_gate.py \
     && python3 scripts/es256_containment_gate.py --selftest \
     && python3 scripts/es256_containment_gate.py \
     && python3 scripts/owned_worker_gate.py --selftest \

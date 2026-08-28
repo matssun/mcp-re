@@ -15,13 +15,13 @@
 use crate::config_state::tls_custody::TlsCustodyState;
 use crate::config_state::trust_revocation::TrustRevocationState;
 use crate::deployment_request::DeploymentRequest;
-use crate::deployment_request::KeySourceKind;
+use crate::deployment_request::{DelegatedChannelKeyRequest, SigningSourceRequest};
 
 /// The relations, kept separate so each can be reported where its clause has always been
 /// read rather than in one block at the end (CF-11 — precedence changes deliberately).
 #[derive(Debug, Default)]
 pub(crate) struct CrossMachineViolations {
-    /// X2a — `Custody` × `TlsCustody`.
+    /// X2a — the response-signing mechanism × the channel key object.
     pub(crate) x2a_delegated_selector: Vec<String>,
     /// X2b — `TlsCustody` × `Tls`.
     pub(crate) x2b_exclusive_tls_custody: Vec<String>,
@@ -31,39 +31,44 @@ pub(crate) struct CrossMachineViolations {
     pub(crate) x9_trust_epoch_posture: Vec<String>,
 }
 
-/// X2a: which delegated TLS selector is legal depends on the custody state.
+/// X2a: the channel key object must live in a backend this deployment already reaches.
 ///
-/// The selector names a key object in a specific backend, so it is meaningful only under
-/// the custody source that has that backend. On any other source it would silently do
-/// nothing, leaving a deployment that believes its handshake key is device-resident.
-/// Asked of the SELECTOR rather than of the built state, because custody is two things and
-/// this relation is about only one of them. `key_source` names a source totally; the state
-/// adds the material that source needs. A deployment naming `aws-kms` without its region
-/// has no custody STATE, and still has a custody SOURCE that a PKCS#11 TLS selector does
-/// not belong to — so asking this of the state would drop that diagnostic exactly when a
-/// configuration is wrong in two ways at once.
-fn x2a(kind: KeySourceKind, config: &DeploymentRequest) -> Vec<String> {
-    [
-        (
-            config.pkcs11_tls_key_label.is_some(),
-            KeySourceKind::Pkcs11,
-            "--pkcs11-tls-key-label has no effect without --key-source pkcs11",
-        ),
-        (
-            config.aws_kms_tls_key_id.is_some(),
-            KeySourceKind::AwsKms,
-            "--aws-kms-tls-key-id has no effect without --key-source aws-kms",
-        ),
-        (
-            config.gcp_kms_tls_key_version.is_some(),
-            KeySourceKind::GcpKms,
-            "--gcp-kms-tls-key-version has no effect without --key-source gcp-kms",
-        ),
-    ]
-    .into_iter()
-    .filter(|(present, owner, _)| *present && kind != *owner)
-    .map(|(_, _, message)| message.to_string())
-    .collect()
+/// The two roles are modelled separately — a response-signing source and a channel
+/// credential — so nothing forces them to agree, and something therefore has to say that
+/// they must. This is that statement, made explicitly rather than produced as a side
+/// effect of one provider discriminator serving two roles (ADR-MCPRE-067 §10).
+///
+/// What it protects: a channel key object named in a backend the deployment does not reach
+/// would silently do nothing, leaving an operator who believes the handshake key is
+/// device-resident.
+///
+/// Asked of the requested SOURCE rather than of the built custody state, because custody
+/// is two things and this relation is about only one of them. A deployment naming AWS KMS
+/// without its region has no custody STATE, and still has a mechanism selection that a
+/// PKCS#11 channel key does not belong to — so asking this of the state would drop the
+/// diagnostic exactly when a configuration is wrong in two ways at once.
+fn x2a(
+    source: &SigningSourceRequest,
+    channel: Option<&DelegatedChannelKeyRequest>,
+) -> Vec<String> {
+    let Some(channel) = channel else {
+        return Vec::new();
+    };
+    let mismatch = |flag: &str, required: &str| {
+        vec![format!("{flag} has no effect without --key-source {required}")]
+    };
+    match (channel, source) {
+        (DelegatedChannelKeyRequest::Pkcs11(_), SigningSourceRequest::Pkcs11(_))
+        | (DelegatedChannelKeyRequest::AwsKms(_), SigningSourceRequest::AwsKms(_))
+        | (DelegatedChannelKeyRequest::GcpKms(_), SigningSourceRequest::GcpKms(_)) => Vec::new(),
+        (DelegatedChannelKeyRequest::Pkcs11(_), _) => {
+            mismatch("--pkcs11-tls-key-label", "pkcs11")
+        }
+        (DelegatedChannelKeyRequest::AwsKms(_), _) => mismatch("--aws-kms-tls-key-id", "aws-kms"),
+        (DelegatedChannelKeyRequest::GcpKms(_), _) => {
+            mismatch("--gcp-kms-tls-key-version", "gcp-kms")
+        }
+    }
 }
 
 /// X2b: a delegated TLS custody forbids an exported copy of the same key.
@@ -121,13 +126,15 @@ fn x9(
 
 /// Check the cross-machine relations over states pass 1 recognised.
 pub(crate) fn validate(
-    custody_source: KeySourceKind,
     tls_custody: Option<&TlsCustodyState>,
     trust_revocation: Option<&TrustRevocationState>,
     config: &DeploymentRequest,
 ) -> CrossMachineViolations {
     CrossMachineViolations {
-        x2a_delegated_selector: x2a(custody_source, config),
+        x2a_delegated_selector: x2a(
+            &config.response_signing.source,
+            config.channel_credential.delegated.as_ref(),
+        ),
         x2b_exclusive_tls_custody: x2b(tls_custody, config),
         x6_unenforceable_deny_list: x6(config),
         x9_trust_epoch_posture: x9(trust_revocation, config),
@@ -195,6 +202,50 @@ pub(crate) fn unenforceable_revocation_list_refusal(paths: &[String]) -> Option<
 mod tests {
     use super::*;
     use crate::config_state::test_support::legal_config;
+    use crate::deployment_request::{
+        AwsKmsChannelKeyRequest, AwsKmsSigningSourceRequest, DeploymentRequest,
+        FileSigningSourceRequest, GcpKmsChannelKeyRequest, GcpKmsSigningSourceRequest,
+        Pkcs11ChannelKeyRequest, Pkcs11SigningSourceRequest,
+    };
+
+    /// Select the response-signing mechanism, with the minimum material each needs.
+    fn select_pkcs11(config: &mut DeploymentRequest) {
+        config.response_signing.source = SigningSourceRequest::Pkcs11(Pkcs11SigningSourceRequest {
+            module: Some("/lib/softhsm.so".to_string()),
+            pin_file: Some("/pin".to_string()),
+            token_label: Some("token".to_string()),
+            key_label: Some("signing".to_string()),
+        });
+    }
+
+    fn select_aws(config: &mut DeploymentRequest) {
+        config.response_signing.source = SigningSourceRequest::AwsKms(AwsKmsSigningSourceRequest {
+            region: Some("eu-north-1".to_string()),
+            key_id: Some("alias/signing".to_string()),
+            ..AwsKmsSigningSourceRequest::default()
+        });
+    }
+
+    fn select_gcp(config: &mut DeploymentRequest) {
+        config.response_signing.source = SigningSourceRequest::GcpKms(GcpKmsSigningSourceRequest {
+            key_version: Some("projects/p/..".to_string()),
+            ..GcpKmsSigningSourceRequest::default()
+        });
+    }
+
+    fn select_file(config: &mut DeploymentRequest) {
+        config.response_signing.source = SigningSourceRequest::File(FileSigningSourceRequest {
+            seed_path: "/seed".to_string(),
+        });
+    }
+
+    fn pkcs11_channel(config: &mut DeploymentRequest) {
+        config.channel_credential.delegated = Some(DelegatedChannelKeyRequest::Pkcs11(
+            Pkcs11ChannelKeyRequest {
+                key_label: "tls".to_string(),
+            },
+        ));
+    }
 
     /// A flag a case must name in its refusal, and the configuration that provokes it.
     type Case = (&'static str, fn(&mut DeploymentRequest));
@@ -205,7 +256,6 @@ mod tests {
         let (tls_custody, _) = crate::config_state::tls_custody::classify_and_validate(&config);
         let (trust, _) = crate::config_state::trust_revocation::classify_and_validate(&config);
         validate(
-            config.key_source,
             tls_custody.as_ref(),
             trust.as_ref(),
             &config,
@@ -215,8 +265,8 @@ mod tests {
     #[test]
     fn a_selector_matching_the_custody_state_is_legal() {
         let found = relations(|c| {
-            c.key_source = KeySourceKind::Pkcs11;
-            c.pkcs11_tls_key_label = Some("tls".to_string());
+            select_pkcs11(c);
+            pkcs11_channel(c);
             c.tls_key = String::new();
         });
         assert!(found.x2a_delegated_selector.is_empty());
@@ -227,16 +277,24 @@ mod tests {
     fn every_selector_is_refused_under_every_other_custody_state() {
         let cases: Vec<Case> = vec![
             ("--pkcs11-tls-key-label", |c| {
-                c.key_source = KeySourceKind::AwsKms;
-                c.pkcs11_tls_key_label = Some("tls".to_string());
+                select_aws(c);
+                pkcs11_channel(c);
             }),
             ("--aws-kms-tls-key-id", |c| {
-                c.key_source = KeySourceKind::GcpKms;
-                c.aws_kms_tls_key_id = Some("alias/tls".to_string());
+                select_gcp(c);
+                c.channel_credential.delegated = Some(DelegatedChannelKeyRequest::AwsKms(
+                    AwsKmsChannelKeyRequest {
+                        key_id: "alias/tls".to_string(),
+                    },
+                ));
             }),
             ("--gcp-kms-tls-key-version", |c| {
-                c.key_source = KeySourceKind::File;
-                c.gcp_kms_tls_key_version = Some("projects/p/..".to_string());
+                select_file(c);
+                c.channel_credential.delegated = Some(DelegatedChannelKeyRequest::GcpKms(
+                    GcpKmsChannelKeyRequest {
+                        key_version: "projects/p/..".to_string(),
+                    },
+                ));
             }),
         ];
         for (flag, mutate) in cases {
@@ -279,8 +337,8 @@ mod tests {
     #[test]
     fn asserting_both_custodies_for_one_key_is_refused() {
         let found = relations(|c| {
-            c.key_source = KeySourceKind::Pkcs11;
-            c.pkcs11_tls_key_label = Some("tls".to_string());
+            select_pkcs11(c);
+            pkcs11_channel(c);
             c.tls_key = "/key".to_string();
         });
         assert_eq!(found.x2b_exclusive_tls_custody.len(), 1);

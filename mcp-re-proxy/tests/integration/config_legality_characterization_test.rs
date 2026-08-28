@@ -113,7 +113,11 @@ fn refused_at_the_boundary() {
     // parameter it cannot start without: nothing else in that state supplies the
     // response-signing key.
     let mut config = base();
-    config.signing_key_seed = String::new();
+    config.response_signing.source = mcp_re_proxy::deployment_request::SigningSourceRequest::File(
+        mcp_re_proxy::deployment_request::FileSigningSourceRequest {
+            seed_path: String::new(),
+        },
+    );
     let refusal = ValidatedDeployment::try_from(config).expect_err("a custody state with no key");
     assert!(refusal.contains("--signing-key-seed"), "{refusal}");
 

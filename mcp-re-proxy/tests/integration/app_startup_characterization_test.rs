@@ -739,7 +739,13 @@ fn a_programmatic_config_cannot_assert_both_delegated_and_exported_tls_custody()
         !config.tls_key.is_empty(),
         "the fixture must start with an exported TLS key for the contradiction to exist"
     );
-    config.pkcs11_tls_key_label = Some("tls-key-on-the-token".to_string());
+    config.channel_credential.delegated = Some(
+        mcp_re_proxy::deployment_request::DelegatedChannelKeyRequest::Pkcs11(
+            mcp_re_proxy::deployment_request::Pkcs11ChannelKeyRequest {
+                key_label: "tls-key-on-the-token".to_string(),
+            },
+        ),
+    );
 
     let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
         .expect_err("contradictory TLS custody must be refused however the config was built");
@@ -843,6 +849,50 @@ fn a_programmatic_config_cannot_disable_the_request_target_reconstruction_check(
 /// The broken implementation this catches: consulting `validated_kms_endpoint` only from
 /// the argv match arms, or checking the scheme and the host's emptiness without checking
 /// what a URL parser reads the authority as.
+/// Select AWS KMS response signing with `endpoint` as its KMS endpoint override.
+///
+/// The endpoint is no longer a sibling of the selector: it belongs to the AWS payload, so
+/// naming one means selecting AWS. That is the point — a GCP deployment can no longer
+/// carry an AWS endpoint at all — and it does not weaken this test, whose subject is
+/// whether the boundary holds an endpoint a config built in code names.
+fn aws_endpoint(config: &mut mcp_re_proxy::deployment_request::DeploymentRequest, endpoint: String) {
+    config.response_signing.source = mcp_re_proxy::deployment_request::SigningSourceRequest::AwsKms(
+        mcp_re_proxy::deployment_request::AwsKmsSigningSourceRequest {
+            region: Some("eu-north-1".to_string()),
+            key_id: Some("alias/signing".to_string()),
+            endpoint: Some(endpoint),
+            ..Default::default()
+        },
+    );
+}
+
+/// Select AWS KMS response signing with `endpoint` as its STS endpoint override, under the
+/// web-identity mode that endpoint parameterizes.
+fn sts_endpoint(config: &mut mcp_re_proxy::deployment_request::DeploymentRequest, endpoint: String) {
+    config.response_signing.source = mcp_re_proxy::deployment_request::SigningSourceRequest::AwsKms(
+        mcp_re_proxy::deployment_request::AwsKmsSigningSourceRequest {
+            region: Some("eu-north-1".to_string()),
+            key_id: Some("alias/signing".to_string()),
+            use_web_identity: true,
+            sts_endpoint: Some(endpoint),
+            ..Default::default()
+        },
+    );
+}
+
+/// Select GCP Cloud KMS response signing with `endpoint` as its endpoint override.
+fn gcp_endpoint(config: &mut mcp_re_proxy::deployment_request::DeploymentRequest, endpoint: String) {
+    config.response_signing.source = mcp_re_proxy::deployment_request::SigningSourceRequest::GcpKms(
+        mcp_re_proxy::deployment_request::GcpKmsSigningSourceRequest {
+            key_version: Some(
+                "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1".to_string(),
+            ),
+            endpoint: Some(endpoint),
+            use_metadata: false,
+        },
+    );
+}
+
 #[test]
 fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() {
     use std::sync::atomic::AtomicBool;
@@ -865,7 +915,7 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
             "loopback",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.aws_kms_endpoint = Some("http://attacker.example/".to_string())
+                    aws_endpoint(c, "http://attacker.example/".to_string())
                 },
             ),
         ),
@@ -874,7 +924,7 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
             "loopback",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.gcp_kms_endpoint = Some("http://attacker.example/v1".to_string())
+                    gcp_endpoint(c, "http://attacker.example/v1".to_string())
                 },
             ),
         ),
@@ -883,7 +933,7 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
             "absolute https:// URL",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.aws_kms_endpoint = Some("ftp://kms.internal/".to_string())
+                    aws_endpoint(c, "ftp://kms.internal/".to_string())
                 },
             ),
         ),
@@ -892,7 +942,7 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
             "has no host",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.aws_kms_endpoint = Some("https://".to_string())
+                    aws_endpoint(c, "https://".to_string())
                 },
             ),
         ),
@@ -903,8 +953,7 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
             "userinfo",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.gcp_kms_endpoint =
-                        Some("https://cloudkms.googleapis.com@evil.example.com".to_string())
+                    gcp_endpoint(c, "https://cloudkms.googleapis.com@evil.example.com".to_string())
                 },
             ),
         ),
@@ -913,7 +962,7 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
             "userinfo",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.gcp_kms_endpoint = Some("http://localhost:80@evil.example.com".to_string())
+                    gcp_endpoint(c, "http://localhost:80@evil.example.com".to_string())
                 },
             ),
         ),
@@ -922,8 +971,7 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
             "userinfo",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.aws_kms_endpoint =
-                        Some("https://kms.us-east-1.amazonaws.com@evil.example.com".to_string())
+                    aws_endpoint(c, "https://kms.us-east-1.amazonaws.com@evil.example.com".to_string())
                 },
             ),
         ),
@@ -932,7 +980,7 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
             "userinfo",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.aws_kms_endpoint = Some("http://127.0.0.1:4566@evil.example.com".to_string())
+                    aws_endpoint(c, "http://127.0.0.1:4566@evil.example.com".to_string())
                 },
             ),
         ),
@@ -941,8 +989,7 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
             "userinfo",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.aws_sts_endpoint =
-                        Some("https://sts.eu-north-1.amazonaws.com@evil.example.com".to_string())
+                    sts_endpoint(c, "https://sts.eu-north-1.amazonaws.com@evil.example.com".to_string())
                 },
             ),
         ),
@@ -975,41 +1022,43 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
         "http://[::1]:4566",
         "http://localhost",
     ] {
-        let mut config = parsed.clone();
-        config.aws_kms_endpoint = Some(allowed.to_string());
-        config.gcp_kms_endpoint = Some(allowed.to_string());
-        let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
-            .expect_err("this fixture stops at an environmental step");
-        assert!(
-            !err.contains("refuses unsafe configuration"),
-            "{allowed} is an admissible endpoint and must not be refused, got: {err}"
-        );
-        // `--aws-sts-endpoint` is refused by an unrelated coherence rule unless
-        // `--aws-kms-use-web-identity` is on, so its accept case is asserted against the
-        // endpoint decision itself rather than against the whole boundary.
-        let mut sts = parsed.clone();
-        sts.aws_sts_endpoint = Some(allowed.to_string());
-        let err = mcp_re_proxy::app::run(sts, Arc::new(AtomicBool::new(true)))
-            .expect_err("this fixture stops at an environmental step");
-        assert!(
-            !err.contains("userinfo") && !err.contains("loopback"),
-            "{allowed} is an admissible --aws-sts-endpoint and must not be refused as one, \
-             got: {err}"
-        );
+        for select in [
+            aws_endpoint
+                as fn(&mut mcp_re_proxy::deployment_request::DeploymentRequest, String),
+            gcp_endpoint,
+            sts_endpoint,
+        ] {
+            let mut config = parsed.clone();
+            select(&mut config, allowed.to_string());
+            let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
+                .expect_err("this fixture stops at an environmental step");
+            assert!(
+                !err.contains("userinfo") && !err.contains("loopback"),
+                "{allowed} is an admissible endpoint and must not be refused as one, got: {err}"
+            );
+        }
     }
 }
 
 /// R8-C108 — the custody-coherence and ingress-assertion clauses refuse a state, not a
 /// typo, so they belong at the validation boundary too.
 ///
-/// A selector belonging to another key source is silently ignored by `build_key_source`,
-/// which dispatches on `key_source` alone; a dangling ingress key is silently ignored by a
+/// A channel key object in a backend the response-signing mechanism does not reach is
+/// silently ignored by `build_key_source`; a dangling ingress key is silently ignored by a
 /// binding that never reads it. In both cases the operator believes a custody or a
 /// request-binding control is in force when nothing enforces it — and neither belief gets
 /// truer because the config was built in code rather than parsed.
 ///
 /// The broken implementation this catches: deciding custody coherence or ingress-assertion
 /// coherence in `parse_args`, on the one route into the runtime that has a command line.
+///
+/// **Two cases left this list rather than being deleted.** `--gcp-kms-use-metadata` and
+/// `--aws-kms-use-web-identity` on a file-backed source used to be representable and were
+/// refused here. They are now values inside the GCP and AWS payloads, so a file-backed
+/// request has nowhere to put them and the compiler refuses what this test refused
+/// (ADR-MCPRE-067 §7). What replaces them is the case that is still representable: the two
+/// key ROLES are independent, so a request can name an AWS channel key beside a file-backed
+/// response-signing source, and X2a must still refuse it.
 #[test]
 fn a_programmatic_config_cannot_carry_a_dangling_custody_or_ingress_selector() {
     use std::sync::atomic::AtomicBool;
@@ -1024,18 +1073,28 @@ fn a_programmatic_config_cannot_carry_a_dangling_custody_or_ingress_selector() {
         Box<dyn Fn(&mut mcp_re_proxy::deployment_request::DeploymentRequest)>,
     )> = vec![
         (
-            "--gcp-kms-use-metadata",
+            "--aws-kms-tls-key-id",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.gcp_kms_use_metadata = true
+                    c.channel_credential.delegated =
+                        Some(mcp_re_proxy::deployment_request::DelegatedChannelKeyRequest::AwsKms(
+                            mcp_re_proxy::deployment_request::AwsKmsChannelKeyRequest {
+                                key_id: "alias/tls".to_string(),
+                            },
+                        ))
                 },
             ),
         ),
         (
-            "--aws-kms-use-web-identity",
+            "--gcp-kms-tls-key-version",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.aws_kms_use_web_identity = true
+                    c.channel_credential.delegated =
+                        Some(mcp_re_proxy::deployment_request::DelegatedChannelKeyRequest::GcpKms(
+                            mcp_re_proxy::deployment_request::GcpKmsChannelKeyRequest {
+                                key_version: "projects/p/..".to_string(),
+                            },
+                        ))
                 },
             ),
         ),

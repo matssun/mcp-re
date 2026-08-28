@@ -4,34 +4,42 @@
 //! Where the Ed25519 response-signing key lives, and therefore what an operator is
 //! entitled to believe about it. Five states:
 //!
-//! | State | Required | Forbidden | Guards |
-//! |---|---|---|---|
-//! | `FileSeed` | seed | every other state's parameters | — |
-//! | `EnvSeed` | seed | every other state's parameters | — |
-//! | `Pkcs11` | module, pin file, token label, key label | AWS/GCP parameters and flags | — |
-//! | `AwsKms` | region, key id | PKCS#11/GCP parameters, GCP flag | endpoint authority |
-//! | `GcpKms` | key version | PKCS#11/AWS parameters, AWS flag | endpoint authority |
+//! | State | Required | Guards |
+//! |---|---|---|
+//! | `FileSeed` | seed | — |
+//! | `EnvSeed` | seed | — |
+//! | `Pkcs11` | module, pin file, token label, key label | — |
+//! | `AwsKms` | region, key id | endpoint authority |
+//! | `GcpKms` | key version | endpoint authority |
 //!
 //! **Each state carries the material it requires.** The columns above are what the state
 //! is inhabited BY, not merely what is checked before it is named — so `build_key_source`
-//! has nothing to reconstruct, and a state that could not be built is not built. The
-//! widest variant holds four values: the twenty custody flags are twenty because they are
-//! flat in the request, not because any one custody path is wide.
+//! has nothing to reconstruct, and a state that could not be built is not built.
 //!
 //! **Which state a binary can ESTABLISH is layer B and not decided here.** `Pkcs11` is a
 //! coherent request in a build without `pkcs11_keysource`; `build_key_source` refuses it,
 //! and that refusal is a statement about the executable rather than about the request
 //! (CF-05).
 //!
-//! **The forbidden column is load-bearing, not tidiness (CF-04).** `--key-source gcp-kms`
-//! together with `--aws-kms-region` states two conflicting intents: a selected custody
-//! path and a parameter belonging to a different one. Accepting it silently hides a typo,
-//! a stale fragment, or an operator who believes both apply. Only parameters whose
-//! presence is semantically observable are refused — `signing_key_seed` is a `String` the
-//! parser leaves empty in the device states, so its emptiness carries no intent and it is
-//! ignored there rather than forbidden.
+//! **The forbidden column is gone because the request no longer has one.** It carried nine
+//! refusals of the form *"`--aws-kms-region` belongs to a different custody source"*,
+//! which existed because `key_source` was a selector beside every provider's parameters.
+//! [`SigningSourceRequest`](crate::deployment_request::SigningSourceRequest) is a tagged
+//! union, so a GCP selection has nowhere to put an AWS region (ADR-MCPRE-067 §7). What
+//! survives is the one refusal that is INTRA-mechanism — an STS endpoint beside the
+//! credential mode it does not parameterize — because both of those belong to one payload.
+//!
+//! **What this machine decides and what it merely carries are different projections.**
+//! [`CustodyState::exposure`] is the durable proposition — whether private key material
+//! can enter this process — and it is what downstream policy consumes; it would survive
+//! every mechanism here being replaced. [`CustodyState::material`] is the mechanism
+//! payload and names its provider, because selecting a backend is materialization's own
+//! job (ADR-MCPRE-067 §6, §8).
 
-use crate::deployment_request::{DeploymentRequest, KeySourceKind};
+use crate::config_state::kms_endpoint::guarded_endpoint;
+use crate::deployment_request::{
+    AwsKmsSigningSourceRequest, DeploymentRequest, SigningSourceRequest,
+};
 
 /// How the AWS KMS states obtain the credentials they call KMS with.
 ///
@@ -56,12 +64,32 @@ pub enum AwsCredentialMode {
     },
 }
 
-/// Which custody state a configuration requests, and what that state is inhabited by.
+/// What may be believed about the response-signing key, and what it is inhabited by.
 ///
-/// Each variant carries the material its own column requires — nothing downstream re-reads
-/// the request for it, and no `require(...)`/`ok_or_else` reconstruction survives past this
-/// boundary. The widest variant needs four values: the twenty flags are twenty because they
-/// are flat, not because any one custody path is wide.
+/// Each variant carries the material its own row requires, so nothing downstream re-reads
+/// the request for it. Two projections, at two altitudes: [`Self::exposure`] is the
+/// durable proposition and names no provider; [`Self::material`] is the mechanism payload
+/// and names one, because its consumer is the materializer that must pick a backend.
+/// Whether private signing-key material can enter this process.
+///
+/// The durable proposition custody establishes, and the one downstream policy asks about.
+/// It would survive every mechanism below it being replaced: a threshold signer, a
+/// hardware enclave or a mechanism not yet invented establishes `NonExporting` exactly as
+/// today's three do, and no consumer of this fact changes (ADR-MCPRE-067 §5, §8).
+///
+/// This is deliberately NOT a list of products. A consumer that asked *"is this AWS?"*
+/// would be asking a question whose answer stops being the one it wanted the moment a
+/// fourth mechanism arrives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrivateKeyExposure {
+    /// The private key is readable by this process: it is loaded from a seed and held in
+    /// memory, so anything that can read this process's memory or its seed can sign.
+    ProcessReadable,
+    /// The private key stays behind a signer that will not export it. This process can ask
+    /// for a signature and can never obtain the key.
+    NonExporting,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CustodyState {
     kind: CustodyKind,
@@ -239,131 +267,130 @@ impl CustodyState {
         }
     }
 
-    /// Whether the key material is held by a device or KMS rather than by this process.
+    /// What may be believed about this deployment's private signing-key material.
     ///
-    /// The property the three device states share and the two seed states do not, and the
-    /// one downstream stages actually ask about.
-    pub fn is_non_exporting_device(&self) -> bool {
-        matches!(
-            self.kind,
-            CustodyKind::Pkcs11 { .. } | CustodyKind::AwsKms { .. } | CustodyKind::GcpKms { .. }
-        )
+    /// The one semantic projection downstream stages consume. The match is here, in the
+    /// owner of the mechanism selection, precisely so that no consumer performs one: a
+    /// stage that matched `Pkcs11 | AwsKms | GcpKms` for itself would be rediscovering a
+    /// fact this machine already decided, and would need editing for a fourth mechanism
+    /// that changes nothing about what it does (ADR-MCPRE-067 §9, §20).
+    pub fn exposure(&self) -> PrivateKeyExposure {
+        match self.kind {
+            CustodyKind::FileSeed { .. } | CustodyKind::EnvSeed { .. } => {
+                PrivateKeyExposure::ProcessReadable
+            }
+            CustodyKind::Pkcs11 { .. } | CustodyKind::AwsKms { .. } | CustodyKind::GcpKms { .. } => {
+                PrivateKeyExposure::NonExporting
+            }
+        }
     }
 }
 
-/// The endpoint override a state is allowed to carry.
+/// Build the requested state from the material its row requires.
 ///
-/// `None` both when no override was named and when the named one failed the
-/// endpoint-authority guard, so no built state ever holds an authority
-/// [`kms_endpoint_refusals`] refused. A refused override is still reported there; dropping
-/// it here only keeps the state's own field honest about what it contains.
-fn guarded_endpoint(flag: &str, value: Option<&str>) -> Option<String> {
-    validated_kms_endpoint(flag, value?).ok()
-}
-
-/// Build the requested state from the material its column requires.
+/// `None` when a required value is absent — which is exactly when [`required_violations`]
+/// pushes a refusal, so a caller never sees one without the other.
 ///
-/// `None` when a required value is absent — which is exactly when `required_violations`
-/// below pushes a refusal, so a caller never sees one without the other.
-fn classify(config: &DeploymentRequest) -> Option<CustodyState> {
-    let seed = |value: &str| (!value.is_empty()).then(|| value.to_string());
-    Some(CustodyState {
-        kind: match config.key_source {
-            KeySourceKind::File => CustodyKind::FileSeed {
-                seed_path: seed(&config.signing_key_seed)?,
-            },
-            KeySourceKind::Env => CustodyKind::EnvSeed {
-                env_var: seed(&config.signing_key_seed)?,
-            },
-            KeySourceKind::Pkcs11 => CustodyKind::Pkcs11 {
-                module: config.pkcs11_module.clone()?,
-                pin_file: config.pkcs11_pin_file.clone()?,
-                token_label: config.pkcs11_token_label.clone()?,
-                key_label: config.pkcs11_key_label.clone()?,
-            },
-            KeySourceKind::AwsKms => CustodyKind::AwsKms {
-                region: config.aws_kms_region.clone()?,
-                key_id: config.aws_kms_key_id.clone()?,
-                endpoint: guarded_endpoint(
-                    "--aws-kms-endpoint",
-                    config.aws_kms_endpoint.as_deref(),
-                ),
-                credentials: if config.aws_kms_use_web_identity {
-                    AwsCredentialMode::WebIdentity {
-                        sts_endpoint: guarded_endpoint(
-                            "--aws-sts-endpoint",
-                            config.aws_sts_endpoint.as_deref(),
-                        ),
-                    }
-                } else {
-                    AwsCredentialMode::StaticEnv
-                },
-            },
-            KeySourceKind::GcpKms => CustodyKind::GcpKms {
-                key_version: config.gcp_kms_key_version.clone()?,
-                endpoint: guarded_endpoint(
-                    "--gcp-kms-endpoint",
-                    config.gcp_kms_endpoint.as_deref(),
-                ),
-                use_metadata: config.gcp_kms_use_metadata,
-            },
+/// One arm per mechanism, and each arm reads only its own payload. There is no arm that
+/// can read another mechanism's value, because the request has no such value to read.
+fn classify(source: &SigningSourceRequest) -> Option<CustodyState> {
+    let named = |value: &str| (!value.is_empty()).then(|| value.to_string());
+    let kind = match source {
+        SigningSourceRequest::File(file) => CustodyKind::FileSeed {
+            seed_path: named(&file.seed_path)?,
         },
-    })
+        SigningSourceRequest::Environment(env) => CustodyKind::EnvSeed {
+            env_var: named(&env.seed_var)?,
+        },
+        SigningSourceRequest::Pkcs11(token) => CustodyKind::Pkcs11 {
+            module: token.module.clone()?,
+            pin_file: token.pin_file.clone()?,
+            token_label: token.token_label.clone()?,
+            key_label: token.key_label.clone()?,
+        },
+        SigningSourceRequest::AwsKms(kms) => CustodyKind::AwsKms {
+            region: kms.region.clone()?,
+            key_id: kms.key_id.clone()?,
+            endpoint: guarded_endpoint("--aws-kms-endpoint", kms.endpoint.as_deref()),
+            credentials: aws_credential_mode(kms),
+        },
+        SigningSourceRequest::GcpKms(kms) => CustodyKind::GcpKms {
+            key_version: kms.key_version.clone()?,
+            endpoint: guarded_endpoint("--gcp-kms-endpoint", kms.endpoint.as_deref()),
+            use_metadata: kms.use_metadata,
+        },
+    };
+    Some(CustodyState { kind })
 }
 
-/// What the selected state cannot start without.
+/// Which credential posture an AWS payload names.
 ///
-/// Takes the requested KIND rather than the built state: this is what runs when the state
-/// could NOT be built, so it cannot depend on one existing.
-fn required_violations(kind: KeySourceKind, config: &DeploymentRequest) -> Vec<String> {
+/// The two inputs are alternatives at the STATE level and not at the request level: the
+/// request must be able to hold an STS endpoint beside the static mode in order for
+/// [`dangling_sts_endpoint`] to refuse it. Reading them into the sum is this machine's job.
+fn aws_credential_mode(kms: &AwsKmsSigningSourceRequest) -> AwsCredentialMode {
+    if kms.use_web_identity {
+        AwsCredentialMode::WebIdentity {
+            sts_endpoint: guarded_endpoint("--aws-sts-endpoint", kms.sts_endpoint.as_deref()),
+        }
+    } else {
+        AwsCredentialMode::StaticEnv
+    }
+}
+
+/// What the selected mechanism cannot start without.
+///
+/// Takes the request rather than the built state: this is what runs when the state could
+/// NOT be built, so it cannot depend on one existing.
+fn required_violations(source: &SigningSourceRequest) -> Vec<String> {
     let mut out = Vec::new();
     let mut require = |present: bool, message: &str| {
         if !present {
             out.push(message.to_string());
         }
     };
-    match kind {
-        KeySourceKind::File => require(
-            !config.signing_key_seed.is_empty(),
+    match source {
+        SigningSourceRequest::File(file) => require(
+            !file.seed_path.is_empty(),
             "--key-source file requires --signing-key-seed <path>: the response-signing key \
              has no other source in this state",
         ),
-        KeySourceKind::Env => require(
-            !config.signing_key_seed.is_empty(),
+        SigningSourceRequest::Environment(env) => require(
+            !env.seed_var.is_empty(),
             "--key-source env requires --signing-key-seed <env-var-name>",
         ),
-        KeySourceKind::Pkcs11 => {
+        SigningSourceRequest::Pkcs11(token) => {
             require(
-                config.pkcs11_module.is_some(),
+                token.module.is_some(),
                 "--key-source pkcs11 requires --pkcs11-module <path>",
             );
             require(
-                config.pkcs11_pin_file.is_some(),
+                token.pin_file.is_some(),
                 "--key-source pkcs11 requires --pkcs11-pin-file <path>; the User PIN is \
                  never accepted on argv, which is world-readable via ps and \
                  /proc/<pid>/cmdline",
             );
             require(
-                config.pkcs11_token_label.is_some(),
+                token.token_label.is_some(),
                 "--key-source pkcs11 requires --pkcs11-token-label <label>",
             );
             require(
-                config.pkcs11_key_label.is_some(),
+                token.key_label.is_some(),
                 "--key-source pkcs11 requires --pkcs11-key-label <label>",
             );
         }
-        KeySourceKind::AwsKms => {
+        SigningSourceRequest::AwsKms(kms) => {
             require(
-                config.aws_kms_region.is_some(),
+                kms.region.is_some(),
                 "--key-source aws-kms requires --aws-kms-region <region>",
             );
             require(
-                config.aws_kms_key_id.is_some(),
+                kms.key_id.is_some(),
                 "--key-source aws-kms requires --aws-kms-key-id <key-id|arn|alias>",
             );
         }
-        KeySourceKind::GcpKms => require(
-            config.gcp_kms_key_version.is_some(),
+        SigningSourceRequest::GcpKms(kms) => require(
+            kms.key_version.is_some(),
             "--key-source gcp-kms requires --gcp-kms-key-version \
              <projects/.../cryptoKeyVersions/N>",
         ),
@@ -371,127 +398,116 @@ fn required_violations(kind: KeySourceKind, config: &DeploymentRequest) -> Vec<S
     out
 }
 
-/// Parameters and capability flags that belong to a state this configuration is not in.
+/// An STS endpoint beside the credential mode it does not parameterize.
 ///
-/// Every entry is `Option`-typed or an explicitly-passed flag, so presence is an operator
-/// statement rather than a default (CF-04's qualification).
-fn forbidden_violations(kind: KeySourceKind, config: &DeploymentRequest) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut forbid = |present: bool, owner: KeySourceKind, flag: &str, owning_source: &str| {
-        if present && kind != owner {
-            out.push(format!(
-                "{flag} belongs to --key-source {owning_source} and this configuration \
-                 selects a different custody source; the value would be ignored, leaving a \
-                 deployment that believes it applies. Remove {flag}, or select \
-                 --key-source {owning_source}"
-            ));
-        }
+/// The last survivor of the nine-entry forbidden table. It survives because it is
+/// INTRA-mechanism: both values belong to the AWS payload, so the tagged union does not
+/// make the combination unrepresentable and something still has to refuse it. The other
+/// eight were cross-mechanism and are now unstatable.
+fn dangling_sts_endpoint(source: &SigningSourceRequest) -> Vec<String> {
+    let SigningSourceRequest::AwsKms(kms) = source else {
+        return Vec::new();
     };
-    for (present, flag) in [
-        (config.pkcs11_module.is_some(), "--pkcs11-module"),
-        (config.pkcs11_pin_file.is_some(), "--pkcs11-pin-file"),
-        (config.pkcs11_token_label.is_some(), "--pkcs11-token-label"),
-        (config.pkcs11_key_label.is_some(), "--pkcs11-key-label"),
-    ] {
-        forbid(present, KeySourceKind::Pkcs11, flag, "pkcs11");
+    if kms.sts_endpoint.is_some() && !kms.use_web_identity {
+        return vec![
+            "--aws-sts-endpoint has no effect without --aws-kms-use-web-identity".to_string(),
+        ];
     }
-    for (present, flag) in [
-        (config.aws_kms_region.is_some(), "--aws-kms-region"),
-        (config.aws_kms_key_id.is_some(), "--aws-kms-key-id"),
-        (
-            config.aws_kms_use_web_identity,
-            "--aws-kms-use-web-identity",
-        ),
-    ] {
-        forbid(present, KeySourceKind::AwsKms, flag, "aws-kms");
-    }
-    for (present, flag) in [
-        (
-            config.gcp_kms_key_version.is_some(),
-            "--gcp-kms-key-version",
-        ),
-        (config.gcp_kms_use_metadata, "--gcp-kms-use-metadata"),
-    ] {
-        forbid(present, KeySourceKind::GcpKms, flag, "gcp-kms");
-    }
-    // Intra-machine: the STS endpoint parameterizes the IRSA credential mode, not the
-    // custody state, so it dangles on a state that has the right source but not that mode.
-    if config.aws_sts_endpoint.is_some() && !config.aws_kms_use_web_identity {
-        out.push("--aws-sts-endpoint has no effect without --aws-kms-use-web-identity".to_string());
-    }
-    out
+    Vec::new()
 }
 
-/// Classify the requested custody state and check its four columns.
+/// Classify the requested custody state and check the columns it still has.
 ///
 /// The endpoint-authority guards come first, matching the order an operator already read
 /// them in: an overridden KMS endpoint substitutes the root verify key the
 /// verify-before-return guardrail is measured against, so it is the graver statement.
 ///
-/// Every violation in the columns is reported, not the first. That is a deliberate change
-/// from the predicate this replaces, and it matches every other clause at this boundary;
-/// a configuration with one violation still reads exactly as before.
+/// Every violation is reported, not the first.
 pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<CustodyState>, Vec<String>) {
-    let mut violations = kms_endpoint_refusals(config);
-    violations.extend(required_violations(config.key_source, config));
-    violations.extend(forbidden_violations(config.key_source, config));
-    (classify(config), violations)
-}
-
-/// The KMS/STS endpoint overrides a [`DeploymentRequest`] carries, held to the rule wherever the
-/// config came from.
-///
-/// [`validated_kms_endpoint`] is the decision; this is only how a `DeploymentRequest` answers it, so
-/// the two call sites cannot drift into disagreeing about the rule. The three fields are
-/// public, and they carry the ROOT-KEY trust bootstrap — on GCP every request to them also
-/// carries a live workload-identity bearer token — so a config built in code must not be
-/// able to name a plaintext or attacker-chosen authority for them.
-pub(crate) fn kms_endpoint_refusals(config: &DeploymentRequest) -> Vec<String> {
-    [
-        ("--aws-kms-endpoint", config.aws_kms_endpoint.as_deref()),
-        ("--aws-sts-endpoint", config.aws_sts_endpoint.as_deref()),
-        ("--gcp-kms-endpoint", config.gcp_kms_endpoint.as_deref()),
-    ]
-    .into_iter()
-    .filter_map(|(flag, value)| validated_kms_endpoint(flag, value?).err())
-    .collect()
-}
-
-/// Validate an operator-supplied KMS endpoint override before anything is sent to it.
-///
-/// The decision itself is [`crate::kms_endpoint_policy::kms_endpoint_authority`]; this only prefixes the offending
-/// flag onto its refusal, so the command line, the validation boundary
-/// ([`kms_endpoint_refusals`]) and the three key-source constructors cannot drift into
-/// disagreeing about the rule.
-pub(crate) fn validated_kms_endpoint(flag: &str, value: &str) -> Result<String, String> {
-    crate::kms_endpoint_policy::kms_endpoint_authority(value)
-        .map(|_| value.to_string())
-        .map_err(|why| format!("{flag} {why}"))
+    let source = &config.response_signing.source;
+    let mut violations = crate::config_state::kms_endpoint::kms_endpoint_refusals(config);
+    violations.extend(required_violations(source));
+    violations.extend(dangling_sts_endpoint(source));
+    (classify(source), violations)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config_state::test_support::legal_config;
+    use crate::deployment_request::{
+        EnvironmentSigningSourceRequest, FileSigningSourceRequest, GcpKmsSigningSourceRequest,
+        Pkcs11SigningSourceRequest,
+    };
+
+    const GCP_KEY_VERSION: &str =
+        "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1";
+
+    fn select(config: &mut DeploymentRequest, source: SigningSourceRequest) {
+        config.response_signing.source = source;
+    }
+
+    fn file_seed(path: &str) -> SigningSourceRequest {
+        SigningSourceRequest::File(FileSigningSourceRequest {
+            seed_path: path.to_string(),
+        })
+    }
 
     fn pkcs11(config: &mut DeploymentRequest) {
-        config.key_source = KeySourceKind::Pkcs11;
-        config.pkcs11_module = Some("/lib/softhsm.so".to_string());
-        config.pkcs11_pin_file = Some("/pin".to_string());
-        config.pkcs11_token_label = Some("token".to_string());
-        config.pkcs11_key_label = Some("signing".to_string());
+        select(
+            config,
+            SigningSourceRequest::Pkcs11(Pkcs11SigningSourceRequest {
+                module: Some("/lib/softhsm.so".to_string()),
+                pin_file: Some("/pin".to_string()),
+                token_label: Some("token".to_string()),
+                key_label: Some("signing".to_string()),
+            }),
+        );
     }
 
     fn aws(config: &mut DeploymentRequest) {
-        config.key_source = KeySourceKind::AwsKms;
-        config.aws_kms_region = Some("eu-north-1".to_string());
-        config.aws_kms_key_id = Some("alias/signing".to_string());
+        select(
+            config,
+            SigningSourceRequest::AwsKms(AwsKmsSigningSourceRequest {
+                region: Some("eu-north-1".to_string()),
+                key_id: Some("alias/signing".to_string()),
+                ..AwsKmsSigningSourceRequest::default()
+            }),
+        );
     }
 
     fn gcp(config: &mut DeploymentRequest) {
-        config.key_source = KeySourceKind::GcpKms;
-        config.gcp_kms_key_version =
-            Some("projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1".to_string());
+        select(
+            config,
+            SigningSourceRequest::GcpKms(GcpKmsSigningSourceRequest {
+                key_version: Some(GCP_KEY_VERSION.to_string()),
+                ..GcpKmsSigningSourceRequest::default()
+            }),
+        );
+    }
+
+    /// The selected PKCS#11 payload, so a case can clear ONE of its values.
+    fn token_of(config: &mut DeploymentRequest) -> &mut Pkcs11SigningSourceRequest {
+        match &mut config.response_signing.source {
+            SigningSourceRequest::Pkcs11(token) => token,
+            other => panic!("the fixture selected {other:?}, not PKCS#11"),
+        }
+    }
+
+    /// The selected AWS KMS payload.
+    fn aws_of(config: &mut DeploymentRequest) -> &mut AwsKmsSigningSourceRequest {
+        match &mut config.response_signing.source {
+            SigningSourceRequest::AwsKms(kms) => kms,
+            other => panic!("the fixture selected {other:?}, not AWS KMS"),
+        }
+    }
+
+    /// The selected GCP Cloud KMS payload.
+    fn gcp_of(config: &mut DeploymentRequest) -> &mut GcpKmsSigningSourceRequest {
+        match &mut config.response_signing.source {
+            SigningSourceRequest::GcpKms(kms) => kms,
+            other => panic!("the fixture selected {other:?}, not GCP Cloud KMS"),
+        }
     }
 
     /// A state this machine must recognise, and how to request it.
@@ -515,12 +531,19 @@ mod tests {
             (
                 |s| matches!(s.material(), CustodyMaterial::FileSeed { .. }),
                 "FileSeed",
-                |c: &mut DeploymentRequest| c.key_source = KeySourceKind::File,
+                |c: &mut DeploymentRequest| select(c, file_seed("/seed")),
             ),
             (
                 |s| matches!(s.material(), CustodyMaterial::EnvSeed { .. }),
                 "EnvSeed",
-                |c: &mut DeploymentRequest| c.key_source = KeySourceKind::Env,
+                |c: &mut DeploymentRequest| {
+                    select(
+                        c,
+                        SigningSourceRequest::Environment(EnvironmentSigningSourceRequest {
+                            seed_var: "MCP_RE_SEED".to_string(),
+                        }),
+                    );
+                },
             ),
             (
                 |s| matches!(s.material(), CustodyMaterial::Pkcs11 { .. }),
@@ -549,47 +572,106 @@ mod tests {
     #[test]
     fn only_the_device_states_hold_the_key_off_this_process() {
         let built = |mutate: fn(&mut DeploymentRequest)| run(mutate).0.expect("a legal state");
-        assert!(!built(|c| c.key_source = KeySourceKind::File).is_non_exporting_device());
+        assert_eq!(
+            built(|c| select(c, file_seed("/seed"))).exposure(),
+            PrivateKeyExposure::ProcessReadable
+        );
         for mutate in [pkcs11 as fn(&mut DeploymentRequest), aws, gcp] {
-            assert!(built(mutate).is_non_exporting_device());
+            assert_eq!(built(mutate).exposure(), PrivateKeyExposure::NonExporting);
         }
+    }
+
+    /// The generic projection control (ADR-MCPRE-067 §21.4): five unrelated mechanisms
+    /// establish ONE semantic fact, and the consumer of that fact is written without
+    /// naming any of them. A sixth mechanism joins the left-hand column and
+    /// [`may_the_key_be_read_here`] is unchanged.
+    #[test]
+    fn a_consumer_of_the_exposure_fact_names_no_mechanism() {
+        let built = |mutate: fn(&mut DeploymentRequest)| run(mutate).0.expect("a legal state");
+        for mutate in [pkcs11 as fn(&mut DeploymentRequest), aws, gcp] {
+            assert!(!may_the_key_be_read_here(built(mutate).exposure()));
+        }
+        assert!(may_the_key_be_read_here(
+            built(|c| select(c, file_seed("/seed"))).exposure()
+        ));
+    }
+
+    /// The consumer under test above and below: it reads the semantic fact and nothing
+    /// else, so its text contains no mechanism at all.
+    fn may_the_key_be_read_here(exposure: PrivateKeyExposure) -> bool {
+        exposure == PrivateKeyExposure::ProcessReadable
+    }
+
+    /// The replacement negative control (ADR-MCPRE-067 §21.5).
+    ///
+    /// A mechanism that exists only in this test — a hypothetical threshold signer and a
+    /// hypothetical in-process software vault — drives the SAME consumer through the same
+    /// semantic projection. The point is not to support a fake provider; it is that
+    /// `may_the_key_be_read_here` cannot be depending on the names of today's five,
+    /// because it answers correctly for two it has never heard of.
+    ///
+    /// If the semantic fact were ever replaced by a provider discriminator, this test
+    /// stops compiling — there would be no variant to give a threshold signer.
+    #[test]
+    fn a_mechanism_that_does_not_exist_drives_the_same_consumer() {
+        /// A signer this repository does not have. Its adapter would establish the
+        /// generic custody fact exactly as the real ones do.
+        enum HypotheticalMechanism {
+            ThresholdSigner,
+            SoftwareVault,
+        }
+
+        impl HypotheticalMechanism {
+            /// What a future adapter would report. This is the only line a new mechanism
+            /// contributes to the semantic layer.
+            fn exposure(&self) -> PrivateKeyExposure {
+                match self {
+                    HypotheticalMechanism::ThresholdSigner => PrivateKeyExposure::NonExporting,
+                    HypotheticalMechanism::SoftwareVault => PrivateKeyExposure::ProcessReadable,
+                }
+            }
+        }
+
+        assert!(!may_the_key_be_read_here(
+            HypotheticalMechanism::ThresholdSigner.exposure()
+        ));
+        assert!(may_the_key_be_read_here(
+            HypotheticalMechanism::SoftwareVault.exposure()
+        ));
     }
 
     #[test]
     fn each_state_names_every_parameter_it_cannot_start_without() {
         // One case per required cell, cleared from an otherwise complete state.
         let cases: Vec<Case> = vec![
-            ("--signing-key-seed", |c| {
-                c.key_source = KeySourceKind::File;
-                c.signing_key_seed = String::new();
-            }),
+            ("--signing-key-seed", |c| select(c, file_seed(""))),
             ("--pkcs11-module", |c| {
                 pkcs11(c);
-                c.pkcs11_module = None;
+                token_of(c).module = None;
             }),
             ("--pkcs11-pin-file", |c| {
                 pkcs11(c);
-                c.pkcs11_pin_file = None;
+                token_of(c).pin_file = None;
             }),
             ("--pkcs11-token-label", |c| {
                 pkcs11(c);
-                c.pkcs11_token_label = None;
+                token_of(c).token_label = None;
             }),
             ("--pkcs11-key-label", |c| {
                 pkcs11(c);
-                c.pkcs11_key_label = None;
+                token_of(c).key_label = None;
             }),
             ("--aws-kms-region", |c| {
                 aws(c);
-                c.aws_kms_region = None;
+                aws_of(c).region = None;
             }),
             ("--aws-kms-key-id", |c| {
                 aws(c);
-                c.aws_kms_key_id = None;
+                aws_of(c).key_id = None;
             }),
             ("--gcp-kms-key-version", |c| {
                 gcp(c);
-                c.gcp_kms_key_version = None;
+                gcp_of(c).key_version = None;
             }),
         ];
         for (flag, mutate) in cases {
@@ -601,43 +683,52 @@ mod tests {
         }
     }
 
-    /// CF-04, and the half that was missing: a dangling TLS selector or capability flag
-    /// was already refused, a dangling *required parameter of another state* was not.
+    /// The tagged-union disjointness control (ADR-MCPRE-067 §21.3).
+    ///
+    /// This machine no longer refuses a parameter belonging to another mechanism, because
+    /// there is no such request to refuse: a selection carries exactly one payload, and
+    /// reading it yields only that mechanism's values. The six cases this test used to
+    /// enumerate — an AWS region under a GCP selection and so on — are now rejected by the
+    /// compiler rather than by a table, so what remains testable is that a selection is
+    /// projected as itself and never as a neighbour.
+    ///
+    /// The command line can still NAME a stray flag, and that refusal moved to the one
+    /// place that can still see both the selection and the stray value: the parser's
+    /// `SigningSourceFlags::stray_value_refusal`, which is where its test lives.
     #[test]
-    fn a_parameter_belonging_to_another_custody_state_is_refused() {
-        let cases: Vec<Case> = vec![
-            ("--aws-kms-region", |c| {
-                gcp(c);
-                c.aws_kms_region = Some("eu-north-1".to_string());
-            }),
-            ("--aws-kms-key-id", |c| {
-                pkcs11(c);
-                c.aws_kms_key_id = Some("alias/signing".to_string());
-            }),
-            ("--pkcs11-module", |c| {
-                aws(c);
-                c.pkcs11_module = Some("/lib/softhsm.so".to_string());
-            }),
-            ("--gcp-kms-key-version", |c| {
-                aws(c);
-                c.gcp_kms_key_version = Some("projects/p/..".to_string());
-            }),
-            ("--aws-kms-use-web-identity", |c| {
-                gcp(c);
-                c.aws_kms_use_web_identity = true;
-            }),
-            ("--gcp-kms-use-metadata", |c| {
-                aws(c);
-                c.gcp_kms_use_metadata = true;
-            }),
-        ];
-        for (flag, mutate) in cases {
-            let (_, violations) = run(mutate);
-            assert!(
-                violations.iter().any(|v| v.contains(flag)),
-                "a dangling {flag} was accepted: {violations:?}"
+    fn a_selection_projects_its_own_material_and_no_neighbours() {
+        for (name, mutate) in [
+            ("Pkcs11", pkcs11 as fn(&mut DeploymentRequest)),
+            ("AwsKms", aws),
+            ("GcpKms", gcp),
+        ] {
+            let state = run(mutate).0.expect("a legal state");
+            let projected = matches!(
+                (name, state.material()),
+                ("Pkcs11", CustodyMaterial::Pkcs11 { .. })
+                    | ("AwsKms", CustodyMaterial::AwsKms { .. })
+                    | ("GcpKms", CustodyMaterial::GcpKms { .. })
             );
+            assert!(projected, "{name} projected {:?}", state.material());
         }
+    }
+
+    /// The intra-mechanism refusal the tagged union does NOT make unrepresentable: both
+    /// values belong to the AWS payload, so something still has to say that one
+    /// parameterizes the other.
+    #[test]
+    fn an_sts_endpoint_without_the_mode_it_parameterizes_is_refused() {
+        let (_, violations) = run(|c| {
+            aws(c);
+            aws_of(c).sts_endpoint = Some("https://sts.eu-north-1.amazonaws.com".to_string());
+        });
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("--aws-sts-endpoint")
+                    && v.contains("--aws-kms-use-web-identity")),
+            "a dangling STS endpoint was accepted: {violations:?}"
+        );
     }
 
     /// Every state carries the material it cannot start without, so `build_key_source` has
@@ -646,11 +737,7 @@ mod tests {
     /// satisfy the type and fail this.
     #[test]
     fn each_state_carries_the_material_that_made_it_inhabitable() {
-        let seed = run(|c| {
-            c.key_source = KeySourceKind::File;
-            c.signing_key_seed = "/seed".to_string();
-        })
-        .0;
+        let seed = run(|c| select(c, file_seed("/seed"))).0;
         assert_eq!(
             seed.as_ref().map(CustodyState::material),
             Some(CustodyMaterial::FileSeed { seed_path: "/seed" })
@@ -658,8 +745,12 @@ mod tests {
 
         assert_eq!(
             run(|c| {
-                c.key_source = KeySourceKind::Env;
-                c.signing_key_seed = "MCP_RE_SEED".to_string();
+                select(
+                    c,
+                    SigningSourceRequest::Environment(EnvironmentSigningSourceRequest {
+                        seed_var: "MCP_RE_SEED".to_string(),
+                    }),
+                );
             })
             .0
             .as_ref()
@@ -707,20 +798,17 @@ mod tests {
         for mutate in [
             (|c: &mut DeploymentRequest| {
                 pkcs11(c);
-                c.pkcs11_pin_file = None;
+                token_of(c).pin_file = None;
             }) as fn(&mut DeploymentRequest),
             |c: &mut DeploymentRequest| {
                 aws(c);
-                c.aws_kms_key_id = None;
+                aws_of(c).key_id = None;
             },
             |c: &mut DeploymentRequest| {
                 gcp(c);
-                c.gcp_kms_key_version = None;
+                gcp_of(c).key_version = None;
             },
-            |c: &mut DeploymentRequest| {
-                c.key_source = KeySourceKind::File;
-                c.signing_key_seed = String::new();
-            },
+            |c: &mut DeploymentRequest| select(c, file_seed("")),
         ] {
             let (state, violations) = run(mutate);
             assert!(state.is_none(), "a state was built over a refusal");
@@ -735,8 +823,9 @@ mod tests {
     fn the_aws_credential_mode_is_a_posture_and_not_a_flag_beside_an_endpoint() {
         let state = run(|c| {
             aws(c);
-            c.aws_kms_use_web_identity = true;
-            c.aws_sts_endpoint = Some("https://sts.eu-north-1.amazonaws.com".to_string());
+            let kms = aws_of(c);
+            kms.use_web_identity = true;
+            kms.sts_endpoint = Some("https://sts.eu-north-1.amazonaws.com".to_string());
         })
         .0
         .expect("a complete AWS custody configuration selects the AWS state");
@@ -753,7 +842,7 @@ mod tests {
         // IRSA without an override is still IRSA, and still not `StaticEnv`.
         let state = run(|c| {
             aws(c);
-            c.aws_kms_use_web_identity = true;
+            aws_of(c).use_web_identity = true;
         })
         .0
         .expect("a complete AWS custody configuration selects the AWS state");
@@ -770,10 +859,10 @@ mod tests {
     /// carries is not evidence of intent, so it is ignored rather than forbidden.
     #[test]
     fn a_seed_path_left_over_on_a_device_state_is_not_forbidden() {
-        let (_, violations) = run(|c| {
-            pkcs11(c);
-            c.signing_key_seed = "/seed".to_string();
-        });
+        // The qualification is now structural rather than a decision this machine makes:
+        // a PKCS#11 selection has no seed field, so a leftover seed path is not something
+        // that can reach here to be ignored.
+        let (_, violations) = run(pkcs11);
         assert!(violations.is_empty(), "{violations:?}");
     }
 
@@ -788,7 +877,7 @@ mod tests {
 
         let (state, violations) = run(|c| {
             aws(c);
-            c.aws_kms_endpoint = Some(hostile.to_string());
+            aws_of(c).endpoint = Some(hostile.to_string());
         });
         assert!(
             violations.iter().any(|v| v.contains("--aws-kms-endpoint")),
@@ -802,8 +891,9 @@ mod tests {
 
         let (state, violations) = run(|c| {
             aws(c);
-            c.aws_kms_use_web_identity = true;
-            c.aws_sts_endpoint = Some(hostile.to_string());
+            let kms = aws_of(c);
+            kms.use_web_identity = true;
+            kms.sts_endpoint = Some(hostile.to_string());
         });
         assert!(
             violations.iter().any(|v| v.contains("--aws-sts-endpoint")),
@@ -822,7 +912,7 @@ mod tests {
 
         let (state, violations) = run(|c| {
             gcp(c);
-            c.gcp_kms_endpoint = Some(hostile.to_string());
+            gcp_of(c).endpoint = Some(hostile.to_string());
         });
         assert!(
             violations.iter().any(|v| v.contains("--gcp-kms-endpoint")),
@@ -841,7 +931,7 @@ mod tests {
     fn an_admissible_endpoint_override_reaches_the_state_it_parameterizes() {
         let (state, violations) = run(|c| {
             aws(c);
-            c.aws_kms_endpoint = Some("https://kms.eu-north-1.amazonaws.com".to_string());
+            aws_of(c).endpoint = Some("https://kms.eu-north-1.amazonaws.com".to_string());
         });
         assert!(violations.is_empty(), "{violations:?}");
         let state = state.expect("a complete AWS custody configuration selects the AWS state");
@@ -852,7 +942,7 @@ mod tests {
 
         let (state, violations) = run(|c| {
             gcp(c);
-            c.gcp_kms_endpoint = Some("https://cloudkms.googleapis.com".to_string());
+            gcp_of(c).endpoint = Some("https://cloudkms.googleapis.com".to_string());
         });
         assert!(violations.is_empty(), "{violations:?}");
         let state = state.expect("a complete GCP custody configuration selects the GCP state");
@@ -862,15 +952,4 @@ mod tests {
         assert_eq!(endpoint, Some("https://cloudkms.googleapis.com"));
     }
 
-    #[test]
-    fn the_sts_endpoint_needs_the_credential_mode_it_parameterizes() {
-        let (_, violations) = run(|c| {
-            aws(c);
-            c.aws_sts_endpoint = Some("https://sts.eu-north-1.amazonaws.com".to_string());
-        });
-        assert!(
-            violations.iter().any(|v| v.contains("--aws-sts-endpoint")),
-            "{violations:?}"
-        );
-    }
 }
