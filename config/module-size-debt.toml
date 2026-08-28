@@ -47,10 +47,15 @@
 # further flat modules in a crate that already has ~100. The debt moves WITH the file —
 # dropping the entry because the path changed would launder 2023 registered lines as
 # progress.
+#
+# The §8 census's authority G — the PEP's read/write boundary inside the client's JSON-RPC
+# body — left for `body_boundary.rs`, and the serving file fell to 1674. The SHA moves with
+# the number: it records where a measurement was ESTABLISHED, and ae40fff never contained a
+# 1674-line serving root.
 [[debt]]
 path = "mcp-re-proxy/src/http_profile_serve/mod.rs"
-baseline_prod_loc = 1764
-baseline_sha = "ae40fff"
+baseline_prod_loc = 1674
+baseline_sha = "bb24777"
 status = "unreviewed"
 
 [[debt]]
