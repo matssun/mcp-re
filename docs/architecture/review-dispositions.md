@@ -890,6 +890,79 @@ seam's second producer is a shipped type rather than a test.
 `scitt.rs` stays `reviewed-action-required`: the decomposition is the next slice, and this
 record is not a re-census.
 
+### Slice 2 (MCPRE-155) — the decomposition, and the EX-004 re-census
+
+`scitt.rs` no longer exists: 1629 production lines became **18 modules** under `scitt/`,
+every one under the 200-line threshold, so the debt entry is REMOVED rather than moved.
+
+| module | prod | the one fact it owns |
+|---|---:|---|
+| `scitt/mod.rs` | 135 | the facade — it re-exports and owns nothing |
+| `commitment/mod.rs` | 198 | A · which digests a record names, and whether they identify a call |
+| `commitment/correspondence.rs` | 90 | when two commitments describe the same call |
+| `wire.rs` | 134 | the COSE/CWT labels and byte layouts both sides must agree on |
+| `statement/mod.rs` | 173 | B · this COSE_Sign1 is MCP-RE call evidence, attributed to its key |
+| `statement/issuance.rs` | 87 | the bytes an issuer signs, and the header that types them |
+| `receipt/mod.rs` | 132 | C · the receipt value and its projections |
+| `receipt/parse.rs` | 149 | reading an RFC 9942 receipt off the wire |
+| `merkle.rs` | 168 | D · this path folds this leaf to this root at this position |
+| `cose_key/mod.rs` | 115 | E · what a COSE verification key is |
+| `cose_key/verify.rs` | 106 | the allowlisted algorithm is the one that runs |
+| `service.rs` | 87 | the key + profiles that go together for ONE service |
+| `offline.rs` | 115 | the composition: verified offline, contacting nobody |
+| `retained.rs` | 154 | F · these bytes are the ones that statement was made about |
+| `trust_pin/mod.rs` | 117 | G · the key an interop run verified against |
+| `trust_pin/document.rs` | 130 | the pin AS WRITTEN, and the one check that makes it a pin |
+| `prototype/mod.rs` | 155 | the in-process stand-in — NOT a product |
+| `prototype/tree.rs` | 66 | the RFC 6962 tree, BUILT — the build side of the cross-check |
+
+**Ruling 2 is honoured: seven authorities did not become seven public modules.** Every
+subordinate is `mod`, not `pub mod`; `scitt/mod.rs` is the facade and the crate's public
+surface is unchanged, item for item.
+
+**Four subtrees, and each has a reason that is not size.**
+
+- `commitment/correspondence.rs` is a CHILD so it can see the parent's private
+  representation. That is what keeps R-COMPOSE satisfied in both directions: the
+  correspondence authority next door consumes a named verdict, and a field added to the
+  record is a compile error in one place rather than a comparison that quietly stopped
+  covering it.
+- `statement/issuance.rs` is the other DIRECTION — reading must refuse everything it does
+  not recognise, issuing must emit exactly one spelling of what it means.
+- `receipt/parse.rs` is the receipt's sole producer and fills the private representation
+  directly; anywhere else it would need a constructor taking every field, which is the seal
+  undone to move a function.
+- `prototype/tree.rs` gives the BUILD half of ruling 3's cross-check a name, so the
+  independence is a fact about the architecture rather than about where two functions
+  happen to sit.
+
+**The test suite was partitioned, not moved wholesale.** The 63 test items became each
+owner's own `mod tests`, over a shared `#[cfg(test)] mod fixtures` in the facade — inline
+rather than a file, because `module_size_gate.py` reads FILES and cannot see a
+`#[cfg(test)]` on a `mod` line, so a fixture file would have been measured as 260 lines of
+production code. All 263 lib tests pass, the same count as before the split.
+
+**Three `#[cfg(test)] pub(super)` affordances were added** rather than widening production
+visibility: `EvidenceCommitment::verified_prefix_fields` and `without_submission_identity`,
+`SignedStatement::with_edited_view`, and `Receipt::with_forged_inclusion_path`. Each exists
+because a test that previously mutated a private field across what is now a module boundary
+needs a named way to build the value it is about — and each compiles to nothing outside the
+test build, so none is production surface.
+
+### EX-004 disposition after the re-census
+
+The census declined an exception on the ground that keeping the unit whole made the argument
+*worse*, measurably: "the retained-correspondence authority re-explains the commitment's
+identity fields, the receipt accessors re-explain the Merkle fold's limits, and the position
+rule is explained in three places because no unit owns it". Each of those now has an owner,
+and §8 question 1 has an 18-row answer with no "and" in it.
+
+What remains for EX-004 is not structural: the theorem inventory is still **zero of 33**,
+and #657 ruling 6 says to state propositions against these owners rather than against the
+monolith — which is now possible for the first time. `PrototypeTransparencyService` still
+needs classifying (ruling 4), and `ReceiptPositionProfile::Bound` is still not selectable
+(ruling 5). Neither is this slice's.
+
 ## EX-005 — `mcp-re-proxy/src/transport.rs` — **census complete, disposition: decompose along the reachability boundary**
 
 **Status:** `reviewed-action-required`. **Measured:** 1268 production lines on `main` @
