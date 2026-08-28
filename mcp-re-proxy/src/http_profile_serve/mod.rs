@@ -39,13 +39,14 @@ use mcp_re_core::McpReError;
 
 use crate::refusal::Refusal;
 use crate::refusal::RefusalCause;
-use crate::refusal::RefusalPosture;
 
 /// The validity a signed response may advertise — obtained here, derived only there.
 pub(crate) mod signing_window;
+
+/// What the proxy asserts under its own credential when it refuses. The assembly asks
+/// this owner for a receipt; it does not assemble one.
+pub(crate) mod receipt;
 use mcp_re_core::VerificationKey;
-use mcp_re_http_profile::build_delegated_rejection;
-use mcp_re_http_profile::build_delegated_rejection_preflight;
 use mcp_re_http_profile::insert_verified_context;
 use mcp_re_http_profile::parse_response_body;
 use mcp_re_http_profile::result_class::classify_result_type;
@@ -62,7 +63,6 @@ use mcp_re_http_profile::ExecutionDisposition;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RejectionReason;
 use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::RetainedContinuation;
@@ -141,7 +141,7 @@ pub type AdmissionAuthorityResolver = Arc<dyn Fn(&str) -> Option<VerificationKey
 /// refusal binds to, the evidence that makes binding possible, the actor it is attributed
 /// to, and the instant the whole exchange is judged at. `now` is fixed for the exchange, so
 /// a key valid at ANSWERABLE is still valid at RESPONSE-SIGNED.
-struct Exchange<'a> {
+pub(super) struct Exchange<'a> {
     http_req: &'a HttpRequest,
     verified: &'a VerifiedMcpRequest,
     actor_id: &'a str,
@@ -221,11 +221,10 @@ pub struct HttpProfileProxy {
     /// The verifier's expected audience tuple (audience id + `@target-uri` + route);
     /// `target_uri` must equal the request `@target-uri` (enforced in verify).
     expected_audience: AudienceTuple,
-    /// The ADR-MCPRE-052 delegated-signing custody — the ONLY response-signing mode.
-    /// Every response and rejection is signed by the active short-TTL delegated key +
-    /// inline credential; the root is never on the request path, and the proxy fails
-    /// closed when no valid delegated key is available. There is no direct-root mode.
-    signer: Arc<DelegatedServerSigner>,
+    /// The response-signing authority: the delegated credential, the configured validity,
+    /// and the receipt a refusal is served as. Held as one owner so the reply path and the
+    /// refusal path cannot drift apart in what they sign under.
+    responses: receipt::ResponseSigning,
     /// The authoritative async replay tier (ADR-MCPRE-051 §4).
     replay_async: crate::async_replay::AsyncReplayTier,
     /// Deployment replay-durability posture (fleet-strict + declared tier).
@@ -238,8 +237,6 @@ pub struct HttpProfileProxy {
     /// What this deployment decides authorization with (ADR-MCPRE-065). Deciding with
     /// nothing is one of its states, and it claims nothing rather than permitting.
     authorization: AuthorizationStage,
-    /// Response-signature validity window (seconds added to `created`).
-    sig_ttl_secs: i64,
     /// Optional MRTR continuation correlation store (ADR-MCPS-047) — the fleet-shared
     /// tier that carries a multi-round-trip continuation across a replica switch.
     /// `None` disables MRTR: an `InputRequiredResult` is still returned, but a later
@@ -301,29 +298,6 @@ impl HttpProfileProxy {
         self
     }
 
-    /// Emit one audit record, if a sink is installed.
-    ///
-    /// `subject` decides which authorities the record carries: a request record states an
-    /// authorization outcome, a response record has none to state (ADR-MCPRE-066 R5). The
-    /// choice is made by the caller that knows which half of the exchange it is reporting,
-    /// and the type refuses the other combination.
-    fn audit(
-        &self,
-        subject: crate::audit_record::AuditSubject,
-        actor_id: Option<String>,
-        status: u16,
-        now: i64,
-    ) {
-        if let Some(sink) = &self.audit {
-            sink.record(&crate::audit_record::AuditRecord {
-                subject,
-                actor_id,
-                status,
-                at_unix: now,
-            });
-        }
-    }
-
     /// Construct the serving PEP (ADR-MCPRE-052 delegated-signing — the only response-
     /// signing mode). `resolve_actor` is the trust seam; `expected_audience` the
     /// verifier audience; `dispatch_cfg`/`inner_async` the replay/inner planes. There
@@ -344,12 +318,11 @@ impl HttpProfileProxy {
         HttpProfileProxy {
             resolve_actor,
             expected_audience,
-            signer: delegated_signer,
+            responses: receipt::ResponseSigning::new(delegated_signer, sig_ttl_secs),
             replay_async,
             dispatch_cfg,
             inner_async,
             transport_binding: None,
-            sig_ttl_secs,
             continuation_store: None,
             continuation_ttl_secs: DEFAULT_CONTINUATION_TTL_SECS,
             verified_context_policy: VerifiedContextPolicy::default(),
@@ -536,45 +509,17 @@ impl HttpProfileProxy {
 
     /// Turn a stage's decision into the signed refusal the client receives.
     ///
-    /// The ONLY place in the pipeline that signs. It is also the only place that consults
-    /// the exchange machine, which is the point: the retry contract is a fact about the whole
-    /// exchange, so a stage could not state it correctly even if it tried. The stage says
-    /// WHAT was refused; the machine says what the client may still assume.
+    /// The assembly's only contribution is the exchange machine's verdict: the retry
+    /// contract is a fact about the whole exchange, so a stage could not state it even if it
+    /// tried. WHICH receipt that becomes belongs to [`receipt::ResponseSigning`].
     fn refuse(
         &self,
         ex: &Exchange<'_>,
         refusal: Refusal,
         progress: &ExchangeProgress,
     ) -> ServedHttpResponse {
-        let execution = Self::disposition(progress);
-        let (bound, actor) = match refusal.posture {
-            // An unverified request has no trustworthy hash to bind to and no resolved actor
-            // to attribute the denial to.
-            RefusalPosture::Preflight => (None, None),
-            _ => (Some(ex.verified.evidence()), Some(ex.actor_id.to_owned())),
-        };
-        if refusal.posture == RefusalPosture::AfterAdmission {
-            return self.response_rejection(
-                ex.http_req,
-                &refusal.cause,
-                refusal.status,
-                ex.now,
-                bound,
-                actor,
-                execution,
-                ex.key.clone(),
-            );
-        }
-        self.rejection(
-            ex.http_req,
-            &refusal.cause,
-            refusal.status,
-            ex.now,
-            bound,
-            actor,
-            execution,
-            ex.key.clone(),
-        )
+        self.responses
+            .refuse(&self.audit, ex, refusal, Self::disposition(progress))
     }
 
     /// Serve one request end to end on the async data plane. Always returns a
@@ -636,7 +581,8 @@ impl HttpProfileProxy {
                 // The signed bodyless 202 IS the signed response for a notification,
                 // and it is returned on this line — so the record describes bytes the
                 // client actually receives.
-                self.audit(
+                crate::audit_record::record_to(
+                    &self.audit,
                     crate::audit_record::AuditSubject::response(
                         mcp_re_core::audit::AuditEvent::response_signed(),
                     ),
@@ -646,7 +592,8 @@ impl HttpProfileProxy {
                 );
                 served(ack)
             }
-            Err(e) => self.response_rejection(
+            Err(e) => self.responses.response_rejection(
+                &self.audit,
                 http_req,
                 &RefusalCause::from(e),
                 500,
@@ -893,7 +840,7 @@ impl HttpProfileProxy {
         // The snapshot is taken ONCE and signs the reply below: `now` is fixed for the
         // whole request, so a key valid here is valid there. The window it opens is what
         // the reply may advertise — this stage does not compute that, the window is it.
-        match SigningWindow::open(&self.signer, ex.now, self.sig_ttl_secs) {
+        match self.responses.window(ex.now) {
             Some(window) => Ok(Established::new(
                 window,
                 ExchangeEvent::DelegatedKeySnapshotted,
@@ -1340,7 +1287,8 @@ impl HttpProfileProxy {
             // Signed inline rather than through `refuse`: there is no `Exchange` yet,
             // because nothing about the request is trusted.
             Err(refusal) => {
-                return self.rejection(
+                return self.responses.rejection(
+                    &self.audit,
                     &http_req,
                     &refusal.cause,
                     refusal.status,
@@ -1462,7 +1410,8 @@ impl HttpProfileProxy {
         // Every exit BELOW this line records `mcp-re.response.rejected` instead — the
         // request was admitted, so a `request.rejected` record would contradict this one,
         // and the fault is on the response side anyway.
-        self.audit(
+        crate::audit_record::record_to(
+            &self.audit,
             crate::audit_record::AuditSubject::request(
                 mcp_re_core::audit::AuditEvent::request_accepted(),
                 // The live product, asked for its own projection. Nothing here reconstructs
@@ -1617,7 +1566,8 @@ impl HttpProfileProxy {
         // Emitted HERE, not at signing time: everything above can still discard this
         // response, and a `response.signed` record for bytes the client never received is
         // exactly the kind of contradiction that makes an audit stream unusable.
-        self.audit(
+        crate::audit_record::record_to(
+            &self.audit,
             crate::audit_record::AuditSubject::response(
                 mcp_re_core::audit::AuditEvent::response_signed(),
             ),
@@ -1692,7 +1642,8 @@ impl HttpProfileProxy {
                     "evidence retention failed AFTER the call executed; the exchange is \
                      indeterminate and MUST NOT be blindly retried: {e}"
                 );
-                Some(self.response_rejection(
+                Some(self.responses.response_rejection(
+                    &self.audit,
                     request,
                     &RefusalCause::from(McpReError::EvidenceRetentionIndeterminate),
                     500,
@@ -1704,172 +1655,6 @@ impl HttpProfileProxy {
                 ))
             }
         }
-    }
-
-    /// A PRE-ACCEPTANCE rejection — recorded as `mcp-re.request.rejected`.
-    ///
-    /// Used by every exit that runs BEFORE the `mcp-re.request.accepted` record is
-    /// emitted, so `accepted` and `request.rejected` stay mutually exclusive per
-    /// request (ADR-MCPS-035). `wire_code` is already the frozen token; the record
-    /// carries it verbatim, never a parallel sub-name.
-    ///
-    /// `actor_id` is the VERIFIER-RESOLVED actor when one was established before this
-    /// exit, and `None` when the request was refused before resolution — the
-    /// distinction `AuditRecord` documents, and the reason a denial that carries
-    /// attribution must not discard it.
-    #[allow(clippy::too_many_arguments)]
-    fn rejection(
-        &self,
-        request: &HttpRequest,
-        cause: &RefusalCause,
-        status: u16,
-        now: i64,
-        bound: Option<&RequestEvidence>,
-        actor_id: Option<String>,
-        execution: ExecutionDisposition,
-        snapshot: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
-    ) -> ServedHttpResponse {
-        self.audit(
-            crate::audit_record::AuditSubject::request(
-                match cause.core_verdict() {
-                    Some(e) => mcp_re_core::audit::AuditEvent::request_rejected(&e),
-                    // Core reached no verdict: a policy did. Its token belongs in the
-                    // authorization coordinate below, never in Core's `reason`.
-                    None => mcp_re_core::audit::AuditEvent::request_rejected_elsewhere(),
-                },
-                cause.authorization_facet(),
-            ),
-            actor_id,
-            status,
-            now,
-        );
-        self.signed_rejection(
-            request,
-            cause.wire_code(),
-            status,
-            now,
-            bound,
-            execution,
-            snapshot,
-        )
-    }
-
-    /// A POST-ACCEPTANCE rejection — recorded as `mcp-re.response.rejected`.
-    ///
-    /// The request was admitted (an `accepted` record already names it) and the fault
-    /// is on the RESPONSE side: the forwarded body, the backend's reply class, the
-    /// response signature, or recording the continuation that makes the reply
-    /// answerable. Emitting `request.rejected` here would contradict the `accepted`
-    /// record for the same request and attribute a backend fault to the caller;
-    /// `mcp-re.response.rejected` is the frozen token the §9 taxonomy splits out for
-    /// exactly this.
-    #[allow(clippy::too_many_arguments)]
-    fn response_rejection(
-        &self,
-        request: &HttpRequest,
-        cause: &RefusalCause,
-        status: u16,
-        now: i64,
-        bound: Option<&RequestEvidence>,
-        actor_id: Option<String>,
-        execution: ExecutionDisposition,
-        snapshot: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
-    ) -> ServedHttpResponse {
-        self.audit(
-            crate::audit_record::AuditSubject::response(match cause.core_verdict() {
-                Some(e) => mcp_re_core::audit::AuditEvent::response_rejected(&e),
-                None => mcp_re_core::audit::AuditEvent::response_rejected_elsewhere(),
-            }),
-            actor_id,
-            status,
-            now,
-        );
-        self.signed_rejection(
-            request,
-            cause.wire_code(),
-            status,
-            now,
-            bound,
-            execution,
-            snapshot,
-        )
-    }
-
-    /// Build a signed rejection receipt bound to `request` (or preflight-unbound),
-    /// with the injected `now` for the signature window (fail-closed freshness).
-    ///
-    /// Signs the rejection with the active delegated key and the inline credential
-    /// (ADR-MCPRE-052) — request-bound when `bound` is `Some` (the request verified),
-    /// preflight-unbound when `None` (the request never earned a trustworthy hash).
-    /// Never root-signed. If no valid delegated key exists, a last-resort UNSIGNED
-    /// error is emitted rather than a bogus signature.
-    ///
-    /// `snapshot` is the key the exchange took at ANSWERABLE, when it had got that far. It
-    /// is preferred over re-asking the signer, and that preference is the whole reason it
-    /// is threaded here: `current` returns `None` for a retired signer, so a drain or a
-    /// failed rotation between ANSWERABLE and a post-dispatch refusal turned the one
-    /// receipt that must state "the backend may have acted" into an unsigned body a client
-    /// cannot tell from an on-path forgery. The same snapshot signs the successful reply,
-    /// so no refusal claims a validity the reply would not have had.
-    ///
-    /// Carries no audit emission of its own: the two callers above choose the frozen
-    /// event type, because which one is correct depends on whether the request had
-    /// already been admitted.
-    #[allow(clippy::too_many_arguments)]
-    fn signed_rejection(
-        &self,
-        request: &HttpRequest,
-        wire_code: &'static str,
-        status: u16,
-        now: i64,
-        bound: Option<&RequestEvidence>,
-        execution: ExecutionDisposition,
-        snapshot: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
-    ) -> ServedHttpResponse {
-        let reason = RejectionReason::new(
-            wire_code,
-            format!("mcp-re http-profile proxy rejected: {wire_code}"),
-        )
-        .with_execution(execution);
-        // The exchange's own snapshot when it reached one, so a refusal signs with the key
-        // the reply itself would have used rather than re-asking a signer that may have been
-        // retired in between. Either way the window is derived once, by its owner.
-        let resp = match snapshot
-            .map(|a| SigningWindow::over(a, now, self.sig_ttl_secs))
-            .or_else(|| SigningWindow::open(&self.signer, now, self.sig_ttl_secs))
-        {
-            Some(w) => {
-                let (a, expires) = (w.key(), w.expires());
-                let built = match bound {
-                    Some(ev) => build_delegated_rejection(
-                        request,
-                        ev,
-                        &reason,
-                        status,
-                        &a.server_signer,
-                        &a.credential,
-                        a.key.as_ref(),
-                        &a.delegated_kid,
-                        now,
-                        expires,
-                    ),
-                    None => build_delegated_rejection_preflight(
-                        Some(request),
-                        &reason,
-                        status,
-                        &a.server_signer,
-                        &a.credential,
-                        a.key.as_ref(),
-                        &a.delegated_kid,
-                        now,
-                        expires,
-                    ),
-                };
-                built.unwrap_or_else(|_| unsigned_error(status, wire_code, execution))
-            }
-            None => unsigned_error(status, wire_code, execution),
-        };
-        served(resp)
     }
 }
 
@@ -1889,7 +1674,7 @@ enum ReplyClass {
 }
 
 /// Wrap a fully-built [`HttpResponse`] as a [`ServedHttpResponse`].
-fn served(resp: HttpResponse) -> ServedHttpResponse {
+pub(super) fn served(resp: HttpResponse) -> ServedHttpResponse {
     ServedHttpResponse {
         status: resp.status,
         headers: resp.headers,
@@ -1975,127 +1760,6 @@ struct Forwarded {
     /// stripped either way; this is the only trace the attempt leaves, so the serving
     /// path names it rather than discarding it.
     seeded: bool,
-}
-
-/// A last-resort unsigned error body when even the signed rejection cannot be built
-/// (a server-key failure). Never a silent allow — an explicit error status.
-///
-/// It still states what the exchange knows about effects. That claim is the one thing a
-/// client cannot infer from what is left: an unsigned 504 with an empty error object reads
-/// as an ordinary transport failure, i.e. as did-not-run, on the exits where the proxy
-/// knows the backend was dispatched.
-fn unsigned_error(status: u16, wire_code: &str, execution: ExecutionDisposition) -> HttpResponse {
-    let mut mcp_re_error = serde_json::json!({ "wire_code": wire_code });
-    // The SAME projection the signed rejection uses. Both inputs are handed over, so this
-    // receipt can state the wire-code-dependent cases — a retention failure the client must
-    // reconcile against a store that has no record of the call — and not merely what the
-    // disposition alone knows.
-    if let Some(claim) = mcp_re_http_profile::retry_semantics(wire_code, execution) {
-        if let (Some(target), Some(extra)) = (mcp_re_error.as_object_mut(), claim.as_object()) {
-            for (k, v) in extra {
-                target.insert(k.clone(), v.clone());
-            }
-        }
-    }
-    HttpResponse {
-        status,
-        headers: vec![("content-type".into(), "application/json".into())],
-        body: serde_json::to_vec(&serde_json::json!({
-            "jsonrpc": "2.0",
-            "error": {
-                "code": mcp_re_core::MCP_RE_JSON_RPC_ERROR_CODE,
-                "message": wire_code,
-                "data": { "mcp_re_error": mcp_re_error },
-            },
-            "id": serde_json::Value::Null,
-        }))
-        .unwrap_or_default(),
-    }
-}
-
-/// The last-resort unsigned receipt states what the signed one would have stated.
-///
-/// This is the exit where a client has least to go on: no signature, no binding, and an
-/// error object it would otherwise read as an ordinary transport failure. What it must
-/// still carry is the execution claim — and the claim is a function of the wire code as
-/// well as the disposition, which is why this receipt consumes the canonical projection
-/// rather than a local copy of it.
-#[cfg(test)]
-mod last_resort_receipt_tests {
-    use super::*;
-
-    /// Read the `mcp_re_error` object out of an unsigned last-resort body.
-    fn claim(status: u16, wire_code: &str, execution: ExecutionDisposition) -> serde_json::Value {
-        let resp = unsigned_error(status, wire_code, execution);
-        let body: serde_json::Value =
-            serde_json::from_slice(&resp.body).expect("the last-resort body is JSON");
-        body["error"]["data"]["mcp_re_error"].clone()
-    }
-
-    /// The negative control for the duplicated-authority defect.
-    ///
-    /// A local projection taking only the disposition CANNOT produce `retention_status`,
-    /// because that case is selected by the wire code. Before the duplicate was deleted
-    /// this assertion failed on the missing field while every other field passed — the
-    /// client was told to reconcile without being told the evidence store has no record of
-    /// the call it must reconcile.
-    #[test]
-    fn a_retention_indeterminate_last_resort_receipt_still_names_the_failed_obligation() {
-        let e = claim(
-            500,
-            mcp_re_core::McpReError::EvidenceRetentionIndeterminate.wire_code(),
-            ExecutionDisposition::PossiblyExecuted,
-        );
-        assert_eq!(e["execution_status"], "possibly_executed");
-        assert_eq!(
-            e["retention_status"], "failed",
-            "the unsigned receipt must state WHICH obligation failed: {e}"
-        );
-        assert_eq!(e["retry_safety"], "unsafe_without_reconciliation");
-    }
-
-    /// The field is selected by the wire code, not added to every possibly-executed exit.
-    #[test]
-    fn an_ordinary_post_dispatch_failure_claims_no_retention_status() {
-        let e = claim(
-            502,
-            mcp_re_core::McpReError::TrustResolverUnavailable.wire_code(),
-            ExecutionDisposition::PossiblyExecuted,
-        );
-        assert_eq!(e["execution_status"], "possibly_executed");
-        assert!(
-            e.get("retention_status").is_none(),
-            "no retention obligation failed here: {e}"
-        );
-    }
-
-    /// The spent-approval case is disposition-selected and survives the same path.
-    #[test]
-    fn a_spent_approval_last_resort_receipt_names_the_consumed_continuation() {
-        let e = claim(
-            503,
-            mcp_re_core::McpReError::ReplayCacheUnavailable.wire_code(),
-            ExecutionDisposition::ApprovalSpentNothingExecuted,
-        );
-        assert_eq!(e["execution_status"], "not_executed");
-        assert_eq!(e["continuation_status"], "consumed");
-        assert_eq!(e["retry_safety"], "unsafe_without_new_elicitation");
-    }
-
-    /// An exchange that states nothing adds nothing: the frozen vectors keep their bytes.
-    #[test]
-    fn an_unstated_disposition_adds_no_claim() {
-        let e = claim(
-            400,
-            mcp_re_core::McpReError::MalformedEnvelope.wire_code(),
-            ExecutionDisposition::Unstated,
-        );
-        assert_eq!(
-            e.as_object().expect("an object").len(),
-            1,
-            "only the wire code: {e}"
-        );
-    }
 }
 
 #[cfg(test)]

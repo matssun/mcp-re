@@ -49,7 +49,7 @@
 # progress.
 [[debt]]
 path = "mcp-re-proxy/src/http_profile_serve/mod.rs"
-baseline_prod_loc = 2023
+baseline_prod_loc = 1764
 baseline_sha = "ae40fff"
 status = "unreviewed"
 
