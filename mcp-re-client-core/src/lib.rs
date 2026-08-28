@@ -27,6 +27,7 @@
 pub mod binding_spec;
 mod delegated_evidence;
 mod delegated_trust;
+mod delegation_policy;
 /// What a verified rejection receipt says about whether the work ran (ADR-MCPRE-058 §10).
 mod execution_contract;
 pub mod request;
@@ -47,6 +48,7 @@ pub use delegated_trust::DelegatedResponseTrust;
 pub use delegated_trust::RevocationSource;
 pub use delegated_trust::StaticRevocationList;
 pub use delegated_trust::TrustedIssuerSet;
+pub use delegation_policy::DelegationPolicy;
 pub use execution_contract::ExecutionContract;
 pub use execution_contract::ExecutionStatus;
 pub use execution_contract::RetrySafety;
@@ -63,7 +65,6 @@ pub use response::verify_delegated_accepted_202;
 pub use response::verify_delegated_response;
 pub use response::verify_signed_response;
 pub use response::DelegatedOutcome;
-pub use response::DelegationPolicy;
 pub use response::ResponseExpectation;
 pub use response::VerifiedDelegatedResponse;
 pub use result_classification::classify_result;

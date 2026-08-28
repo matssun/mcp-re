@@ -162,10 +162,17 @@ review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 # item 4 the execution/retry contract to `execution_contract.rs`: 739 -> 608; and EX-009's
 # own disposition — result classification, which is not verification — to
 # `result_classification.rs`: 608 -> 564, absorbing the 13 lines the clock-skew seal added.
+#
+# Then the seal itself demanded one more: `clippy::partial_pub_fields` fired on a
+# `DelegationPolicy` whose invariant-bearing field was private beside three `pub` siblings,
+# and the fix — private fields plus one `with_expectations` projection — could not mean
+# anything while the type lived in the same module as the function that destructured it.
+# Module privacy is the only in-crate lever, so authority E moved to `delegation_policy.rs`:
+# 564 -> 470.
 [[debt]]
 path = "mcp-re-client-core/src/response.rs"
-baseline_prod_loc = 564
-baseline_sha = "9fecad9"
+baseline_prod_loc = 470
+baseline_sha = "9306f23"
 status = "unreviewed"
 
 # MCPRE-154 relocated the shutdown-drain authority and the EX-002 census was re-run on the
