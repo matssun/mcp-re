@@ -58,7 +58,7 @@ pub(super) const SOURCE_FALLBACKS: &[(&str, &str)] = &[
     // rule that asserts no event a stage establishes is also advanced by the assembly.
     (
         "MCP_RE_HTTP_PROFILE_SERVE_SRC",
-        "mcp-re-proxy/src/http_profile_serve.rs",
+        "mcp-re-proxy/src/http_profile_serve/mod.rs",
     ),
     ("MCP_RE_TRUST_PLANE_SRC", "mcp-re-proxy/src/trust_plane.rs"),
     ("MCP_RE_TLS_PLANE_SRC", "mcp-re-proxy/src/tls_plane.rs"),
