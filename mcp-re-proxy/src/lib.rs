@@ -167,7 +167,6 @@ pub(crate) mod refusal;
 // ADR-MCPS-021 Axis 2: the declared REVOCATION tier (Tier 1 bounded-cache / Tier 2
 // live / Tier 3 push) — semantic names, honest per-tier guarantee, tier-claim
 // ceiling. Pure type — in the default build. The Axis-2 analogue of replay_tier.
-pub mod revocation_resolver;
 pub mod revocation_tier;
 // ADR-MCPS-021 Tier 2: live strong trust check — consults the inner store on every
 // verification (no positive-trust caching), with an optional second live
@@ -175,7 +174,6 @@ pub mod revocation_tier;
 /// Per-request client-certificate revocation — what makes a warm connection safe to
 /// keep, since rustls consults the CRLs at the handshake and never again.
 pub mod client_revocation;
-pub(crate) mod live_trust;
 /// The re-readable trust store the revocation tiers resolve against — what makes
 /// "the store is consulted on every verification" a true statement about a running
 /// proxy rather than about a map frozen at boot.
@@ -187,7 +185,6 @@ pub mod tls_listener_state;
 // ADR-MCPS-021 Tier 3: push-invalidation trust cache — bounded-`T` caching plus an
 // injected invalidation channel that evicts revoked entries immediately, with a
 // bounded-`T` fallback when the channel is unhealthy (never a zero-window claim).
-pub(crate) mod push_trust;
 // Issue #3837: shared, server-side-atomic replay cache for horizontally-scaled
 // replay safety (the backend-agnostic core + the in-memory reference store).
 pub mod shared_replay;
@@ -303,7 +300,6 @@ pub(crate) mod trust_plan;
 // ADR-MCPS-021: bounded trust-propagation cache (Tier 1). Caching is a caller
 // concern (mcp-re-core does not cache); this wraps the injected TrustResolver with
 // the bounded-`T` window + negative-cache classification + fail-closed rules.
-pub mod trust_cache;
 
 // ADR-MCPS-028 §B: the AWS KMS Ed25519 backend (feature-gated). Drives the
 // `KmsResponseSigner` core via the `KmsEd25519Backend` seam.
@@ -365,11 +361,6 @@ pub use pkcs11_keysource::Pkcs11KeySource;
 pub use async_redis_store::RedisAsyncAtomicReplayStore;
 #[cfg(feature = "cpstore_etcd")]
 pub use etcd_store::EtcdAtomicReplayStore;
-pub use live_trust::LiveTrustResolver;
-pub use push_trust::InMemoryInvalidationChannel;
-pub use push_trust::InvalidationChannel;
-pub use push_trust::InvalidationEvent;
-pub use push_trust::PushInvalidationTrustCache;
 #[cfg(feature = "redis_replay")]
 pub use redis_store::RedisAtomicReplayStore;
 pub use replay_tier::ReplayDurabilityTier;
@@ -378,6 +369,9 @@ pub use shared_replay::AtomicReplayStore;
 pub use shared_replay::InMemoryAtomicReplayStore;
 pub use shared_replay::ReplayStoreError;
 pub use shared_replay::SharedReplayCache;
+pub use trust_plane::InvalidationChannel;
+pub use trust_plane::InvalidationEvent;
+pub use trust_plane::PushInvalidationTrustCache;
 // Kept at the crate root for existing embedders; the provenance is the harness.
 pub use blocking_mtls_harness::serve;
 pub use blocking_mtls_harness::serve_once;
@@ -411,7 +405,6 @@ pub use transport::DEFAULT_LB_ASSERTION_MAX_AGE_SECS;
 pub use transport::MAX_ASSERTED_IDENTITY_LEN;
 pub use transport::MCP_METHOD_HEADER;
 pub use transport::MCP_NAME_HEADER;
-pub use trust_cache::BoundedTrustCache;
 #[cfg(feature = "redis_replay")]
 pub use trust_epoch::redis_trust_epoch_source;
 pub use trust_epoch::EpochReader;

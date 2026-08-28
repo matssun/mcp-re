@@ -58,6 +58,14 @@ pub struct LiveTrustResolver {
     /// Optional second revocation authority (ADR-MCPS-013 grant deny-list),
     /// consulted live alongside the key-status binding when a `revocation_id` is
     /// supplied to [`resolve_with_revocation_id`](LiveTrustResolver::resolve_with_revocation_id).
+    /// **NOT WIRED.** No production path installs one, so Tier 2's revocation check is
+    /// whatever the inner store answers — which is the freshness guarantee the tier is
+    /// actually sold on (a key removed from the store stops resolving on the next
+    /// request), not an identifier denylist. Retained rather than deleted: the seam is the
+    /// ADR-MCPS-021 elaboration a networked revocation feed would use, and the composition
+    /// root having never installed one is a deployment fact rather than evidence the seam
+    /// is wrong.
+    #[allow(dead_code)]
     revocation: Option<Box<dyn RevocationSource + Send + Sync>>,
 }
 
@@ -74,7 +82,8 @@ impl LiveTrustResolver {
     /// Wrap `inner` and additionally consult `revocation` (ADR-MCPS-013) as a
     /// second live revocation authority via
     /// [`resolve_with_revocation_id`](LiveTrustResolver::resolve_with_revocation_id).
-    pub fn with_revocation_source(
+    #[allow(dead_code)]
+    pub(super) fn with_revocation_source(
         inner: Box<dyn TrustResolver + Send + Sync>,
         revocation: Box<dyn RevocationSource + Send + Sync>,
     ) -> Self {
@@ -91,7 +100,8 @@ impl LiveTrustResolver {
     /// `Active` binding is then gated on the revocation source. `Revoked` maps to
     /// [`TrustResolverError::Revoked`]; a [`RevocationUnavailable`] maps to
     /// [`TrustResolverError::Unavailable`] (operational, never an allow).
-    pub fn resolve_with_revocation_id(
+    #[allow(dead_code)]
+    pub(super) fn resolve_with_revocation_id(
         &self,
         signer: &str,
         key_id: &str,

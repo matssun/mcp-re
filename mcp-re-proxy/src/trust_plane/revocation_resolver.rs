@@ -29,49 +29,59 @@
 ///   it never claims a near-zero window the channel cannot prove.
 ///
 /// Pure and unit-testable: the `clock` is injected (tests pass a controllable one),
-/// and the negative TTL is the named [`crate::trust_cache::DEFAULT_NEGATIVE_TTL_SECS`].
-pub fn build_revocation_resolver(
+/// and the negative TTL is the named [`crate::trust_plane::trust_cache::DEFAULT_NEGATIVE_TTL_SECS`].
+/// For the [`RevocationTier::Push`] (ADR-MCPS-021 Tier 3) tier a caller may inject a
+/// networked [`InvalidationChannel`](super::push_trust::InvalidationChannel) — e.g. the
+/// MCPS-84 Redis trust-epoch source. When `push_channel` is `None` the Push tier falls
+/// back to the inert in-process reference channel (today's default: bounded-`T`, no
+/// networked pushes). Non-Push tiers ignore `push_channel`.
+///
+/// ONE entry point. There used to be a second, `build_revocation_resolver`, whose whole
+/// body was `build_revocation_resolver(tier, base, clock, None)` — a strictly
+/// weaker duplicate with no production caller, since the composition root always has a
+/// channel to pass or an explicit `None` to pass. Two ways in where one suffices is
+/// interface width, and it is what ADR-MCPRE-061 §7 asks to be removed even where no size
+/// band flags it.
+pub(super) fn build_revocation_resolver(
     tier: &crate::revocation_tier::RevocationTier,
     base: Box<dyn mcp_re_core::TrustResolver + Send + Sync>,
-    clock: crate::trust_cache::UnixClock,
+    clock: crate::trust_plane::trust_cache::UnixClock,
+    push_channel: Option<
+        Box<dyn crate::trust_plane::invalidation_channel::InvalidationChannel + Send + Sync>,
+    >,
 ) -> Box<dyn mcp_re_core::TrustResolver + Send + Sync> {
-    build_revocation_resolver_with_channel(tier, base, clock, None)
-}
-
-/// As [`build_revocation_resolver`], but for the [`RevocationTier::Push`]
-/// (ADR-MCPS-021 Tier 3) tier a caller may inject a networked
-/// [`InvalidationChannel`](crate::push_trust::InvalidationChannel) — e.g. the
-/// MCPS-84 Redis trust-epoch source. When `push_channel` is `None` the Push tier
-/// falls back to the inert in-process reference channel (today's default:
-/// bounded-`T`, no networked pushes). Non-Push tiers ignore `push_channel`.
-pub fn build_revocation_resolver_with_channel(
-    tier: &crate::revocation_tier::RevocationTier,
-    base: Box<dyn mcp_re_core::TrustResolver + Send + Sync>,
-    clock: crate::trust_cache::UnixClock,
-    push_channel: Option<Box<dyn crate::push_trust::InvalidationChannel + Send + Sync>>,
-) -> Box<dyn mcp_re_core::TrustResolver + Send + Sync> {
-    let negative_ttl_secs = crate::trust_cache::DEFAULT_NEGATIVE_TTL_SECS;
+    let negative_ttl_secs = crate::trust_plane::trust_cache::DEFAULT_NEGATIVE_TTL_SECS;
     match tier {
-        crate::revocation_tier::RevocationTier::BoundedCache { t_secs } => Box::new(
-            crate::trust_cache::BoundedTrustCache::new(base, *t_secs, negative_ttl_secs, clock),
-        ),
+        crate::revocation_tier::RevocationTier::BoundedCache { t_secs } => {
+            Box::new(crate::trust_plane::trust_cache::BoundedTrustCache::new(
+                base,
+                *t_secs,
+                negative_ttl_secs,
+                clock,
+            ))
+        }
         crate::revocation_tier::RevocationTier::Live => {
-            Box::new(crate::live_trust::LiveTrustResolver::new(base))
+            Box::new(crate::trust_plane::live_trust::LiveTrustResolver::new(base))
         }
         crate::revocation_tier::RevocationTier::Push { t_secs } => {
             // Tier 3: use the injected networked channel (MCPS-84 Redis trust-epoch
             // source) when present; otherwise the in-process reference channel is
             // inert and the cache runs at its bounded-`T` fallback (the honest
             // guarantee when no push backend is wired).
-            let channel = push_channel
-                .unwrap_or_else(|| Box::new(crate::push_trust::InMemoryInvalidationChannel::new()));
-            Box::new(crate::push_trust::PushInvalidationTrustCache::new(
-                base,
-                *t_secs,
-                negative_ttl_secs,
-                clock,
-                channel,
-            ))
+            let channel = push_channel.unwrap_or_else(|| {
+                Box::new(
+                    crate::trust_plane::invalidation_channel::InMemoryInvalidationChannel::new(),
+                )
+            });
+            Box::new(
+                crate::trust_plane::push_trust::PushInvalidationTrustCache::new(
+                    base,
+                    *t_secs,
+                    negative_ttl_secs,
+                    clock,
+                    channel,
+                ),
+            )
         }
     }
 }
@@ -91,7 +101,7 @@ mod tests {
 
     use super::build_revocation_resolver;
     use crate::revocation_tier::RevocationTier;
-    use crate::trust_cache::UnixClock;
+    use crate::trust_plane::trust_cache::UnixClock;
     use mcp_re_core::TrustResolverError;
     use mcp_re_core::VerificationKey;
     use std::sync::atomic::AtomicI64;
@@ -165,7 +175,7 @@ mod tests {
         let inner = Arc::new(ScriptedRevResolver::new(Ok(rev_key())));
         let (clock, _now) = fixed_clock(1000);
         let resolver =
-            build_revocation_resolver(&RevocationTier::Live, base_over(inner.clone()), clock);
+            build_revocation_resolver(&RevocationTier::Live, base_over(inner.clone()), clock, None);
 
         resolver
             .resolve("did:host", "key-1")
@@ -196,6 +206,7 @@ mod tests {
             &RevocationTier::BoundedCache { t_secs: 60 },
             base_over(inner.clone()),
             clock,
+            None,
         );
 
         resolver
@@ -224,6 +235,7 @@ mod tests {
             &RevocationTier::Push { t_secs: 60 },
             base_over(inner.clone()),
             clock,
+            None,
         );
 
         resolver

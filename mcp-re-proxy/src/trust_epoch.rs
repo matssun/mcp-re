@@ -1,6 +1,6 @@
 //! MCPS-84 (ADR-MCPS-049 W2) — trust-epoch invalidation source.
 //!
-//! A networked [`InvalidationChannel`](crate::push_trust::InvalidationChannel)
+//! A networked [`InvalidationChannel`](crate::trust_plane::InvalidationChannel)
 //! (ADR-MCPS-021 Tier 3) driven by a **monotonic trust-epoch counter**: an
 //! operator bumps a shared epoch (e.g. `INCR mcp-re:trust:epoch`) whenever the trust
 //! store changes (a key revoked or rotated). Each replica polls the epoch; when it
@@ -26,8 +26,8 @@ use std::sync::PoisonError;
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::push_trust::InvalidationChannel;
-use crate::push_trust::InvalidationEvent;
+use crate::trust_plane::InvalidationChannel;
+use crate::trust_plane::InvalidationEvent;
 
 /// Take a lock, recovering it if a panic elsewhere poisoned it.
 ///

@@ -41,12 +41,54 @@
 //! apart. A graceful drain therefore fails verification closed rather than leaving a
 //! surviving resolver as an indefinitely-valid frozen verifier.
 
+/// The Tier-3 invalidation seam: the event vocabulary and the source contract.
+mod invalidation_channel;
+/// Tier 2: consult the store on every call, so a revocation is visible on the next request.
+mod live_trust;
+/// Tier 3: a bounded cache an external event may evict early.
+mod push_trust;
+
+/// Whether the trust store is still being maintained, and the resolver that refuses to
+/// answer once it is not.
+mod freshness;
+
+/// What revocation window this deployment actually DELIVERS, as the operator is told it at
+/// startup.
+mod delivered_window;
+use delivered_window::delivered_revocation_window;
+use delivered_window::store_change_cadence;
+use freshness::StaleFailsClosed;
+use freshness::TrustStoreFreshness;
+/// Materialisation of a revocation policy as runtime resolver behaviour — WHICH structure
+/// implements the declared tier. Private: the tier is a policy choice a deployment
+/// declares, and the wiring that honours it is nobody else's business.
+mod revocation_resolver;
+/// Tier 1 and the bounded window `T` every caching tier runs under.
+mod trust_cache;
+/// WHICH window a deployment may use — as distinct from the cache that honours one.
+mod window_policy;
+
+/// The Tier-3 invalidation seam and its events.
+///
+/// The reason at the point of widening: the ADR-MCPS-021 Tier-3 guarantee is established
+/// end to end by `tests/integration_ext/redis_trust_epoch_e2e_test.rs`, which drives a
+/// real Redis trust-epoch source through the cache. That lane cannot run inside the owning
+/// module — it needs a live Redis and is feature-gated — so the seam is reachable rather
+/// than the test being weakened to something it can prove in-process.
+pub use invalidation_channel::InvalidationChannel;
+pub use invalidation_channel::InvalidationEvent;
+pub use push_trust::PushInvalidationTrustCache;
+
+/// The deployment-wide default trust-propagation window, read by the argv parser when no
+/// tier is declared. A named projection rather than a path into the cache: the parser
+/// needs the DEFAULT, not the cache.
+pub(crate) use trust_cache::DEFAULT_T_SECS;
+
 use crate::managed_worker::WorkerSet;
 use crate::reloading_trust::SignerDirectory;
 use crate::RevocationTier;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -229,7 +271,7 @@ impl TrustPlane {
                  --trust-epoch-redis-url to activate the trust-epoch push source."
             );
         }
-        let resolver = crate::revocation_resolver::build_revocation_resolver_with_channel(
+        let resolver = crate::trust_plane::revocation_resolver::build_revocation_resolver(
             &plan.revocation().tier(),
             Box::new(crate::reloading_trust::SharedTrustStore(Arc::clone(
                 &trust_store,
@@ -315,8 +357,8 @@ pub const TRUST_EPOCH_POLL_SECS: u64 = 5;
 /// The production [`UnixClock`] the revocation-tier resolver wrapping uses to bound
 /// the propagation window `T` (ADR-MCPS-021). Delegates to the trust-cache's
 /// system clock so production and the unit-tested helper share one clock type.
-fn trust_clock() -> crate::trust_cache::UnixClock {
-    crate::trust_cache::system_clock()
+fn trust_clock() -> crate::trust_plane::trust_cache::UnixClock {
+    crate::trust_plane::trust_cache::system_clock()
 }
 /// Read `--trust` and build the snapshot the revocation tiers resolve against.
 ///
@@ -346,60 +388,6 @@ fn read_trust_file(
     let signers = crate::trust_document::load_trust_request_signers(&bytes, response_kid)?;
     Ok((resolver, signers))
 }
-/// The qualifier carried on the revocation-tier startup line: how fast the trust STORE
-/// itself can change.
-///
-/// Every tier's window is a claim about how quickly a key removed from `--trust` stops
-/// resolving, and nothing resolves faster than the file is re-read. The default tier
-/// (`bounded-cache`) is accepted without a cadence — unlike `live`/`push`, whose claims
-/// are refused outright without one — so its "enforced fleet-wide within T" line is the
-/// one an operator gets by omission. The correction therefore rides on the SAME line as
-/// the claim: as a separate line further down it was read as being about something else,
-/// and the tier line was quoted on its own.
-fn store_change_cadence(reload: crate::startup_plan::TrustReloadPlan) -> String {
-    match reload.cadence_secs() {
-        Some(secs) => format!("{secs}s (--trust re-read on that cadence)"),
-        None => "NONE: --trust is read once at startup, so the window above bounds CACHING \
-                 only — the store itself changes only when every replica restarts"
-            .to_string(),
-    }
-}
-/// The revocation window the deployment actually delivers: the store cadence `R` and the
-/// tier's cached-entry lifetime `T` ADD, and this states the sum.
-///
-/// A reload swaps the snapshot the tier resolves AGAINST; it holds no handle to the tier's
-/// cache and evicts nothing, and a cached entry restarts a full `T` at every miss. So an
-/// entry re-cached one tick before the swap survives it by a further `T`, and a key removed
-/// from `--trust` can keep resolving for up to `R + T`. `Live` caches no positive trust, so
-/// there the store cadence is the whole window.
-///
-/// Stated as arithmetic because every other surface prints the two numbers side by side and
-/// leaves the composition to a preposition, which an operator sizing an incident response
-/// reads as "the tighter of" rather than "add these".
-fn delivered_revocation_window(
-    tier: &RevocationTier,
-    reload: crate::startup_plan::TrustReloadPlan,
-) -> String {
-    let Some(cadence) = reload.cadence_secs() else {
-        return "UNBOUNDED: --trust is read once at startup, so a removed key keeps \
-                resolving until every replica restarts"
-            .to_string();
-    };
-    let r = i64::try_from(cadence.get()).unwrap_or(i64::MAX);
-    match tier {
-        RevocationTier::Live => format!(
-            "worst case {r}s (the store cadence R={r}s; this tier caches no positive trust)"
-        ),
-        RevocationTier::BoundedCache { t_secs } | RevocationTier::Push { t_secs } => {
-            let total = r.saturating_add(*t_secs);
-            format!(
-                "worst case {total}s = R {r}s + T {t_secs}s (the reload swaps the store but \
-                 evicts nothing already cached, so a cached entry outlives the swap by a \
-                 further T)"
-            )
-        }
-    }
-}
 /// How many consecutive failed `--trust` re-reads are absorbed before the resolver
 /// fails closed.
 ///
@@ -411,81 +399,6 @@ fn delivered_revocation_window(
 /// ConfigMap remount or an editor's save and short enough that an incident-time
 /// revocation is not silently ignored.
 const TRUST_RELOAD_FAILURE_BUDGET: u32 = 5;
-/// Whether the trust store is still fresh enough to answer.
-///
-/// Set by [`spawn_trust_reload_task`] when the file has been unreadable for
-/// [`TRUST_RELOAD_FAILURE_BUDGET`] consecutive cadences, or when the reload thread has
-/// died. Read by the resolver wrapper below on every verification, which is what makes
-/// it a real fail-closed rather than a log line.
-#[derive(Debug, Default)]
-struct TrustStoreFreshness {
-    stale: std::sync::atomic::AtomicBool,
-    /// Set by [`mark_stale_permanently`](Self::mark_stale_permanently). Separate from
-    /// `stale` because the two stalenesses differ in whether a later reload may undo
-    /// them: exhausting the failure budget is recoverable, and
-    /// [`mark_fresh`](Self::mark_fresh) is the recovery it exists to allow, while the
-    /// owner going away or the reload thread dying is not. Held in one flag, the
-    /// difference is not representable and the next successful read reverses either.
-    terminal: std::sync::atomic::AtomicBool,
-}
-impl TrustStoreFreshness {
-    fn mark_stale(&self) {
-        self.stale.store(true, Ordering::SeqCst);
-    }
-
-    /// Stale, permanently: no later reload can report this store fresh again.
-    ///
-    /// For the two cases the store is not meant to recover from — the owning
-    /// [`TrustPlane`] being dropped, and the reload thread dying — both of which say so,
-    /// and neither of which could enforce it while the flag they set was one a live
-    /// reload could overwrite.
-    fn mark_stale_permanently(&self) {
-        self.terminal.store(true, Ordering::SeqCst);
-        self.mark_stale();
-    }
-
-    fn mark_fresh(&self) {
-        if self.terminal.load(Ordering::SeqCst) {
-            return;
-        }
-        self.stale.store(false, Ordering::SeqCst);
-    }
-
-    fn is_stale(&self) -> bool {
-        self.terminal.load(Ordering::Relaxed) || self.stale.load(Ordering::Relaxed)
-    }
-}
-/// The request-trust resolver, refusing to answer at all once the store behind it has
-/// stopped being maintained — whether because the reload exhausted its failure budget or
-/// because the owning [`TrustPlane`] retired.
-///
-/// `Unavailable` and not `NotFound`: a frozen store still HOLDS the revoked key, so
-/// answering from it is the one outcome that must not happen, and reporting the outage
-/// as an unknown keyid would send the operator hunting a client bug. The verifier maps
-/// this to `mcp-re.trust_resolver_unavailable`, which is what a stale store actually is.
-struct StaleFailsClosed {
-    inner: Arc<dyn mcp_re_core::TrustResolver + Send + Sync>,
-    freshness: Arc<TrustStoreFreshness>,
-}
-impl mcp_re_core::TrustResolver for StaleFailsClosed {
-    fn resolve(
-        &self,
-        signer: &str,
-        key_id: &str,
-    ) -> Result<mcp_re_core::VerificationKey, mcp_re_core::TrustResolverError> {
-        if self.freshness.is_stale() {
-            return Err(mcp_re_core::TrustResolverError::Unavailable {
-                details: "nothing is maintaining the trust store: either --trust has not \
-                          been re-read successfully for several cadences, or the trust \
-                          plane that owned the refresh is gone. A key revoked in --trust \
-                          would still resolve from the frozen snapshot, so verification \
-                          fails closed"
-                    .to_string(),
-            });
-        }
-        self.inner.resolve(signer, key_id)
-    }
-}
 /// Re-read `--trust` on a cadence and swap the snapshot atomically.
 ///
 /// The same shape as [`spawn_crl_reload_task`], and for the same reason: a
@@ -1249,6 +1162,7 @@ mod handle_lifetime_tests {
 mod reload_loop_tests {
     use super::*;
     use mcp_re_core::TrustResolver;
+    use std::sync::atomic::Ordering;
 
     const SIGNER: &str = "did:example:client";
 

@@ -100,7 +100,7 @@ reason the ADR says this is the window to start.
 | runtime lifecycle | `mcp-re-proxy/src/runtime_state.rs` | 11 states, 10 events, one closed transition relation; invalid pair leaves state unchanged |
 | materialization ownership | `mcp-re-proxy/src/materializing_runtime.rs` | owns partial construction; success applied only after all required resources are taken |
 | post-drain teardown | `mcp-re-proxy/src/materialized_runtime.rs` | drain → security transition → reclaim, each gated on the prior lifecycle event |
-| trust freshness | `mcp-re-proxy/src/trust_plane.rs` | `TrustStoreFreshness`, with a terminal `mark_stale_permanently` latch |
+| trust freshness | `mcp-re-proxy/src/trust_plane/freshness.rs` | `TrustStoreFreshness`, with a terminal `mark_stale_permanently` latch |
 | signing custody | `mcp-re-proxy/src/signing_plane.rs` | active/retired with a terminal retirement latch |
 | trust snapshot publication | `mcp-re-proxy/src/reloading_trust.rs` | resolver + signer map published as one unit behind one lock |
 | serving capabilities | `mcp-re-proxy/src/serving_capabilities.rs` | seven optional capabilities behind `Established<T>`; ON-over-nothing unrepresentable |
