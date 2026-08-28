@@ -510,12 +510,15 @@ fn verdict(f: &Fixture) -> String {
         &receipt,
         |kid| resolve(kid, ISSUER_KID, issuer_key.clone()),
         |kid| {
-            resolve(kid, TS_KID, ts_key.clone()).map(|key| ResolvedTransparencyService {
-                key,
-                // This corpus is produced by the in-process prototype log, which hashes
-                // the statement's own octets as the entry.
-                leaf_profile: StatementLeafProfile::StatementBytes,
-                position_profile: ReceiptPositionProfile::Bound,
+            resolve(kid, TS_KID, ts_key.clone()).map(|key| {
+                // `stated`, not a pin: this corpus is produced by the in-process prototype
+                // log, so there is no operator-reviewed document these profiles came from.
+                // The log hashes the statement's own octets as the entry.
+                ResolvedTransparencyService::stated(
+                    key,
+                    StatementLeafProfile::StatementBytes,
+                    ReceiptPositionProfile::Bound,
+                )
             })
         },
     ) {

@@ -74,6 +74,9 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `CryptographicSigningKeyEvidence` | `communication_assurance/signing_key_evidence.rs` | `key()` |
 | `CredentialKeyCorrespondenceFacts` | `communication_assurance/credential_key_correspondence.rs` | `corresponding_key()` |
 | `DelegatedCertResolver` | `delegated_tls/resolver.rs` | `budget()`, `materialize()` (the only constructor) |
+| `P256Point` | http-profile `scitt.rs` | `verifying_key()` — the representation IS the decoded key |
+| `ScittServiceTrustPin` | http-profile `scitt.rs` | `verification_key()`, `kid()`, `service_identifier()`, `leaf_profile()`, `position_profile()`, `resolve()` |
+| `EvidenceCommitment` | http-profile `scitt.rs` | `corresponds_to()`, `is_complete_record()`, `commits_to_verified_evidence()`, `identifies_a_submission()`, `chain_label()` |
 
 A plan produced by an owner lives **with that owner**, not in `startup_plan.rs`.
 `startup_plan` re-exports it. The plan is the owner's projection of its own validated
@@ -299,6 +302,45 @@ the same mistake as the wide composition object.
 The question to ask before sealing: **if this value is illegal, whose bug is it?** If the
 answer is "the owner's classifier", seal. If it is "whoever implemented the seam", the
 invariant is a contract on the seam and privacy is theatre.
+
+#### The same measurement a second time — `ResolvedTransparencyService` (MCPRE-155)
+
+EX-004 question 11 named it: its own doc says the key and the profiles *"travel together"*
+while all three fields were `pub`, so a caller could pair a pinned key with a leaf profile
+nobody pinned. The seal was attempted and the answer came out the same way as
+`ResolvedActor`'s. `verify_receipt_offline` takes the service through a
+`Fn(&str) -> Option<ResolvedTransparencyService>` seam, and there is a real second producer
+with no pin behind it — the in-process `PrototypeTransparencyService`, which the conformance
+corpora are built from.
+
+What was done instead, and what it is worth: the fields are private and there are two NAMED
+producers, `pinned` (private, reached only through `ScittServiceTrustPin::resolve`) and
+`stated`, whose name is its contract — *the caller is asserting these; no operator pinned
+them*. That buys legibility at every call site, not unconstructibility, and the record says
+so rather than claiming a seal. It is the third measurement of this rule and the first where
+the seam's second producer is a shipped type rather than a test.
+
+#### Where the seal DID hold, in the same file
+
+Three of EX-004's four question-11 types were sealable and are sealed:
+
+- **`P256Point`** (new). `CoseVerificationKey::EcdsaP256 { x, y }` let a struct literal name
+  two 32-octet numbers that are not a point on the curve, while the variant's name said
+  otherwise; `from_ec2_p256` checked and then threw the parsed key away, so every
+  verification re-decoded. The representation is now the DECODED `VerifyingKey`, the decode
+  is the proof, and the §11 operational test passes: delete the check and an invalid value
+  is still unconstructible, because the check *is* the constructor.
+- **`ScittServiceTrustPin`**. The illegal state was the `(algorithm, public_key)` PAIR — an
+  `EdDSA` pin carrying an `ES256` `y`. It was constructible and refused only if somebody
+  called `verification_key`. Deserialization now goes through a private `PinDocument` and
+  `TryFrom`, so the pair is checked on the way in and `verification_key` is infallible. The
+  seal is on the pin, not on `PinnedPublicKey`: a key is not illegal, a mislabelled pairing
+  is.
+- **`EvidenceCommitment`**. Two producers, both named — `from_reconstruction` (derived from
+  one `ChainReconstruction`, so the label and the handles cannot be chosen separately) and
+  `Deserialize` (a received CLAIM, trusted only after the issuer's `COSE_Sign1` verifies).
+  The third way — assembling one field by field, so a `complete` label could carry an
+  unrelated call's handles — is gone.
 
 ### A proved postcondition outranks a seal
 

@@ -114,14 +114,14 @@ Signing (`issue_signed_statement` takes an external signer closure — the issue
 
 This is the strongest finding after question 2. **Four types state invariants their representations do not hold.**
 
-| type | claimed | actual |
-|---|---|---|
-| `EvidenceCommitment` | fields are one reconstruction's outputs (`from_reconstruction`) | all seven fields `pub`; a caller can pair a `complete` label with unrelated handles, or an empty `request_evidence` with a non-empty `chain_commitment` |
-| `ResolvedTransparencyService` | *"the two travel together … separating them would let a caller pair a pinned key with a profile nobody pinned"* | all three fields `pub` — a caller can do exactly that |
-| `CoseVerificationKey::EcdsaP256` | `from_ec2_p256` refuses a point not on the curve | variant fields `pub`; struct-literal construction bypasses the check (**mitigated**: `p256_public_key()` re-checks at verify time, so it fails closed) |
-| `ScittServiceTrustPin` | `verification_key()` refuses an `EdDSA` pin carrying a `y` | all fields `pub`; the illegal pin is constructible and only refused when read |
+| type | claimed | at census | after MCPRE-155 |
+|---|---|---|---|
+| `EvidenceCommitment` | fields are one reconstruction's outputs (`from_reconstruction`) | all seven fields `pub`; a caller can pair a `complete` label with unrelated handles, or an empty `request_evidence` with a non-empty `chain_commitment` | **CLOSED** — private, two named producers: `from_reconstruction` (derived) and `Deserialize` (a received CLAIM, trusted only after the issuer's COSE_Sign1 verifies) |
+| `ResolvedTransparencyService` | *"the two travel together … separating them would let a caller pair a pinned key with a profile nobody pinned"* | all three fields `pub` — a caller can do exactly that | **NOT SEALABLE**, measured rather than asserted — the resolver seam has a second real producer (the prototype log the corpora use). Private fields with two NAMED producers (`pinned`, `stated`) buy legibility, not unconstructibility |
+| `CoseVerificationKey::EcdsaP256` | `from_ec2_p256` refuses a point not on the curve | variant fields `pub`; struct-literal construction bypasses the check (**mitigated**: `p256_public_key()` re-checks at verify time, so it fails closed) | **CLOSED** — the payload is a `P256Point` whose representation is the DECODED `VerifyingKey`; the decode is the proof and the re-check is gone |
+| `ScittServiceTrustPin` | `verification_key()` refuses an `EdDSA` pin carrying a `y` | all fields `pub`; the illegal pin is constructible and only refused when read | **CLOSED** — private `PinDocument` + `TryFrom`, so the `(algorithm, public_key)` PAIR is checked on the way in and `verification_key` is infallible |
 
-In every case a check exists at one construction site and the type admits the illegal inhabitant — the R-SEAL shape: *possession does not mean the invariant holds*. `SignedStatement` and `Receipt` are the counter-examples and the model: private representations, `from_cose` the only producer.
+In every case a check existed at one construction site and the type admitted the illegal inhabitant — the R-SEAL shape: *possession does not mean the invariant holds*. `SignedStatement` and `Receipt` were the counter-examples and the model: private representations, `from_cose` the only producer. Three of the four now match them.
 
 ### 12. Which test/build/proof lane establishes each claimed property?
 
@@ -201,11 +201,11 @@ Every file lands under the 200-line threshold except `statement.rs` and `receipt
 
 **Sealing work the split enables** (question 11), which is the part worth more than the file boundaries:
 
-1. `EvidenceCommitment` — private fields, `from_reconstruction` the sole producer, named projections for the four questions readers actually ask. Serde needs a reader path; that is a `TryFrom` on a wire struct, not public fields.
-2. `ResolvedTransparencyService` — private fields, constructed only by `ScittServiceTrustPin::resolve`, which is what its own doc already claims.
-3. `CoseVerificationKey::EcdsaP256` — private variant payload behind `from_ec2_p256`, so the on-curve check is owned rather than repeated at use.
-4. `ScittServiceTrustPin` — a validated `TryFrom<PinDocument>`, so an illegal pin is unconstructible instead of refused on read.
-5. `PrototypeTransparencyService` — move behind a `test-support` feature or into a test-only crate. It is a public production API with three test call sites and a doc comment saying it must never be production.
+1. ~~`EvidenceCommitment`~~ — **DONE (MCPRE-155).** Private fields; the reader path is `Deserialize`, and it is named as a producer rather than pretended away: a received statement is a CLAIM, trusted only once the issuer's COSE_Sign1 verifies over it.
+2. ~~`ResolvedTransparencyService`~~ — **ATTEMPTED, and the answer is no (MCPRE-155).** "Constructed only by `ScittServiceTrustPin::resolve`" is not achievable: `verify_receipt_offline` takes the service through a closure seam and the in-process prototype log is a real producer with no pin behind it. Private fields plus two NAMED producers is what the boundary permits.
+3. ~~`CoseVerificationKey::EcdsaP256`~~ — **DONE (MCPRE-155),** and better than "the check is owned": the payload is the decoded key, so there is no check left to own.
+4. ~~`ScittServiceTrustPin`~~ — **DONE (MCPRE-155),** exactly as sketched.
+5. `PrototypeTransparencyService` — move behind a `test-support` feature or into a test-only crate. It is a public production API with three test call sites and a doc comment saying it must never be production. **Still open**, and #657 ruling 4 governs: zero production callers is not a deletion argument, so it must be CLASSIFIED, not removed.
 
 **Follow-up issues, not this one.** ADR-061 orders the campaign; this census recommends and stops.
 

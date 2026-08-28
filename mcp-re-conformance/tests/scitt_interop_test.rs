@@ -113,6 +113,36 @@ fn pin() -> ScittServiceTrustPin {
     serde_json::from_slice(&artifact("service-key-pin.json")).expect("pin parses")
 }
 
+/// The corpus pin with one field of its DOCUMENT edited.
+///
+/// The edit is applied to the JSON, not to a parsed pin, because a pin no longer has
+/// editable fields: its `(algorithm, public_key)` pair is checked on the way in, so the
+/// only way to obtain a different one is to present a different document. That is also
+/// the more faithful negative fixture — a pin an operator could ship by mistake, rather
+/// than a value that could only ever have existed in memory.
+fn pin_document_with(
+    bytes: &[u8],
+    edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>),
+) -> ScittServiceTrustPin {
+    let mut document: serde_json::Value = serde_json::from_slice(bytes).expect("pin document");
+    edit(
+        document
+            .as_object_mut()
+            .expect("a pin document is an object"),
+    );
+    serde_json::from_value(document).expect("the edited document is still a legal pin")
+}
+
+/// A real Ed25519 key that is simply not the service's signer.
+fn another_ed25519_key() -> serde_json::Value {
+    mcp_re_core::b64url_encode(
+        &mcp_re_core::SigningKey::from_seed_bytes(&[0xAB; 32])
+            .public_key()
+            .to_bytes(),
+    )
+    .into()
+}
+
 fn statement() -> SignedStatement {
     SignedStatement::from_cose(&artifact("signed-statement.cbor")).expect("statement parses")
 }
@@ -225,21 +255,18 @@ fn a_retained_record_cannot_claim_a_submission_the_statement_never_made() {
 /// pointing it at the wrong key must fail rather than fall back to anything.
 #[test]
 fn a_wrong_pinned_service_key_is_refused() {
-    let mut wrong = pin();
-    // A real Ed25519 key that simply is not the signer.
-    wrong.public_key.x = mcp_re_core::b64url_encode(
-        &mcp_re_core::SigningKey::from_seed_bytes(&[0xAB; 32])
-            .public_key()
-            .to_bytes(),
-    );
+    let wrong = pin_document_with(&artifact("service-key-pin.json"), |d| {
+        d["public_key"]["x"] = another_ed25519_key();
+    });
     assert_eq!(
         verify_with(&statement(), &receipt(), &wrong).unwrap_err(),
         HttpProfileError::ReceiptInvalid,
     );
 
     // And a pin whose kid does not match the receipt resolves to nothing at all.
-    let mut other_kid = pin();
-    other_kid.kid = "not-the-receipts-kid".into();
+    let other_kid = pin_document_with(&artifact("service-key-pin.json"), |d| {
+        d.insert("kid".into(), "not-the-receipts-kid".into());
+    });
     assert_eq!(
         verify_with(&statement(), &receipt(), &other_kid).unwrap_err(),
         HttpProfileError::ReceiptIssuerUntrusted,
@@ -415,15 +442,17 @@ fn the_wrong_leaf_profile_refuses_rather_than_falling_back() {
 
     let statement = SignedStatement::from_cose(&capsule("signed-statement.cbor")).expect("parses");
     let receipt = Receipt::from_cose(&capsule("receipt.cbor")).expect("parses");
-    let mut pin: ScittServiceTrustPin =
+    let pin: ScittServiceTrustPin =
         serde_json::from_slice(&capsule("service-key-pin.json")).expect("pin parses");
     assert_eq!(
-        pin.leaf_profile,
+        pin.leaf_profile(),
         StatementLeafProfile::StatementDigest,
         "capsule-anchor logs a digest of the statement"
     );
 
-    pin.leaf_profile = StatementLeafProfile::StatementBytes;
+    let pin = pin_document_with(&capsule("service-key-pin.json"), |d| {
+        d.insert("leaf_profile".into(), "statement-bytes".into());
+    });
     let issuer = issuer();
     assert_eq!(
         verify_receipt_offline(
@@ -551,35 +580,31 @@ fn build_report(dir: &std::path::Path, peer: &str) -> VerificationReport {
     let mut refusals = std::collections::BTreeMap::new();
 
     // A pinned key that is not the signer.
-    let mut wrong_key = pin.clone();
-    wrong_key.public_key.x = mcp_re_core::b64url_encode(
-        &mcp_re_core::SigningKey::from_seed_bytes(&[0xAB; 32])
-            .public_key()
-            .to_bytes(),
-    );
+    let wrong_key = pin_document_with(&read("service-key-pin.json"), |d| {
+        d["public_key"]["x"] = another_ed25519_key();
+    });
     refusals.insert(
         "wrong-pinned-service-key".to_owned(),
         verdict_token(verify(&statement, &receipt, &wrong_key)),
     );
 
     // A pin that answers for a different kid.
-    let mut wrong_kid = pin.clone();
-    wrong_kid.kid = "not-the-receipts-kid".into();
+    let wrong_kid = pin_document_with(&read("service-key-pin.json"), |d| {
+        d.insert("kid".into(), "not-the-receipts-kid".into());
+    });
     refusals.insert(
         "kid-not-covered-by-the-pin".to_owned(),
         verdict_token(verify(&statement, &receipt, &wrong_kid)),
     );
 
     // The other leaf profile — exactly one can be right.
-    let mut other_profile = pin.clone();
-    other_profile.leaf_profile = match pin.leaf_profile {
-        mcp_re_http_profile::scitt::StatementLeafProfile::StatementBytes => {
-            mcp_re_http_profile::scitt::StatementLeafProfile::StatementDigest
-        }
-        mcp_re_http_profile::scitt::StatementLeafProfile::StatementDigest => {
-            mcp_re_http_profile::scitt::StatementLeafProfile::StatementBytes
-        }
-    };
+    let other_profile = pin_document_with(&read("service-key-pin.json"), |d| {
+        let other = match pin.leaf_profile() {
+            mcp_re_http_profile::scitt::StatementLeafProfile::StatementBytes => "statement-digest",
+            mcp_re_http_profile::scitt::StatementLeafProfile::StatementDigest => "statement-bytes",
+        };
+        d.insert("leaf_profile".into(), other.into());
+    });
     refusals.insert(
         "wrong-leaf-profile".to_owned(),
         verdict_token(verify(&statement, &receipt, &other_profile)),

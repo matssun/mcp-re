@@ -500,10 +500,14 @@ fn a_served_call_becomes_an_offline_verifiable_receipt() {
         &receipt,
         |kid| (kid == ISSUER_KID).then(|| CoseVerificationKey::Ed25519(issuer_key().public_key())),
         |kid| {
-            (kid == TS_KID).then(|| ResolvedTransparencyService {
-                key: CoseVerificationKey::Ed25519(ts_key().public_key()),
-                leaf_profile: StatementLeafProfile::StatementBytes,
-                position_profile: ReceiptPositionProfile::Bound,
+            // `stated`, not a pin: this is the in-process prototype log, so there is no
+            // operator-reviewed document to resolve the profiles from and the test says so.
+            (kid == TS_KID).then(|| {
+                ResolvedTransparencyService::stated(
+                    CoseVerificationKey::Ed25519(ts_key().public_key()),
+                    StatementLeafProfile::StatementBytes,
+                    ReceiptPositionProfile::Bound,
+                )
             })
         },
     )
