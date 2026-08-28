@@ -65,7 +65,14 @@ jobs:
     name: cargo build + test (1.97.1)
     runs-on: ubuntu-latest
     steps:
+      # Full history: the module-size ratchet checks DISPOSITION TRANSITIONS against
+      # `origin/main:config/module-size-debt.toml`, and at depth 1 that ref does not
+      # exist. The gate prints "no baseline registry at origin/main" rather than
+      # silently passing, so a shallow clone would be visible — but a check that
+      # announces it could not run is still a check that did not run.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       # JCS vocabulary firewall (D1 of the active-profile/legacy-quarantine note):
       # forward-design docs must not frame a live "object profile + HTTP profile"
@@ -235,6 +242,23 @@ jobs:
           python3 scripts/lifecycle_purity_gate.py --selftest
           python3 scripts/lifecycle_purity_gate.py
 
+      # ADR-MCPRE-061 §5 — THE TWO RATCHETS. Both existed and neither ran on the merge
+      # path: `scripts/local_gate.sh` was their only caller, so a PR that did not run the
+      # local gate could grow a registered file or a lint baseline and nothing would say
+      # so. That is not hypothetical — it happened, and the campaign that found it was the
+      # one that had caused it. This is the same repair ci.yml already applied to the ES256
+      # containment gate and the lifecycle-purity gate, for the same stated reason: wired
+      # here as well as in `local_gate.sh` so the MERGE path enforces it.
+      #
+      # `--selftest` first in each case: a ratchet that has stopped measuring reports the
+      # same "OK" as one that measures and finds nothing.
+      - name: Module-size ratchet (ADR-MCPRE-061 §5.1)
+        run: |
+          python3 scripts/module_size_gate.py --selftest
+          python3 scripts/module_size_gate.py
+
+      # The clippy ratchet needs the toolchain, so it runs with the clippy lanes below.
+
       # ADR-MCPRE-061 Amendment 1 §3. The Group A zero-debt protections live in ONE
       # `[workspace.lints]` table in the root Cargo.toml — thirteen copies of the same
       # deny block grew six files already registered in config/module-size-debt.toml.
@@ -371,6 +395,18 @@ jobs:
       # must fail with clippy::todo. Runs here because it needs the toolchain.
       - name: Workspace-lints enforcement probe
         run: python3 scripts/workspace_lints_gate.py --probe
+
+      # The ADR-MCPRE-061 §6 lints are ALLOW-BY-DEFAULT, so the `-D warnings` lanes above
+      # say nothing about them: `unwrap_used`, `expect_used`, `indexing_slicing`,
+      # `too_many_lines`, `excessive_nesting` and `arithmetic_side_effects` are switched on
+      # by this gate and nowhere else. `--activation-probe` compiles a deliberately
+      # violating file and fails if they stop firing — the repository has twice shipped a
+      # threshold that parameterised a lint nobody had enabled.
+      - name: Clippy ratchet (ADR-MCPRE-061 §6)
+        run: |
+          python3 scripts/clippy_ratchet_gate.py --selftest
+          python3 scripts/clippy_ratchet_gate.py --activation-probe
+          python3 scripts/clippy_ratchet_gate.py
 
       - name: Clippy — each feature alone
         run: |
