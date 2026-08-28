@@ -150,7 +150,7 @@ size orders the queue while §8 question 2 decides the outcome:
 |---:|---:|---:|---:|---|
 | 2023 | 11 | 2 | 44 | `mcp-re-proxy/src/http_profile_serve/mod.rs` — the only band-4 unit; the serving path became an owner subtree in MCPRE-151 |
 | 1907 | 23 | 9 | 100 | `mcp-re-proxy/src/tls.rs` |
-| 1640 | 23 | 4 | 15 | `mcp-re-http-profile/src/verify.rs` — **the ruled first component** |
+| 1640 | 23 | 4 | 15 | `mcp-re-http-profile/src/verify.rs` — **the ruled first component**; decomposed into the `verify/` subtree, EX-003 re-censused |
 | 1629 | 25 | 12 | 70 | `mcp-re-http-profile/src/scitt.rs` — **census complete**, outcome *decompose* ([`components/scitt-transparency.md`](components/scitt-transparency.md)) |
 | 1268 | 25 | 21 | 73 | `mcp-re-proxy/src/transport.rs` — **census complete**, outcome *decompose along reachability* ([`components/transport-binding.md`](components/transport-binding.md)). Was 1305 before ADR-064 Slice 4 removed `MappedBinding` |
 | 1271 | 14 | 3 | 91 | `mcp-re-proxy/src/ocsp.rs` — **census complete**, outcome *extract, then §14* ([`components/online-ocsp.md`](components/online-ocsp.md)) |

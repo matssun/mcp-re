@@ -115,7 +115,7 @@ def test_an_anchor_matching_no_site_is_stale(tmp=None):
 def test_an_ambiguous_anchor_is_stale_too():
     """Two matches is as much a failure as none: the lane could not say which check it
     broke, so whatever went red proves nothing about the conjunct named."""
-    source = (lane.REPO_ROOT / "mcp-re-http-profile/src/verify.rs").read_text()
+    source = (lane.REPO_ROOT / "mcp-re-http-profile/src/verify/floor/response.rs").read_text()
     repeated = "    reject_content_encoding(&response.headers)?;"
     assert source.count(repeated) > 1, "fixture assumption: this line is not unique"
     _expect_manifest_error(

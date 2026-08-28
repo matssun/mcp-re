@@ -84,7 +84,7 @@ def test_a_formal_units_fingerprint_covers_the_whole_verified_crate():
     identical and the graph answered FRESH."""
     source = components("http_profile.freshness_window")["source_inputs"]
     assert "mcp-re-http-profile/src/sigbase.rs" in source
-    assert "mcp-re-http-profile/src/verify.rs" in source
+    assert "mcp-re-http-profile/src/verify/floor/params.rs" in source
 
 
 def test_a_formal_units_proof_dependencies_reach_the_verified_dependency_closure():

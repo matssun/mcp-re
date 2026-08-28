@@ -73,7 +73,7 @@ id = "M01-request-signature"
 unit = "http_profile.verifier_results"
 theorem = "THM-0014"
 conjunct = "the RFC 9421 signature verifies over the reconstructed base"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/floor/request.rs"
 anchor = """
     let sig = signature_value_b64url(&request.headers, "signature", REQUEST_LABEL)?;
     verify_under(
@@ -104,7 +104,7 @@ id = "M02-request-content-digest"
 unit = "http_profile.verifier_results"
 theorem = "THM-0014"
 conjunct = "the covered Content-Digest agreed with the body"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/floor/request.rs"
 anchor = """
     let digest_header = required_header(&request.headers, "content-digest")?;
     verify_content_digest_sha256(digest_header, &request.body)?;
@@ -123,7 +123,7 @@ id = "M03-request-slot-resolution"
 unit = "http_profile.verifier_results"
 theorem = "THM-0014"
 conjunct = "the presented keyid resolved through the trust seam for the Request slot"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/floor/request.rs"
 anchor = """
     let resolved_actor = resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Request)?;
 """
@@ -141,7 +141,7 @@ id = "M27-algorithm-allowlist"
 unit = "http_profile.verifier_results"
 theorem = "THM-0014"
 conjunct = "the algorithm was one the verifier's policy accepts"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/floor/params.rs"
 anchor = """
     let algorithm = params
         .alg
@@ -165,7 +165,7 @@ id = "M04-request-block-profile-tag"
 unit = "http_profile.verifier_results"
 theorem = "THM-0015"
 conjunct = "the request evidence block parsed and validated under the profile tag"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/full/request.rs"
 anchor = """
     block.validate(floor.profile_id())?;
 """
@@ -181,7 +181,7 @@ id = "M05-audience-tuple-equality"
 unit = "http_profile.verifier_results"
 theorem = "THM-0015"
 conjunct = "the block's audience tuple equalled the verifier's own"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/full/request.rs"
 anchor = """
     if block.audience != *expected_audience || expected_audience.target_uri != request.target_uri {
 """
@@ -197,7 +197,7 @@ id = "M06-target-uri-consistency"
 unit = "http_profile.verifier_results"
 theorem = "THM-0015"
 conjunct = "that tuple's target_uri agreed with the request's @target-uri"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/full/request.rs"
 anchor = """
     if block.audience != *expected_audience || expected_audience.target_uri != request.target_uri {
 """
@@ -213,7 +213,7 @@ id = "M25-bound-response-content-digest"
 unit = "http_profile.verifier_results"
 theorem = "THM-0021"
 conjunct = "the covered Content-Digest agreed with the body"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/floor/response.rs"
 anchor = """
     let digest_header = required_header(&response.headers, "content-digest")
         .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
@@ -251,7 +251,7 @@ id = "M07-bound-response-signature"
 unit = "http_profile.verifier_results"
 theorem = "THM-0021"
 conjunct = "the signature verified over a base whose ;req resolved against the supplied request"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/floor/response.rs"
 anchor = """
     let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
     verify_under(
@@ -283,7 +283,7 @@ id = "M26-bound-response-slot-resolution"
 unit = "http_profile.verifier_results"
 theorem = "THM-0016"
 conjunct = "the presented keyid resolved through the trust seam for the Response slot"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/floor/response.rs"
 anchor = """
     // Trust resolution for the RESPONSE slot: a request-signer key presented on
     // a response fails actor_binding_failed.
@@ -305,7 +305,7 @@ id = "M12-unbound-content-digest"
 unit = "http_profile.verifier_results"
 theorem = "THM-0022"
 conjunct = "the covered Content-Digest agreed with the body"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/floor/response.rs"
 anchor = """
     let digest_header = required_header(&response.headers, "content-digest")
         .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
@@ -353,7 +353,7 @@ id = "M10-unbound-req-refusal"
 unit = "http_profile.verifier_results"
 theorem = "THM-0022"
 conjunct = "a ;req component is refused as malformed"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/floor/response.rs"
 anchor = """
     require_components(&parsed.components, &REQUIRED_RESPONSE_COMPONENTS, &[])?;
     if parsed.components.iter().any(|c| c.req) {
@@ -382,7 +382,7 @@ id = "M11-unbound-signature"
 unit = "http_profile.verifier_results"
 theorem = "THM-0022"
 conjunct = "the signature verified over a base covering only response components"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/floor/response.rs"
 anchor = """
     let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
     verify_under(
@@ -414,7 +414,7 @@ id = "M08-full-response-signer-correspondence"
 unit = "http_profile.verifier_results"
 theorem = "THM-0018"
 conjunct = "the block's server_signer carries the keyid the signature was accepted under"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/full/response.rs"
 anchor = """
     if block.server_signer.keyid != floor.resolved_server_actor.identity.keyid {
         return Err(HttpProfileError::ResponseBindingMismatch);
@@ -434,7 +434,7 @@ id = "M09-full-response-request-evidence"
 unit = "http_profile.verifier_results"
 theorem = "THM-0018"
 conjunct = "the block's request_evidence handle equals the handle the caller supplied"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/full/response.rs"
 anchor = """
     if block.request_evidence.digest_alg != bound_request_evidence.digest_alg
         || block.request_evidence.digest_value != bound_request_evidence.digest_value
@@ -460,7 +460,7 @@ id = "M13-chain-to-root-issuer-slot-seam"
 unit = "http_profile.verifier_results"
 theorem = "THM-0019"
 conjunct = "the credential's root issuer key is resolved through the trust seam FOR THE RESPONSE SLOT"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/full/delegated/credential_chain.rs"
 anchor = """
         |issuer_kid| match resolve_actor_for_slot(resolve_actor, issuer_kid, SignerSlot::Response) {
 """
@@ -493,7 +493,7 @@ id = "M14-delegated-bound-keyid-vs-cred"
 unit = "http_profile.verifier_results"
 theorem = "THM-0019"
 conjunct = "the wire keyid is the delegated kid the credential confirms"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/full/delegated/bound.rs"
 anchor = """
     if key_id != verified.delegated_kid || block.server_signer.keyid != verified.delegated_kid {
         return Err(HttpProfileError::DelegationKeyMismatch);
@@ -523,7 +523,7 @@ id = "M15-delegated-bound-block-signer-vs-cred"
 unit = "http_profile.verifier_results"
 theorem = "THM-0019"
 conjunct = "the block's declared keyid is the delegated kid the credential confirms"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/full/delegated/bound.rs"
 anchor = """
     if key_id != verified.delegated_kid || block.server_signer.keyid != verified.delegated_kid {
         return Err(HttpProfileError::DelegationKeyMismatch);
@@ -553,7 +553,7 @@ id = "M16-delegated-bound-cnf-signature"
 unit = "http_profile.verifier_results"
 theorem = "THM-0019"
 conjunct = "the response signature verified under cnf.jwk"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/full/delegated/bound.rs"
 anchor = """
     verify_under(
         algorithm,
@@ -586,7 +586,7 @@ id = "M17-delegated-bound-request-evidence"
 unit = "http_profile.verifier_results"
 theorem = "THM-0019"
 conjunct = "the block's request_evidence handle equals the handle the caller supplied"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/full/delegated/bound.rs"
 anchor = """
     let bound = bound_request_evidence;
     if block.request_evidence.digest_alg != bound.digest_alg
@@ -610,7 +610,7 @@ id = "M20-delegated-unbound-content-digest"
 unit = "http_profile.verifier_results"
 theorem = "THM-0022"
 conjunct = "the covered Content-Digest agreed with the body"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/full/delegated/unbound.rs"
 anchor = """
     verify_content_digest_sha256(digest_header, &response.body)?;
 
@@ -630,7 +630,7 @@ id = "M18-delegated-unbound-req-refusal"
 unit = "http_profile.verifier_results"
 theorem = "THM-0022"
 conjunct = "a ;req component is refused as malformed"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/full/delegated/unbound.rs"
 anchor = """
     require_components(&parsed.components, &REQUIRED_RESPONSE_COMPONENTS, &[])?;
     if parsed.components.iter().any(|c| c.req) {
@@ -659,7 +659,7 @@ id = "M21-delegated-unbound-credential-required"
 unit = "http_profile.verifier_results"
 theorem = "THM-0020"
 conjunct = "the response carried an inline delegation credential"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/full/delegated/unbound.rs"
 anchor = """
     // Step 1 (required mode): no inline credential — including a directly
     // root-signed one — is rejected.
@@ -682,7 +682,7 @@ id = "M19-delegated-unbound-cnf-signature"
 unit = "http_profile.verifier_results"
 theorem = "THM-0020"
 conjunct = "the response signature verified under cnf.jwk"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/full/delegated/unbound.rs"
 anchor = """
     verify_under(
         algorithm,
@@ -715,7 +715,7 @@ id = "M23-delegated-unbound-block-signer-vs-cred"
 unit = "http_profile.verifier_results"
 theorem = "THM-0020"
 conjunct = "the block's declared keyid is the delegated kid the credential confirms"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/full/delegated/unbound.rs"
 anchor = """
     if key_id != verified.delegated_kid || block.server_signer.keyid != verified.delegated_kid {
         return Err(HttpProfileError::DelegationKeyMismatch);
@@ -745,7 +745,7 @@ id = "M24-delegated-unbound-keyid-vs-cred"
 unit = "http_profile.verifier_results"
 theorem = "THM-0020"
 conjunct = "the wire keyid is the delegated kid the credential confirms"
-path = "mcp-re-http-profile/src/verify.rs"
+path = "mcp-re-http-profile/src/verify/full/delegated/unbound.rs"
 anchor = """
     if key_id != verified.delegated_kid || block.server_signer.keyid != verified.delegated_kid {
         return Err(HttpProfileError::DelegationKeyMismatch);

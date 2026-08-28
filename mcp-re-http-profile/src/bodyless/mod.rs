@@ -52,7 +52,18 @@
 
 use mcp_re_core::McpReError;
 
+// The cryptographic-floor subordinates, imported by name rather than spelled out at each
+// call site. The bodyless shapes verify DIFFERENT required component sets — a 202 has no
+// body to digest — under IDENTICAL parse, coverage, parameter, trust and signature rules,
+// so this list is the whole of what they borrow from the floor, stated once.
 use crate::block::ResolvedActor;
+use crate::verify::floor::components::require_components;
+use crate::verify::floor::components::require_conditional_coverage;
+use crate::verify::floor::params::check_params;
+use crate::verify::floor::signature::signature_value_b64url;
+use crate::verify::floor::signature::verify_under;
+use crate::verify::floor::signature_input::parse_signature_input_for;
+use crate::verify::floor::trust_slot::resolve_actor_for_slot;
 
 /// What a verified bodyless acknowledgement establishes.
 mod acknowledged;
@@ -158,11 +169,8 @@ fn emit(
 /// `Signature-Input` value — RFC 9421 §7.3.7 makes covering the request's `Signature`
 /// NOT RECOMMENDED, and this reaches the same instance identity without doing so.
 fn request_evidence_of(request: &HttpRequest) -> Result<RequestEvidence, HttpProfileError> {
-    let parsed = crate::verify::parse_signature_input_for(
-        &request.headers,
-        REQUEST_LABEL,
-        "request signature-input",
-    )?;
+    let parsed =
+        parse_signature_input_for(&request.headers, REQUEST_LABEL, "request signature-input")?;
     let base = signature_base(
         &parsed.components,
         &parsed.params,
@@ -284,7 +292,7 @@ pub fn verify_accepted_202<R: Into<ResolverOutcome>>(
     // the verifier re-derives that name from the request rather than trusting it.
     check_request_evidence(&response.headers, request)?;
 
-    let parsed = crate::verify::parse_signature_input_for(
+    let parsed = parse_signature_input_for(
         &response.headers,
         RESPONSE_LABEL,
         "response signature-input",
@@ -292,7 +300,7 @@ pub fn verify_accepted_202<R: Into<ResolverOutcome>>(
     // The NAMED bodyless response set, enforced exactly: `@status` and
     // `content-digest`, plus the full `;req` binding. `content-type` is absent
     // from the set and rejected as a covered component below.
-    crate::verify::require_components_for(
+    require_components(
         &parsed.components,
         &BODYLESS_RESPONSE_COMPONENTS,
         &REQUIRED_RESPONSE_REQ_COMPONENTS,
@@ -307,17 +315,17 @@ pub fn verify_accepted_202<R: Into<ResolverOutcome>>(
         ));
     }
     let (_c, _e, _n, key_id, algorithm) =
-        crate::verify::check_params_for(&parsed.params, verifier.policy(), now, false)?;
+        check_params(&parsed.params, verifier.policy(), now, false)?;
     let seam = verifier.resolve_actor();
-    let actor = crate::verify::resolve_actor_for_slot(seam, &key_id, SignerSlot::Response)?;
+    let actor = resolve_actor_for_slot(seam, &key_id, SignerSlot::Response)?;
 
     let base = signature_base(
         &parsed.components,
         &parsed.params,
         &SourceMessage::Response { response, request },
     )?;
-    let sig = crate::verify::signature_value_for(&response.headers, RESPONSE_LABEL)?;
-    crate::verify::verify_under(
+    let sig = signature_value_b64url(&response.headers, "signature", RESPONSE_LABEL)?;
+    verify_under(
         algorithm,
         &base,
         &sig,
@@ -448,14 +456,14 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
     }
     let credential = credential.to_owned();
 
-    let parsed = crate::verify::parse_signature_input_for(
+    let parsed = parse_signature_input_for(
         &response.headers,
         RESPONSE_LABEL,
         "response signature-input",
     )?;
     // The DELEGATED bodyless set, enforced exactly: the credential header MUST be
     // covered (an uncovered credential is unprotected evidence).
-    crate::verify::require_components_for(
+    require_components(
         &parsed.components,
         &crate::ids::BODYLESS_DELEGATED_RESPONSE_COMPONENTS,
         &REQUIRED_RESPONSE_REQ_COMPONENTS,
@@ -470,7 +478,7 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
         ));
     }
     let (_c, _e, _n, key_id, algorithm) =
-        crate::verify::check_params_for(&parsed.params, verifier.policy(), now, false)?;
+        check_params(&parsed.params, verifier.policy(), now, false)?;
 
     // There is no body block here to declare a server signer, so the credential's own
     // `mcp_re_server_signer` is the only value available — and feeding it back in as
@@ -498,11 +506,8 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
         &credential,
         &params,
         |issuer_kid| {
-            match crate::verify::resolve_actor_for_slot(
-                verifier.resolve_actor(),
-                issuer_kid,
-                SignerSlot::Response,
-            ) {
+            match resolve_actor_for_slot(verifier.resolve_actor(), issuer_kid, SignerSlot::Response)
+            {
                 Ok(actor) => Some(actor.verification_key),
                 // A definitive "not trusted" stays the credential layer's verdict; only
                 // an outage and a wrong-slot actor are propagated. See `verify.rs`.
@@ -544,8 +549,8 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
         &parsed.params,
         &SourceMessage::Response { response, request },
     )?;
-    let sig = crate::verify::signature_value_for(&response.headers, RESPONSE_LABEL)?;
-    crate::verify::verify_under(
+    let sig = signature_value_b64url(&response.headers, "signature", RESPONSE_LABEL)?;
+    verify_under(
         algorithm,
         &base,
         &sig,
@@ -658,12 +663,8 @@ pub fn verify_bodyless_request<R: Into<ResolverOutcome>>(
     let digest_header = required_header(&request.headers, "content-digest")?;
     verify_content_digest_sha256(digest_header, &request.body)?;
 
-    let parsed = crate::verify::parse_signature_input_for(
-        &request.headers,
-        REQUEST_LABEL,
-        "signature-input",
-    )?;
-    crate::verify::require_components_for(&parsed.components, &BODYLESS_REQUEST_COMPONENTS, &[])?;
+    let parsed = parse_signature_input_for(&request.headers, REQUEST_LABEL, "signature-input")?;
+    require_components(&parsed.components, &BODYLESS_REQUEST_COMPONENTS, &[])?;
     if parsed.components.iter().any(|c| c.req) {
         return Err(HttpProfileError::MalformedEvidence(
             "req component on a request",
@@ -678,17 +679,16 @@ pub fn verify_bodyless_request<R: Into<ResolverOutcome>>(
     // same rule and the same code the bodied path uses. Missing here, a bodyless
     // request could present an `Authorization`/`DPoP` credential or an `Mcp-Method`
     // routing claim entirely outside its signature.
-    crate::verify::require_conditional_coverage(&request.headers, &parsed.components)?;
-    let (_c, _e, _n, key_id, algorithm) =
-        crate::verify::check_params_for(&parsed.params, policy, now, true)?;
-    let actor = crate::verify::resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Request)?;
+    require_conditional_coverage(&request.headers, &parsed.components)?;
+    let (_c, _e, _n, key_id, algorithm) = check_params(&parsed.params, policy, now, true)?;
+    let actor = resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Request)?;
     let base = signature_base(
         &parsed.components,
         &parsed.params,
         &SourceMessage::Request(request),
     )?;
-    let sig = crate::verify::signature_value_for(&request.headers, REQUEST_LABEL)?;
-    crate::verify::verify_under(
+    let sig = signature_value_b64url(&request.headers, "signature", REQUEST_LABEL)?;
+    verify_under(
         algorithm,
         &base,
         &sig,

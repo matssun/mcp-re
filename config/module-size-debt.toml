@@ -97,12 +97,14 @@ baseline_sha = "94fcc0a"
 status = "reviewed-action-required"
 review_ref = "EX-004 in docs/architecture/review-dispositions.md"
 
-[[debt]]
-path = "mcp-re-http-profile/src/verify.rs"
-baseline_prod_loc = 1373
-baseline_sha = "d1fc5fa"
-status = "reviewed-action-required"
-review_ref = "EX-003 in docs/architecture/review-dispositions.md"
+# EX-003's disposition is implemented. `verify.rs` no longer exists: 1373 production lines
+# became 21 modules under `verify/`, every one of them under the threshold, so the entry is
+# REMOVED rather than moved — a debt that is paid leaves the registry.
+#
+# The sum rose from 1373 to 1936. That is 21 module headers each stating the one
+# security/control fact its module owns, which is what the census found missing when the
+# four assurance axes were multiplied into a flat function list. It is not headroom: no
+# entry is left here to grow into, and a new file over 200 fails outright.
 
 [[debt]]
 path = "mcp-re-http-profile/src/scitt.rs"

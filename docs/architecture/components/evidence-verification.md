@@ -349,7 +349,10 @@ Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_g
 | `mcp-re-http-profile/src/verified_response/bound.rs` | 177 | the three request-bound products | unchanged |
 | `mcp-re-http-profile/src/verified_response/unbound.rs` | 71 | the two unbound products | unchanged |
 | `mcp-re-http-profile/src/verifier.rs` | 185 | `Verifier` — one policy authority, one operation per proposition | unchanged |
-| `mcp-re-http-profile/src/verify.rs` | 1360 | the stage implementations, now `pub(crate)` behind the facade | floor and full-profile stages become private subordinate modules |
+| ~~`mcp-re-http-profile/src/verify.rs`~~ | ~~1360~~ | **gone** — became the `verify/` subtree | the target below IS the current state |
+| `verify/mod.rs` | 50 | the assembly; the one `pub` item is `DelegationExpectations`, an INPUT | unchanged |
+| `verify/floor/` (12 modules) | 1205 | the cryptographic floor and its subordinates | unchanged |
+| `verify/full/` (8 modules) | 684 | full-profile request, response and delegated composition | unchanged |
 | `mcp-re-http-profile/src/sigbase.rs` | 306 | signature-base reconstruction | private subordinate of the floor |
 | `mcp-re-http-profile/src/digest.rs` | 65 | content-digest | private subordinate of the floor |
 | `mcp-re-http-profile/src/block.rs` | 647 | evidence blocks, `ResolvedActor` | shared: `ResolvedActor` is a seam value (§14), blocks are a full-profile subordinate |
@@ -360,7 +363,7 @@ Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_g
 | `mcp-re-http-profile/src/keyid.rs` | 45 | keyid parsing | private subordinate of the floor |
 | `mcp-re-http-profile/src/policy.rs` | 240 | `VerifierPolicy` (algorithm allowlist, skew) | floor input; unchanged |
 
-`verify.rs` at 1360 production lines is a §5.3 band-3 hotspot (>1,000): authority census required before substantial new functionality. Its census is EX-003.
+~~`verify.rs` at 1360 production lines is a §5.3 band-3 hotspot (>1,000)~~ — **closed.** It became 21 modules, every one under the 200-line threshold, and its debt entry left the registry. The EX-003 re-census records the module-by-module answers to §8 question 2, and reports the fact that made the split checkable rather than asserted: all 26 of its mutation-probe anchors resolved to **exactly one** of the new modules, each landing in the module its conjunct is about, and `verify-mutations` reports PASS over all 58 probes afterwards.
 
 The seventeen public items in `verify.rs` today:
 
@@ -407,7 +410,9 @@ Four axes were multiplied into a flat function list: floor vs full, request vs r
 
 5. **The two products are deliberately NOT sealed.** Both carry `pub` fields. Verus rejects private fields on a transparent datatype and cannot call accessors from verified code, and THM-0009's postcondition is stated over `VerifiedMcpRequest::request_block` — so sealing would cost the theorem. This is the second measurement of a rule this project already had: a proved postcondition outranks a seal ([`docs/dev/sealed-owners.md`](../../dev/sealed-owners.md)). The assurance split does not depend on the seal; it is carried by the type distinction.
 
-6. **`sigbase` is still a public module.** `digest`, `keyid`, and `policy` are now private to the crate with their intended items re-exported at the root, but `sigbase`'s module path is a real consumer contract — the conformance KAT oracle reconstructs the exact signature base through it. It becomes properly subordinate when #571 gives the floor stage its own module; narrowing it now would have meant trading module privacy for two lines in an over-threshold `lib.rs`.
+6. **`sigbase` is still a public module, and that is now the settled answer rather than a deferral.** `digest`, `keyid`, and `policy` are private to the crate with their intended items re-exported at the root. This entry used to say `sigbase` "becomes properly subordinate when the floor stage gets its own module". The floor has one now, and the answer turns out to be that `sigbase` is a subordinate of the floor in the DEPENDENCY sense while remaining public in the API sense — the conformance KAT oracle reconstructs the exact RFC 9421 signature base through its module path, which is a real external consumer contract. Those are two different questions and only the first one moved.
+
+7. **The four response paths keep a duplicated preamble, deliberately.** `floor_bound_response`, `floor_unbound_response`, `delegated_bound_response` and `delegated_unbound_response` each repeat content-encoding, media-type, content-digest, parse, components and params. One shared helper is the obvious LOC win; it would collapse **eight separately probed conjuncts into two** — content-digest ×3 (M25/M12/M20), signature ×4 (M07/M11/M16/M19), `;req` refusal ×2 (M10/M18) — trading the isolation the V0 argument rests on for a smaller diff. §9.1 already records one coarse probe as *a coverage fact, not an isolation one*; seven more would be the reverse of what the probe suite is for.
 
 2. **`ResolvedActor` is deliberately unsealed and must stay that way.** It looks like a verdict — *the trust layer authorized this actor for this slot* — but the trust seam is a caller-supplied resolver, so every in-process and test resolver is a legitimate producer. `sealed-owners.md` records the measurement and the rule: sealing it would relocate ceremony without moving authority. Any decomposition here must not "fix" it.
 
