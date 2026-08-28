@@ -297,10 +297,11 @@ pub(crate) mod test_support {
     /// its locators were checked.
     pub(crate) fn legal_linearizable_config() -> DeploymentRequest {
         let mut config = legal_config();
-        config.replay_redis_url = None;
-        config.replay_durability_tier =
-            Some(crate::replay_tier::ReplayDurabilityTier::Linearizable);
-        config.cpstore_etcd_endpoint = Some("http://127.0.0.1:2379".to_string());
+        config.replay.store = None;
+        config.replay.durability = Some(crate::replay_tier::ReplayDurabilityTier::Linearizable);
+        config.replay.store = Some(crate::deployment_request::ReplayStoreRequest::etcd(
+            "http://127.0.0.1:2379",
+        ));
         config
     }
 
@@ -327,7 +328,9 @@ pub(crate) mod test_support {
     /// The same configuration with a shared continuation store requested.
     pub(crate) fn shared_continuation_config() -> DeploymentRequest {
         let mut config = legal_config();
-        config.continuation_control_redis_url = Some("redis://127.0.0.1:6379".to_string());
+        config.continuation_control.shared = Some(
+            crate::deployment_request::SharedStoreRequest::redis("redis://127.0.0.1:6379"),
+        );
         config
     }
 
@@ -342,7 +345,9 @@ pub(crate) mod test_support {
                 .public_key()
                 .to_b64url(),
         );
-        config.admission_redis_url = Some("redis://127.0.0.1:6379".to_string());
+        config.admission_store.authoritative = Some(
+            crate::deployment_request::SharedStoreRequest::redis("redis://127.0.0.1:6379"),
+        );
         config
     }
 
@@ -372,8 +377,9 @@ pub(crate) mod test_support {
         let mut config = legal_config();
         config.revocation_tier = tier;
         config.trust_reload_secs = reload_secs;
-        config.trust_epoch_redis_url = epoch.map(|(url, _)| url.to_string());
-        config.trust_epoch_key = epoch.map(|(_, key)| key.to_string());
+        config.trust_epoch.source = epoch.map(|(url, key)| {
+            crate::deployment_request::TrustEpochSource::redis(url, Some(key.to_string()))
+        });
         super::trust_revocation::classify_and_validate(&config)
             .0
             .expect("the requested revocation posture is legal")
@@ -410,8 +416,9 @@ pub(crate) mod test_support {
         let mut config = legal_config();
         config.revocation_tier = tier;
         config.trust_reload_secs = reload_secs;
-        config.trust_epoch_redis_url = epoch.map(|(url, _)| url.to_string());
-        config.trust_epoch_key = epoch.map(|(_, key)| key.to_string());
+        config.trust_epoch.source = epoch.map(|(url, key)| {
+            crate::deployment_request::TrustEpochSource::redis(url, Some(key.to_string()))
+        });
         let validated = super::validation::ValidatedDeployment::try_from(config)
             .expect("the requested trust posture is a legal deployment");
         let epoch_plan = crate::startup_plan::TrustEpochPlan::from_validated(&validated);

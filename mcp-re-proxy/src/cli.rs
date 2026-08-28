@@ -15,6 +15,7 @@
 
 mod authorization_flags;
 mod signing_source_flags;
+mod storage_flags;
 
 use std::time::Duration;
 
@@ -598,19 +599,24 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
         admission,
         admission_authority_kid,
         admission_authority_pubkey_b64url,
-        admission_redis_url,
+        admission_store: crate::deployment_request::AdmissionStoreRequest {
+            authoritative: storage_flags::shared(admission_redis_url),
+        },
         admission_degraded_bound_secs,
         admission_allow_degraded,
         trust_reload_secs,
         audit_sink,
         retained_evidence_dir,
         verified_context,
-        replay_redis_url,
-        continuation_control_redis_url,
-        trust_epoch_redis_url,
-        trust_epoch_key,
-        cpstore_etcd_endpoint,
-        replay_durability_tier,
+        replay: storage_flags::replay(
+            replay_durability_tier,
+            replay_redis_url,
+            cpstore_etcd_endpoint,
+        )?,
+        continuation_control: crate::deployment_request::ContinuationStoreRequest {
+            shared: storage_flags::shared(continuation_control_redis_url),
+        },
+        trust_epoch: storage_flags::trust_epoch(trust_epoch_redis_url, trust_epoch_key)?,
         revocation_tier,
         binding,
         identity_source,
@@ -1727,7 +1733,9 @@ mod tests {
         config.admission = super::AdmissionKind::Required;
         config.admission_authority_kid = Some("admission-root-1".to_string());
         config.admission_authority_pubkey_b64url = Some("not-a-key".to_string());
-        config.admission_redis_url = Some("redis://127.0.0.1:6379".to_string());
+        config.admission_store.authoritative = Some(
+            crate::deployment_request::SharedStoreRequest::redis("redis://127.0.0.1:6379"),
+        );
         let violations = unsafe_config_violations(&config);
         assert!(
             violations
@@ -1767,7 +1775,7 @@ mod tests {
             let config =
                 parse_args(&a).unwrap_or_else(|e| panic!("--admission {mode} must parse: {e}"));
             assert_ne!(config.admission, super::AdmissionKind::Off);
-            assert!(config.admission_redis_url.is_some());
+            assert!(config.admission_store.authoritative.is_some());
         }
     }
 
@@ -3466,15 +3474,21 @@ mod tests {
         );
         let config = parse_args(&a).expect("parse");
         assert_eq!(
-            config.replay_redis_url.as_deref(),
+            config
+                .replay
+                .store
+                .as_ref()
+                .map(crate::deployment_request::ReplayStoreRequest::locator),
             Some("redis://127.0.0.1:6379")
         );
         assert_eq!(
-            config.replay_durability_tier,
-            Some(crate::replay_tier::ReplayDurabilityTier::RedisWaitQuorum {
-                quorum: 2,
-                timeout_ms: 500
-            })
+            config.replay.durability,
+            Some(
+                crate::replay_tier::ReplayDurabilityTier::QuorumAcknowledged {
+                    quorum: 2,
+                    timeout_ms: 500
+                }
+            )
         );
     }
 
@@ -3519,11 +3533,13 @@ mod tests {
         );
         let config = parse_args(&a).expect("parse");
         assert_eq!(
-            config.replay_durability_tier,
-            Some(crate::replay_tier::ReplayDurabilityTier::RedisWaitQuorum {
-                quorum: 2,
-                timeout_ms: 500
-            })
+            config.replay.durability,
+            Some(
+                crate::replay_tier::ReplayDurabilityTier::QuorumAcknowledged {
+                    quorum: 2,
+                    timeout_ms: 500
+                }
+            )
         );
     }
 
@@ -3559,28 +3575,37 @@ mod tests {
         );
         let config = parse_args(&a).expect("parse");
         assert_eq!(
-            config.replay_durability_tier,
+            config.replay.durability,
             Some(crate::replay_tier::ReplayDurabilityTier::Linearizable)
         );
         assert_eq!(
-            config.cpstore_etcd_endpoint.as_deref(),
+            config
+                .replay
+                .store
+                .as_ref()
+                .map(crate::deployment_request::ReplayStoreRequest::locator),
             Some("http://127.0.0.1:2379")
         );
-        // The Redis URL is NOT required for the CP tier.
-        assert_eq!(config.replay_redis_url, None);
+        // One slot: naming the CP store is how the Redis one stops being named.
+        assert!(matches!(
+            config.replay.store,
+            Some(crate::deployment_request::ReplayStoreRequest::Etcd(_))
+        ));
     }
 
-    // #69 — a dangling --cpstore-etcd-endpoint for a non-LINEARIZABLE config is
-    // rejected (it would silently do nothing — a false belief a CP store is in
-    // force). Fail closed, mirroring the dangling --ocsp-responder-url guard.
+    // #69 — a --cpstore-etcd-endpoint under a non-LINEARIZABLE tier is rejected (it would
+    // silently do nothing — a false belief a CP store is in force). Fail closed.
+    //
+    // The refusal moved: it used to be that the endpoint was a SIBLING of the Redis URL
+    // and the boundary said it had no effect. There is one store slot now, so naming the
+    // CP store is how Redis stops being named — and what is left is a store that cannot
+    // deliver the declared tier, which the boundary says instead.
     #[test]
     fn cpstore_endpoint_without_linearizable_fails_closed() {
         let mut a = minimal();
         a.splice(
             0..0,
             args(&[
-                "--replay-redis-url",
-                "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
                 "redis-wait-quorum:1:100",
                 "--cpstore-etcd-endpoint",
@@ -3589,9 +3614,32 @@ mod tests {
         );
         let err = parse_args(&a).unwrap_err();
         assert!(
-            err.contains("--cpstore-etcd-endpoint has no effect"),
-            "a dangling CPStore endpoint must fail closed; got: {err}"
+            err.contains("--cpstore-etcd-endpoint names the replay store")
+                && err.contains("--replay-redis-url"),
+            "a CP endpoint under a Redis tier must fail closed naming both: {err}"
         );
+    }
+
+    /// And the argv form of the pair — two stores at once — is the adapter's, because the
+    /// request has no second slot for the boundary to find one in.
+    #[test]
+    fn naming_both_replay_stores_on_the_command_line_fails_closed() {
+        let mut a = minimal();
+        a.splice(
+            0..0,
+            args(&[
+                "--replay-durability-tier",
+                "redis-wait-quorum:1:100",
+                "--cpstore-etcd-endpoint",
+                "http://127.0.0.1:2379",
+            ]),
+        );
+        a.splice(
+            0..0,
+            args(&["--replay-redis-url", "redis://127.0.0.1:6379"]),
+        );
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("both name the replay store"), "got: {err}");
     }
 
     #[test]
@@ -4206,11 +4254,19 @@ mod tests {
         );
         let config = parse_args(&a).expect("push + trust-epoch must parse");
         assert_eq!(
-            config.trust_epoch_redis_url.as_deref(),
+            config
+                .trust_epoch
+                .source
+                .as_ref()
+                .map(crate::deployment_request::TrustEpochSource::locator),
             Some("redis://127.0.0.1:6379")
         );
         assert_eq!(
-            config.trust_epoch_key.as_deref(),
+            config
+                .trust_epoch
+                .source
+                .as_ref()
+                .and_then(crate::deployment_request::TrustEpochSource::key),
             Some("mcp-re:trust:epoch")
         );
     }

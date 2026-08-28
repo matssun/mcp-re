@@ -279,7 +279,10 @@ mod tests {
         let found = relations(|c| {
             c.revocation_tier = crate::revocation_tier::RevocationTier::Push { t_secs: 30 };
             c.trust_reload_secs = Some(30);
-            c.trust_epoch_redis_url = Some("redis://127.0.0.1:6379".to_string());
+            c.trust_epoch.source = Some(crate::deployment_request::TrustEpochSource::redis(
+                "redis://127.0.0.1:6379",
+                None,
+            ));
         });
         assert!(found.x9_trust_epoch_posture.is_empty());
     }

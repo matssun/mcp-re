@@ -32,7 +32,7 @@
 //! forbid it without destroying cross-replica MRTR. `ContinuationControl` owns that fact
 //! now, so the forbidden cell can finally be stated.
 
-use crate::deployment_request::DeploymentRequest;
+use crate::deployment_request::{DeploymentRequest, ReplayStoreRequest};
 use crate::replay_tier::ReplayDurabilityTier;
 
 /// Which replay state a configuration requests. Only live states are representable.
@@ -98,7 +98,7 @@ impl ReplayState {
         match &self.kind {
             ReplayKind::SharedRedis {
                 quorum, timeout_ms, ..
-            } => ReplayDurabilityTier::RedisWaitQuorum {
+            } => ReplayDurabilityTier::QuorumAcknowledged {
                 quorum: *quorum,
                 timeout_ms: *timeout_ms,
             },
@@ -250,7 +250,7 @@ fn wait_quorum_guards(quorum: u32, timeout_ms: u64) -> Result<(), String> {
 /// both live states are shared, so a request either declares a tier that names one of them
 /// or it names no deployment at all.
 fn classify(config: &DeploymentRequest) -> Result<RequestedState, String> {
-    let Some(tier) = &config.replay_durability_tier else {
+    let Some(tier) = &config.replay.durability else {
         // Absence is a refusal, never a fallback. This is the clause that makes an
         // otherwise-complete request with no replay configuration fail closed: there is no
         // implicit store to drop back to, so saying nothing about replay is saying the
@@ -265,7 +265,7 @@ fn classify(config: &DeploymentRequest) -> Result<RequestedState, String> {
     };
     match tier {
         ReplayDurabilityTier::Linearizable => Ok(RequestedState::SharedLinearizable),
-        ReplayDurabilityTier::RedisWaitQuorum { quorum, timeout_ms } => {
+        ReplayDurabilityTier::QuorumAcknowledged { quorum, timeout_ms } => {
             wait_quorum_guards(*quorum, *timeout_ms)?;
             Ok(RequestedState::SharedRedis {
                 quorum: *quorum,
@@ -299,59 +299,40 @@ fn locator_shape(flag: &str, value: Option<&str>, example: &str) -> Option<Strin
 
 /// The required and forbidden locators of a recognised state.
 fn locator_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<String> {
-    let mut out = Vec::new();
-    match state {
-        RequestedState::SharedRedis { .. } => {
-            if config.replay_redis_url.is_none() {
-                out.push(
-                    "a redis-wait-quorum tier requires --replay-redis-url: the tier names \
-                     the guarantee, the URL names the store that must deliver it"
-                        .to_string(),
-                );
-            }
-            out.extend(locator_shape(
-                "--replay-redis-url",
-                config.replay_redis_url.as_deref(),
-                "redis://host:6379",
-            ));
-            if config.cpstore_etcd_endpoint.is_some() {
-                out.push(
-                    "--cpstore-etcd-endpoint has no effect without \
-                     --replay-durability-tier linearizable"
-                        .to_string(),
-                );
-            }
-        }
-        RequestedState::SharedLinearizable => {
-            if config.cpstore_etcd_endpoint.is_none() {
-                out.push(
-                    "--replay-durability-tier linearizable requires a CP/linearizable store \
-                     endpoint: --cpstore-etcd-endpoint <url>"
-                        .to_string(),
-                );
-            }
-            out.extend(locator_shape(
-                "--cpstore-etcd-endpoint",
-                config.cpstore_etcd_endpoint.as_deref(),
-                "http://host:2379",
-            ));
-            // CF-12's clean break. Before the split this value silently became the MRTR
-            // continuation store's endpoint while replay ran on etcd — one field meaning
-            // two different things depending on the tier beside it. It is refused rather
-            // than reinterpreted, and the refusal names what replaces the overloaded use.
-            if config.replay_redis_url.is_some() {
-                out.push(
-                    "--replay-redis-url is not valid with --replay-durability-tier \
-                     linearizable: the replay store is the CP store named by \
-                     --cpstore-etcd-endpoint. If a shared MRTR continuation store is \
-                     wanted, configure it separately with \
-                     --continuation-control-redis-url"
-                        .to_string(),
-                );
-            }
-        }
+    let (flag, example, expected) = match state {
+        RequestedState::SharedRedis { .. } => (
+            "--replay-redis-url",
+            "redis://host:6379",
+            "a quorum-acknowledged tier requires --replay-redis-url: the tier names the \
+             guarantee, the URL names the store that must deliver it",
+        ),
+        RequestedState::SharedLinearizable => (
+            "--cpstore-etcd-endpoint",
+            "http://host:2379",
+            "--replay-durability-tier linearizable requires a CP/linearizable store \
+             endpoint: --cpstore-etcd-endpoint <url>",
+        ),
+    };
+    let Some(store) = config.replay.store.as_ref() else {
+        return vec![expected.to_string()];
+    };
+    // The one relation left. The pair of sibling locators is gone — there is a single
+    // store slot, so naming one backend is how the other stops being named, and the two
+    // "has no effect" refusals that explained the pair have no configuration to examine
+    // (ADR-MCPRE-067 §7). What a request CAN still say is a tier its store cannot serve,
+    // because the tier is a claim a deployment makes and not a property read off the store.
+    if store.flag() != flag {
+        return vec![format!(
+            "{} names the replay store, but the declared --replay-durability-tier needs \
+             {flag}: the tier is the guarantee, and this store does not deliver it. If a \
+             shared MRTR continuation store is wanted, configure it separately with \
+             --continuation-control-redis-url",
+            store.flag()
+        )];
     }
-    out
+    locator_shape(flag, Some(store.locator()), example)
+        .into_iter()
+        .collect()
 }
 
 /// Classify the requested replay state and check its columns.
@@ -373,19 +354,25 @@ pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<ReplayState>
 ///
 /// `None` never travels alone: `locator_violations` has already named the missing value.
 fn build(requested: RequestedState, config: &DeploymentRequest) -> Option<ReplayState> {
-    Some(match requested {
-        RequestedState::SharedRedis { quorum, timeout_ms } => ReplayState {
-            kind: ReplayKind::SharedRedis {
-                url: config.replay_redis_url.clone()?,
-                quorum,
-                timeout_ms,
-            },
-        },
-        RequestedState::SharedLinearizable => ReplayState {
+    let store = config.replay.store.as_ref()?;
+    Some(match (requested, store) {
+        (RequestedState::SharedRedis { quorum, timeout_ms }, ReplayStoreRequest::Redis(redis)) => {
+            ReplayState {
+                kind: ReplayKind::SharedRedis {
+                    url: redis.url.clone(),
+                    quorum,
+                    timeout_ms,
+                },
+            }
+        }
+        (RequestedState::SharedLinearizable, ReplayStoreRequest::Etcd(etcd)) => ReplayState {
             kind: ReplayKind::SharedLinearizable {
-                endpoint: config.cpstore_etcd_endpoint.clone()?,
+                endpoint: etcd.endpoint.clone(),
             },
         },
+        // The tier and the store disagree; `locator_violations` has already said so, and a
+        // state is never built over a refusal.
+        _ => return None,
     })
 }
 
@@ -400,17 +387,17 @@ mod tests {
     type Form = (ReplayState, fn(&mut DeploymentRequest));
 
     fn redis(config: &mut DeploymentRequest) {
-        config.replay_redis_url = Some("redis://127.0.0.1:6379".to_string());
-        config.replay_durability_tier = Some(ReplayDurabilityTier::RedisWaitQuorum {
+        config.replay.store = Some(ReplayStoreRequest::redis("redis://127.0.0.1:6379"));
+        config.replay.durability = Some(ReplayDurabilityTier::QuorumAcknowledged {
             quorum: 1,
             timeout_ms: 100,
         });
     }
 
     fn linearizable(config: &mut DeploymentRequest) {
-        config.replay_redis_url = None;
-        config.replay_durability_tier = Some(ReplayDurabilityTier::Linearizable);
-        config.cpstore_etcd_endpoint = Some("http://127.0.0.1:2379".to_string());
+        config.replay.store = None;
+        config.replay.durability = Some(ReplayDurabilityTier::Linearizable);
+        config.replay.store = Some(ReplayStoreRequest::etcd("http://127.0.0.1:2379"));
     }
 
     fn run(mutate: impl FnOnce(&mut DeploymentRequest)) -> (Option<ReplayState>, Vec<String>) {
@@ -487,17 +474,17 @@ mod tests {
         let cases: Vec<Case> = vec![
             ("--replay-redis-url", |c| {
                 redis(c);
-                c.replay_redis_url = Some(String::new());
+                c.replay.store = Some(ReplayStoreRequest::redis(String::new()));
             }),
             ("--cpstore-etcd-endpoint", |c| {
                 linearizable(c);
-                c.cpstore_etcd_endpoint = Some(String::new());
+                c.replay.store = Some(ReplayStoreRequest::etcd(String::new()));
             }),
             // Not empty, but equally not an endpoint — the guard is about naming a store,
             // and emptiness is only its most obvious failure.
             ("--replay-redis-url", |c| {
                 redis(c);
-                c.replay_redis_url = Some("127.0.0.1:6379".to_string());
+                c.replay.store = Some(ReplayStoreRequest::redis("127.0.0.1:6379"));
             }),
         ];
         for (flag, mutate) in cases {
@@ -583,7 +570,7 @@ mod tests {
         let (redis_state, _) = run(redis);
         assert_eq!(
             redis_state.expect("redis form is legal").durability_tier(),
-            ReplayDurabilityTier::RedisWaitQuorum {
+            ReplayDurabilityTier::QuorumAcknowledged {
                 quorum: 1,
                 timeout_ms: 100,
             },
@@ -605,7 +592,7 @@ mod tests {
     /// state, and not a default.
     #[test]
     fn no_declared_tier_yields_no_state() {
-        let (state, violations) = run(|c| c.replay_durability_tier = None);
+        let (state, violations) = run(|c| c.replay.durability = None);
         assert!(
             state.is_none(),
             "a request with no declared tier must not become a validated state"
@@ -622,7 +609,7 @@ mod tests {
     fn a_sub_strict_tier_names_no_state() {
         let (state, violations) = run(|c| {
             redis(c);
-            c.replay_durability_tier = Some(ReplayDurabilityTier::SingleStoreFailClosed);
+            c.replay.durability = Some(ReplayDurabilityTier::SingleStoreFailClosed);
         });
         assert!(state.is_none());
         assert!(
@@ -642,8 +629,8 @@ mod tests {
         for (quorum, timeout_ms) in [(0u32, 100u64), (1, 0), (0, 0)] {
             let (state, violations) = run(move |c| {
                 redis(c);
-                c.replay_durability_tier =
-                    Some(ReplayDurabilityTier::RedisWaitQuorum { quorum, timeout_ms });
+                c.replay.durability =
+                    Some(ReplayDurabilityTier::QuorumAcknowledged { quorum, timeout_ms });
             });
             assert!(
                 state.is_none(),
@@ -665,7 +652,7 @@ mod tests {
     fn the_smallest_acknowledging_wait_quorum_parameters_are_accepted() {
         let (state, violations) = run(|c| {
             redis(c);
-            c.replay_durability_tier = Some(ReplayDurabilityTier::RedisWaitQuorum {
+            c.replay.durability = Some(ReplayDurabilityTier::QuorumAcknowledged {
                 quorum: 1,
                 timeout_ms: 1,
             });
@@ -675,7 +662,7 @@ mod tests {
             state
                 .expect("quorum 1 / timeout 1 is legal")
                 .durability_tier(),
-            ReplayDurabilityTier::RedisWaitQuorum {
+            ReplayDurabilityTier::QuorumAcknowledged {
                 quorum: 1,
                 timeout_ms: 1,
             }
@@ -686,7 +673,7 @@ mod tests {
     fn a_shared_store_with_no_declared_tier_names_no_state() {
         let (state, violations) = run(|c| {
             redis(c);
-            c.replay_durability_tier = None;
+            c.replay.durability = None;
         });
         assert!(state.is_none());
         assert!(
@@ -702,11 +689,11 @@ mod tests {
         let cases: Vec<Case> = vec![
             ("--replay-redis-url", |c| {
                 redis(c);
-                c.replay_redis_url = None;
+                c.replay.store = None;
             }),
             ("--cpstore-etcd-endpoint", |c| {
                 linearizable(c);
-                c.cpstore_etcd_endpoint = None;
+                c.replay.store = None;
             }),
         ];
         for (flag, mutate) in cases {
@@ -723,11 +710,11 @@ mod tests {
         let cases: Vec<Case> = vec![
             ("--cpstore-etcd-endpoint", |c| {
                 redis(c);
-                c.cpstore_etcd_endpoint = Some("http://127.0.0.1:2379".to_string());
+                c.replay.store = Some(ReplayStoreRequest::etcd("http://127.0.0.1:2379"));
             }),
             ("--replay-redis-url", |c| {
                 linearizable(c);
-                c.replay_redis_url = Some("redis://127.0.0.1:6379".to_string());
+                c.replay.store = Some(ReplayStoreRequest::redis("redis://127.0.0.1:6379"));
             }),
         ];
         for (flag, mutate) in cases {
@@ -745,7 +732,7 @@ mod tests {
     fn the_old_alias_names_its_replacement_rather_than_being_reinterpreted() {
         let (_, violations) = run(|c| {
             linearizable(c);
-            c.replay_redis_url = Some("redis://127.0.0.1:6379".to_string());
+            c.replay.store = Some(ReplayStoreRequest::redis("redis://127.0.0.1:6379"));
         });
         let refusal = violations
             .iter()

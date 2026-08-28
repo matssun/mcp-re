@@ -21,6 +21,7 @@ mod inner_backend_display;
 mod kinds;
 mod secret_string;
 mod signing_source;
+mod storage;
 
 pub use authorization::AuthorizationRequest;
 pub(crate) use inner_backend_display::RedactedBackendUrls;
@@ -28,6 +29,12 @@ pub use kinds::{
     AdmissionKind, AuditSinkKind, AuthzKind, BindingKind, OcspKind, VerifiedContextKind,
 };
 pub use secret_string::SecretString;
+pub use storage::{
+    AdmissionStoreRequest, ContinuationStoreRequest, EtcdStoreRequest, RedisStoreRequest,
+    ReplayStorageRequest, ReplayStoreRequest, SharedStoreRequest, TrustEpochSource,
+    TrustEpochStoreRequest,
+};
+
 pub use signing_source::{
     AwsKmsChannelKeyRequest, AwsKmsSigningSourceRequest, ChannelCredentialRequest,
     ChannelKeyRequest, DelegatedChannelKeyRequest, EnvironmentSigningSourceRequest,
@@ -164,26 +171,19 @@ pub struct DeploymentRequest {
     /// [`in_flight_limit`](crate::config_state::in_flight_limit) applies the fail-safe
     /// per-core default at the validation boundary.
     pub in_flight_limit: crate::config_state::InFlightLimitRequest,
-    /// Shared replay-store connection URL (required when `replay == Shared` and the
-    /// declared tier is a Redis tier), e.g. `redis://127.0.0.1:6379` (issue #3837).
+    /// Where shared replay state lives, and what durability this deployment claims for it.
     ///
-    /// The REPLAY store's location, and nothing else. It once also decided where the MRTR
-    /// continuation store lived, which made one field carry two different facts: on the
-    /// linearizable tier replay is on etcd and this named the continuation store instead.
-    /// `continuation_control_redis_url` owns that fact now.
-    pub replay_redis_url: Option<String>,
-    /// ADR-MCPS-047: the cross-replica MRTR continuation store's Redis URL.
+    /// The REPLAY store, and nothing else. One field once also decided where the MRTR
+    /// continuation store lived, which made it carry two different facts depending on the
+    /// tier beside it; `continuation_control` owns that fact, and each role names its own
+    /// store (ADR-MCPRE-067 §10, CF-12).
+    pub replay: ReplayStorageRequest,
+    /// ADR-MCPS-047: where a retained cross-replica MRTR continuation base lives.
     ///
-    /// Separate from `replay_redis_url` because it is a different fact, not the same fact
-    /// with a second consumer: replay records where admitted nonces live, this records
-    /// where a retained continuation base lives, and the two stores answer to different
-    /// owners with disjoint key namespaces. They may name the same Redis — that is then an
+    /// A different fact from replay's store, not the same fact with a second consumer, and
+    /// a different fact from admission's. The three may name one Redis; that is then an
     /// operator's deployment choice rather than an alias the configuration forces.
-    ///
-    /// `None` is a real posture, not missing configuration: cross-replica MRTR is
-    /// opportunistic, its absence is announced, and an answer arriving at a replica with
-    /// no correlated continuation is refused rather than guessed.
-    pub continuation_control_redis_url: Option<String>,
+    pub continuation_control: ContinuationStoreRequest,
     /// MCPRE-493: what a request carrying NO admission evidence means here —
     /// `off` (admission not enforced at all), `optional`, or `required`. Anything
     /// but `off` requires an authority to verify assertions against and a source to
@@ -195,12 +195,11 @@ pub struct DeploymentRequest {
     pub admission_authority_kid: Option<String>,
     /// The admission authority's Ed25519 public key, base64url, no padding.
     pub admission_authority_pubkey_b64url: Option<String>,
-    /// Redis URL of the shared authoritative admission record — the tier a
-    /// revocation is written to and every replica reads. Separate from
-    /// `replay_redis_url` on purpose: admission state and replay state have
-    /// different owners, lifetimes and blast radii, and collapsing them would make
-    /// one outage two.
-    pub admission_redis_url: Option<String>,
+    /// Where the shared authoritative admission record lives — the store a revocation is
+    /// written to and every replica reads. Separate from `replay` on purpose: admission
+    /// state and replay state have different owners, lifetimes and blast radii, and
+    /// collapsing them would make one outage two.
+    pub admission_store: AdmissionStoreRequest,
     /// P (seconds): how long a replica may keep serving on the LAST-KNOWN state when
     /// the authority is unreachable. Meaningful only with
     /// `admission_allow_degraded`.
@@ -235,27 +234,14 @@ pub struct DeploymentRequest {
     /// forwarded to the inner server. `Disabled` by default because `Trusted` asserts
     /// an unverifiable property of the inner channel.
     pub verified_context: VerifiedContextKind,
-    /// MCPS-84 (ADR-MCPS-049 W2): Redis URL for the networked trust-epoch
-    /// invalidation source (ADR-021 Tier 3 / `--revocation-tier push`). When set,
-    /// the Push tier watches this Redis's monotonic epoch key and flushes the trust
-    /// cache on an advance; when `None`, Push runs at its inert bounded-`T`
-    /// fallback. Consumed only under the `redis_replay` feature.
-    pub trust_epoch_redis_url: Option<String>,
-    /// The Redis key holding the monotonic trust epoch (default
-    /// [`crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY`]).
-    pub trust_epoch_key: Option<String>,
-    /// CP / linearizable replay-store (etcd v3 JSON gateway) endpoint, e.g.
-    /// `http://127.0.0.1:2379` (issue #69, epic #68 v0.4 Axis 1). REQUIRED when the
-    /// declared durability tier is `LINEARIZABLE`, and meaningless otherwise — a
-    /// dangling value is refused (fail closed). Selecting `LINEARIZABLE` WITHOUT this
-    /// endpoint is refused by the `Replay` machine, never silently downgraded to Redis /
-    /// in-memory (ADR-MCPS-020).
-    pub cpstore_etcd_endpoint: Option<String>,
-    /// Declared replay-store durability tier (ADR-MCPS-020). Required when
-    /// `replay == Shared` — the tier is an explicit deployment assertion that
-    /// determines the horizontal replay-safety claim. `None` for single-node
-    /// `Memory` / `File` backends.
-    pub replay_durability_tier: Option<crate::replay_tier::ReplayDurabilityTier>,
+    /// MCPS-84 (ADR-MCPS-049 W2): where the networked trust-epoch invalidation source
+    /// lives (ADR-021 Tier 3 / `--revocation-tier push`). When configured, the Push tier
+    /// watches its monotonic epoch key and flushes the trust cache on an advance; when
+    /// absent, Push runs at its inert bounded-`T` fallback.
+    ///
+    /// The key travels inside the source, so a coordinate in a store this configuration
+    /// does not have cannot be stated (ADR-MCPRE-067 §7).
+    pub trust_epoch: TrustEpochStoreRequest,
     /// Declared revocation tier (ADR-MCPS-021 Axis 2). Selects how strong a
     /// revocation-propagation window the deployment asserts: Tier 1
     /// (`bounded-cache:<T>`, the default), Tier 2 (`live`), or Tier 3

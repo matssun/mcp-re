@@ -180,13 +180,13 @@ fn fleet_strict_refuses_redis_async_tier() {
     let cache = durable_cache(); // durable cache: the core gate would pass...
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
-        tier: Some(ReplayDurabilityTier::RedisAsyncBounded), // ...but the tier is sub-minimum
+        tier: Some(ReplayDurabilityTier::AsyncReplicatedBounded), // ...but the tier is sub-minimum
     };
     let err = dispatch_request_with_tier_gate(&verified, &cache, None, &cfg)
         .expect_err("fleet-strict must refuse a redis-async tier");
     assert_eq!(
         err,
-        ProxyDispatchError::SubMinimumReplayTier(ReplayDurabilityTier::RedisAsyncBounded)
+        ProxyDispatchError::SubMinimumReplayTier(ReplayDurabilityTier::AsyncReplicatedBounded)
     );
     assert_eq!(err.wire_code(), "mcp-re.replay_cache_unavailable");
 }
@@ -230,7 +230,7 @@ fn fleet_strict_admits_redis_wait_quorum_tier() {
     let cache = durable_cache();
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
-        tier: Some(ReplayDurabilityTier::RedisWaitQuorum {
+        tier: Some(ReplayDurabilityTier::QuorumAcknowledged {
             quorum: 2,
             timeout_ms: 500,
         }),
@@ -281,7 +281,7 @@ fn non_fleet_strict_skips_the_tier_gate_but_keeps_core_admission() {
     let single_process = InMemoryReplayCache::new(0);
     let cfg = ProxyDispatchConfig {
         fleet_strict: false,
-        tier: Some(ReplayDurabilityTier::RedisAsyncBounded),
+        tier: Some(ReplayDurabilityTier::AsyncReplicatedBounded),
     };
     dispatch_request_with_tier_gate(&verified, &single_process, None, &cfg)
         .expect("non-strict admits regardless of tier / cache class");
@@ -314,7 +314,7 @@ fn http_profile_request_flows_verify_dispatch_serve_end_to_end() {
     let cache = durable_cache();
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
-        tier: Some(ReplayDurabilityTier::RedisWaitQuorum {
+        tier: Some(ReplayDurabilityTier::QuorumAcknowledged {
             quorum: 2,
             timeout_ms: 500,
         }),

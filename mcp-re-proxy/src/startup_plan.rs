@@ -520,7 +520,7 @@ mod tests {
         );
 
         // And for a programmatic request, which is the altitude that guards the runtime.
-        let err = refusal_for_mutated(SHARED_REDIS, |c| c.replay_durability_tier = None);
+        let err = refusal_for_mutated(SHARED_REDIS, |c| c.replay.durability = None);
         assert!(
             err.contains("--replay-durability-tier"),
             "a request whose tier is cleared must be refused: {err}"
@@ -560,13 +560,13 @@ mod tests {
 
     #[test]
     fn a_shared_tier_that_skipped_the_parser_is_refused_without_a_durability_tier() {
-        let err = refusal_for_mutated(SHARED_REDIS, |c| c.replay_durability_tier = None);
+        let err = refusal_for_mutated(SHARED_REDIS, |c| c.replay.durability = None);
         assert!(err.contains("--replay-durability-tier"), "{err}");
     }
 
     #[test]
     fn a_shared_redis_tier_that_skipped_the_parser_is_refused_without_a_url() {
-        let err = refusal_for_mutated(SHARED_REDIS, |c| c.replay_redis_url = None);
+        let err = refusal_for_mutated(SHARED_REDIS, |c| c.replay.store = None);
         assert!(err.contains("--replay-redis-url"), "{err}");
     }
 
@@ -574,7 +574,7 @@ mod tests {
     /// CPStore endpoint the tier is refused, not resolved to something weaker.
     #[test]
     fn a_linearizable_tier_that_skipped_the_parser_is_refused_without_an_endpoint() {
-        let err = refusal_for_mutated(SHARED_LINEARIZABLE, |c| c.cpstore_etcd_endpoint = None);
+        let err = refusal_for_mutated(SHARED_LINEARIZABLE, |c| c.replay.store = None);
         assert!(err.contains("--cpstore-etcd-endpoint"), "{err}");
     }
 
@@ -737,8 +737,8 @@ mod tests {
         ])
         .expect_err("the alias is refused");
         assert!(
-            refusal.contains("--replay-redis-url is not valid"),
-            "{refusal}"
+            refusal.contains("both name the replay store"),
+            "the pair is refused where it is still statable — argv: {refusal}"
         );
         assert!(
             refusal.contains("--continuation-control-redis-url"),
@@ -1013,7 +1013,9 @@ mod tests {
         config.admission_authority_kid = Some("admission-root-1".to_string());
         config.admission_authority_pubkey_b64url =
             Some("1i8Bah79Hk_feT60LNhEceG6nwzwTRKHtcxx9hYofLg".to_string());
-        config.admission_redis_url = Some("redis://127.0.0.1:6379".to_string());
+        config.admission_store.authoritative = Some(
+            crate::deployment_request::SharedStoreRequest::redis("redis://127.0.0.1:6379"),
+        );
         config
     }
 

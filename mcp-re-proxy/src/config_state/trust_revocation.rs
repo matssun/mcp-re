@@ -27,7 +27,7 @@
 //! done once, and `TrustPlan` and `SigningPlane` are consumers of the one answer
 //! (CF-09 — a fact may have two consumers, it must not have two authorities).
 
-use crate::deployment_request::DeploymentRequest;
+use crate::deployment_request::{DeploymentRequest, TrustEpochSource};
 use crate::revocation_tier::RevocationTier;
 use std::num::NonZeroU64;
 
@@ -251,7 +251,7 @@ fn classify(config: &DeploymentRequest) -> RequestedState {
     match config.revocation_tier {
         RevocationTier::BoundedCache { t_secs } => RequestedState::BoundedCache { t_secs },
         RevocationTier::Live => RequestedState::Live,
-        RevocationTier::Push { t_secs } if config.trust_epoch_redis_url.is_some() => {
+        RevocationTier::Push { t_secs } if config.trust_epoch.source.is_some() => {
             RequestedState::PushNetworked { t_secs }
         }
         RevocationTier::Push { t_secs } => RequestedState::PushInert { t_secs },
@@ -285,13 +285,14 @@ fn build(requested: RequestedState, config: &DeploymentRequest) -> Option<TrustR
             RequestedState::PushNetworked { t_secs } => RevocationKind::PushNetworked {
                 t_secs,
                 reload_secs: cadence?,
-                epoch_url: config.trust_epoch_redis_url.clone()?,
+                epoch_url: config.trust_epoch.locator()?.to_string(),
                 // The default belongs to this machine, so it is applied here and nothing
                 // downstream can tell an omitted key from a named one.
                 epoch_key: config
-                    .trust_epoch_key
-                    .clone()
-                    .unwrap_or_else(|| crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY.to_string()),
+                    .trust_epoch
+                    .key()
+                    .unwrap_or(crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY)
+                    .to_string(),
             },
         },
     })
@@ -367,7 +368,7 @@ fn epoch_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<St
     let mut out = Vec::new();
     // X8. `PushInert` is the state that has no URL, so only the two non-Push states can
     // reach this: a configured source under a tier that never consumes it.
-    if config.trust_epoch_redis_url.is_some() && !state.has_networked_epoch() {
+    if config.trust_epoch.source.is_some() && !state.has_networked_epoch() {
         out.push(
             "--trust-epoch-redis-url has no effect under this --revocation-tier: the \
              networked epoch source drives PUSH invalidation only, so any other tier \
@@ -377,19 +378,18 @@ fn epoch_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<St
                 .to_string(),
         );
     }
-    // CF-04: the key names a location in a store this state has not configured. It is
-    // `Option`-typed and mode-specific, so its presence carries intent.
-    if config.trust_epoch_key.is_some() && !state.has_networked_epoch() {
-        out.push(
-            "--trust-epoch-key names a key in a trust-epoch store this configuration does \
-             not have; set --trust-epoch-redis-url under --revocation-tier push, or remove \
-             --trust-epoch-key"
-                .to_string(),
-        );
-    }
+    // CF-04's clause is GONE, and its absence is the result. It refused a
+    // `--trust-epoch-key` naming a location in a store this configuration did not have;
+    // the coordinate now travels inside `TrustEpochSource`, so a key with no store cannot
+    // be built (ADR-MCPRE-067 §7). The argv form is answered by `cli::storage_flags`.
     // Build-independent shape only. Whether the URL RESOLVES is layer C, and whether this
     // binary has a Redis client at all is layer B; both are materialization's to refuse.
-    if let Some(url) = &config.trust_epoch_redis_url {
+    if let Some(url) = config
+        .trust_epoch
+        .source
+        .as_ref()
+        .map(TrustEpochSource::locator)
+    {
         if !url.contains("://") {
             out.push(format!(
                 "--trust-epoch-redis-url {url:?} is not a URL: the trust-epoch source is \
@@ -433,6 +433,19 @@ pub const MAX_NEAR_ZERO_TRUST_RELOAD_SECS: u64 = 60;
 
 #[cfg(test)]
 mod tests {
+    /// Name the epoch coordinate on whatever source the fixture already configured. The
+    /// key lives INSIDE the source now, so there is no way to set one without a store.
+    fn set_epoch_key(config: &mut DeploymentRequest, key: &str) {
+        let url = config
+            .trust_epoch
+            .source
+            .as_ref()
+            .map(TrustEpochSource::locator)
+            .unwrap_or("redis://127.0.0.1:6379")
+            .to_string();
+        config.trust_epoch.source = Some(TrustEpochSource::redis(url, Some(key.to_string())));
+    }
+
     /// Build a state from the owner's own representation. In-module only: outside this
     /// module a state is obtainable solely from `classify_and_validate`.
     fn state(kind: RevocationKind) -> TrustRevocationState {
@@ -580,8 +593,9 @@ mod tests {
                 Box::new(|c: &mut DeploymentRequest| {
                     c.revocation_tier = RevocationTier::Push { t_secs: 30 };
                     c.trust_reload_secs = Some(30);
-                    c.trust_epoch_redis_url = Some("redis://127.0.0.1:6379".to_string());
-                    c.trust_epoch_key = Some("mcp-re:trust:epoch".to_string());
+                    c.trust_epoch.source =
+                        Some(TrustEpochSource::redis("redis://127.0.0.1:6379", None));
+                    set_epoch_key(c, "mcp-re:trust:epoch");
                 }),
             ),
         ];
@@ -612,7 +626,7 @@ mod tests {
         let networked = state_of(|c| {
             c.revocation_tier = RevocationTier::Push { t_secs: 30 };
             c.trust_reload_secs = Some(30);
-            c.trust_epoch_redis_url = Some("redis://127.0.0.1:6379".to_string());
+            c.trust_epoch.source = Some(TrustEpochSource::redis("redis://127.0.0.1:6379", None));
         });
         assert!(!inert.has_networked_epoch());
         assert!(networked.has_networked_epoch());
@@ -715,7 +729,7 @@ mod tests {
         let violations = violations_of(|c| {
             c.revocation_tier = RevocationTier::Push { t_secs: 30 };
             c.trust_reload_secs = Some(30);
-            c.trust_epoch_redis_url = Some("127.0.0.1:6379".to_string());
+            c.trust_epoch.source = Some(TrustEpochSource::redis("127.0.0.1:6379", None));
         });
         assert!(
             violations.iter().any(|v| v.contains("is not a URL")),
@@ -734,7 +748,8 @@ mod tests {
             let violations = violations_of(|c| {
                 c.revocation_tier = tier;
                 c.trust_reload_secs = Some(30);
-                c.trust_epoch_redis_url = Some("redis://127.0.0.1:6379".to_string());
+                c.trust_epoch.source =
+                    Some(TrustEpochSource::redis("redis://127.0.0.1:6379", None));
             });
             assert!(
                 violations
@@ -745,20 +760,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn an_epoch_key_without_an_epoch_store_is_refused() {
-        let violations = violations_of(|c| {
-            c.revocation_tier = RevocationTier::Push { t_secs: 30 };
-            c.trust_reload_secs = Some(30);
-            c.trust_epoch_key = Some("mcp-re:trust:epoch".to_string());
-        });
-        assert!(
-            violations
-                .iter()
-                .any(|v| v.contains("--trust-epoch-key names a key")),
-            "{violations:?}"
-        );
-    }
+    // CF-04 — an epoch key naming a place in a store this configuration does not have —
+    // has no test here any more, and its absence is the result. The coordinate travels
+    // inside `TrustEpochSource`, so a key with no store cannot be constructed and the
+    // clause has no configuration to examine. The argv form is still statable, and
+    // `cli::storage_flags` refuses it with the same sentence.
 
     // ---- guards ----
 

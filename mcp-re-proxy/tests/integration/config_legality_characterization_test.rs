@@ -104,7 +104,10 @@ fn refused_at_the_boundary() {
     // MCPS-84 / atlas X8. Admitted before: the deployment believed a networked trust
     // invalidation was active while no tier consumed it.
     let mut config = base();
-    config.trust_epoch_redis_url = Some("redis://127.0.0.1:6379".to_string());
+    config.trust_epoch.source = Some(mcp_re_proxy::deployment_request::TrustEpochSource::redis(
+        "redis://127.0.0.1:6379",
+        None,
+    ));
     let refusal =
         ValidatedDeployment::try_from(config).expect_err("an epoch source under a non-Push tier");
     assert!(refusal.contains("--trust-epoch-redis-url"), "{refusal}");
@@ -128,12 +131,14 @@ fn refused_at_the_boundary() {
         (
             "cpstore_etcd_endpoint",
             Box::new(|c: &mut DeploymentRequest| {
-                c.cpstore_etcd_endpoint = Some("http://127.0.0.1:2379".to_string())
+                c.replay.store = Some(mcp_re_proxy::deployment_request::ReplayStoreRequest::etcd(
+                    "http://127.0.0.1:2379",
+                ))
             }) as Box<dyn FnOnce(&mut DeploymentRequest)>,
         ),
         (
             "replay_durability_tier",
-            Box::new(|c: &mut DeploymentRequest| c.replay_durability_tier = None),
+            Box::new(|c: &mut DeploymentRequest| c.replay.durability = None),
         ),
     ] {
         let mut config = base();
@@ -246,7 +251,10 @@ fn refused_at_the_boundary() {
     let mut config = base();
     config.revocation_tier = mcp_re_proxy::revocation_tier::RevocationTier::Push { t_secs: 30 };
     config.trust_reload_secs = Some(30);
-    config.trust_epoch_redis_url = Some("redis://127.0.0.1:6379".to_string());
+    config.trust_epoch.source = Some(mcp_re_proxy::deployment_request::TrustEpochSource::redis(
+        "redis://127.0.0.1:6379",
+        None,
+    ));
     let validated = ValidatedDeployment::try_from(config).expect("push + epoch source is legal");
     assert!(
         validated.state().trust_revocation().has_networked_epoch(),

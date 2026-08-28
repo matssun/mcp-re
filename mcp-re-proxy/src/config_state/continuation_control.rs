@@ -22,7 +22,7 @@
 //! and a cargo feature with `Replay` is not a semantic edge. The endpoints may name the
 //! same Redis, and when they do that is an operator's deployment choice.
 
-use crate::deployment_request::DeploymentRequest;
+use crate::deployment_request::{DeploymentRequest, SharedStoreRequest};
 
 /// Which continuation-control state a configuration requests.
 ///
@@ -45,8 +45,8 @@ enum ContinuationKind {
     /// No shared store. Multi-round-trip flows are single-replica; a cross-replica answer
     /// is refused at the binding.
     Disabled,
-    /// A shared Redis store, so a flow opened on one replica can be answered on another.
-    Redis {
+    /// A shared store, so a flow opened on one replica can be answered on another.
+    Shared {
         /// Where retained continuation bases live.
         endpoint: String,
     },
@@ -55,7 +55,7 @@ enum ContinuationKind {
 impl ContinuationControlState {
     /// Whether a shared continuation store is requested.
     pub fn is_shared(&self) -> bool {
-        matches!(self.kind, ContinuationKind::Redis { .. })
+        matches!(self.kind, ContinuationKind::Shared { .. })
     }
 
     /// What establishing continuation control requires, as this owner states it.
@@ -67,7 +67,7 @@ impl ContinuationControlState {
     pub fn continuation_plan(&self) -> ContinuationControlPlan {
         match &self.kind {
             ContinuationKind::Disabled => ContinuationControlPlan { store: None },
-            ContinuationKind::Redis { endpoint } => ContinuationControlPlan {
+            ContinuationKind::Shared { endpoint } => ContinuationControlPlan {
                 store: Some(endpoint.clone()),
             },
         }
@@ -104,9 +104,9 @@ impl ContinuationControlPlan {
 /// Recognise the requested state. Total: presence of the locator IS the request.
 fn classify(config: &DeploymentRequest) -> ContinuationControlState {
     ContinuationControlState {
-        kind: match &config.continuation_control_redis_url {
-            Some(endpoint) => ContinuationKind::Redis {
-                endpoint: endpoint.clone(),
+        kind: match &config.continuation_control.shared {
+            Some(store) => ContinuationKind::Shared {
+                endpoint: store.locator().to_string(),
             },
             None => ContinuationKind::Disabled,
         },
@@ -122,7 +122,12 @@ pub fn classify_and_validate(
 ) -> (ContinuationControlState, Vec<String>) {
     let state = classify(config);
     let mut violations = Vec::new();
-    if let Some(url) = &config.continuation_control_redis_url {
+    if let Some(url) = config
+        .continuation_control
+        .shared
+        .as_ref()
+        .map(SharedStoreRequest::locator)
+    {
         if !url.contains("://") {
             violations.push(format!(
                 "--continuation-control-redis-url {url:?} is not a URL: give a \
@@ -153,7 +158,8 @@ mod tests {
         assert!(violations.is_empty(), "{violations:?}");
 
         let (state, violations) = run(|c| {
-            c.continuation_control_redis_url = Some("redis://127.0.0.1:6379".to_string());
+            c.continuation_control.shared =
+                Some(SharedStoreRequest::redis("redis://127.0.0.1:6379"));
         });
         assert_eq!(
             state.continuation_plan().shared_store(),
@@ -167,7 +173,7 @@ mod tests {
     /// classifier must produce a state rather than treat it as an under-specified one.
     #[test]
     fn disabled_is_a_state_and_not_a_missing_value() {
-        let (state, violations) = run(|c| c.continuation_control_redis_url = None);
+        let (state, violations) = run(|c| c.continuation_control.shared = None);
         assert!(!state.is_shared());
         assert_eq!(state.continuation_plan().shared_store(), None);
         assert!(
@@ -180,7 +186,7 @@ mod tests {
     #[test]
     fn a_locator_that_cannot_name_a_store_is_refused() {
         let (_, violations) = run(|c| {
-            c.continuation_control_redis_url = Some("127.0.0.1:6379".to_string());
+            c.continuation_control.shared = Some(SharedStoreRequest::redis("127.0.0.1:6379"));
         });
         assert!(
             violations.iter().any(|v| v.contains("is not a URL")),
@@ -193,11 +199,12 @@ mod tests {
     #[test]
     fn the_replay_tier_does_not_reach_this_machine() {
         let shared = |c: &mut DeploymentRequest| {
-            c.continuation_control_redis_url = Some("redis://127.0.0.1:6379".to_string());
+            c.continuation_control.shared =
+                Some(SharedStoreRequest::redis("redis://127.0.0.1:6379"));
         };
         assert_eq!(
             run(|c| {
-                c.replay_durability_tier = Some(crate::ReplayDurabilityTier::Linearizable);
+                c.replay.durability = Some(crate::ReplayDurabilityTier::Linearizable);
                 shared(c);
             })
             .0
@@ -207,7 +214,9 @@ mod tests {
         );
         assert_eq!(
             run(|c| {
-                c.replay_redis_url = Some("redis://127.0.0.1:6379".to_string());
+                c.replay.store = Some(crate::deployment_request::ReplayStoreRequest::redis(
+                    "redis://127.0.0.1:6379",
+                ));
             })
             .0
             .continuation_plan()
