@@ -57,6 +57,10 @@ mod continuation;
 
 /// What the backend's reply IS: read once, here, so no later authority re-reads it.
 mod reply;
+
+/// The backend seam, and what the exchange may claim about execution given what it
+/// managed to do.
+mod inner_plane;
 pub use body_boundary::extract_request_state;
 use body_boundary::ForwardedBody;
 use continuation::Retirement;
@@ -67,7 +71,6 @@ use mcp_re_http_profile::AdmissionPolicy;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::ExecutionDisposition;
-use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RequestEvidence;
@@ -85,7 +88,6 @@ use crate::admission_enforcer::AdmissionEnforcement;
 use crate::admission_enforcer::AdmissionEnforcer;
 use crate::admission_source::AsyncAdmissionSource;
 use crate::async_inner::AsyncInnerServer;
-use crate::async_inner::InnerOutcome;
 use crate::async_serve::ServedHttpRequest;
 use crate::async_serve::ServedHttpResponse;
 use crate::authorization::AuthorizationEvaluator;
@@ -100,7 +102,6 @@ use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
 use crate::exchange_state::ExchangeProgress;
 use crate::exchange_state::OpenLeg;
-use crate::exchange_state::ResponseOrigin;
 use crate::exchange_state::RetrySemantics;
 use crate::http_profile_dispatch::dispatch_request_with_async_tier;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
@@ -174,8 +175,8 @@ pub struct HttpProfileProxy {
     replay_async: crate::async_replay::AsyncReplayTier,
     /// Deployment replay-durability posture (fleet-strict + declared tier).
     dispatch_cfg: ProxyDispatchConfig,
-    /// The async inner-plane client to the stateless Streamable-HTTP backend.
-    inner_async: Box<dyn AsyncInnerServer>,
+    /// The backend seam, and the reading of every answer it can give.
+    inner_async: inner_plane::InnerPlane,
     /// Optional Mode-A transport binding: bind the verified request actor to the
     /// mTLS peer identity. `None` disables the channel binding.
     transport_binding: Option<TransportBinding>,
@@ -261,7 +262,7 @@ impl HttpProfileProxy {
             responses: receipt::ResponseSigning::new(delegated_signer, sig_ttl_secs),
             replay_async,
             dispatch_cfg,
-            inner_async,
+            inner_async: inner_plane::InnerPlane::over(inner_async),
             transport_binding: None,
             continuations: continuation::ContinuationPlane::disabled(),
             verified_context_policy: VerifiedContextPolicy::default(),
@@ -808,121 +809,6 @@ impl HttpProfileProxy {
         }
     }
 
-    /// INNER-PLANE-ACCEPTED — can a dispatch begin at all?
-    ///
-    /// ```text
-    /// ensures   Ok  => the inner plane has a permit and a live backend
-    ///           Err => 503, bound
-    /// forbids   transmitting anything
-    /// refusal   free, and free of DURABLE consequence — asked before the retention
-    ///           reservation, so a saturated plane leaves nothing behind on disk
-    /// ```
-    ///
-    /// Local saturation and a fully-ejected backend set are facts about THIS proxy, knowable
-    /// without putting a byte on the wire. Discovering them from the far side of the
-    /// threshold — which is what a seam returning only bytes forces — turned a
-    /// definitely-not-executed outage into an exchange that must claim `possibly_executed`
-    /// forever after, and served it as a signed HTTP 200 carrying an error body.
-    fn inner_plane_stage(&self) -> Result<Established<()>, Refusal> {
-        self.inner_async
-            .admit()
-            .map(|_| Established::new((), ExchangeEvent::InnerPlaneAccepted))
-            .map_err(|_| Refusal::after_admission(McpReError::InnerPlaneUnavailable, 503))
-    }
-
-    /// RESPONSE-OBSERVED — what did the inner plane actually manage to do?
-    ///
-    /// ```text
-    /// ensures   Ok  => bytes authored by the BACKEND
-    ///           Err => 503 / 504 / 502, bound, recorded as a RESPONSE-side fault
-    /// refusal   NOT free — every arm below reports possibly-executed
-    /// ```
-    ///
-    /// The three failing arms are three different facts and get three different codes. The
-    /// one that matters most is the middle: a timeout means the request was transmitted and
-    /// the answer never came, so whether the tool ran is genuinely unknown, and the previous
-    /// behaviour — a synthesized `-32603` signed at HTTP 200 — was the strongest available
-    /// statement that the exchange completed normally.
-    fn observe_inner_stage(
-        &self,
-        progress: &mut ExchangeProgress,
-        outcome: InnerOutcome,
-    ) -> Result<Established<Vec<u8>>, Refusal> {
-        match outcome {
-            InnerOutcome::Replied(bytes) => {
-                progress.observe_origin(ResponseOrigin::BackendReplied);
-                Ok(Established::new(bytes, ExchangeEvent::ResponseObserved))
-            }
-            // A lost race against `admit`: the last permit went to another core between the
-            // question and the dispatch. Reported as what it is, at the consequence the
-            // exchange has already crossed — the floor does not move back for a more
-            // precise late observation.
-            InnerOutcome::NotDispatched(_) => Err(Refusal::after_admission(
-                McpReError::InnerPlaneUnavailable,
-                503,
-            )),
-            InnerOutcome::Indeterminate(_) => {
-                progress.observe_origin(ResponseOrigin::DispatchIndeterminate);
-                Err(Refusal::after_admission(
-                    McpReError::InnerDispatchIndeterminate,
-                    504,
-                ))
-            }
-            InnerOutcome::InvalidUpstream(clause) => Err(Refusal::after_admission(
-                HttpProfileError::UpstreamResponseInvalid(clause),
-                502,
-            )),
-        }
-    }
-
-    /// NOTIFICATION-OBSERVED — may a 202 be minted for what the inner plane managed to do?
-    ///
-    /// ```text
-    /// ensures   Ok  => the backend RECEIVED the message
-    ///           Err => 503 (nothing was transmitted) / 504 (transmitted, no answer)
-    /// refusal   NOT free — the exchange has crossed the threshold either way
-    /// ```
-    ///
-    /// Two outcomes acknowledge and two refuse, split on whether the backend ANSWERED. The
-    /// 202 says the enforcement boundary authenticated and accepted the message and the
-    /// inner plane received it; it never says any action completed (#418). What the backend
-    /// answered is discarded unread, as JSON-RPC requires — but WHETHER it was reached is
-    /// not a detail of the answer, and a message that never left the proxy has been
-    /// accepted by nothing.
-    ///
-    /// [`InnerOutcome::InvalidUpstream`] acknowledges, and that is not a concession: a
-    /// conformant Streamable-HTTP backend answers a notification with `202 Accepted` and no
-    /// body, which carries no `application/json` content type and therefore arrives here as
-    /// an unusable answer FROM A BACKEND THAT RECEIVED THE MESSAGE
-    /// ([`crate::http_inner`]). The two refused outcomes are the two that say the message
-    /// did not get there, or may not have.
-    fn observe_notification_stage(
-        &self,
-        progress: &mut ExchangeProgress,
-        outcome: &InnerOutcome,
-    ) -> Result<Established<()>, Refusal> {
-        match outcome {
-            InnerOutcome::Replied(_) | InnerOutcome::InvalidUpstream(_) => {
-                progress.observe_origin(ResponseOrigin::BackendReplied);
-                Ok(Established::new(
-                    (),
-                    ExchangeEvent::NotificationAcknowledged,
-                ))
-            }
-            InnerOutcome::NotDispatched(_) => Err(Refusal::after_admission(
-                McpReError::InnerPlaneUnavailable,
-                503,
-            )),
-            InnerOutcome::Indeterminate(_) => {
-                progress.observe_origin(ResponseOrigin::DispatchIndeterminate);
-                Err(Refusal::after_admission(
-                    McpReError::InnerDispatchIndeterminate,
-                    504,
-                ))
-            }
-        }
-    }
-
     /// RESPONSE-SIGNED — the enforcement boundary puts its signature on the reply.
     ///
     /// ```text
@@ -1143,7 +1029,7 @@ impl HttpProfileProxy {
         // dispatch, and the relation says so: `RetentionReserved` is the last pre-dispatch
         // state, so a pipeline that asked in the other order would be refused rather than
         // recorded in whichever order the relation happened to prefer.
-        match self.inner_plane_stage() {
+        match self.inner_async.admit() {
             Ok(accepted) => progress.establish(accepted),
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         }
@@ -1186,7 +1072,10 @@ impl HttpProfileProxy {
             outstanding,
             mcp_re_http_profile::OutstandingId::Notification
         ) {
-            match self.observe_notification_stage(&mut progress, &outcome) {
+            match self
+                .inner_async
+                .observe_acknowledgement(&mut progress, &outcome)
+            {
                 Ok(acknowledged) => progress.establish(acknowledged),
                 Err(refusal) => return self.refuse(&ex, refusal, &progress),
             }
@@ -1205,7 +1094,7 @@ impl HttpProfileProxy {
                 .await;
         }
 
-        let inner_bytes = match self.observe_inner_stage(&mut progress, outcome) {
+        let inner_bytes = match self.inner_async.observe_reply(&mut progress, outcome) {
             Ok(bytes) => progress.establish(bytes),
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         };
