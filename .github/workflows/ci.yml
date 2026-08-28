@@ -252,6 +252,12 @@ jobs:
       #
       # `--selftest` first in each case: a ratchet that has stopped measuring reports the
       # same "OK" as one that measures and finds nothing.
+      #
+      # NOTE ON THE BASELINES. `config/clippy-debt.toml` was emitted on a developer's macOS
+      # machine, so `#[cfg(target_os = "linux")]` code was never counted into it. Running
+      # the gate on this Linux runner is the first time those sites have been measured at
+      # all — the first green run here is the real baseline, and a difference on this
+      # runner is a MEASUREMENT that was missing, not necessarily a regression.
       - name: Module-size ratchet (ADR-MCPRE-061 §5.1)
         run: |
           python3 scripts/module_size_gate.py --selftest
