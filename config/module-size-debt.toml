@@ -139,14 +139,17 @@ review_ref = "EX-005 in docs/architecture/review-dispositions.md"
 
 # EX-006 action 1: the outbound-fetch/SSRF authority — which is not RFC 6960's — left for
 # `src/outbound_fetch/`, and is compiled UNCONDITIONALLY there. 1271 -> 980, close to the
-# 26% the census predicted. Action 2 (the sealed §3.2 product) landed with it. The §14
-# exception action 3 anticipates for the protocol remainder is still NOT granted: the census
-# is explicit that it is "the expected end state, not an assumed one".
+# 26% the census predicted. Action 2 (the sealed §3.2 product) landed with it. Action 3 —
+# the §14 exception over the protocol remainder — was granted 2026-08-28 once both
+# preconditions were met: the remainder is ONE RFC 6960 verification argument whose five
+# checks are conjuncts of one conclusion. The exception is about structure only; the
+# live-responder evidence limitation the census flagged still stands, and EX-006 says so.
+# It is not a licence to grow — the ratchet applies to every entry whatever its status.
 [[debt]]
 path = "mcp-re-proxy/src/ocsp.rs"
 baseline_prod_loc = 980
 baseline_sha = "d7abd3e"
-status = "reviewed-action-required"
+status = "reviewed-exception"
 review_ref = "EX-006 in docs/architecture/review-dispositions.md"
 
 [[debt]]
