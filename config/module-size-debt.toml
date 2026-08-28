@@ -53,11 +53,12 @@
 # the number: it records where a measurement was ESTABLISHED, and ae40fff never contained a
 # 1674-line serving root.
 #
-# Authority E's continuation half then left for the `continuation/` subtree: 1674 -> 1478.
+# Authority E's continuation half then left for the `continuation/` subtree: 1674 -> 1478,
+# and authority H — what the backend's reply IS — for `reply.rs`: 1478 -> 1389.
 [[debt]]
 path = "mcp-re-proxy/src/http_profile_serve/mod.rs"
-baseline_prod_loc = 1478
-baseline_sha = "875d9f9"
+baseline_prod_loc = 1389
+baseline_sha = "d7372b8"
 status = "unreviewed"
 
 [[debt]]
