@@ -74,7 +74,6 @@ use body_boundary::ForwardedBody;
 use continuation::Retirement;
 use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::sign_delegated_accepted_202;
-use mcp_re_http_profile::sign_delegated_response_full;
 use mcp_re_http_profile::AdmissionPolicy;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::ExecutionDisposition;
@@ -694,42 +693,6 @@ impl HttpProfileProxy {
         ))
     }
 
-    /// RESPONSE-SIGNED — the enforcement boundary puts its signature on the reply.
-    ///
-    /// ```text
-    /// ensures   Ok  => `response` carries the delegated signature bound to THIS request,
-    ///                  and the returned bytes are its signature base
-    ///           Err => 500, bound
-    /// refusal   NOT free
-    /// ```
-    #[allow(clippy::too_many_arguments)]
-    fn sign_reply_stage(
-        &self,
-        ex: &Exchange<'_>,
-        response: &mut HttpResponse,
-        a: &mcp_re_http_profile::ActiveDelegatedKey,
-        expires: i64,
-    ) -> Result<Established<Vec<u8>>, Refusal> {
-        // Scoped so the timer covers the signature and nothing after it.
-        let sign_result = {
-            let _t = crate::stage_timers::Timed::start(crate::stage_timers::Stage::Sign);
-            sign_delegated_response_full(
-                response,
-                ex.http_req,
-                ex.verified.evidence(),
-                &a.server_signer,
-                &a.credential,
-                a.key.as_ref(),
-                &a.delegated_kid,
-                ex.now,
-                expires,
-            )
-        };
-        sign_result
-            .map(|base| Established::new(base, ExchangeEvent::ResponseSigned))
-            .map_err(|e| Refusal::after_admission(e, 500))
-    }
-
     /// Serve one request end to end on the async data plane.
     ///
     /// This function is the ASSEMBLY, not the work. It composes the stages above and
@@ -1012,11 +975,10 @@ impl HttpProfileProxy {
             ReplyClass::Open(_) => OpenLeg::Required,
         });
 
-        let response_base =
-            match self.sign_reply_stage(&ex, &mut response, window.key(), window.expires()) {
-                Ok(base) => progress.establish(base),
-                Err(refusal) => return self.refuse(&ex, refusal, &progress),
-            };
+        let response_base = match self.responses.sign_reply(&ex, &mut response, &window) {
+            Ok(base) => progress.establish(base),
+            Err(refusal) => return self.refuse(&ex, refusal, &progress),
+        };
 
         match &class {
             ReplyClass::Terminal => progress.advance(ExchangeEvent::ContinuationNotRequired),

@@ -23,6 +23,10 @@ use crate::refusal::RefusalPosture;
 use mcp_re_http_profile::ExecutionDisposition;
 
 use super::signing_window::SigningWindow;
+use crate::exchange_state::Established;
+use crate::exchange_state::ExchangeEvent;
+use mcp_re_http_profile::HttpResponse;
+
 use super::Exchange;
 use super::Refusal;
 use super::ServedHttpResponse;
@@ -71,6 +75,46 @@ impl ResponseSigning {
     /// the exchange machine, which is the point: the retry contract is a fact about the whole
     /// exchange, so a stage could not state it correctly even if it tried. The stage says
     /// WHAT was refused; the machine says what the client may still assume.
+    /// RESPONSE-SIGNED — the enforcement boundary puts its signature on the reply.
+    ///
+    /// ```text
+    /// ensures   Ok  => `response` carries the delegated signature bound to THIS request,
+    ///                  and the returned bytes are its signature base
+    ///           Err => 500, bound
+    /// refusal   NOT free
+    /// ```
+    ///
+    /// Here rather than in the assembly because it is the same claim [`Self::refuse`]
+    /// makes, about the same credential and the same window: this module's whole reason to
+    /// exist is that the reply path and the refusal path cannot drift apart in what they
+    /// sign under. Both take a [`SigningWindow`], and only this owner opens one.
+    pub(crate) fn sign_reply(
+        &self,
+        ex: &Exchange<'_>,
+        response: &mut HttpResponse,
+        window: &SigningWindow,
+    ) -> Result<Established<Vec<u8>>, Refusal> {
+        let a = window.key();
+        // Scoped so the timer covers the signature and nothing after it.
+        let sign_result = {
+            let _t = crate::stage_timers::Timed::start(crate::stage_timers::Stage::Sign);
+            mcp_re_http_profile::sign_delegated_response_full(
+                response,
+                ex.http_req,
+                ex.verified.evidence(),
+                &a.server_signer,
+                &a.credential,
+                a.key.as_ref(),
+                &a.delegated_kid,
+                ex.now,
+                window.expires(),
+            )
+        };
+        sign_result
+            .map(|base| Established::new(base, ExchangeEvent::ResponseSigned))
+            .map_err(|e| Refusal::after_admission(e, 500))
+    }
+
     pub(crate) fn refuse(
         &self,
         audit: &MaybeAuditSink,
