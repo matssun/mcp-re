@@ -27,29 +27,16 @@ use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::SignerSlot;
-use mcp_re_http_profile::VerifiedMcpResponse;
 use mcp_re_http_profile::Verifier;
 use serde_json::Value;
 
+use mcp_re_http_profile::VerifiedMcpResponse;
+
+use crate::result_classification::classify_result;
+use crate::result_classification::ClassifiedResponse;
+
 use crate::execution_contract::rejection_receipt;
 use crate::execution_contract::ExecutionContract;
-
-/// The MCP-RE round-trip classification of a verified response body
-/// (ADR-MCPS-047). Read ONLY from the signed, verified body — never from
-/// untrusted bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResultClass {
-    /// An ordinary terminal result.
-    Terminal,
-    /// An `InputRequiredResult` — a non-terminal leg awaiting client continuation.
-    InputRequired,
-    /// A `resultType` this client does not recognize. MCP 2026-07-28 requires it
-    /// be considered invalid, so it is never resolved to [`Terminal`]: a caller
-    /// that acts on the exchange must refuse it.
-    ///
-    /// [`Terminal`]: ResultClass::Terminal
-    Unrecognized,
-}
 
 /// What the client expects of the bound response for one outstanding request: the
 /// exact request it sent (for the `;req` binding), the [`RequestEvidence`] handle
@@ -157,16 +144,6 @@ fn check_expected_server_signer(
     }
 }
 
-/// A verified response plus its multi-round-trip classification (ADR-MCPS-047),
-/// read from the signed, verified body.
-#[derive(Debug, Clone)]
-pub struct ClassifiedResponse {
-    /// The verification verdict.
-    pub verified: VerifiedMcpResponse,
-    /// Terminal vs `InputRequiredResult`.
-    pub class: ResultClass,
-}
-
 /// Verify a signed RFC 9421 response AND classify its result body for the
 /// multi-round-trip flow. Classification runs ONLY after verification succeeds, so
 /// the class is never trusted from unverified bytes.
@@ -187,40 +164,6 @@ pub fn verify_and_classify_response<R: Into<ResolverOutcome>>(
         .map_err(|_| HttpProfileError::MalformedEvidence("response body"))?;
     let class = classify_result(body.get("result"));
     Ok(ClassifiedResponse { verified, class })
-}
-
-/// Classify a (verified) `result` body through the profile's single discriminator
-/// ([`mcp_re_http_profile::result_class`], ADR-MCPS-047). An absent `resultType` is
-/// terminal, as MCP 2026-07-28 requires of clients; an unrecognized one is
-/// [`ResultClass::Unrecognized`], never terminal.
-///
-/// This is the typed client-side face of that one classifier, not a second copy of
-/// it: the discriminator string lives in the lower crate every reader shares, so
-/// the SEP-2322 drift guard that pins this function covers the proxy, chain
-/// reconstruction and both SDK bindings too.
-pub fn classify_result(result: Option<&Value>) -> ResultClass {
-    use mcp_re_http_profile::result_class::ResultTypeClass;
-    match mcp_re_http_profile::result_class::classify_result_type(result) {
-        ResultTypeClass::InputRequired => ResultClass::InputRequired,
-        ResultTypeClass::Complete => ResultClass::Terminal,
-        ResultTypeClass::Unrecognized => ResultClass::Unrecognized,
-    }
-}
-
-/// The continuation state a VERIFIED response carries, for callers that must act
-/// on a live exchange rather than reconstruct a record: `Some(state)` for an
-/// `InputRequiredResult`, `None` for a terminal reply, and an ERROR for a reply
-/// that announces itself non-terminal without a usable `requestState`.
-///
-/// This is what the SDK bindings call. Each of them used to open-code the JSON walk
-/// and collapse the malformed case to `None`, which their transports read as
-/// terminal: the open leg's correlation entry was consumed, the input-required
-/// callback never fired, no answer leg was ever signed, and an elicitation was
-/// handed to the application as a completed tool result. See
-/// [`mcp_re_http_profile::result_class::input_required_state`] for the three-way
-/// contract.
-pub fn continuation_state(body: &[u8]) -> Result<Option<String>, HttpProfileError> {
-    mcp_re_http_profile::result_class::input_required_state(body)
 }
 
 // ---- ADR-MCPRE-052 delegated-required client verification (MCPRE-122) --------
