@@ -27,29 +27,16 @@ use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::SignerSlot;
-use mcp_re_http_profile::VerifiedMcpResponse;
 use mcp_re_http_profile::Verifier;
 use serde_json::Value;
 
+use mcp_re_http_profile::VerifiedMcpResponse;
+
+use crate::result_classification::classify_result;
+use crate::result_classification::ClassifiedResponse;
+
 use crate::execution_contract::rejection_receipt;
 use crate::execution_contract::ExecutionContract;
-
-/// The MCP-RE round-trip classification of a verified response body
-/// (ADR-MCPS-047). Read ONLY from the signed, verified body — never from
-/// untrusted bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResultClass {
-    /// An ordinary terminal result.
-    Terminal,
-    /// An `InputRequiredResult` — a non-terminal leg awaiting client continuation.
-    InputRequired,
-    /// A `resultType` this client does not recognize. MCP 2026-07-28 requires it
-    /// be considered invalid, so it is never resolved to [`Terminal`]: a caller
-    /// that acts on the exchange must refuse it.
-    ///
-    /// [`Terminal`]: ResultClass::Terminal
-    Unrecognized,
-}
 
 /// What the client expects of the bound response for one outstanding request: the
 /// exact request it sent (for the `;req` binding), the [`RequestEvidence`] handle
@@ -157,16 +144,6 @@ fn check_expected_server_signer(
     }
 }
 
-/// A verified response plus its multi-round-trip classification (ADR-MCPS-047),
-/// read from the signed, verified body.
-#[derive(Debug, Clone)]
-pub struct ClassifiedResponse {
-    /// The verification verdict.
-    pub verified: VerifiedMcpResponse,
-    /// Terminal vs `InputRequiredResult`.
-    pub class: ResultClass,
-}
-
 /// Verify a signed RFC 9421 response AND classify its result body for the
 /// multi-round-trip flow. Classification runs ONLY after verification succeeds, so
 /// the class is never trusted from unverified bytes.
@@ -189,40 +166,6 @@ pub fn verify_and_classify_response<R: Into<ResolverOutcome>>(
     Ok(ClassifiedResponse { verified, class })
 }
 
-/// Classify a (verified) `result` body through the profile's single discriminator
-/// ([`mcp_re_http_profile::result_class`], ADR-MCPS-047). An absent `resultType` is
-/// terminal, as MCP 2026-07-28 requires of clients; an unrecognized one is
-/// [`ResultClass::Unrecognized`], never terminal.
-///
-/// This is the typed client-side face of that one classifier, not a second copy of
-/// it: the discriminator string lives in the lower crate every reader shares, so
-/// the SEP-2322 drift guard that pins this function covers the proxy, chain
-/// reconstruction and both SDK bindings too.
-pub fn classify_result(result: Option<&Value>) -> ResultClass {
-    use mcp_re_http_profile::result_class::ResultTypeClass;
-    match mcp_re_http_profile::result_class::classify_result_type(result) {
-        ResultTypeClass::InputRequired => ResultClass::InputRequired,
-        ResultTypeClass::Complete => ResultClass::Terminal,
-        ResultTypeClass::Unrecognized => ResultClass::Unrecognized,
-    }
-}
-
-/// The continuation state a VERIFIED response carries, for callers that must act
-/// on a live exchange rather than reconstruct a record: `Some(state)` for an
-/// `InputRequiredResult`, `None` for a terminal reply, and an ERROR for a reply
-/// that announces itself non-terminal without a usable `requestState`.
-///
-/// This is what the SDK bindings call. Each of them used to open-code the JSON walk
-/// and collapse the malformed case to `None`, which their transports read as
-/// terminal: the open leg's correlation entry was consumed, the input-required
-/// callback never fired, no answer leg was ever signed, and an elicitation was
-/// handed to the application as a completed tool result. See
-/// [`mcp_re_http_profile::result_class::input_required_state`] for the three-way
-/// contract.
-pub fn continuation_state(body: &[u8]) -> Result<Option<String>, HttpProfileError> {
-    mcp_re_http_profile::result_class::input_required_state(body)
-}
-
 // ---- ADR-MCPRE-052 delegated-required client verification (MCPRE-122) --------
 
 /// The deployment policy the client applies when verifying a DELEGATED-key-signed
@@ -242,16 +185,21 @@ pub struct DelegationPolicy {
     /// The accepted trust-epoch set (default `{ current }`, optionally
     /// `{ current, previous }` in a bounded rollout window).
     pub accepted_epochs: Vec<String>,
-    /// Clock-skew tolerance, seconds, as CONFIGURED. The value actually applied is
-    /// [`DelegationPolicy::bounded_clock_skew`] — the field is `pub`, so nothing can
-    /// guarantee it was ever validated, and both windows read the bounded value rather
-    /// than this one.
+    /// Clock-skew tolerance, seconds, ALREADY bounded to the profile's
+    /// `0..=MAX_CLOCK_SKEW_BOUND` range.
+    ///
+    /// Private, and that is the whole change: the field used to be `pub` and its own
+    /// documentation said so — *nothing can guarantee it was ever validated*. The clamp
+    /// lived in [`bounded_clock_skew`](Self::bounded_clock_skew), which every reader had to
+    /// remember to call, and a reader that took the field directly got the unbounded
+    /// number. Now [`new`](Self::new) is the only producer and it clamps, so the bound is a
+    /// property of every inhabitant rather than of the call sites somebody checked.
     ///
     /// It governs BOTH the credential's `nbf`/`exp` window and the RFC 9421
     /// response-signature freshness gate, and the two must be the same number: a
     /// deployment that widened the skew for a real clock spread and got it on one
     /// window only is running two different notions of "close enough" on one message.
-    pub max_clock_skew: i64,
+    clock_skew: i64,
 }
 
 impl DelegationPolicy {
@@ -273,8 +221,7 @@ impl DelegationPolicy {
     ///
     /// [`VerifierPolicy::new`]: mcp_re_http_profile::VerifierPolicy::new
     fn bounded_clock_skew(&self) -> i64 {
-        self.max_clock_skew
-            .clamp(0, mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND)
+        self.clock_skew
     }
 
     /// The RFC 9421 signature-acceptance policy this delegation policy implies.
@@ -287,7 +234,14 @@ impl DelegationPolicy {
             .unwrap_or_default()
     }
 
-    /// Build a delegation policy.
+    /// Build a delegation policy, bounding the configured clock skew as it goes.
+    ///
+    /// The clamp is HERE and nowhere else. A configured 604800 accepted a delegated
+    /// credential a week past its `exp` while the signature gate silently clamped the same
+    /// number — the TTL is the primary bound on a compromised delegated key, so that window
+    /// has to stay bounded (DEL-4). Applying it at construction is what makes *both gates
+    /// read one bounded number* true of every policy rather than of the paths that
+    /// remembered to ask for the bounded projection.
     pub fn new(
         verifier_audiences: Vec<String>,
         expected_audience_hash: impl Into<String>,
@@ -298,7 +252,8 @@ impl DelegationPolicy {
             verifier_audiences,
             expected_audience_hash: expected_audience_hash.into(),
             accepted_epochs,
-            max_clock_skew,
+            clock_skew: max_clock_skew
+                .clamp(0, mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND),
         }
     }
 }
@@ -604,6 +559,54 @@ pub fn verify_delegated_accepted_202_pinned(
         }
     }
     Ok(acknowledged.into_actor())
+}
+
+#[cfg(test)]
+mod policy_seal_tests {
+    //! MCPRE-172 item 6 — the clock-skew carrier is sealed at construction.
+
+    use super::*;
+
+    #[test]
+    fn a_configured_skew_beyond_the_profile_bound_is_not_constructible() {
+        // The operational test for a seal: can the check be deleted and still leave an
+        // invalid value unconstructible? The clamp used to live in the projection every
+        // reader had to remember to call, and a reader taking the field got 604800 — a
+        // delegated credential accepted a week past its `exp`. There is now no inhabitant
+        // carrying it.
+        let policy = DelegationPolicy::new(
+            vec!["aud".to_owned()],
+            "hash",
+            vec!["epoch".to_owned()],
+            604_800,
+        );
+        assert_eq!(
+            policy.bounded_clock_skew(),
+            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND
+        );
+    }
+
+    #[test]
+    fn a_negative_skew_narrows_to_zero_rather_than_skewing_the_window_backwards() {
+        let policy =
+            DelegationPolicy::new(vec!["aud".to_owned()], "hash", vec!["epoch".to_owned()], -1);
+        assert_eq!(policy.bounded_clock_skew(), 0);
+    }
+
+    #[test]
+    fn both_gates_read_the_same_bounded_number() {
+        // The property the field's own documentation states: the credential window and the
+        // RFC 9421 signature window must be one number. The verifier policy is built from
+        // the same bounded value the credential expectations carry.
+        let policy = DelegationPolicy::new(
+            vec!["aud".to_owned()],
+            "hash",
+            vec!["epoch".to_owned()],
+            120,
+        );
+        assert_eq!(policy.verifier_policy().max_clock_skew(), 120);
+        assert_eq!(policy.bounded_clock_skew(), 120);
+    }
 }
 
 #[cfg(test)]

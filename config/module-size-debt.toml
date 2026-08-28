@@ -146,11 +146,13 @@ review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 # re-parse of the credential header out at 993. Re-established at the measurement rather
 # than left as headroom nobody paid for, with the SHA that establishes it. Item 3 then moved
 # the trust-anchor lifecycle and the revocation seam under `delegated_trust/`: 993 -> 739,
-# and item 4 the execution/retry contract to `execution_contract.rs`: 739 -> 608.
+# item 4 the execution/retry contract to `execution_contract.rs`: 739 -> 608; and EX-009's
+# own disposition — result classification, which is not verification — to
+# `result_classification.rs`: 608 -> 564, absorbing the 13 lines the clock-skew seal added.
 [[debt]]
 path = "mcp-re-client-core/src/response.rs"
-baseline_prod_loc = 608
-baseline_sha = "27d8612"
+baseline_prod_loc = 564
+baseline_sha = "9fecad9"
 status = "unreviewed"
 
 [[debt]]
