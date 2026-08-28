@@ -18,7 +18,7 @@
 
 use std::net::SocketAddr;
 
-use super::address::resolved_ip_is_public;
+use super::resolved_ip_is_public;
 
 /// The DNS resolution seam ([`VettingResolver`] vets whatever this returns). The
 /// production implementation defers to the OS resolver via `std`'s

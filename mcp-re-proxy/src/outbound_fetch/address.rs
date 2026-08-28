@@ -59,7 +59,7 @@ pub(super) fn ipv6_is_public(v6: &Ipv6Addr) -> bool {
 /// SAME predicates the literal-IP guard applies. The single chokepoint through
 /// which every resolved OCSP-fetch address must pass (see [`VettingResolver`]);
 /// it must never be weakened independently of `ipv4_is_public`/`ipv6_is_public`.
-pub(super) fn resolved_ip_is_public(ip: &IpAddr) -> bool {
+pub fn resolved_ip_is_public(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => ipv4_is_public(v4),
         IpAddr::V6(v6) => ipv6_is_public(v6),

@@ -1222,15 +1222,23 @@ one, and it is a decision for whoever takes the remainder up.
 
 #### Action 1 — authority E extracted, and compiled unconditionally
 
-`mcp-re-proxy/src/outbound_fetch/` — 479 production lines across four modules, none over the
-threshold:
+`mcp-re-proxy/src/outbound_fetch/` — four modules, none over the threshold:
 
-| module | prod | the one fact it owns |
-|---|---:|---|
-| `mod.rs` | 135 | a destination has passed the guard its PROVENANCE requires |
-| `url.rs` | 57 | the scheme and host a URL names |
-| `address.rs` | 186 | whether an address or host is outside our own network |
-| `resolver.rs` | 101 | every address connected to has passed the address guard |
+| module | prod | gate | the one fact it owns |
+|---|---:|---|---|
+| `mod.rs` | 155 | **none** | a destination has passed the guard its PROVENANCE requires |
+| `url.rs` | 57 | **none** | the scheme and host a URL names |
+| `address.rs` | 180 | **none** | whether an address or host is outside our own network |
+| `resolver.rs` | 101 | `online_ocsp` | every address connected to has passed the address guard |
+
+**392 unconditional lines — the POLICY the census measured at 336 — and one gated module.**
+The gate on `resolver.rs` (and on `VettedDestination::agent`, which installs it) is not the
+coupling the census objected to. Binding the policy into a `ureq` agent can only exist where
+an HTTP client is linked, and ADR-MCPS-018 keeps the default closure lean: the Bazel base
+flavor deliberately links no HTTP client, which is how this was caught — `bazel build
+//mcp-re-proxy:mcp_re_proxy` failed with `unresolved module or unlinked crate ureq` on the
+first attempt to compile the whole authority unconditionally. The policy is unconditional;
+the client binding cannot be, and the distinction is now stated rather than incidental.
 
 **Provenance is carried in the TYPE, not in a bool or a caller's assertion.** The census
 found the guard applied by a caller matching on a `Copy` enum three lines above the fetch —

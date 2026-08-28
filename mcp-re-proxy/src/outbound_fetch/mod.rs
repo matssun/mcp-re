@@ -43,11 +43,29 @@
 //! ```
 
 mod address;
-mod resolver;
 mod url;
 
+pub use address::resolved_ip_is_public;
+
+// The HTTP-CLIENT BINDING, and the only part of this authority that is feature-gated.
+//
+// The POLICY above — scheme allowlist, private-address classification, the `inet_aton`
+// canonicalizer, the public-range predicates — is unconditional, which is what the census
+// asked for: any future outbound fetch needs it, and it must not be reachable only through
+// a gate that has nothing to do with it.
+//
+// Installing that policy into a `ureq` agent is a different thing, and it can only exist
+// where an HTTP client is linked. ADR-MCPS-018 keeps the default closure lean and the
+// Bazel base flavor deliberately links no HTTP client at all, so this half rides the
+// feature that brings one in. That is a real constraint on the BINDING, not the accidental
+// coupling of the guard the census objected to.
+#[cfg(feature = "online_ocsp")]
+mod resolver;
+
+#[cfg(feature = "online_ocsp")]
 use std::time::Duration;
 
+#[cfg(feature = "online_ocsp")]
 use self::resolver::VettingResolver;
 
 /// A destination this proxy may fetch from, and the provenance that decided how it was
@@ -68,9 +86,16 @@ pub struct VettedDestination {
 
 /// Where a destination came from, which is what decides the guard it had to pass.
 ///
-/// Private: it is not an input. It is recorded by whichever constructor ran.
+/// Readable, and NOT settable. A caller obtains one only by reading it off a destination
+/// some constructor recorded it on; there is no way to hand a `Provenance` in. That is what
+/// makes [`VettedDestination::provenance`] a projection rather than the flag the census
+/// found — the value says which guard ALREADY ran, not which one should.
+///
+/// It is `pub` because an outbound fetch that does not use `ureq` still has to configure
+/// its own client from it, and this authority exists so that every such fetch reaches the
+/// same policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Provenance {
+pub enum Provenance {
     /// Read out of a certificate — ATTACKER-INFLUENCED.
     CertificateDerived,
     /// Configured by the operator — trusted configuration.
@@ -116,13 +141,28 @@ impl VettedDestination {
         &self.url
     }
 
+    /// Where this destination came from, and therefore which guard it passed.
+    ///
+    /// For a client this module does not itself build. [`agent`](Self::agent) is the
+    /// `ureq` binding and is feature-gated with the crate that provides it; a future async
+    /// outbound fetch configures its own client, and this is what it reads to know whether
+    /// resolved-address vetting is required. It still cannot be SET: the answer is whatever
+    /// the constructor recorded.
+    pub fn provenance(&self) -> Provenance {
+        self.provenance
+    }
+
     /// An HTTP agent configured for THIS destination's provenance.
+    ///
+    /// Feature-gated with the resolver it installs, for the reason stated on that module:
+    /// the guard is unconditional, binding it to an HTTP client cannot be.
     ///
     /// A capability, not a flag. Redirects are disabled for every provenance — a revocation
     /// fetch has no legitimate need to chase a `302 Location: http://169.254.169.254/`, and
     /// the first URL is the only one any guard saw. The resolved-address vetting is
     /// installed only for a certificate-derived destination, for the same reason the
     /// literal-address block is.
+    #[cfg(feature = "online_ocsp")]
     pub fn agent(&self, _timeout: Duration) -> ureq::Agent {
         let builder = ureq::AgentBuilder::new().redirects(0);
         let builder = match self.provenance {
