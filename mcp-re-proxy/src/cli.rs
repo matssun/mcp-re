@@ -104,7 +104,7 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     // the deployment-default window T, so an absent flag preserves the existing
     // Tier-1 posture exactly.
     let mut revocation_tier = crate::revocation_tier::RevocationTier::BoundedCache {
-        t_secs: crate::trust_cache::DEFAULT_T_SECS,
+        t_secs: crate::trust_plane::DEFAULT_T_SECS,
     };
     let mut binding = BindingKind::Exact;
     let mut identity_source = IdentityPolicy::UriSan;
@@ -3646,7 +3646,7 @@ mod tests {
         assert_eq!(
             config.revocation_tier,
             crate::revocation_tier::RevocationTier::BoundedCache {
-                t_secs: crate::trust_cache::DEFAULT_T_SECS
+                t_secs: crate::trust_plane::DEFAULT_T_SECS
             }
         );
     }

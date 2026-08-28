@@ -41,14 +41,60 @@
 //! apart. A graceful drain therefore fails verification closed rather than leaving a
 //! surviving resolver as an indefinitely-valid frozen verifier.
 
+/// The Tier-3 invalidation seam: the event vocabulary and the source contract.
+mod invalidation_channel;
+/// Tier 2: consult the store on every call, so a revocation is visible on the next request.
+mod live_trust;
+/// Tier 3: a bounded cache an external event may evict early.
+mod push_trust;
+
+/// Whether the trust store is still being maintained, and the resolver that refuses to
+/// answer once it is not.
+mod freshness;
+mod reload;
+/// Re-reading `--trust` on a cadence, and the bounded budget that stops it pretending.
+/// What a `--trust` document becomes: one read, two products that cannot disagree.
+mod snapshot;
+use reload::spawn_trust_reload_task;
+use snapshot::load_trust_snapshot;
+
+/// What revocation window this deployment actually DELIVERS, as the operator is told it at
+/// startup.
+pub(in crate::trust_plane) mod delivered_window;
+use delivered_window::delivered_revocation_window;
+use delivered_window::store_change_cadence;
+use freshness::StaleFailsClosed;
+use freshness::TrustStoreFreshness;
+/// Materialisation of a revocation policy as runtime resolver behaviour — WHICH structure
+/// implements the declared tier. Private: the tier is a policy choice a deployment
+/// declares, and the wiring that honours it is nobody else's business.
+mod revocation_resolver;
+/// Tier 1 and the bounded window `T` every caching tier runs under.
+mod trust_cache;
+/// WHICH window a deployment may use — as distinct from the cache that honours one.
+mod window_policy;
+
+/// The Tier-3 invalidation seam and its events.
+///
+/// The reason at the point of widening: the ADR-MCPS-021 Tier-3 guarantee is established
+/// end to end by `tests/integration_ext/redis_trust_epoch_e2e_test.rs`, which drives a
+/// real Redis trust-epoch source through the cache. That lane cannot run inside the owning
+/// module — it needs a live Redis and is feature-gated — so the seam is reachable rather
+/// than the test being weakened to something it can prove in-process.
+pub use invalidation_channel::InvalidationChannel;
+pub use invalidation_channel::InvalidationEvent;
+pub use push_trust::PushInvalidationTrustCache;
+
+/// The deployment-wide default trust-propagation window, read by the argv parser when no
+/// tier is declared. A named projection rather than a path into the cache: the parser
+/// needs the DEFAULT, not the cache.
+pub(crate) use trust_cache::DEFAULT_T_SECS;
+
 use crate::managed_worker::WorkerSet;
 use crate::reloading_trust::SignerDirectory;
 use crate::RevocationTier;
-use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
 
 /// The trust domain's materialized state and the workers that keep it fresh.
 pub struct TrustPlane {
@@ -107,7 +153,7 @@ impl TrustPlane {
         freshness: Arc<TrustStoreFreshness>,
         body: impl FnOnce(crate::managed_worker::Halt) + Send + 'static,
     ) -> Self {
-        let mut signers = HashMap::new();
+        let mut signers = std::collections::HashMap::new();
         signers.insert(TEST_KID.to_string(), TEST_SIGNER.to_string());
         let store = Arc::new(crate::reloading_trust::ReloadingTrustStore::new(
             mcp_re_core::InMemoryTrustResolver::new(),
@@ -229,7 +275,7 @@ impl TrustPlane {
                  --trust-epoch-redis-url to activate the trust-epoch push source."
             );
         }
-        let resolver = crate::revocation_resolver::build_revocation_resolver_with_channel(
+        let resolver = crate::trust_plane::revocation_resolver::build_revocation_resolver(
             &plan.revocation().tier(),
             Box::new(crate::reloading_trust::SharedTrustStore(Arc::clone(
                 &trust_store,
@@ -315,312 +361,8 @@ pub const TRUST_EPOCH_POLL_SECS: u64 = 5;
 /// The production [`UnixClock`] the revocation-tier resolver wrapping uses to bound
 /// the propagation window `T` (ADR-MCPS-021). Delegates to the trust-cache's
 /// system clock so production and the unit-tested helper share one clock type.
-fn trust_clock() -> crate::trust_cache::UnixClock {
-    crate::trust_cache::system_clock()
-}
-/// Read `--trust` and build the snapshot the revocation tiers resolve against.
-///
-/// Two things come out of one read so they can never disagree: the
-/// [`InMemoryTrustResolver`](mcp_re_core::InMemoryTrustResolver) that answers
-/// `resolve`, and the `kid -> signer` map the actor seam uses as the identity
-/// coordinate. `response_kid` is excluded from the request-signer map: the
-/// deployment's own issuer key must never be presentable as a client credential.
-fn load_trust_snapshot(
-    trust_path: &str,
-    response_kid: &str,
-) -> Result<crate::reloading_trust::ReloadingTrustStore, String> {
-    let (resolver, signers) = read_trust_file(trust_path, response_kid)?;
-    Ok(crate::reloading_trust::ReloadingTrustStore::new(
-        resolver, signers,
-    ))
-}
-/// The file read shared by startup and every reload.
-fn read_trust_file(
-    trust_path: &str,
-    response_kid: &str,
-) -> Result<(mcp_re_core::InMemoryTrustResolver, HashMap<String, String>), String> {
-    let bytes = std::fs::read(trust_path).map_err(|e| format!("{trust_path}: {e}"))?;
-    let resolver = crate::trust_document::load_trust(&bytes)?;
-    // Slot-scoped: only entries this file enrols for the REQUEST slot become client
-    // request signers. A key carried here for another purpose is not one.
-    let signers = crate::trust_document::load_trust_request_signers(&bytes, response_kid)?;
-    Ok((resolver, signers))
-}
-/// The qualifier carried on the revocation-tier startup line: how fast the trust STORE
-/// itself can change.
-///
-/// Every tier's window is a claim about how quickly a key removed from `--trust` stops
-/// resolving, and nothing resolves faster than the file is re-read. The default tier
-/// (`bounded-cache`) is accepted without a cadence — unlike `live`/`push`, whose claims
-/// are refused outright without one — so its "enforced fleet-wide within T" line is the
-/// one an operator gets by omission. The correction therefore rides on the SAME line as
-/// the claim: as a separate line further down it was read as being about something else,
-/// and the tier line was quoted on its own.
-fn store_change_cadence(reload: crate::startup_plan::TrustReloadPlan) -> String {
-    match reload.cadence_secs() {
-        Some(secs) => format!("{secs}s (--trust re-read on that cadence)"),
-        None => "NONE: --trust is read once at startup, so the window above bounds CACHING \
-                 only — the store itself changes only when every replica restarts"
-            .to_string(),
-    }
-}
-/// The revocation window the deployment actually delivers: the store cadence `R` and the
-/// tier's cached-entry lifetime `T` ADD, and this states the sum.
-///
-/// A reload swaps the snapshot the tier resolves AGAINST; it holds no handle to the tier's
-/// cache and evicts nothing, and a cached entry restarts a full `T` at every miss. So an
-/// entry re-cached one tick before the swap survives it by a further `T`, and a key removed
-/// from `--trust` can keep resolving for up to `R + T`. `Live` caches no positive trust, so
-/// there the store cadence is the whole window.
-///
-/// Stated as arithmetic because every other surface prints the two numbers side by side and
-/// leaves the composition to a preposition, which an operator sizing an incident response
-/// reads as "the tighter of" rather than "add these".
-fn delivered_revocation_window(
-    tier: &RevocationTier,
-    reload: crate::startup_plan::TrustReloadPlan,
-) -> String {
-    let Some(cadence) = reload.cadence_secs() else {
-        return "UNBOUNDED: --trust is read once at startup, so a removed key keeps \
-                resolving until every replica restarts"
-            .to_string();
-    };
-    let r = i64::try_from(cadence.get()).unwrap_or(i64::MAX);
-    match tier {
-        RevocationTier::Live => format!(
-            "worst case {r}s (the store cadence R={r}s; this tier caches no positive trust)"
-        ),
-        RevocationTier::BoundedCache { t_secs } | RevocationTier::Push { t_secs } => {
-            let total = r.saturating_add(*t_secs);
-            format!(
-                "worst case {total}s = R {r}s + T {t_secs}s (the reload swaps the store but \
-                 evicts nothing already cached, so a cached entry outlives the swap by a \
-                 further T)"
-            )
-        }
-    }
-}
-/// How many consecutive failed `--trust` re-reads are absorbed before the resolver
-/// fails closed.
-///
-/// Keeping the last-good store across a blip is deliberate: a truncated file caught
-/// mid-write must not empty the trust map. But "keep last-good" with no bound restores
-/// exactly the unbounded revocation window the reload exists to close — the replica
-/// keeps honouring a key the operator removed, indefinitely, while its startup line
-/// promises a one-cadence window. Five consecutive failures is far longer than a
-/// ConfigMap remount or an editor's save and short enough that an incident-time
-/// revocation is not silently ignored.
-const TRUST_RELOAD_FAILURE_BUDGET: u32 = 5;
-/// Whether the trust store is still fresh enough to answer.
-///
-/// Set by [`spawn_trust_reload_task`] when the file has been unreadable for
-/// [`TRUST_RELOAD_FAILURE_BUDGET`] consecutive cadences, or when the reload thread has
-/// died. Read by the resolver wrapper below on every verification, which is what makes
-/// it a real fail-closed rather than a log line.
-#[derive(Debug, Default)]
-struct TrustStoreFreshness {
-    stale: std::sync::atomic::AtomicBool,
-    /// Set by [`mark_stale_permanently`](Self::mark_stale_permanently). Separate from
-    /// `stale` because the two stalenesses differ in whether a later reload may undo
-    /// them: exhausting the failure budget is recoverable, and
-    /// [`mark_fresh`](Self::mark_fresh) is the recovery it exists to allow, while the
-    /// owner going away or the reload thread dying is not. Held in one flag, the
-    /// difference is not representable and the next successful read reverses either.
-    terminal: std::sync::atomic::AtomicBool,
-}
-impl TrustStoreFreshness {
-    fn mark_stale(&self) {
-        self.stale.store(true, Ordering::SeqCst);
-    }
-
-    /// Stale, permanently: no later reload can report this store fresh again.
-    ///
-    /// For the two cases the store is not meant to recover from — the owning
-    /// [`TrustPlane`] being dropped, and the reload thread dying — both of which say so,
-    /// and neither of which could enforce it while the flag they set was one a live
-    /// reload could overwrite.
-    fn mark_stale_permanently(&self) {
-        self.terminal.store(true, Ordering::SeqCst);
-        self.mark_stale();
-    }
-
-    fn mark_fresh(&self) {
-        if self.terminal.load(Ordering::SeqCst) {
-            return;
-        }
-        self.stale.store(false, Ordering::SeqCst);
-    }
-
-    fn is_stale(&self) -> bool {
-        self.terminal.load(Ordering::Relaxed) || self.stale.load(Ordering::Relaxed)
-    }
-}
-/// The request-trust resolver, refusing to answer at all once the store behind it has
-/// stopped being maintained — whether because the reload exhausted its failure budget or
-/// because the owning [`TrustPlane`] retired.
-///
-/// `Unavailable` and not `NotFound`: a frozen store still HOLDS the revoked key, so
-/// answering from it is the one outcome that must not happen, and reporting the outage
-/// as an unknown keyid would send the operator hunting a client bug. The verifier maps
-/// this to `mcp-re.trust_resolver_unavailable`, which is what a stale store actually is.
-struct StaleFailsClosed {
-    inner: Arc<dyn mcp_re_core::TrustResolver + Send + Sync>,
-    freshness: Arc<TrustStoreFreshness>,
-}
-impl mcp_re_core::TrustResolver for StaleFailsClosed {
-    fn resolve(
-        &self,
-        signer: &str,
-        key_id: &str,
-    ) -> Result<mcp_re_core::VerificationKey, mcp_re_core::TrustResolverError> {
-        if self.freshness.is_stale() {
-            return Err(mcp_re_core::TrustResolverError::Unavailable {
-                details: "nothing is maintaining the trust store: either --trust has not \
-                          been re-read successfully for several cadences, or the trust \
-                          plane that owned the refresh is gone. A key revoked in --trust \
-                          would still resolve from the frozen snapshot, so verification \
-                          fails closed"
-                    .to_string(),
-            });
-        }
-        self.inner.resolve(signer, key_id)
-    }
-}
-/// Re-read `--trust` on a cadence and swap the snapshot atomically.
-///
-/// The same shape as [`spawn_crl_reload_task`], and for the same reason: a
-/// revocation mechanism that needs a restart is not one an operator can use during an
-/// incident. A FAILED read keeps the last-good store — a truncated file caught
-/// mid-write must not empty the trust map, because an empty map rejects every request
-/// and would turn an editor's save into a fleet-wide outage.
-///
-/// That tolerance is BOUNDED. Unlike a CRL, an `InMemoryTrustResolver` carries no
-/// expiry, so nothing makes a frozen snapshot stop being honoured on its own; after
-/// [`TRUST_RELOAD_FAILURE_BUDGET`] consecutive failures the resolver fails closed
-/// instead. SUPERVISED for the same reason as the rotation owner: nothing joins this
-/// thread, so a panic (a poisoned lock, a closed stderr) would otherwise end reloading
-/// for the process lifetime while every surface still read healthy.
-fn spawn_trust_reload_task(
-    workers: &mut crate::managed_worker::WorkerSet,
-    store: Arc<crate::reloading_trust::ReloadingTrustStore>,
-    trust_path: String,
-    response_kid: String,
-    interval_secs: u64,
-    freshness: Arc<TrustStoreFreshness>,
-) {
-    let halt = workers.halt();
-    workers.spawn("trust store reload", move || {
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            trust_reload_loop(
-                &store,
-                &trust_path,
-                &response_kid,
-                interval_secs,
-                &freshness,
-                &halt,
-            );
-        }));
-        if outcome.is_err() {
-            freshness.mark_stale_permanently();
-            eprintln!(
-                "mcp-re-proxy: FATAL: the trust store reload thread PANICKED. --trust is no \
-                 longer being re-read, so a key revoked in it would keep resolving from the \
-                 frozen snapshot; request verification now fails closed \
-                 (trust_resolver_unavailable) rather than serving a store that cannot change. \
-                 This replica cannot recover on its own — restart it."
-            );
-        }
-    });
-}
-/// The reload loop proper. Split out so the supervisor above can catch a panic from
-/// anywhere inside it.
-fn trust_reload_loop(
-    store: &crate::reloading_trust::ReloadingTrustStore,
-    trust_path: &str,
-    response_kid: &str,
-    interval_secs: u64,
-    freshness: &TrustStoreFreshness,
-    halt: &crate::managed_worker::Halt,
-) {
-    let mut consecutive_failures: u32 = 0;
-    loop {
-        // Naps in small increments, so a halt is observed within one increment rather
-        // than after a whole reload interval.
-        if halt.sleep(Duration::from_secs(interval_secs)) {
-            // Past this return nothing re-reads `--trust` on this replica while the
-            // process keeps serving, so the snapshot's revocation window is unbounded.
-            // PERMANENTLY, because there is no reload left to recover it. `Halt`
-            // collapses its two sources on purpose — a worker never asks why it is
-            // stopping — and the security consequence is identical either way, so
-            // failing closed with `trust_resolver_unavailable` is the correct side of
-            // the trade for a drain as well as for a retirement.
-            freshness.mark_stale_permanently();
-            return;
-        }
-        consecutive_failures = trust_reload_cycle(
-            store,
-            trust_path,
-            response_kid,
-            freshness,
-            consecutive_failures,
-        );
-    }
-}
-/// One re-read of `--trust`: swap the snapshot, or absorb the failure against the budget.
-///
-/// Takes and returns the running count of CONSECUTIVE failures, so the budget the
-/// fail-closed hangs off is a value the caller carries rather than state reachable only
-/// from inside a loop that never returns.
-fn trust_reload_cycle(
-    store: &crate::reloading_trust::ReloadingTrustStore,
-    trust_path: &str,
-    response_kid: &str,
-    freshness: &TrustStoreFreshness,
-    consecutive_failures: u32,
-) -> u32 {
-    match read_trust_file(trust_path, response_kid) {
-        Ok((resolver, signers)) => {
-            let enrolled = signers.len();
-            let recovered = consecutive_failures > 0;
-            store.store(resolver, signers);
-            freshness.mark_fresh();
-            if recovered {
-                eprintln!(
-                    "mcp-re-proxy: trust store reload RECOVERED; {enrolled} request-signer \
-                     key(s) live, verification is serving again"
-                );
-            } else {
-                eprintln!(
-                    "mcp-re-proxy: trust store reloaded; {enrolled} request-signer key(s) live"
-                );
-            }
-            0
-        }
-        Err(reason) => {
-            let consecutive_failures = consecutive_failures.saturating_add(1);
-            if consecutive_failures >= TRUST_RELOAD_FAILURE_BUDGET {
-                freshness.mark_stale();
-                eprintln!(
-                    "mcp-re-proxy: trust store reload FAILED {consecutive_failures}x in a row \
-                     ({reason}); the snapshot is now too old to carry the declared revocation \
-                     window, so request verification FAILS CLOSED \
-                     (trust_resolver_unavailable) until a reload succeeds. Fix the --trust \
-                     mount at {trust_path}."
-                );
-            } else {
-                eprintln!(
-                    "mcp-re-proxy: WARNING: trust store reload FAILED \
-                     ({consecutive_failures}/{TRUST_RELOAD_FAILURE_BUDGET}), keeping last-good \
-                     store: {reason}. The last-good store still holds every key present at the \
-                     last successful read, including any the operator has removed since, and it \
-                     keeps resolving them for up to {TRUST_RELOAD_FAILURE_BUDGET} cadences on \
-                     top of the declared window; at {TRUST_RELOAD_FAILURE_BUDGET} consecutive \
-                     failures verification fails closed."
-                );
-            }
-            consecutive_failures
-        }
-    }
+fn trust_clock() -> crate::trust_plane::trust_cache::UnixClock {
+    crate::trust_plane::trust_cache::system_clock()
 }
 /// MCPS-84 (ADR-MCPS-049 W2): build the networked trust-epoch invalidation channel
 /// for the ADR-021 Push tier when `--trust-epoch-redis-url` is configured. Under
@@ -1068,7 +810,7 @@ mod handle_lifetime_tests {
     fn plane() -> TrustPlane {
         TrustPlane::for_teardown_test(|halt| {
             while !halt.requested() {
-                std::thread::sleep(Duration::from_millis(5));
+                std::thread::sleep(std::time::Duration::from_millis(5));
             }
         })
     }
@@ -1236,195 +978,5 @@ mod handle_lifetime_tests {
             Err(mcp_re_core::TrustResolverError::Unavailable { .. })
         ));
         assert!(signers.signer_for(KID).is_some());
-    }
-}
-
-/// The reload loop itself: what a halt does to the store, what a cycle does to the
-/// snapshot, and how much exposure the failure budget buys before it fails closed.
-///
-/// These drive `trust_reload_loop`/`trust_reload_cycle` rather than the freshness flag,
-/// because every other test in this file hand-drives the flag — which proves the resolver
-/// honours it and nothing about whether anything sets it.
-#[cfg(test)]
-mod reload_loop_tests {
-    use super::*;
-    use mcp_re_core::TrustResolver;
-
-    const SIGNER: &str = "did:example:client";
-
-    /// A trust file enrolling exactly `key_id`, at a path unique to this test.
-    fn trust_file(tag: &str, key_id: &str) -> std::path::PathBuf {
-        let key = mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32]).public_key();
-        let path = std::env::temp_dir().join(format!(
-            "mcp_re_trust_reload_{tag}_{}.json",
-            std::process::id()
-        ));
-        std::fs::write(
-            &path,
-            format!(
-                r#"[{{"signer":"{SIGNER}","key_id":"{key_id}","public_key":"{}"}}]"#,
-                key.to_b64url()
-            ),
-        )
-        .expect("write trust file");
-        path
-    }
-
-    fn empty_store() -> crate::reloading_trust::ReloadingTrustStore {
-        crate::reloading_trust::ReloadingTrustStore::new(
-            mcp_re_core::InMemoryTrustResolver::new(),
-            HashMap::new(),
-        )
-    }
-
-    /// A clean stop on the DEPLOYMENT's shutdown flag freezes the store, and a frozen store
-    /// must not keep answering.
-    ///
-    /// `Halt` collapses its two sources on purpose — the worker never asks why it is
-    /// stopping — so the only place the consequence can be applied is the loop's own halt
-    /// exit. During a graceful drain the process keeps serving after this returns, and
-    /// `TrustStoreFreshness` is a plain latch rather than a time bound, so nothing else
-    /// would ever notice that `--trust` had stopped being re-read.
-    #[test]
-    fn a_halted_reloader_marks_the_trust_store_stale() {
-        let deployment = Arc::new(AtomicBool::new(false));
-        let workers = WorkerSet::new(Arc::clone(&deployment));
-        let halt = workers.halt();
-        let freshness = TrustStoreFreshness::default();
-        freshness.mark_fresh();
-
-        // The operator's shutdown flag, with the plane still alive and still serving.
-        deployment.store(true, Ordering::SeqCst);
-        trust_reload_loop(
-            &empty_store(),
-            "/nonexistent/trust.json",
-            "response-kid",
-            60,
-            &freshness,
-            &halt,
-        );
-
-        assert!(
-            freshness.is_stale(),
-            "a reloader that stopped while the process keeps serving left the store \
-             answering from a snapshot nothing re-reads"
-        );
-        freshness.mark_fresh();
-        assert!(
-            freshness.is_stale(),
-            "the staleness must be terminal: no reload can follow a halt to recover it"
-        );
-    }
-
-    /// A cycle REPLACES the map the resolver answers from, and resets the failure budget.
-    #[test]
-    fn a_reload_cycle_replaces_the_map_the_resolver_answers_from() {
-        let path = trust_file("swap", "kid-old");
-        let trust_path = path.to_string_lossy().into_owned();
-        let store = load_trust_snapshot(&trust_path, "response-kid").expect("initial snapshot");
-        assert!(
-            store.resolve(SIGNER, "kid-old").is_ok(),
-            "the enrolled key resolves before the file changes"
-        );
-
-        // The operator revokes kid-old by removing it from --trust.
-        let _ = trust_file("swap", "kid-new");
-        let freshness = TrustStoreFreshness::default();
-        let failures = trust_reload_cycle(&store, &trust_path, "response-kid", &freshness, 3);
-
-        let _ = std::fs::remove_file(&path);
-        assert_eq!(failures, 0, "a successful read resets the failure budget");
-        assert!(
-            !freshness.is_stale(),
-            "a successful read leaves the store fresh"
-        );
-        assert!(
-            store.resolve(SIGNER, "kid-old").is_err(),
-            "the revoked key still resolved: the reload did not replace the snapshot"
-        );
-        assert!(
-            store.resolve(SIGNER, "kid-new").is_ok(),
-            "the re-read map is the one the resolver now answers from"
-        );
-    }
-
-    /// The keep-last-good tolerance is bounded, and the bound is exactly the budget.
-    ///
-    /// Asserted at both edges: the fourth failure must still serve — collapsing it to a
-    /// fail-closed turns an editor's save into a fleet outage — and the fifth must not.
-    #[test]
-    fn the_failure_budget_fails_closed_on_exactly_the_fifth_consecutive_bad_read() {
-        let freshness = TrustStoreFreshness::default();
-        let mut failures = 0;
-        for expected in 1..TRUST_RELOAD_FAILURE_BUDGET {
-            failures = trust_reload_cycle(
-                &empty_store(),
-                "/nonexistent/trust.json",
-                "response-kid",
-                &freshness,
-                failures,
-            );
-            assert_eq!(failures, expected);
-            assert!(
-                !freshness.is_stale(),
-                "failure {expected} of {TRUST_RELOAD_FAILURE_BUDGET} must keep serving the \
-                 last-good store rather than emptying the trust map"
-            );
-        }
-
-        failures = trust_reload_cycle(
-            &empty_store(),
-            "/nonexistent/trust.json",
-            "response-kid",
-            &freshness,
-            failures,
-        );
-        assert_eq!(failures, TRUST_RELOAD_FAILURE_BUDGET);
-        assert!(
-            freshness.is_stale(),
-            "an unreadable --trust must stop verification instead of honouring a frozen \
-             snapshot indefinitely"
-        );
-        freshness.mark_fresh();
-        assert!(
-            !freshness.is_stale(),
-            "exhausting the budget is recoverable; only a halt or a dead thread is terminal"
-        );
-    }
-
-    /// The window an operator is told is the SUM, because a reload evicts nothing the tier
-    /// has already cached.
-    #[test]
-    fn a_caching_tier_states_the_cache_lifetime_on_top_of_the_store_cadence() {
-        let line = delivered_revocation_window(
-            &RevocationTier::BoundedCache { t_secs: 300 },
-            crate::startup_plan::TrustReloadPlan::Every {
-                secs: crate::config_state::TrustRevocationState::cadence(300),
-            },
-        );
-        assert!(
-            line.contains("600s"),
-            "bounded-cache:300 with a 300s cadence delivers 600s: {line}"
-        );
-
-        let live = delivered_revocation_window(
-            &RevocationTier::Live,
-            crate::startup_plan::TrustReloadPlan::Every {
-                secs: crate::config_state::TrustRevocationState::cadence(300),
-            },
-        );
-        assert!(
-            live.contains("300s") && !live.contains("600s"),
-            "a tier with no positive cache delivers the cadence alone: {live}"
-        );
-
-        let frozen = delivered_revocation_window(
-            &RevocationTier::BoundedCache { t_secs: 300 },
-            crate::startup_plan::TrustReloadPlan::ReadOnceAtStartup,
-        );
-        assert!(
-            frozen.contains("UNBOUNDED"),
-            "with no cadence the store never changes: {frozen}"
-        );
     }
 }

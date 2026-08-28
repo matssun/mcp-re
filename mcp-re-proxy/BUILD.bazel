@@ -303,7 +303,13 @@ _PROXY_LIB_SRCS = [
     "src/managed_worker.rs",
     # ADR-MCPRE-056 §8: the trust plane — owns the swappable store and its refresh
     # workers; hands out a verification resolver and a read-only signer directory.
-    "src/trust_plane.rs",
+    "src/trust_plane/mod.rs",
+    "src/trust_plane/freshness.rs",
+    "src/trust_plane/window_policy.rs",
+    "src/trust_plane/reload.rs",
+    "src/trust_plane/snapshot.rs",
+    "src/trust_plane/invalidation_channel.rs",
+    "src/trust_plane/delivered_window.rs",
     # ADR-MCPRE-056 §8 (ADR-MCPRE-052): the signing plane — root issuer, delegated
     # snapshot and rotation worker; retires the snapshot before it stops rotating.
     "src/signing_plane.rs",
@@ -320,11 +326,11 @@ _PROXY_LIB_SRCS = [
     # live / Tier 3 push) — semantic names + honest per-tier guarantee. Pure type.
     # The tier says which revocation policy applies; this materialises it as runtime
     # resolver machinery. Separate responsibilities, separate owners.
-    "src/revocation_resolver.rs",
+    "src/trust_plane/revocation_resolver.rs",
     "src/revocation_tier.rs",
     # ADR-MCPS-021 Tier 2: live strong trust check (no positive caching, optional
     # second live revocation authority, fail-closed on outage).
-    "src/live_trust.rs",
+    "src/trust_plane/live_trust.rs",
     "src/reloading_trust.rs",
     # Per-request client-cert revocation: the revoked-serial index the serving path
     # consults on every request, since rustls consults the CRLs at the handshake alone.
@@ -342,7 +348,7 @@ _PROXY_LIB_SRCS = [
     "src/tls_listener_state/resumption_binding.rs",
     # ADR-MCPS-021 Tier 3: push-invalidation trust cache (bounded-T cache + injected
     # invalidation channel; bounded-T fallback when the channel is unhealthy).
-    "src/push_trust.rs",
+    "src/trust_plane/push_trust.rs",
     # Issue #3837: shared, server-side-atomic replay cache (backend-agnostic core +
     # in-memory reference store). Always compiled; default-build, Bazel-tested.
     "src/shared_replay.rs",
@@ -386,7 +392,7 @@ _PROXY_LIB_SRCS = [
     "src/redis_admission_source.rs",
     "src/transport.rs",
     # ADR-MCPS-021: bounded trust-propagation cache (revocation window T).
-    "src/trust_cache.rs",
+    "src/trust_plane/trust_cache.rs",
     # MCPS-84 (ADR-MCPS-049 W2): trust-epoch invalidation source (Redis reader is
     # redis_replay-gated inside the module).
     "src/trust_epoch.rs",
@@ -727,7 +733,7 @@ nt_rust_test(
         "src/replay_plane.rs",
         "src/signing_plane.rs",
         "src/tls_plane.rs",
-        "src/trust_plane.rs",
+        "src/trust_plane/mod.rs",
     ],
     edition = "2021",
     env = {
@@ -739,7 +745,7 @@ nt_rust_test(
         "MCP_RE_REPLAY_PLANE_SRC": "$(rlocationpath src/replay_plane.rs)",
         "MCP_RE_SIGNING_PLANE_SRC": "$(rlocationpath src/signing_plane.rs)",
         "MCP_RE_TLS_PLANE_SRC": "$(rlocationpath src/tls_plane.rs)",
-        "MCP_RE_TRUST_PLANE_SRC": "$(rlocationpath src/trust_plane.rs)",
+        "MCP_RE_TRUST_PLANE_SRC": "$(rlocationpath src/trust_plane/mod.rs)",
     },
     deps = [
         ":mcp_re_proxy",

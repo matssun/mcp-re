@@ -39,11 +39,6 @@ use mcp_re_core::TrustResolver;
 use mcp_re_core::TrustResolverError;
 use mcp_re_core::VerificationKey;
 
-/// The maximum recommended trust-propagation window (seconds). ADR-MCPS-021 warns
-/// when a configured `T` exceeds 5 minutes (a long revocation exposure window);
-/// strict/production mode MAY cap `T` at this value unless explicitly overridden.
-pub const RECOMMENDED_MAX_T_SECS: i64 = 300;
-
 /// The deployment-wide default trust-propagation window (seconds), ADR-MCPS-021.
 pub const DEFAULT_T_SECS: i64 = 60;
 
@@ -53,29 +48,6 @@ pub const DEFAULT_T_SECS: i64 = 60;
 /// `<= DEFAULT_T_SECS`; used when wiring the Tier-1 bounded cache (and the Tier-3
 /// bounded fallback) from the CLI.
 pub const DEFAULT_NEGATIVE_TTL_SECS: i64 = 5;
-
-/// Whether a configured `T` exceeds the recommended maximum (→ the proxy warns;
-/// strict mode MAY cap). A non-positive `T` (live-check / no caching) never warns.
-pub fn t_exceeds_recommended_max(t_secs: i64) -> bool {
-    t_secs > RECOMMENDED_MAX_T_SECS
-}
-
-/// Select the **strictest applicable** trust-propagation window (ADR-MCPS-021:
-/// "a request MUST use the strictest applicable `T`").
-///
-/// Starts from the global `default_t_secs` and takes the minimum over any stricter
-/// per-sensitivity-class windows that apply to the request (admin, financial
-/// mutation, production infra, high-risk tools). Negative class windows are
-/// ignored (malformed config never widens the window); the default is clamped to
-/// non-negative. The result is the smallest — i.e. the tightest revocation
-/// exposure — of the applicable windows.
-pub fn strictest_applicable_t(default_t_secs: i64, class_windows: &[i64]) -> i64 {
-    class_windows
-        .iter()
-        .copied()
-        .filter(|t| *t >= 0)
-        .fold(default_t_secs.max(0), |acc, t| acc.min(t))
-}
 
 /// A source of the CURRENT Unix time (seconds). The proxy's impure edge — the
 /// pure `TrustResolver` trait carries no clock, so the cache owns one to bound the
@@ -189,6 +161,12 @@ const PRUNE_EVERY_N_WRITES: u64 = 64;
 const MAX_CACHE_ENTRIES: usize = 100_000;
 
 impl BoundedTrustCache {
+    // Several items below are exercised only by this module's own tests, and that is
+    // question 8 of the ADR-MCPRE-061 §8 census — *what public interface exists only
+    // because tests need it* — answered by narrowing rather than by widening: each stays
+    // `pub(super)`, and the attribute states that a production build has no caller. The
+    // capacity ceiling itself IS enforced in production; what has no production caller is
+    // the ability to change it and the manual sweep, since `store` sweeps opportunistically.
     /// Wrap `inner` with a propagation window of `t_secs` for active/revoked state
     /// and `negative_ttl_secs` for not-found/malformed negatives.
     ///
@@ -213,19 +191,22 @@ impl BoundedTrustCache {
     }
 
     /// Override the cache-entry ceiling (tests, and memory-constrained deployments).
-    pub fn with_max_entries(mut self, max_entries: usize) -> Self {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn with_max_entries(mut self, max_entries: usize) -> Self {
         self.max_entries = max_entries;
         self
     }
 
     /// Number of cached entries, expired and invalidated ones included
     /// (test/inspection aid).
-    pub fn len(&self) -> usize {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn len(&self) -> usize {
         self.cache.lock().map(|c| c.len()).unwrap_or(0)
     }
 
     /// Whether the cache holds no entries.
-    pub fn is_empty(&self) -> bool {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
@@ -326,7 +307,8 @@ impl BoundedTrustCache {
     /// Evict every entry whose window has closed (`expires_at <= now`). Opportunistic
     /// housekeeping; correctness does not depend on it (an expired entry is ignored
     /// on read), but it bounds memory for churny key sets.
-    pub fn prune(&self, now: i64) {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn prune(&self, now: i64) {
         if let Ok(mut cache) = self.cache.lock() {
             cache.retain(|_, e| e.expires_at > now);
         }
@@ -753,31 +735,6 @@ mod tests {
             cache.resolve("did:host", "key-1"),
             Err(TrustResolverError::Unavailable { .. })
         ));
-    }
-
-    #[test]
-    fn strictest_applicable_t_picks_the_tightest_window() {
-        use super::strictest_applicable_t;
-        // No class overrides → the global default.
-        assert_eq!(strictest_applicable_t(60, &[]), 60);
-        // A stricter class window wins (smaller = tighter exposure).
-        assert_eq!(strictest_applicable_t(60, &[10]), 10);
-        // The strictest of several applicable classes wins.
-        assert_eq!(strictest_applicable_t(60, &[30, 5, 45]), 5);
-        // A looser class window never widens past the default.
-        assert_eq!(strictest_applicable_t(60, &[120]), 60);
-        // Negative (malformed) class windows are ignored, not treated as 0.
-        assert_eq!(strictest_applicable_t(60, &[-1, 20]), 20);
-    }
-
-    #[test]
-    fn t_exceeds_recommended_max_flags_long_windows() {
-        use super::t_exceeds_recommended_max;
-        use super::RECOMMENDED_MAX_T_SECS;
-        assert!(!t_exceeds_recommended_max(RECOMMENDED_MAX_T_SECS));
-        assert!(t_exceeds_recommended_max(RECOMMENDED_MAX_T_SECS + 1));
-        assert!(!t_exceeds_recommended_max(0), "no caching never warns");
-        assert!(!t_exceeds_recommended_max(super::DEFAULT_T_SECS));
     }
 
     #[test]

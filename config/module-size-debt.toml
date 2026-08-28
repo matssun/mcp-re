@@ -259,9 +259,16 @@ status = "reviewed-action-required"
 review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 
 [[debt]]
-path = "mcp-re-proxy/src/trust_plane.rs"
-baseline_prod_loc = 690
-baseline_sha = "d1fc5fa"
+# MCPRE-149 gave the trust subtree a facade: `trust_plane.rs` became `trust_plane/mod.rs`
+# and four subordinates moved under it as PRIVATE modules. The debt moves WITH each file —
+# dropping an entry because the path changed would launder registered lines as progress —
+# and the facade itself fell 690 -> 599 because the freshness authority and the
+# delivered-window authority left it, and then the reload worker and the snapshot reader
+# did too: 690 -> 425. It gained EIGHT module declarations on the way and still shrank,
+# which is the test a facade has to pass.
+path = "mcp-re-proxy/src/trust_plane/mod.rs"
+baseline_prod_loc = 425
+baseline_sha = "a9b2bc1"
 status = "unreviewed"
 
 [[debt]]
@@ -391,9 +398,9 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-proxy/src/trust_cache.rs"
-baseline_prod_loc = 442
-baseline_sha = "d1fc5fa"
+path = "mcp-re-proxy/src/trust_plane/trust_cache.rs"
+baseline_prod_loc = 424
+baseline_sha = "2eef1fe"
 status = "unreviewed"
 
 [[debt]]
@@ -613,12 +620,6 @@ status = "unreviewed"
 [[debt]]
 path = "mcp-re-http-profile/src/body.rs"
 baseline_prod_loc = 247
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/push_trust.rs"
-baseline_prod_loc = 244
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 

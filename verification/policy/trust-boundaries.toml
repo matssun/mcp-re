@@ -99,7 +99,7 @@ paths = [
   "mcp-re-proxy/src/retained_evidence.rs",
   "mcp-re-proxy/src/shared_replay.rs",
   "mcp-re-proxy/src/tls.rs",
-  "mcp-re-proxy/src/trust_cache.rs",
+  "mcp-re-proxy/src/trust_plane/trust_cache.rs",
 ]
 beyond = "Whether wall-clock time is within the skew bound of any peer's."
 max_class_without_assumption = "V0"
