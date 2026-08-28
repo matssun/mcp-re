@@ -50,8 +50,13 @@ pub(crate) mod receipt;
 /// The PEP's read/write boundary inside the client's JSON-RPC body: what it reads out,
 /// what it strips because it owns it, and what it writes because it is entitled to.
 mod body_boundary;
+
+/// The ADR-MCPS-047 continuation plane: a human's approval opened, read without being
+/// spent, spent exactly once, and recorded so any replica can answer it.
+mod continuation;
 pub use body_boundary::extract_request_state;
 use body_boundary::ForwardedBody;
+use continuation::Retirement;
 use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::parse_response_body;
 use mcp_re_http_profile::result_class::classify_result_type;
@@ -88,9 +93,7 @@ use crate::authorization::AuthorizationPosture;
 use crate::authorization::AuthorizationStage;
 use crate::communication_assurance::request_peer_binding::http_profile_adapter::verified_request_subject;
 use crate::communication_assurance::RequestPeerBindingFacts;
-use crate::continuation_store::continuation_key;
 use crate::continuation_store::AsyncContinuationStore;
-use crate::continuation_store::RetainedBases;
 use crate::delegated_server_signer::DelegatedServerSigner;
 use crate::exchange_state::ContinuationState;
 use crate::exchange_state::Established;
@@ -111,14 +114,6 @@ use signing_window::SigningWindow;
 /// bounded so an unanswered continuation does not linger. Overridable via
 /// [`HttpProfileProxy::with_continuation_store`].
 pub const DEFAULT_CONTINUATION_TTL_SECS: i64 = 300;
-
-/// How many times the CONTINUATION-RECORDED open-leg record is attempted before the leg is failed.
-///
-/// Bounded and small: the shared tier answered the replay admission moments earlier,
-/// so the only failure this can absorb is a transient one, and retrying past that
-/// would put an unbounded stall in front of a response the backend has already
-/// produced.
-const CONTINUATION_RECORD_ATTEMPTS: usize = 3;
 
 /// The trust seam: resolve a presented keyid FOR a signing slot to a structured
 /// actor (identity + verification key). A key not trusted for `slot` resolves to
@@ -159,59 +154,6 @@ pub(super) struct Exchange<'a> {
     key: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
 }
 
-/// What CONTINUATION-PREPARED recovered.
-///
-/// The owned `retained` and `answer_state` outlive the borrowed [`RetainedContinuation`]
-/// handed to replay admission, which is why the borrow is produced on demand by
-/// [`ContinuationPrep::binding`] rather than stored.
-struct ContinuationPrep {
-    answer_state: Option<String>,
-    answer_key: Option<String>,
-    retained: Option<RetainedBases>,
-}
-
-impl ContinuationPrep {
-    /// The binding to check the answer leg against, when there is one to check.
-    ///
-    /// `None` covers every way the bases can be absent — no store, no `requestState`, a
-    /// store miss, an expired or already-answered entry, a store outage — because the
-    /// dispatcher must fail closed on `continuation_binding_failed` in all of them. A
-    /// continuation that was signed but cannot be bound is never admitted.
-    fn binding(&self) -> Option<RetainedContinuation<'_>> {
-        match (&self.retained, &self.answer_state) {
-            (Some(bases), Some(state)) => Some(RetainedContinuation {
-                previous_request_base: &bases.previous_request_base,
-                input_required_response_base: &bases.input_required_response_base,
-                request_state: state.as_bytes(),
-            }),
-            _ => None,
-        }
-    }
-}
-
-/// What the shared tier reported when this exchange tried to retire the approval it
-/// answers.
-///
-/// Four values, because the store's `Err` is not the store's `Ok(false)`. A `DEL` whose
-/// reply was never read may well have executed, so "there was definitely nothing to
-/// retire" and "the entry may or may not be gone" are different facts about a human's
-/// approval: they warrant different wire codes, and — the load-bearing part — different
-/// claims about whether an ordinary retry can still succeed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Retirement {
-    /// This deployment runs no store, or this request answers nothing. No approval is at
-    /// stake.
-    NotInvolved,
-    /// THIS call removed the live entry. **The approval is spent.**
-    Retired,
-    /// The store ANSWERED, and there was no live entry to remove: already answered,
-    /// expired, or a splice. A statement about the caller.
-    AlreadyAnswered,
-    /// The store did not answer. The entry may or may not be gone, and nothing downstream
-    /// can find out — the answer leg is the only thing that would have consumed it.
-    Indeterminate,
-}
-
 /// The RFC 9421 server-side PEP run by the async fleet (ADR-MCPRE-051).
 ///
 /// Holds ONLY the RFC 9421 serving state — the verifier, signer, and evidence all
@@ -240,15 +182,10 @@ pub struct HttpProfileProxy {
     /// What this deployment decides authorization with (ADR-MCPRE-065). Deciding with
     /// nothing is one of its states, and it claims nothing rather than permitting.
     authorization: AuthorizationStage,
-    /// Optional MRTR continuation correlation store (ADR-MCPS-047) — the fleet-shared
-    /// tier that carries a multi-round-trip continuation across a replica switch.
-    /// `None` disables MRTR: an `InputRequiredResult` is still returned, but a later
-    /// answer leg carrying a continuation fails closed (no retained bases). A fleet
-    /// wires the Redis store; single-replica runs may wire the in-memory one.
-    continuation_store: Option<Arc<dyn AsyncContinuationStore>>,
-    /// Lifetime of a recorded continuation (seconds); see
-    /// [`DEFAULT_CONTINUATION_TTL_SECS`].
-    continuation_ttl_secs: i64,
+    /// The ADR-MCPS-047 continuation plane: the shared correlation tier and the bounded
+    /// lifetime its entries run under, held as one owner so a TTL never outlives the
+    /// question of whether there is a store to apply it to.
+    continuations: continuation::ContinuationPlane,
     /// Whether to carry verified context to the inner server (#415 rev 2 §10).
     /// Default `Disabled`: the context is the PEP's conclusion, unsigned by
     /// design, so it is only meaningful over a channel the PEP alone can write to
@@ -326,8 +263,7 @@ impl HttpProfileProxy {
             dispatch_cfg,
             inner_async,
             transport_binding: None,
-            continuation_store: None,
-            continuation_ttl_secs: DEFAULT_CONTINUATION_TTL_SECS,
+            continuations: continuation::ContinuationPlane::disabled(),
             verified_context_policy: VerifiedContextPolicy::default(),
             verifier_policy: VerifierPolicy::default(),
             authorization: AuthorizationStage::default(),
@@ -431,8 +367,7 @@ impl HttpProfileProxy {
         store: Arc<dyn AsyncContinuationStore>,
         ttl_secs: i64,
     ) -> Self {
-        self.continuation_store = Some(store);
-        self.continuation_ttl_secs = ttl_secs;
+        self.continuations = continuation::ContinuationPlane::wired(store, ttl_secs);
         self
     }
 
@@ -740,64 +675,6 @@ impl HttpProfileProxy {
         Ok(Established::new(Some(bound), checked))
     }
 
-    /// CONTINUATION-PREPARED — recover the retained open-leg bases for an ANSWER leg.
-    ///
-    /// ```text
-    /// ensures   Ok  => the continuation machine is NotInvolved or Peeked — never Consumed
-    ///           Err => 503, bound: the shared tier did not answer
-    /// forbids   consuming anything
-    /// refusal   free — `peek` has no side effect, so nothing is spent
-    /// ```
-    ///
-    /// Keyed by the actor the VERIFIER resolved, never by anything the request asserts, so
-    /// one peer cannot name another's continuation at all. `peek` has no side effect, which
-    /// is what lets a request that is about to be refused leave a live approval intact.
-    ///
-    /// A store MISS and a store OUTAGE are different facts and are refused differently. A
-    /// miss — never opened, expired, already answered — leaves no bases, and the binding
-    /// then fails closed `continuation_binding_failed`, which is a statement about the
-    /// CALLER. An outage is a statement about this DEPLOYMENT, so it is named as one:
-    /// flattening the two reports a forged continuation every time the shared tier blips,
-    /// and hides a genuine splice attempt inside an outage.
-    async fn prepare_continuation_stage(
-        &self,
-        ex: &Exchange<'_>,
-    ) -> Result<Established<ContinuationPrep>, Refusal> {
-        let has_continuation = ex.verified.request_block().continuation.is_some();
-        let answer_state = if has_continuation {
-            extract_request_state(&ex.http_req.body)
-        } else {
-            None
-        };
-        let answer_key = answer_state.as_ref().map(|state| {
-            continuation_key(
-                &self.expected_audience.audience_id,
-                ex.actor_id,
-                state.as_bytes(),
-            )
-        });
-        let retained = match (&self.continuation_store, &answer_key) {
-            (Some(store), Some(key)) => match store.peek(key).await {
-                Ok(bases) => bases,
-                Err(_) => {
-                    return Err(Refusal::before_admission(
-                        McpReError::ReplayCacheUnavailable,
-                        503,
-                    ))
-                }
-            },
-            _ => None,
-        };
-        Ok(Established::new(
-            ContinuationPrep {
-                answer_state,
-                answer_key,
-                retained,
-            },
-            ExchangeEvent::ContinuationPrepared,
-        ))
-    }
-
     /// REPLAY-ADMITTED — async §4 replay admission plus the continuation binding.
     ///
     /// ```text
@@ -852,31 +729,6 @@ impl HttpProfileProxy {
                 McpReError::DelegatedSigningUnavailable,
                 503,
             )),
-        }
-    }
-
-    /// CONTINUATION-RETIRED — spend the approval, exactly once.
-    ///
-    /// ```text
-    /// ensures   what the shared tier reported, as a [`Retirement`]
-    /// forbids   running the backend
-    /// refusal   minted by the CALLER — see [`Retirement`]
-    /// ```
-    ///
-    /// One-shot is enforced here, by the store's atomic `consume`: of two concurrent answer
-    /// legs that both bound successfully, exactly one proceeds. The other three outcomes do
-    /// not proceed, and they are not the same fact, so the stage reports what happened and
-    /// the caller — which holds the continuation machine — decides both the refusal and
-    /// what the exchange may claim about the approval. A stage cannot do the second, and a
-    /// stage that refused without it would be stating a retry contract it cannot know.
-    async fn retire_continuation_stage(&self, answer_key: Option<&String>) -> Retirement {
-        let (Some(store), Some(key)) = (&self.continuation_store, answer_key) else {
-            return Retirement::NotInvolved;
-        };
-        match store.consume(key).await {
-            Ok(true) => Retirement::Retired,
-            Ok(false) => Retirement::AlreadyAnswered,
-            Err(_) => Retirement::Indeterminate,
         }
     }
 
@@ -1186,64 +1038,6 @@ impl HttpProfileProxy {
             .map_err(|e| Refusal::after_admission(e, 500))
     }
 
-    /// CONTINUATION-RECORDED — make an open leg answerable on any replica.
-    ///
-    /// ```text
-    /// ensures   Ok(true)  => the retained bases are in the shared tier
-    ///           Ok(false) => this reply opens no leg, so there is nothing to record
-    ///           Err       => 502 (unreadable reply) or 503 (shared tier), bound
-    /// refusal   NOT free
-    /// ```
-    ///
-    /// Retried briefly before failing the leg. Reaching here means the backend has ALREADY
-    /// run, and the shared tier answered the replay admission microseconds ago — so a
-    /// failure now is a transient blip rather than the outage REPLAY-ADMITTED already fails
-    /// closed on. Absorbing it is what keeps a retryable 503, which re-executes the tool
-    /// call, off a path that has side effects.
-    async fn record_open_leg_stage(
-        &self,
-        ex: &Exchange<'_>,
-        state: &str,
-        response_base: Vec<u8>,
-    ) -> Result<Established<()>, Refusal> {
-        // D3. A deployment with no shared store cannot make this leg answerable ON ANY
-        // REPLICA, and it has known that since startup. Serving the elicitation anyway
-        // hands the client a signed, verified instruction to continue an exchange nothing
-        // has been kept for — and the failure surfaces one leg later, as
-        // `continuation_binding_failed`, which on the wire reads like an attack signal.
-        //
-        // The dependent leg does fail closed either way. What it cannot do is fail closed
-        // in TIME, which is why the refusal belongs here.
-        let Some(store) = &self.continuation_store else {
-            return Err(Refusal::after_admission(
-                McpReError::ReplayCacheUnavailable,
-                503,
-            ));
-        };
-        let bases = RetainedBases {
-            previous_request_base: ex.verified.request_signature_base().to_vec(),
-            input_required_response_base: response_base,
-        };
-        let key = continuation_key(
-            &self.expected_audience.audience_id,
-            ex.actor_id,
-            state.as_bytes(),
-        );
-        for _ in 0..CONTINUATION_RECORD_ATTEMPTS {
-            if store
-                .store(&key, &bases, self.continuation_ttl_secs)
-                .await
-                .is_ok()
-            {
-                return Ok(Established::new((), ExchangeEvent::OpenLegRecorded));
-            }
-        }
-        Err(Refusal::after_admission(
-            McpReError::ReplayCacheUnavailable,
-            503,
-        ))
-    }
-
     /// Serve one request end to end on the async data plane.
     ///
     /// This function is the ASSEMBLY, not the work. It composes the stages above and
@@ -1332,11 +1126,15 @@ impl HttpProfileProxy {
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         };
 
-        let prep = match self.prepare_continuation_stage(&ex).await {
+        let prep = match self
+            .continuations
+            .prepare(&ex, &self.expected_audience.audience_id)
+            .await
+        {
             Ok(prep) => progress.establish(prep),
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         };
-        if prep.retained.is_some() {
+        if prep.was_peeked() {
             // A `peek`, so nothing is spent yet — a refusal from here is still an ordinary
             // retry, which is the whole reason the read is not a `consume`.
             progress.observe_continuation(ContinuationState::Peeked);
@@ -1356,10 +1154,7 @@ impl HttpProfileProxy {
         // retired in between and degrading to an unsigned error.
         ex.key = Some(window.shared());
 
-        match self
-            .retire_continuation_stage(prep.answer_key.as_ref())
-            .await
-        {
+        match self.continuations.retire(prep.answer_key()).await {
             Retirement::NotInvolved => {}
             // The human's approval is now spent. Every refusal from here to the dispatch
             // must say so: the action did not run, but an ordinary retry cannot make it run
@@ -1526,7 +1321,16 @@ impl HttpProfileProxy {
         match &class {
             ReplyClass::Terminal => progress.advance(ExchangeEvent::ContinuationNotRequired),
             ReplyClass::Open(state) => {
-                match self.record_open_leg_stage(&ex, state, response_base).await {
+                match self
+                    .continuations
+                    .record_open_leg(
+                        &ex,
+                        &self.expected_audience.audience_id,
+                        state,
+                        response_base,
+                    )
+                    .await
+                {
                     Ok(recorded) => {
                         progress.observe_open_leg(OpenLeg::Recorded);
                         progress.establish(recorded);
