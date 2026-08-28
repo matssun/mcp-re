@@ -46,15 +46,19 @@ pub(crate) mod signing_window;
 /// What the proxy asserts under its own credential when it refuses. The assembly asks
 /// this owner for a receipt; it does not assemble one.
 pub(crate) mod receipt;
+
+/// The PEP's read/write boundary inside the client's JSON-RPC body: what it reads out,
+/// what it strips because it owns it, and what it writes because it is entitled to.
+mod body_boundary;
+pub use body_boundary::extract_request_state;
+use body_boundary::ForwardedBody;
 use mcp_re_core::VerificationKey;
-use mcp_re_http_profile::insert_verified_context;
 use mcp_re_http_profile::parse_response_body;
 use mcp_re_http_profile::result_class::classify_result_type;
 use mcp_re_http_profile::result_class::input_required_state_of;
 use mcp_re_http_profile::result_class::ResultTypeClass;
 use mcp_re_http_profile::sign_delegated_accepted_202;
 use mcp_re_http_profile::sign_delegated_response_full;
-use mcp_re_http_profile::strip_proxy_owned_meta;
 use mcp_re_http_profile::validate_response_envelope;
 use mcp_re_http_profile::AdmissionPolicy;
 use mcp_re_http_profile::ArtifactBinding;
@@ -67,7 +71,6 @@ use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::RetainedContinuation;
 use mcp_re_http_profile::SignerSlot;
-use mcp_re_http_profile::VerifiedContext;
 use mcp_re_http_profile::VerifiedContextPolicy;
 use mcp_re_http_profile::VerifiedMcpRequest;
 use mcp_re_http_profile::Verifier;
@@ -891,30 +894,17 @@ impl HttpProfileProxy {
     /// the inner server would otherwise get an ordinary-looking request with no verified
     /// context, which is a silent downgrade to an unauthenticated call.
     fn forward_body_stage(&self, ex: &Exchange<'_>) -> Result<Established<Vec<u8>>, Refusal> {
-        match forwarded_body(
+        let forwarded = ForwardedBody::prepare(
             &ex.http_req.body,
             ex.verified,
             self.verified_context_policy,
             ex.now,
-        ) {
-            Ok(Forwarded { body, seeded }) => {
-                if seeded {
-                    // A deliberate attempt to assert one's own authentication context to
-                    // the inner server is exactly what this surface exists to detect. The
-                    // frozen audit vocabulary has no event for it (ADR-MCPS-035 §3 admits
-                    // no third success event), so it is named on the diagnostic channel
-                    // rather than left with no trace at all.
-                    eprintln!(
-                        "mcp-re-proxy: warning: request from actor {} seeded the reserved \
-                         verified-context `_meta` key; stripped before forwarding (the inner \
-                         server never saw it)",
-                        ex.actor_id
-                    );
-                }
-                Ok(Established::new(body, ExchangeEvent::ForwardBodyPrepared))
-            }
-            Err(e) => Err(Refusal::after_admission(e, 500)),
-        }
+        )
+        .map_err(|e| Refusal::after_admission(e, 500))?;
+        Ok(Established::new(
+            forwarded.into_bytes_for_inner(ex.actor_id),
+            ExchangeEvent::ForwardBodyPrepared,
+        ))
     }
 
     /// RETENTION-RESERVED — take durable responsibility BEFORE the side effects run.
@@ -1680,86 +1670,6 @@ pub(super) fn served(resp: HttpResponse) -> ServedHttpResponse {
         headers: resp.headers,
         body: resp.body,
     }
-}
-
-/// Read `params.requestState` (a string) from a JSON-RPC request body — the opaque
-/// MRTR state an answer leg re-presents (ADR-MCPS-047). `None` if the body is not
-/// JSON, has no `params.requestState`, or it is not a string.
-///
-/// The value is read only to KEY the correlation store; it is never interpreted, and
-/// what it binds to is settled by digest equality against the retained bases.
-pub fn extract_request_state(body: &[u8]) -> Option<String> {
-    let v: serde_json::Value = serde_json::from_slice(body).ok()?;
-    v.get("params")?
-        .get("requestState")?
-        .as_str()
-        .map(str::to_owned)
-}
-
-/// Compose the body forwarded to the inner server (#415 rev 2 §10, MCPRE-429).
-///
-/// Two steps, in this order:
-///
-/// 1. **Strip the PEP-owned `_meta` keys** — the request-evidence block the PEP
-///    just consumed, and the reserved verified-context key. This is the §10 guard
-///    and it runs on EVERY request regardless of policy: a caller that could seed
-///    the reserved key would be asserting its own verified context to a server
-///    that trusts the block implicitly, which is an authentication bypass rather
-///    than a spoofing nuisance. A deployment with the carrier disabled must not be
-///    one config flip away from forwarding attacker-authored context.
-///
-///    Only PEP-owned keys are removed. Application and MCP `_meta` entries are
-///    none of the enforcement boundary's business — deleting the whole `_meta`
-///    would not be caution, it would be destroying data the PEP was asked to pass
-///    through.
-///
-/// 2. **Write the PEP's own context**, only under an explicitly trusted channel.
-///
-/// Returns `Err` if the trusted carrier is enabled and the context could not be
-/// written. That is deliberate: under `Trusted` the inner server is entitled to
-/// assume the PEP speaks, and silently forwarding a request WITHOUT the context it
-/// expects would degrade into an unauthenticated call that looks ordinary. Fail
-/// closed instead.
-fn forwarded_body(
-    body: &[u8],
-    verified: &VerifiedMcpRequest,
-    policy: VerifiedContextPolicy,
-    now: i64,
-) -> Result<Forwarded, HttpProfileError> {
-    // The forwarded bytes are re-serialized below, which cannot carry a duplicate
-    // member name or a number the f64 carrier alters. Refuse those on the ORIGINAL
-    // bytes, using the same scan the response path applies, so the backend never sees
-    // a body that differs from what the client signed.
-    mcp_re_http_profile::reject_unrepresentable_json(body)?;
-    let mut seeded = false;
-    let stripped = match serde_json::from_slice::<serde_json::Value>(body) {
-        Ok(mut v) => {
-            seeded = strip_proxy_owned_meta(&mut v);
-            serde_json::to_vec(&v)
-                .map_err(|_| HttpProfileError::MalformedEvidence("body reserialize"))?
-        }
-        // A non-object body never verified as a full-profile request, so this is
-        // unreachable on the served path; pass it through rather than invent bytes.
-        Err(_) => body.to_vec(),
-    };
-    let body = match policy {
-        VerifiedContextPolicy::Disabled => stripped,
-        VerifiedContextPolicy::Trusted => {
-            let ctx = VerifiedContext::from_verified(verified, now);
-            insert_verified_context(&stripped, &ctx)?
-        }
-    };
-    Ok(Forwarded { body, seeded })
-}
-
-/// The body forwarded to the inner server, plus the §10 guard's detection signal.
-struct Forwarded {
-    /// The clean JSON-RPC bytes the inner server receives.
-    body: Vec<u8>,
-    /// Whether the caller had seeded the reserved verified-context key. The value was
-    /// stripped either way; this is the only trace the attempt leaves, so the serving
-    /// path names it rather than discarding it.
-    seeded: bool,
 }
 
 #[cfg(test)]
