@@ -390,7 +390,8 @@ _PROXY_LIB_SRCS = [
     # MCPRE-493: the Redis-backed admission source (live per-request GET, no cached
     # copy). #[cfg(feature = "redis_replay")] — cfg'd out of the default build.
     "src/redis_admission_source.rs",
-    "src/transport.rs",
+    "src/transport/mod.rs",
+    "src/transport/ingress.rs",
     # ADR-MCPS-021: bounded trust-propagation cache (revocation window T).
     "src/trust_plane/trust_cache.rs",
     # MCPS-84 (ADR-MCPS-049 W2): trust-epoch invalidation source (Redis reader is

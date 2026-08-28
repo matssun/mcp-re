@@ -907,7 +907,7 @@ fn parse_cert_lifetime(value: &str) -> Result<Option<Duration>, String> {
 /// was deleted.
 pub fn build_attested_ingress_binding(
     config: &DeploymentRequest,
-) -> Result<Option<crate::transport::LbAssertionV2Binding>, String> {
+) -> Result<Option<crate::transport::ingress::LbAssertionV2Binding>, String> {
     if config.binding != BindingKind::AttestedIngress {
         return Ok(None);
     }
@@ -920,7 +920,7 @@ pub fn build_attested_ingress_binding(
         .ingress_audience
         .as_deref()
         .ok_or("internal error: attested-ingress binding selected but no --ingress-audience set")?;
-    let mut binding = crate::transport::LbAssertionV2Binding::new(source, audience);
+    let mut binding = crate::transport::ingress::LbAssertionV2Binding::new(source, audience);
     for (key_id, key_b64) in &config.ingress_attestor_keys {
         let key = VerificationKey::from_b64url(key_b64).map_err(|_| {
             format!(
@@ -2526,14 +2526,14 @@ mod tests {
 
         let request_hash = mcp_re_core::sha256_hash_id(b"an in-hand request body");
         let now = 1_800_000_000_i64;
-        let assertion = crate::transport::LbAssertionV2 {
+        let assertion = crate::transport::ingress::LbAssertionV2 {
             key_id: "attestor-1".to_string(),
             ingress_identity: "spiffe://example.org/ingress-1".to_string(),
             asserted_client_identity: "spiffe://example.org/agent-1".to_string(),
             request_hash: request_hash.clone(),
             audience: "did:example:server-1".to_string(),
-            cert_verification_result: crate::transport::AttestedCertVerification::Verified,
-            revocation_result: crate::transport::AttestedRevocation::Good,
+            cert_verification_result: crate::transport::ingress::AttestedCertVerification::Verified,
+            revocation_result: crate::transport::ingress::AttestedRevocation::Good,
             validation_time: now,
             crl_next_update: now + 86_400,
             expires_at: None,
@@ -2545,11 +2545,11 @@ mod tests {
             .verify(&wire, &request_hash, now)
             .expect("the configured attestor's assertion must verify");
         assert_eq!(
-            verified.client_identity.value,
+            verified.client_identity().value(),
             "spiffe://example.org/agent-1"
         );
         assert_eq!(
-            verified.client_identity.source,
+            verified.client_identity().source(),
             crate::transport::IdentitySource::UriSan,
             "the configured identity source must be the one stamped on the yielded identity"
         );
