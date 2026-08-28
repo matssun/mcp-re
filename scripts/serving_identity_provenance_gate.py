@@ -17,7 +17,8 @@ WHAT THIS PROVES, exactly, over production Rust (test regions excluded):
      `evaluate_credential_currency` — and carries no raw-certificate route of its own.
   4. Each resolver's signature takes its predecessor and the options, and NOTHING else. No
      `leaf`, no `der`, no `chain`, no `certificate`, no second identity parameter.
-  5. No production code outside the historical facade calls `extract_identity`.
+  5. No production code outside the historical facade and the extractor's own module
+     calls `extract_identity`.
   6. The async path never names `accepted_chain_der`. The blocking path may, and ONLY while
      the file also carries the `online_ocsp` feature gate that is its last consumer.
 
@@ -65,6 +66,15 @@ DISPATCH_MODULE = "mcp-re-proxy/src/tls.rs"
 #: The historical facade module. It is allowed to name the historical route, because
 #: converting between the vocabularies is the whole reason it exists.
 FACADE = "mcp-re-proxy/src/facades/asserted_identity.rs"
+
+#: Where the historical extractor itself lives. MCPRE-156 moved it out of the dispatch
+#: module and into the transport identity owner, so that `TransportIdentity`'s private
+#: constructor and its one certificate producer are in the same module — a `pub(crate)`
+#: constructor beside a sibling producer is not a boundary in this crate. The gate follows
+#: the extractor rather than continuing to exempt the file it used to live in: an
+#: exemption left pointing at a module that no longer calls it would exempt that module for
+#: the next author who added a call.
+EXTRACTOR_HOME = "mcp-re-proxy/src/transport/identity.rs"
 
 #: The route this migration removed from production serving: certificate representation in,
 #: identity out. Each of these names a step of it.
@@ -249,7 +259,7 @@ def check_facade_containment(root: Path) -> list[str]:
     problems = []
     for path in sorted(root.glob("mcp-re-*/src/**/*.rs")):
         rel = path.relative_to(root).as_posix()
-        if rel in (FACADE, DISPATCH_MODULE):
+        if rel in (FACADE, EXTRACTOR_HOME):
             continue
         text = production_text(path.read_text(encoding="utf-8"))
         if re.search(r"\bextract_identity\s*\(", text):
