@@ -35,9 +35,23 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-# The one crate permitted to depend on p256, and the one module permitted to use it.
+# The one crate permitted to depend on p256, and the modules permitted to use it.
+#
+# This list got TIGHTER when MCPRE-155 decomposed `scitt.rs`. It used to name one 1629-line
+# file carrying seven authorities, so "confined to one module" meant confined to the whole
+# SCITT unit. It now names the COSE-key owner and its verifier — the two modules whose
+# subject IS what a receipt signature is checked under — plus the SCITT facade, whose only
+# p256 references are inside its `#[cfg(test)] mod fixtures` (a test service has to be able
+# to sign an ES256 receipt for the negative controls to mean anything).
+#
+# The gate's proposition is unchanged and is stated the same way: nothing on the serving
+# path can reach the P-256 verifier without editing this list.
 ALLOWED_CRATE = "mcp-re-http-profile"
-ALLOWED_MODULES = {"src/scitt.rs"}
+ALLOWED_MODULES = {
+    "src/scitt/cose_key/mod.rs",
+    "src/scitt/cose_key/verify.rs",
+    "src/scitt/mod.rs",
+}
 
 # Core is on every signing path; it must not gain an ECDSA verifier.
 SIGNING_CORE = "mcp-re-core"
@@ -100,7 +114,10 @@ def selftest() -> int:
         (root / ALLOWED_CRATE / "Cargo.toml").write_text(
             f'[package]\nname = "{ALLOWED_CRATE}"\n\n[dependencies]\np256 = "0.13"\n'
         )
-        (root / ALLOWED_CRATE / "src" / "scitt.rs").write_text("use p256::ecdsa;\n")
+        (root / ALLOWED_CRATE / "src" / "scitt" / "cose_key").mkdir(parents=True)
+        (root / ALLOWED_CRATE / "src" / "scitt" / "cose_key" / "verify.rs").write_text(
+            "use p256::ecdsa;\n"
+        )
         (root / SIGNING_CORE / "src" / "crypto.rs").write_text('ensure("ES256");\n')
 
         if check(root):
@@ -143,8 +160,9 @@ def main() -> int:
             print(f"  - {p}")
         return 1
     print(
-        f"es256 containment gate: OK — p256 confined to {ALLOWED_CRATE}/"
-        f"{sorted(ALLOWED_MODULES)[0]}, and {SIGNING_CORE} still refuses ES256."
+        f"es256 containment gate: OK — p256 confined to {len(ALLOWED_MODULES)} module(s) in "
+        f"{ALLOWED_CRATE} ({', '.join(sorted(ALLOWED_MODULES))}), and {SIGNING_CORE} still "
+        "refuses ES256."
     )
     return 0
 

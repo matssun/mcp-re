@@ -184,20 +184,32 @@ Question 2 answered **seven**, so ADR-061 §5 case A applies. A §14 exception w
 
 **The proposed split**, in dependency order, each file a named authority:
 
+**IMPLEMENTED (MCPRE-155).** The shape below is what shipped, with four subtrees the sketch did not anticipate — each for a reason that is not size:
+
 ```text
-scitt/commitment.rs      A   EvidenceCommitment + label_token                 ~135
-scitt/wire.rs                COSE/CWT labels, position_commitment, profiles   ~115
-scitt/statement.rs       B   SignedStatement, issue_signed_statement          ~209
-scitt/receipt.rs         C   Receipt parsing                                  ~201
-scitt/merkle.rs          D   leaf_hash, node_hash, RFC 9162 fold              ~166
-scitt/cose_key.rs        E   CoseVerificationKey, COSE signature verification ~150
-scitt/verify.rs              verify_receipt_offline — the composition          ~93
-scitt/retained.rs        F   EvidenceDigest, store trait, correspondence      ~187
-scitt/trust_pin.rs       G   ScittServiceTrustPin, PinnedPublicKey            ~120
-scitt/prototype.rs           PrototypeTransparencyService, mth_and_path       ~159
+scitt/mod.rs                       the FACADE; every subordinate is `mod`, not `pub mod`   135
+scitt/commitment/mod.rs        A   EvidenceCommitment + label_token                        198
+scitt/commitment/correspondence.rs when two commitments describe the same call              90
+scitt/wire.rs                      COSE/CWT labels, position_commitment, profiles          134
+scitt/statement/mod.rs         B   SignedStatement                                         173
+scitt/statement/issuance.rs        issue_signed_statement — the other DIRECTION             87
+scitt/receipt/mod.rs           C   the receipt value and its projections                   132
+scitt/receipt/parse.rs             from_cose — the receipt's sole producer                 149
+scitt/merkle.rs                D   leaf_hash, node_hash, the RFC 9162 fold (VERIFY side)   168
+scitt/cose_key/mod.rs          E   CoseVerificationKey, P256Point                          115
+scitt/cose_key/verify.rs           the allowlisted algorithm is the one that runs          106
+scitt/service.rs                   ResolvedTransparencyService                              87
+scitt/offline.rs                   verify_receipt_offline — the composition                115
+scitt/retained.rs              F   EvidenceDigest, store trait, correspondence             154
+scitt/trust_pin/mod.rs         G   ScittServiceTrustPin                                    117
+scitt/trust_pin/document.rs        PinDocument + the one check that makes it a pin         130
+scitt/prototype/mod.rs             PrototypeTransparencyService                            155
+scitt/prototype/tree.rs            mth_and_path — the RFC 6962 tree, BUILT                  66
 ```
 
-Every file lands under the 200-line threshold except `statement.rs` and `receipt.rs`, which sit at ~200-210 and are then band-1 units to look at on their own terms rather than hidden inside a 1629-line file.
+Every module lands under the 200-line threshold — including `statement` and `receipt`, which this sketch expected at ~200-210 and which the read/write and value/parse seams took below it. The sum rose from 1629 to ~2300: 18 module headers, each naming the one fact its module owns.
+
+**Why the four subtrees, and not four more siblings:** `commitment/correspondence.rs` and `receipt/parse.rs` need the PARENT'S PRIVATE REPRESENTATION — a child sees it, a sibling would need a constructor taking every field, which is the seal undone in order to move a function. `statement/issuance.rs` is the opposite direction from reading. `prototype/tree.rs` gives ruling 3's build-side implementation a name, so the independence is architecture rather than a fact about where two functions sit.
 
 **Sealing work the split enables** (question 11), which is the part worth more than the file boundaries:
 
