@@ -782,6 +782,61 @@ stated there — and **seal `TransportIdentity` and `AttestedIngressVerified`**.
 the part that changes what is provable. `transport.rs` stays `reviewed-action-required` until
 that work lands and this census is re-run.
 
+## EX-009 — `mcp-re-client-core/src/response.rs` — **census re-run, disposition: decompose the classification half**
+
+**Status:** `unreviewed` in the registry, and this record does not change that on its own —
+it records the RE-RUN the MCPRE-172 parent asked for after items 2, 3 and 4 landed.
+**Measured:** 608 production lines, down from 1108 at the sixth census (#580 / PR #670).
+**Parent:** [#672](https://github.com/matssun/mcp-re/issues/672). **Blueprint:**
+[`components/client-response-verification.md`](components/client-response-verification.md).
+
+### What left, and what that establishes
+
+| item | went to | why |
+|---|---|---|
+| the resolver/revocation pairing | `delegated_trust/mod.rs` (PR #673) | one typed trust input; the bad pairing is not expressible |
+| the trust-anchor lifecycle | `delegated_trust/anchors.rs` | root rotation and revocation are the trust authority's, not the verifier's |
+| the revocation seam | `delegated_trust/revocation.rs` | the other half of the same authority |
+| the manifest's own lifetime | `delegated_trust/manifest_validity.rs` | outranks every root in the picture; found by the ratchet, not planned |
+| the execution/retry contract | `execution_contract.rs` | *did the work run* is not *is this receipt genuine* |
+| the 202 issuer-kid re-parse | deleted; `bodyless/acknowledged.rs` | the anchor is a verified product, not a second reading of the wire |
+
+### §8 question 2 — how many independently describable authorities remain?
+
+**Two**, and the second is why this record does not grant an exception:
+
+| # | authority | prod | what single fact it owns |
+|---|---|---:|---|
+| A | delegated response verification | ~370 | that a response is a genuine, request-bound, delegated-signed answer from a trusted anchor |
+| B | result classification | ~90 | what an MCP result MEANS — `ResultClass`, `classify_result`, `continuation_state`, `ClassifiedResponse` |
+
+A is the file's subject and belongs here. **B is not verification at all**: `classify_result`
+and `continuation_state` read a body's MCP lifecycle members and say nothing about whether
+anything is signed, and `mcp-re-http-profile::result_class` already owns the discriminator
+they read. The serving side reached the same conclusion in this campaign — its classifier
+became `http_profile_serve/reply.rs` — and the client half is the same authority on the same
+bytes.
+
+### §8 question 6 — what does this file reconstruct that another owner decided?
+
+Nothing, now. The two instances the census found are both gone: the 202 path's re-parse of
+the credential header (item 2), and the pairing that let a revoked root resolve (Slice 1).
+
+### §8 question 7 — what relationship exists only through call ordering?
+
+`enforce_expected_server_signer` / `check_expected_server_signer` remain a pair of free
+functions the verifier must remember to call after each of three verification arms. That is
+item 7 of the parent — *whether the "direct-root mode only" path is still a supported
+contract* — and it is deliberately **not answered here**: the question is its owner's, and
+inventing a direct-root contract to close it would be the over-claim ADR-061 exists to
+prevent.
+
+### Disposition
+
+**Decompose B**, then re-run. A file that verifies signatures and also decides what an MCP
+result means is answering question 1 with an "and". This record does not schedule it: the
+parent's ruled order governs, and the classification half is a cleanup rather than a defect.
+
 ## EX-006 — `mcp-re-proxy/src/ocsp.rs` — **census complete, disposition: extract, then expect a §14 exception**
 
 **Status:** `reviewed-action-required`. **Measured:** 1271 production lines on `main` @

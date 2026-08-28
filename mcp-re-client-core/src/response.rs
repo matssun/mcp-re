@@ -30,8 +30,9 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpResponse;
 use mcp_re_http_profile::Verifier;
 use serde_json::Value;
-use std::collections::HashMap;
-use std::collections::HashSet;
+
+use crate::execution_contract::rejection_receipt;
+use crate::execution_contract::ExecutionContract;
 
 /// The MCP-RE round-trip classification of a verified response body
 /// (ADR-MCPS-047). Read ONLY from the signed, verified body — never from
@@ -224,258 +225,6 @@ pub fn continuation_state(body: &[u8]) -> Result<Option<String>, HttpProfileErro
 
 // ---- ADR-MCPRE-052 delegated-required client verification (MCPRE-122) --------
 
-/// The client-side delegated-credential revocation seam (ADR-MCPRE-052 §3 step 7).
-///
-/// Consulted during delegated verification with EACH identifier the credential
-/// presents — its `delegated_kid`, its `issuer_kid` (root anchor), and its `jti`
-/// (per-credential id) — and reports whether ANY of them is revoked at the current
-/// trust epoch. Revocation is checked in ADDITION to freshness: short delegated-key
-/// TTLs bound the exposure window, and this seam narrows it to the moment of report.
-///
-/// This is deliberately a narrow, pure interface. The in-memory
-/// [`StaticRevocationList`] covers the GKE proof and small deployments; a networked
-/// source (a signed revocation feed, an OCSP-style responder with its own freshness
-/// proof) implements the same trait later WITHOUT touching the verifier. Implementations
-/// MUST be non-blocking — this is consulted on the response-verification path.
-pub trait RevocationSource: Send + Sync {
-    /// Report whether `identifier` (a `delegated_kid`, `issuer_kid`, or credential
-    /// `jti`) is revoked at the current epoch. A conservative source MAY return `true`
-    /// for an identifier it cannot resolve; an empty denylist reports `false` for all
-    /// (TTL-only reliance — see [`StaticRevocationList::new`]).
-    fn is_revoked(&self, identifier: &str) -> bool;
-}
-
-/// An in-memory static denylist of revoked identifiers — any mix of `delegated_kid`s,
-/// root `issuer_kid`s, and credential `jti`s (ADR-MCPRE-052 §3 step 7). This is the
-/// concrete seam a networked revocation feed replaces later; it is enough for the GKE
-/// proof (exercise both allow and deny) and for deployments that publish a small,
-/// operator-curated denylist.
-///
-/// An EMPTY list means "no identifier is revoked" — the explicit TTL-only posture. It
-/// is a deliberate operator choice (constructed via [`StaticRevocationList::new`]), not
-/// a silent default: a `DelegatedRequired` route cannot be built without SOME source.
-#[derive(Debug, Clone, Default)]
-pub struct StaticRevocationList {
-    revoked: HashSet<String>,
-}
-
-impl StaticRevocationList {
-    /// An empty denylist — nothing is revoked (explicit TTL-only reliance). The
-    /// operator chooses this deliberately; it is never the implicit default of a
-    /// delegated-required route.
-    pub fn new() -> Self {
-        StaticRevocationList {
-            revoked: HashSet::new(),
-        }
-    }
-
-    /// Build a denylist from an initial set of revoked identifiers (kids and/or jtis).
-    pub fn from_identifiers<I, S>(identifiers: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        StaticRevocationList {
-            revoked: identifiers.into_iter().map(Into::into).collect(),
-        }
-    }
-
-    /// Add one revoked identifier (a `delegated_kid`, `issuer_kid`, or `jti`), builder
-    /// style.
-    pub fn revoke(mut self, identifier: impl Into<String>) -> Self {
-        self.revoked.insert(identifier.into());
-        self
-    }
-
-    /// Whether the denylist is empty (the TTL-only posture).
-    pub fn is_empty(&self) -> bool {
-        self.revoked.is_empty()
-    }
-}
-
-impl RevocationSource for StaticRevocationList {
-    fn is_revoked(&self, identifier: &str) -> bool {
-        self.revoked.contains(identifier)
-    }
-}
-
-/// The client-side TRUST-ANCHOR lifecycle (ADR-MCPRE-052 root rotation + revocation)
-/// — which ROOT issuers the verifier trusts to anchor a delegation credential, and
-/// for how long. This is the MASTER-key analogue of [`StaticRevocationList`] (which
-/// governs individual short-lived DELEGATED keys): this governs the ISSUER itself.
-///
-/// Trust-anchor rotation is NOT delegated-key rotation. A delegated key rotates every
-/// few minutes under ONE root (the hot path); a root rotation swaps the anchor the
-/// whole fleet chains to — a rare, high-stakes ceremony that needs a controlled
-/// OVERLAP so credentials issued under the outgoing root keep verifying until a
-/// cutover deadline, then stop. That overlap deadline is the mechanism a single
-/// `issuer_kid -> key` map cannot express.
-///
-/// Four states per `issuer_kid`, evaluated at `now`:
-///   * CURRENT — a live root; its credentials verify (subject to the usual scope /
-///     freshness / epoch gates).
-///   * RETIRED — a superseded root inside its overlap window; its credentials verify
-///     ONLY while `now <= valid_until`, then resolve to untrusted
-///     (`delegation_issuer_untrusted`). This is trust-anchor rotation.
-///   * REVOKED — a compromised / withdrawn root; the ONE decisive action that
-///     invalidates ALL its descendant delegated credentials at once
-///     (`delegation_revoked`), even before their own `exp` and WITHOUT chasing each
-///     delegated key. (Consulted via the [`RevocationSource`] impl below.)
-///   * UNKNOWN — any other issuer; rejected `delegation_issuer_untrusted`.
-///
-/// The verifier core (`verify_delegation_credential`) is unchanged: this set feeds
-/// its two existing seams — the `resolve_root` actor resolver (current + in-window
-/// retired) and the `is_revoked` revocation source (revoked issuers). Because the
-/// resolver is rebuilt per verification with the caller's injected `now`
-/// (the [`DelegatedResponseTrust`] impl takes `now` per call), the overlap window is
-/// enforced without
-/// the pure verifier ever reading a clock.
-#[derive(Debug, Clone, Default)]
-pub struct TrustedIssuerSet {
-    /// Live roots: `issuer_kid` -> the resolved ROOT actor (identity + pubkey).
-    current: HashMap<String, ResolvedActor>,
-    /// Superseded-but-overlapping roots: `issuer_kid` -> (actor, `valid_until` unix).
-    retired: HashMap<String, (ResolvedActor, i64)>,
-    /// Withdrawn / compromised roots (by `issuer_kid`).
-    revoked: HashSet<String>,
-    /// When the document that published this trust picture stops being usable (unix
-    /// seconds). `None` for a set assembled by hand, which has no document behind it
-    /// and therefore no expiry to enforce.
-    manifest_expires_at: Option<i64>,
-}
-
-impl TrustedIssuerSet {
-    /// An empty set — trusts no root (every issuer is UNKNOWN → rejected). Roots are
-    /// added deliberately; a delegated-required verifier cannot silently trust one.
-    pub fn new() -> Self {
-        TrustedIssuerSet::default()
-    }
-
-    /// Add a CURRENT (live) root, keyed by the actor's `keyid` (= the credential
-    /// `issuer_kid`). The actor MUST be for the `Response` slot (it anchors the
-    /// server/response signer).
-    pub fn with_current(mut self, root: ResolvedActor) -> Self {
-        self.current.insert(root.identity.keyid.clone(), root);
-        self
-    }
-
-    /// Add a RETIRED root that remains trusted only through `valid_until` (unix
-    /// seconds) — the overlap deadline. After it, credentials under this root resolve
-    /// to untrusted.
-    pub fn with_retired(mut self, root: ResolvedActor, valid_until: i64) -> Self {
-        self.retired
-            .insert(root.identity.keyid.clone(), (root, valid_until));
-        self
-    }
-
-    /// Mark an `issuer_kid` REVOKED — one decisive action invalidating every
-    /// descendant delegated credential immediately (`delegation_revoked`).
-    pub fn revoke(mut self, issuer_kid: impl Into<String>) -> Self {
-        self.revoked.insert(issuer_kid.into());
-        self
-    }
-
-    /// Carry the publishing document's `expires_at` INTO the set, so "a stale trust
-    /// picture is never used" is a property of every verification rather than of the
-    /// one moment the document was loaded.
-    ///
-    /// Without it the expiry gate lives only in `load_signed_manifest` and in whatever
-    /// refresher a deployment happens to run: a client that disables refresh keeps
-    /// verifying against anchors from a document that expired weeks ago, and even one
-    /// that refreshes keeps them for up to a full reload interval past expiry. Every
-    /// root then resolves to `None` once `now` passes the deadline, so responses fail
-    /// closed as `delegation_issuer_untrusted` until a newer document is accepted.
-    pub fn with_manifest_expiry(mut self, expires_at: i64) -> Self {
-        self.manifest_expires_at = Some(expires_at);
-        self
-    }
-
-    /// When the document behind this trust picture stops being usable, if it came from
-    /// one.
-    pub fn manifest_expires_at(&self) -> Option<i64> {
-        self.manifest_expires_at
-    }
-
-    /// Whether the document that published this set has expired at `now`. A set with no
-    /// document behind it never expires.
-    pub fn is_expired(&self, now: i64) -> bool {
-        self.manifest_expires_at
-            .is_some_and(|expires_at| now > expires_at)
-    }
-
-    /// Whether this set vouches for `issuer_kid` at `now` — the public yes/no.
-    ///
-    /// Fails closed on revocation, on a retired root past its overlap deadline, on an
-    /// unknown issuer, and on an expired publishing document. It is the only trust
-    /// question this type answers in public, and it answers it whole.
-    pub fn trusts(&self, issuer_kid: &str, now: i64) -> bool {
-        !self.is_revoked(issuer_kid) && self.resolve_root(issuer_kid, now).is_some()
-    }
-
-    /// The LIFECYCLE lookup: a current root, or a retired root still inside its overlap
-    /// window (`now <= valid_until`). A retired root past its window, an unknown issuer,
-    /// or ANY issuer once the publishing document's
-    /// [`manifest_expires_at`](Self::manifest_expires_at) has passed, resolves to `None`.
-    ///
-    /// **It answers rotation, not revocation, and it is `pub(crate)` for that reason.** A
-    /// revoked-but-still-current root resolves here, so this is not a trust verdict and
-    /// must never be exposed as one: a caller holding it could pair it with an empty
-    /// revocation source and verify a credential beneath a root this very set marks
-    /// REVOKED. The public verdict is [`resolve_issuer`](DelegatedResponseTrust::resolve_issuer),
-    /// which fails closed, and [`trusts`](Self::trusts) for a plain yes/no.
-    pub(crate) fn resolve_root(&self, issuer_kid: &str, now: i64) -> Option<ResolvedActor> {
-        // The whole picture has a deadline, and it outranks any individual root's:
-        // past the publishing document's `expires_at` nothing in it resolves, so a
-        // verifier that never refreshes fails closed instead of serving forever on
-        // anchors the org stopped standing behind.
-        if self.is_expired(now) {
-            return None;
-        }
-        // RETIREMENT WINS. A kid listed as both current and retiring is a contradiction
-        // in the manifest, and reading `current` first resolved it in the permissive
-        // direction: the root stayed trusted unconditionally and its `valid_until`
-        // cutover was never evaluated — so a retirement an org published could be
-        // undone by leaving the same kid in the current list. Checking the deadline
-        // first makes the contradiction fail safe: past `valid_until` nothing resolves.
-        if let Some((actor, valid_until)) = self.retired.get(issuer_kid) {
-            return (now <= *valid_until).then(|| actor.clone());
-        }
-        self.current.get(issuer_kid).cloned()
-    }
-}
-
-impl DelegatedResponseTrust for TrustedIssuerSet {
-    /// Resolve the credential's root issuer for the RESPONSE slot at `now`. The Request
-    /// slot is never resolved on the response-verification path.
-    ///
-    /// **A REVOKED issuer resolves to nothing here, structurally.** This is the only
-    /// public resolution interface on the type, so a revoked root cannot yield a usable
-    /// [`ResolvedActor`] through any public path — including one composed into a
-    /// [`CompositeResponseTrust`] beside an empty revocation source. The refusal does not
-    /// depend on which revocation half the caller supplied, because it does not consult
-    /// the caller's half at all.
-    ///
-    /// The cost is the error's precision: the rejection reads `delegation_issuer_untrusted`
-    /// rather than `delegation_revoked`, because the credential's signature is never
-    /// reached. That is the right trade. A diagnostic distinction is worth less than a
-    /// structural guarantee, and the honest reason was only available while a caller
-    /// could still get the pairing wrong.
-    fn resolve_issuer(&self, issuer_kid: &str, slot: SignerSlot, now: i64) -> ResolverOutcome {
-        match slot {
-            SignerSlot::Response if !self.is_revoked(issuer_kid) => {
-                self.resolve_root(issuer_kid, now).into()
-            }
-            _ => ResolverOutcome::NotTrusted,
-        }
-    }
-}
-
-impl RevocationSource for TrustedIssuerSet {
-    fn is_revoked(&self, identifier: &str) -> bool {
-        self.revoked.contains(identifier)
-    }
-}
-
 /// The deployment policy the client applies when verifying a DELEGATED-key-signed
 /// response (ADR-MCPRE-052 §3) — the owned, client-side mirror of
 /// [`mcp_re_http_profile::DelegationExpectations`]. The trusted ROOT issuer is
@@ -551,115 +300,6 @@ impl DelegationPolicy {
             accepted_epochs,
             max_clock_skew,
         }
-    }
-}
-
-/// Whether the refused work had already reached the backend, as the server states it
-/// in the verified rejection body (ADR-MCPRE-058 §10 `execution_status`).
-///
-/// [`Unstated`](ExecutionStatus::Unstated) is NOT
-/// [`NotExecuted`](ExecutionStatus::NotExecuted). A receipt that says nothing leaves
-/// the question open, and collapsing the two here would turn "unknown whether it ran"
-/// into "it did not run" at the one place a caller decides whether to retry.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExecutionStatus {
-    /// The receipt carries no `execution_status`. Nothing is known from it.
-    Unstated,
-    /// The server states the work did not reach the backend.
-    NotExecuted,
-    /// The server states the work may already have run.
-    PossiblyExecuted,
-    /// A token this client does not recognize. Never resolved to either of the two
-    /// known states: an unknown disposition is not evidence that nothing ran.
-    Unrecognized(String),
-}
-
-/// What a retry of the refused request would cost, as the server states it
-/// (ADR-MCPRE-058 §10 `retry_safety`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RetrySafety {
-    /// The receipt carries no `retry_safety`. The server made no statement; a caller
-    /// that needs one must not read this as permission to retry.
-    Unstated,
-    /// The work may already have run. A blind retry re-executes it — the caller must
-    /// reconcile against the backend first.
-    UnsafeWithoutReconciliation,
-    /// The work did not run, but the human approval that authorized it is gone. A
-    /// retry cannot recover it; a new elicitation is required.
-    UnsafeWithoutNewElicitation,
-    /// A token this client does not recognize. Treated as a statement that was made
-    /// and not understood — never as its absence, and never as "safe".
-    Unrecognized(String),
-}
-
-/// The execution / retry contract a server derives from its exchange machine and signs
-/// into every rejection body (ADR-MCPRE-058 §10, SL-10), read back on the client.
-///
-/// The raw tokens are kept verbatim so a caller can log exactly what the peer said; the
-/// accessors classify them without ever inventing a state the receipt did not carry.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ExecutionContract {
-    /// `error.data.mcp_re_error.execution_status`, verbatim.
-    pub execution_status: Option<String>,
-    /// `error.data.mcp_re_error.retry_safety`, verbatim.
-    pub retry_safety: Option<String>,
-    /// `error.data.mcp_re_error.continuation_status`, verbatim.
-    pub continuation_status: Option<String>,
-    /// `error.data.mcp_re_error.retention_status`, verbatim.
-    pub retention_status: Option<String>,
-}
-
-impl ExecutionContract {
-    /// Whether the receipt stated any part of the contract at all.
-    pub fn is_stated(&self) -> bool {
-        self.execution_status.is_some()
-            || self.retry_safety.is_some()
-            || self.continuation_status.is_some()
-            || self.retention_status.is_some()
-    }
-
-    /// The classified `execution_status`.
-    pub fn execution(&self) -> ExecutionStatus {
-        match self.execution_status.as_deref() {
-            None => ExecutionStatus::Unstated,
-            Some("not_executed") => ExecutionStatus::NotExecuted,
-            Some("possibly_executed") => ExecutionStatus::PossiblyExecuted,
-            Some(other) => ExecutionStatus::Unrecognized(other.to_owned()),
-        }
-    }
-
-    /// The classified `retry_safety`.
-    pub fn retry(&self) -> RetrySafety {
-        match self.retry_safety.as_deref() {
-            None => RetrySafety::Unstated,
-            Some("unsafe_without_reconciliation") => RetrySafety::UnsafeWithoutReconciliation,
-            Some("unsafe_without_new_elicitation") => RetrySafety::UnsafeWithoutNewElicitation,
-            Some(other) => RetrySafety::Unrecognized(other.to_owned()),
-        }
-    }
-
-    /// Whether a blind retry is refused by this receipt: the server stated a retry
-    /// hazard, or stated the work may already have run.
-    ///
-    /// A receipt that states NOTHING returns `false` — this reports what the server
-    /// said, and a caller that needs the difference between "stated safe" and "said
-    /// nothing" reads [`is_stated`](Self::is_stated) alongside it. There is no token
-    /// for "safe to retry": the contract only ever names hazards.
-    pub fn retry_is_refused(&self) -> bool {
-        !matches!(self.retry(), RetrySafety::Unstated)
-            || matches!(self.execution(), ExecutionStatus::PossiblyExecuted)
-    }
-
-    /// Whether the exchange consumed a continuation (a human approval) that a retry
-    /// cannot recover.
-    pub fn continuation_consumed(&self) -> bool {
-        self.continuation_status.as_deref() == Some("consumed")
-    }
-
-    /// Whether the server states its evidence-retention obligation failed for this
-    /// exchange — the audit store has no record of a call that may have run.
-    pub fn retention_failed(&self) -> bool {
-        self.retention_status.as_deref() == Some("failed")
     }
 }
 
@@ -810,31 +450,6 @@ pub fn verify_delegated_response(
     }
 }
 
-/// The server's frozen wire code and its ADR-MCPRE-058 §10 execution/retry contract,
-/// from a (verified) rejection-receipt body's `error.data.mcp_re_error`.
-///
-/// Read ONLY after verification: the content-digest covered these bytes, so what comes
-/// back is what the server signed. One parse for both, because they are one object and
-/// a caller must never see the wire code without the disposition beside it.
-fn rejection_receipt(body: &[u8]) -> (Option<String>, ExecutionContract) {
-    let Ok(value) = serde_json::from_slice::<Value>(body) else {
-        return (None, ExecutionContract::default());
-    };
-    let Some(error) = value.pointer("/error/data/mcp_re_error") else {
-        return (None, ExecutionContract::default());
-    };
-    let field = |name: &str| error.get(name).and_then(Value::as_str).map(str::to_owned);
-    (
-        field("wire_code"),
-        ExecutionContract {
-            execution_status: field("execution_status"),
-            retry_safety: field("retry_safety"),
-            continuation_status: field("continuation_status"),
-            retention_status: field("retention_status"),
-        },
-    )
-}
-
 /// The `digest_alg` a preflight receipt uses for the digest of the bytes it received.
 /// It is the ONLY alg that names "these are the request bytes that reached me".
 const RECEIVED_DIGEST_ALG: &str = "sha-256-received";
@@ -941,11 +556,13 @@ pub fn verify_delegated_accepted_202(
 /// one-way notifications, so an operator's configured control read as enabled and did
 /// not run on half the traffic.
 ///
-/// The kid is read from the credential AFTER the full verification succeeds: the
-/// credential header is a COVERED component of the 202's signature (an uncovered one
-/// is refused), the root signature covers the JWS header, and the credential verifier
-/// requires `header.kid == claims.issuer_kid` — so the value read here is the anchor
-/// the response provably chained to, not a self-asserted label.
+/// The kid is taken from the VERIFIED product, never re-read from the wire: the credential
+/// header is a COVERED component of the 202's signature (an uncovered one is refused), the
+/// root signature covers the JWS header, and the credential verifier requires
+/// `header.kid == claims.issuer_kid` — so
+/// [`AcknowledgedDelegation::issuer_kid`](mcp_re_http_profile::AcknowledgedDelegation::issuer_kid)
+/// is the anchor the response provably chained to, and there is no second reader of the
+/// raw bytes to disagree with the first.
 pub fn verify_delegated_accepted_202_pinned(
     response: &HttpResponse,
     request: &HttpRequest,
@@ -969,7 +586,7 @@ pub fn verify_delegated_accepted_202_pinned(
     };
     let is_revoked = |identifier: &str| trust.is_revoked(identifier);
     let resolve_actor = |kid: &str, slot: SignerSlot| trust.resolve_issuer(kid, slot, now);
-    let actor = mcp_re_http_profile::verify_delegated_accepted_202(
+    let acknowledged = mcp_re_http_profile::verify_delegated_accepted_202(
         response,
         request,
         &Verifier::new(&verifier_policy, &resolve_actor),
@@ -977,51 +594,27 @@ pub fn verify_delegated_accepted_202_pinned(
         &is_revoked,
         now,
     )?;
+    // The pin is compared against the VERIFIED product's anchor. This used to re-parse the
+    // response's own credential header — untrusted bytes read to answer a question the
+    // verifier had just answered — so the pin depended on the second reader agreeing with
+    // the first about which of two credential headers to believe.
     if let Some(pinned) = expected_issuer_kid {
-        if delegation_issuer_kid(response)? != pinned {
+        if acknowledged.issuer_kid() != pinned {
             return Err(HttpProfileError::ResponseBindingMismatch);
         }
     }
-    Ok(actor)
-}
-
-/// The ROOT issuer kid of the delegation credential a response carries.
-///
-/// Read from the compact-JWS header's `kid`, which the credential verifier has already
-/// required to equal the root-signed `issuer_kid` claim. Call it only on a response
-/// whose credential has verified: on its own this parses an untrusted header.
-///
-/// A REPEATED credential header is a protocol error here as it is in the verifier, so
-/// the pin reads the same one the verification did rather than whichever the two
-/// happen to pick first.
-fn delegation_issuer_kid(response: &HttpResponse) -> Result<String, HttpProfileError> {
-    let mut found: Option<&str> = None;
-    for (name, value) in &response.headers {
-        if name.eq_ignore_ascii_case(mcp_re_http_profile::MCP_RE_DELEGATION_HEADER) {
-            if found.is_some() {
-                return Err(HttpProfileError::DuplicateHeader(
-                    mcp_re_http_profile::MCP_RE_DELEGATION_HEADER,
-                ));
-            }
-            found = Some(value.as_str());
-        }
-    }
-    let credential = found.ok_or(HttpProfileError::DelegationCredentialMissing)?;
-    let header_seg = credential
-        .split('.')
-        .next()
-        .ok_or(HttpProfileError::MalformedEvidence("delegation header"))?;
-    let decoded = mcp_re_core::b64url_decode(header_seg)
-        .map_err(|_| HttpProfileError::MalformedEvidence("delegation header"))?;
-    let header: mcp_re_http_profile::DelegationHeader = serde_json::from_slice(&decoded)
-        .map_err(|_| HttpProfileError::MalformedEvidence("delegation header"))?;
-    Ok(header.kid)
+    Ok(acknowledged.into_actor())
 }
 
 #[cfg(test)]
 mod delegated_tests {
     use super::*;
     use crate::build_signed_request;
+    use crate::delegated_trust::RevocationSource;
+    use crate::delegated_trust::StaticRevocationList;
+    use crate::delegated_trust::TrustedIssuerSet;
+    use crate::execution_contract::ExecutionStatus;
+    use crate::execution_contract::RetrySafety;
     use crate::RequestSigningInputs;
     use mcp_re_core::SigningKey;
     use mcp_re_http_profile::build_delegated_rejection;

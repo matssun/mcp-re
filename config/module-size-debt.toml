@@ -141,10 +141,16 @@ baseline_sha = "d1fc5fa"
 status = "reviewed-action-required"
 review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 
+# The registered 1108 was already stale by 87 lines: PR #673 made delegated-response trust
+# one typed input and the file fell to 1021, and MCPRE-172 item 2 then took the 202 path's
+# re-parse of the credential header out at 993. Re-established at the measurement rather
+# than left as headroom nobody paid for, with the SHA that establishes it. Item 3 then moved
+# the trust-anchor lifecycle and the revocation seam under `delegated_trust/`: 993 -> 739,
+# and item 4 the execution/retry contract to `execution_contract.rs`: 739 -> 608.
 [[debt]]
 path = "mcp-re-client-core/src/response.rs"
-baseline_prod_loc = 1108
-baseline_sha = "d1fc5fa"
+baseline_prod_loc = 608
+baseline_sha = "27d8612"
 status = "unreviewed"
 
 [[debt]]
@@ -228,10 +234,15 @@ baseline_prod_loc = 719
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
+# MCPRE-172 item 2 gave the bodyless verifier an owner subtree: `bodyless.rs` became
+# `bodyless/mod.rs` so the acknowledgement's verified product is declared by its producer
+# rather than added to a file the ratchet holds at 712. The debt moves WITH the file —
+# dropping the entry because the path changed would launder 712 registered lines as
+# progress — and the number falls to 707 because the actor projection left with it.
 [[debt]]
-path = "mcp-re-http-profile/src/bodyless.rs"
-baseline_prod_loc = 712
-baseline_sha = "d1fc5fa"
+path = "mcp-re-http-profile/src/bodyless/mod.rs"
+baseline_prod_loc = 707
+baseline_sha = "c744e2a"
 status = "unreviewed"
 
 [[debt]]

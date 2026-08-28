@@ -53,6 +53,9 @@
 use mcp_re_core::McpReError;
 
 use crate::block::ResolvedActor;
+
+/// What a verified bodyless acknowledgement establishes.
+mod acknowledged;
 use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::digest::content_digest_sha256;
@@ -77,6 +80,7 @@ use crate::sigbase::signature_base;
 use crate::sigbase::CoveredComponent;
 use crate::sigbase::SignatureParams;
 use crate::sigbase::SourceMessage;
+pub use acknowledged::AcknowledgedDelegation;
 
 /// Fail closed if a bodyless message carries content metadata or content.
 ///
@@ -417,7 +421,7 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
     expect: &crate::verify::DelegationExpectations<'_>,
     is_revoked: &dyn Fn(&str) -> bool,
     now: i64,
-) -> Result<ResolvedActor, HttpProfileError> {
+) -> Result<AcknowledgedDelegation, HttpProfileError> {
     reject_content_encoding(&response.headers)?;
     require_bodyless(&response.headers, &response.body)?;
     if response.status != STATUS_ACCEPTED {
@@ -550,16 +554,7 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
     )
     .map_err(|_| HttpProfileError::DelegationKeyMismatch)?;
 
-    Ok(ResolvedActor {
-        identity: crate::block::ActorIdentity {
-            role: "server".to_owned(),
-            trust_domain: String::new(),
-            subject: verified.server_signer.clone(),
-            keyid: verified.delegated_kid.clone(),
-        },
-        verification_key: verified.delegated_key,
-        slot: SignerSlot::Response,
-    })
+    Ok(AcknowledgedDelegation::established(verified))
 }
 
 /// Read the `mcp_re_server_signer` claim from a compact-JWS credential's payload

@@ -36,7 +36,7 @@ count = 1
 [[debt]]
 crate = "mcp-re-client-core"
 lint = "excessive_nesting"
-count = 1
+count = 0
 
 [[debt]]
 crate = "mcp-re-client-core"
