@@ -238,7 +238,7 @@ review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 # is the test a facade has to pass.
 path = "mcp-re-proxy/src/trust_plane/mod.rs"
 baseline_prod_loc = 603
-baseline_sha = "d1fc5fa"
+baseline_sha = "2eef1fe"
 status = "unreviewed"
 
 [[debt]]
@@ -370,7 +370,7 @@ status = "unreviewed"
 [[debt]]
 path = "mcp-re-proxy/src/trust_plane/trust_cache.rs"
 baseline_prod_loc = 424
-baseline_sha = "d1fc5fa"
+baseline_sha = "2eef1fe"
 status = "unreviewed"
 
 [[debt]]
