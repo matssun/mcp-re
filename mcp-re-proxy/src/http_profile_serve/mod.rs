@@ -65,6 +65,10 @@ mod inner_plane;
 /// Durable responsibility for a served exchange: taken before the side effects run, and
 /// discharged with what was actually served.
 mod retention;
+
+/// What makes an inbound message a request this deployment reads at all: whose it is,
+/// whether it is addressed here, and whether it is legal MCP.
+mod request_admission;
 pub use body_boundary::extract_request_state;
 use body_boundary::ForwardedBody;
 use continuation::Retirement;
@@ -72,7 +76,6 @@ use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::sign_delegated_accepted_202;
 use mcp_re_http_profile::sign_delegated_response_full;
 use mcp_re_http_profile::AdmissionPolicy;
-use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::ExecutionDisposition;
 use mcp_re_http_profile::HttpRequest;
@@ -83,7 +86,6 @@ use mcp_re_http_profile::RetainedContinuation;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedContextPolicy;
 use mcp_re_http_profile::VerifiedMcpRequest;
-use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 use reply::ReplyClass;
 use reply::ValidatedReply;
@@ -166,11 +168,9 @@ pub(super) struct Exchange<'a> {
 /// (MCPRE-111): one instance is
 /// shared across all per-core runtimes.
 pub struct HttpProfileProxy {
-    /// Trust resolution for request (client) and response (server) signing slots.
-    resolve_actor: ActorResolver,
-    /// The verifier's expected audience tuple (audience id + `@target-uri` + route);
-    /// `target_uri` must equal the request `@target-uri` (enforced in verify).
-    expected_audience: AudienceTuple,
+    /// Who may speak, to whom, and under what acceptance policy — the three inputs that
+    /// decide whether an inbound message is a request this deployment reads at all.
+    requests: request_admission::RequestAdmission,
     /// The response-signing authority: the delegated credential, the configured validity,
     /// and the receipt a refusal is served as. Held as one owner so the reply path and the
     /// refusal path cannot drift apart in what they sign under.
@@ -196,11 +196,6 @@ pub struct HttpProfileProxy {
     /// design, so it is only meaningful over a channel the PEP alone can write to
     /// — an operator asserts that, and nothing here can check it.
     verified_context_policy: VerifiedContextPolicy,
-    /// The verifier-local acceptance policy: algorithm registry, bounded skew, and
-    /// the optional MCP transport/version contract (§4.1, §5.1, §13.1). Default is
-    /// `VerifierPolicy::default()` — Ed25519, 30s skew, no transport contract — so
-    /// serving behaves as before unless a deployment attaches a stricter policy.
-    verifier_policy: VerifierPolicy,
     /// The ADR-MCPS-035 security-audit sink. `None` is the explicit no-emission
     /// posture; a sink failure never fails a request (see [`crate::audit_sink`]).
     audit: crate::audit_sink::MaybeAuditSink,
@@ -261,8 +256,7 @@ impl HttpProfileProxy {
         delegated_signer: Arc<DelegatedServerSigner>,
     ) -> Self {
         HttpProfileProxy {
-            resolve_actor,
-            expected_audience,
+            requests: request_admission::RequestAdmission::new(resolve_actor, expected_audience),
             responses: receipt::ResponseSigning::new(delegated_signer, sig_ttl_secs),
             replay_async,
             dispatch_cfg,
@@ -270,7 +264,6 @@ impl HttpProfileProxy {
             transport_binding: None,
             continuations: continuation::ContinuationPlane::disabled(),
             verified_context_policy: VerifiedContextPolicy::default(),
-            verifier_policy: VerifierPolicy::default(),
             authorization: AuthorizationStage::default(),
             audit: None,
             admission: None,
@@ -283,7 +276,7 @@ impl HttpProfileProxy {
     /// passes `VerifierPolicy::default().with_mcp_transport(McpTransportPolicy::mcp_2026_07_28(&["2026-07-28"]))`
     /// to enforce required-header presence and version policy on the served path.
     pub fn with_verifier_policy(mut self, policy: VerifierPolicy) -> Self {
-        self.verifier_policy = policy;
+        self.requests.under(policy);
         self
     }
 
@@ -440,7 +433,7 @@ impl HttpProfileProxy {
             .decide(
                 ex.verified,
                 ex.actor_id,
-                &self.expected_audience.audience_id,
+                self.requests.audience_id(),
                 ex.now,
             )
             .await
@@ -589,69 +582,6 @@ impl HttpProfileProxy {
     //
     // Refusals take their retry contract from the machine, never from their own position:
     // every one of them passes `Self::disposition(progress)`.
-
-    /// VERIFIED — RFC 9421 + RFC 9530 + the evidence block.
-    ///
-    /// ```text
-    /// ensures   Ok  => the signature verified and an actor is resolved
-    ///           Err => 403, signed UNBOUND (no trustworthy request hash exists yet)
-    /// forbids   any effect on the request's behalf
-    /// refusal   free — nothing has happened
-    /// ```
-    ///
-    /// DPoP artifact bindings derive their credential from the covered Authorization
-    /// header, so no external material is supplied; a binding lacking one fails closed.
-    fn verify_stage(
-        &self,
-        http_req: &HttpRequest,
-        now: i64,
-    ) -> Result<Established<VerifiedMcpRequest>, Refusal> {
-        let no_material = |_b: &ArtifactBinding| None;
-        // Scoped so the timer covers the verification and nothing after it.
-        let verify_result = {
-            let _t = crate::stage_timers::Timed::start(crate::stage_timers::Stage::Verify);
-            Verifier::new(&self.verifier_policy, self.resolve_actor.as_ref()).verify_request(
-                http_req,
-                &self.expected_audience,
-                &no_material,
-                now,
-            )
-        };
-        // The request never verified, so there is no trustworthy request hash to bind to
-        // and no resolved actor to attribute the denial to.
-        verify_result
-            .map(|v| Established::new(v, ExchangeEvent::SignatureVerified))
-            .map_err(|e| Refusal::preflight(e, 403))
-    }
-
-    /// REQUEST-ENVELOPE-VALIDATED — is this body a legal JSON-RPC request at all?
-    ///
-    /// ```text
-    /// ensures   Ok  => the body is a legal JSON-RPC 2.0 request, and the outstanding id
-    ///                  it establishes is decided ONCE, here
-    ///           Err => 400, bound to the request via `;req`
-    /// forbids   any effect on the request's behalf
-    /// refusal   free — nothing has happened
-    /// ```
-    ///
-    /// Asked here, before anything reads the body for meaning, because everything below
-    /// does: the continuation stage reads `params.requestState`, the forwarded body strips
-    /// `_meta`, and the terminal arm is chosen by the presence of `id`. Deciding the shape
-    /// after admission would burn a nonce, spend an approval and write a durable retention
-    /// marker on behalf of a document that is not an MCP message.
-    ///
-    /// The returned [`OutstandingId`](mcp_re_http_profile::OutstandingId) is the exchange's
-    /// single answer to "what is this request": the notification arm and the response
-    /// envelope validator are both given this value rather than re-reading the body. Two
-    /// readers of one document can disagree, and the disagreement that mattered here is a
-    /// body dispatched as a request and acknowledged as a notification.
-    fn validate_request_stage(
-        &self,
-        http_req: &HttpRequest,
-    ) -> Result<mcp_re_http_profile::OutstandingId, Refusal> {
-        mcp_re_http_profile::validate_request_envelope(&http_req.body)
-            .map_err(|e| Refusal::before_admission(e, 400))
-    }
 
     /// TRANSPORT-BOUND — Mode-A: the verified request actor must be the mTLS peer.
     /// ```text
@@ -828,7 +758,7 @@ impl HttpProfileProxy {
             body: req.body,
         };
 
-        let verified = match self.verify_stage(&http_req, now) {
+        let verified = match self.requests.verify(&http_req, now) {
             Ok(v) => progress.establish(v),
             // Signed inline rather than through `refuse`: there is no `Exchange` yet,
             // because nothing about the request is trusted.
@@ -861,7 +791,7 @@ impl HttpProfileProxy {
 
         // What this request IS, decided once and carried: a legal JSON-RPC 2.0 request, and
         // the outstanding id that selects its terminal.
-        let outstanding = match self.validate_request_stage(&http_req) {
+        let outstanding = match self.requests.validate_envelope(&http_req) {
             Ok(id) => id,
             Err(refusal) => return self.refuse(&ex, refusal, &progress),
         };
@@ -890,7 +820,7 @@ impl HttpProfileProxy {
 
         let prep = match self
             .continuations
-            .prepare(&ex, &self.expected_audience.audience_id)
+            .prepare(&ex, self.requests.audience_id())
             .await
         {
             Ok(prep) => progress.establish(prep),
@@ -1093,12 +1023,7 @@ impl HttpProfileProxy {
             ReplyClass::Open(state) => {
                 match self
                     .continuations
-                    .record_open_leg(
-                        &ex,
-                        &self.expected_audience.audience_id,
-                        state,
-                        response_base,
-                    )
+                    .record_open_leg(&ex, self.requests.audience_id(), state, response_base)
                     .await
                 {
                     Ok(recorded) => {
