@@ -1136,9 +1136,11 @@ prevent.
 result means is answering question 1 with an "and". This record does not schedule it: the
 parent's ruled order governs, and the classification half is a cleanup rather than a defect.
 
-## EX-006 — `mcp-re-proxy/src/ocsp.rs` — **census complete, disposition: extract, then expect a §14 exception**
+## EX-006 — `mcp-re-proxy/src/ocsp.rs` — **census complete; actions 1 and 2 landed; the protocol remainder is a reviewed exception**
 
-**Status:** `reviewed-action-required`. **Measured:** 1271 production lines on `main` @
+**Status:** `reviewed-exception`, granted 2026-08-28 by the repository owner over the
+post-#697 remainder — see *Action 3* at the end of this record. **Measured:** 980 production
+lines on `main` @ `d7abd3e`; 1271 at the original census on `main` @
 `68e821b`. **Component blueprint:** [`components/online-ocsp.md`](components/online-ocsp.md).
 **Census issue:** [#577](https://github.com/matssun/mcp-re/issues/577) (MCPRE-141).
 
@@ -1301,6 +1303,79 @@ of a feature-gated item made `mcp-re-proxy` fail to build, and the gate reported
 40 and 12 — instructing the operator to erase the debt register for a crate nobody had
 linted. It now refuses on any non-zero status, and that refusal was verified by breaking the
 build on purpose.
+
+### Action 3 — the §14 exception, granted over the post-#697 remainder
+
+**Ruling (repository owner, 2026-08-28): the 980-line remainder is a reviewed exception.**
+
+The census made action 3 conditional on actions 1 and 2, and both have landed:
+
+| condition the census set | state |
+|---|---|
+| the unrelated outbound-fetch/SSRF authority is out of the file | done — `src/outbound_fetch/`, compiled unconditionally |
+| the RFC 6960 §3.2 conclusion has an earned success product | done — `TrustedRevocationAnswer` / `RevocationEvidence` |
+| what is left is one coherent authority | yes — the re-census leaves the RFC 6960 protocol and nothing else |
+
+**Why decomposition would damage the reasoning.** The remainder is the §3.2 verification
+argument, and its parts are *conjuncts of one conclusion*, not stages of a pipeline:
+responder signature, responder identity (delegated-signer authorisation via the
+`id-kp-OCSPSigning` EKU or a direct CA match), CertID binding to the certificate actually
+being admitted, freshness (`thisUpdate`/`nextUpdate` against the clock), and nonce
+correlation. None of them is a security fact on its own. A responder signature that verifies
+against a key nobody authorised proves nothing; a `Good` for a CertID that names another
+certificate proves nothing; a verified, correctly-bound answer from last year proves
+nothing. Splitting them into separately-callable units would hand out exactly the partial
+results that §8 question 11 identified as this file's sharpest defect — and the repair for
+that defect was to make the *whole* argument the only producer of the answer. Cutting the
+argument into files would re-create producers of pieces of it.
+
+**What invariant requires locality.** `TrustedRevocationAnswer` has one producer,
+`verify_and_map_response`, and its meaning is *"all five §3.2 checks passed over this
+certificate"*. That is a single-producer seal, and the seal is only as narrow as the module
+that owns the private representation. Distributing the conjuncts across modules requires
+either widening the constructor or inventing per-conjunct intermediate products — which
+would put back the three-valued `Copy` enum the census condemned, one level down.
+
+**Why the subordinate responsibilities cannot be separated.** They are not subordinate
+*responsibilities*; they are predicates over one parsed response, sharing its DER
+structures, its issuer material and its clock. The two parts that genuinely were separable
+have already left: the outbound-fetch policy (action 1) and, before that, nothing else was
+found. Question 2's re-run answer is **one**.
+
+**Compensating evidence.** The size is not carried by review alone:
+
+- the §3.2 conclusion is type-sealed — `OcspChecker::allows` takes `RevocationEvidence`, so
+  no caller can speak a `Good` that did not pass the argument;
+- responder `Unknown` and local inability are distinct values, so the audit trail cannot
+  report one as the other;
+- the unit tests in the file cover each conjunct's refusal path individually —
+  `acceptance_wrong_certid_is_denied` and `signed_good_for_wrong_certid_is_denied`,
+  `freshness_window_enforced` and `freshness_capped_when_no_next_update`,
+  `acceptance_nonce_mismatch_is_denied`, `forged_signature_is_denied` and
+  `wrong_key_signature_is_denied`, `delegated_responder_validity_window_enforced`,
+  `rejects_non_successful_responder_status`. **One conjunct has only its positive case:**
+  the `id-kp-OCSPSigning` EKU requirement is exercised by an EKU-bearing delegated
+  responder, and no test mints a responder that lacks the EKU. That is a named gap in this
+  record, not a claim;
+- THM-0013 pins the reachability/legality fact — no validated deployment is handed a
+  checker — and is explicit that it says nothing about correctness if one were.
+
+**The exception does not claim stronger evidence than the file has.** The
+`tests/integration_ext/ocsp_e2e_test.rs` limitation the census flagged **stands unchanged**:
+the test prints a SKIP notice and returns success when `MCP_RE_TEST_OCSP_RESPONDER_URL` is
+unset, so the live-responder property holds in the non-gating nightly `live-infra-e2e` lane
+and nowhere else. This record grants an exception about *structure*; it makes no claim about
+the live path, and a future decision to wire OCSP up must re-open that evidence question
+before relying on it.
+
+**What this exception does not license.** It is file-granular and it is not a licence to
+grow: the ratchet applies to `reviewed-exception` entries exactly as to any other. Adding
+another authority to `ocsp.rs` — a second protocol, a scheduler, a cache — is outside what
+was reviewed here, and belongs in its own module.
+
+`#661` (MCPRE-161) closes against this result. **No further OCSP implementation work is
+scheduled**; `AGENT_INSTRUCTIONS` §9's do-not-delete / do-not-wire-up prohibitions stand.
+
 
 ## EX-007 — `mcp-re-proxy/src/cli.rs` — **census complete, disposition: move the materialization out**
 
