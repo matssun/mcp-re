@@ -58,31 +58,6 @@ pub enum VerifiedContextKind {
     Trusted,
 }
 
-/// Transport-binding policy selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BindingKind {
-    /// No transport binding (the mTLS identity is ignored).
-    None,
-    /// Exact match: request `signer` must equal the verified transport identity.
-    Exact,
-    /// ADR-MCPS-023 Tier 3 (issue #71): the verified transport identity comes from
-    /// an LB-signed, request-bound ingress assertion (the node cryptographically
-    /// verifies the LB tied the asserted client identity to THIS request hash),
-    /// then binds exactly to the request signer. Honestly downgraded — NOT
-    /// `end_to_end_mtls`. Requires at least one `--ingress-lb-key`.
-    LbAssertion,
-    /// ADR-MCPS-023 §C (v0.10) Mode C **attested ingress**: the verified transport
-    /// identity comes from a controlled ingress attestor's request-bound
-    /// `mcp-re/lb-ingress-assertion/v2` assertion, verified over the pinned
-    /// attestor→node channel, then bound exactly to the request signer. Unlike
-    /// `LbAssertion` (Mode B, strict-rejected) this is a strict-ADMITTED, explicit-
-    /// opt-in posture — but it is *attested delegation*, NOT `end_to_end_mtls`: the
-    /// load balancer witnesses proof-of-possession and stays in the trusted
-    /// computing base. Requires `--ingress-attestor-key`, `--ingress-identity`,
-    /// `--ingress-audience`, and the explicit `--ingress-pinned-mtls` acknowledgement.
-    AttestedIngress,
-}
-
 /// Authorization-policy selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthzKind {

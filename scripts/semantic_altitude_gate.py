@@ -23,8 +23,10 @@ check can honestly enforce.
 
 ## Why it carries a registry of families not yet migrated
 
-`DeploymentRequest` still has one ingress sibling, `ingress_pinned_mtls`. It is ADR Phase 6
-and is listed in `NOT_YET_MIGRATED` with the phase that owns it. The gate
+`NOT_YET_MIGRATED` is EMPTY after Phase 6: every family the sweep named has a typed
+mechanism payload. The registry stays in the file because the shape it enforces — a family
+must be listed with the phase that owns it, or be refused — is what keeps a future
+un-migrated family from passing silently. The gate
 therefore states what it does NOT check, rather than passing silently over it: an
 unlisted family is refused, and a family whose fields have all left must be removed from
 the registry — so the list can only shrink, and finishing a phase is a visible edit here.
@@ -65,6 +67,14 @@ MIGRATED: dict[str, str] = {
         "OnlineRevocationEvidenceRequest::Required"
     ),
     "crl": "ADR-MCPRE-067 Phase 5 — RevocationListRequest, inside PeerRevocationRequest",
+    "mtls": (
+        "ADR-MCPRE-067 Phase 6 — the channel guarantee is PinnedChannelAcknowledgement, "
+        "a required member of AttestedIngressRequest"
+    ),
+    "ingress": (
+        "ADR-MCPRE-067 Phase 6 — the ingress material lives inside the peer-identity form "
+        "that verifies with it"
+    ),
     "redis": (
         "ADR-MCPRE-067 Phase 4 — RedisStoreRequest, inside the role's own storage request"
     ),
@@ -85,7 +95,6 @@ MIGRATED: dict[str, str] = {
 #: Fields matching these are reported as KNOWN and not refused. The registry may only
 #: shrink: a family with no matching field left must be deleted from it.
 NOT_YET_MIGRATED: dict[str, str] = {
-    "mtls": "Phase 6 — the ingress-assertion inputs, which no proving slice has reached",
 }
 
 FIELD = re.compile(r"^\s*pub ([a-z][a-z0-9_]*)\s*:", re.MULTILINE)
@@ -189,8 +198,15 @@ def qualifier_hits(field: str, qualifiers: dict[str, str]) -> list[str]:
     return sorted(q for q in qualifiers if q in parts)
 
 
-def check(text: str) -> tuple[list[str], list[str]]:
-    """Refusals, and the known-outstanding fields, for one request source."""
+def check(
+    text: str, not_yet_migrated: dict[str, str] | None = None
+) -> tuple[list[str], list[str]]:
+    """Refusals, and the known-outstanding fields, for one request source.
+
+    `not_yet_migrated` overrides the registry, for the selftest that must prove a stale
+    entry is refused — the live registry is empty, and a probe over nothing proves nothing.
+    """
+    registry = NOT_YET_MIGRATED if not_yet_migrated is None else not_yet_migrated
     problems: list[str] = []
     known: list[str] = []
     seen_families: set[str] = set()
@@ -202,15 +218,13 @@ def check(text: str) -> tuple[list[str], list[str]]:
                 f"({MIGRATED[qualifier]}); a new value belongs inside it, not beside "
                 f"the selector"
             )
-        outstanding = qualifier_hits(field, NOT_YET_MIGRATED)
+        outstanding = qualifier_hits(field, registry)
         seen_families.update(outstanding)
         # One line per FIELD, not per qualifier: `cpstore_etcd_endpoint` carries two and
         # is still one field awaiting one phase.
         if outstanding:
-            known.append(
-                f"{REQUEST_TYPE}::{field} — {NOT_YET_MIGRATED[outstanding[0]]}"
-            )
-    for qualifier in sorted(set(NOT_YET_MIGRATED) - seen_families):
+            known.append(f"{REQUEST_TYPE}::{field} — {registry[outstanding[0]]}")
+    for qualifier in sorted(set(registry) - seen_families):
         problems.append(
             f"`{qualifier}` is registered in NOT_YET_MIGRATED but no "
             f"`{REQUEST_TYPE}` field carries it — its migration is done, so remove the "
@@ -247,8 +261,8 @@ def selftest() -> int:
     if not any("client_crl_paths" in p for p in problems):
         print("selftest FAIL: a re-added revocation sibling field was accepted")
         failures += 1
-    if not any("ingress_pinned_mtls" in k for k in known):
-        print("selftest FAIL: an outstanding Phase-6 field was not reported as known")
+    if not any("ingress_pinned_mtls" in p for p in problems):
+        print("selftest FAIL: a re-added ingress sibling field was accepted")
         failures += 1
 
     clean = (
@@ -257,16 +271,18 @@ def selftest() -> int:
         .replace("    pub replay_redis_url: Option<String>,\n", "")
         .replace("    pub client_crl_paths: Vec<String>,\n", "")
         .replace("    pub client_ocsp: OcspKind,\n", "")
+        .replace("    pub ingress_pinned_mtls: bool,\n", "")
     )
     problems, _ = check(clean)
     if problems:
         print(f"selftest FAIL: a clean request was refused: {problems}")
         failures += 1
 
-    # A family whose fields have all gone must leave the registry.
-    emptied = clean.replace("    pub ingress_pinned_mtls: bool,\n", "")
-    problems, _ = check(emptied)
-    if not any("`mtls` is registered" in p for p in problems):
+    # A family whose fields have all gone must leave the registry. The live registry is
+    # empty, so the probe supplies one rather than asserting over nothing.
+    stale = {"nothing": "Phase 99 — a family with no field"}
+    problems, _ = check(clean, not_yet_migrated=stale)
+    if not any("`nothing` is registered" in p for p in problems):
         print("selftest FAIL: a stale NOT_YET_MIGRATED entry was accepted")
         failures += 1
 

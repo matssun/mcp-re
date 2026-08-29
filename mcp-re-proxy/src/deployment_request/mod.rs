@@ -19,6 +19,7 @@
 mod authorization;
 mod inner_backend_display;
 mod kinds;
+mod peer_identity;
 mod revocation;
 mod secret_string;
 mod signing_source;
@@ -26,7 +27,11 @@ mod storage;
 
 pub use authorization::AuthorizationRequest;
 pub(crate) use inner_backend_display::RedactedBackendUrls;
-pub use kinds::{AdmissionKind, AuditSinkKind, AuthzKind, BindingKind, VerifiedContextKind};
+pub use kinds::{AdmissionKind, AuditSinkKind, AuthzKind, VerifiedContextKind};
+pub use peer_identity::{
+    AttestedIngressRequest, ChannelCredentialIdentityRequest, IngressAssertionRequest,
+    PeerIdentityEvidenceRequest, PinnedChannelAcknowledgement,
+};
 pub use revocation::{
     OcspResponderRequest, OnlineRevocationEvidenceRequest, PeerRevocationRequest,
     RevocationListRequest,
@@ -49,7 +54,6 @@ pub use signing_source::{
 use std::time::Duration;
 
 use crate::tls::ServerLimits;
-use crate::transport::IdentityPolicy;
 
 /// A deployment as REQUESTED: every field an operator can state, and nothing decided.
 ///
@@ -226,36 +230,11 @@ pub struct DeploymentRequest {
     /// to bounded-cache with the deployment-default window `T` so absent-flag
     /// behavior is byte-for-byte the Tier-1 posture.
     pub revocation_tier: crate::revocation_tier::RevocationTier,
-    /// Transport-binding selection.
-    pub binding: BindingKind,
-    /// The authoritative client-certificate identity field (no implicit fallback).
-    pub identity_source: IdentityPolicy,
-    /// ADR-MCPS-023 Tier 3 (issue #71): the trusted LB verification keys for
-    /// LB-signed request-bound ingress assertions, as `(key_id, base64url-ed25519-pub)`
-    /// pairs from repeatable `--ingress-lb-key <keyid>:<base64-pub>`. Required (and
-    /// only meaningful) when `binding == LbAssertion`; an unknown asserted key id
-    /// fails closed. Empty for every other binding mode.
-    pub ingress_lb_keys: Vec<(String, String)>,
-    /// ADR-MCPS-023 §C (Mode C): the trusted ingress-attestor verification keys for
-    /// `mcp-re/lb-ingress-assertion/v2` assertions, as `(key_id, base64url-ed25519-pub)`
-    /// pairs from repeatable `--ingress-attestor-key <keyid>:<base64-pub>`. Required
-    /// (and only meaningful) when `binding == AttestedIngress`; an unknown asserted
-    /// key id fails closed. Empty for every other binding mode.
-    pub ingress_attestor_keys: Vec<(String, String)>,
-    /// ADR-MCPS-023 §C (Mode C): the ingress identities the node trusts, from
-    /// repeatable `--ingress-identity <id>`. A v2 assertion whose `ingress_identity`
-    /// is not in this set fails closed. Required when `binding == AttestedIngress`.
-    pub ingress_identities: Vec<String>,
-    /// ADR-MCPS-023 §C (Mode C): the node's own audience; a v2 assertion's `audience`
-    /// must equal it (route/audience binding). Set from `--ingress-audience`;
-    /// required when `binding == AttestedIngress`.
-    pub ingress_audience: Option<String>,
-    /// ADR-MCPS-023 §C2 (Mode C): the explicit operator acknowledgement, via
-    /// `--ingress-pinned-mtls`, that the attestor→node hop is a pinned mTLS channel
-    /// (or equivalent pinned workload identity). Mode C REQUIRES it — absent, the
-    /// proxy refuses to start (fail closed), so an attested-ingress posture can
-    /// never run without the pinned backend channel it depends on.
-    pub ingress_pinned_mtls: bool,
+    /// Which evidence carries the peer's identity to this node, and the material that
+    /// form verifies with. One tagged value: an attested-ingress selection has nowhere to
+    /// put a load-balancer key, so the five clauses that refused a value belonging to an
+    /// unselected form have no configuration left to examine (ADR-MCPRE-067 §7).
+    pub peer_identity: PeerIdentityEvidenceRequest,
     /// Everything this deployment asks for on the authorization axis.
     pub authorization: AuthorizationRequest,
     /// Which key establishes this deployment's communication channel.

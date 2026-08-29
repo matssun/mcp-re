@@ -18,8 +18,7 @@
 
 use mcp_re_proxy::cli::{self};
 use mcp_re_proxy::deployment_request::{
-    AuthzKind, BindingKind, DeploymentRequest, OcspResponderRequest,
-    OnlineRevocationEvidenceRequest,
+    AuthzKind, DeploymentRequest, OcspResponderRequest, OnlineRevocationEvidenceRequest,
 };
 use mcp_re_proxy::IdentityPolicy;
 
@@ -186,9 +185,8 @@ fn the_boundary_refuses_in_this_order() {
     config.limits.read_timeout = None;
     config.limits.write_timeout = None;
     config.limits.request_deadline = None;
-    config.identity_source = IdentityPolicy::CnLegacy;
     config.replay.durability = None;
-    config.binding = BindingKind::None;
+    config.peer_identity = mcp_re_proxy::deployment_request::PeerIdentityEvidenceRequest::Unbound;
 
     let order = keys(&mcp_re_proxy::config_state::validation::unsafe_config_violations(&config));
     assert_eq!(
@@ -207,12 +205,16 @@ fn the_boundary_refuses_in_this_order() {
             // leftovers are. An operator learns the freshness posture does not resolve
             // before being told which limits are unset.
             "--max-clock-skew",
-            // Both moved UP with the `ChannelBinding` machine, from the end of the list to
-            // its own position. Deliberate: an undeployable binding kind and a deprecated
-            // identity source are statements about whether this deployment exists at all,
-            // and an operator should meet them before a limit or a timeout.
+            // Moved UP with the `ChannelBinding` machine, from the end of the list to its
+            // own position. Deliberate: an undeployable peer-identity form is a statement
+            // about whether this deployment exists at all, and an operator should meet it
+            // before a limit or a timeout.
+            //
+            // Its sibling `--transport-identity-source cn_legacy` is no longer beside it in
+            // this fixture and cannot be: the identity field is a MEMBER of the
+            // channel-credential form, so a request naming the unbound form has no field to
+            // deprecate. Its slot is pinned in its own run below.
             "--transport-binding none",
-            "--transport-identity-source cn_legacy",
             // NEW. Requiredness for these lived in the parser's `require()`, which rejects
             // an ABSENT flag and says nothing about an EMPTY value. They sit immediately
             // before `--target-uri` because it is one of them: the coordinates a verifier
@@ -279,7 +281,12 @@ fn the_trust_and_fleet_clauses_keep_their_places() {
     // The zero-cadence clause shares this position with the missing-cadence clause above —
     // they are the same guard answering two ways, so only one can fire per run and they
     // are pinned together rather than each claiming its own slot.
-    config.binding = BindingKind::LbAssertion;
+    config.peer_identity =
+        mcp_re_proxy::deployment_request::PeerIdentityEvidenceRequest::IngressAssertion(
+            mcp_re_proxy::deployment_request::IngressAssertionRequest {
+                verification_keys: vec![("lb-1".to_string(), "k".to_string())],
+            },
+        );
 
     let order = keys(&mcp_re_proxy::config_state::validation::unsafe_config_violations(&config));
     assert_eq!(
@@ -308,17 +315,54 @@ fn the_trust_and_fleet_clauses_keep_their_places() {
 fn the_boundary_reports_every_violation_not_the_first() {
     let mut config = legal();
     config.authorization.kind = AuthzKind::Reference;
-    config.identity_source = IdentityPolicy::CnLegacy;
     config.replay.durability = None;
+    config.peer_identity = mcp_re_proxy::deployment_request::PeerIdentityEvidenceRequest::Unbound;
 
     let refusal = mcp_re_proxy::config_state::validation::ValidatedDeployment::try_from(config)
         .expect_err("three violations must refuse");
-    for expected in ["--authz", "cn_legacy", "--replay-durability-tier"] {
+    // `cn_legacy` used to be the third here. It cannot be: the identity FIELD is a member
+    // of the channel-credential form, and this fixture's other violation names the unbound
+    // form — so the two clauses are now mutually exclusive by construction rather than by
+    // fixture. The third is a different machine's, which is what the property needs.
+    for expected in [
+        "--authz",
+        "--transport-binding none",
+        "--replay-durability-tier",
+    ] {
         assert!(
             refusal.contains(expected),
             "missing {expected} in: {refusal}"
         );
     }
+}
+
+/// The deprecated identity field keeps the `ChannelBinding` machine's slot.
+///
+/// Pinned in its own run because a single configuration can no longer provoke it beside
+/// `--transport-binding none`: the field is a member of the channel-credential form, so a
+/// request that names another form has no field to deprecate. Two clauses of one machine
+/// that used to be siblings are now alternatives, and the order between them is a fact
+/// about the machine rather than about one fixture.
+#[test]
+fn the_deprecated_identity_field_takes_the_channel_binding_slot() {
+    let mut config = legal();
+    config.max_clock_skew = -1;
+    config.peer_identity =
+        mcp_re_proxy::deployment_request::PeerIdentityEvidenceRequest::channel_credential(
+            IdentityPolicy::CnLegacy,
+        );
+    config.trust_path = String::new();
+
+    let order = keys(&mcp_re_proxy::config_state::validation::unsafe_config_violations(&config));
+    assert_eq!(
+        order,
+        vec![
+            "--max-clock-skew",
+            "--transport-identity-source cn_legacy",
+            "--trust is empty",
+        ],
+        "the boundary's refusal order changed"
+    );
 }
 
 /// The zero-cadence refusal occupies the SAME slot as its missing-cadence sibling.
@@ -332,7 +376,12 @@ fn the_zero_cadence_clause_takes_the_cadence_slot() {
     config.revocation_tier = mcp_re_proxy::revocation_tier::RevocationTier::Live;
     config.trust_reload_secs = Some(0);
     config.fleet = true;
-    config.binding = BindingKind::LbAssertion;
+    config.peer_identity =
+        mcp_re_proxy::deployment_request::PeerIdentityEvidenceRequest::IngressAssertion(
+            mcp_re_proxy::deployment_request::IngressAssertionRequest {
+                verification_keys: vec![("lb-1".to_string(), "k".to_string())],
+            },
+        );
 
     let order = keys(&mcp_re_proxy::config_state::validation::unsafe_config_violations(&config));
     assert_eq!(

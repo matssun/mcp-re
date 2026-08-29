@@ -411,7 +411,12 @@ fn the_boundary_alone_refuses_an_lb_assertion_binding() {
     let m = serving_fixtures::write_material();
     let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
 
-    config.binding = mcp_re_proxy::deployment_request::BindingKind::LbAssertion;
+    config.peer_identity =
+        mcp_re_proxy::deployment_request::PeerIdentityEvidenceRequest::IngressAssertion(
+            mcp_re_proxy::deployment_request::IngressAssertionRequest {
+                verification_keys: vec![("lb-1".to_string(), "k".to_string())],
+            },
+        );
 
     let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
         .expect_err("lb-assertion binding must be refused however it was built");
@@ -449,7 +454,17 @@ fn mode_c_attested_ingress_is_refused_at_the_configuration_boundary() {
     let m = serving_fixtures::write_material();
     let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
 
-    config.binding = mcp_re_proxy::deployment_request::BindingKind::AttestedIngress;
+    config.peer_identity =
+        mcp_re_proxy::deployment_request::PeerIdentityEvidenceRequest::AttestedIngress(
+            mcp_re_proxy::deployment_request::AttestedIngressRequest {
+                asserted_identity_kind: mcp_re_proxy::IdentityPolicy::UriSan,
+                attestor_keys: vec![("attestor-1".to_string(), "k".to_string())],
+                identities: vec!["spiffe://example.org/ingress-1".to_string()],
+                audience: "did:example:server-1".to_string(),
+                pinned_channel:
+                    mcp_re_proxy::deployment_request::PinnedChannelAcknowledgement::acknowledged(),
+            },
+        );
 
     let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
         .expect_err("a non-deployable transport-binding mode must be refused");
@@ -1073,22 +1088,11 @@ fn a_programmatic_config_cannot_carry_a_dangling_custody_or_ingress_selector() {
                 },
             ),
         ),
-        (
-            "--ingress-lb-key",
-            Box::new(
-                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.ingress_lb_keys = vec![("lb-1".to_string(), "not-a-key".to_string())]
-                },
-            ),
-        ),
-        (
-            "--ingress-identity",
-            Box::new(
-                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.ingress_identities = vec!["spiffe://x/ingress".to_string()]
-                },
-            ),
-        ),
+        // The two ingress cases that used to be here — a dangling `--ingress-lb-key` and a
+        // dangling `--ingress-identity` — are gone, and their absence is the result.
+        // ADR-MCPRE-067 Phase 6 made `peer_identity` a tagged form, so material belonging
+        // to a form the deployment did not select has nowhere to live: the mutation cannot
+        // be written. The argv shape survives and `cli::peer_identity_flags` answers it.
     ];
 
     for (flag, mutate) in cases {

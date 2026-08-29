@@ -33,7 +33,9 @@
 
 use std::time::Duration;
 
-use crate::deployment_request::{BindingKind, DeploymentRequest};
+use crate::deployment_request::{
+    AttestedIngressRequest, DeploymentRequest, PeerIdentityEvidenceRequest,
+};
 use crate::transport::IdentityPolicy;
 
 /// How a verified request signer is bound to the authenticated channel.
@@ -131,11 +133,15 @@ impl ClientRevocationPlan {
 /// deployment can be in, and `identity_source` has a deprecated one. They are input forms,
 /// not states, so they produce no member of the model.
 fn classify_binding(config: &DeploymentRequest) -> Result<ChannelBindingState, Vec<String>> {
-    let mut refusals = binding_kind_refusals(config.binding);
-    let identity = match config.identity_source {
-        IdentityPolicy::UriSan => Some(ChannelBindingState::ExactUriSan),
-        IdentityPolicy::DnsSan => Some(ChannelBindingState::ExactDnsSan),
-        IdentityPolicy::CnLegacy => {
+    let form = &config.peer_identity;
+    let mut refusals = binding_kind_refusals(form);
+    // The identity FIELD is asked of the form that has one. No other form reads a
+    // certificate, so under those there is no field to be deprecated — where the old shape
+    // had a sibling `identity_source` that every form carried and only one consulted.
+    let identity = match form.credential_identity_field() {
+        Some(IdentityPolicy::UriSan) => Some(ChannelBindingState::ExactUriSan),
+        Some(IdentityPolicy::DnsSan) => Some(ChannelBindingState::ExactDnsSan),
+        Some(IdentityPolicy::CnLegacy) => {
             refusals.push(
                 "--transport-identity-source cn_legacy is a deprecated, insecure identity \
                  binding; use uri_san or dns_san"
@@ -143,38 +149,39 @@ fn classify_binding(config: &DeploymentRequest) -> Result<ChannelBindingState, V
             );
             None
         }
+        None => None,
     };
-    // `Exact` is named positively: the state is the PAIR, so a kind that is not the one
-    // deployable kind cannot reach a state named `Exact*` however the refusal list came out.
-    match (config.binding, identity, refusals.is_empty()) {
-        (BindingKind::Exact, Some(state), true) => Ok(state),
+    // The state is the PAIR, so a form that is not the one deployable form cannot reach a
+    // state named `Exact*` however the refusal list came out.
+    match (identity, refusals.is_empty()) {
+        (Some(state), true) => Ok(state),
         _ => Err(refusals),
     }
 }
 
-/// Every refusal the `binding` selector states about itself.
+/// Every refusal the peer-identity FORM states about itself.
 ///
-/// Exhaustive over [`BindingKind`], because the classifier's answer for a kind is what
-/// decides whether the deployment is in a channel-binding state at all: `Exact` is the one
-/// kind the serving path installs a transport binding for, so a kind reaching a state
-/// without an arm here would name an exact-match posture the deployment is not in. A kind
-/// added to the enum has no answer until one is written here.
-fn binding_kind_refusals(binding: BindingKind) -> Vec<String> {
+/// Exhaustive over [`PeerIdentityEvidenceRequest`], because the classifier's answer for a
+/// form is what decides whether the deployment is in a channel-binding state at all: the
+/// channel-credential form is the one the serving path installs a transport binding for, so
+/// a form reaching a state without an arm here would name a posture the deployment is not
+/// in. A form added to the union has no answer until one is written here.
+fn binding_kind_refusals(form: &PeerIdentityEvidenceRequest) -> Vec<String> {
     let mut refusals = Vec::new();
-    if let Some(refusal) = undeployable_transport_binding_refusal(binding) {
+    if let Some(refusal) = undeployable_transport_binding_refusal(form) {
         refusals.push(refusal);
     }
-    match binding {
-        BindingKind::Exact => {}
+    match form {
+        PeerIdentityEvidenceRequest::ChannelCredential(_) => {}
         // Refused by the one decision about whether a mode can be deployed, above.
-        BindingKind::AttestedIngress => {}
-        BindingKind::None => refusals.push(
+        PeerIdentityEvidenceRequest::AttestedIngress(_) => {}
+        PeerIdentityEvidenceRequest::Unbound => refusals.push(
             "--transport-binding none ignores the mTLS channel identity, decoupling the \
              verified request signer from the authenticated channel; production must bind \
              them (--transport-binding exact)"
                 .to_string(),
         ),
-        BindingKind::LbAssertion => refusals.push(
+        PeerIdentityEvidenceRequest::IngressAssertion(_) => refusals.push(
             "--transport-binding lb-assertion places the load balancer in the trusted \
              computing base (the LB terminates the client mTLS and signs a request-bound \
              assertion); this is request-bound ingress assertion, NOT end-to-end \
@@ -277,8 +284,10 @@ pub const MAX_CLIENT_CERT_LIFETIME: Duration = Duration::from_secs(3600);
 ///
 /// `--transport-binding lb-assertion` is refused separately, by the unsafe-configuration
 /// guard that names why a load balancer in the trusted computing base is unacceptable.
-pub(crate) fn undeployable_transport_binding_refusal(binding: BindingKind) -> Option<String> {
-    (binding == BindingKind::AttestedIngress).then(|| {
+pub(crate) fn undeployable_transport_binding_refusal(
+    form: &PeerIdentityEvidenceRequest,
+) -> Option<String> {
+    matches!(form, PeerIdentityEvidenceRequest::AttestedIngress(_)).then(|| {
         "--transport-binding attested-ingress is not a supported deployment mode: Mode-C \
          attested ingress binds the request under the owner-signed security boundary, and \
          its rebinding onto the RFC 9421 request evidence is not yet specified (what the \
@@ -288,197 +297,123 @@ pub(crate) fn undeployable_transport_binding_refusal(binding: BindingKind) -> Op
     })
 }
 
-/// Ingress-assertion witnesses: the material a request-bound ingress binding verifies with.
+/// The verification material a peer-identity form needs, checked WITHIN that form.
 ///
-/// `ChannelBinding`-LOCAL validity, which is why it lives beside the classifier rather than
-/// among the relations: every clause reads `binding` and the ingress material that binding
-/// names — nothing about another machine's state.
-/// Ingress-assertion coherence: the LB-assertion (Tier 3) and attested-ingress (Mode C)
-/// flag sets, as one rule.
+/// Every clause here is internal to one form: a form with no verification key admits
+/// nothing, a trusted identity that is the empty string admits everything, and an empty
+/// audience binds an assertion to every node that also named none. None of them is a
+/// relation to another machine, which is why they live beside the classifier.
 ///
-/// Pure: it takes what it decides on and returns the refusal, so the clauses can be tested
-/// without building a `DeploymentRequest` or a command line.
-/// [`ingress_assertion_violation`] is how the validation boundary — the only caller — asks
-/// it of a `DeploymentRequest`.
-#[allow(clippy::too_many_arguments)]
-fn ingress_assertion_refusal(
-    binding: BindingKind,
-    ingress_lb_keys: &[(String, String)],
-    ingress_attestor_keys: &[(String, String)],
-    ingress_identities: &[String],
-    ingress_audience: Option<&str>,
-    ingress_pinned_mtls: bool,
-) -> Option<String> {
-    // ADR-MCPS-023 Tier 3 (issue #71): LB-signed request-bound ingress assertion.
-    // Fail CLOSED at the CLI trust boundary so the operator can never believe a
-    // request-binding control is in force when it is not.
-    //
-    // (a) Dangling `--ingress-lb-key` without `--transport-binding lb-assertion`
-    //     would SILENTLY do nothing (an illusion of request-bound ingress). Reject
-    //     it — mirrors the OCSP dangling-flag guard.
-    if !ingress_lb_keys.is_empty() && binding != BindingKind::LbAssertion {
-        return Some(
-            "--ingress-lb-key has no effect without --transport-binding lb-assertion".to_string(),
-        );
+/// **Five clauses are gone and their absence is the result.** They said that a value
+/// belonged to a form the deployment had not selected — `--ingress-identity has no effect
+/// without --transport-binding attested-ingress` and its four siblings. Each form now
+/// carries only its own material, so there is no configuration left for them to examine
+/// (ADR-MCPRE-067 §7). The command line can still name a stray flag, and the CLI adapter
+/// answers that.
+///
+/// A sixth is gone for a different reason: the pinned-channel acknowledgement is a REQUIRED
+/// member of [`AttestedIngressRequest`], so a Mode-C request without one cannot be built at
+/// all rather than being refused after the fact.
+fn ingress_assertion_refusal(form: &PeerIdentityEvidenceRequest) -> Option<String> {
+    match form {
+        PeerIdentityEvidenceRequest::ChannelCredential(_)
+        | PeerIdentityEvidenceRequest::Unbound => None,
+        PeerIdentityEvidenceRequest::IngressAssertion(assertion) => {
+            // A form with no trusted key can never verify an assertion — it would reject
+            // every request while reporting that request-bound ingress is in force.
+            if assertion.verification_keys.is_empty() {
+                return Some(
+                    "--transport-binding lb-assertion requires at least one --ingress-lb-key \
+                     <keyid>:<base64url-ed25519-pub> (the trusted LB verification key)"
+                        .to_string(),
+                );
+            }
+            verification_keys_refusal("--ingress-lb-key", "LB key", &assertion.verification_keys)
+        }
+        PeerIdentityEvidenceRequest::AttestedIngress(attested) => {
+            attested_ingress_refusal(attested)
+        }
     }
-    // (b) `lb-assertion` binding with NO trusted LB key can never verify any
-    //     assertion — it would reject every request. Require at least one key.
-    if binding == BindingKind::LbAssertion && ingress_lb_keys.is_empty() {
+}
+
+/// Mode C is strict-ADMITTED but ONLY when fully configured: attestor keys, trusted ingress
+/// identities, and the expected audience. The pinned-channel acknowledgement is not checked
+/// here because it cannot be absent.
+fn attested_ingress_refusal(attested: &AttestedIngressRequest) -> Option<String> {
+    if attested.attestor_keys.is_empty() {
         return Some(
-            "--transport-binding lb-assertion requires at least one --ingress-lb-key \
-             <keyid>:<base64url-ed25519-pub> (the trusted LB verification key)"
+            "--transport-binding attested-ingress requires at least one \
+             --ingress-attestor-key <keyid>:<base64url-ed25519-pub> (the trusted \
+             ingress-attestor verification key)"
                 .to_string(),
         );
     }
-    // (c) Each configured LB key must be a valid base64url 32-byte Ed25519 public
-    //     key, and key ids must be unique — a malformed key or duplicate id is a
-    //     misconfiguration, refused before serving rather than at first request.
-    {
-        let mut seen_ids: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-        for (key_id, key_b64) in ingress_lb_keys {
-            if !seen_ids.insert(key_id.as_str()) {
-                return Some(format!(
-                    "duplicate --ingress-lb-key id '{key_id}' (each LB key id must be unique)"
-                ));
-            }
-            if mcp_re_core::VerificationKey::from_b64url(key_b64).is_err() {
-                return Some(format!(
-                    "invalid --ingress-lb-key '{key_id}': the body must be a base64url-no-pad \
-                     32-byte Ed25519 public key"
-                ));
-            }
-        }
+    // A form with no trusted ingress identity would reject every assertion.
+    if attested.identities.is_empty() {
+        return Some(
+            "--transport-binding attested-ingress requires at least one \
+             --ingress-identity <id> (a trusted ingress identity)"
+                .to_string(),
+        );
     }
+    // The witness exists, then the witness means something. A trusted identity that is the
+    // empty string matches a v2 assertion whose `ingress_identity` states nothing, turning
+    // the trusted set into a hole.
+    if attested.identities.iter().any(|id| id.trim().is_empty()) {
+        return Some(
+            "--ingress-identity is empty: an empty trusted identity matches an assertion \
+             that names none, so the trusted set would admit rather than restrict"
+                .to_string(),
+        );
+    }
+    // The audience binds a v2 assertion to this node's route. Two clauses used to live
+    // here — one for an absent audience and one for an empty one — and the absent case is
+    // gone: the audience is a MEMBER of the form, so a Mode-C request always carries one.
+    // What survives is the clause about what it says, because an empty audience binds an
+    // assertion to every node that also named none.
+    if attested.audience.trim().is_empty() {
+        return Some(
+            "--ingress-audience is empty: the audience binds a v2 assertion to this \
+             node's route, and an empty one binds it to every node that also set none"
+                .to_string(),
+        );
+    }
+    verification_keys_refusal(
+        "--ingress-attestor-key",
+        "attestor key",
+        &attested.attestor_keys,
+    )
+}
 
-    // ADR-MCPS-023 §C (v0.10) Mode C attested ingress — fail CLOSED at the CLI trust
-    // boundary so an operator can never believe an attested-ingress control is in
-    // force when a piece of it is missing. Mode C is strict-ADMITTED but ONLY when
-    // fully configured: attestor keys, trusted ingress identities, the expected
-    // audience, and the explicit pinned-mTLS acknowledgement.
-    //
-    // (a) The Mode-C flags SILENTLY do nothing outside `attested-ingress` — reject
-    //     dangling ones (mirrors the `--ingress-lb-key` dangling guard).
-    if binding != BindingKind::AttestedIngress {
-        if !ingress_attestor_keys.is_empty() {
-            return Some(
-                "--ingress-attestor-key has no effect without --transport-binding attested-ingress"
-                    .to_string(),
-            );
+/// Each configured key must be a valid base64url 32-byte Ed25519 public key, and key ids
+/// must be unique — a malformed key or duplicate id is a misconfiguration, refused before
+/// serving rather than at the first request.
+///
+/// One function for both forms because it is one rule about one kind of material, and the
+/// flag names it quotes are diagnostics rather than semantics.
+fn verification_keys_refusal(flag: &str, what: &str, keys: &[(String, String)]) -> Option<String> {
+    let mut seen_ids: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for (key_id, key_b64) in keys {
+        if !seen_ids.insert(key_id.as_str()) {
+            return Some(format!(
+                "duplicate {flag} id '{key_id}' (each {what} id must be unique)"
+            ));
         }
-        if !ingress_identities.is_empty() {
-            return Some(
-                "--ingress-identity has no effect without --transport-binding attested-ingress"
-                    .to_string(),
-            );
-        }
-        if ingress_audience.is_some() {
-            return Some(
-                "--ingress-audience has no effect without --transport-binding attested-ingress"
-                    .to_string(),
-            );
-        }
-        if ingress_pinned_mtls {
-            return Some(
-                "--ingress-pinned-mtls has no effect without --transport-binding attested-ingress"
-                    .to_string(),
-            );
-        }
-    } else {
-        // (b) attested-ingress with NO trusted attestor key can never verify any
-        //     assertion — it would reject every request. Require at least one.
-        if ingress_attestor_keys.is_empty() {
-            return Some(
-                "--transport-binding attested-ingress requires at least one \
-                 --ingress-attestor-key <keyid>:<base64url-ed25519-pub> (the trusted \
-                 ingress-attestor verification key)"
-                    .to_string(),
-            );
-        }
-        // (c) attested-ingress with NO trusted ingress identity would reject every
-        //     assertion — require at least one.
-        if ingress_identities.is_empty() {
-            return Some(
-                "--transport-binding attested-ingress requires at least one \
-                 --ingress-identity <id> (a trusted ingress identity)"
-                    .to_string(),
-            );
-        }
-        // (c2) A trusted identity that is the empty string is not a trusted identity. It
-        //      passes (c) because the LIST is non-empty, and then matches a v2 assertion
-        //      whose `ingress_identity` states nothing — turning the trusted set into a
-        //      hole. Asked immediately after presence: the witness exists, then the
-        //      witness means something, before any clause compares it with another.
-        if ingress_identities.iter().any(|id| id.trim().is_empty()) {
-            return Some(
-                "--ingress-identity is empty: an empty trusted identity matches an assertion \
-                 that names none, so the trusted set would admit rather than restrict"
-                    .to_string(),
-            );
-        }
-        // (d) attested-ingress binds the assertion's audience to the node's own — it
-        //     must be configured.
-        if ingress_audience.is_none() {
-            return Some(
-                "--transport-binding attested-ingress requires --ingress-audience <aud> \
-                 (the node's expected assertion audience/route)"
-                    .to_string(),
-            );
-        }
-        // (d2) Same shape as (c2), one clause later: an empty audience is present but binds
-        //      the assertion to nothing, so two nodes' assertions become interchangeable —
-        //      the route binding this flag exists to establish.
-        if ingress_audience.is_some_and(|aud| aud.trim().is_empty()) {
-            return Some(
-                "--ingress-audience is empty: the audience binds a v2 assertion to this \
-                 node's route, and an empty one binds it to every node that also set none"
-                    .to_string(),
-            );
-        }
-        // (e) The pinned attestor→node channel (§C2) is load-bearing: without the
-        //     explicit `--ingress-pinned-mtls` acknowledgement, attested ingress
-        //     refuses to start (fail closed) — an attested-ingress posture must never
-        //     run without the pinned backend channel it depends on.
-        if !ingress_pinned_mtls {
-            return Some(
-                "--transport-binding attested-ingress requires --ingress-pinned-mtls: the \
-                 attestor→node hop MUST be a pinned mTLS channel (ADR-MCPS-023 §C2); \
-                 acknowledge it explicitly or do not enable attested ingress"
-                    .to_string(),
-            );
-        }
-        // (g) Each attestor key must be a valid base64url 32-byte Ed25519 public key,
-        //     and key ids must be unique.
-        let mut seen_ids: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-        for (key_id, key_b64) in ingress_attestor_keys {
-            if !seen_ids.insert(key_id.as_str()) {
-                return Some(format!(
-                    "duplicate --ingress-attestor-key id '{key_id}' (each attestor key id \
-                     must be unique)"
-                ));
-            }
-            if mcp_re_core::VerificationKey::from_b64url(key_b64).is_err() {
-                return Some(format!(
-                    "invalid --ingress-attestor-key '{key_id}': the body must be a \
-                     base64url-no-pad 32-byte Ed25519 public key"
-                ));
-            }
+        if mcp_re_core::VerificationKey::from_b64url(key_b64).is_err() {
+            return Some(format!(
+                "invalid {flag} '{key_id}': the body must be a base64url-no-pad 32-byte \
+                 Ed25519 public key"
+            ));
         }
     }
     None
 }
 
-/// Ingress-assertion coherence, read off a [`DeploymentRequest`], for the same reason as above: the
-/// clauses decide whether an operator can believe a request-binding ingress control is in
-/// force, and that belief is no more true when the config was built in code.
+/// Peer-identity coherence, read off a [`DeploymentRequest`], because the clauses decide
+/// whether an operator can believe a request-binding ingress control is in force, and that
+/// belief is no more true when the config was built in code.
 pub(crate) fn ingress_assertion_violation(config: &DeploymentRequest) -> Option<String> {
-    ingress_assertion_refusal(
-        config.binding,
-        &config.ingress_lb_keys,
-        &config.ingress_attestor_keys,
-        &config.ingress_identities,
-        config.ingress_audience.as_deref(),
-        config.ingress_pinned_mtls,
-    )
+    ingress_assertion_refusal(&config.peer_identity)
 }
 
 #[cfg(test)]
@@ -509,7 +444,9 @@ mod tests {
             (IdentityPolicy::UriSan, ChannelBindingState::ExactUriSan),
             (IdentityPolicy::DnsSan, ChannelBindingState::ExactDnsSan),
         ] {
-            let (state, violations) = binding(|c| c.identity_source = source);
+            let (state, violations) = binding(|c| {
+                c.peer_identity = PeerIdentityEvidenceRequest::channel_credential(source)
+            });
             assert_eq!(state, Some(expected));
             assert!(
                 violations.is_empty(),
@@ -518,47 +455,67 @@ mod tests {
         }
     }
 
-    /// Every `BindingKind`. The match is the exhaustiveness witness: a kind added to the
-    /// enum stops this list compiling, so no test below can enumerate a stale variant set.
-    fn every_binding_kind() -> Vec<BindingKind> {
-        let kinds = vec![
-            BindingKind::None,
-            BindingKind::Exact,
-            BindingKind::LbAssertion,
-            BindingKind::AttestedIngress,
-        ];
-        for kind in &kinds {
-            match kind {
-                BindingKind::None
-                | BindingKind::Exact
-                | BindingKind::LbAssertion
-                | BindingKind::AttestedIngress => {}
-            }
-        }
-        kinds
+    /// A Mode-C form, fully configured. Written as a literal so the acknowledgement is
+    /// visible: there is no way to name this form without stating it.
+    fn attested_form() -> PeerIdentityEvidenceRequest {
+        PeerIdentityEvidenceRequest::AttestedIngress(AttestedIngressRequest {
+            asserted_identity_kind: IdentityPolicy::UriSan,
+            attestor_keys: vec![("attestor-1".to_string(), "k".to_string())],
+            identities: vec!["ingress-1".to_string()],
+            audience: "https://mcp.example.com/mcp".to_string(),
+            pinned_channel: crate::deployment_request::PinnedChannelAcknowledgement::acknowledged(),
+        })
     }
 
-    /// One machine, two selectors: `identity_source` names which state, `binding` decides
-    /// whether there is one.
+    /// Every form. The match is the exhaustiveness witness: a form added to the union stops
+    /// this list compiling, so no test below can enumerate a stale variant set.
+    fn every_form() -> Vec<PeerIdentityEvidenceRequest> {
+        let forms = vec![
+            PeerIdentityEvidenceRequest::Unbound,
+            PeerIdentityEvidenceRequest::default(),
+            PeerIdentityEvidenceRequest::IngressAssertion(
+                crate::deployment_request::IngressAssertionRequest {
+                    verification_keys: vec![("lb-1".to_string(), "k".to_string())],
+                },
+            ),
+            attested_form(),
+        ];
+        for form in &forms {
+            match form {
+                PeerIdentityEvidenceRequest::Unbound
+                | PeerIdentityEvidenceRequest::ChannelCredential(_)
+                | PeerIdentityEvidenceRequest::IngressAssertion(_)
+                | PeerIdentityEvidenceRequest::AttestedIngress(_) => {}
+            }
+        }
+        forms
+    }
+
+    /// One machine: the identity FIELD names which state, and the form decides whether
+    /// there is one. The field is asked of the form that has one, so the other forms are
+    /// not carrying a value nothing reads.
     #[test]
-    fn identity_source_names_the_state_and_binding_decides_whether_there_is_one() {
-        let uri = binding(|c| c.identity_source = IdentityPolicy::UriSan).0;
-        let dns = binding(|c| c.identity_source = IdentityPolicy::DnsSan).0;
+    fn the_identity_field_names_the_state_and_the_form_decides_whether_there_is_one() {
+        let uri = binding(|c| {
+            c.peer_identity =
+                PeerIdentityEvidenceRequest::channel_credential(IdentityPolicy::UriSan);
+        })
+        .0;
+        let dns = binding(|c| {
+            c.peer_identity =
+                PeerIdentityEvidenceRequest::channel_credential(IdentityPolicy::DnsSan);
+        })
+        .0;
         assert_eq!(uri, Some(ChannelBindingState::ExactUriSan));
         assert_eq!(dns, Some(ChannelBindingState::ExactDnsSan));
-        assert_ne!(uri, dns, "the same binding kind, two states");
-        for kind in every_binding_kind()
+        assert_ne!(uri, dns, "the same form, two states");
+        for form in every_form()
             .into_iter()
-            .filter(|kind| *kind != BindingKind::Exact)
+            .filter(|form| form.credential_identity_field().is_none())
         {
-            let (state, _) = binding(|c| {
-                c.binding = kind;
-                c.identity_source = IdentityPolicy::UriSan;
-            });
-            assert_eq!(
-                state, None,
-                "{kind:?} named a state under the identity source that names one under exact"
-            );
+            let named = form.flag_value();
+            let (state, _) = binding(|c| c.peer_identity = form);
+            assert_eq!(state, None, "{named} named a state it cannot inhabit");
         }
     }
 
@@ -567,16 +524,18 @@ mod tests {
     /// with a diagnostic rather than passed over.
     #[test]
     fn only_exact_binding_becomes_a_state_and_every_other_kind_is_refused_aloud() {
-        for kind in every_binding_kind() {
-            let (state, violations) = binding(|c| c.binding = kind);
-            if kind == BindingKind::Exact {
+        for form in every_form() {
+            let named = form.flag_value();
+            let is_credential = form.credential_identity_field().is_some();
+            let (state, violations) = binding(|c| c.peer_identity = form);
+            if is_credential {
                 assert_eq!(state, Some(ChannelBindingState::ExactUriSan));
                 assert!(violations.is_empty(), "exact refused: {violations:?}");
             } else {
-                assert!(state.is_none(), "{kind:?} became a validated state");
+                assert!(state.is_none(), "{named} became a validated state");
                 assert!(
                     !violations.is_empty(),
-                    "{kind:?} named no state and said nothing about why"
+                    "{named} named no state and said nothing about why"
                 );
             }
         }
@@ -587,7 +546,7 @@ mod tests {
     /// a deployment in a mode nothing else in the file rejects.
     #[test]
     fn attested_ingress_is_refused_by_name_rather_than_passed_over() {
-        let (state, violations) = binding(|c| c.binding = BindingKind::AttestedIngress);
+        let (state, violations) = binding(|c| c.peer_identity = attested_form());
         assert!(state.is_none(), "attested ingress became a validated state");
         assert!(
             violations
@@ -599,7 +558,10 @@ mod tests {
 
     #[test]
     fn the_deprecated_identity_source_names_no_state() {
-        let (state, violations) = binding(|c| c.identity_source = IdentityPolicy::CnLegacy);
+        let (state, violations) = binding(|c| {
+            c.peer_identity =
+                PeerIdentityEvidenceRequest::channel_credential(IdentityPolicy::CnLegacy);
+        });
         assert!(state.is_none());
         assert!(
             violations.iter().any(|v| v.contains("cn_legacy")),

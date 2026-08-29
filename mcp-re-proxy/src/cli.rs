@@ -14,6 +14,7 @@
 //! module: the configuration state machines read a request without depending on the parser.
 
 mod authorization_flags;
+mod peer_identity_flags;
 mod revocation_flags;
 mod signing_source_flags;
 mod storage_flags;
@@ -23,8 +24,8 @@ use std::time::Duration;
 use mcp_re_core::VerificationKey;
 
 use crate::deployment_request::{
-    AdmissionKind, AuditSinkKind, BindingKind, ChannelCredentialRequest, DeploymentRequest,
-    SecretString, VerifiedContextKind,
+    AdmissionKind, AuditSinkKind, ChannelCredentialRequest, DeploymentRequest, SecretString,
+    VerifiedContextKind,
 };
 
 #[cfg(feature = "aws_kms_keysource")]
@@ -108,17 +109,11 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     let mut revocation_tier = crate::revocation_tier::RevocationTier::BoundedCache {
         t_secs: crate::trust_plane::DEFAULT_T_SECS,
     };
-    let mut binding = BindingKind::Exact;
-    let mut identity_source = IdentityPolicy::UriSan;
+    let mut peer_identity = peer_identity_flags::PeerIdentityFlags::default();
     // ADR-MCPS-023 Tier 3 (issue #71): repeatable trusted LB verification keys for
     // request-bound ingress assertions, as (key_id, base64url-ed25519-pub) pairs.
-    let mut ingress_lb_keys: Vec<(String, String)> = Vec::new();
     // ADR-MCPS-023 §C (Mode C): attestor verification keys, trusted ingress
     // identities, the node's expected audience, and the pinned-mTLS acknowledgement.
-    let mut ingress_attestor_keys: Vec<(String, String)> = Vec::new();
-    let mut ingress_identities: Vec<String> = Vec::new();
-    let mut ingress_audience: Option<String> = None;
-    let mut ingress_pinned_mtls = false;
     // ADR-MCPRE-065: the selection, its two parameters, and the ADR-MCPS-013 deny-list.
     let mut authorization = authorization_flags::AuthorizationFlags::new();
     // #4034 PKCS#11 key source: module path, User PIN (sensitive), token label,
@@ -157,7 +152,7 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
         // acknowledgement that the attestor→node hop is a pinned mTLS channel. Mode C
         // REQUIRES it (checked below); absent, attested ingress refuses to start.
         if flag == "--ingress-pinned-mtls" {
-            ingress_pinned_mtls = true;
+            peer_identity.take_pinned_channel();
             i += 1;
             continue;
         }
@@ -341,24 +336,7 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
             "--revocation-tier" => {
                 revocation_tier = crate::revocation_tier::RevocationTier::parse(value)?
             }
-            "--transport-binding" => {
-                binding = match value.as_str() {
-                    // `exact` binds the request to the verified mTLS peer identity.
-                    "exact" => BindingKind::Exact,
-                    // ADR-MCPS-023 Tier 3 (issue #71): LB-signed request-bound
-                    // ingress assertion. Honestly downgraded — NOT end_to_end_mtls.
-                    "lb-assertion" => BindingKind::LbAssertion,
-                    // ADR-MCPS-023 §C (v0.10) Mode C: attested ingress. Strict-
-                    // ADMITTED, explicit opt-in; still NOT end_to_end_mtls.
-                    "attested-ingress" => BindingKind::AttestedIngress,
-                    other => {
-                        return Err(format!(
-                            "unknown --transport-binding '{other}' \
-                         (exact|lb-assertion|attested-ingress)"
-                        ))
-                    }
-                }
-            }
+            "--transport-binding" => peer_identity.take_form(value)?,
             // ADR-MCPS-023 Tier 3 (issue #71): a trusted LB verification key for
             // request-bound ingress assertions, as `<keyid>:<base64url-ed25519-pub>`.
             // Repeatable. The key id is the opaque label the assertion stamps; the
@@ -376,7 +354,7 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
                         "invalid --ingress-lb-key '{value}' (empty key id or key body)"
                     ));
                 }
-                ingress_lb_keys.push((key_id.to_string(), key_b64.to_string()));
+                peer_identity.take_lb_key(key_id.to_string(), key_b64.to_string());
             }
             // ADR-MCPS-023 §C (Mode C): a trusted ingress-ATTESTOR verification key
             // for `mcp-re/lb-ingress-assertion/v2` assertions, as
@@ -396,26 +374,15 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
                         "invalid --ingress-attestor-key '{value}' (empty key id or key body)"
                     ));
                 }
-                ingress_attestor_keys.push((key_id.to_string(), key_b64.to_string()));
+                peer_identity.take_attestor_key(key_id.to_string(), key_b64.to_string());
             }
             // ADR-MCPS-023 §C (Mode C): a trusted ingress identity. Repeatable. A v2
             // assertion whose `ingress_identity` is not in this set fails closed.
-            "--ingress-identity" => ingress_identities.push(value.clone()),
+            "--ingress-identity" => peer_identity.take_identity(value.clone()),
             // ADR-MCPS-023 §C (Mode C): the node's own audience; a v2 assertion's
             // `audience` must equal it (route/audience binding).
-            "--ingress-audience" => ingress_audience = Some(value.clone()),
-            "--transport-identity-source" => {
-                identity_source = match value.as_str() {
-                    "uri_san" => IdentityPolicy::UriSan,
-                    "dns_san" => IdentityPolicy::DnsSan,
-                    "cn_legacy" => IdentityPolicy::CnLegacy,
-                    other => {
-                        return Err(format!(
-                        "unknown --transport-identity-source '{other}' (uri_san|dns_san|cn_legacy)"
-                    ))
-                    }
-                }
-            }
+            "--ingress-audience" => peer_identity.take_audience(value.clone()),
+            "--transport-identity-source" => peer_identity.take_identity_field(value)?,
             "--max-header-bytes" => {
                 limits.max_header_bytes = value
                     .parse()
@@ -625,13 +592,7 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
         },
         trust_epoch: storage_flags::trust_epoch(trust_epoch_redis_url, trust_epoch_key)?,
         revocation_tier,
-        binding,
-        identity_source,
-        ingress_lb_keys,
-        ingress_attestor_keys,
-        ingress_identities,
-        ingress_audience,
-        ingress_pinned_mtls,
+        peer_identity: peer_identity.finish()?,
         authorization: authorization.finish(),
         allow_group_readable_key_files,
         limits,
@@ -815,20 +776,30 @@ fn parse_cert_lifetime(value: &str) -> Result<Option<Duration>, String> {
 pub fn build_attested_ingress_binding(
     config: &DeploymentRequest,
 ) -> Result<Option<crate::transport::ingress::LbAssertionV2Binding>, String> {
-    if config.binding != BindingKind::AttestedIngress {
+    let crate::deployment_request::PeerIdentityEvidenceRequest::AttestedIngress(attested) =
+        &config.peer_identity
+    else {
         return Ok(None);
-    }
-    let source = match config.identity_source {
+    };
+    let source = match attested.asserted_identity_kind {
         IdentityPolicy::UriSan => crate::transport::IdentitySource::UriSan,
         IdentityPolicy::DnsSan => crate::transport::IdentitySource::DnsSan,
         IdentityPolicy::CnLegacy => crate::transport::IdentitySource::CommonName,
     };
-    let audience = config
-        .ingress_audience
-        .as_deref()
-        .ok_or("internal error: attested-ingress binding selected but no --ingress-audience set")?;
-    let mut binding = crate::transport::ingress::LbAssertionV2Binding::new(source, audience);
-    for (key_id, key_b64) in &config.ingress_attestor_keys {
+    // The form always carries an audience — it is a member, not a sibling — but an EMPTY
+    // one is still representable, and a verifier built around it would admit assertions
+    // minted for any other node that also named none. The absent case is gone; this one is
+    // not, so it stays here as well as at the boundary.
+    if attested.audience.trim().is_empty() {
+        return Err(
+            "--ingress-audience names nothing: the audience scopes an assertion to THIS \
+             node's route, so an empty one admits assertions minted for another"
+                .to_string(),
+        );
+    }
+    let mut binding =
+        crate::transport::ingress::LbAssertionV2Binding::new(source, &attested.audience);
+    for (key_id, key_b64) in &attested.attestor_keys {
         let key = VerificationKey::from_b64url(key_b64).map_err(|_| {
             format!(
                 "invalid --ingress-attestor-key '{key_id}': the body must be a \
@@ -837,7 +808,7 @@ pub fn build_attested_ingress_binding(
         })?;
         binding.add_key(key_id.clone(), key);
     }
-    for ingress_identity in &config.ingress_identities {
+    for ingress_identity in &attested.identities {
         binding.permit_ingress_identity(ingress_identity.clone());
     }
     Ok(Some(binding))
@@ -1084,7 +1055,6 @@ mod tests {
     use super::build_attested_ingress_binding;
     use super::parse_args;
     use super::AuditSinkKind;
-    use super::BindingKind;
     use super::DeploymentRequest;
     use super::Duration;
     use super::IdentityPolicy;
@@ -1389,7 +1359,11 @@ mod tests {
     #[test]
     fn a_command_line_wrong_three_ways_is_answered_about_all_three() {
         // A shared replay store with no durability tier, a PKCS#11 channel key on a source
-        // that is not PKCS#11, and an LB key with no lb-assertion binding.
+        // that is not PKCS#11, and an lb-assertion form the boundary refuses.
+        //
+        // The third wrong used to be a dangling `--ingress-lb-key`. It is a parser refusal
+        // now — the form owns its own keys, so after assembly there is no dangling value to
+        // report — and the third is the form itself, which is still boundary-shaped.
         let mut a = minimal_delegating_the_channel_key();
         a.splice(
             0..0,
@@ -1398,6 +1372,8 @@ mod tests {
                 "redis://127.0.0.1:6379",
                 "--pkcs11-tls-key-label",
                 "tls-on-token",
+                "--transport-binding",
+                "lb-assertion",
                 "--ingress-lb-key",
                 "lb-1:1i8Bah79Hk_feT60LNhEceG6nwzwTRKHtcxx9hYofLg",
             ]),
@@ -1406,7 +1382,7 @@ mod tests {
         for expected in [
             "--replay-durability-tier",
             "--pkcs11-tls-key-label",
-            "--ingress-lb-key",
+            "--transport-binding lb-assertion",
         ] {
             assert!(err.contains(expected), "missing {expected} in: {err}");
         }
@@ -1673,17 +1649,36 @@ mod tests {
     /// THIS clause either way.
     #[test]
     fn an_ingress_witness_that_is_present_but_empty_is_refused() {
+        /// A Mode-C form over one attestor key, written as a literal so the pinned-channel
+        /// acknowledgement stays visible.
+        fn attested_form(
+            identities: Vec<String>,
+            audience: String,
+        ) -> crate::deployment_request::PeerIdentityEvidenceRequest {
+            crate::deployment_request::PeerIdentityEvidenceRequest::AttestedIngress(
+                crate::deployment_request::AttestedIngressRequest {
+                    asserted_identity_kind: IdentityPolicy::UriSan,
+                    attestor_keys: vec![("attestor-1".to_string(), attestor_pub_b64())],
+                    identities,
+                    audience,
+                    pinned_channel:
+                        crate::deployment_request::PinnedChannelAcknowledgement::acknowledged(),
+                },
+            )
+        }
+
         let attested = |c: &mut DeploymentRequest| {
-            c.binding = BindingKind::AttestedIngress;
-            c.ingress_attestor_keys = vec![("attestor-1".to_string(), attestor_pub_b64())];
-            c.ingress_identities = vec!["ingress-1".to_string()];
-            c.ingress_audience = Some("https://mcp.example.com/mcp".to_string());
-            c.ingress_pinned_mtls = true;
+            c.peer_identity = attested_form(
+                vec!["ingress-1".to_string()],
+                "https://mcp.example.com/mcp".to_string(),
+            );
         };
 
         let mut empty_identity = parsed_baseline();
-        attested(&mut empty_identity);
-        empty_identity.ingress_identities = vec!["ingress-1".to_string(), String::new()];
+        empty_identity.peer_identity = attested_form(
+            vec!["ingress-1".to_string(), String::new()],
+            "https://mcp.example.com/mcp".to_string(),
+        );
         assert!(
             boundary_reports(&empty_identity, "--ingress-identity is empty"),
             "{:?}",
@@ -1691,8 +1686,8 @@ mod tests {
         );
 
         let mut empty_audience = parsed_baseline();
-        attested(&mut empty_audience);
-        empty_audience.ingress_audience = Some("  ".to_string());
+        empty_audience.peer_identity =
+            attested_form(vec!["ingress-1".to_string()], "  ".to_string());
         assert!(
             boundary_reports(&empty_audience, "--ingress-audience is empty"),
             "{:?}",
@@ -2184,9 +2179,12 @@ mod tests {
             config.response_signing.source,
             SigningSourceRequest::File(_)
         ));
-        assert_eq!(config.binding, BindingKind::Exact);
+        assert_eq!(config.peer_identity.flag_value(), "exact");
         // Safe defaults: URI SAN identity, bounded resources.
-        assert_eq!(config.identity_source, IdentityPolicy::UriSan);
+        assert_eq!(
+            config.peer_identity.credential_identity_field(),
+            Some(IdentityPolicy::UriSan)
+        );
         assert_eq!(config.authorization.kind, AuthzKind::Off);
         assert_eq!(config.limits.max_header_bytes, 64 * 1024);
         assert_eq!(config.limits.max_body_bytes, 16 * 1024 * 1024);
@@ -2274,14 +2272,22 @@ mod tests {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--transport-identity-source", "uri_san"]));
         assert_eq!(
-            parse_args(&a).expect("parse").identity_source,
+            parse_args(&a)
+                .expect("parse")
+                .peer_identity
+                .credential_identity_field()
+                .expect("the channel-credential form"),
             IdentityPolicy::UriSan
         );
 
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--transport-identity-source", "dns_san"]));
         assert_eq!(
-            parse_args(&a).expect("parse").identity_source,
+            parse_args(&a)
+                .expect("parse")
+                .peer_identity
+                .credential_identity_field()
+                .expect("the channel-credential form"),
             IdentityPolicy::DnsSan
         );
     }
@@ -2456,7 +2462,10 @@ mod tests {
         // `parse_args` now ends at this same guard: going through it would prove only that
         // SOMETHING refused, not that this guard did.
         let mut config = parse_args(&minimal_durable()).expect("the base config parses");
-        config.binding = BindingKind::AttestedIngress;
+        config.peer_identity = mode_c_form(
+            vec!["spiffe://example.org/ingress-1".to_string()],
+            "did:example:server-1".to_string(),
+        );
         let violations = unsafe_config_violations(&config);
         assert!(
             violations
@@ -2472,13 +2481,30 @@ mod tests {
     /// [`attested_ingress_flags`].
     fn mode_c_config() -> super::DeploymentRequest {
         let mut config = parse_args(&minimal_durable()).expect("the base config parses");
-        config.binding = BindingKind::AttestedIngress;
-        config.identity_source = IdentityPolicy::UriSan;
-        config.ingress_attestor_keys = vec![("attestor-1".to_string(), attestor_pub_b64())];
-        config.ingress_identities = vec!["spiffe://example.org/ingress-1".to_string()];
-        config.ingress_audience = Some("did:example:server-1".to_string());
-        config.ingress_pinned_mtls = true;
+        config.peer_identity = mode_c_form(
+            vec!["spiffe://example.org/ingress-1".to_string()],
+            "did:example:server-1".to_string(),
+        );
         config
+    }
+
+    /// A Mode-C form over the standard fixture attestor. A literal rather than a helper on
+    /// the request type: the pinned-channel acknowledgement is the point, and a constructor
+    /// that supplied it silently would hide what the form rests on.
+    fn mode_c_form(
+        identities: Vec<String>,
+        audience: String,
+    ) -> crate::deployment_request::PeerIdentityEvidenceRequest {
+        crate::deployment_request::PeerIdentityEvidenceRequest::AttestedIngress(
+            crate::deployment_request::AttestedIngressRequest {
+                asserted_identity_kind: IdentityPolicy::UriSan,
+                attestor_keys: vec![("attestor-1".to_string(), attestor_pub_b64())],
+                identities,
+                audience,
+                pinned_channel:
+                    crate::deployment_request::PinnedChannelAcknowledgement::acknowledged(),
+            },
+        )
     }
 
     #[test]
@@ -2542,7 +2568,10 @@ mod tests {
         // with an empty or defaulted audience would admit assertions minted for another
         // route, so the absent case must be an error and not a fallback.
         let mut config = mode_c_config();
-        config.ingress_audience = None;
+        config.peer_identity = mode_c_form(
+            vec!["spiffe://example.org/ingress-1".to_string()],
+            String::new(),
+        );
         let err = build_attested_ingress_binding(&config)
             .expect_err("a Mode-C verifier without an audience must not be built");
         assert!(
@@ -2557,7 +2586,12 @@ mod tests {
         // trusts fewer attestors than configured and fails closed later at request
         // time, where the cause is far from the configuration that caused it.
         let mut config = mode_c_config();
-        config.ingress_attestor_keys = vec![("attestor-1".to_string(), "not-a-key".to_string())];
+        let crate::deployment_request::PeerIdentityEvidenceRequest::AttestedIngress(attested) =
+            &mut config.peer_identity
+        else {
+            panic!("the fixture names the attested form");
+        };
+        attested.attestor_keys = vec![("attestor-1".to_string(), "not-a-key".to_string())];
         let err = build_attested_ingress_binding(&config)
             .expect_err("an undecodable attestor key must not be silently dropped");
         assert!(
