@@ -75,6 +75,7 @@ is a genuine violation by the replacement test; none is Phase 2's.
 | ~~`tls::IdentityStrategy::DirectTls`, `startup_plan::identity_strategy`~~ | how the peer's identity reaches this node | **3 — done** |
 | ~~`startup_plan::TlsPlan`~~ | what must hold to establish authenticated channels | **3 — done** |
 | `materializing_runtime::install_tls` / `tls` | ruled a mechanism leaf: it installs a `TlsPlane`, and a rustls plane is entitled to say so | **3 — ruled** |
+| ~~`DeploymentRequest`'s `ingress_pinned_mtls` and its five ingress siblings~~ | which evidence carries the peer's identity | **6 — done** |
 | ~~`DeploymentRequest`'s 5 Redis/etcd locator fields~~ | where shared replay, continuation, admission and trust-epoch state live | **4 — done** |
 | ~~`config_state::transport::CrlRevocationState`, `crl_posture`, `crl_plan`~~ | the credential-currency posture and its latency bound | **5 — done**, and the posture is now its own type; the CRL state stays CRL-named below it |
 | ~~`deployment_request::OcspKind`, `config_state::validation::residue::ocsp_*`~~ | whether online revocation evidence is required | **5 — done** |
@@ -167,6 +168,40 @@ Classified, not wired. None is a security control a deployment currently believe
 No item met the "required live security control that current deployments falsely claim to
 enforce" condition, so this phase did not stop.
 
+### B.6 — what Phases 6-8 produced
+
+**Phase 6 rebuilt the request.** 72 fields at the start of the campaign, 46 after Phase 5,
+**31** now — and every one names a durable proposition rather than a CLI flag or a
+state-machine input.
+
+| before | after | clauses deleted |
+|---|---|---|
+| `binding` + `identity_source` + five `ingress_*` | `peer_identity: PeerIdentityEvidenceRequest` | 5 dangling + the pinned-channel requirement |
+| `admission` + five `admission_*` | `admission: AdmissionRequest` | 5 dangling + the 2 illegal degraded cells |
+| `revocation_tier` + `trust_reload_secs` + `trust_epoch` | `request_signer_currency: RequestSignerCurrencyRequest` | X8 + 2 cadence-requiredness |
+| five `delegated_*` | `delegated_signing: DelegatedSigningRequest` | — (all four were value guards) |
+
+`PinnedChannelAcknowledgement` is the sharpest case: the §C2 channel guarantee is not a
+flag beside the attested form, it is what the form is BUILT from — no `Default`, no public
+field — so a Mode-C request cannot come into existence beside a silence.
+
+**`strictest_applicable_t` got the input it was missing NAMED rather than fabricated.**
+Its rule needs two things this tree has neither of: a producer that classifies a request
+into a sensitivity class, and a deployment input stating a window per class.
+`ApplicableClassWindows` has one production constructor and it is empty, so the rule is the
+identity BY TYPE — the compiler records which input is missing, and no class-name-to-number
+map was invented to activate dormant code.
+
+**Phase 7 decomposed the CLI.** `parse_args` **537 → 22** production lines; `cli.rs`
+**1170 → 331**. Fourteen flag families, each owning one semantic question's spelling.
+
+**Phase 8 moved materialization to its owners.** `build_key_source` (210 lines, one arm per
+mechanism) became `capability_materialization::key_source` with a module per mechanism;
+`read_pkcs11_pin`, `build_ocsp_checker` and `build_attested_ingress_binding` went with it,
+and `key_file_mode_is_insecure` went to the policy that owns it. EX-008's last duplication —
+`quota_verdict`, written twice and already drifted in shape — is one rule over per-provider
+DATA.
+
 ### C — mechanism-selection boundary (legitimate; a provider name is correct here)
 
 These sit *at* the boundary. They name mechanisms because their consumer is the thing that
@@ -229,8 +264,11 @@ dormant control, classified       3 (B.5.1) — 2 intentionally dormant,
                                   1 needing a Phase-6 input; 0 falsely claimed
 ```
 
-After Phase 5 the semantic-altitude gate's `NOT_YET_MIGRATED` registry holds ONE entry,
-`mtls`, for the single remaining field: `ingress_pinned_mtls`, which Phase 6 owns.
+After Phase 6 the semantic-altitude gate's `NOT_YET_MIGRATED` registry is **empty**: every
+family the sweep named has a typed mechanism payload. The registry stays in the file because
+the shape it enforces — a family must be listed with the phase that owns it, or be refused —
+is what keeps a future un-migrated family from passing silently, and its selftest now
+supplies its own registry rather than asserting over nothing.
 
 Per the tracker's one rule, no issue was opened per finding. Section B is the phase list
 the ADR already carries; section A is the work this campaign did.
