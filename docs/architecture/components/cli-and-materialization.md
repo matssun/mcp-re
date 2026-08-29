@@ -196,11 +196,12 @@ is one authority (EX-007's Phase-9 re-run).
 
 | lines | region | note |
 |---|---|---|
-| 1–35 | module doc + child declarations | corrected: it no longer claims the Layer-A boundary or the `KeySource` builders live here |
-| 36–134 | `Flags` — the accumulator, its two routing methods, and `finish` | the family list in its three required projections |
-| 135–160 | `refused_or_unknown` | the routing table's answer for the empty case |
-| 161–163 | `require` | shared by four families |
-| 164–230 | `parse_args` — 22 production lines | orchestration and the hand-off to layer A |
+| 1–38 | module doc + the fourteen child declarations | corrected: it no longer claims the Layer-A boundary or the `KeySource` builders live here |
+| 40–63 | `struct Flags` | the family list, projection 1 of 3 |
+| 65–174 | `impl Flags` — `take_switch`, `take` (projection 2), `finish` (projection 3) | no decision; each family already answered its own question |
+| 176–195 | `refused_or_unknown` | the routing table's answer for the empty case, incl. the `--pkcs11-pin` refusal |
+| 197–200 | `require` | shared by four families |
+| 202–229 | `parse_args` — **22 production lines** | orchestration and the hand-off to layer A |
 
 Fourteen flag families now live under `cli/`, four of them as owner subtrees
 (`admission_flags/`, `peer_identity_flags/`, `signing_source_flags/`, `runtime_flags/`).
