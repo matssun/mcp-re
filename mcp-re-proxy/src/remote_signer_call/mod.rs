@@ -187,4 +187,34 @@ mod tests {
         let rendered = failure.into_key_error("gcp-kms", "asymmetricSign");
         assert!(matches!(rendered, KeyError::Malformed(ref m) if m == "no bearer token"));
     }
+
+    #[cfg(feature = "gcp_kms_keysource")]
+    #[test]
+    fn a_chained_cause_renders_but_never_enters_the_body() {
+        let failure = RemoteSignerFailure::status_body(
+            503,
+            "{\"error\":{\"status\":\"UNAVAILABLE\"}}".to_string(),
+        )
+        .after("asymmetricSign HTTP 401: ".to_string());
+
+        assert_eq!(
+            failure.body(),
+            Some("{\"error\":{\"status\":\"UNAVAILABLE\"}}"),
+            "the classifier must still see the service's own answer"
+        );
+        assert_eq!(
+            quota_signals::json_string_field(failure.body().unwrap(), &["error", "status"])
+                .as_deref(),
+            Some("UNAVAILABLE"),
+            "and must still be able to read the field out of it"
+        );
+        assert_eq!(failure.status(), Some(503));
+
+        let rendered = format!("{}", failure.into_key_error("gcp-kms", "asymmetricSign"));
+        assert!(rendered.contains("HTTP 503"), "{rendered}");
+        assert!(
+            rendered.contains("HTTP 401"),
+            "the cause must survive: {rendered}"
+        );
+    }
 }

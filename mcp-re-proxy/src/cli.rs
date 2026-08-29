@@ -32,12 +32,6 @@ use std::time::Duration;
 
 use crate::deployment_request::DeploymentRequest;
 
-#[cfg(feature = "aws_kms_keysource")]
-// MCPS-076 (audit gap G-3): EnvKeySource is dev/CI-only — compiled only under the
-// non-default `dev_env_key_source` feature.
-#[cfg(feature = "dev_env_key_source")]
-use crate::key_source::EnvKeySource;
-
 /// Every flag family this parser knows, accumulating across one argument list.
 ///
 /// The CLI is an adapter (ADR-MCPRE-067 §16): a command line is flat, and each family reads

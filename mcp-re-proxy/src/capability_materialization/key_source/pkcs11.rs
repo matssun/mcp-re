@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The PKCS#11 token-backed key source (#4034).
 
+#[cfg(feature = "pkcs11_keysource")]
+use super::read_pkcs11_pin;
 use super::ChannelMaterial;
 use crate::config_state::ChannelKeyMaterial;
 use crate::key_source::{KeyError, KeySource};

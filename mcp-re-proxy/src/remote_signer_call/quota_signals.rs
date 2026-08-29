@@ -25,7 +25,7 @@ fn is_load_shedding_status(status: Option<u16>) -> bool {
 /// Returns `None` for a body that is not JSON, has no such field, or whose field is not a
 /// string — all of which mean *this body does not state the thing*, which is exactly what a
 /// classifier must not read as a positive.
-fn json_string_field(body: &str, path: &[&str]) -> Option<String> {
+pub(super) fn json_string_field(body: &str, path: &[&str]) -> Option<String> {
     let mut node: serde_json::Value = serde_json::from_str(body).ok()?;
     for (index, key) in path.iter().enumerate() {
         let next = node.get_mut(key)?.take();
@@ -106,34 +106,6 @@ mod tests {
         assert_eq!(failure.status(), None);
         assert_eq!(failure.body(), None);
         assert!(!is_load_shedding_status(failure.status()));
-    }
-
-    #[test]
-    fn a_chained_cause_renders_but_never_enters_the_body() {
-        let failure = RemoteSignerFailure::status_body(
-            503,
-            "{\"error\":{\"status\":\"UNAVAILABLE\"}}".to_string(),
-        )
-        .after("asymmetricSign HTTP 401: ".to_string());
-
-        assert_eq!(
-            failure.body(),
-            Some("{\"error\":{\"status\":\"UNAVAILABLE\"}}"),
-            "the classifier must still see the service's own answer"
-        );
-        assert_eq!(
-            json_string_field(failure.body().unwrap(), &["error", "status"]).as_deref(),
-            Some("UNAVAILABLE"),
-            "and must still be able to read the field out of it"
-        );
-        assert_eq!(failure.status(), Some(503));
-
-        let rendered = format!("{}", failure.into_key_error("gcp-kms", "asymmetricSign"));
-        assert!(rendered.contains("HTTP 503"), "{rendered}");
-        assert!(
-            rendered.contains("HTTP 401"),
-            "the cause must survive: {rendered}"
-        );
     }
 
     #[test]
