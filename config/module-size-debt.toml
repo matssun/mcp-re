@@ -246,10 +246,16 @@ baseline_prod_loc = 924
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
+# MCPRE-175 gave the async listener an owner subtree. `async_serve.rs` mixed four
+# authorities — what a core admits work against, the byte half of that admission, one
+# connection, and one request over it — so it became `async_serve/mod.rs` plus
+# `core_admission.rs`, `body_budget.rs`, `connection.rs`, `http_limits.rs`, `inbound.rs`
+# and `request.rs`. The debt moves WITH the file; dropping the entry because the path
+# changed would launder 898 registered lines as progress.
 [[debt]]
-path = "mcp-re-proxy/src/async_serve.rs"
-baseline_prod_loc = 898
-baseline_sha = "d1fc5fa"
+path = "mcp-re-proxy/src/async_serve/mod.rs"
+baseline_prod_loc = 365
+baseline_sha = "255465e"
 status = "unreviewed"
 
 [[debt]]
