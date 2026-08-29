@@ -276,10 +276,15 @@ baseline_prod_loc = 498
 baseline_sha = "255465e"
 status = "unreviewed"
 
+# MCPRE-175 re-censused the PKCS#11 provider and found four subordinates inside it: the
+# session vocabulary (`session.rs`), ONE session reused (`amortized_session.rs`), a bounded
+# set of interchangeable ones (`session_pool.rs`), finding things on the token
+# (`token.rs`), and the second key it custodies (`tls_signer.rs`). All PKCS#11 vocabulary
+# stays at the mechanism leaf. The debt moves WITH the file.
 [[debt]]
-path = "mcp-re-proxy/src/pkcs11_keysource.rs"
-baseline_prod_loc = 856
-baseline_sha = "1b31c60"
+path = "mcp-re-proxy/src/pkcs11_keysource/mod.rs"
+baseline_prod_loc = 447
+baseline_sha = "255465e"
 status = "unreviewed"
 
 [[debt]]

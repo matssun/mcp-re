@@ -43,19 +43,9 @@
 //! cargo feature, so a default build is byte-for-byte unchanged and gains zero
 //! dependencies.
 
-use crate::communication_assurance::ED25519_PUBLIC_KEY_LEN;
 use crate::communication_assurance::ED25519_SIGNATURE_LEN;
 use std::sync::Arc;
-use std::sync::Mutex;
 
-use cryptoki_sys::CKR_DEVICE_ERROR;
-use cryptoki_sys::CKR_DEVICE_REMOVED;
-use cryptoki_sys::CKR_SESSION_CLOSED;
-use cryptoki_sys::CKR_SESSION_COUNT;
-use cryptoki_sys::CKR_SESSION_HANDLE_INVALID;
-use cryptoki_sys::CKR_USER_NOT_LOGGED_IN;
-use cryptoki_sys::CK_OBJECT_HANDLE;
-use cryptoki_sys::CK_SESSION_HANDLE;
 use cryptoki_sys::CK_SLOT_ID;
 use mcp_re_core::b64url_encode;
 use mcp_re_core::verify_ed25519;
@@ -69,252 +59,37 @@ use crate::key_source::FileKeySource;
 use crate::key_source::KeyError;
 use crate::key_source::KeySource;
 use crate::key_source::ResponseSigner;
-use crate::pkcs11_native::AttributeTemplate;
 use crate::pkcs11_native::ObjectClass;
 use crate::pkcs11_native::Pkcs11Context;
-use crate::pkcs11_native::Pkcs11Error;
-use crate::pkcs11_native::SessionCloser;
 use crate::pkcs11_native::SessionRef;
 
-/// Outcome of running an operation on a (possibly stale) cached session.
-///
-/// The amortization layer ([`AmortizedSession`]) distinguishes a *transient*
-/// session fault (the cached session went invalid/closed or login lapsed —
-/// re-open ONCE and retry) from a *fatal* error (a genuine
-/// [`KeyError`] that re-opening would not fix — propagate, fail closed). This is
-/// what keeps the fail-closed posture intact while still amortizing logins: a real
-/// signing/lookup failure is NEVER masked by a reconnect-and-retry loop.
-enum SessionOpError {
-    /// The cached session is no longer usable (handle invalid / closed / not
-    /// logged in / device hiccup). Re-open a fresh logged-in session and retry the
-    /// operation exactly once.
-    SessionInvalid(KeyError),
-    /// A genuine failure that a fresh session would not cure — propagate as-is.
-    Fatal(KeyError),
-}
+/// The session vocabulary: what a transient fault is, and what opening one costs.
+mod session;
 
-/// Open a fresh logged-in session of type `S`. Implemented for the real
-/// [`Pkcs11KeySource`] (opens a Cryptoki R/W session + `C_Login`) and, in tests,
-/// by a counting fake — so the amortization decision is provable WITHOUT a live
-/// token (no PKCS#11 provider dependency for the unit proof).
-trait LoginSessionFactory {
-    /// The session handle type this factory produces.
-    type Session;
-    /// Open a NEW session and authenticate it (one `C_Login`). Every call here is
-    /// one login — the whole point of [`AmortizedSession`] is to make this run far
-    /// fewer than once per signed response.
-    fn open_logged_in(&self) -> Result<Self::Session, KeyError>;
-}
+/// ONE logged-in session, reused across operations.
+mod amortized_session;
 
-/// Amortizes the PKCS#11 LOGIN across operations (audit M16): instead of opening a
-/// fresh session and performing a `C_Login` on EVERY signed response — which makes
-/// signing latency/availability hostage to token login throughput and is a
-/// boundary DoS amplification — this holds ONE logged-in session behind a `Mutex`
-/// and reuses it. A fresh login happens only on first use or when the cached
-/// session has gone invalid (handle closed / token re-inserted / login lapsed), so
-/// N sequential signs perform far fewer than N logins.
-///
-/// Fail-closed is preserved: a *fatal* [`SessionOpError::Fatal`] (a real sign /
-/// lookup failure) is propagated immediately and never retried; only a
-/// [`SessionOpError::SessionInvalid`] triggers a single re-open-and-retry. If the
-/// re-open itself fails, that error is surfaced (no in-process fallback, no
-/// fabricated signature).
-struct AmortizedSession<S> {
-    /// The cached logged-in session, lazily opened on first use and re-opened on a
-    /// transient session fault. `None` until the first successful login.
-    cached: Mutex<Option<S>>,
-}
+/// A bounded set of INTERCHANGEABLE logged-in sessions, for the delegated-TLS path.
+mod session_pool;
 
-impl<S> AmortizedSession<S> {
-    /// Start with no cached session; the first [`Self::with_session`] call opens
-    /// and logs one in.
-    fn new() -> Self {
-        AmortizedSession {
-            cached: Mutex::new(None),
-        }
-    }
+/// Finding things ON the token, and reading what comes back.
+mod token;
 
-    /// Run `op` against a logged-in session, reusing the cached one when possible.
-    ///
-    /// 1. Ensure a cached session exists (open + login once if absent).
-    /// 2. Run `op` on it. On success, return — NO new login.
-    /// 3. On [`SessionOpError::SessionInvalid`], drop the dead session, open a
-    ///    fresh logged-in one, and run `op` ONE more time. A second transient
-    ///    failure (or a re-open failure) is surfaced — no unbounded retry loop.
-    /// 4. On [`SessionOpError::Fatal`], propagate immediately (fail closed).
-    fn with_session<F, T, Op>(&self, factory: &F, op: Op) -> Result<T, KeyError>
-    where
-        F: LoginSessionFactory<Session = S>,
-        Op: Fn(&S) -> Result<T, SessionOpError>,
-    {
-        let mut guard = self
-            .cached
-            .lock()
-            .map_err(|e| KeyError::NotFound(format!("pkcs11: session mutex poisoned: {e}")))?;
+/// Delegated TLS handshake signing: the SECOND key the token custodies.
+mod tls_signer;
 
-        // Ensure a session is cached (first use, or after a prior invalidation
-        // cleared it).
-        if guard.is_none() {
-            *guard = Some(factory.open_logged_in()?);
-        }
+use amortized_session::AmortizedSession;
+use session::classify_op_error;
+use session::LoggedInSession;
+use session::LoginSessionFactory;
+use session::SessionOpError;
+use session_pool::SessionPool;
+use session_pool::TLS_SESSION_POOL_SIZE;
+use token::find_key;
+use token::find_token_slot;
+use token::raw_ed25519_point;
 
-        // First attempt on the (reused) cached session.
-        let first = {
-            let session = guard
-                .as_ref()
-                .ok_or_else(|| KeyError::NotFound("pkcs11: session cache empty".to_string()))?;
-            op(session)
-        };
-        match first {
-            Ok(value) => Ok(value),
-            Err(SessionOpError::Fatal(e)) => Err(e),
-            Err(SessionOpError::SessionInvalid(_)) => {
-                // Transient: the cached session is dead. Drop it, open exactly ONE
-                // fresh logged-in session, and retry the op once. Re-open failure
-                // (or a second transient failure) fails closed.
-                *guard = None;
-                let session = factory.open_logged_in()?;
-                // Cache the fresh session ONLY if the retried op SUCCEEDS (issue
-                // #25). A session whose op returned Fatal or SessionInvalid must
-                // NOT be cached — leaving the cache empty so the next call re-opens
-                // a clean session — otherwise a dead/invalid handle would be reused
-                // and every subsequent op would fail until eviction.
-                match op(&session) {
-                    Ok(value) => {
-                        *guard = Some(session);
-                        Ok(value)
-                    }
-                    Err(SessionOpError::Fatal(e)) | Err(SessionOpError::SessionInvalid(e)) => {
-                        // `guard` stays None; `session` is dropped (closed) here.
-                        Err(e)
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Concurrent delegated-TLS signing sessions opened on the token.
-///
-/// One session means one mutex, and [`AmortizedSession::with_session`] holds it across
-/// the whole blocking `C_Sign` — so with a single TLS session every handshake on every
-/// core queues behind one token operation, and a slow token stalls all of them. PKCS#11
-/// permits many sessions per slot (they all ride the one `C_Login`, which is
-/// per-token-per-application), so the handshake path gets several and signs that many
-/// at a time. Small: each entry is a session handle the token has to keep open, and
-/// tokens bound their session count. It matches
-/// `crate::async_fleet::DELEGATED_TLS_WORKERS_PER_CORE`, the number of blocking
-/// handshake-signing workers a core runs, so a core's workers do not queue on each
-/// other; it is deliberately NOT scaled by core count, because the ceiling that binds
-/// is the token's own session limit and its internal concurrency, not the host's.
-const TLS_SESSION_POOL_SIZE: usize = 4;
-
-/// A fixed set of interchangeable logged-in sessions for the delegated-TLS path.
-///
-/// Interchangeable is what makes this a pool and not a cache: a handshake signature
-/// needs *a* logged-in session, not a particular one, so callers are spread across the
-/// set by a rotating cursor and each blocks only on the one it was handed.
-struct SessionPool<S> {
-    sessions: Vec<AmortizedSession<S>>,
-    next: std::sync::atomic::AtomicUsize,
-}
-
-impl<S> SessionPool<S> {
-    fn new(size: usize) -> Self {
-        SessionPool {
-            sessions: (0..size.max(1)).map(|_| AmortizedSession::new()).collect(),
-            next: std::sync::atomic::AtomicUsize::new(0),
-        }
-    }
-
-    /// Run `op` on one of the pool's logged-in sessions.
-    ///
-    /// The cursor is advanced with `Relaxed` ordering: it selects which session to try
-    /// and orders nothing, and the session's own mutex is what makes the operation
-    /// exclusive.
-    fn with_session<F, T, Op>(&self, factory: &F, op: Op) -> Result<T, KeyError>
-    where
-        F: LoginSessionFactory<Session = S>,
-        Op: Fn(&S) -> Result<T, SessionOpError>,
-    {
-        let index =
-            self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % self.sessions.len();
-        self.sessions[index].with_session(factory, op)
-    }
-}
-
-/// A cached, logged-in PKCS#11 session reduced to its raw `CK_SESSION_HANDLE`.
-///
-/// This is the lifetime-free `S` that [`AmortizedSession`] caches for the real
-/// source. The wrapper's [`crate::pkcs11_native::Session`] carries a phantom
-/// lifetime tying it to its [`Pkcs11Context`], which makes it impossible to store
-/// alongside that same context in one struct (self-referential). Because a session
-/// is really just a `Copy` handle, we amortize on the HANDLE: open+login once,
-/// keep the handle here, and run each op through a non-owning
-/// [`SessionRef`](crate::pkcs11_native::SessionRef) against the live context.
-///
-/// The handle is closed explicitly when this holder is retired (on a transient
-/// invalidation, via [`Pkcs11Context::close_session`]); `C_Finalize` on context
-/// drop is the backstop for the one currently-cached handle.
-struct LoggedInSession {
-    /// The raw open+logged-in session handle (owned: closed on retirement).
-    handle: CK_SESSION_HANDLE,
-    /// Lifetime-free closer for `handle`'s parent context; closes the handle on
-    /// drop (retirement by [`AmortizedSession`], or when the source is dropped).
-    closer: SessionCloser,
-}
-
-impl Drop for LoggedInSession {
-    fn drop(&mut self) {
-        // Retire the cached handle. A close error on teardown has nowhere
-        // meaningful to go (and `C_Finalize` on the context is the backstop), so it
-        // is intentionally ignored — but we never call a null pointer (the closer
-        // guards that) and we never leak silently while the context lives.
-        let _ = self.closer.close(self.handle);
-    }
-}
-
-/// Classify a wrapper [`Pkcs11Error`]: `true` when re-opening a fresh logged-in
-/// session could plausibly cure it (the current session handle is invalid/closed,
-/// the login lapsed, or the device had a transient fault). A `false` here means the
-/// error is intrinsic to the operation (bad mechanism, malformed object, …) and a
-/// reconnect would not help — fail closed (a real sign/lookup error is NOT retried).
-fn is_session_invalid(error: &Pkcs11Error) -> bool {
-    match error {
-        Pkcs11Error::Ck { rv, .. } => matches!(
-            *rv,
-            CKR_SESSION_HANDLE_INVALID
-                | CKR_SESSION_CLOSED
-                | CKR_SESSION_COUNT
-                | CKR_USER_NOT_LOGGED_IN
-                | CKR_DEVICE_ERROR
-                | CKR_DEVICE_REMOVED
-        ),
-        // Load / missing-function / protocol shape errors are not transient session
-        // faults — re-opening would not cure them. Fail closed.
-        Pkcs11Error::Load(_) | Pkcs11Error::MissingFunction(_) | Pkcs11Error::Protocol(_) => false,
-    }
-}
-
-/// Map a wrapper [`Pkcs11Error`] from a token op into a [`SessionOpError`]: a
-/// session-fault CK_RV becomes [`SessionOpError::SessionInvalid`] (retry once),
-/// everything else [`SessionOpError::Fatal`] (propagate, fail closed). `make_fatal`
-/// builds the contextual [`KeyError`] for the fatal/propagated case (matching the
-/// pre-amortization error text exactly).
-fn classify_op_error(
-    error: Pkcs11Error,
-    make_fatal: impl FnOnce(&Pkcs11Error) -> KeyError,
-) -> SessionOpError {
-    if is_session_invalid(&error) {
-        // Retryable: surface a NotFound carrying the transient cause; the retry
-        // path discards the message, so the text is diagnostic only.
-        SessionOpError::SessionInvalid(KeyError::NotFound(format!(
-            "pkcs11: transient session fault: {error}"
-        )))
-    } else {
-        SessionOpError::Fatal(make_fatal(&error))
-    }
-}
+pub use tls_signer::Pkcs11TlsSigner;
 
 /// A PKCS#11-backed [`KeySource`] whose Ed25519 response-signing key lives on a
 /// hardware/software token and is exercised only via `C_Sign` — the private key
@@ -357,11 +132,11 @@ pub struct Pkcs11KeySource {
 /// `context`'s function list — which [`Pkcs11Context::drop`] FINALIZES (`C_Finalize`).
 /// Dropping `context` first would call into a finalized module (use-after-finalize →
 /// crash). With the sessions first, every cached handle is closed BEFORE `C_Finalize`.
-struct Pkcs11Token {
+pub(crate) struct Pkcs11Token {
     /// The session used for ROOT operations: delegated-credential issuance and
     /// public-key reads (M16). A fresh login happens only on first use or after a
     /// transient session invalidation. Declared first so it drops before `context`.
-    session: AmortizedSession<LoggedInSession>,
+    pub(crate) session: AmortizedSession<LoggedInSession>,
     /// SEPARATE sessions for TLS handshake signing, distinct from `session` and from
     /// each other.
     ///
@@ -375,14 +150,14 @@ struct Pkcs11Token {
     /// core behind one token operation, which an unauthenticated peer can hold
     /// continuously — so [`TLS_SESSION_POOL_SIZE`] sign at a time. All of them share
     /// the module context and the single login PIN.
-    tls_sessions: SessionPool<LoggedInSession>,
+    pub(crate) tls_sessions: SessionPool<LoggedInSession>,
     /// The loaded Cryptoki context (owns the module handle; finalized on drop, after
     /// every session). One `C_Initialize` per process.
-    context: Pkcs11Context,
+    pub(crate) context: Pkcs11Context,
     /// The id of the slot whose token holds the key objects.
-    slot: CK_SLOT_ID,
+    pub(crate) slot: CK_SLOT_ID,
     /// The token User PIN, scrubbed on drop.
-    pin: Zeroizing<String>,
+    pub(crate) pin: Zeroizing<String>,
 }
 
 // SAFETY (Send + Sync): the shared token is held inside an `Arc` reachable from the
@@ -522,99 +297,7 @@ impl Pkcs11KeySource {
 /// `NotFound` context text as the pre-amortization path. The count cases are
 /// intrinsic, never a session fault: zero matches is a [`KeyError::NotFound`] Fatal;
 /// more than one is a [`KeyError::Malformed`] Fatal (an ambiguous token config must
-/// fail closed, never silently pick one). A re-open would not change these.
-fn find_key(
-    view: &SessionRef<'_>,
-    key_label: &str,
-    class: ObjectClass,
-) -> Result<CK_OBJECT_HANDLE, SessionOpError> {
-    let template = AttributeTemplate::ed25519_labelled(class, key_label);
-    let mut handles = view.find_objects(&template).map_err(|e| {
-        classify_op_error(e, |e| {
-            KeyError::NotFound(format!("pkcs11: find key '{key_label}': {e}"))
-        })
-    })?;
-    match handles.len() {
-        0 => Err(SessionOpError::Fatal(KeyError::NotFound(format!(
-            "pkcs11: no Ed25519 key object labelled '{key_label}' (class {})",
-            class_name(class)
-        )))),
-        1 => Ok(handles.remove(0)),
-        n => Err(SessionOpError::Fatal(KeyError::Malformed(format!(
-            "pkcs11: {n} Ed25519 key objects labelled '{key_label}' (class {}); refusing to guess",
-            class_name(class)
-        )))),
-    }
-}
-
-/// Human-readable name for an [`ObjectClass`] in error context (the wrapper enum
-/// is intentionally minimal and not `Debug`-printed onto the token path).
-fn class_name(class: ObjectClass) -> &'static str {
-    match class {
-        ObjectClass::Private => "CKO_PRIVATE_KEY",
-        ObjectClass::Public => "CKO_PUBLIC_KEY",
-    }
-}
-
-/// Select the slot whose token's label equals `token_label`. Token labels are
-/// stable across reboots (slot ids are not), so this is the primary selector. No
-/// match is [`KeyError::NotFound`].
-fn find_token_slot(context: &Pkcs11Context, token_label: &str) -> Result<CK_SLOT_ID, KeyError> {
-    // `token_slots` enumerates present-token slots and reads each token's label
-    // with the 32-byte 0x20 padding already trimmed.
-    let slots = context
-        .token_slots()
-        .map_err(|e| KeyError::NotFound(format!("pkcs11: enumerate token slots: {e}")))?;
-    for (slot, label) in slots {
-        if label.trim_end() == token_label {
-            return Ok(slot);
-        }
-    }
-    Err(KeyError::NotFound(format!(
-        "pkcs11: no token with label '{token_label}'"
-    )))
-}
-
-/// Strip a DER `OCTET STRING` wrapper (`0x04 <len> <bytes>`) if present, returning
-/// the raw 32-byte Ed25519 point. PKCS#11 v3 returns `CKA_EC_POINT` as a DER
-/// `OCTET STRING` around the curve point; some modules return the bare 32 bytes.
-/// Accept both, but reject anything that is not ultimately exactly 32 bytes (fail
-/// closed — a wrong-length point cannot be a valid Ed25519 key).
-fn raw_ed25519_point(ec_point: &[u8]) -> Result<[u8; ED25519_PUBLIC_KEY_LEN], KeyError> {
-    let raw: &[u8] = if ec_point.len() == ED25519_PUBLIC_KEY_LEN {
-        ec_point
-    } else if ec_point.len() == ED25519_PUBLIC_KEY_LEN + 2
-        && ec_point[0] == 0x04
-        && usize::from(ec_point[1]) == ED25519_PUBLIC_KEY_LEN
-    {
-        // DER OCTET STRING: tag 0x04, length 0x20, then the 32-byte point.
-        &ec_point[2..]
-    } else {
-        return Err(KeyError::Malformed(format!(
-            "pkcs11: CKA_EC_POINT is {} bytes; expected a raw or OCTET-STRING-wrapped \
-             32-byte Ed25519 point",
-            ec_point.len()
-        )));
-    };
-    let mut bytes = [0u8; ED25519_PUBLIC_KEY_LEN];
-    bytes.copy_from_slice(raw);
-    Ok(bytes)
-}
-
-/// Build the RFC 8410 Ed25519 `SubjectPublicKeyInfo` DER from a token's raw
-/// `CKA_EC_POINT` (issue #59, ADR-MCPS-028 §G). The point is first normalized to
-/// the bare 32-byte Edwards point (stripping a DER `OCTET STRING` wrapper if the
-/// module returned one), then prefixed with the shared 12-byte RFC 8410 Ed25519
-/// SPKI header used by the KMS public-key path — so the result feeds the same
-/// [`crate::kms_keysource::Ed25519SpkiDer`] guard that the validated
-/// delegated-TLS build path (#58) uses to fail closed on a cert/key mismatch. A
-/// wrong-length / non-Ed25519 point fails closed via [`raw_ed25519_point`].
-fn ed25519_spki_from_ec_point(ec_point: &[u8]) -> Result<Vec<u8>, KeyError> {
-    let raw = raw_ed25519_point(ec_point)?;
-    let der = crate::communication_assurance::Ed25519PublicKeyValue::spki_der_for_point(raw);
-    Ok(der)
-}
-
+/// unit-testable without a live token.
 /// Emit-guard for a token `C_Sign` result (ADR-MCPS-028 §D verify-before-return).
 ///
 /// Encodes the raw signature exactly as [`mcp_re_core::SigningKey::sign`] would
@@ -624,7 +307,6 @@ fn ed25519_spki_from_ec_point(ec_point: &[u8]) -> Result<Vec<u8>, KeyError> {
 /// mis-bound key, a prehash/over-hashing `CKM_*` mechanism, or corruption) is a
 /// [`KeyError::Malformed`] — fail closed, never emitted. This is the pure,
 /// token-free core mirroring the AWS/GCP `sign_raw_ed25519` guardrail, so it is
-/// unit-testable without a live token.
 fn verify_before_emit(
     preimage: &[u8],
     signature: &[u8],
@@ -763,94 +445,6 @@ impl KeySource for Pkcs11KeySource {
 /// ADR-MCPS-028 §G) that rides the same module + login as the response-signing key.
 /// (The ADR allows the TLS key to carry distinct PKCS#11 auth; the CLI wires the
 /// same token PIN. A future flag could route a separate credential without changing
-/// the `RawEd25519TlsSigner` surface.)
-pub struct Pkcs11TlsSigner {
-    /// The shared, logged-in token (see [`Pkcs11Token`]). All TLS handshake signs and
-    /// public-key reads go through its one amortized login.
-    token: Arc<Pkcs11Token>,
-    /// The CKA_LABEL of the Ed25519 TLS PRIVATE key object (used via `C_Sign` only).
-    tls_key_label: String,
-}
-
-// `Pkcs11TlsSigner` is `Send + Sync` automatically: its only fields are an
-// `Arc<Pkcs11Token>` (the token is `Send + Sync` — see its `unsafe impl` above) and
-// a `String`. rustls requires the delegated `RawEd25519TlsSigner` to be `Send + Sync`,
-// which this satisfies without a further `unsafe impl`.
-
-impl Pkcs11TlsSigner {
-    /// Bind to the named Ed25519 TLS key on the shared `token`, proving at
-    /// construction that BOTH the PRIVATE and PUBLIC TLS key objects exist, are
-    /// Ed25519, and are UNAMBIGUOUS — a misconfigured TLS credential fails closed
-    /// here, before any server starts, never at the first handshake. Every failure
-    /// maps to a [`KeyError`] with context; this never panics and never fabricates a
-    /// signature or public key.
-    fn open(token: Arc<Pkcs11Token>, tls_key_label: &str) -> Result<Self, KeyError> {
-        let tls_key_label = tls_key_label.to_string();
-
-        // Prove BOTH TLS key objects exist + are single Ed25519 objects (fail closed
-        // on zero/multiple/non-Ed25519), reusing the token's already-primed login.
-        token.session.with_session(token.as_ref(), |logged_in| {
-            let view = token.context.with_handle(logged_in.handle);
-            find_key(&view, &tls_key_label, ObjectClass::Private)?;
-            find_key(&view, &tls_key_label, ObjectClass::Public)?;
-            Ok::<(), SessionOpError>(())
-        })?;
-
-        Ok(Pkcs11TlsSigner {
-            token,
-            tls_key_label,
-        })
-    }
-}
-
-/// Signs the raw TLS handshake transcript ON the token (`C_Sign` / `CKM_EDDSA`) and
-/// exports the TLS public point as an RFC 8410 Ed25519 SPKI — the TLS private key
-/// never leaves the device. Runs through the SHARED token's one amortized login.
-impl RawEd25519TlsSigner for Pkcs11TlsSigner {
-    fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, KeyError> {
-        self.token
-            .tls_sessions
-            .with_session(self.token.as_ref(), |logged_in| {
-                let view = self.token.context.with_handle(logged_in.handle);
-                let private = find_key(&view, &self.tls_key_label, ObjectClass::Private)?;
-                // CKM_EDDSA over the raw handshake transcript (NO pre-hash): exactly the
-                // PureEdDSA signature rustls expects for SignatureScheme::ED25519. The
-                // token returns the raw 64-byte signature; the delegated signer wrapper
-                // (delegated_tls.rs) enforces the 64-byte length before it hits the wire.
-                let signature = view.sign_eddsa(private, message).map_err(|e| {
-                    classify_op_error(e, |e| {
-                        KeyError::Malformed(format!("pkcs11 tls: C_Sign (CKM_EDDSA): {e}"))
-                    })
-                })?;
-                if signature.len() != ED25519_SIGNATURE_LEN {
-                    return Err(SessionOpError::Fatal(KeyError::Malformed(format!(
-                        "pkcs11 tls: token returned a {}-byte signature; expected \
-                     {ED25519_SIGNATURE_LEN}",
-                        signature.len()
-                    ))));
-                }
-                Ok(signature)
-            })
-    }
-
-    fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
-        self.token
-            .session
-            .with_session(self.token.as_ref(), |logged_in| {
-                let view = self.token.context.with_handle(logged_in.handle);
-                let public = find_key(&view, &self.tls_key_label, ObjectClass::Public)?;
-                let ec_point = view.get_ec_point(public).map_err(|e| {
-                    classify_op_error(e, |e| {
-                        KeyError::Malformed(format!("pkcs11 tls: read CKA_EC_POINT: {e}"))
-                    })
-                })?;
-                // Build the RFC 8410 SPKI from the raw point; a wrong-length / non-Ed25519
-                // point fails closed (intrinsic — not a session fault).
-                ed25519_spki_from_ec_point(&ec_point).map_err(SessionOpError::Fatal)
-            })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
@@ -859,16 +453,16 @@ mod tests {
     use mcp_re_core::b64url_encode;
     use mcp_re_core::SigningKey;
 
-    use super::ed25519_spki_from_ec_point;
+    use super::token::ed25519_spki_from_ec_point;
     use super::verify_before_emit;
     use super::AmortizedSession;
     use super::KeyError;
     use super::LoginSessionFactory;
     use super::SessionOpError;
     use super::SessionPool;
-    use super::ED25519_PUBLIC_KEY_LEN;
     use super::ED25519_SIGNATURE_LEN;
     use super::TLS_SESSION_POOL_SIZE;
+    use crate::communication_assurance::ED25519_PUBLIC_KEY_LEN;
 
     /// Issue #59 (test b, no token): the SPKI the TLS signer exports from a token's
     /// raw `CKA_EC_POINT` is a well-formed RFC 8410 Ed25519 `SubjectPublicKeyInfo`

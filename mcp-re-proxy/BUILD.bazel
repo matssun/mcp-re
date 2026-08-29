@@ -293,7 +293,12 @@ _PROXY_LIB_SRCS = [
     "src/log_sink.rs",
     # Issue #4034: PKCS#11/HSM-backed KeySource (behind #[cfg(feature =
     # "pkcs11_keysource")]; cfg'd out of the default build).
-    "src/pkcs11_keysource.rs",
+    "src/pkcs11_keysource/mod.rs",
+    "src/pkcs11_keysource/session.rs",
+    "src/pkcs11_keysource/amortized_session.rs",
+    "src/pkcs11_keysource/session_pool.rs",
+    "src/pkcs11_keysource/token.rs",
+    "src/pkcs11_keysource/tls_signer.rs",
     # Issue #4034 supply-chain follow-up: the OWNED safe wrapper over the raw
     # cryptoki-sys FFI bindings (replaces the high-level cryptoki crate +
     # transitive unmaintained `paste`). Same `pkcs11_keysource` feature gate.
