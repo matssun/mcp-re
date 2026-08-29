@@ -189,6 +189,22 @@ The first row is the interesting one: the proposition is *true*, it is *earned*,
 
 Child module: `cli/authorization_flags.rs` (95) — A, and the model for how a flag family should live.
 
+### 7.1 — re-measured at the ADR-MCPRE-067 Phase-9 closure
+
+`mcp-re-proxy/src/cli.rs` — **230 production lines**. B and C are gone; A is what is left, and it
+is one authority (EX-007's Phase-9 re-run).
+
+| lines | region | note |
+|---|---|---|
+| 1–35 | module doc + child declarations | corrected: it no longer claims the Layer-A boundary or the `KeySource` builders live here |
+| 36–134 | `Flags` — the accumulator, its two routing methods, and `finish` | the family list in its three required projections |
+| 135–160 | `refused_or_unknown` | the routing table's answer for the empty case |
+| 161–163 | `require` | shared by four families |
+| 164–230 | `parse_args` — 22 production lines | orchestration and the hand-off to layer A |
+
+Fourteen flag families now live under `cli/`, four of them as owner subtrees
+(`admission_flags/`, `peer_identity_flags/`, `signing_source_flags/`, `runtime_flags/`).
+
 ## 8. Outcome — move the materialization out; `parse_args` keeps its exception
 
 Question 2 answered three, and the split is unusually clean: **A and C never call each other.** The Layer-A boundary and `app::run` sit between them, so this is not a case where separating authorities costs locality — there is no locality to lose.
@@ -218,6 +234,18 @@ Question 2 answered three, and the split is unusually clean: **A and C never cal
 | Two of C's four builders materialize capabilities no validated deployment can select | not a defect — EX-005/EX-006 territory, correctly retained |
 | Index and registry say 1177; the file is 1170 | corrected in this change |
 | `parse_args` at 722 lines | **ADR-058 §14 reviewed exception, not reopened** |
+
+**Status of the deviations at the ADR-MCPRE-067 Phase-9 closure:**
+
+| deviation | status |
+|---|---|
+| capability materialization in the CLI module | **discharged** — Phase 8 moved C to `capability_materialization::*` and B to the policy that owns it |
+| the module doc claims the Layer-A boundary lives here | **discharged** — the doc was corrected in Phase 9 |
+| `parse_args` at 722 lines | **spent** — it is 22 lines; the ADR-058 exception has no function left to cover, and EX-007 records it as spent rather than revoked |
+| the validation proof is created, discarded and recreated | **open**, recorded not ruled — unchanged |
+| requiredness is a parser-only rule over public `String` fields | **open** — `require` still enforces it at parse time over public fields; it belongs in a disposition record or at the boundary |
+| 23 legality tests test a neighbour's owner from inside this file | **open** — test placement, not a production authority |
+| 6 materialization tests for 297 lines of key custody | **moved with C**; it is `capability_materialization`'s coverage question now |
 
 ## 10. Completion criteria
 
