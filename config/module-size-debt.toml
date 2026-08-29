@@ -307,10 +307,16 @@ baseline_prod_loc = 731
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
+# MCPRE-175 gave the local listener an owner subtree. `serve.rs` mixed the accept loop with
+# the HTTP grammar, the browser guards, the deadline construction, the close semantics and
+# the dispatch, so it became `serve/mod.rs` plus `deadlines.rs`, `close.rs`, `guards.rs`,
+# `request.rs`, `head_fields.rs`, `response.rs`, `exchange.rs` and `render.rs`. The debt
+# moves WITH the file — dropping the entry because the path changed would launder 756
+# registered lines as progress.
 [[debt]]
-path = "mcp-re-client/src/serve.rs"
-baseline_prod_loc = 756
-baseline_sha = "d1fc5fa"
+path = "mcp-re-client/src/serve/mod.rs"
+baseline_prod_loc = 262
+baseline_sha = "255465e"
 status = "unreviewed"
 
 [[debt]]
