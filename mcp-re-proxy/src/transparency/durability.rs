@@ -1,321 +1,40 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Evidence retention on the serving path, and the auditor step that turns retained
-//! evidence into a portable SCITT record (ADR-MCPRE-054).
+//! WHEN responsibility for retaining an exchange has been durably established.
 //!
-//! The SCITT surface — `issue_signed_statement`, `reconstruct_chain`,
-//! `verify_retained_evidence`, `FsRetainedEvidenceStore` — was reachable only from
-//! tests, conformance vectors and interop harnesses. Nothing on the serving path
-//! produced a statement, reconstructed a chain, or retained anything, so
-//! `retained_evidence.rs` was dead code inside the serving crate and any claim of
-//! transparency coverage was unbacked.
+//! A different authority from [`super::retained_record`], and the distinction is the whole
+//! design: that one says what an auditor will find, this one says at what INSTANT the
+//! deployment became answerable for it — and therefore at what instant it may serve.
 //!
-//! ## The split: the PEP retains, an auditor attests
+//! The order is what makes the guarantee real. A reservation is admitted BEFORE the request
+//! is dispatched, which is the last point at which refusing is still free and genuinely
+//! retry-safe; the write is completed, and its durability barrier crossed, before the
+//! response goes out. A deployment that acknowledged first and wrote later would be
+//! asserting it could account for a call while the evidence was still in a queue.
 //!
-//! Retention is the only half that MUST happen while the call is being served — nobody
-//! can reconstruct later what was not kept. So the PEP writes each exchange into the
-//! content-addressed store and nothing more.
+//! The queue is bounded by the reservations, not the other way round: a reservation
+//! contributes at most one queued job at any instant, so `K` reservations bound the queue at
+//! `K` jobs. Exceeding the ceiling is refused before dispatch.
 //!
-//! Everything else is deliberately NOT on the request path:
-//!
-//! * `reconstruct_chain` needs the WHOLE chain, and a chain is not whole until its last
-//!   hop. A PEP attesting per hop could only ever commit to a one-hop record, which for
-//!   a continuation is a truncated one — precisely what the `ChainLabel` exists to make
-//!   impossible to launder.
-//! * It needs an audit posture — a resolver, delegation expectations, an audit instant —
-//!   which is the auditor's to choose, not the serving deployment's.
-//! * Registering against a transparency service is network I/O, and putting it in front
-//!   of a response would make an audit dependency an availability dependency.
-//!
-//! ## Retention fails CLOSED
-//!
-//! When a deployment turns retention on it is asserting it can account for what it
-//! served. Serving a call whose evidence could not be kept breaks that assertion
-//! silently, and the deployment would find out only when an auditor asked for a record
-//! that was never written. So a retention failure refuses the exchange with a signed
-//! `mcp-re.evidence_retention_unavailable` rejection, the same posture the replay tier
-//! takes for the same reason.
-//!
-//! This is the opposite of the audit SINK's posture, and deliberately: the sink must not
-//! fail a request, because a lost log line does not change what the deployment can
-//! prove about the call. Lost retained evidence does.
-//!
-//! **The cost of that choice, stated rather than discovered.** Failing closed on a store
-//! failure means a FULL VOLUME is a total outage: every request is refused until space
-//! is freed. The store grows without bound by construction — one object per accepted
-//! call, each holding a request and response body up to `--max-body-bytes` (16 MiB by
-//! default), with no expiry, no lifecycle and no quota. So an authenticated client can
-//! drive disk exhaustion, and the fail-closed posture turns that into a refusal of
-//! everything.
-//!
-//! A cap here would not fix it, it would only move it: at the cap the choice is refuse
-//! (the same outage) or stop retaining (breaking the assertion retention exists to make).
-//! The real control is an external retention policy — a dedicated volume, rotation or
-//! archival off the node, and free-space alerting — which is a deployment concern this
-//! module deliberately does not try to be. Turning retention on without one is choosing
-//! an outage on a timer.
-//!
-//! ## What is retained: ACCEPTED exchanges only
-//!
-//! Retention runs at the one exit where a request was verified, dispatched and answered.
-//! A REJECTED request is not retained: it produced no hop a chain can be reconstructed
-//! from, and a signed rejection receipt is already an audit-sink record carrying the
-//! frozen wire code. "We can account for what we served" is therefore the honest reading
-//! of a full store — not "we can account for everything that was attempted."
-//!
-//! ## What a retained record contains: the covered headers, credentials included
-//!
-//! A record keeps each message's body and the headers that message's own signature
-//! covers — no more, because reconstruction reads nothing else, and no less, because the
-//! signature base cannot be recomputed from a subset. This profile REQUIRES
-//! `authorization` and `dpop` to be covered when present, so a retained request holds the
-//! call's live bearer token and DPoP proof verbatim.
-//!
-//! That is a real cost, stated rather than discovered. It cannot be avoided by digesting
-//! them — the signature is over the raw header line, so a digest makes the hop
-//! unverifiable, which is the one thing retention exists to enable. What it does buy is a
-//! boundary that can be stated: the store holds what the evidence carrier covers, never
-//! whatever else the client happened to send. Uncovered credentials — `cookie`,
-//! `proxy-authorization`, bespoke API-key headers — are dropped, because no auditor can
-//! use them.
-//!
-//! The consequence for a deployment: this directory is credential material for every
-//! call since it was created, with no expiry. It is created `0700` and its objects
-//! `0600`, and an existing directory that is looser is warned about at startup. Handing
-//! it to an auditor hands over replayable tokens.
-//!
-//! ## First exposure
-//!
-//! Nothing under here had met hostile input before this wiring. Every value that
-//! arrives from the wire — a body, a header, a digest read back from disk — is treated
-//! as such: the store re-addresses what it returns, the retained record carries a schema
-//! token, and the loader refuses a record it cannot read rather than reconstructing a
-//! chain from a partial one.
+//! Nothing here decides what a record CONTAINS, and nothing in the record owner decides
+//! when a write has landed. Two copies of either fact is how they would come to disagree.
 
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::sync::mpsc::SyncSender;
 use std::sync::Arc;
 
-use mcp_re_core::b64url_decode;
-use mcp_re_core::b64url_encode;
-use mcp_re_http_profile::chain::RetainedHop;
 use mcp_re_http_profile::scitt::EvidenceDigest;
 use mcp_re_http_profile::scitt::RetainedEvidenceStore;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
-use serde::Deserialize;
-use serde::Serialize;
 
 use crate::retained_evidence::FsRetainedEvidenceStore;
 
-/// The schema token every retained record carries.
-///
-/// A content-addressed blob has no type of its own — the store returns bytes that hash
-/// to the name asked for and nothing more. Without a token in the record, a future
-/// change to the encoding would be read by an old reader as a valid record of a
-/// different shape, and the chain it reconstructed would be about something else.
-pub const RETAINED_HOP_SCHEMA: &str = "mcp-re-retained-hop/v1";
+use mcp_re_http_profile::chain::RetainedHop;
 
-/// A retention failure. Every variant refuses the exchange.
-#[derive(Debug)]
-pub enum RetentionError {
-    /// The store could not write or read.
-    Store(std::io::Error),
-    /// A record came back that this reader cannot use.
-    Malformed(&'static str),
-    /// The reservation offered has already had its completion taken.
-    AlreadyCompleted,
-}
-
-impl std::fmt::Display for RetentionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RetentionError::Store(e) => write!(f, "retained-evidence store: {e}"),
-            RetentionError::Malformed(what) => write!(f, "retained evidence: {what}"),
-            RetentionError::AlreadyCompleted => {
-                write!(f, "retained evidence: reservation is already completed")
-            }
-        }
-    }
-}
-
-impl std::error::Error for RetentionError {}
-
-/// One retained exchange, in the form an auditor reconstructs a chain from.
-///
-/// Bodies are base64url rather than byte arrays: a JSON array of 40 000 integers is the
-/// same information at eight times the size, and this store holds one of these per
-/// served call.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RetainedHopRecord {
-    schema: String,
-    request: RetainedRequest,
-    response: RetainedResponse,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RetainedRequest {
-    method: String,
-    target_uri: String,
-    headers: Vec<(String, String)>,
-    body_b64: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RetainedResponse {
-    status: u16,
-    headers: Vec<(String, String)>,
-    body_b64: String,
-}
-
-/// The headers a retained message keeps: the ones its own signature covers, plus the two
-/// that carry the signature itself.
-///
-/// Everything else is dropped. Reconstruction re-verifies each message, and verification
-/// reads exactly the covered components plus `signature`/`signature-input` — so an
-/// uncovered header contributes nothing to a chain and is retained for no reason. That
-/// distinction matters because of what these records hold: this profile REQUIRES
-/// `authorization` and `dpop` to be covered when present, so a retained request contains
-/// the live bearer token and DPoP proof of the call it describes. Those cannot be
-/// stripped without making the signature base unreproducible — the signature is over
-/// them. What CAN be kept out is every other credential the client happened to send
-/// (`cookie`, `proxy-authorization`, bespoke API-key headers), none of which any auditor
-/// will ever need.
-///
-/// The covered set is read from the ONE `Signature-Input` dictionary member the verifier
-/// checked — `label`, which is [`mcp_re_http_profile::REQUEST_LABEL`] for a request and
-/// [`mcp_re_http_profile::RESPONSE_LABEL`] for a response — and from inside that member's
-/// component list `( … )` only. Both restrictions are load-bearing. Verification reads a
-/// single member and ignores every other one, so a client may add `decoy=("cookie")` to a
-/// value that verifies normally; and a component may carry its own parameters, so
-/// `("@method";key="cookie")` names one component, not two. Neither may decide what is
-/// written to a store that holds credential material.
-fn covered_headers(headers: &[(String, String)], label: &str) -> Vec<(String, String)> {
-    let mut covered: Vec<String> = Vec::new();
-    for (name, value) in headers {
-        if !name.eq_ignore_ascii_case("signature-input") {
-            continue;
-        }
-        let Some(list) = component_list_for(value, label) else {
-            continue;
-        };
-        for component in component_names(list) {
-            // `@method`, `@target-uri`, … are derived, not headers.
-            if !component.starts_with('@') {
-                covered.push(component.to_ascii_lowercase());
-            }
-        }
-    }
-    headers
-        .iter()
-        .filter(|(name, _)| {
-            let lower = name.to_ascii_lowercase();
-            lower == "signature" || lower == "signature-input" || covered.contains(&lower)
-        })
-        .cloned()
-        .collect()
-}
-
-/// The `( … )` component list of the dictionary member named `label`, if it has one.
-fn component_list_for<'a>(value: &'a str, label: &str) -> Option<&'a str> {
-    for member in dictionary_members(value) {
-        let Some((name, rest)) = member.split_once('=') else {
-            continue;
-        };
-        if name.trim() != label {
-            continue;
-        }
-        let open = rest.find('(')?;
-        let tail = &rest[open + 1..];
-        let close = tail.find(')')?;
-        return Some(&tail[..close]);
-    }
-    None
-}
-
-/// The top-level members of a structured-fields dictionary: commas inside a quoted string
-/// do not separate members.
-fn dictionary_members(value: &str) -> Vec<&str> {
-    let mut members = Vec::new();
-    let mut start = 0;
-    let mut quoted = false;
-    let mut escaped = false;
-    for (index, character) in value.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match character {
-            '\\' if quoted => escaped = true,
-            '"' => quoted = !quoted,
-            ',' if !quoted => {
-                members.push(&value[start..index]);
-                start = index + 1;
-            }
-            _ => {}
-        }
-    }
-    members.push(&value[start..]);
-    members
-}
-
-/// The component names in one component list: the leading quoted token of each
-/// whitespace-separated item, so an item's own `;key="…"` parameters are not names.
-fn component_names(list: &str) -> impl Iterator<Item = &str> {
-    list.split_whitespace().filter_map(|item| {
-        let rest = item.strip_prefix('"')?;
-        let end = rest.find('"')?;
-        Some(&rest[..end])
-    })
-}
-
-impl RetainedHopRecord {
-    fn of(request: &HttpRequest, response: &HttpResponse) -> Self {
-        RetainedHopRecord {
-            schema: RETAINED_HOP_SCHEMA.to_owned(),
-            request: retained_request(request),
-            response: RetainedResponse {
-                status: response.status,
-                headers: covered_headers(&response.headers, mcp_re_http_profile::RESPONSE_LABEL),
-                body_b64: b64url_encode(&response.body),
-            },
-        }
-    }
-
-    fn into_hop(self) -> Result<RetainedHop, RetentionError> {
-        if self.schema != RETAINED_HOP_SCHEMA {
-            return Err(RetentionError::Malformed("unknown retained-hop schema"));
-        }
-        Ok(RetainedHop {
-            request: HttpRequest {
-                method: self.request.method,
-                target_uri: self.request.target_uri,
-                headers: self.request.headers,
-                body: b64url_decode(&self.request.body_b64)
-                    .map_err(|_| RetentionError::Malformed("request body encoding"))?,
-            },
-            response: HttpResponse {
-                status: self.response.status,
-                headers: self.response.headers,
-                body: b64url_decode(&self.response.body_b64)
-                    .map_err(|_| RetentionError::Malformed("response body encoding"))?,
-            },
-        })
-    }
-}
-
-/// The retained-request half of a record, shared by the reservation marker and the hop.
-fn retained_request(request: &HttpRequest) -> RetainedRequest {
-    RetainedRequest {
-        method: request.method.clone(),
-        target_uri: request.target_uri.clone(),
-        headers: covered_headers(&request.headers, mcp_re_http_profile::REQUEST_LABEL),
-        body_b64: b64url_encode(&request.body),
-    }
-}
+use super::retained_record::retained_request;
+use super::retained_record::RetainedHopRecord;
+use super::RetentionError;
 
 /// Process-global ceiling on calls that hold a retention reservation at once.
 ///
@@ -777,112 +496,10 @@ impl EvidenceRetention {
     }
 }
 
-/// What an attestation produced: the portable statement, and the chain verdict it
-/// commits to.
-///
-/// Both, never just the statement. A `SignedStatement` alone does not say whether the
-/// record it describes is whole — the `ChainLabel` inside it does, and handing back the
-/// reconstruction means a caller can act on an INCOMPLETE verdict rather than discover
-/// it by decoding the statement it just published.
-pub struct Attestation {
-    /// The RFC 9943 Signed Statement, ready to submit to a transparency service.
-    pub statement: mcp_re_http_profile::scitt::SignedStatement,
-    /// The reconstruction the statement commits to.
-    pub reconstruction: mcp_re_http_profile::ChainReconstruction,
-}
-
-/// An attestation that could not be produced.
-#[derive(Debug)]
-pub enum AttestError {
-    /// The retained evidence could not be read.
-    Retention(RetentionError),
-    /// The statement could not be issued, or did not describe the retained bytes.
-    Statement(mcp_re_http_profile::HttpProfileError),
-}
-
-impl std::fmt::Display for AttestError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AttestError::Retention(e) => write!(f, "{e}"),
-            AttestError::Statement(e) => write!(f, "scitt statement: {}", e.wire_code()),
-        }
-    }
-}
-
-impl std::error::Error for AttestError {}
-
-/// Reconstruct a retained chain and issue a Signed Statement committing to it.
-///
-/// This is the auditor step, off the request path by design (see the module note). It
-/// runs the FULL delegated verification over every retained hop — that is what
-/// `reconstruct_chain` is for, and the label it produces is embedded in the statement,
-/// so a receipt could otherwise commit to a COMPLETE call record established without
-/// any delegation chain ever being checked.
-///
-/// `audit` carries the two full-profile inputs the retained bytes cannot supply — the
-/// verifier's own audience tuple and the artifact credential surface — so a `Complete`
-/// label asserts what an admission asserts rather than the minimal proof path.
-///
-/// An INCOMPLETE chain is attested, not refused. That is the point of the §9 seam: a
-/// truncated or broken record is representable and distinguishable, and refusing to
-/// issue a statement about one would leave the most interesting records — the ones with
-/// a hop missing — with no portable evidence at all.
-///
-/// The statement is verified against the retained bytes before it is returned. Issuing
-/// is a signature over a commitment this function just computed, so checking it is
-/// checking our own arithmetic — but the check is the one an auditor will later run
-/// with the same call, and a statement that fails it must never leave this process.
-#[allow(clippy::too_many_arguments)]
-pub fn attest_chain<R: Into<mcp_re_http_profile::ResolverOutcome>>(
-    retention: &EvidenceRetention,
-    hops: &[EvidenceDigest],
-    verifier: &mcp_re_http_profile::Verifier<'_, R>,
-    expect: &mcp_re_http_profile::DelegationExpectations<'_>,
-    audit: &mcp_re_http_profile::ChainAudit<'_>,
-    is_revoked: &dyn Fn(&str) -> bool,
-    now: i64,
-    issuer_kid: &str,
-    bindings_commitment: Option<String>,
-    verified_context_commitment: Option<String>,
-    sign: impl FnOnce(&[u8]) -> Result<Vec<u8>, mcp_re_http_profile::HttpProfileError>,
-) -> Result<Attestation, AttestError> {
-    let retained = retention.load_chain(hops).map_err(AttestError::Retention)?;
-    let reconstruction =
-        mcp_re_http_profile::reconstruct_chain(&retained, verifier, expect, audit, is_revoked, now);
-    let commitment = mcp_re_http_profile::scitt::EvidenceCommitment::from_reconstruction(
-        &reconstruction,
-        bindings_commitment.clone(),
-        verified_context_commitment.clone(),
-    );
-    let statement =
-        mcp_re_http_profile::scitt::issue_signed_statement(issuer_kid, commitment, now, sign)
-            .map_err(AttestError::Statement)?;
-    // The self-check compares a record against the bytes it names, and a reconstruction
-    // with no verified prefix — a chain that broke at hop 0, and the empty chain — names
-    // none: two empty handles and a fold over nothing. `verify_retained_evidence` refuses
-    // such a record rather than reporting a match that would equally hold for every
-    // unrelated submission that failed the same way, so running it here would refuse to
-    // attest exactly the records this seam exists for. The statement is still issued: its
-    // label says which hop broke, and `commits_to_verified_evidence` is how any reader
-    // tells that it identifies no particular call.
-    if statement.commitment().commits_to_verified_evidence() {
-        mcp_re_http_profile::scitt::verify_retained_evidence(
-            statement.commitment(),
-            &reconstruction,
-            bindings_commitment,
-            verified_context_commitment,
-        )
-        .map_err(AttestError::Statement)?;
-    }
-    Ok(Attestation {
-        statement,
-        reconstruction,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transparency::covered_set::covered_headers;
 
     struct TempDir(std::path::PathBuf);
 
@@ -1005,154 +622,6 @@ mod tests {
             !String::from_utf8_lossy(&raw).contains("session=not-covered"),
             "the uncovered credential reached the file"
         );
-    }
-
-    /// A `keyid` (or any other signature parameter) that happens to name a header must
-    /// not widen what is kept: only the `( … )` component list is the covered set.
-    #[test]
-    fn a_signature_parameter_cannot_widen_the_covered_set() {
-        let headers = vec![
-            (
-                "Signature-Input".to_owned(),
-                "mcp-re=(\"@method\");keyid=\"cookie\"".to_owned(),
-            ),
-            ("cookie".to_owned(), "session=secret".to_owned()),
-        ];
-        let kept = covered_headers(&headers, mcp_re_http_profile::REQUEST_LABEL);
-        assert!(
-            !kept.iter().any(|(name, _)| name == "cookie"),
-            "kept {kept:?}"
-        );
-    }
-
-    /// R8-C042/C121: a second dictionary member is not the covered set.
-    ///
-    /// The verifier reads ONE member and ignores every other, so a value carrying a
-    /// decoy label verifies exactly as it would without it. If retention unioned the
-    /// members instead, an enrolled client could name any header it liked — its own
-    /// `cookie`, or an internal header an ingress adds that the client cannot even read
-    /// — and have it written verbatim into a store of credential material with no
-    /// expiry.
-    #[test]
-    fn a_decoy_dictionary_member_cannot_widen_the_covered_set() {
-        let headers = vec![
-            (
-                "Signature-Input".to_owned(),
-                "mcp-re=(\"@method\" \"authorization\");keyid=\"k\", \
-                 decoy=(\"cookie\" \"x-forwarded-client-cert\")"
-                    .to_owned(),
-            ),
-            ("authorization".to_owned(), "Bearer live".to_owned()),
-            ("cookie".to_owned(), "session=secret".to_owned()),
-            (
-                "x-forwarded-client-cert".to_owned(),
-                "By=spiffe://mesh".to_owned(),
-            ),
-        ];
-        let kept = covered_headers(&headers, mcp_re_http_profile::REQUEST_LABEL);
-        let names: Vec<&str> = kept.iter().map(|(name, _)| name.as_str()).collect();
-        assert!(
-            !names.contains(&"cookie") && !names.contains(&"x-forwarded-client-cert"),
-            "an unverified dictionary member decided what is retained: {names:?}"
-        );
-        assert!(
-            names.contains(&"authorization"),
-            "the verified member's own covered header must still be kept: {names:?}"
-        );
-    }
-
-    /// R8-C042: a component's own parameters are not component names.
-    ///
-    /// `("@method";key="cookie")` names one component. Reading every quoted token in the
-    /// list would read the parameter VALUE as a second one, so the widening the previous
-    /// test closes at the dictionary level would simply move inside the parentheses.
-    #[test]
-    fn an_in_list_component_parameter_cannot_widen_the_covered_set() {
-        let headers = vec![
-            (
-                "Signature-Input".to_owned(),
-                "mcp-re=(\"@method\";key=\"cookie\" \"content-digest\")".to_owned(),
-            ),
-            ("cookie".to_owned(), "session=secret".to_owned()),
-            ("content-digest".to_owned(), "sha-256=:AAAA:".to_owned()),
-        ];
-        let kept = covered_headers(&headers, mcp_re_http_profile::REQUEST_LABEL);
-        let names: Vec<&str> = kept.iter().map(|(name, _)| name.as_str()).collect();
-        assert!(
-            !names.contains(&"cookie"),
-            "a component parameter value was read as a covered header: {names:?}"
-        );
-        assert!(names.contains(&"content-digest"), "kept {names:?}");
-    }
-
-    /// R8-C093: a call refused before dispatch takes its marker with it.
-    ///
-    /// A marker asserts that this request crossed the execution threshold. A refusal
-    /// taken while the backend is untouched did not, so leaving the marker would invent
-    /// an indeterminacy that never existed — and would leave the request's covered
-    /// headers, live bearer token included, on disk for an exchange the boundary
-    /// refused.
-    #[tokio::test]
-    async fn a_reservation_released_before_dispatch_leaves_nothing_behind() {
-        let dir = TempDir::new("released");
-        let retention = EvidenceRetention::open(&dir.0).expect("open");
-        let (request, _) = exchange();
-
-        let reservation = retention.reserve(&request).await.expect("reserve");
-        let marker = dir
-            .0
-            .join(format!("{}.pending", reservation.digest().as_str()));
-        assert!(marker.exists(), "the marker is durable before dispatch");
-        assert_eq!(
-            retention.pending_reservations().expect("list"),
-            vec![reservation.digest().as_str().to_owned()],
-            "an unfinished reservation is enumerable, or nothing can reconcile it"
-        );
-
-        retention.release_before_dispatch(reservation).await;
-
-        assert!(
-            !marker.exists(),
-            "a call that never reached the backend left a credential-bearing marker \
-             that only a successful completion can ever remove"
-        );
-        assert!(retention.pending_reservations().expect("list").is_empty());
-    }
-
-    /// A reservation that is merely DROPPED keeps its marker. Dropping is what a request
-    /// that died mid-flight does, and for that one the outcome genuinely is unknown.
-    #[tokio::test]
-    async fn a_dropped_reservation_keeps_its_marker() {
-        let dir = TempDir::new("dropped");
-        let retention = EvidenceRetention::open(&dir.0).expect("open");
-        let (request, _) = exchange();
-
-        let reservation = retention.reserve(&request).await.expect("reserve");
-        let marker = dir
-            .0
-            .join(format!("{}.pending", reservation.digest().as_str()));
-        drop(reservation);
-
-        assert!(
-            marker.exists(),
-            "over-reporting indeterminacy is the safe direction; a dropped reservation \
-             must not read as a call that never ran"
-        );
-    }
-
-    /// Content addressing makes retention idempotent: the same exchange retained twice
-    /// is one object under one handle.
-    #[tokio::test]
-    async fn retaining_the_same_exchange_twice_yields_one_object() {
-        let dir = TempDir::new("idempotent");
-        let retention = EvidenceRetention::open(&dir.0).expect("open");
-        let (request, response) = exchange();
-        let first = retention.retain(&request, &response).await.expect("retain");
-        let second = retention
-            .retain(&request, &response)
-            .await
-            .expect("retain again");
-        assert_eq!(first, second);
     }
 
     /// A blob that is not a retained hop must not be reconstructed from. The store
@@ -1398,5 +867,97 @@ mod tests {
             vec![first.as_str().to_owned()],
             "one execution wrote more than one hop object"
         );
+    }
+    ///
+    /// `("@method";key="cookie")` names one component. Reading every quoted token in the
+    /// list would read the parameter VALUE as a second one, so the widening the previous
+    /// test closes at the dictionary level would simply move inside the parentheses.
+    #[test]
+    fn an_in_list_component_parameter_cannot_widen_the_covered_set() {
+        let headers = vec![
+            (
+                "Signature-Input".to_owned(),
+                "mcp-re=(\"@method\";key=\"cookie\" \"content-digest\")".to_owned(),
+            ),
+            ("cookie".to_owned(), "session=secret".to_owned()),
+            ("content-digest".to_owned(), "sha-256=:AAAA:".to_owned()),
+        ];
+        let kept = covered_headers(&headers, mcp_re_http_profile::REQUEST_LABEL);
+        let names: Vec<&str> = kept.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(
+            !names.contains(&"cookie"),
+            "a component parameter value was read as a covered header: {names:?}"
+        );
+        assert!(names.contains(&"content-digest"), "kept {names:?}");
+    }
+
+    /// R8-C093: a call refused before dispatch takes its marker with it.
+    ///
+    /// A marker asserts that this request crossed the execution threshold. A refusal
+    /// taken while the backend is untouched did not, so leaving the marker would invent
+    /// an indeterminacy that never existed — and would leave the request's covered
+    /// headers, live bearer token included, on disk for an exchange the boundary
+    /// refused.
+    #[tokio::test]
+    async fn a_reservation_released_before_dispatch_leaves_nothing_behind() {
+        let dir = TempDir::new("released");
+        let retention = EvidenceRetention::open(&dir.0).expect("open");
+        let (request, _) = exchange();
+
+        let reservation = retention.reserve(&request).await.expect("reserve");
+        let marker = dir
+            .0
+            .join(format!("{}.pending", reservation.digest().as_str()));
+        assert!(marker.exists(), "the marker is durable before dispatch");
+        assert_eq!(
+            retention.pending_reservations().expect("list"),
+            vec![reservation.digest().as_str().to_owned()],
+            "an unfinished reservation is enumerable, or nothing can reconcile it"
+        );
+
+        retention.release_before_dispatch(reservation).await;
+
+        assert!(
+            !marker.exists(),
+            "a call that never reached the backend left a credential-bearing marker \
+             that only a successful completion can ever remove"
+        );
+        assert!(retention.pending_reservations().expect("list").is_empty());
+    }
+
+    /// A reservation that is merely DROPPED keeps its marker. Dropping is what a request
+    /// that died mid-flight does, and for that one the outcome genuinely is unknown.
+    #[tokio::test]
+    async fn a_dropped_reservation_keeps_its_marker() {
+        let dir = TempDir::new("dropped");
+        let retention = EvidenceRetention::open(&dir.0).expect("open");
+        let (request, _) = exchange();
+
+        let reservation = retention.reserve(&request).await.expect("reserve");
+        let marker = dir
+            .0
+            .join(format!("{}.pending", reservation.digest().as_str()));
+        drop(reservation);
+
+        assert!(
+            marker.exists(),
+            "over-reporting indeterminacy is the safe direction; a dropped reservation \
+             must not read as a call that never ran"
+        );
+    }
+
+    /// Content addressing makes retention idempotent: the same exchange retained twice
+    /// is one object under one handle.
+    #[tokio::test]
+    async fn retaining_the_same_exchange_twice_yields_one_object() {
+        let dir = TempDir::new("idempotent");
+        let retention = EvidenceRetention::open(&dir.0).expect("open");
+        let (request, response) = exchange();
+        let first = retention.retain(&request, &response).await.expect("retain");
+        let second = retention
+            .retain(&request, &response)
+            .await
+            .expect("retain again");
+        assert_eq!(first, second);
     }
 }

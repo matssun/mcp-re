@@ -264,10 +264,16 @@ baseline_prod_loc = 365
 baseline_sha = "255465e"
 status = "unreviewed"
 
+# MCPRE-175 split `transparency.rs` into its authorities: WHAT is retained
+# (`retained_record.rs`), WHICH headers a hop keeps (`covered_set.rs`), WHEN responsibility
+# for retaining it is durably established (`durability.rs`), and the auditor's half
+# (`attestation.rs`). The debt follows the bulk rather than the path: `transparency/mod.rs`
+# is 143 lines and below the threshold, so the registered file is the durability runtime,
+# which inherits 882 registered lines as 498.
 [[debt]]
-path = "mcp-re-proxy/src/transparency.rs"
-baseline_prod_loc = 882
-baseline_sha = "d1fc5fa"
+path = "mcp-re-proxy/src/transparency/durability.rs"
+baseline_prod_loc = 498
+baseline_sha = "255465e"
 status = "unreviewed"
 
 [[debt]]

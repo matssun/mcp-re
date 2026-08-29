@@ -264,7 +264,11 @@ _PROXY_LIB_SRCS = [
     # decided it. Split from the serving path so the cause outlives the stage.
     "src/refusal/mod.rs",
     "src/refusal/cause.rs",
-    "src/transparency.rs",
+    "src/transparency/mod.rs",
+    "src/transparency/retained_record.rs",
+    "src/transparency/covered_set.rs",
+    "src/transparency/durability.rs",
+    "src/transparency/attestation.rs",
     # Trust-document interpretation: the authoritative rules over the bytes, owned apart
     # from the parser that was merely their first caller.
     "src/trust_document.rs",
