@@ -36,12 +36,21 @@
 //! the first is safe to leave frozen.
 
 use std::sync::Arc;
-use std::time::Duration;
 
-use crate::clock::now_unix;
 use crate::delegated_server_signer::DelegatedServerSigner;
-use crate::delegated_server_signer::TrustEpochAdvance;
 use crate::managed_worker::WorkerSet;
+
+/// Keeping a delegated key in force: when to mint the successor, and what a root outage
+/// costs.
+mod rotation;
+
+/// The break-glass half: what the shared trust epoch says, and what asking it costs.
+mod trust_epoch_advance;
+
+/// Asking the root for a successor, and reading its answer honestly.
+mod mint_successor;
+
+use rotation::spawn_delegated_rotation_task;
 
 /// Response-signing custody: the delegated snapshot and the worker that maintains it.
 pub struct SigningPlane {
@@ -86,7 +95,7 @@ impl SigningPlane {
             },
             credential: "cred".into(),
             nbf: 0,
-            exp: now_unix() + 3600,
+            exp: crate::clock::now_unix() + 3600,
         });
         let mut workers = WorkerSet::new(Arc::new(std::sync::atomic::AtomicBool::new(false)));
         let halt = workers.halt();
@@ -205,298 +214,9 @@ impl SigningPlane {
 /// current key until then (no gap). If issuance fails while the current key is still
 /// valid, serving continues until that key expires and THEN fails closed
 /// (ADR-MCPRE-052 §6) — never a stale-key extension or a direct-root fallback. The
-/// thread observes its halt between naps so it exits promptly on a rolling deploy.
-fn spawn_delegated_rotation_task(
-    workers: &mut crate::managed_worker::WorkerSet,
-    mut rotor: crate::delegated_wiring::ProdDelegatedRotor,
-    signer: Arc<crate::delegated_server_signer::DelegatedServerSigner>,
-    overlap: i64,
-    epoch_watch: Option<DelegatedEpochWatch>,
-) {
-    let halt = workers.halt();
-    workers.spawn("delegated key rotation", move || {
-        // SUPERVISION (C040). This thread is the ONLY thing that mints delegated keys, and
-        // nothing observes it while it runs — `WorkerSet` reclaims it at shutdown, which is
-        // far too late to matter here. Left bare, a panic on any reachable `.expect()` (the
-        // CSPRNG draw, the two custody invariants) would end all rotation for the process
-        // lifetime while every health surface still read steady state:
-        // `DelegatedRotationMetrics.consecutive_failures` is only written BY this thread, so
-        // a dead thread leaves it at 0 and the replica appears healthy right up until the
-        // current key's `exp`, then 503s with no attributable cause.
-        //
-        // So the loop runs inside `catch_unwind` and a panic is converted into the
-        // strongest honest signal available: RETIRE the snapshot, which makes the hot path
-        // fail closed IMMEDIATELY (`delegated_signing_unavailable`) rather than at `exp`,
-        // and record a failure so the metric stops reading healthy. The thread does not
-        // resume — after a panic the rotor's state is not known good, and continuing to
-        // mint from it would be worse than refusing.
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            rotation_loop(&mut rotor, &signer, overlap, epoch_watch.as_ref(), &halt)
-        }));
-        if outcome.is_err() {
-            signer.retire_permanently();
-            signer.metrics().record_failure();
-            eprintln!(
-                "mcp-re-proxy: FATAL: the delegated rotation thread PANICKED. Delegated key \
-                 rotation has stopped for the lifetime of this process and the current \
-                 snapshot has been retired, so response signing now fails closed \
-                 (delegated_signing_unavailable) immediately rather than at the key's exp. \
-                 This replica cannot recover on its own — restart it."
-            );
-        }
-    });
-}
-
-/// The rotation loop proper. Split out of [`spawn_delegated_rotation_task`] so the
-/// supervisor above can catch a panic from anywhere inside it.
-fn rotation_loop(
-    rotor: &mut crate::delegated_wiring::ProdDelegatedRotor,
-    signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
-    overlap: i64,
-    epoch_watch: Option<&DelegatedEpochWatch>,
-    halt: &crate::managed_worker::Halt,
-) {
-    use crate::delegated_server_signer::rotation_backoff;
-    {
-        // Failures since the last success drive the backoff schedule; 0 in steady state.
-        let mut consecutive_failures: u32 = 0;
-        // The epoch this node is currently minting under (starts at the configured
-        // baseline label from the startup issuance). An advance of the shared counter
-        // moves it; verifiers pinned to the old label then reject across replicas.
-        let mut last_label = rotor.trust_epoch().to_string();
-        loop {
-            if halt.requested() {
-                return;
-            }
-            // In steady state, sleep until the overlap window opens (`exp - overlap`) so
-            // a successor is minted while the predecessor is still valid. While retrying
-            // after a failure we skip this wait and go straight to the backoff-then-retry
-            // below. With no current key (startup edge / post-retirement) rotate at once.
-            // The wait ALSO breaks early when the shared trust epoch advances, so
-            // cross-replica revocation is bounded by the ~500ms epoch poll, not a full TTL.
-            if consecutive_failures == 0 {
-                let wake_at = match signer.current(now_unix()) {
-                    Some(a) => (a.exp - overlap).max(now_unix()),
-                    None => now_unix(),
-                };
-                let mut ticks = 0u32;
-                while now_unix() < wake_at {
-                    if halt.requested() {
-                        return;
-                    }
-                    // Poll the shared trust epoch ~every 500ms (10 * 50ms).
-                    if ticks.is_multiple_of(10) {
-                        if let Some(watch) = epoch_watch.as_ref() {
-                            if matches!(watch.current_label(), Some(l) if l != last_label) {
-                                break;
-                            }
-                        }
-                    }
-                    ticks += 1;
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-            }
-            if halt.requested() {
-                return;
-            }
-            // Trust-epoch advance takes priority over the scheduled rotation: swap to
-            // the new epoch NOW so verifiers pinned to the prior accepted-epoch set
-            // reject on the next request (cross-replica, since every replica reads the
-            // same counter). ADR-MCPRE-052 §7.
-            if let Some(watch) = epoch_watch.as_ref() {
-                let resolved = watch.current_label();
-                if resolved.is_none() {
-                    // FAIL CLOSED FOR MINTING: the shared epoch is unreadable (outage)
-                    // or went backwards (refused, never rebased). Either way we cannot
-                    // produce a comparable epoch, so we must not issue. The current key
-                    // keeps serving until its `exp`, after which the hot path fails
-                    // closed on its own — no stale-epoch minting, no rebase. Back off
-                    // and retry; the reader reconnects on the next read.
-                    consecutive_failures = signer.metrics().record_failure();
-                    let ttl = signer.seconds_to_expiry(now_unix());
-                    let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter());
-                    eprintln!(
-                        "mcp-re-proxy: WARNING: shared trust epoch unreadable or regressed; \
-                         NOT minting (a credential without a comparable epoch is unrevokable). \
-                         Current key serves until exp then fails closed. \
-                         consecutive_failures {}, time-to-expiry {}s. Retrying in {}ms.",
-                        consecutive_failures,
-                        ttl.unwrap_or(0),
-                        backoff.as_millis(),
-                    );
-                    if halt.sleep(backoff) {
-                        return;
-                    }
-                    continue;
-                }
-                if let Some(label) = resolved {
-                    if label != last_label {
-                        match rotor.advance_trust_epoch(label.clone(), now_unix()) {
-                            Ok(TrustEpochAdvance::Advanced) => {
-                                consecutive_failures = 0;
-                                last_label = label;
-                                signer.metrics().record_success(now_unix());
-                                eprintln!(
-                                    "mcp-re-proxy: trust epoch advanced -> {last_label}: delegated \
-                                     keys re-issued under the new epoch. This replica no longer \
-                                     mints under the prior epoch. Credentials already issued under \
-                                     it stay VERIFIABLE until verifiers are pointed at the new \
-                                     epoch — update the verifiers' accepted epochs to complete the \
-                                     revocation (delegation_trust_epoch_stale)."
-                                );
-                                continue;
-                            }
-                            // The root declined and the PRIOR-epoch key is still valid.
-                            // `last_label` is deliberately left where it was, so the
-                            // next pass re-enters this arm and retries; advancing it
-                            // here would report a revocation that never happened and
-                            // never look at it again.
-                            Ok(TrustEpochAdvance::Declined) => {
-                                consecutive_failures = signer.metrics().record_failure();
-                                let ttl = signer.seconds_to_expiry(now_unix());
-                                let backoff =
-                                    rotation_backoff(consecutive_failures, ttl, rotation_jitter());
-                                eprintln!(
-                                    "mcp-re-proxy: WARNING: trust epoch advance to {label} NOT \
-                                     APPLIED (root issuer declined); this replica is STILL MINTING \
-                                     under the prior epoch on its current key, until that key's \
-                                     exp ({}s) and then FAILS CLOSED. The break-glass revocation \
-                                     is not yet in force here. consecutive_failures {}. Retrying \
-                                     in {}ms.",
-                                    ttl.unwrap_or(0),
-                                    consecutive_failures,
-                                    backoff.as_millis(),
-                                );
-                                if halt.sleep(backoff) {
-                                    return;
-                                }
-                                continue;
-                            }
-                            Err(_) => {
-                                consecutive_failures = signer.metrics().record_failure();
-                                let ttl = signer.seconds_to_expiry(now_unix());
-                                let backoff =
-                                    rotation_backoff(consecutive_failures, ttl, rotation_jitter());
-                                eprintln!(
-                                    "mcp-re-proxy: WARNING: re-issue on trust-epoch advance FAILED \
-                                     (root issuer unavailable); consecutive_failures {}. Retrying in {}ms.",
-                                    consecutive_failures,
-                                    backoff.as_millis(),
-                                );
-                                if halt.sleep(backoff) {
-                                    return;
-                                }
-                                continue;
-                            }
-                        }
-                    }
-                }
-            }
-            // The delegated kid BEFORE the attempt, so silent no-progress is detectable.
-            // `ensure_active` returns Ok when successor issuance FAILED but the current
-            // key is still valid (custody.rs: the `!current_valid` guard is skipped and
-            // the fallthrough `Some(a) if now < a.exp => Ok(())` wins). That is the
-            // PRIMARY failure mode — a root outage during the overlap window, exactly
-            // what the overlap exists to absorb — and taking it as success would reset
-            // `consecutive_failures`, collapse `wake_at` to now (we are already past
-            // `exp - overlap`), and re-enter this arm immediately: a tight retry loop
-            // against the root KMS/HSM, minting a fresh keypair every pass, for the
-            // whole overlap window. The backoff below must cover it.
-            let before_kid = signer.current(now_unix()).map(|a| a.delegated_kid.clone());
-            match rotor.rotate(now_unix()) {
-                Ok(()) if !rotation_made_progress(signer, &before_kid, overlap) => {
-                    consecutive_failures = signer.metrics().record_failure();
-                    let ttl = signer.seconds_to_expiry(now_unix());
-                    let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter());
-                    eprintln!(
-                        "mcp-re-proxy: WARNING: delegated successor issuance FAILED (root issuer \
-                         unavailable) but the current key is still valid; consecutive_failures {}, \
-                         time-to-expiry {}s. Serving continues on the current key until its exp, \
-                         then FAILS CLOSED (ADR-MCPRE-052 §6). Retrying in {}ms.",
-                        consecutive_failures,
-                        ttl.unwrap_or(0),
-                        backoff.as_millis(),
-                    );
-                    if halt.sleep(backoff) {
-                        return;
-                    }
-                }
-                Ok(()) => {
-                    consecutive_failures = 0;
-                    signer.metrics().record_success(now_unix());
-                    if let Some(ev) = rotor.audit().last() {
-                        let ttl = signer.seconds_to_expiry(now_unix()).unwrap_or(0);
-                        eprintln!(
-                            "mcp-re-proxy: delegated key {} (kid {}, exp {}); time-to-expiry {}s; \
-                             rotations_ok {}",
-                            ev.event_type,
-                            ev.delegated_kid,
-                            ev.exp,
-                            ttl,
-                            signer.metrics().rotations_ok(),
-                        );
-                    }
-                }
-                Err(_) => {
-                    consecutive_failures = signer.metrics().record_failure();
-                    let ttl = signer.seconds_to_expiry(now_unix());
-                    // Bounded jittered exponential backoff, capped by the current key's
-                    // remaining validity (retry inside the overlap window) and a 30s
-                    // ceiling once expired. OS CSPRNG jitter decorrelates a fleet.
-                    let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter());
-                    eprintln!(
-                        "mcp-re-proxy: WARNING: delegated key issuance FAILED (root issuer \
-                         unavailable); consecutive_failures {}, time-to-expiry {}s. Serving \
-                         continues only until the current delegated key expires, then FAILS CLOSED \
-                         (ADR-MCPRE-052 §6) — no stale-key extension, no direct-root fallback. \
-                         Retrying in {}ms.",
-                        consecutive_failures,
-                        ttl.unwrap_or(0),
-                        backoff.as_millis(),
-                    );
-                    // Interruptible backoff so a persistent root outage does not hot-spin;
-                    // the hot path keeps signing off the current key until its exp.
-                    if halt.sleep(backoff) {
-                        return;
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Did the rotation attempt actually mint a successor?
-///
-/// `DelegatedSigningCustody::ensure_active` reports `Ok(())` in two very different
-/// situations: a successor was issued, or issuance failed while the current key is
-/// still valid (so the fleet keeps signing and the caller is expected to retry).
-/// Only the first is progress. Without this distinction the retry loop treats a root
-/// outage during the overlap window as steady state and spins on the root issuer.
-///
-/// Progress means the published delegated kid changed. When nothing is published at
-/// all there is nothing to keep serving on, and the `Err` arm already handles that;
-/// when the attempt was not yet due (we are outside the overlap window) an unchanged
-/// kid is expected and not a failure.
-fn rotation_made_progress(
-    signer: &crate::delegated_server_signer::DelegatedServerSigner,
-    before_kid: &Option<String>,
-    overlap: i64,
-) -> bool {
-    let now = now_unix();
-    let Some(active) = signer.current(now) else {
-        // Nothing published: not progress, but also nothing to back off protecting.
-        return false;
-    };
-    if active.delegated_kid != *before_kid.as_deref().unwrap_or("") {
-        return true;
-    }
-    // Same kid. Only a rotation that was DUE and did not happen is a failure.
-    now < active.exp - overlap
-}
-
+/// rotation thread — the backoff still bounds the retry rate, only its dither is lost.
 /// A fresh random u64 from the OS CSPRNG for backoff jitter. On the (astronomically
 /// unlikely) CSPRNG failure, fall back to 0 (no jitter) rather than panicking the
-/// rotation thread — the backoff still bounds the retry rate, only its dither is lost.
 fn rotation_jitter() -> u64 {
     let mut b = [0u8; 8];
     match getrandom::fill(&mut b) {
@@ -637,7 +357,8 @@ fn build_delegated_epoch_watch(
 }
 #[cfg(test)]
 mod rotation_progress_tests {
-    use super::rotation_made_progress;
+    use super::mint_successor::rotation_made_progress;
+
     use crate::delegated_server_signer::DelegatedServerSigner;
     use mcp_re_core::SigningKey;
     use mcp_re_http_profile::ActiveDelegatedKey;
@@ -994,6 +715,7 @@ mod epoch_watch_wiring_tests {
 #[cfg(test)]
 mod rotation_owner_tests {
     use super::*;
+    use crate::clock::now_unix;
     use crate::delegated_wiring::build_delegated_signing;
     use crate::delegated_wiring::ProdDelegatedRotor;
     use crate::key_source::KeyError;
@@ -1007,6 +729,7 @@ mod rotation_owner_tests {
     use std::sync::atomic::AtomicBool;
     use std::sync::atomic::AtomicU64;
     use std::sync::atomic::Ordering;
+    use std::time::Duration;
 
     const ROOT_SEED: [u8; 32] = [33u8; 32];
 
@@ -1089,7 +812,7 @@ mod rotation_owner_tests {
         let workers = WorkerSet::new(Arc::clone(&deployment));
         let halt = workers.halt();
         let running = std::thread::spawn(move || {
-            rotation_loop(&mut rotor, &signer, OVERLAP, watch.as_ref(), &halt);
+            super::rotation::rotation_loop(&mut rotor, &signer, OVERLAP, watch.as_ref(), &halt);
             rotor
         });
         std::thread::sleep(RUN_WINDOW);
@@ -1256,10 +979,12 @@ mod rotation_owner_tests {
 #[cfg(test)]
 mod handle_lifetime_tests {
     use super::*;
+    use crate::clock::now_unix;
     use mcp_re_core::SigningKey;
     use mcp_re_http_profile::ActiveDelegatedKey;
     use mcp_re_http_profile::ActorIdentity;
     use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
 
     const KID: &str = TEST_KID;
 

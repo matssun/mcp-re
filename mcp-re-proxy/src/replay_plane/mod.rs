@@ -43,9 +43,15 @@
 use std::sync::Arc;
 
 use crate::async_replay::AsyncReplayTier;
+
+/// Establishing one concrete backend, and refusing the ones this build does not carry.
+mod backends;
+
 use crate::control_runtime::ControlRuntime;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
 use crate::startup_plan::{PlannedStore, ReplayPlan};
+use backends::establish_etcd;
+use backends::establish_redis;
 
 /// The established replay tier and the dispatch posture it implies.
 ///
@@ -82,14 +88,6 @@ impl MaterializedReplay {
 /// `control` must be present when the plan declared it needed (see
 /// `startup_plan::control_runtime_requirement`); its absence there is a wiring error in
 /// this process, not an operator mistake.
-// In a build with NEITHER backend compiled, both arms below refuse, so the code after the
-// match never runs and `max_clock_skew` is never read. That is the honest shape of such a
-// build — it can establish no live replay state at all — rather than a wart to work
-// around, so it is named here instead of being silenced everywhere.
-#[cfg_attr(
-    not(any(feature = "cpstore_etcd", feature = "redis_replay")),
-    allow(unreachable_code, unused_variables)
-)]
 pub fn materialize(
     plan: &ReplayPlan,
     freshness: crate::config_state::FreshnessWindow,
@@ -99,79 +97,9 @@ pub fn materialize(
     // store with the only tier it can serve, and materialization has no standing to re-pair
     // them.
     let tier = plan.tier();
-    let (established, dispatch): (AsyncReplayTier, ProxyDispatchConfig) = match plan.store() {
-        PlannedStore::Etcd { endpoint } => {
-            #[cfg(feature = "cpstore_etcd")]
-            {
-                eprintln!(
-                    "mcp-re-proxy: replay tier = shared (CP/linearizable; async etcd backend)"
-                );
-                eprintln!("mcp-re-proxy: {}", tier.startup_audit_line("etcd"));
-                // The etcd store drives its own requests, so it needs no share of the
-                // control runtime — which is why the plan does not declare one for it.
-                let store = Arc::new(
-                    crate::async_etcd_store::EtcdAsyncAtomicReplayStore::connect(endpoint),
-                );
-                (
-                    AsyncReplayTier::new(store, freshness),
-                    ProxyDispatchConfig {
-                        fleet_strict: true,
-                        tier: Some(tier.clone()),
-                    },
-                )
-            }
-            #[cfg(not(feature = "cpstore_etcd"))]
-            {
-                let _ = (endpoint, tier);
-                return Err("--replay-durability-tier linearizable requires a build with the `cpstore_etcd` feature".to_string());
-            }
-        }
-        PlannedStore::Redis { url } => {
-            #[cfg(feature = "redis_replay")]
-            {
-                eprintln!(
-                    "mcp-re-proxy: replay tier = shared (horizontally-scaled; async Redis backend)"
-                );
-                eprintln!("mcp-re-proxy: {}", tier.startup_audit_line("redis"));
-                let rt = control
-                    .expect("the plan declared the redis replay tier needs the control runtime")
-                    .handle();
-                // The client-side response timeout is sized for the DECLARED WAIT timeout
-                // BEFORE connecting: the library defaults to 500ms per command, and `WAIT`
-                // is an ordinary command — so a declared `redis-wait-quorum:2:2000` could
-                // never wait 2000ms, and any replica ack slower than 500ms failed the
-                // request closed while the startup line advertised the fuller window.
-                let wait_timeout_ms = tier.wait_quorum_params().map(|(_, ms)| ms);
-                let mut store = rt
-                    .block_on(
-                        crate::RedisAsyncAtomicReplayStore::connect_with_wait_timeout(
-                            url,
-                            crate::redis_store::system_clock(),
-                            wait_timeout_ms,
-                        ),
-                    )
-                    .map_err(|e| format!("connect redis async replay store: {e:?}"))?;
-                // Apply the DECLARED durability tier to the store that actually serves.
-                // `startup_audit_line` above promises "WAIT timeout or insufficient acks
-                // fail closed" for REDIS_WAIT_QUORUM; without this the store would run
-                // plain SET NX PX and the promise would be audited but unenforced.
-                if let Some((quorum, timeout_ms)) = tier.wait_quorum_params() {
-                    store = store.with_wait_quorum(quorum, timeout_ms);
-                }
-                (
-                    AsyncReplayTier::new(Arc::new(store), freshness),
-                    ProxyDispatchConfig {
-                        fleet_strict: true,
-                        tier: Some(tier.clone()),
-                    },
-                )
-            }
-            #[cfg(not(feature = "redis_replay"))]
-            {
-                let _ = (url, tier, control);
-                return Err("--replay-cache shared (redis) requires a build with the `redis_replay` feature".to_string());
-            }
-        }
+    let (established, dispatch) = match plan.store() {
+        PlannedStore::Etcd { endpoint } => establish_etcd(endpoint, tier, freshness)?,
+        PlannedStore::Redis { url } => establish_redis(url, tier, freshness, control)?,
     };
     MaterializedReplay::new(established, dispatch)
 }

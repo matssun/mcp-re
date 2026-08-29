@@ -356,10 +356,13 @@ baseline_prod_loc = 425
 baseline_sha = "a9b2bc1"
 status = "unreviewed"
 
+# MCPRE-175: the client-revocation posture — loading the CRLs, indexing them per request,
+# and keeping them fresh — left for `tls_plane/client_revocation_posture.rs`, so
+# `tls_plane.rs` became `tls_plane/mod.rs`. The debt moves WITH the file.
 [[debt]]
-path = "mcp-re-proxy/src/tls_plane.rs"
-baseline_prod_loc = 678
-baseline_sha = "d1fc5fa"
+path = "mcp-re-proxy/src/tls_plane/mod.rs"
+baseline_prod_loc = 438
+baseline_sha = "255465e"
 status = "unreviewed"
 
 [[debt]]
@@ -380,10 +383,13 @@ baseline_prod_loc = 608
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
+# MCPRE-175: keeping a delegated key in force — the schedule, the trust-epoch override and
+# what a root outage costs — left for `signing_plane/rotation.rs`, so `signing_plane.rs`
+# became `signing_plane/mod.rs`. The debt moves WITH the file.
 [[debt]]
-path = "mcp-re-proxy/src/signing_plane.rs"
-baseline_prod_loc = 601
-baseline_sha = "d1fc5fa"
+path = "mcp-re-proxy/src/signing_plane/mod.rs"
+baseline_prod_loc = 321
+baseline_sha = "255465e"
 status = "unreviewed"
 
 [[debt]]
@@ -762,11 +768,5 @@ status = "unreviewed"
 [[debt]]
 path = "mcp-re-proxy/src/materializing_runtime.rs"
 baseline_prod_loc = 204
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/replay_plane.rs"
-baseline_prod_loc = 202
 baseline_sha = "d1fc5fa"
 status = "unreviewed"

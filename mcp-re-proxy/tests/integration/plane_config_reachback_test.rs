@@ -148,12 +148,55 @@ const CONFIGURATION_NAMES: &[&str] = &[
     "ValidatedDeployment",
 ];
 
-/// Whether `line` names `ident` as a whole identifier rather than inside a longer one.
+/// Whether `line` names `ident` as a whole identifier rather than inside a longer one, and
+/// as something other than an interior MODULE PATH segment.
+///
+/// `crate::revocation_tier::RevocationTier` shares a spelling with the `DeploymentRequest`
+/// field it was named after, and the two are opposites under this rule: the field is the
+/// primitive a plane must not re-read, while the module is where the classified STATE lives
+/// — consuming which is the whole point. An interior `::name::` is therefore a path into a
+/// state owner, never a field read, and a field read (`config.name`, `plan.name`) is never
+/// interior to a path.
+///
+/// This distinction was invisible while the rule scanned only each plane's `mod.rs`. Widening
+/// the scope to the plane's whole subtree surfaced it in `trust_plane/revocation_resolver.rs`,
+/// which materialises the tier it is HANDED. Measuring the spelling instead of the
+/// proposition is how these rules go wrong — the same reason comments are already skipped.
 fn names_identifier(line: &str, ident: &str) -> bool {
     let boundary = |c: Option<char>| !c.is_some_and(|c| c.is_alphanumeric() || c == '_');
     line.match_indices(ident).any(|(at, _)| {
         boundary(line[..at].chars().next_back())
             && boundary(line[at + ident.len()..].chars().next())
+    })
+}
+
+/// Whether `line` READS `field` — as opposed to naming a module that shares its spelling.
+///
+/// `crate::revocation_tier::RevocationTier` shares a spelling with the `DeploymentRequest`
+/// field it was named after, and the two are opposites under this rule: the field is the
+/// primitive a plane must not re-read, while the module is where the classified STATE lives
+/// — consuming which is the whole point. An interior `::name::` is therefore a path into a
+/// state owner, never a field read, and a field read (`config.name`, `plan.name`) is never
+/// interior to a path.
+///
+/// This distinction only matters for the per-plane FIELD list. The
+/// [`CONFIGURATION_NAMES`] list is the opposite kind of rule — naming the configuration
+/// model AT ALL is the violation there, module path included — so it keeps
+/// [`names_identifier`].
+///
+/// The difference was invisible while the rule scanned only each plane's `mod.rs`. Widening
+/// the scope to the plane's whole subtree surfaced it in `trust_plane/revocation_resolver.rs`,
+/// which materialises the tier it is HANDED. Measuring the spelling instead of the
+/// proposition is how these rules go wrong — the same reason comments are already skipped.
+fn reads_field(line: &str, field: &str) -> bool {
+    let boundary = |c: Option<char>| !c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+    line.match_indices(field).any(|(at, _)| {
+        let before = &line[..at];
+        let after = &line[at + field.len()..];
+        if before.ends_with("::") && after.starts_with("::") {
+            return false; // an interior module path segment, not a field read
+        }
+        boundary(before.chars().next_back()) && boundary(after.chars().next())
     })
 }
 
@@ -181,13 +224,23 @@ struct Reach {
 /// matching together — over a synthetic module. A control that exercised only the region
 /// helper would leave the composition untested, which is the shape of bug this gate had.
 fn reaches_for(source: &str, names: &[&str]) -> Vec<Reach> {
+    scan(source, names, names_identifier)
+}
+
+/// Every FIELD `source` re-reads from production code — the per-plane list, scanned with
+/// the module-path distinction [`reads_field`] draws.
+fn re_reads(source: &str, fields: &[&str]) -> Vec<Reach> {
+    scan(source, fields, reads_field)
+}
+
+fn scan(source: &str, names: &[&str], hit: fn(&str, &str) -> bool) -> Vec<Reach> {
     let mut found = Vec::new();
     for (number, line) in mcp_re_test_paths::rust_source::production_lines(source) {
         if is_comment(line) {
             continue;
         }
         for name in names {
-            if names_identifier(line, name) {
+            if hit(line, name) {
                 found.push(Reach {
                     number,
                     name: (*name).to_string(),
@@ -210,11 +263,42 @@ fn report(found: &[Reach]) -> String {
 }
 
 /// `plane`'s delivered source, with the path it came from.
+///
+/// A plane that has grown an owner subtree is read WHOLE: the rule is about the plane, and
+/// a scan of its `mod.rs` alone would report a clean pass over the subordinate owners that
+/// hold most of it. The scope is the DIRECTORY, walked, rather than a list of files — a list
+/// has to learn about the next file, and the failure mode of a stale list is a clean pass
+/// over unmeasured code.
 fn plane_source(plane: &Plane) -> (std::path::PathBuf, String) {
     let path = mcp_re_test_paths::resolve_runfile(plane.env);
-    let source =
-        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    (path, source)
+    let read = |p: &std::path::Path| {
+        std::fs::read_to_string(p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()))
+    };
+    if path.file_name().is_none_or(|name| name != "mod.rs") {
+        let source = read(&path);
+        return (path, source);
+    }
+    let root = path
+        .parent()
+        .unwrap_or_else(|| panic!("{} has no parent directory", path.display()))
+        .to_path_buf();
+    let mut files = Vec::new();
+    collect_rust_files(&root, &mut files);
+    files.sort();
+    let source = files.iter().map(|f| read(f)).collect::<Vec<_>>().join("\n");
+    (root, source)
+}
+
+fn collect_rust_files(dir: &std::path::Path, into: &mut Vec<std::path::PathBuf>) {
+    let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read dir {dir:?}: {e}"));
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rust_files(&path, into);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            into.push(path);
+        }
+    }
 }
 
 #[test]
@@ -244,7 +328,7 @@ fn a_projected_plane_names_no_configuration_type() {
 fn a_projected_plane_reconstructs_no_classified_state() {
     for plane in PROJECTED_PLANES {
         let (path, source) = plane_source(plane);
-        let found = reaches_for(&source, plane.reconstructed);
+        let found = re_reads(&source, plane.reconstructed);
         assert!(
             found.is_empty(),
             "{} — {}. Consume the classified state the plan carries; a primitive here means \
@@ -259,6 +343,34 @@ fn a_projected_plane_reconstructs_no_classified_state() {
 /// The gate detects what it claims to. Without this, an expression error — a path that
 /// never matches — leaves every assertion above vacuously true, and a green run would mean
 /// nothing at all.
+/// A path INTO a classified state's own module is not a reach-back; a read of the
+/// same-named request field is.
+#[test]
+fn a_module_path_is_not_a_field_read() {
+    assert!(!reads_field(
+        "use crate::revocation_tier::RevocationTier;",
+        "revocation_tier"
+    ));
+    assert!(!reads_field(
+        "    tier: &crate::revocation_tier::RevocationTier,",
+        "revocation_tier"
+    ));
+    assert!(reads_field(
+        "    let tier = config.revocation_tier.clone();",
+        "revocation_tier"
+    ));
+    assert!(reads_field(
+        "    if plan.revocation_tier.is_none() {",
+        "revocation_tier"
+    ));
+    // And the OTHER list keeps counting a module path: naming the configuration model at
+    // all is the violation there.
+    assert!(names_identifier(
+        "use crate::deployment_request::KeySourceKind;",
+        "deployment_request"
+    ));
+}
+
 #[test]
 fn the_rule_would_catch_a_reach_back() {
     let reaching = "fn materialize(plan: &TrustPlan) {\n    let _ = config.trust_path;\n}\n\

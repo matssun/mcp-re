@@ -49,7 +49,6 @@
 //! `reloading_trust` does: a truncated file mid-write must not empty what is enforced.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::client_revocation;
 use crate::config_snapshot;
@@ -177,6 +176,17 @@ impl Drop for TlsPlane {
     }
 }
 
+/// The client-revocation posture: what the CRLs say, and whether this deployment may start
+/// under them.
+mod client_revocation_posture;
+
+/// Keeping that posture fresh without a restart.
+mod crl_reload_worker;
+
+use client_revocation_posture::build_revocation_index;
+use client_revocation_posture::load_and_check_crls;
+use crl_reload_worker::start_reload_worker;
+
 impl TlsPlane {
     /// Establish transport custody: load and check the CRLs, build the serving TLS
     /// configuration, and start the reload worker when a cadence is configured.
@@ -214,97 +224,13 @@ impl TlsPlane {
                 custody_word(established),
             ));
         }
-        // Offline client-cert CRLs (#3839). Loaded once at startup; a missing or
-        // malformed CRL file fails closed here. OFFLINE revocation only — there is no
-        // online OCSP / distribution-point fetching.
         let crl_paths = plan.client_revocation.paths();
-        let client_crls = crate::client_crl_publication::load_client_crls(crl_paths)?;
-        let mut postures = Vec::with_capacity(client_crls.len());
-        if !client_crls.is_empty() {
-            eprintln!(
-                "mcp-re-proxy: offline client-cert revocation enabled — {} CRL file(s), unknown \
-                 status DENIED (fail closed) (OFFLINE only; no online OCSP/CRL-DP fetching)",
-                crl_paths.len(),
-            );
-            // ADR-MCPS-023 §A1 (MCPS-58): the verifier enforces CRL nextUpdate, so a
-            // stale CRL fails every new handshake closed. Surface that at BOOT — refuse
-            // to start on a stale CRL — and warn while a CRL is near expiry so a
-            // refreshed CRL can be installed before the cutover. A malformed CRL is a
-            // hard startup error (fail closed).
-            const CRL_NEAR_EXPIRY_WARN_SECS: i64 = 6 * 3600;
-            for (i, crl) in client_crls.iter().enumerate() {
-                match crate::client_crl_publication::crl_freshness(
-                    crl.as_ref(),
-                    startup_now_unix,
-                    CRL_NEAR_EXPIRY_WARN_SECS,
-                )
-                .map_err(|e| e.to_string())?
-                {
-                    crate::client_crl_publication::CrlFreshness::Fresh => {}
-                    crate::client_crl_publication::CrlFreshness::NoNextUpdate => {
-                        crate::client_crl_publication::crl_next_update_required(crl.as_ref(), i)
-                            .map_err(|e| {
-                                format!(
-                                    "mcp-re-proxy refuses to start with a client CRL that never \
-                                 falls out of force: {e}"
-                                )
-                            })?;
-                    }
-                    crate::client_crl_publication::CrlFreshness::NearExpiry {
-                        next_update_unix,
-                    } => eprintln!(
-                        "mcp-re-proxy: WARNING: client CRL #{i} is near expiry \
-                         (nextUpdate={next_update_unix}); install a refreshed CRL and restart \
-                         before then, or new handshakes will fail closed."
-                    ),
-                    crate::client_crl_publication::CrlFreshness::Stale { next_update_unix } => {
-                        let msg = format!(
-                            "client CRL #{i} is STALE (nextUpdate={next_update_unix} <= \
-                             now={startup_now_unix}): with CRL expiration enforced, every new \
-                             client handshake fails closed. Install a CRL published within its \
-                             nextUpdate window."
-                        );
-                        return Err(format!(
-                            "mcp-re-proxy refuses to start with a stale client CRL: {msg}"
-                        ));
-                    }
-                }
-            }
-            // Parsed here, once, and carried as facts. Freshness is checked first, above,
-            // so a stale CRL still refuses startup with its own diagnostic rather than
-            // being reported as posture.
-            for crl in &client_crls {
-                postures.push(
-                    crate::client_crl_publication::crl_posture(crl.as_ref())
-                        .map_err(|e| e.to_string())?,
-                );
-            }
-        }
-        let crls = ClientCrlEvidence { postures };
-
+        let (client_crls, crls) = load_and_check_crls(crl_paths, startup_now_unix)?;
         // Cloned because the initial build below consumes the original; the reload
         // re-reads only the CRLs, never this.
         let reload_chain = server_chain.clone();
         let reload_crl_paths = crl_paths.to_vec();
-        // The PER-REQUEST revocation index, built from the same CRL bytes the handshake
-        // verifier is about to be given. Without this, revocation reaches only NEW
-        // connections: rustls runs client authentication on a full handshake alone, so a
-        // peer added to a reloaded CRL keeps serving every request on the connection it
-        // already holds.
-        let revocation = if client_crls.is_empty() {
-            None
-        } else {
-            let index = client_revocation::ClientRevocationIndex::from_crl_ders(
-                &client_crls
-                    .iter()
-                    .map(|crl| crl.as_ref().to_vec())
-                    .collect::<Vec<_>>(),
-            )
-            .map_err(|e| e.to_string())?;
-            Some(Arc::new(client_revocation::SharedClientRevocation::new(
-                index,
-            )))
-        };
+        let revocation = build_revocation_index(&client_crls)?;
 
         // Created once, before the first build, and handed to every later one: the trust
         // anchors, the session cache and the trust epoch survive a reload, and so does the
@@ -322,36 +248,16 @@ impl TlsPlane {
             server_config,
         )));
 
-        let mut workers = WorkerSet::new(deployment);
-        // Only the `Reloading` posture starts a worker, and the cadence comes from that
-        // variant rather than from an `Option` beside it.
-        //
-        // There was a branch here for a cadence with no CRLs, which printed "no CRL reload
-        // scheduled" and carried on. It is gone because it is now unreachable: that
-        // combination is refused at the boundary (CF-04 — a cadence for re-reading an empty
-        // set states a control the deployment does not have). The same shape as
-        // `ReplayPlan::Memory` — a branch that survived because nothing had ever asked
-        // whether a configuration could reach it.
-        if let Some(cadence_secs) = plan.client_revocation.reload_cadence_secs() {
-            let custody = material.label();
-            spawn_crl_reload_task(
-                &mut workers,
-                CrlReloadTask {
-                    snapshot: Arc::clone(&snapshot),
-                    server_chain: reload_chain,
-                    material,
-                    crl_paths: reload_crl_paths,
-                    interval_secs: cadence_secs,
-                    revocation: revocation.clone(),
-                    rebuild_state: Arc::clone(&rebuild_state),
-                },
-            );
-            eprintln!(
-                "mcp-re-proxy: in-process CRL hot-reload enabled (every {cadence_secs}s, \
-                 {custody} TLS custody; refreshed --client-crl honored without restart; \
-                 failed reload keeps last-good)"
-            );
-        }
+        let workers = start_reload_worker(
+            deployment,
+            plan,
+            material,
+            &snapshot,
+            reload_chain,
+            reload_crl_paths,
+            revocation.clone(),
+            &rebuild_state,
+        );
         Ok(TlsPlane {
             snapshot,
             revocation,
@@ -430,120 +336,6 @@ impl TlsKeyMaterial {
             TlsKeyMaterial::Delegated(signer) => state
                 .build_delegated_config(server_chain, Arc::clone(signer), crls)
                 .map_err(|e| e.to_string()),
-        }
-    }
-}
-
-struct CrlReloadTask {
-    snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
-    /// The immutable server key material the verifier is rebuilt from; a reload
-    /// re-reads only the CRLs, never these.
-    server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
-    material: TlsKeyMaterial,
-    crl_paths: Vec<String>,
-    interval_secs: u64,
-    /// The per-request revocation index, republished from the same re-read bytes as
-    /// the rebuilt verifier. Rebuilding only the verifier would leave the reload
-    /// reaching new connections alone — which is the gap the per-request check exists
-    /// to close.
-    revocation: Option<Arc<client_revocation::SharedClientRevocation>>,
-    /// The listener's own security state — anchors, epoch, session cache and
-    /// handshake-signature budget. The same one startup built, so a reload rebuilds
-    /// against the anchor set in force and neither empties the cache nor refills the
-    /// bucket.
-    rebuild_state: Arc<TlsListenerSecurityState>,
-}
-/// SUPERVISED like the trust reload and the rotation owner: nothing joins this thread,
-/// and a panic in it would silently stop CRL reloading for the process lifetime.
-///
-/// Unlike the trust store, a stale CRL index bounds ITSELF — a CRL past its `nextUpdate`
-/// covers nothing, so its issuer's certificates become `Unknown` and are refused. A
-/// failed reload therefore never widens what is accepted, and the escalation here is a
-/// loud operator signal rather than a second fail-closed transition.
-fn spawn_crl_reload_task(workers: &mut crate::managed_worker::WorkerSet, task: CrlReloadTask) {
-    let halt = workers.halt();
-    workers.spawn("client CRL reload", move || {
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            crl_reload_loop(task, &halt);
-        }));
-        if outcome.is_err() {
-            eprintln!(
-                "mcp-re-proxy: FATAL: the client-CRL reload thread PANICKED. --client-crl is no \
-                 longer being re-read, so a newly revoked client certificate reaches this replica \
-                 only when its CRL passes nextUpdate (after which that issuer's certificates are \
-                 refused outright). This replica cannot recover on its own — restart it."
-            );
-        }
-    });
-}
-
-/// The CRL reload loop proper. Split out so the supervisor above can catch a panic.
-fn crl_reload_loop(task: CrlReloadTask, halt: &crate::managed_worker::Halt) {
-    let CrlReloadTask {
-        snapshot,
-        server_chain,
-        material,
-        crl_paths,
-        interval_secs,
-        revocation,
-        rebuild_state,
-    } = task;
-    {
-        let mut consecutive_failures: u32 = 0;
-        loop {
-            // Naps in small increments, so a halt is observed within one increment
-            // rather than after a whole reload interval.
-            if halt.sleep(Duration::from_secs(interval_secs)) {
-                return;
-            }
-            let outcome = config_snapshot::reload_once(&snapshot, || {
-                let crls = crate::client_crl_publication::load_client_crls(&crl_paths)?;
-                // A CRL that never falls out of force is refused on reload for the same
-                // reason it is refused at startup: keeping last-good is only safe while
-                // last-good ages out on its own.
-                for (i, crl) in crls.iter().enumerate() {
-                    crate::client_crl_publication::crl_next_update_required(crl.as_ref(), i)
-                        .map_err(|e| e.to_string())?;
-                }
-                // Build the per-request index from the SAME bytes, BEFORE the verifier
-                // is rebuilt, so a malformed CRL keeps last-good on both rather than
-                // swapping one and failing the other.
-                let index = client_revocation::ClientRevocationIndex::from_crl_ders(
-                    &crls
-                        .iter()
-                        .map(|crl| crl.as_ref().to_vec())
-                        .collect::<Vec<_>>(),
-                )
-                .map_err(|e| e.to_string())?;
-                let rebuilt = material.rebuild(server_chain.clone(), crls, &rebuild_state)?;
-                if let Some(revocation) = revocation.as_ref() {
-                    revocation.store(index);
-                }
-                Ok(Arc::new(rebuilt))
-            });
-            match outcome {
-                config_snapshot::ReloadOutcome::Swapped => {
-                    let recovered = consecutive_failures > 0;
-                    consecutive_failures = 0;
-                    if recovered {
-                        eprintln!(
-                            "mcp-re-proxy: client CRL reload RECOVERED; new verifier and \
-                             per-request index are live"
-                        );
-                    } else {
-                        eprintln!("mcp-re-proxy: client CRL reloaded; new verifier is live");
-                    }
-                }
-                config_snapshot::ReloadOutcome::KeptLastGood { reason } => {
-                    consecutive_failures = consecutive_failures.saturating_add(1);
-                    eprintln!(
-                        "mcp-re-proxy: WARNING: client CRL reload FAILED {consecutive_failures}x \
-                         in a row, keeping last-good config: {reason}. Newly revoked certificates \
-                         are NOT reaching this replica; when the last-good CRL passes its \
-                         nextUpdate its issuer's certificates are refused outright."
-                    );
-                }
-            }
         }
     }
 }
@@ -667,6 +459,7 @@ mod handle_lifetime_tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
     use std::sync::atomic::Ordering;
+    use std::time::Duration;
 
     /// A plane over a snapshot and one worker that only waits to be halted — enough to
     /// assert the ownership relationship without standing up TLS material.

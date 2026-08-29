@@ -162,6 +162,9 @@ _PROXY_LIB_SRCS = [
     "src/config_state/trust_revocation.rs",
     # Layer A's boundary: assembly, report-all, and the refusal-precedence contract.
     "src/config_state/validation/mod.rs",
+    "src/config_state/validation/recognition.rs",
+    "src/config_state/validation/refusable_machines.rs",
+    "src/config_state/validation/total_machines.rs",
     # The ownerless layer-A rules, enumerated so the remaining work is countable.
     "src/config_state/validation/machine_violations.rs",
     "src/config_state/validation/residue.rs",
@@ -392,16 +395,22 @@ _PROXY_LIB_SRCS = [
     "src/trust_plane/delivered_window.rs",
     # ADR-MCPRE-056 §8 (ADR-MCPRE-052): the signing plane — root issuer, delegated
     # snapshot and rotation worker; retires the snapshot before it stops rotating.
-    "src/signing_plane.rs",
+    "src/signing_plane/mod.rs",
+    "src/signing_plane/rotation.rs",
+    "src/signing_plane/trust_epoch_advance.rs",
+    "src/signing_plane/mint_successor.rs",
     # ADR-MCPRE-056 §8 (ADR-MCPRE-051 §6): the TLS plane — serving TLS config, the
     # per-request revocation index and the CRL reload worker.
-    "src/tls_plane.rs",
+    "src/tls_plane/mod.rs",
+    "src/tls_plane/client_revocation_posture.rs",
+    "src/tls_plane/crl_reload_worker.rs",
     # ADR-MCPRE-056 §8: the shared control runtime — one owner for control-plane
     # execution; consumers get a tokio Handle (access, not ownership).
     "src/control_runtime.rs",
     # ADR-MCPRE-056 §6: the replay plane — establishes the planned tier and hands it
     # over by value; owns nothing afterwards.
-    "src/replay_plane.rs",
+    "src/replay_plane/mod.rs",
+    "src/replay_plane/backends.rs",
     # ADR-MCPS-021 Axis 2: declared revocation tier (Tier 1 bounded-cache / Tier 2
     # live / Tier 3 push) — semantic names + honest per-tier guarantee. Pure type.
     # The tier says which revocation policy applies; this materialises it as runtime
@@ -829,17 +838,12 @@ nt_rust_test(
     data = [
         "//docs:sidecar-deployment-guide.md",
         ":mcp_re_proxy_cli",
-        "src/app.rs",
-        "src/delegated_wiring.rs",
-        # The whole serving path, not just its assembly: the transition-ownership rule
-        # scopes to the directory, so a region added later is measured without this list
-        # having to learn about it.
-    ] + glob(["src/http_profile_serve/**/*.rs"]) + [
-        "src/replay_plane.rs",
-        "src/signing_plane.rs",
-        "src/tls_plane.rs",
-        "src/trust_plane/mod.rs",
-    ],
+        # Every library source. The source-scanning guards in this suite scope to a
+        # DIRECTORY — the serving path, a plane — because a list of files has to learn
+        # about the next file, and the failure mode of a stale list is a clean pass over
+        # unmeasured code. A glob here says nothing about `srcs`, which
+        # `scripts/bazel_srcs_gate.py` still checks file by file.
+    ] + glob(["src/**/*.rs"]),
     edition = "2021",
     env = {
         "MCP_RE_SIDECAR_GUIDE": "$(rlocationpath //docs:sidecar-deployment-guide.md)",
