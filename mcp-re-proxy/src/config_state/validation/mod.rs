@@ -471,7 +471,10 @@ mod required_coordinate_tests {
     /// The list is the point. A coordinate added to `DeploymentRequest` that something
     /// downstream cannot function without belongs here, and the test below is what says
     /// whether the boundary refuses it — so the answer is measured rather than assumed.
-    const REQUIRED: &[(&str, fn(&mut DeploymentRequest))] = &[
+    /// A coordinate's name, and how to blank it on a request built in code.
+    type Coordinate = (&'static str, fn(&mut DeploymentRequest));
+
+    const REQUIRED: &[Coordinate] = &[
         ("bind", |c| c.bind = String::new()),
         ("audience", |c| c.audience = String::new()),
         ("server_signer", |c| c.server_signer = String::new()),

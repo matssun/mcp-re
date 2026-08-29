@@ -581,7 +581,8 @@ mod tests {
     /// test disagreed with every other one.
     #[test]
     fn a_whitespace_minted_fact_is_refused_like_an_empty_one() {
-        let cases: [(&str, fn(&mut DeploymentRequest)); 3] = [
+        type MintedFact = (&'static str, fn(&mut DeploymentRequest));
+        let cases: [MintedFact; 3] = [
             ("the base label", |c| {
                 c.delegated_signing.trust_epoch = Some("   ".to_string());
             }),
