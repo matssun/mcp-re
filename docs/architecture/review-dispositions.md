@@ -2054,3 +2054,140 @@ threshold, and its operands now live below it.
 
 **Neither provider is split from itself**, which this census forbade and which shaving either
 file would amount to. EX-008's five remediation findings are discharged.
+
+## EX-011 — the MCPRE-175 long-function campaign — **eight censuses, one exception granted**
+
+The campaign that took `clippy::too_many_lines` from **21 production sites to 0** and split
+seven files along the authorities inside them. Recorded here because seven of the eight
+censuses were *not* exception requests: they identified work and did it, which is exactly
+what §14 exists to keep distinguishable from an unperformed census.
+
+**Scope note.** This campaign did NOT census the 82 `unreviewed` registry entries. Every
+file below is here because a long function inside it, or a named section of the campaign
+brief, put it in scope. `unreviewed` still means unknown, not defective.
+
+### The one exception granted
+
+None. Every unit in scope was decomposed. `handle`'s census, which the EX-010 record
+deferred, DECLINED an exception — see that record.
+
+### The function backlog
+
+| function | before | after |
+|---|---:|---:|
+| `HttpProfileProxy::handle` | 218 | 55 |
+| `chain::reconstruct_chain` | 207 | 43 |
+| `signing_plane::rotation_loop` | 166 | 34 |
+| `ClientConfig::validate` | 129 | 4 |
+| `validate_configuration` | 124 | 13 |
+| `ClientProxy::handle` | 121 | 22 |
+| `TlsPlane::materialize` | 115 | 45 |
+| `async_serve::serve_connection` | 109 | 44 |
+| `Receipt::from_cose` | 100 | 17 |
+| `main` (mcp-re-client) | 98 | 45 |
+| `verify_delegated_accepted_202` | 97 | 29 |
+| `parse_signature_parameters` | 84 | 23 |
+| `async_replay::insert_locked` | 83 | 22 |
+| `read_request` (client listener) | 83 | 20 |
+| `async_serve::handle_request` | 80 | 60 |
+| `verify_delegation_credential` | 69 | 23 |
+| `McpTransportPolicy::enforce` | 69 | 9 |
+| `replay_plane::materialize` | 65 | 11 |
+| `transport::parse_response` | 65 | 24 |
+| `reject_unrepresentable_json` | 65 | 23 |
+| `async_serve::serve` | 61 | 32 |
+| `aws_kms_keysource::post_kms` | 62 | 38 |
+
+Counted as `clippy::too_many_lines` counts: non-blank, non-comment lines of the function
+body. The last row is outside the default clippy lane (it is behind `aws_kms_keysource`) and was
+included because the campaign brief named it.
+
+### The file censuses
+
+| file | before | after (registered unit) |
+|---|---:|---:|
+| `http_profile_serve/mod.rs` | 1108 | **529** |
+| `async_replay.rs` → `async_replay/mod.rs` | 924 | **248** |
+| `async_serve.rs` → `async_serve/mod.rs` | 898 | **365** |
+| `transparency.rs` → `transparency/durability.rs` | 882 | **498** |
+| `pkcs11_keysource.rs` → `pkcs11_keysource/mod.rs` | 853 | **447** |
+| `mcp-re-transport/src/lib.rs` | 938 | **234** |
+| `mcp-re-client/src/serve.rs` → `serve/mod.rs` | 756 | **262** |
+| `tls_plane.rs` → `tls_plane/mod.rs` | 678 | **438** |
+| `chain.rs` → `chain/mod.rs` | 660 | **447** |
+| `signing_plane.rs` → `signing_plane/mod.rs` | 601 | **321** |
+| `bodyless/mod.rs` | 707 | **529** |
+| `mcp-re-client/src/config.rs` → `config/mod.rs` | 562 | **438** |
+| `mcp-re-client-proxy/src/proxy.rs` | 531 | **495** |
+| `delegation.rs` → `delegation/mod.rs` | 384 | **218** |
+| `mcp-re-client/src/main.rs` | 215 | **116** — entry removed |
+| `mcp-re-proxy/src/replay_plane.rs` | 202 | **130** — entry removed |
+| `mcp_transport.rs` | 250 | **147** — entry removed |
+| `mcp-re-http-profile/src/body.rs` | 247 | **83** — entry removed |
+
+Four registry entries were REMOVED because their files fell to the threshold, and the
+registry now holds 93 files rather than 97.
+
+### What a registered file may not do, and what that forced
+
+**A registered file may not grow, reviewed exception included.** That is not a nuisance
+here — it chose the mechanism twice. Where an extraction would have added net lines to a
+file at its baseline, the answer was an owner SUBTREE rather than a shorter comment: the
+declaration line is absorbed by the file that is shrinking, and the debt entry moves with
+the file. Where the extracted half held the bulk, the entry followed the BULK rather than
+the path — `transparency/mod.rs` is 143 lines, so the registered unit is the durability
+runtime.
+
+One growth was caught and reverted rather than re-baselined: `mcp-re-client-proxy/src/proxy.rs`
+briefly rose 531 → 583, and the answer was to give `read_outcome` its own owner, not to
+raise the number.
+
+### The L1 replay disposition
+
+`L1FastRejectStore` is **DORMANT, not a wiring defect**, and it now has an owner whose
+module documentation opens with that fact. Asked mechanically: `app.rs` wires the L2 store
+directly on every backend, no configuration surface selects an L1, no theorem, specification
+or security-boundary document claims one is in force, and the only constructions in the tree
+are in `async_replay_test`.
+
+No live guarantee rests on it, and none could be lost: the L1 can only ever fast-REJECT, and
+its lookup returns a type that cannot express `Fresh`. An SLO claim resting on per-core
+fast-reject would be unbacked, and none is made. It is NOT wired: that needs per-core state,
+and one `HttpProfileProxy` is shared by every core. `lib.rs`'s module comment, which read as
+though the L1 were on the data plane, is corrected.
+
+### Guards repaired, and one real finding
+
+Three source-scanning guards had a scope that a decomposition invalidates. Widening one
+found a false positive that had been out of scope the whole time.
+
+| guard | was | is |
+|---|---|---|
+| `exchange_transition_ownership_test` | one file | the serving-path DIRECTORY, walked |
+| `plane_config_reachback_test` | each plane's `mod.rs` | each plane's DIRECTORY, walked |
+| `scripts/bazel_srcs_gate.py` | the word `glob` anywhere in a BUILD file | a `glob` that is the value of a `srcs` attribute |
+
+The third is the one that mattered: a `data = glob(["src/**/*.rs"])` on an unrelated test
+target exempted the WHOLE of `mcp-re-proxy` from the srcs gate — a clean pass over a
+hand-listed library nobody was checking. It is now read with a balanced-delimiter parse, with
+selftest controls in both directions.
+
+The finding: widening the plane guard surfaced `trust_plane/revocation_resolver.rs`, which
+names `crate::revocation_tier::RevocationTier`. That is NOT a reach-back — it shares a
+spelling with the `DeploymentRequest` field but is the classified state's own module, and
+consuming it is the point. The matcher now distinguishes an interior `::name::` from a field
+read, for the per-plane FIELD list only; the configuration-model list is the opposite kind of
+rule and still counts module paths.
+
+### Newly discovered live-but-unwired security control
+
+**None.** The L1 above is the only unwired mechanism the campaign reached, and it carries no
+guarantee. Nothing else in scope was found to be advertised and not in force.
+
+### Any function that could not be made small
+
+**None.** No unit in scope turned out to be a single total relation that could not be
+decomposed without duplicating it. `Recognised::classify` came closest — a total map from a
+request to every machine's verdict — and it split on a distinction the code already
+documented three times: a machine that CAN refuse and one that cannot are different kinds.
+
