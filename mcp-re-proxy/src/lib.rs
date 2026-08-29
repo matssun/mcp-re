@@ -46,6 +46,7 @@ pub mod aws_sigv4;
 // via STS), which is the AWS counterpart of the GKE workload-identity path.
 #[cfg(feature = "aws_kms_keysource")]
 pub mod aws_sts;
+pub mod capability_materialization;
 pub mod cli;
 /// Wall-clock acquisition — the one place the OS clock enters the proxy, and the module
 /// `boundary.clock` names.

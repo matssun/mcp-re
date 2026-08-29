@@ -30,22 +30,13 @@ mod storage_flags;
 
 use std::time::Duration;
 
-use mcp_re_core::VerificationKey;
-
-use crate::deployment_request::{DeploymentRequest, SecretString};
+use crate::deployment_request::DeploymentRequest;
 
 #[cfg(feature = "aws_kms_keysource")]
-use crate::config_state::AwsCredentialMode;
-use crate::config_state::ChannelCredentialCustodyState;
-use crate::config_state::{CustodyMaterial, CustodyState};
 // MCPS-076 (audit gap G-3): EnvKeySource is dev/CI-only — compiled only under the
 // non-default `dev_env_key_source` feature.
 #[cfg(feature = "dev_env_key_source")]
 use crate::key_source::EnvKeySource;
-use crate::key_source::FileKeySource;
-use crate::key_source::KeyError;
-use crate::key_source::KeySource;
-use crate::transport::IdentityPolicy;
 
 /// Every flag family this parser knows, accumulating across one argument list.
 ///
@@ -276,52 +267,6 @@ fn second_admission_limit(
     ))
 }
 
-/// Whether a Unix file mode is group- or world-accessible (MCPS-3842). Pure
-/// predicate factored out of `main.rs`'s key-file-permission check so the
-/// warn-vs-reject decision is black-box testable without touching the filesystem.
-/// A sensitive key file must be restricted to the owner (mode `0600`); any
-/// group/world permission bit set is an insecure posture.
-pub fn key_file_mode_is_insecure(mode: u32) -> bool {
-    mode & 0o077 != 0
-}
-
-/// Read the PKCS#11 User PIN from `path` into a short-lived [`SecretString`].
-///
-/// Enforces the key-file permission floor here as well as at startup: `run()` checks it
-/// via `key_files_read_from_disk`, but `build_key_source` is a public entry point a test
-/// or an embedding binary can reach directly, and a secret-reading function that trusts
-/// its caller to have checked is one refactor from not being checked at all.
-///
-/// Trailing whitespace is trimmed — a PIN file written with `echo` ends in a newline, and
-/// a token would reject the PIN with an opaque error that looks like a wrong PIN. Interior
-/// whitespace is preserved: it may be part of the PIN.
-pub fn read_pkcs11_pin(path: &str) -> Result<SecretString, KeyError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let meta = std::fs::metadata(path).map_err(|e| {
-            KeyError::NotFound(format!("--pkcs11-pin-file {path} cannot be read: {e}"))
-        })?;
-        let mode = meta.permissions().mode();
-        if key_file_mode_is_insecure(mode) {
-            return Err(KeyError::NotFound(format!(
-                "--pkcs11-pin-file {path} is group/world-accessible (mode {:o}); it unlocks \
-                 the token holding the signing keys, so restrict it to 0600",
-                mode & 0o777
-            )));
-        }
-    }
-    let raw = std::fs::read_to_string(path)
-        .map_err(|e| KeyError::NotFound(format!("--pkcs11-pin-file {path} cannot be read: {e}")))?;
-    let pin = SecretString::new(raw.trim_end());
-    if pin.expose().is_empty() {
-        return Err(KeyError::NotFound(format!(
-            "--pkcs11-pin-file {path} is empty; a blank PIN would be sent to the token"
-        )));
-    }
-    Ok(pin)
-}
-
 /// Parse a timeout in whole seconds; `0` disables the timeout (`None`). The
 /// value is CAPPED at [`MAX_INNER_READ_TIMEOUT_SECS`] (1 day) and an over-cap
 /// value is REJECTED loudly. This matters for `--request-deadline-secs`, whose
@@ -382,305 +327,10 @@ fn parse_cert_lifetime(value: &str) -> Result<Option<Duration>, String> {
     })
 }
 
-/// Build the ADR-MCPS-023 §C (Mode C) attested-ingress verifier from `config`, or
-/// `Ok(None)` when `binding != AttestedIngress`. The validation boundary has already
-/// refused a deployment missing the attestor keys, a trusted ingress identity, the
-/// audience or the pinned-mTLS acknowledgement (fail closed), and one whose attestor
-/// key is not a valid Ed25519 public key — this only reconstructs the verifier, failing
-/// closed with a precise error if any invariant were ever violated.
-///
-/// **Retained, not live.** No validated deployment reaches it:
-/// [`undeployable_transport_binding_refusal`] refuses Mode C in every build, because the
-/// rebinding of an attestation onto the RFC 9421 request evidence is not yet specified —
-/// a deferred capability rather than a rejected posture, on the same terms as
-/// [`build_ocsp_checker`]. Its test mints a real v2 assertion and verifies it through the
-/// built binding, so the capability stays correct rather than merely compiling. The
-/// lb-assertion builder had no such standing — that binding is refused because the LB
-/// belongs outside the trusted computing base, which is a ruling and not a gap — and it
-/// was deleted.
-pub fn build_attested_ingress_binding(
-    config: &DeploymentRequest,
-) -> Result<Option<crate::transport::ingress::LbAssertionV2Binding>, String> {
-    let crate::deployment_request::PeerIdentityEvidenceRequest::AttestedIngress(attested) =
-        &config.peer_identity
-    else {
-        return Ok(None);
-    };
-    let source = match attested.asserted_identity_kind {
-        IdentityPolicy::UriSan => crate::transport::IdentitySource::UriSan,
-        IdentityPolicy::DnsSan => crate::transport::IdentitySource::DnsSan,
-        IdentityPolicy::CnLegacy => crate::transport::IdentitySource::CommonName,
-    };
-    // The form always carries an audience — it is a member, not a sibling — but an EMPTY
-    // one is still representable, and a verifier built around it would admit assertions
-    // minted for any other node that also named none. The absent case is gone; this one is
-    // not, so it stays here as well as at the boundary.
-    if attested.audience.trim().is_empty() {
-        return Err(
-            "--ingress-audience names nothing: the audience scopes an assertion to THIS \
-             node's route, so an empty one admits assertions minted for another"
-                .to_string(),
-        );
-    }
-    let mut binding =
-        crate::transport::ingress::LbAssertionV2Binding::new(source, &attested.audience);
-    for (key_id, key_b64) in &attested.attestor_keys {
-        let key = VerificationKey::from_b64url(key_b64).map_err(|_| {
-            format!(
-                "invalid --ingress-attestor-key '{key_id}': the body must be a \
-                 base64url-no-pad 32-byte Ed25519 public key"
-            )
-        })?;
-        binding.add_key(key_id.clone(), key);
-    }
-    for ingress_identity in &attested.identities {
-        binding.permit_ingress_identity(ingress_identity.clone());
-    }
-    Ok(Some(binding))
-}
-
-/// Build the configured [`KeySource`] from the classified custody states.
-///
-/// MCPS-076 (audit gap G-3): [`CustodyMaterial::EnvSeed`] is honored ONLY in a build with
-/// the non-default `dev_env_key_source` feature. A default (production) build does
-/// not compile [`EnvKeySource`] at all and FAILS CLOSED here with a clear error —
-/// `--key-source env` still parses and still classifies (so the message is precise), but
-/// no env-backed key can be constructed. That refusal is layer B: a statement about this
-/// executable, not about the request.
-///
-/// # The two locators that are not owned by either state
-///
-/// `tls_cert` and `client_ca` belong to no custody machine — all five states consume them,
-/// and shared use is not semantic ownership. They are STRINGS WHOSE INTERPRETATION THE
-/// CUSTODY STATE DECIDES: filesystem paths under every state but [`CustodyMaterial::EnvSeed`],
-/// where they name environment variables. The same is true of the exported TLS key locator
-/// carried by the exported TLS-custody state.
-pub fn build_key_source(
-    custody: &CustodyState,
-    channel_credential_custody: &ChannelCredentialCustodyState,
-    tls_cert: &str,
-    client_ca: &str,
-) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
-    let channel_material = channel_credential_custody.material();
-    let tls_key = channel_material.exported_key_path().unwrap_or("");
-    match custody.material() {
-        CustodyMaterial::FileSeed { seed_path } => Ok(Box::new(FileKeySource {
-            signing_key_seed_path: seed_path.to_string(),
-            tls_cert_path: tls_cert.to_string(),
-            tls_key_path: tls_key.to_string(),
-            client_ca_path: client_ca.to_string(),
-        })),
-        #[cfg(feature = "dev_env_key_source")]
-        CustodyMaterial::EnvSeed { env_var } => Ok(Box::new(EnvKeySource {
-            signing_key_seed_var: env_var.to_string(),
-            tls_cert_var: tls_cert.to_string(),
-            tls_key_var: tls_key.to_string(),
-            client_ca_var: client_ca.to_string(),
-        })),
-        #[cfg(not(feature = "dev_env_key_source"))]
-        CustodyMaterial::EnvSeed { .. } => Err(KeyError::NotFound(
-            "env key source is development-only; rebuild with \
-             --features dev_env_key_source (production must use --key-source file)"
-                .to_string(),
-        )),
-        // #4034 PKCS#11 token-backed source. The state carries all four values, so there
-        // is nothing to unwrap and no arm for material that went missing.
-        #[cfg(feature = "pkcs11_keysource")]
-        CustodyMaterial::Pkcs11 {
-            module,
-            pin_file,
-            token_label,
-            key_label,
-        } => {
-            // Read the User PIN here, at the one point it is used, so it exists for as
-            // short a window as possible and never lands in `DeploymentRequest` (which is `Debug`
-            // and freely cloned). The file must be no more readable than a key file:
-            // it unlocks the token holding the signing keys.
-            let pin = read_pkcs11_pin(pin_file)?;
-            // #59: an optional SECOND token object holds the Ed25519 TLS key. When
-            // present, `open` builds the delegated TLS signer and the proxy never
-            // reads `--tls-key` from disk (the exclusivity guard already forbade it).
-            Ok(Box::new(crate::pkcs11_keysource::Pkcs11KeySource::open(
-                module,
-                pin.expose(),
-                token_label,
-                key_label,
-                tls_cert,
-                tls_key,
-                client_ca,
-                channel_material.pkcs11_key_label(),
-            )?))
-        }
-        // Default build: the PKCS#11 backend is not compiled, so `--key-source
-        // pkcs11` FAILS CLOSED here (mirrors the env-keysource gate). The flag
-        // still PARSES so the message is precise; no token-backed key is built.
-        #[cfg(not(feature = "pkcs11_keysource"))]
-        CustodyMaterial::Pkcs11 { .. } => Err(KeyError::NotFound(
-            "pkcs11 key source requires the pkcs11_keysource feature (build with \
-             --features pkcs11_keysource); not available in this build"
-                .to_string(),
-        )),
-        // ADR-MCPS-028 §B: AWS KMS object-signing key, TLS material from files. The
-        // response-signing key never leaves KMS.
-        #[cfg(feature = "aws_kms_keysource")]
-        CustodyMaterial::AwsKms {
-            region,
-            key_id,
-            endpoint,
-            credentials,
-        } => {
-            let kms_config = crate::aws_kms_keysource::AwsKmsConfig {
-                region: region.to_string(),
-                key_id: key_id.to_string(),
-                endpoint: endpoint.map(str::to_string),
-            };
-            // IRSA or the static env pair — never both, never a fallback between
-            // them. A deployment that asked for web identity and cannot mint through
-            // it must fail, not quietly sign with whatever keys are in the process
-            // environment. One posture, so there is no pair of flags to combine wrongly.
-            let backend = match credentials {
-                AwsCredentialMode::WebIdentity { sts_endpoint } => {
-                    crate::aws_kms_keysource::AwsKmsEd25519Backend::from_web_identity(
-                        &kms_config,
-                        sts_endpoint.clone(),
-                    )?
-                }
-                AwsCredentialMode::StaticEnv => {
-                    crate::aws_kms_keysource::AwsKmsEd25519Backend::from_env(&kms_config)?
-                }
-            };
-            let tls = FileKeySource::tls_only(tls_cert, tls_key, client_ca);
-            // #60: a configured TLS-key id custodies the TLS server key in a SECOND,
-            // DISTINCT KMS key (independent of the object-signing key). Its own
-            // `AwsKmsEd25519Backend` (same region/endpoint, the TLS key id) drives the
-            // delegated TLS handshake signature; the proxy then never reads `--tls-key`
-            // from disk (the exclusivity guard already forbade it). `None` keeps the
-            // file-backed TLS path.
-            match channel_material.aws_key_id() {
-                Some(tls_key_id) => {
-                    let tls_kms_config = crate::aws_kms_keysource::AwsKmsConfig {
-                        region: region.to_string(),
-                        key_id: tls_key_id.to_string(),
-                        endpoint: endpoint.map(str::to_string),
-                    };
-                    // The TLS key takes the SAME custody path as the object-signing
-                    // key: a deployment cannot end up with one KMS principal reached
-                    // through IRSA and the other through static keys.
-                    let tls_backend = match credentials {
-                        AwsCredentialMode::WebIdentity { sts_endpoint } => {
-                            crate::aws_kms_keysource::AwsKmsEd25519Backend::from_web_identity(
-                                &tls_kms_config,
-                                sts_endpoint.clone(),
-                            )?
-                        }
-                        AwsCredentialMode::StaticEnv => {
-                            crate::aws_kms_keysource::AwsKmsEd25519Backend::from_env(
-                                &tls_kms_config,
-                            )?
-                        }
-                    };
-                    Ok(Box::new(
-                        crate::kms_keysource::KmsKeySource::new_with_delegated_tls(
-                            Box::new(backend),
-                            tls,
-                            std::sync::Arc::new(tls_backend),
-                        ),
-                    ))
-                }
-                None => Ok(Box::new(crate::kms_keysource::KmsKeySource::new(
-                    Box::new(backend),
-                    tls,
-                ))),
-            }
-        }
-        // Default build: the AWS KMS backend is not compiled, so `--key-source
-        // aws-kms` FAILS CLOSED here (mirrors the pkcs11 gate). The flag still PARSES.
-        #[cfg(not(feature = "aws_kms_keysource"))]
-        CustodyMaterial::AwsKms { .. } => Err(KeyError::NotFound(
-            "aws-kms key source requires the aws_kms_keysource feature (build with \
-             --features aws_kms_keysource); not available in this build"
-                .to_string(),
-        )),
-        // ADR-MCPS-028 §C: GCP Cloud KMS object-signing key, TLS material from files.
-        #[cfg(feature = "gcp_kms_keysource")]
-        CustodyMaterial::GcpKms {
-            key_version,
-            endpoint,
-            use_metadata,
-        } => {
-            let kms_config = crate::gcp_kms_keysource::GcpKmsConfig {
-                key_version_name: key_version.to_string(),
-                endpoint: endpoint.map(str::to_string),
-            };
-            let backend =
-                crate::gcp_kms_keysource::GcpKmsEd25519Backend::new(&kms_config, use_metadata)?;
-            let tls = FileKeySource::tls_only(tls_cert, tls_key, client_ca);
-            // #61: the GCP counterpart of #60 — a SECOND, DISTINCT key version custodies
-            // the TLS server key, and the proxy never reads `--tls-key` from disk.
-            match channel_material.gcp_key_version() {
-                Some(tls_key_version) => {
-                    let tls_kms_config = crate::gcp_kms_keysource::GcpKmsConfig {
-                        key_version_name: tls_key_version.to_string(),
-                        endpoint: endpoint.map(str::to_string),
-                    };
-                    let tls_backend = crate::gcp_kms_keysource::GcpKmsEd25519Backend::new(
-                        &tls_kms_config,
-                        use_metadata,
-                    )?;
-                    Ok(Box::new(
-                        crate::kms_keysource::KmsKeySource::new_with_delegated_tls(
-                            Box::new(backend),
-                            tls,
-                            std::sync::Arc::new(tls_backend),
-                        ),
-                    ))
-                }
-                None => Ok(Box::new(crate::kms_keysource::KmsKeySource::new(
-                    Box::new(backend),
-                    tls,
-                ))),
-            }
-        }
-        #[cfg(not(feature = "gcp_kms_keysource"))]
-        CustodyMaterial::GcpKms { .. } => Err(KeyError::NotFound(
-            "gcp-kms key source requires the gcp_kms_keysource feature (build with \
-             --features gcp_kms_keysource); not available in this build"
-                .to_string(),
-        )),
-    }
-}
-
-/// Build the ONLINE OCSP checker selected by `--client-ocsp require` (#4030),
-/// or `None` when `--client-ocsp off` (the default). Compiled ONLY under the
-/// `online_ocsp` feature; the validation boundary already fails closed for `require` in
-/// every build, so this is only reached with the backend present.
-///
-/// The checker uses `ocsp_responder_url` as the AIA override (else the leaf's
-/// AIA OCSP URL) and ALWAYS fails closed on an indeterminate result (the
-/// `--ocsp-soft-fail` fail-open relaxation was removed). Its HTTP fetch carries a
-/// mandatory timeout (fail closed on timeout) so it can never wedge the blocking
-/// serve loop.
-#[cfg(feature = "online_ocsp")]
-pub fn build_ocsp_checker(config: &DeploymentRequest) -> Option<crate::ocsp::OcspChecker> {
-    // Hard-fail (fail closed) always: OCSP has no soft-fail knob any more.
-    config.peer_revocation.online.is_required().then(|| {
-        crate::ocsp::OcspChecker::new(
-            config
-                .peer_revocation
-                .online
-                .responder_override()
-                .map(str::to_string),
-            false,
-        )
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use super::build_attested_ingress_binding;
     use super::parse_args;
     use super::DeploymentRequest;
-    use super::IdentityPolicy;
     use crate::config_state::validation::unsafe_config_violations;
     use crate::deployment_request::AuditSinkKind;
     use crate::deployment_request::AuthzKind;
@@ -688,7 +338,47 @@ mod tests {
         AwsKmsSigningSourceRequest, GcpKmsSigningSourceRequest, Pkcs11SigningSourceRequest,
         SigningSourceRequest,
     };
-    use mcp_re_core::SigningKey;
+    use crate::transport::IdentityPolicy;
+
+    /// The full, valid set of Mode-C flags (attestor key + ingress identity +
+    /// audience + pinned-mTLS ack). Prepend `--strict`/etc. as needed.
+    fn attested_ingress_flags() -> Vec<String> {
+        args(&[
+            "--transport-binding",
+            "attested-ingress",
+            "--ingress-attestor-key",
+            &format!("attestor-1:{}", attestor_pub_b64()),
+            "--ingress-identity",
+            "spiffe://example.org/ingress-1",
+            "--ingress-audience",
+            "did:example:server-1",
+            "--ingress-pinned-mtls",
+        ])
+    }
+    /// A distinct valid Ed25519 public key for `--ingress-attestor-key`.
+    fn attestor_pub_b64() -> String {
+        mcp_re_core::SigningKey::from_seed_bytes(&[9u8; 32])
+            .public_key()
+            .to_b64url()
+    }
+    /// A Mode-C form over the standard fixture attestor. A literal rather than a helper on
+    /// the request type: the pinned-channel acknowledgement is the point, and a constructor
+    /// that supplied it silently would hide what the form rests on.
+    fn mode_c_form(
+        identities: Vec<String>,
+        audience: String,
+    ) -> crate::deployment_request::PeerIdentityEvidenceRequest {
+        crate::deployment_request::PeerIdentityEvidenceRequest::AttestedIngress(
+            crate::deployment_request::AttestedIngressRequest {
+                asserted_identity_kind: IdentityPolicy::UriSan,
+                attestor_keys: vec![("attestor-1".to_string(), attestor_pub_b64())],
+                identities,
+                audience,
+                pinned_channel:
+                    crate::deployment_request::PinnedChannelAcknowledgement::acknowledged(),
+            },
+        )
+    }
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
@@ -1753,29 +1443,6 @@ mod tests {
     // ADR-MCPS-023 §C (v0.10) Mode C attested ingress (MCPS-61).
     // ---------------------------------------------------------------------
 
-    /// A distinct valid Ed25519 public key for `--ingress-attestor-key`.
-    fn attestor_pub_b64() -> String {
-        mcp_re_core::SigningKey::from_seed_bytes(&[9u8; 32])
-            .public_key()
-            .to_b64url()
-    }
-
-    /// The full, valid set of Mode-C flags (attestor key + ingress identity +
-    /// audience + pinned-mTLS ack). Prepend `--strict`/etc. as needed.
-    fn attested_ingress_flags() -> Vec<String> {
-        args(&[
-            "--transport-binding",
-            "attested-ingress",
-            "--ingress-attestor-key",
-            &format!("attestor-1:{}", attestor_pub_b64()),
-            "--ingress-identity",
-            "spiffe://example.org/ingress-1",
-            "--ingress-audience",
-            "did:example:server-1",
-            "--ingress-pinned-mtls",
-        ])
-    }
-
     #[test]
     fn a_fully_configured_mode_c_clears_every_completeness_check_and_is_still_refused() {
         // Mode-C is deliberately non-deployable in v0.16 (ADR-MCPRE-056 §Y6): refused, not
@@ -1813,131 +1480,6 @@ mod tests {
                 .iter()
                 .any(|v| v.contains("attested-ingress is not a supported deployment mode")),
             "the unsafe-configuration guard must be what refuses Mode C, got {violations:?}"
-        );
-    }
-
-    /// A complete Mode-C [`DeploymentRequest`], assembled by mutating a parsed base rather than
-    /// through `parse_args` — the boundary refuses the mode, so no parsed path can
-    /// produce one. The `did:` audience and ingress identity match
-    /// [`attested_ingress_flags`].
-    fn mode_c_config() -> super::DeploymentRequest {
-        let mut config = parse_args(&minimal_durable()).expect("the base config parses");
-        config.peer_identity = mode_c_form(
-            vec!["spiffe://example.org/ingress-1".to_string()],
-            "did:example:server-1".to_string(),
-        );
-        config
-    }
-
-    /// A Mode-C form over the standard fixture attestor. A literal rather than a helper on
-    /// the request type: the pinned-channel acknowledgement is the point, and a constructor
-    /// that supplied it silently would hide what the form rests on.
-    fn mode_c_form(
-        identities: Vec<String>,
-        audience: String,
-    ) -> crate::deployment_request::PeerIdentityEvidenceRequest {
-        crate::deployment_request::PeerIdentityEvidenceRequest::AttestedIngress(
-            crate::deployment_request::AttestedIngressRequest {
-                asserted_identity_kind: IdentityPolicy::UriSan,
-                attestor_keys: vec![("attestor-1".to_string(), attestor_pub_b64())],
-                identities,
-                audience,
-                pinned_channel:
-                    crate::deployment_request::PinnedChannelAcknowledgement::acknowledged(),
-            },
-        )
-    }
-
-    #[test]
-    fn the_retained_mode_c_verifier_still_admits_an_assertion_from_its_configured_attestor() {
-        // Mode C is refused for deployment but RETAINED as a capability, so its verifier
-        // has to stay correct rather than merely compile. Minting a real assertion and
-        // verifying it through the built binding is what proves the builder actually
-        // transferred all three configured facts: an implementation that skipped
-        // `add_key`, skipped `permit_ingress_identity`, or passed the wrong audience
-        // would fail this with `UnknownKeyId`, `UntrustedIngressIdentity`, or
-        // `AudienceMismatch` respectively.
-        let binding = build_attested_ingress_binding(&mode_c_config())
-            .expect("a complete Mode-C config builds its verifier")
-            .expect("the verifier is present for the attested-ingress binding");
-
-        let request_hash = mcp_re_core::sha256_hash_id(b"an in-hand request body");
-        let now = 1_800_000_000_i64;
-        let assertion = crate::transport::ingress::LbAssertionV2 {
-            key_id: "attestor-1".to_string(),
-            ingress_identity: "spiffe://example.org/ingress-1".to_string(),
-            asserted_client_identity: "spiffe://example.org/agent-1".to_string(),
-            request_hash: request_hash.clone(),
-            audience: "did:example:server-1".to_string(),
-            cert_verification_result: crate::transport::ingress::AttestedCertVerification::Verified,
-            revocation_result: crate::transport::ingress::AttestedRevocation::Good,
-            validation_time: now,
-            crl_next_update: now + 86_400,
-            expires_at: None,
-        };
-        let attestor = SigningKey::from_seed_bytes(&[9u8; 32]);
-        let wire = assertion.to_wire(&attestor.sign(&assertion.signing_preimage()));
-
-        let verified = binding
-            .verify(&wire, &request_hash, now)
-            .expect("the configured attestor's assertion must verify");
-        assert_eq!(
-            verified.client_identity().value(),
-            "spiffe://example.org/agent-1"
-        );
-        assert_eq!(
-            verified.client_identity().source(),
-            crate::transport::IdentitySource::UriSan,
-            "the configured identity source must be the one stamped on the yielded identity"
-        );
-    }
-
-    #[test]
-    fn the_mode_c_verifier_is_built_only_for_the_attested_ingress_binding() {
-        let config = parse_args(&minimal_durable()).expect("the base config parses");
-        assert!(
-            build_attested_ingress_binding(&config)
-                .expect("a non-Mode-C config is not an error")
-                .is_none(),
-            "no verifier may be built for a binding other than attested-ingress"
-        );
-    }
-
-    #[test]
-    fn a_mode_c_verifier_missing_its_audience_fails_closed_rather_than_defaulting() {
-        // The audience is what scopes an assertion to THIS node. Building a verifier
-        // with an empty or defaulted audience would admit assertions minted for another
-        // route, so the absent case must be an error and not a fallback.
-        let mut config = mode_c_config();
-        config.peer_identity = mode_c_form(
-            vec!["spiffe://example.org/ingress-1".to_string()],
-            String::new(),
-        );
-        let err = build_attested_ingress_binding(&config)
-            .expect_err("a Mode-C verifier without an audience must not be built");
-        assert!(
-            err.contains("--ingress-audience"),
-            "the failure must name the missing audience, got: {err}"
-        );
-    }
-
-    #[test]
-    fn a_mode_c_verifier_rejects_an_unusable_attestor_key_rather_than_dropping_it() {
-        // Silently skipping a key that will not decode would build a verifier that
-        // trusts fewer attestors than configured and fails closed later at request
-        // time, where the cause is far from the configuration that caused it.
-        let mut config = mode_c_config();
-        let crate::deployment_request::PeerIdentityEvidenceRequest::AttestedIngress(attested) =
-            &mut config.peer_identity
-        else {
-            panic!("the fixture names the attested form");
-        };
-        attested.attestor_keys = vec![("attestor-1".to_string(), "not-a-key".to_string())];
-        let err = build_attested_ingress_binding(&config)
-            .expect_err("an undecodable attestor key must not be silently dropped");
-        assert!(
-            err.contains("attestor-1"),
-            "the failure must name the offending key id, got: {err}"
         );
     }
 
@@ -2153,89 +1695,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_secret_string_does_not_print_its_value_or_length() {
-        // C049: DeploymentRequest derives Debug and is cloned freely. The PIN is no longer a DeploymentRequest
-        // field at all, but the type that carries it in transit must not leak either.
-        let secret = super::SecretString::new("hunter2");
-        let rendered = format!("{secret:?}");
-        assert!(
-            !rendered.contains("hunter2"),
-            "Debug leaked the value: {rendered}"
-        );
-        assert!(
-            !rendered.contains('7'),
-            "Debug leaked the length: {rendered}"
-        );
-        assert_eq!(
-            secret.expose(),
-            "hunter2",
-            "the value is still retrievable on purpose"
-        );
-    }
-
-    #[test]
-    fn the_pin_file_reader_trims_a_trailing_newline_and_refuses_an_empty_file() {
-        // A PIN file written with `echo` ends in a newline; sending that to a token gets
-        // an opaque failure that looks like a wrong PIN. An EMPTY file is refused rather
-        // than sending a blank PIN.
-        let dir = std::env::temp_dir();
-        let pid = std::process::id();
-        let ok_path = dir.join(format!("mcp-re-pin-ok-{pid}"));
-        let empty_path = dir.join(format!("mcp-re-pin-empty-{pid}"));
-        std::fs::write(&ok_path, b"1234\n").expect("write pin");
-        std::fs::write(&empty_path, b"  \n").expect("write empty pin");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            for p in [&ok_path, &empty_path] {
-                std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600))
-                    .expect("chmod 0600");
-            }
-        }
-
-        let pin = super::read_pkcs11_pin(ok_path.to_str().unwrap()).expect("reads");
-        assert_eq!(
-            pin.expose(),
-            "1234",
-            "the trailing newline is not part of the PIN"
-        );
-        assert!(
-            super::read_pkcs11_pin(empty_path.to_str().unwrap()).is_err(),
-            "an empty PIN file must not yield a blank PIN"
-        );
-        let _ = std::fs::remove_file(&ok_path);
-        let _ = std::fs::remove_file(&empty_path);
-    }
-
     #[cfg(unix)]
-    #[test]
-    fn a_group_readable_pin_file_is_refused() {
-        // The PIN unlocks the token holding the signing keys, so it sits behind the same
-        // permission floor as a key file. Checked in the reader itself, not only at
-        // startup: build_key_source is a public entry point.
-        use std::os::unix::fs::PermissionsExt;
-        let path = std::env::temp_dir().join(format!("mcp-re-pin-lax-{}", std::process::id()));
-        // A PIN that cannot occur in the path itself. `b"1234"` could: the file is named
-        // after the process id, and a pid of 12341 made the assertion below fire on the
-        // path in the message rather than on an echoed secret.
-        const PIN: &[u8] = b"pin-nowhere-in-any-path";
-        std::fs::write(&path, PIN).expect("write pin");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640))
-            .expect("chmod 0640");
-        let err = super::read_pkcs11_pin(path.to_str().unwrap()).unwrap_err();
-        let message = format!("{err:?}");
-        assert!(
-            message.contains("group/world-accessible"),
-            "expected a permission refusal, got: {message}"
-        );
-        assert!(
-            !message.contains(std::str::from_utf8(PIN).expect("utf-8")),
-            "the refusal must not echo the PIN: {message}"
-        );
-        let _ = std::fs::remove_file(&path);
-    }
-
     #[test]
     fn unknown_key_source_lists_pkcs11() {
         let mut a = minimal();
@@ -2273,15 +1733,20 @@ mod tests {
     /// Build the key source the way `run()` does — from the classified custody states
     /// rather than from the request, so a layer-B refusal is measured through the same
     /// path production takes.
+    ///
+    /// The materializer moved to `capability_materialization` in ADR-MCPRE-067 Phase 8;
+    /// these cases stay here because what they measure is what a COMMAND LINE reaches, end
+    /// to end. Its own properties are tested with it.
     fn key_source_from(
-        config: &super::DeploymentRequest,
-    ) -> Result<Box<dyn super::KeySource + Send + Sync>, super::KeyError> {
+        config: &DeploymentRequest,
+    ) -> Result<Box<dyn crate::key_source::KeySource + Send + Sync>, crate::key_source::KeyError>
+    {
         let (custody, violations) = crate::config_state::custody::classify_and_validate(config);
         assert!(violations.is_empty(), "fixture refused: {violations:?}");
         let (channel_credential_custody, violations) =
             crate::config_state::channel_credential_custody::classify_and_validate(config);
         assert!(violations.is_empty(), "fixture refused: {violations:?}");
-        super::build_key_source(
+        crate::capability_materialization::build_key_source(
             &custody.expect("the fixture names a custody state"),
             &channel_credential_custody.expect("the fixture names a TLS custody state"),
             &config.channel_credential.credential_chain,
@@ -3820,36 +3285,6 @@ mod tests {
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("unknown --transport-binding"), "got: {err}");
         assert!(err.contains("none"), "got: {err}");
-    }
-
-    #[test]
-    fn key_file_mode_predicate_flags_group_and_world_bits() {
-        // The pure file-perm predicate used by main.rs's strict key-file check:
-        // owner-only (0600) is safe; any group/world bit is insecure.
-        assert!(
-            !super::key_file_mode_is_insecure(0o600),
-            "0600 owner-only is safe"
-        );
-        assert!(
-            !super::key_file_mode_is_insecure(0o400),
-            "0400 owner-read is safe"
-        );
-        assert!(
-            super::key_file_mode_is_insecure(0o640),
-            "group-readable is insecure"
-        );
-        assert!(
-            super::key_file_mode_is_insecure(0o604),
-            "world-readable is insecure"
-        );
-        assert!(
-            super::key_file_mode_is_insecure(0o660),
-            "group-writable is insecure"
-        );
-        assert!(
-            super::key_file_mode_is_insecure(0o777),
-            "world-everything is insecure"
-        );
     }
 
     /// The leading PKCS#11-source flags (no `--tls-key`, no TLS label, no inner

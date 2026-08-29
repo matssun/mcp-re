@@ -185,6 +185,16 @@ _PROXY_LIB_SRCS = [
     "src/deployment_request/delegated_signing/mod.rs",
     "src/cli/currency_flags.rs",
     "src/deployment_request/request_signer_currency/mod.rs",
+    "src/capability_materialization/ingress.rs",
+    "src/capability_materialization/key_source/aws.rs",
+    "src/capability_materialization/key_source/env.rs",
+    "src/capability_materialization/key_source/file.rs",
+    "src/capability_materialization/key_source/gcp.rs",
+    "src/capability_materialization/key_source/mod.rs",
+    "src/capability_materialization/key_source/pin.rs",
+    "src/capability_materialization/key_source/pkcs11.rs",
+    "src/capability_materialization/mod.rs",
+    "src/capability_materialization/revocation.rs",
     "src/cli/admission_flags/availability.rs",
     "src/cli/admission_flags/mod.rs",
     "src/cli/audit_flags.rs",
@@ -226,7 +236,8 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPS-028 §B/§C: one remote-signer call as it failed, with the HTTP status kept
     # separable from the body so the quota question is answered from the wire fact. Same
     # cfg gate as `handshake_quota`, and compiled by `mcp_re_proxy_ext`.
-    "src/remote_signer_call.rs",
+    "src/remote_signer_call/mod.rs",
+    "src/remote_signer_call/quota_signals.rs",
     # Issue #3838 (ADR-MCPS-014): non-exporting reference ResponseSigner proving the
     # response-signing delegation seam. Always compiled; default-build, Bazel-tested.
     "src/delegated_response_signer.rs",

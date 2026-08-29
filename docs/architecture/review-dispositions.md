@@ -1471,7 +1471,17 @@ moves land and this census is re-run.
 
 ## EX-008 — the KMS key-custody axis — **census complete, disposition: one common owner, no per-provider split**
 
-**Status:** `reviewed-action-required` on all four units. **Measured** on `main` @ `7ec8f92`:
+**Status:** `reviewed-action-required` on all four units. **ADR-MCPRE-067 Phase 8 closed the
+remaining duplication.** `is_load_shedding_status`, `json_string_field` and
+`ED25519_SIGNATURE_LEN` already had common owners; what was still written twice was
+`quota_verdict` itself, and the two copies had drifted in shape while stating the same
+proposition — one folded the namespace-suffix rule into a closure and the other did not.
+There is now one rule in `remote_signer_call::quota_signals`, and each provider supplies
+DATA: the JSON path its error name is stated at, the names that mean the quota is gone, and
+whether that name is namespaced. No generic provider abstraction was created to reduce
+filenames, the provider-agnostic Ed25519 protocol mapping is untouched, and the
+root-signing versus channel-key roles stay separate — the AWS and GCP materializers each
+build a SECOND backend for the channel key rather than reusing the signing one. **Measured** on `main` @ `7ec8f92`:
 `gcp_kms_keysource.rs` 1149, `aws_kms_keysource.rs` 694, `key_source.rs` 362,
 `kms_keysource.rs` 230 — **2435 production lines**. **Component blueprint:**
 [`components/kms-key-custody.md`](components/kms-key-custody.md). **Census issue:**

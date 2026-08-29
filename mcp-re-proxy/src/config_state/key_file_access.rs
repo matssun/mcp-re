@@ -26,7 +26,7 @@
 //! # A known asymmetry, deliberately left alone
 //!
 //! The PKCS#11 PIN file is held to the STRICT rule
-//! ([`crate::cli::key_file_mode_is_insecure`]) whichever policy this resolves, so an
+//! ([`mode_is_insecure`]) whichever policy this resolves, so an
 //! fsGroup-mounted PIN at `0440` is refused while an fsGroup-mounted signing key at `0440`
 //! is accepted. Refusing more is not a fail-open, so it is recorded here rather than
 //! quietly relaxed: loosening a secret-file check is an owner decision, not a consistency
@@ -100,6 +100,19 @@ pub fn classify(config: &DeploymentRequest) -> KeyFileAccessPolicy {
     }
 }
 
+/// Whether a Unix file mode is group- or world-accessible (MCPS-3842).
+///
+/// A sensitive key file must be restricted to the owner (mode `0600`); any group or world
+/// permission bit set is an insecure posture. A pure predicate, so the warn-vs-reject
+/// decision is black-box testable without touching the filesystem.
+///
+/// It lives with the POLICY rather than with either caller. ADR-MCPRE-067 Phase 8 moved it
+/// out of `cli.rs`, where it sat beside argument parsing while both of its readers — the
+/// startup permission check and the PKCS#11 PIN reader — are elsewhere.
+pub fn mode_is_insecure(mode: u32) -> bool {
+    mode & 0o077 != 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,5 +178,17 @@ mod tests {
             classify(&relaxed),
             KeyFileAccessPolicy::GroupReadableUnderProcessGroup
         );
+    }
+
+    #[test]
+    fn key_file_mode_predicate_flags_group_and_world_bits() {
+        // The pure file-perm predicate used by main.rs's strict key-file check:
+        // owner-only (0600) is safe; any group/world bit is insecure.
+        assert!(!mode_is_insecure(0o600), "0600 owner-only is safe");
+        assert!(!mode_is_insecure(0o400), "0400 owner-read is safe");
+        assert!(mode_is_insecure(0o640), "group-readable is insecure");
+        assert!(mode_is_insecure(0o604), "world-readable is insecure");
+        assert!(mode_is_insecure(0o660), "group-writable is insecure");
+        assert!(mode_is_insecure(0o777), "world-everything is insecure");
     }
 }
