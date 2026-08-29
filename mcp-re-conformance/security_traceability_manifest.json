@@ -75,35 +75,35 @@
     {
       "property": "cloud-KMS seam: a KMS-produced Ed25519 response signature verifies under the mcp-re-core verifier (provider-agnostic delegation)",
       "bazel_target": "//mcp-re-proxy:proxy_unit_test",
-      "source": "mcp-re-proxy/src/kms_keysource.rs",
+      "source": "mcp-re-proxy/src/kms_keysource/mod.rs",
       "test_fn": "kms_signature_verifies_under_mcp_re_core_verifier",
       "notes": "MCPS-72 (#252) / MCPS-56. ADR-MCPS-028 provider-agnostic KMS response-signer core (the shared seam behind the #3838 delegation). Positive control: a signature from the generic KMS wrapper (mock backend) verifies under the same mcp-re-core VerificationKey path production uses. Runs under the default-feature proxy_unit_test (the seam is always compiled, not feature-gated)."
     },
     {
       "property": "cloud-KMS seam fails closed: a backend returning a non-64-byte signature is rejected",
       "bazel_target": "//mcp-re-proxy:proxy_unit_test",
-      "source": "mcp-re-proxy/src/kms_keysource.rs",
+      "source": "mcp-re-proxy/src/kms_keysource/mod.rs",
       "test_fn": "wrong_length_signature_fails_closed",
       "notes": "MCPS-72 (#252) / MCPS-56. A KMS backend that returns a wrong-length (non-Ed25519) signature is rejected at the seam before it can be emitted \u2014 malformed KMS output never reaches the wire."
     },
     {
       "property": "cloud-KMS seam fails closed: a backend reporting a non-Ed25519 public key is rejected",
       "bazel_target": "//mcp-re-proxy:proxy_unit_test",
-      "source": "mcp-re-proxy/src/kms_keysource.rs",
+      "source": "mcp-re-proxy/src/kms_keysource/mod.rs",
       "test_fn": "non_ed25519_public_key_fails_closed",
       "notes": "MCPS-72 (#252) / MCPS-56. The seam refuses a backend whose reported SPKI public key is not Ed25519 \u2014 the response-signing identity is pinned to Ed25519 (no algorithm substitution)."
     },
     {
       "property": "cloud-KMS seam fails closed: prehash-mode signing (KMS signs a digest, not the raw preimage) is caught",
       "bazel_target": "//mcp-re-proxy:proxy_unit_test",
-      "source": "mcp-re-proxy/src/kms_keysource.rs",
+      "source": "mcp-re-proxy/src/kms_keysource/mod.rs",
       "test_fn": "prehash_mode_is_caught_at_the_seam",
       "notes": "MCPS-72 (#252) / MCPS-56. Ed25519ph (prehashed) is a DIFFERENT primitive from pure Ed25519; a backend that prehashes would produce a signature the Core verifier rejects. The seam catches the prehash/pure mismatch so a misconfigured KMS key can never silently downgrade the signing primitive."
     },
     {
       "property": "cloud-KMS seam fails closed: a signature not matching the reported public key is rejected",
       "bazel_target": "//mcp-re-proxy:proxy_unit_test",
-      "source": "mcp-re-proxy/src/kms_keysource.rs",
+      "source": "mcp-re-proxy/src/kms_keysource/mod.rs",
       "test_fn": "mismatched_key_signature_fails_closed_at_the_seam",
       "notes": "MCPS-72 (#252) / MCPS-56. A signature produced by a key that does not correspond to the backend's reported public key fails closed at the seam \u2014 the emitted signature is always self-consistent with the advertised signer identity."
     },

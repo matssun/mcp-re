@@ -1626,7 +1626,7 @@ fn stale_crl_fails_client_handshake_closed() {
 // absolute date.
 #[test]
 fn crl_freshness_classifies_fresh_near_and_stale() {
-    use mcp_re_proxy::tls::{crl_freshness, CrlFreshness};
+    use mcp_re_proxy::client_crl_publication::{crl_freshness, CrlFreshness};
     let ca = make_ca();
     let crl = make_crl_full(&ca, &[0x01], (2020, 1, 1), (2020, 6, 1));
     let warn = 6 * 3600;
@@ -1662,7 +1662,7 @@ fn crl_freshness_classifies_fresh_near_and_stale() {
 // closed rather than silently skipping (the verifier build would reject it too).
 #[test]
 fn crl_freshness_rejects_malformed_der() {
-    use mcp_re_proxy::tls::crl_freshness;
+    use mcp_re_proxy::client_crl_publication::crl_freshness;
     assert!(
         crl_freshness(b"not a der crl", 0, 3600).is_err(),
         "a malformed CRL must be a hard error, not a silent pass"
@@ -1674,7 +1674,7 @@ fn crl_freshness_rejects_malformed_der() {
 // line — a canonical `sha256:` digest and the CRL's this/next update timestamps.
 #[test]
 fn crl_posture_reports_canonical_digest_and_dates() {
-    use mcp_re_proxy::tls::crl_posture;
+    use mcp_re_proxy::client_crl_publication::crl_posture;
     let ca = make_ca();
     let crl = make_crl_full(&ca, &[0x01], (2024, 1, 1), (2999, 1, 1));
     let p = crl_posture(crl.as_ref()).expect("parse");

@@ -169,7 +169,7 @@ nt_rust_test(
         "//mcp-re-proxy:src/cli.rs",
         # MCPS-72 (#252): KMS-lifecycle offline negatives are in-crate #[cfg(test)]
         # unit tests, so the guard reads their src/*.rs (not tests/*.rs) from disk.
-        "//mcp-re-proxy:src/kms_keysource.rs",
+        "//mcp-re-proxy:src/kms_keysource/mod.rs",
         "//mcp-re-proxy:src/gcp_kms_keysource.rs",
         "//mcp-re-proxy:src/aws_kms_keysource.rs",
         "//mcp-re-demo:BUILD.bazel",
@@ -193,7 +193,7 @@ nt_rust_test(
         "MCP_RE_SRC_AUDIT_VOCABULARY_GUARD": "$(rlocationpath tests/audit_vocabulary_guard_test.rs)",
         "MCP_RE_SRC_FORBIDDEN_CLAIM_GUARD": "$(rlocationpath tests/forbidden_claim_guard_test.rs)",
         "MCP_RE_SRC_CLI": "$(rlocationpath //mcp-re-proxy:src/cli.rs)",
-        "MCP_RE_SRC_KMS_KEYSOURCE": "$(rlocationpath //mcp-re-proxy:src/kms_keysource.rs)",
+        "MCP_RE_SRC_KMS_KEYSOURCE": "$(rlocationpath //mcp-re-proxy:src/kms_keysource/mod.rs)",
         "MCP_RE_SRC_GCP_KMS_KEYSOURCE": "$(rlocationpath //mcp-re-proxy:src/gcp_kms_keysource.rs)",
         "MCP_RE_SRC_AWS_KMS_KEYSOURCE": "$(rlocationpath //mcp-re-proxy:src/aws_kms_keysource.rs)",
         "MCP_RE_SRC_KEY_SOURCE": "$(rlocationpath //mcp-re-proxy:tests/key_source_test.rs)",

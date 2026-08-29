@@ -459,3 +459,94 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     violations.extend(decided.cross.x9_trust_epoch_posture);
     violations
 }
+
+#[cfg(test)]
+mod required_coordinate_tests {
+    use crate::config_state::test_support::legal_config;
+    use crate::config_state::validation::unsafe_config_violations;
+    use crate::deployment_request::DeploymentRequest;
+
+    /// Every required semantic coordinate, and how to empty it on a request built IN CODE.
+    ///
+    /// The list is the point. A coordinate added to `DeploymentRequest` that something
+    /// downstream cannot function without belongs here, and the test below is what says
+    /// whether the boundary refuses it — so the answer is measured rather than assumed.
+    /// A coordinate's name, and how to blank it on a request built in code.
+    type Coordinate = (&'static str, fn(&mut DeploymentRequest));
+
+    const REQUIRED: &[Coordinate] = &[
+        ("bind", |c| c.bind = String::new()),
+        ("audience", |c| c.audience = String::new()),
+        ("server_signer", |c| c.server_signer = String::new()),
+        ("server_key_id", |c| c.server_key_id = String::new()),
+        ("target_uri", |c| c.target_uri = String::new()),
+        ("trust_domain", |c| c.trust_domain = String::new()),
+        ("peer_trust_anchors", |c| {
+            c.peer_trust_anchors = String::new()
+        }),
+        ("trust_path", |c| c.trust_path = String::new()),
+        ("credential_chain", |c| {
+            c.channel_credential.credential_chain = String::new();
+        }),
+    ];
+
+    /// **Requiredness is the BOUNDARY's rule, not the parser's.**
+    ///
+    /// `DeploymentRequest` has public fields, so a request reaches the serving path from an
+    /// embedder, a test or a future adapter without a parser ever running. If the only thing
+    /// refusing an empty identity coordinate were `cli::require`, every one of those routes
+    /// would serve traffic with a coordinate that names nothing.
+    ///
+    /// This is the control for that, and it is deliberately written from the EMBEDDER's
+    /// position: it never constructs an argument list. Each coordinate is emptied on an
+    /// otherwise-legal request and the boundary must refuse it.
+    #[test]
+    fn every_required_coordinate_is_refused_when_empty_however_the_request_was_built() {
+        for (name, empty_it) in REQUIRED {
+            let mut config = legal_config();
+            empty_it(&mut config);
+            assert!(
+                !unsafe_config_violations(&config).is_empty(),
+                "{name} is empty and the boundary admitted the deployment — a coordinate \
+                 that names nothing must be refused however the request was built, not only \
+                 when a parser happened to construct it"
+            );
+        }
+    }
+
+    /// Whitespace is emptiness. A coordinate of spaces satisfies a presence check and names
+    /// nothing, which is precisely the gap between the parser's rule and this one.
+    #[test]
+    fn a_whitespace_coordinate_is_refused_like_an_empty_one() {
+        for (name, _) in REQUIRED {
+            let mut config = legal_config();
+            match *name {
+                "bind" => config.bind = "   ".to_string(),
+                "audience" => config.audience = "   ".to_string(),
+                "server_signer" => config.server_signer = "   ".to_string(),
+                "server_key_id" => config.server_key_id = "   ".to_string(),
+                "target_uri" => config.target_uri = "   ".to_string(),
+                "trust_domain" => config.trust_domain = "   ".to_string(),
+                "peer_trust_anchors" => config.peer_trust_anchors = "   ".to_string(),
+                "trust_path" => config.trust_path = "   ".to_string(),
+                _ => config.channel_credential.credential_chain = "   ".to_string(),
+            }
+            assert!(
+                !unsafe_config_violations(&config).is_empty(),
+                "{name} of whitespace must be refused: it passes a presence check and names \
+                 nothing"
+            );
+        }
+    }
+
+    /// The baseline the two tests above rest on: the fixture they mutate is itself legal.
+    /// Without this, a fixture that had drifted into being refused for some unrelated reason
+    /// would make both tests pass while proving nothing.
+    #[test]
+    fn the_fixture_these_controls_mutate_is_otherwise_legal() {
+        assert!(
+            unsafe_config_violations(&legal_config()).is_empty(),
+            "the controls above only mean something if the unmutated request is admitted"
+        );
+    }
+}

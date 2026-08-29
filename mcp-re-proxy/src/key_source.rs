@@ -58,15 +58,11 @@ pub enum KeyError {
 /// follow-up satisfies it by forwarding to the device. Either way the trait does
 /// NOT demand export.
 ///
-/// SCOPE / TRACKED FOLLOW-UP: this change lands ONLY the dependency-free delegation
-/// SEAM (this trait, the in-memory impls, and the proxy wiring through it). It does
-/// NOT deliver HSM-backed key custody. Still tracked as the follow-up (new crate +
-/// device + repin): the concrete PKCS#11 / cloud-KMS `ResponseSigner` adapter, the
-/// `--key-source hsm` CLI wiring that selects it, delegated TLS signing via a custom
-/// `rustls::sign::SigningKey` (so the TLS private key — still exported through
-/// [`KeySource::tls_server_key`] today — also never leaves the device), and a
-/// live-device black-box conformance test. Until those land, "the response-signing
-/// key never leaves the device" is ENABLED by this seam but only DELIVERED in-memory.
+/// The non-exporting implementations exist: `pkcs11_keysource`, `aws_kms_keysource` and
+/// `gcp_kms_keysource` are feature-gated adapters behind this trait, and each also supplies
+/// a [`KeySource::tls_delegated_signer`] so the TLS key stays inside the device too. What
+/// this trait guarantees is unchanged by that: it demands the signing OPERATION and never
+/// the key, so which custody a deployment runs is a selection below this seam.
 pub trait ResponseSigner {
     /// Sign the canonical response `preimage`, returning the Base64URL-no-pad
     /// Ed25519 signature. The private key never leaves the implementation.
@@ -358,5 +354,143 @@ impl KeySource for EnvKeySource {
     }
     fn client_ca_roots(&self) -> Result<Vec<CertificateDer<'static>>, KeyError> {
         certs_from_pem(self.read(&self.client_ca_var)?.as_bytes(), "client CA")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A non-exporting source: it signs, and every export accessor REFUSES.
+    ///
+    /// It is the shape the seam exists for — a device that can sign and cannot hand out a
+    /// key — so a test that drives the seam through it proves the seam never took the
+    /// export route, rather than proving it happened not to this time.
+    struct NonExportingSource {
+        key: SigningKey,
+        exports_attempted: std::cell::Cell<u32>,
+    }
+
+    impl NonExportingSource {
+        fn new() -> Self {
+            NonExportingSource {
+                key: SigningKey::from_seed_bytes(&[9u8; 32]),
+                exports_attempted: std::cell::Cell::new(0),
+            }
+        }
+
+        fn refuse_export<T>(&self) -> Result<T, KeyError> {
+            self.exports_attempted.set(self.exports_attempted.get() + 1);
+            Err(KeyError::NotFound(
+                "this device does not export key material".to_string(),
+            ))
+        }
+    }
+
+    impl ResponseSigner for NonExportingSource {
+        fn sign_response(&self, preimage: &[u8]) -> Result<String, KeyError> {
+            Ok(self.key.sign(preimage))
+        }
+
+        fn response_public_key(&self) -> Result<VerificationKey, KeyError> {
+            Ok(self.key.public_key())
+        }
+    }
+
+    impl KeySource for NonExportingSource {
+        fn tls_server_cert_chain(&self) -> Result<Vec<CertificateDer<'static>>, KeyError> {
+            self.refuse_export()
+        }
+
+        fn tls_server_key(&self) -> Result<PrivateKeyDer<'static>, KeyError> {
+            self.refuse_export()
+        }
+
+        fn client_ca_roots(&self) -> Result<Vec<CertificateDer<'static>>, KeyError> {
+            self.refuse_export()
+        }
+    }
+
+    // SAFETY-free: the cell is only touched behind `&self` in single-threaded tests, and
+    // the bound exists because `KeySource: Send + Sync`.
+    unsafe impl Sync for NonExportingSource {}
+
+    /// **The seam's own proposition.** Boxing a source and using it AS the response signer
+    /// signs through the source; it does not reach for an exported key.
+    ///
+    /// This is what lets the composition root hand the proxy a `Box<dyn KeySource>` as its
+    /// signer. The counter is the evidence: a forward that quietly went through
+    /// `tls_server_key` would show up here even though the signature would still verify.
+    #[test]
+    fn a_boxed_source_signs_by_delegation_and_never_by_export() {
+        let source = NonExportingSource::new();
+        let expected = source.key.public_key();
+        let boxed: Box<dyn KeySource + Send + Sync> = Box::new(source);
+
+        let preimage = b"the canonical response preimage";
+        let signature = boxed.sign_response(preimage).expect("the device signs");
+        let public = boxed
+            .response_public_key()
+            .expect("the public key is exportable");
+
+        // The signature verifies under the key the same seam advertises — the two
+        // accessors are paired, which is what a relying party depends on.
+        mcp_re_core::verify_ed25519(preimage, &signature, &public)
+            .expect("a delegated signature verifies under the advertised key");
+        assert_eq!(public.to_bytes(), expected.to_bytes());
+    }
+
+    /// A source that says nothing about delegation is on the EXPORTED-key TLS path.
+    ///
+    /// The default matters more than it looks: if it were `Some`, a source that had not
+    /// thought about delegated TLS would claim its key never leaves the device.
+    #[test]
+    fn the_default_is_no_delegated_tls_signer() {
+        assert!(NonExportingSource::new().tls_delegated_signer().is_none());
+        assert!(FileKeySource {
+            signing_key_seed_path: "/seed".to_string(),
+            tls_cert_path: "/cert".to_string(),
+            tls_key_path: "/key".to_string(),
+            client_ca_path: "/ca".to_string(),
+        }
+        .tls_delegated_signer()
+        .is_none());
+    }
+
+    /// The two refusal variants are the tree's intrinsic/transient distinction, and every
+    /// consumer branches on it: absent material may be a deployment mistake worth
+    /// reporting as missing, whereas malformed material is never retried into working.
+    #[test]
+    fn the_refusal_vocabulary_separates_absent_from_malformed() {
+        let absent = FileKeySource {
+            signing_key_seed_path: "/nonexistent/seed".to_string(),
+            tls_cert_path: "/nonexistent/cert".to_string(),
+            tls_key_path: "/nonexistent/key".to_string(),
+            client_ca_path: "/nonexistent/ca".to_string(),
+        };
+        assert!(
+            matches!(absent.tls_server_cert_chain(), Err(KeyError::NotFound(_))),
+            "an unreadable path is NotFound, not Malformed"
+        );
+        assert!(matches!(
+            absent.client_ca_roots(),
+            Err(KeyError::NotFound(_))
+        ));
+    }
+
+    /// `tls_only` builds a source whose SEED is outside the reachable surface.
+    ///
+    /// The doc claims the seed path is not merely unused but unconsumable. The empty path
+    /// is what makes that true by construction: there is no file it could name.
+    #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
+    #[test]
+    fn a_tls_only_source_names_no_signing_seed() {
+        let source = FileKeySource::tls_only("/cert", "/key", "/ca");
+        assert!(
+            source.signing_key_seed_path.is_empty(),
+            "a KMS-backed deployment must not carry a seed path something could read"
+        );
+        assert_eq!(source.tls_cert_path, "/cert");
+        assert_eq!(source.client_ca_path, "/ca");
     }
 }

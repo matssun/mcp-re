@@ -145,7 +145,7 @@ pub(super) const SOURCE_FALLBACKS: &[(&str, &str)] = &[
     // unit tests, so the traceability guard reads their src/*.rs (not tests/*.rs).
     (
         "MCP_RE_SRC_KMS_KEYSOURCE",
-        "mcp-re-proxy/src/kms_keysource.rs",
+        "mcp-re-proxy/src/kms_keysource/mod.rs",
     ),
     (
         "MCP_RE_SRC_GCP_KMS_KEYSOURCE",

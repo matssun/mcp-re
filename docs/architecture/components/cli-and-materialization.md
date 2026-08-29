@@ -244,9 +244,36 @@ Question 2 answered three, and the split is unusually clean: **A and C never cal
 | the module doc claims the Layer-A boundary lives here | **discharged** — the doc was corrected in Phase 9 |
 | `parse_args` at 722 lines | **spent** — it is 22 lines; the ADR-058 exception has no function left to cover, and EX-007 records it as spent rather than revoked |
 | the validation proof is created, discarded and recreated | **open**, recorded not ruled — unchanged |
-| requiredness is a parser-only rule over public `String` fields | **open** — `require` still enforces it at parse time over public fields; it belongs in a disposition record or at the boundary |
+| ~~requiredness is a parser-only rule over public `String` fields~~ | **CLOSED 2026-08-29** — see below |
 | 23 legality tests test a neighbour's owner from inside this file | **open** — test placement, not a production authority |
 | 6 materialization tests for 297 lines of key custody | **moved with C**; it is `capability_materialization`'s coverage question now |
+
+### Requiredness — the boundary owns it, and now says so executably
+
+**The census's finding was true when taken and had become false without being noticed.** Six
+of the nine required coordinates acquired boundary rules in `validation::residue`
+(`--bind`, `--audience`, `--target-uri`, `--tls-cert`, `--client-ca`), one through
+`TrustDocumentSource` (`--trust`), and two through ADR-MCPRE-063's identity owner
+(`--trust-domain`, `--server-signer`). The ninth, `--server-key-id`, is guarded through the
+RESOLVED delegated issuer kid.
+
+That was established by measuring rather than by reading: an embedder-position probe emptied
+each of the nine on a request built in code and asked the boundary. **All nine were refused
+— and one, `--server-key-id`, was refused only for the empty string.** Its owner's guard used
+`is_empty()` where every other required coordinate at this boundary uses `trim().is_empty()`,
+so `--server-key-id "   "` reached the serving path with a kid that names no root key. That
+is fixed in the owner, alongside the two other facts minted verbatim into every delegation
+credential.
+
+**The rule is now proved rather than believed.** `validation::required_coordinate_tests`
+lists all nine and asserts, from the embedder's position and without ever constructing an
+argument list, that emptying or blanking any one of them is refused. A coordinate added later
+without a boundary rule fails that control.
+
+**`cli::require` stays, and is not a second owner of this rule.** It states a different
+proposition — *this flag was supplied* — which is argv grammar and has no meaning off the
+command line. The semantic rule is *this coordinate names something*, and the boundary owns
+it alone. Nothing in `DeploymentRequest` records CLI presence.
 
 ## 10. Completion criteria
 

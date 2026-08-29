@@ -780,6 +780,53 @@ It is an exception for **this file at this size**, not for the subtree and not f
 `tls.rs` — EX-004 stays `reviewed-action-required` until #574 lands and its census is
 re-run. Review granularity equals exception granularity.
 
+### EX-004 re-census on the current tree, 2026-08-29
+
+**Measured: 679 production lines**, down from 1907 at the census and 867 at the registered
+baseline. The old census's implementation map is stale as a map — ADR-MCPRE-063 and
+ADR-MCPRE-067 moved several of its candidate authorities out — so this re-run measures what
+is actually there rather than re-deriving the old list.
+
+| candidate authority (original census) | where it is now |
+|---|---|
+| identity interpretation | **left** — `transport/identity.rs`, ADR-MCPRE-063 Slice 1 |
+| delegated resolver validation | **left** — `delegated_tls::DelegatedCertResolver::materialize`; what remains here is one refusal rendering |
+| CRL mechanism posture | **left in this pass** — `client_crl_publication` |
+| serving/options vocabulary | **stays** — `ServerLimits`, `ServerOptions`, `TlsError`, the ingress-assertion header name |
+| per-request peer admission | **stays** — `served_channel_peer`, `authenticated_peer`, `currency_policy` |
+| header hygiene | **stays** — the ingress-assertion header extraction, fail-closed on duplicates |
+| shared refusal vocabulary | **stays** — `transport_binding_failure`, four lines |
+
+**The extraction this pass made, and why its owner was obvious.** `CrlFreshness`,
+`CrlPosture`, `crl_posture`, `crl_freshness`, `crl_next_update_required` and
+`load_client_crls` read a PUBLISHED RFC 5280 document and classify what it says about its own
+currency. **The serving path never calls any of them** — the sole consumer is
+`tls_plane`, at startup and on reload. They sat in the listener module without the listener
+using them, which is what made the boundary obvious rather than a judgement call.
+
+They are a top-level owner rather than a child of `client_revocation` for a reason the
+ratchet surfaced: adding a child would have grown that registered facade, and the two are
+siblings rather than parent and child anyway — `client_revocation` matches a peer's serial
+against a loaded index per REQUEST, and this reads a document's own freshness at STARTUP.
+Different consumers, different instants, different questions.
+
+The names stay CRL-named. This is a mechanism leaf and ADR-MCPRE-067 §3 says so.
+
+### §8 question 2 on the remainder — **ONE**, and it is returned as a §14 candidate
+
+What is left is *what one TLS listener is configured with, and what it decides about the peer
+on one served request*. The options vocabulary is that listener's configuration; the peer
+admission is that listener's per-request question, and it is already a FACADE — it parses no
+certificate, compares no clock, consults no CRL and decides no identity, because
+ADR-MCPRE-064's authorities own all four. The header extraction and the refusal rendering are
+that same request's transport boundary.
+
+Question 1 needs no "and" that spans two subjects: *this listener, this request*. The
+original census's answer needed one, and the three authorities that made it need one have
+left.
+
+**Returned as a candidate §14 reviewed exception at 679 lines.** Not granted here.
+
 ## EX-004 — `mcp-re-http-profile/src/scitt.rs` — **census complete, disposition: decompose**
 
 **Status:** `reviewed-action-required`. **Measured:** 1629 production lines on `main` @
@@ -1076,10 +1123,54 @@ is one a verification produced. Removing them is a public-API narrowing outside 
 slice's remit ("do not expand this into general transport cleanup"), so it is recorded here
 rather than done.
 
-**Status stays `reviewed-action-required`** on both halves. `ingress.rs` at 1012 lines is
-one authority with two protocol versions inside it, and whether that is a §14 exception is
-a question for whoever decides the Mode-C capability's future — not one this slice should
-pre-empt.
+~~**Status stays `reviewed-action-required`** on both halves.~~ — **both resolved by owner
+ruling, 2026-08-29.** See the two subsections below.
+
+### `transport/mod.rs` — §14 REVIEWED EXCEPTION, granted
+
+**Status: `reviewed-exception`** at 338 production lines. The owner granted it on the
+re-census's own finding: the live half is **ONE authority — channel binding on the served
+path** — and this record had already said that a §14 exception "would have been arguable" on
+question 2 alone. What defeated it then was question 9, and question 9 no longer applies to
+this file: the unreachable 913 lines left for `ingress/`, so the reachability ambiguity the
+census refused to except is gone.
+
+Identity policy, header view, routing-header hygiene and the binding capability remain four
+aspects of one request's relation to its channel. The exception does **not** extend to
+`ingress/`, which is a different capability with the opposite change rule.
+
+### `ingress/` — split by FROZEN FORMAT, and the two halves returned for disposition
+
+The 1012-line file was **not** granted an exception. Its own source already drew the
+boundary, and the split follows it exactly:
+
+```text
+ingress capability            mod.rs (74) — what these mechanisms ARE, the attestor keys
+    |                         a node trusts for either, and the disjointness proof
+    +-- v1  Mode B / Tier 3   v1.rs (334)  mcp-re/lb-ingress-assertion/v1
+    +-- v2  Mode C / Tier 4   v2.rs (673)  mcp-re/lb-ingress-assertion/v2
+```
+
+**v2 is a genuinely new frozen format, not an extension of v1** — a distinct
+domain-separation tag, a distinct field layout and a distinct verifier order — so each
+version owns its own wire vocabulary, preimage, parser, verifier and rejection vocabulary,
+and its own tests. **Nothing abstracts over the two.** An abstraction that made the formats
+interchangeable would erase the property the separation exists to guarantee; the facade
+holds the one test neither version can state alone — that for identical shared field values
+the two preimages are disjoint, so a v1 signature can never be re-framed as a v2 assertion.
+
+What the facade owns is the fact that these ARE ingress-attestation mechanisms, plus
+`LbKeyEntry` — the trusted-attestor key both bindings look up, which is not either format's
+wire vocabulary.
+
+Neither mode was made selectable and Mode B/C deployment reachability is unchanged: the
+retention rule still sits at the top of the facade, where a reader meets it first.
+
+**Both remain `reviewed-action-required`, returned for disposition.** `v2.rs` at 673 lines
+is the strongest §14 candidate of the two: it is one frozen format's complete definition,
+and decomposing it further would fragment a wire format whose parts are meaningless apart.
+`v1.rs` at 334 is the same shape at a third the size. Whether either is excepted is the
+owner's call on the Mode-C capability's future, which this split does not pre-empt.
 
 ## EX-009 — `mcp-re-client-core/src/response.rs` — **census re-run, disposition: decompose the classification half**
 
@@ -1168,6 +1259,66 @@ A name reading *signer* over a comparison against an *issuer* is a second thing 
 agreement, and the three negative controls that pin the semantics are unchanged: a pinned
 issuer accepts the chained root, another issuer fails closed, and pinning the rotating
 delegated kid is refused.
+
+## EX-010 — the two theorem-owner roots — **re-censused 2026-08-29, both returned as §14 candidates**
+
+Re-censused because theorem work is about to rely on their semantic stability, and **not** as
+part of any sweep of the 84 `unreviewed` registry entries. `unreviewed` means unknown, not
+defective; these two are here because this campaign changed them.
+
+### `mcp-re-client-core/src/response.rs` — **367 production lines, ONE authority**
+
+1114 at the sixth census, 1021 after PR #673, 435 after the extractions, 368 after the
+direct-root removal, **367** after this pass.
+
+The question asked was whether delegated response verification and the 202 acknowledgement
+are one authority with two products, or two owners. **One**, and the evidence is in their
+inputs:
+
+| | bodied reply | bodyless 202 |
+|---|---|---|
+| trust | `&dyn DelegatedResponseTrust` | the same |
+| policy | `&DelegationPolicy` | the same |
+| pin coordinate | the credential's ROOT ISSUER kid | the same |
+| refusal on a wrong pin | `ResponseBindingMismatch` | the same |
+| what differs | it has a response block to bind | it has none, so it binds the request digest instead |
+
+The difference is the CARRIER, not the proposition: *this is a genuine delegated-signed
+answer from a trusted anchor, and it is an answer to what I sent*. Splitting them would put
+the same trust, policy and pin logic in two files — **and the repository has already run that
+experiment.** The pin was once enforced on replies and silently absent on one-way
+notifications, so an operator's configured control read as enabled and did not run on half
+the traffic. That is what two owners over one proposition costs.
+
+**One small correction this re-census made rather than recorded.** The pin rule was still
+stated twice — once over a `ResponseExpectation`, once over an `Option<&str>` inline in the
+202 path. `check_expected_issuer` now takes the coordinate itself, so both shapes apply one
+function. A bodyless 202 has no response block to hang a `ResponseExpectation` on, which is
+why the coordinate rather than the expectation is the right parameter.
+
+**Returned as a §14 candidate.** Not granted here.
+
+### `mcp-re-proxy/src/http_profile_serve/mod.rs` — **1108 production lines, assembly**
+
+1764 before the decomposition campaign, 1108 now, registry-`unreviewed` throughout — so this
+is its first authority question, not a repeat of that campaign.
+
+**What is left is assembly and composition, and the file says so about itself.** `handle`'s
+own doc: it owns *"the pipeline itself — which step follows which, and where the execution
+threshold lies"*, it *"does not advance the request machine"*, and it *"never re-decides what
+a failure means"*. Each stage method is an adapter onto an extracted owner —
+`signing_window`, `receipt`, `body_boundary`, `continuation`, `reply`, `inner_plane`,
+`retention`, `request_admission` — and the builder half is composition, which is a
+composition root's job.
+
+The two longest remaining methods were checked for a hidden authority and neither is one:
+`retain_accepted` calls `Retention::complete` and mints a refusal from what comes back;
+`answer_notification` calls the profile's `sign_delegated_accepted_202` and mints a response.
+Both are wiring, and their owners are next door.
+
+**Returned as a §14 candidate at band 4.** It is the largest unit in the tree, and size is
+what puts it first in the queue rather than what decides it. Granting or refusing is the
+owner's call.
 
 ## EX-006 — `mcp-re-proxy/src/ocsp.rs` — **census complete; actions 1 and 2 landed; the protocol remainder is a reviewed exception**
 
@@ -1715,3 +1866,86 @@ the repository's own rule that every file carries a test module.
 Re-measure after 1–3. `gcp_kms_keysource.rs` will stay over the threshold, and its remaining
 bulk is one provider's genuine access-token mechanism — a candidate for its own §14
 discussion, which this census does not pre-empt.
+
+### Discharge, 2026-08-29 — all five disposition items
+
+Re-run against the post-ADR-MCPRE-067 tree first, because several of the representation
+questions had changed under it.
+
+**1. The common `quota_verdict` owner — DONE** in ADR-MCPRE-067 Phase 8. Not redone.
+
+**2. The four "pure duplications" — three were real, one never was.**
+
+| finding | outcome |
+|---|---|
+| `ED25519_SIGNATURE_LEN` (4 files) | **one owner**: `communication_assurance::ed25519_public_key`, beside the `ED25519_PUBLIC_KEY_LEN` that was already there. It is a property of the algorithm's representation — not of KMS, not of a PKCS#11 token, not of any provider — which is the authority that module already claims in its own doc |
+| network timeout | **one owner**: `remote_signer_call::wire_limits::NETWORK_TIMEOUT` |
+| bounded error-body size + reader | **one owner**: `remote_signer_call::wire_limits`, which had three byte-for-byte copies, each carrying a comment saying it matched its siblings. A comment is how a duplication is remembered, not how it is owned |
+| local-key test transport | **not a duplication — recorded, not merged.** `LocalKeyKmsTransport` and `LocalKeyGcpTransport` implement DIFFERENT traits over DIFFERENT wire formats (AWS JSON `KeySpec`/`PublicKey`; GCP PEM-wrapped `algorithm`/`pem`). They share a shape, not code. Merging them would require an abstraction over two provider protocols, which is what this census's own disposition forbids |
+
+`remote_signer_call` was the right home for the wire limits rather than a new module: it
+already owns *one call to a remote signer, as it failed*, and it already carries the same
+`any(aws_kms_keysource, gcp_kms_keysource)` gate.
+
+**3. Typed operands at the KMS seam — DONE.** `KmsEd25519Backend` no longer takes `&[u8]`
+and returns `Vec<u8>`:
+
+| operand | the wrong value it makes unconstructible |
+|---|---|
+| `RawEd25519Message` | a pre-hashed input reaching a RAW-only signing call |
+| `RawEd25519Signature` | a signature of any length but 64 leaving the seam |
+| `Ed25519SpkiDer` | a public key that has not been through RFC 8410 interpretation |
+
+They are load-bearing, not aliases: `KmsResponseSigner::sign_response`'s length check is
+**deleted**, because there is no longer an over-long signature for it to catch — the
+operational test the ownership rule asks for. RFC 8410 interpretation likewise happens once,
+at the seam, instead of in each adapter. Verify-before-return is unchanged and still at the
+seam; provider independence is unchanged; no AWS or GCP network mechanics moved into the
+common owner.
+
+**The RAW/digest distinction is one arm, not two.** There is no `PreHashedEd25519Message`,
+because nothing in this tree pre-hashes: the missing input is named in the type's own doc
+rather than fabricated. A prehash backend is still caught by verify-before-return — a type
+cannot prove what a remote actually hashed — and the test that proves it now says so.
+
+**4. The two representation questions — SUPERSEDED by ADR-MCPRE-067, not merely recorded.**
+
+| question | why it is discharged |
+|---|---|
+| *`KeySource` cannot itself express non-exporting custody* | it does not need to. `PrivateKeyExposure { ProcessReadable, NonExporting }` owns that proposition at the configuration layer, projected by BOTH `CustodyState` and `ChannelCredentialCustodyState`. `KeySource` carries the capability that follows from it — `tls_delegated_signer()` — and a boxed source is no longer where the distinction is asked for |
+| *root-signing vs channel-key separation depends on `build_key_source`* | the separation is structural now: two typed requests (`ResponseSigningRequest`, `ChannelCredentialRequest`), two states each projecting its own exposure, and per-role materializers under `capability_materialization::key_source` that consume `custody.material()` and `channel_credential_custody.material()` separately. `build_key_source` no longer exists |
+
+**No second custody vocabulary was added.** The operands describe the KMS PROTOCOL; custody
+remains `PrivateKeyExposure`'s.
+
+**5. `key_source.rs` has a test module** — five controls over what the SEAM owns, not
+duplicates of provider tests: that a boxed source signs by DELEGATION and never by export
+(driven through a source whose every export accessor refuses, so the claim is structural
+rather than incidental); that `tls_delegated_signer` defaults to `None`, so a source that
+has not thought about delegated TLS does not claim its key never leaves the device; that the
+refusal vocabulary separates absent from malformed; and that a `tls_only` source names no
+signing seed.
+
+### Re-measurement
+
+| file | census | now |
+|---:|---:|---:|
+| `gcp_kms_keysource.rs` | 1149 | **1143** |
+| `aws_kms_keysource.rs` | 694 | **668** |
+| `key_source.rs` | 362 | **359** |
+| `kms_keysource.rs` → `kms_keysource/mod.rs` | 230 | **202** |
+| new: `kms_keysource/protocol_operands.rs` | — | 128 |
+| new: `remote_signer_call/wire_limits.rs` | — | 47 |
+
+**§8 question 2 on the corrected tree.** `key_source.rs` is ONE authority (the custody seam
+every source implements) and is under its own registered baseline. `kms_keysource/mod.rs` is
+ONE authority (the provider-agnostic Ed25519 protocol mapping) at 202 lines — two over the
+threshold, and its operands now live below it.
+
+**The two provider transports are each ONE authority and are returned as §14 candidates.**
+`gcp_kms_keysource.rs` at 1143 is one provider's transport and authentication: the Cloud KMS
+REST mapping plus the access-token mechanism (metadata server, service-account JWT
+assertion, token cache) the census already named as its remaining bulk. `aws_kms_keysource.rs`
+at 668 is the same shape — SigV4 signing, the STS/IRSA credential path, and the KMS JSON
+protocol. **Neither is split provider-from-itself**, which this census forbade and which
+shaving either file would amount to.

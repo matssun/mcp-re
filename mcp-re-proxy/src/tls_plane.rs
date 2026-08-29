@@ -18,7 +18,7 @@
 //!   and admits nothing on its own.
 //! - This plane's snapshot KEEPS SERVING, for a reason none of the others can claim:
 //!   **every CRL this plane loads states its own `nextUpdate`** — one that omits it is
-//!   refused where it is read ([`tls::crl_next_update_required`]), at startup and on
+//!   refused where it is read ([`crate::client_crl_publication::crl_next_update_required`]), at startup and on
 //!   every reload, because it would never fall out of force. Past `nextUpdate` the
 //!   verdict for that issuer is `Unknown`,
 //!   and unknown status is refused unconditionally — no builder on either the handshake
@@ -56,7 +56,6 @@ use crate::config_snapshot;
 use crate::config_state::CredentialCurrencyBound;
 use crate::config_state::PrivateKeyExposure;
 use crate::managed_worker::WorkerSet;
-use crate::tls;
 use crate::tls_listener_state::TlsListenerSecurityState;
 
 /// The client-CRL facts observed at startup, in configuration order.
@@ -66,7 +65,7 @@ use crate::tls_listener_state::TlsListenerSecurityState;
 pub struct ClientCrlEvidence {
     /// One entry per loaded CRL. Empty when offline client-cert revocation is not
     /// configured, which is a different posture — not an empty one.
-    pub postures: Vec<tls::CrlPosture>,
+    pub postures: Vec<crate::client_crl_publication::CrlPosture>,
 }
 
 impl ClientCrlEvidence {
@@ -219,7 +218,7 @@ impl TlsPlane {
         // malformed CRL file fails closed here. OFFLINE revocation only — there is no
         // online OCSP / distribution-point fetching.
         let crl_paths = plan.client_revocation.paths();
-        let client_crls = tls::load_client_crls(crl_paths)?;
+        let client_crls = crate::client_crl_publication::load_client_crls(crl_paths)?;
         let mut postures = Vec::with_capacity(client_crls.len());
         if !client_crls.is_empty() {
             eprintln!(
@@ -234,24 +233,31 @@ impl TlsPlane {
             // hard startup error (fail closed).
             const CRL_NEAR_EXPIRY_WARN_SECS: i64 = 6 * 3600;
             for (i, crl) in client_crls.iter().enumerate() {
-                match tls::crl_freshness(crl.as_ref(), startup_now_unix, CRL_NEAR_EXPIRY_WARN_SECS)
-                    .map_err(|e| e.to_string())?
+                match crate::client_crl_publication::crl_freshness(
+                    crl.as_ref(),
+                    startup_now_unix,
+                    CRL_NEAR_EXPIRY_WARN_SECS,
+                )
+                .map_err(|e| e.to_string())?
                 {
-                    tls::CrlFreshness::Fresh => {}
-                    tls::CrlFreshness::NoNextUpdate => {
-                        tls::crl_next_update_required(crl.as_ref(), i).map_err(|e| {
-                            format!(
-                                "mcp-re-proxy refuses to start with a client CRL that never \
+                    crate::client_crl_publication::CrlFreshness::Fresh => {}
+                    crate::client_crl_publication::CrlFreshness::NoNextUpdate => {
+                        crate::client_crl_publication::crl_next_update_required(crl.as_ref(), i)
+                            .map_err(|e| {
+                                format!(
+                                    "mcp-re-proxy refuses to start with a client CRL that never \
                                  falls out of force: {e}"
-                            )
-                        })?;
+                                )
+                            })?;
                     }
-                    tls::CrlFreshness::NearExpiry { next_update_unix } => eprintln!(
+                    crate::client_crl_publication::CrlFreshness::NearExpiry {
+                        next_update_unix,
+                    } => eprintln!(
                         "mcp-re-proxy: WARNING: client CRL #{i} is near expiry \
                          (nextUpdate={next_update_unix}); install a refreshed CRL and restart \
                          before then, or new handshakes will fail closed."
                     ),
-                    tls::CrlFreshness::Stale { next_update_unix } => {
+                    crate::client_crl_publication::CrlFreshness::Stale { next_update_unix } => {
                         let msg = format!(
                             "client CRL #{i} is STALE (nextUpdate={next_update_unix} <= \
                              now={startup_now_unix}): with CRL expiration enforced, every new \
@@ -268,7 +274,10 @@ impl TlsPlane {
             // so a stale CRL still refuses startup with its own diagnostic rather than
             // being reported as posture.
             for crl in &client_crls {
-                postures.push(tls::crl_posture(crl.as_ref()).map_err(|e| e.to_string())?);
+                postures.push(
+                    crate::client_crl_publication::crl_posture(crl.as_ref())
+                        .map_err(|e| e.to_string())?,
+                );
             }
         }
         let crls = ClientCrlEvidence { postures };
@@ -488,12 +497,13 @@ fn crl_reload_loop(task: CrlReloadTask, halt: &crate::managed_worker::Halt) {
                 return;
             }
             let outcome = config_snapshot::reload_once(&snapshot, || {
-                let crls = tls::load_client_crls(&crl_paths)?;
+                let crls = crate::client_crl_publication::load_client_crls(&crl_paths)?;
                 // A CRL that never falls out of force is refused on reload for the same
                 // reason it is refused at startup: keeping last-good is only safe while
                 // last-good ages out on its own.
                 for (i, crl) in crls.iter().enumerate() {
-                    tls::crl_next_update_required(crl.as_ref(), i).map_err(|e| e.to_string())?;
+                    crate::client_crl_publication::crl_next_update_required(crl.as_ref(), i)
+                        .map_err(|e| e.to_string())?;
                 }
                 // Build the per-request index from the SAME bytes, BEFORE the verifier
                 // is rebuilt, so a malformed CRL keeps last-good on both rather than
@@ -743,8 +753,8 @@ mod handle_lifetime_tests {
 mod revocation_posture_tests {
     use super::revocation_posture_lines;
     use super::ClientCrlEvidence;
+    use crate::client_crl_publication::CrlPosture;
     use crate::startup_plan::ChannelEstablishmentPlan;
-    use crate::tls::CrlPosture;
 
     /// A plan with no CRLs and the given client-cert lifetime.
     ///

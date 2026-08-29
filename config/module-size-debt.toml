@@ -92,7 +92,7 @@ status = "unreviewed"
 # ESTABLISHED and c81df3e never contained a 1013-line tls.rs.
 [[debt]]
 path = "mcp-re-proxy/src/tls.rs"
-baseline_prod_loc = 867
+baseline_prod_loc = 680
 baseline_sha = "94fcc0a"
 status = "reviewed-action-required"
 review_ref = "EX-004 in docs/architecture/review-dispositions.md"
@@ -127,12 +127,29 @@ review_ref = "EX-004 in docs/architecture/review-dispositions.md"
 path = "mcp-re-proxy/src/transport/mod.rs"
 baseline_prod_loc = 338
 baseline_sha = "94fcc0a"
+status = "reviewed-exception"
+review_ref = "EX-005 in docs/architecture/review-dispositions.md"
+
+# EX-005's ingress disposition is implemented. `ingress.rs` split along the boundary its own
+# source already drew: two FROZEN wire formats, `mcp-re/lb-ingress-assertion/v1` (Mode B /
+# Tier 3) and `.../v2` (Mode C / Tier 4), which share no preimage, no field layout and no
+# verifier order. The facade (`ingress/mod.rs`, 74 lines) is under the threshold and holds
+# no entry; the debt moves WITH the two formats, because dropping it on a path change would
+# launder 1012 registered lines as progress.
+#
+# 1012 -> 334 + 673, plus the facade's 74. Each version now carries the module note stating
+# which frozen format it owns, and the facade carries the disjointness test neither version
+# can state alone. Neither entry may grow from here.
+[[debt]]
+path = "mcp-re-proxy/src/transport/ingress/v1.rs"
+baseline_prod_loc = 334
+baseline_sha = "94fcc0a"
 status = "reviewed-action-required"
 review_ref = "EX-005 in docs/architecture/review-dispositions.md"
 
 [[debt]]
-path = "mcp-re-proxy/src/transport/ingress.rs"
-baseline_prod_loc = 1012
+path = "mcp-re-proxy/src/transport/ingress/v2.rs"
+baseline_prod_loc = 673
 baseline_sha = "94fcc0a"
 status = "reviewed-action-required"
 review_ref = "EX-005 in docs/architecture/review-dispositions.md"
@@ -537,7 +554,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/key_source.rs"
-baseline_prod_loc = 362
+baseline_prod_loc = 359
 baseline_sha = "d1fc5fa"
 status = "reviewed-action-required"
 review_ref = "EX-008 in docs/architecture/review-dispositions.md"
@@ -698,8 +715,8 @@ status = "unreviewed"
 [[debt]]
 # The RFC 8410 Ed25519 invariant left for its owner; what remains is the facade rendering
 # that owner's refusal into the KMS key vocabulary.
-path = "mcp-re-proxy/src/kms_keysource.rs"
-baseline_prod_loc = 230
+path = "mcp-re-proxy/src/kms_keysource/mod.rs"
+baseline_prod_loc = 202
 baseline_sha = "1b31c60"
 status = "reviewed-action-required"
 review_ref = "EX-008 in docs/architecture/review-dispositions.md"

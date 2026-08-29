@@ -119,6 +119,8 @@ pub use credential_public_key_evidence::CredentialKeyRefusal;
 pub use credential_public_key_evidence::CredentialPublicKeyEvidence;
 pub use ed25519_public_key::Ed25519PublicKeyValue;
 pub use ed25519_public_key::Rfc8410SpkiRefusal;
+pub use ed25519_public_key::ED25519_PUBLIC_KEY_LEN;
+pub use ed25519_public_key::ED25519_SIGNATURE_LEN;
 pub use mechanism_verified_credential::EstablishmentPath;
 pub use mechanism_verified_credential::MechanismVerificationRefusal;
 pub use mechanism_verified_credential::MechanismVerifiedCredentialEvidence;

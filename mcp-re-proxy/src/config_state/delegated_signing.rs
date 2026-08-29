@@ -57,13 +57,10 @@ const _: () = {
 /// the rotor mints a successor within.
 ///
 /// One value, because `0 < overlap < ttl` is a relation between the two and a relation
-/// cannot be carried by either half. Planning previously read two independent `i64`s out of
-/// the request and re-paired them, so the guard bound the request rather than anything
-/// downstream held: deleting it left `overlap >= ttl` constructible at the plan.
-///
-/// The fields are private to this module and the only producer is
-/// [`classify_and_validate`], so possessing one IS the statement that the pair satisfies the
-/// guard.
+/// cannot be carried by either half. The fields are private to this module and the only
+/// producer is [`classify_and_validate`], so possessing one IS the statement that the pair
+/// satisfies the guard — two independent `i64`s re-paired downstream would leave
+/// `overlap >= ttl` constructible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RotationWindow {
     ttl_secs: i64,
@@ -230,7 +227,11 @@ fn empty_fact_violations(facts: &DelegatedSigningFacts) -> Vec<String> {
         ),
     ]
     .into_iter()
-    .filter(|(value, _)| value.is_empty())
+    // TRIMMED, like every other required coordinate at this boundary. A label of spaces
+    // satisfies a presence check and names nothing, so the two must be one refusal: these
+    // three are minted verbatim into every delegation credential, where whitespace is
+    // indistinguishable from absence to the verifier reading them back.
+    .filter(|(value, _)| value.trim().is_empty())
     .map(|(_, message)| message.to_string())
     .collect()
 }
@@ -567,6 +568,38 @@ mod tests {
                 facts.issuer_kid(),
                 expected,
                 "{label}: the explicit override must win wherever it is present"
+            );
+        }
+    }
+
+    /// Whitespace is emptiness for all three minted facts.
+    ///
+    /// They are minted VERBATIM into every delegation credential, so a label of spaces is
+    /// indistinguishable from absence to the verifier reading it back — while satisfying any
+    /// presence check on the way in. `--server-key-id "   "` was admitted until this rule was
+    /// trimmed, which made it the one required coordinate at this boundary whose emptiness
+    /// test disagreed with every other one.
+    #[test]
+    fn a_whitespace_minted_fact_is_refused_like_an_empty_one() {
+        type MintedFact = (&'static str, fn(&mut DeploymentRequest));
+        let cases: [MintedFact; 3] = [
+            ("the base label", |c| {
+                c.delegated_signing.trust_epoch = Some("   ".to_string());
+            }),
+            ("the delegated issuer kid", |c| {
+                c.delegated_signing.issuer_kid = None;
+                c.server_key_id = "   ".to_string();
+            }),
+            ("the delegated audience scope", |c| {
+                c.delegated_signing.audience_hash = Some("   ".to_string());
+            }),
+        ];
+        for (what, mutate) in cases {
+            let mut config = crate::config_state::test_support::legal_config();
+            mutate(&mut config);
+            assert!(
+                !crate::config_state::validation::unsafe_config_violations(&config).is_empty(),
+                "{what} of whitespace names nothing and must be refused"
             );
         }
     }

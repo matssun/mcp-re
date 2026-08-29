@@ -44,18 +44,16 @@ use crate::execution_contract::ExecutionContract;
 /// so: the field is `expected_issuer_kid`, because a name reading `server_signer` while
 /// the comparison is against an issuer is a second thing to keep in agreement.
 ///
-/// The interim behaviour this replaces refused any set pin outright, so an operator who
-/// configured one learned it was unenforced rather than believing a control that never
-/// ran. That was the correct holding position; it is not a control.
+/// There is no "missing issuer" arm: the delegated products hold the issuer kid
+/// unconditionally, so an issuer-less verdict is not a state that can be constructed.
 ///
-/// The "missing issuer is a contradiction" branch this used to carry is gone: the
-/// delegated products hold the issuer kid unconditionally, so an issuer-less delegated
-/// verdict is not a state that can be constructed. What remains is the comparison.
-fn check_expected_issuer(
-    expectation: &ResponseExpectation,
-    issuer_kid: &str,
-) -> Result<(), HttpProfileError> {
-    let Some(pinned) = expectation.expected_issuer_kid() else {
+/// Takes the pin as an `Option<&str>` rather than an expectation because BOTH message
+/// shapes enforce it and only one of them has a `ResponseExpectation`: a bodyless 202 has
+/// no response block to bind one to. Stating the rule once over the coordinate itself is
+/// what keeps the two shapes from drifting — which they did, with the pin enforced on
+/// replies and silently absent on one-way notifications.
+fn check_expected_issuer(pinned: Option<&str>, issuer_kid: &str) -> Result<(), HttpProfileError> {
+    let Some(pinned) = pinned else {
         return Ok(());
     };
     if issuer_kid == pinned {
@@ -143,6 +141,9 @@ fn verify_delegated_response_under(
     verifier_policy: &mcp_re_http_profile::VerifierPolicy,
     now: i64,
 ) -> Result<VerifiedDelegatedResponse, HttpProfileError> {
+    // The route's pinned issuer, read once: all three arms below apply the same rule to the
+    // same coordinate, and reading it per arm is how one of them comes to be missed.
+    let pinned = expectation.expected_issuer_kid();
     // Adapt the one trust authority to the http-profile verifier's two closure forms.
     // Both halves come from the SAME value, so a resolver that answers cannot be paired
     // with a revocation source that does not.
@@ -164,7 +165,7 @@ fn verify_delegated_response_under(
             is_revoked,
             now,
         )?;
-        check_expected_issuer(expectation, &verified.delegation_issuer_kid)?;
+        check_expected_issuer(pinned, &verified.delegation_issuer_kid)?;
         return Ok(VerifiedDelegatedResponse {
             verified: DelegatedResponseEvidence::Bound(verified),
             outcome: DelegatedOutcome::Success,
@@ -183,7 +184,7 @@ fn verify_delegated_response_under(
         now,
     ) {
         Ok(verified) => {
-            check_expected_issuer(expectation, &verified.delegation_issuer_kid)?;
+            check_expected_issuer(pinned, &verified.delegation_issuer_kid)?;
             let (wire_code, execution) = rejection_receipt(&response.body);
             Ok(VerifiedDelegatedResponse {
                 verified: DelegatedResponseEvidence::Bound(verified),
@@ -196,7 +197,7 @@ fn verify_delegated_response_under(
         Err(bound_err) => {
             match verifier.verify_delegated_unbound_response(response, expect, is_revoked, now) {
                 Ok(verified) => {
-                    check_expected_issuer(expectation, &verified.delegation_issuer_kid)?;
+                    check_expected_issuer(pinned, &verified.delegation_issuer_kid)?;
                     // The unbound signature binds nothing about the request, so a receipt
                     // that verifies here is not yet an answer to THIS request. Confirm the
                     // server produced it for the bytes this client sent before reporting a
@@ -352,15 +353,10 @@ pub fn verify_delegated_accepted_202_pinned(
             now,
         )
     })?;
-    // The pin is compared against the VERIFIED product's anchor. This used to re-parse the
-    // response's own credential header — untrusted bytes read to answer a question the
-    // verifier had just answered — so the pin depended on the second reader agreeing with
-    // the first about which of two credential headers to believe.
-    if let Some(pinned) = expected_issuer_kid {
-        if acknowledged.issuer_kid() != pinned {
-            return Err(HttpProfileError::ResponseBindingMismatch);
-        }
-    }
+    // The pin is compared against the VERIFIED product's anchor, by the SAME rule the bodied
+    // path applies: the coordinate is the credential's root issuer kid on both shapes, and
+    // one function states that once.
+    check_expected_issuer(expected_issuer_kid, acknowledged.issuer_kid())?;
     Ok(acknowledged.into_actor())
 }
 

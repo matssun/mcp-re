@@ -240,6 +240,7 @@ _PROXY_LIB_SRCS = [
     # cfg gate as `handshake_quota`, and compiled by `mcp_re_proxy_ext`.
     "src/remote_signer_call/mod.rs",
     "src/remote_signer_call/quota_signals.rs",
+    "src/remote_signer_call/wire_limits.rs",
     # Issue #3838 (ADR-MCPS-014): non-exporting reference ResponseSigner proving the
     # response-signing delegation seam. Always compiled; default-build, Bazel-tested.
     "src/delegated_response_signer.rs",
@@ -270,7 +271,8 @@ _PROXY_LIB_SRCS = [
     "src/kms_endpoint_policy.rs",
     # ADR-MCPS-028: provider-agnostic cloud-KMS response signer core (the shared
     # protocol mapping behind the #3838 delegation seam). Always compiled.
-    "src/kms_keysource.rs",
+    "src/kms_keysource/mod.rs",
+    "src/kms_keysource/protocol_operands.rs",
     "src/lib.rs",
     # ADR-MCPS-035: the serving path's audit emission seam (admitted actor, rejection
     # wire code, response signing key). Pure std, no feature gate — always compiled.
@@ -402,6 +404,7 @@ _PROXY_LIB_SRCS = [
     "src/reloading_trust.rs",
     # Per-request client-cert revocation: the revoked-serial index the serving path
     # consults on every request, since rustls consults the CRLs at the handshake alone.
+    "src/client_crl_publication.rs",
     "src/client_revocation.rs",
     "src/stage_timers.rs",
     "src/blocking_mtls_harness/connection.rs",
@@ -459,7 +462,9 @@ _PROXY_LIB_SRCS = [
     # copy). #[cfg(feature = "redis_replay")] — cfg'd out of the default build.
     "src/redis_admission_source.rs",
     "src/transport/mod.rs",
-    "src/transport/ingress.rs",
+    "src/transport/ingress/mod.rs",
+    "src/transport/ingress/v1.rs",
+    "src/transport/ingress/v2.rs",
     "src/transport/identity.rs",
     # ADR-MCPS-021: bounded trust-propagation cache (revocation window T).
     "src/trust_plane/trust_cache.rs",
