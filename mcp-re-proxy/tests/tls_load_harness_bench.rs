@@ -1356,7 +1356,7 @@ fn load_harness_smoke() {
         // (`SERVER_KEY_ID`) via an inline credential. `server_resolve` anchors that root
         // on the Response slot; the delegated verifier follows the credential to it.
         let expectation =
-            ResponseExpectation::new(signed.request().clone(), signed.evidence().clone());
+            ResponseExpectation::for_signed(signed);
         let policy = DelegationPolicy::new(
             vec![AUDIENCE.to_string()],
             AUDIENCE,

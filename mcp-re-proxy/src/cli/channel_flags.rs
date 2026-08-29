@@ -38,7 +38,7 @@ impl ChannelFlags {
         match flag {
             "--tls-cert" => self.credential_chain = Some(value.to_string()),
             "--client-ca" => self.peer_trust_anchors = Some(value.to_string()),
-            _ => self.max_client_cert_lifetime = Some(super::parse_cert_lifetime(value)?),
+            _ => self.max_client_cert_lifetime = Some(parse_cert_lifetime(value)?),
         }
         Ok(())
     }
@@ -64,6 +64,39 @@ impl ChannelFlags {
                 .unwrap_or(default_cert_lifetime),
         })
     }
+}
+
+/// Parse a client-cert lifetime: a number with an optional `h`/`m`/`s` suffix
+/// (bare = seconds), or `none`/`0` to disable enforcement. E.g. `1h`, `30m`,
+/// `3600`, `none`.
+fn parse_cert_lifetime(value: &str) -> Result<Option<Duration>, String> {
+    if value == "none" {
+        return Ok(None);
+    }
+    let (digits, multiplier) = match value.strip_suffix('h') {
+        Some(d) => (d, 3600),
+        None => match value.strip_suffix('m') {
+            Some(d) => (d, 60),
+            None => (value.strip_suffix('s').unwrap_or(value), 1),
+        },
+    };
+    let n: u64 = digits.parse().map_err(|_| {
+        format!("invalid --max-client-cert-lifetime '{value}' (e.g. 1h, 30m, 3600, none)")
+    })?;
+    // Checked, because the wrapped product is a DIFFERENT lifetime rather than a larger
+    // one: `5124095576030432h` wraps to 3584s, under the ceiling, so nothing downstream
+    // refuses it and the deployment enforces a bound the operator never wrote.
+    let secs = n.checked_mul(multiplier).ok_or_else(|| {
+        format!(
+            "--max-client-cert-lifetime '{value}' does not fit in seconds; the ceiling is {}s",
+            crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME.as_secs()
+        )
+    })?;
+    Ok(if secs == 0 {
+        None
+    } else {
+        Some(Duration::from_secs(secs))
+    })
 }
 
 #[cfg(test)]

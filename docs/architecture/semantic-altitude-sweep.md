@@ -171,8 +171,9 @@ enforce" condition, so this phase did not stop.
 ### B.6 — what Phases 6-8 produced
 
 **Phase 6 rebuilt the request.** 72 fields at the start of the campaign, 46 after Phase 5,
-**31** now — and every one names a durable proposition rather than a CLI flag or a
-state-machine input.
+**32** now — and every one names a durable proposition rather than a CLI flag or a
+state-machine input. (This section said 31 until the Phase-9 re-measurement counted the
+declarations rather than the migration table's rows.)
 
 | before | after | clauses deleted |
 |---|---|---|
@@ -201,6 +202,48 @@ mechanism) became `capability_materialization::key_source` with a module per mec
 and `key_file_mode_is_insecure` went to the policy that owns it. EX-008's last duplication —
 `quota_verdict`, written twice and already drifted in shape — is one rule over per-provider
 DATA.
+
+### B.7 — what Phase 9 closed
+
+A regression pass over the corrected tree, not a new design exercise.
+
+**The gate's registry is still empty and its scope still states itself.** `NOT_YET_MIGRATED`
+holds nothing; `MIGRATED` holds 21 families; the dependency-direction half checks 20
+mechanism adapters against four semantic directories. No new provider-qualified sibling
+appeared on `DeploymentRequest`, and no semantic module acquired an adapter import.
+
+**One altitude finding, fixed.** `config_state::admission` destructured the Phase-4
+`SharedStoreRequest` into a bare `redis_url: String` on both enforcing states and projected
+it as `EnforcedAdmission::redis_url()`. Its own doc comment already stated the durable
+proposition — *the shared authoritative record currency is compared against* — so only the
+identifier disagreed with it, and the identifier is what a consumer reads. Its sibling
+`ContinuationControlState` had already migrated the same shape to `shared_store()`. The
+field and its projection are now `record_store`; the `--admission-redis-url` spelling inside
+the refusal text is unchanged, because a flag name in a diagnostic is a diagnostic
+(section C).
+
+**Everything else above the boundary carries a justification.** Re-checked by hand, since a
+name-based gate cannot: `CrlRevocationState` and `classify_and_validate_crl` (ruled in B,
+Phase 5 — the posture is its own type and the CRL state stays CRL-named below it),
+`AwsCredentialMode` and `kms_endpoint` (C and E), `residue::ocsp_*` (each carries its own
+"why no narrower owner" clause), `channel_key_material`'s per-mechanism locator projections
+(the ruled `CustodyMaterial` shape, consumed only by the materializer), and the typed
+mechanism payloads under `deployment_request::signing_source`, `::storage` and
+`::revocation`. The leaves in section D are unchanged and still specific.
+
+**The completion question, answered per family.** *Can a new mechanism be added as a typed
+leaf without changing the semantic consumers that care only about the durable proposition?*
+
+| family | a new mechanism adds | what a semantic consumer reads, unchanged |
+|---|---|---|
+| signing source / channel key | one `SigningSourceRequest` / `ChannelKeyRequest` variant, one payload, one materializer arm | `PrivateKeyExposure`, `ChannelCredentialCustodyState` |
+| shared storage | one `SharedStoreRequest` variant | `shared_store()`, `record_store()`, `materialization_plan()` |
+| peer revocation | one arm under `PeerRevocationRequest` | `CredentialCurrencyBound` |
+| peer identity | one `PeerIdentityEvidenceRequest` variant | `PeerIdentityProvenance` |
+
+**Yes across all four**, so Phase 9 closes. What a new mechanism still touches is its own
+adapter and the materializer that selects backends — which is the selection boundary's job,
+not a semantic consumer's.
 
 ### C — mechanism-selection boundary (legitimate; a provider name is correct here)
 
@@ -262,9 +305,11 @@ ambiguous, ruled                  3 (E)
 dependency-direction violation    0
 dormant control, classified       3 (B.5.1) — 2 intentionally dormant,
                                   1 needing a Phase-6 input; 0 falsely claimed
+Phase-9 regression pass           1 finding (config_state::admission), fixed
 ```
 
-After Phase 6 the semantic-altitude gate's `NOT_YET_MIGRATED` registry is **empty**: every
+After Phase 6 the semantic-altitude gate's `NOT_YET_MIGRATED` registry is **empty**, and
+Phase 9's regression pass confirmed it stayed so: every
 family the sweep named has a typed mechanism payload. The registry stays in the file because
 the shape it enforces — a family must be listed with the phase that owns it, or be refused —
 is what keeps a future un-migrated family from passing silently, and its selftest now

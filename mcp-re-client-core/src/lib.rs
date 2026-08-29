@@ -33,6 +33,7 @@ mod execution_contract;
 pub mod request;
 pub mod request_signing_inputs;
 pub mod response;
+mod response_expectation;
 /// What an MCP result MEANS — as distinct from whether the message carrying it is genuine.
 mod result_classification;
 pub mod trust_manifest;
@@ -65,8 +66,8 @@ pub use response::verify_delegated_accepted_202;
 pub use response::verify_delegated_response;
 pub use response::verify_signed_response;
 pub use response::DelegatedOutcome;
-pub use response::ResponseExpectation;
 pub use response::VerifiedDelegatedResponse;
+pub use response_expectation::ResponseExpectation;
 pub use result_classification::classify_result;
 pub use result_classification::continuation_state;
 pub use result_classification::ClassifiedResponse;

@@ -226,7 +226,7 @@ impl ClientProxy {
         // variants differ ONLY in where the trust anchors come from; the outcome
         // handling below is shared, so neither can drift into a laxer mapping.
         let mut expectation =
-            ResponseExpectation::new(signed.request().clone(), signed.evidence().clone());
+            ResponseExpectation::for_signed(&signed);
         // The route's PINNED server signer, if it configured one. Without this the
         // field was route bookkeeping that decided nothing: any server whose delegated
         // credential chains to a trusted root and is scoped to this audience could

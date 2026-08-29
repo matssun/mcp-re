@@ -133,7 +133,7 @@ fn signed_request() -> SignedRequest {
 }
 
 fn expectation(signed: &SignedRequest) -> ResponseExpectation {
-    ResponseExpectation::new(signed.request().clone(), signed.evidence().clone())
+    ResponseExpectation::for_signed(signed)
 }
 
 fn policy() -> DelegationPolicy {
