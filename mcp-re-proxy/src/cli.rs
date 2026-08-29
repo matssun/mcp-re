@@ -14,10 +14,17 @@
 //! module: the configuration state machines read a request without depending on the parser.
 
 mod admission_flags;
+mod audit_flags;
 mod authorization_flags;
+mod channel_flags;
 mod currency_flags;
+mod delegated_signing_flags;
+mod identity_flags;
 mod peer_identity_flags;
+mod protocol_flags;
 mod revocation_flags;
+mod runtime_flags;
+mod serving_flags;
 mod signing_source_flags;
 mod storage_flags;
 
@@ -25,9 +32,7 @@ use std::time::Duration;
 
 use mcp_re_core::VerificationKey;
 
-use crate::deployment_request::{
-    AuditSinkKind, ChannelCredentialRequest, DeploymentRequest, SecretString, VerifiedContextKind,
-};
+use crate::deployment_request::{DeploymentRequest, SecretString};
 
 #[cfg(feature = "aws_kms_keysource")]
 use crate::config_state::AwsCredentialMode;
@@ -40,546 +45,196 @@ use crate::key_source::EnvKeySource;
 use crate::key_source::FileKeySource;
 use crate::key_source::KeyError;
 use crate::key_source::KeySource;
-use crate::tls::ServerLimits;
 use crate::transport::IdentityPolicy;
+
+/// Every flag family this parser knows, accumulating across one argument list.
+///
+/// The CLI is an adapter (ADR-MCPRE-067 §16): a command line is flat, and each family reads
+/// the flat spelling its operator types and hands back one typed semantic value. Nothing
+/// here decides legality beyond argv coherence — whether the deployment a coherent command
+/// line describes may RUN is the configuration boundary's, and the answer is the same
+/// however the request was built.
+#[derive(Default)]
+struct Flags {
+    identity: identity_flags::IdentityFlags,
+    protocol: protocol_flags::ProtocolFlags,
+    serving: serving_flags::ServingFlags,
+    runtime: runtime_flags::RuntimeFlags,
+    channel: channel_flags::ChannelFlags,
+    signing_source: signing_source_flags::SigningSourceFlags,
+    peer_identity: peer_identity_flags::PeerIdentityFlags,
+    revocation: revocation_flags::RevocationFlags,
+    storage: storage_flags::StorageFlags,
+    currency: currency_flags::CurrencyFlags,
+    admission: admission_flags::AdmissionFlags,
+    authorization: authorization_flags::AuthorizationFlags,
+    audit: audit_flags::AuditFlags,
+    delegated_signing: delegated_signing_flags::DelegatedSigningFlags,
+}
+
+impl Flags {
+    /// Route one valueless flag to the family that owns it, reporting whether one did.
+    fn take_switch(&mut self, flag: &str) -> bool {
+        self.signing_source.take_switch(flag)
+            || self.serving.take_switch(flag)
+            || self.peer_identity.take_switch(flag)
+    }
+
+    /// Route one value-taking flag to the family that owns it.
+    ///
+    /// One line per family, and the families are disjoint: a flag belongs to exactly one,
+    /// so this is a routing table and not a decision.
+    fn take(&mut self, flag: &str, value: &str) -> Result<(), String> {
+        if identity_flags::IdentityFlags::owns(flag) {
+            self.identity.take(flag, value);
+        } else if serving_flags::ServingFlags::owns(flag) {
+            self.serving.take(flag, value);
+        } else if protocol_flags::ProtocolFlags::owns(flag) {
+            self.protocol.take(flag, value)?;
+        } else if runtime_flags::RuntimeFlags::owns(flag) {
+            self.runtime.take(flag, value)?;
+        } else if channel_flags::ChannelFlags::owns(flag) {
+            self.channel.take(flag, value)?;
+        } else if signing_source_flags::SigningSourceFlags::owns(flag) {
+            self.signing_source.take(flag, value)?;
+        } else if peer_identity_flags::PeerIdentityFlags::owns(flag) {
+            self.peer_identity.take(flag, value)?;
+        } else if revocation_flags::RevocationFlags::owns(flag) {
+            self.revocation.take(flag, value)?;
+        } else if storage_flags::StorageFlags::owns(flag) {
+            self.storage.take(flag, value)?;
+        } else if currency_flags::CurrencyFlags::owns(flag) {
+            self.currency.take(flag, value)?;
+        } else if admission_flags::AdmissionFlags::owns(flag) {
+            self.admission.take(flag, value)?;
+        } else if authorization_flags::AuthorizationFlags::owns(flag) {
+            self.authorization.take(flag, value)?;
+        } else if audit_flags::AuditFlags::owns(flag) {
+            self.audit.take(flag, value)?;
+        } else if delegated_signing_flags::DelegatedSigningFlags::owns(flag) {
+            self.delegated_signing.take(flag, value)?;
+        } else {
+            return Err(refused_or_unknown(flag));
+        }
+        Ok(())
+    }
+
+    /// The request this command line describes.
+    ///
+    /// One line per semantic field. Each family answered its own question already, so this
+    /// composes products rather than reading values — there is no decision here to hide in
+    /// a large literal, because every decision was made one layer down.
+    fn finish(self) -> Result<DeploymentRequest, String> {
+        let identity = self.identity.finish()?;
+        let protocol = self
+            .protocol
+            .finish(mcp_re_http_profile::VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW)?;
+        let serving = self.serving.finish()?;
+        let runtime = self.runtime.finish();
+        let mut currency = self.currency;
+        let storage = self.storage.finish()?;
+        currency.take_epoch(storage.trust_epoch);
+        // #59/#60/#61: which custody holds the channel key is one tagged value, and the
+        // signing-source family assembles it — including the argv contradiction of naming
+        // both arms, which no request can carry any more.
+        let (response_signing, channel_key) = self.signing_source.finish()?;
+        let channel = self.channel.finish(
+            channel_key,
+            Some(crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME),
+        )?;
+        let audit = self.audit.finish();
+        Ok(DeploymentRequest {
+            bind: serving.bind,
+            audience: identity.audience,
+            server_signer: identity.server_signer,
+            server_key_id: identity.server_key_id,
+            max_clock_skew: protocol.max_clock_skew,
+            mcp_protocol_versions: protocol.versions,
+            target_uri: protocol.target_uri,
+            trust_domain: identity.trust_domain,
+            route: serving.route,
+            response_signing,
+            channel_credential: channel.credential,
+            peer_trust_anchors: channel.peer_trust_anchors,
+            max_client_cert_lifetime: channel.max_client_cert_lifetime,
+            peer_revocation: self.revocation.finish()?,
+            peer_identity: self.peer_identity.finish()?,
+            trust_path: serving.trust_path,
+            inner_http_urls: serving.inner_http_urls,
+            fleet: serving.fleet,
+            allow_group_readable_key_files: serving.allow_group_readable_key_files,
+            cores: runtime.cores,
+            workers_per_shard: runtime.workers_per_shard,
+            in_flight_limit: runtime.in_flight_limit,
+            limits: runtime.limits,
+            replay: storage.replay,
+            continuation_control: storage.continuation,
+            request_signer_currency: currency.finish()?,
+            admission: self.admission.finish()?,
+            authorization: self.authorization.finish(),
+            audit_sink: audit.sink,
+            retained_evidence_dir: audit.retained_evidence_dir,
+            verified_context: audit.verified_context,
+            delegated_signing: self.delegated_signing.finish(
+                crate::config_state::delegated_signing::DEFAULT_DELEGATED_TTL_SECS,
+                crate::config_state::delegated_signing::DEFAULT_DELEGATED_OVERLAP_SECS,
+            ),
+        })
+    }
+}
+
+/// A flag no family owns.
+///
+/// One spelling is recognised only to REFUSE it with the reason and the replacement.
+/// Falling through to "unknown flag" would be a worse error for the one operator who most
+/// needs to understand what changed — and worse, it would report a secret-handling decision
+/// as a typo.
+fn refused_or_unknown(flag: &str) -> String {
+    if flag == "--pkcs11-pin" {
+        // The PIN has already been exposed at this point (it is in this process's argv,
+        // which is world-readable): the refusal is about not making it a standing exposure,
+        // and the operator should treat that PIN as compromised and change it.
+        return "--pkcs11-pin is refused: a process command line is world-readable \
+                (ps, /proc/<pid>/cmdline), so the PIN unlocking the token that holds the \
+                signing keys would be published to every local user for the lifetime of the \
+                process. Use --pkcs11-pin-file <path> with a 0600 file. Treat any PIN \
+                previously passed this way as compromised."
+            .to_string();
+    }
+    format!("unknown flag {flag}")
+}
+
+/// A required value, or the flag that would have supplied it.
+fn require(value: Option<String>, flag: &str) -> Result<String, String> {
+    value.ok_or_else(|| format!("missing required {flag}"))
+}
 
 /// Parse CLI arguments (excluding argv[0]) into a [`DeploymentRequest`]. Returns a
 /// human-readable error string on any missing/invalid argument.
+///
+/// Orchestration: read the argument list into the flag families, then ask them for the
+/// request they describe. Both halves are one line each, because every flag's grammar lives
+/// with the family that owns its meaning (ADR-MCPRE-067 §16, Phase 7).
 pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
-    let mut bind = None;
-    let mut audience = None;
-    let mut server_signer = None;
-    let mut server_key_id = None;
-    // One skew governs BOTH the RFC 9421 freshness gate and the replay `retain_until`,
-    // so an admitted nonce is retained exactly as long as its signature can still be
-    // accepted. The default is the profile's own `DEFAULT_MAX_CLOCK_SKEW` rather than a
-    // locally-chosen number, so proxy and verifier cannot drift apart.
-    let mut max_clock_skew: i64 = mcp_re_http_profile::VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW;
-    let mut mcp_protocol_versions: Vec<String> = Vec::new();
-    // ADR-MCPS-039 (D1): default to the migration posture (admit both wire
-    // profiles) so an omitted flag preserves back-compat with draft-01 clients;
-    // `--expected-version-policy draft-02-only` tightens it.
-    let mut target_uri: Option<String> = None;
-    let mut trust_domain: Option<String> = None;
-    let mut route: Option<String> = None;
-    let mut signing_source = signing_source_flags::SigningSourceFlags::new();
-    let mut allow_group_readable_key_files = false;
-    let mut tls_cert = None;
-    let mut client_ca = None;
-    // #3839 offline CRL revocation: zero or more CRL file paths, fail-closed on
-    // unknown status by default.
-    let mut client_crl_paths: Vec<String> = Vec::new();
-    // ADR-MCPRE-051 §3: stateless HTTP inner backend URL(s) for the async serving
-    // path (comma-separated and/or repeated).
-    let mut inner_http_urls: Vec<String> = Vec::new();
-    // ADR-MCPRE-051 §1: per-core worker count; 0 = auto (one per core).
-    let mut cores: usize = 0;
-    let mut workers_per_shard: usize = 0;
-    // The admission limit the operator states, if any. `Unspecified` until a flag names
-    // one; the fail-safe default is applied at the validation boundary, not here, so the
-    // request keeps the difference between a value chosen and a value never mentioned.
-    let mut in_flight_limit = crate::config_state::InFlightLimitRequest::Unspecified;
-    let mut client_crl_reload_secs: Option<u64> = None;
-    // #4030 online OCSP revocation: off by default; responder-URL override
-    // optional; hard-fail (deny on indeterminate) by default.
-    let mut require_online_revocation = false;
-    let mut ocsp_responder_url: Option<String> = None;
-    let mut trust_path = None;
-    let mut admission = admission_flags::AdmissionFlags::default();
-
-    let mut audit_sink = AuditSinkKind::Stderr;
-    let mut retained_evidence_dir: Option<String> = None;
-    let mut verified_context = VerifiedContextKind::Disabled;
-    let mut replay_redis_url = None;
-    let mut continuation_control_redis_url = None;
-    // MCPS-84: networked trust-epoch invalidation backend (optional; only under
-    // --revocation-tier push).
-    let mut trust_epoch_redis_url = None;
-    let mut trust_epoch_key = None;
-    // #69 (epic #68 v0.4 Axis 1): the CP/etcd endpoint for the LINEARIZABLE tier.
-    let mut cpstore_etcd_endpoint: Option<String> = None;
-    let mut replay_durability_tier: Option<crate::replay_tier::ReplayDurabilityTier> = None;
-    // ADR-MCPS-021 Axis 2: revocation tier. Defaults to Tier 1 bounded-cache with
-    // the deployment-default window T, so an absent flag preserves the existing
-    // Tier-1 posture exactly.
-    let mut currency = currency_flags::CurrencyFlags::default();
-    let mut peer_identity = peer_identity_flags::PeerIdentityFlags::default();
-    // ADR-MCPS-023 Tier 3 (issue #71): repeatable trusted LB verification keys for
-    // request-bound ingress assertions, as (key_id, base64url-ed25519-pub) pairs.
-    // ADR-MCPS-023 §C (Mode C): attestor verification keys, trusted ingress
-    // identities, the node's expected audience, and the pinned-mTLS acknowledgement.
-    // ADR-MCPRE-065: the selection, its two parameters, and the ADR-MCPS-013 deny-list.
-    let mut authorization = authorization_flags::AuthorizationFlags::new();
-    // #4034 PKCS#11 key source: module path, User PIN (sensitive), token label,
-    // and signing-key object label. Required only when `--key-source pkcs11`.
-    let mut limits = ServerLimits::default();
-    // v1 revocation posture: short-lived client certs, proxy-enforced. The default IS the
-    // ceiling — an omitted flag lands on the strictest lifetime the boundary permits — so
-    // it is read from the constant that states it rather than retyped beside it.
-    let mut max_client_cert_lifetime =
-        Some(crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME);
-    // MCPS-79 (ADR-MCPS-049): horizontally-scaled deployment topology, off by
-    // default. This selects the deployment TOPOLOGY (single-node vs multi-verifier
-    // fleet); it does NOT relax security — the proxy always refuses an unsafe config.
-    // A fleet additionally rejects node-local replay caches.
-    let mut fleet = false;
-    // ADR-MCPRE-052 (MCPRE-122): delegated-signing is the ONLY response-signing mode.
-    // The delegated-custody knobs are tracked as Options so their defaults are applied
-    // at validation (trust-epoch is required; there is no direct-root mode to select).
-    let mut delegated_ttl_secs: Option<i64> = None;
-    let mut delegated_overlap_secs: Option<i64> = None;
-    let mut delegated_trust_epoch: Option<String> = None;
-    let mut delegated_issuer_kid: Option<String> = None;
-    let mut delegated_audience_hash: Option<String> = None;
-
+    let mut flags = Flags::default();
     let mut i = 0;
     while i < args.len() {
         let flag = args[i].as_str();
-        // The signing-source family's two valueless flags: the GCE/GKE metadata server
-        // for the Cloud KMS OAuth2 token, and IRSA for the AWS KMS credentials. Both
-        // parameterize a mechanism payload, so the family reads them.
-        if signing_source.take_switch(flag) {
-            i += 1;
-            continue;
-        }
-        // Valueless boolean flag (ADR-MCPS-023 §C2, Mode C): the explicit operator
-        // acknowledgement that the attestor→node hop is a pinned mTLS channel. Mode C
-        // REQUIRES it (checked below); absent, attested ingress refuses to start.
-        if flag == "--ingress-pinned-mtls" {
-            peer_identity.take_pinned_channel();
-            i += 1;
-            continue;
-        }
-        // Valueless boolean flag (C053b): accept a group-READABLE key file whose group
-        // this process is in — the Kubernetes fsGroup mount model. Explicit, because it
-        // widens who can read a signing key; the strict 0600 floor is otherwise
-        // unsatisfiable for a non-root pod.
-        if flag == "--allow-group-readable-key-files" {
-            allow_group_readable_key_files = true;
-            i += 1;
-            continue;
-        }
-        // Select the horizontally-scaled (fleet) deployment topology.
-        if flag == "--fleet" {
-            fleet = true;
+        if flags.take_switch(flag) {
             i += 1;
             continue;
         }
         let value = args
             .get(i + 1)
             .ok_or_else(|| format!("flag {flag} requires a value"))?;
-        match flag {
-            // ADR-MCPRE-065: one arm for the whole authorization family, whose spelling
-            // and meaning live together in `authorization_flags`.
-            f if authorization_flags::AuthorizationFlags::owns(f) => {
-                authorization.take(f, value)?
-            }
-            "--bind" => bind = Some(value.clone()),
-            "--audience" => audience = Some(value.clone()),
-            "--server-signer" => server_signer = Some(value.clone()),
-            "--server-key-id" => server_key_id = Some(value.clone()),
-            "--max-clock-skew" => {
-                max_clock_skew = value
-                    .parse()
-                    .map_err(|_| "invalid --max-clock-skew".to_string())?;
-            }
-            // §4.1 MCP transport contract. Repeatable; each occurrence adds an
-            // accepted `Mcp-Protocol-Version`. Absent = no transport contract.
-            "--mcp-protocol-version" => mcp_protocol_versions.push(value.clone()),
-            "--target-uri" => target_uri = Some(value.clone()),
-            "--trust-domain" => trust_domain = Some(value.clone()),
-            "--route" => route = Some(value.clone()),
-            // The signing-source family: the mechanism selection and every mechanism's
-            // parameters, assembled into the two typed role requests rather than carried
-            // on as provider-qualified siblings (ADR-MCPRE-067 §16).
-            flag if signing_source_flags::SigningSourceFlags::owns(flag) => {
-                signing_source.take(flag, value)?
-            }
-            // Still recognised, only to REFUSE it with the reason and the replacement.
-            // Falling through to "unknown flag" would be a worse error for the one
-            // operator who most needs to understand what changed — and worse, it would
-            // report a secret-handling decision as a typo. The PIN has already been
-            // exposed at this point (it is in this process's argv, which is
-            // world-readable): the refusal is about not making it a standing exposure,
-            // and the operator should treat that PIN as compromised and change it.
-            "--pkcs11-pin" => {
-                return Err(
-                    "--pkcs11-pin is refused: a process command line is world-readable \
-                     (ps, /proc/<pid>/cmdline), so the PIN unlocking the token that holds \
-                     the signing keys would be published to every local user for the \
-                     lifetime of the process. Use --pkcs11-pin-file <path> with a 0600 \
-                     file. Treat any PIN previously passed this way as compromised."
-                        .to_string(),
-                )
-            }
-            "--tls-cert" => tls_cert = Some(value.clone()),
-            "--client-ca" => client_ca = Some(value.clone()),
-            // #3839: repeatable and/or comma-separated CRL file paths. Splitting is the
-            // CLI's encoding; whether a resulting path names a file is the
-            // `CrlRevocation` machine's, so a trailing comma reaches it as the empty
-            // path it produced.
-            "--client-crl" => {
-                client_crl_paths.extend(value.split(',').map(str::to_string));
-            }
-            // ADR-MCPRE-051 §3: stateless HTTP inner backend URL(s) for the async
-            // serving path. Comma-separated and/or repeated, on the same terms.
-            "--inner-http-url" => {
-                inner_http_urls.extend(value.split(',').map(str::to_string));
-            }
-            // ADR-MCPRE-051 §6 (MCPRE-116): in-process CRL hot-reload cadence, in whole
-            // seconds. Whether zero is a cadence is the machine's question.
-            "--client-crl-reload-secs" => {
-                client_crl_reload_secs = Some(value.parse().map_err(|_| {
-                    "invalid --client-crl-reload-secs (expected a positive integer)".to_string()
-                })?);
-            }
-            "--trust" => trust_path = Some(value.clone()),
-            // #4030 online OCSP revocation mode.
-            "--client-ocsp" => {
-                require_online_revocation = match value.as_str() {
-                    "off" => false,
-                    "require" => true,
-                    other => return Err(format!("unknown --client-ocsp '{other}' (off|require)")),
-                }
-            }
-            // #4030 AIA-override responder URL.
-            "--ocsp-responder-url" => ocsp_responder_url = Some(value.clone()),
-            "--admission" => admission.take_strictness(value)?,
-            // ADR-MCPS-021 Axis 2: re-read the trust store on a cadence, so removing
-            // a compromised request-signer key from `--trust` takes effect without
-            // restarting every replica. `0` disables, which is the historical
-            // read-once-at-startup posture.
-            "--trust-reload-secs" => {
-                let secs: u64 = value
-                    .parse()
-                    .map_err(|_| "invalid --trust-reload-secs".to_string())?;
-                // A zero cadence has always meant the read-once posture on the command
-                // line, so it is normalised away rather than carried into a tier that would
-                // spin on it. A programmatically built request can still say `Some(0)`, and
-                // the configuration boundary still refuses it there.
-                if secs > 0 {
-                    currency.take_reload_secs(secs);
-                }
-            }
-            // ADR-MCPS-035: the per-request security record. Without this the
-            // emission points exist and nothing consumes them, so a deployment has no
-            // per-request attribution at all.
-            "--retained-evidence-dir" => retained_evidence_dir = Some(value.clone()),
-            "--audit-sink" => {
-                audit_sink = match value.as_str() {
-                    "none" => AuditSinkKind::None,
-                    "stderr" => AuditSinkKind::Stderr,
-                    other => {
-                        return Err(format!("--audit-sink must be none|stderr, got {other:?}"))
-                    }
-                }
-            }
-            // #415 rev 2 §10: the verified-context carrier. `trusted` asserts that
-            // nothing but this PEP can reach the inner server — the carrier is
-            // unsigned, so that assertion is the entire basis for the inner server
-            // trusting it, and nothing here can check it.
-            "--verified-context-carrier" => {
-                verified_context = match value.as_str() {
-                    "disabled" => VerifiedContextKind::Disabled,
-                    "trusted" => VerifiedContextKind::Trusted,
-                    other => {
-                        return Err(format!(
-                            "--verified-context-carrier must be disabled|trusted, got {other:?}"
-                        ))
-                    }
-                }
-            }
-            "--admission-authority-kid" => admission.take_authority_kid(value.clone()),
-            "--admission-authority-pubkey" => admission.take_authority_pubkey(value.clone()),
-            "--admission-redis-url" => admission.take_store_url(value.clone()),
-            "--admission-degraded-bound-secs" => admission.take_degraded_bound(value)?,
-            "--admission-allow-degraded" => admission.take_allow_degraded(value)?,
-            "--replay-redis-url" => replay_redis_url = Some(value.clone()),
-            "--continuation-control-redis-url" => {
-                continuation_control_redis_url = Some(value.clone())
-            }
-            "--trust-epoch-redis-url" => trust_epoch_redis_url = Some(value.clone()),
-            "--trust-epoch-key" => trust_epoch_key = Some(value.clone()),
-            // #69: the CP / etcd endpoint for the LINEARIZABLE durability tier.
-            "--cpstore-etcd-endpoint" => cpstore_etcd_endpoint = Some(value.clone()),
-            "--replay-durability-tier" => {
-                replay_durability_tier =
-                    Some(crate::replay_tier::ReplayDurabilityTier::parse(value)?)
-            }
-            "--revocation-tier" => currency.take_tier(value)?,
-            "--transport-binding" => peer_identity.take_form(value)?,
-            // ADR-MCPS-023 Tier 3 (issue #71): a trusted LB verification key for
-            // request-bound ingress assertions, as `<keyid>:<base64url-ed25519-pub>`.
-            // Repeatable. The key id is the opaque label the assertion stamps; the
-            // base64url body MUST decode to a valid 32-byte Ed25519 public key (a
-            // malformed key is rejected when the binding is built). An unknown key
-            // id in a presented assertion fails closed at verification.
-            "--ingress-lb-key" => {
-                let (key_id, key_b64) = value.split_once(':').ok_or_else(|| {
-                    format!(
-                        "invalid --ingress-lb-key '{value}' (expected <keyid>:<base64url-ed25519-pub>)"
-                    )
-                })?;
-                if key_id.is_empty() || key_b64.is_empty() {
-                    return Err(format!(
-                        "invalid --ingress-lb-key '{value}' (empty key id or key body)"
-                    ));
-                }
-                peer_identity.take_lb_key(key_id.to_string(), key_b64.to_string());
-            }
-            // ADR-MCPS-023 §C (Mode C): a trusted ingress-ATTESTOR verification key
-            // for `mcp-re/lb-ingress-assertion/v2` assertions, as
-            // `<keyid>:<base64url-ed25519-pub>`. Repeatable. Same shape as
-            // `--ingress-lb-key`, but a DISTINCT flag so a v1 LB key can never be
-            // mistaken for a Mode-C attestor key. Malformed body is rejected when the
-            // binding is built; an unknown key id fails closed at verification.
-            "--ingress-attestor-key" => {
-                let (key_id, key_b64) = value.split_once(':').ok_or_else(|| {
-                    format!(
-                        "invalid --ingress-attestor-key '{value}' \
-                         (expected <keyid>:<base64url-ed25519-pub>)"
-                    )
-                })?;
-                if key_id.is_empty() || key_b64.is_empty() {
-                    return Err(format!(
-                        "invalid --ingress-attestor-key '{value}' (empty key id or key body)"
-                    ));
-                }
-                peer_identity.take_attestor_key(key_id.to_string(), key_b64.to_string());
-            }
-            // ADR-MCPS-023 §C (Mode C): a trusted ingress identity. Repeatable. A v2
-            // assertion whose `ingress_identity` is not in this set fails closed.
-            "--ingress-identity" => peer_identity.take_identity(value.clone()),
-            // ADR-MCPS-023 §C (Mode C): the node's own audience; a v2 assertion's
-            // `audience` must equal it (route/audience binding).
-            "--ingress-audience" => peer_identity.take_audience(value.clone()),
-            "--transport-identity-source" => peer_identity.take_identity_field(value)?,
-            "--max-header-bytes" => {
-                limits.max_header_bytes = value
-                    .parse()
-                    .map_err(|_| "invalid --max-header-bytes".to_string())?
-            }
-            "--max-body-bytes" => {
-                limits.max_body_bytes = value
-                    .parse()
-                    .map_err(|_| "invalid --max-body-bytes".to_string())?
-            }
-            "--read-timeout-secs" => {
-                limits.read_timeout = parse_timeout(value, "--read-timeout-secs")?
-            }
-            "--request-deadline-secs" => {
-                // Aggregate wall-clock deadline over the whole server read phase
-                // (handshake + header/body); slow-loris defense, server mirror of
-                // mcp-re-transport's DeadlineStream. `0` disables (like the per-socket
-                // read timeout knob).
-                limits.request_deadline = parse_timeout(value, "--request-deadline-secs")?
-            }
-            "--write-timeout-secs" => {
-                limits.write_timeout = parse_timeout(value, "--write-timeout-secs")?
-            }
-            "--max-connections" => {
-                limits.max_concurrent_connections = value
-                    .parse()
-                    .map_err(|_| "invalid --max-connections".to_string())?;
-            }
-            // MCPRE-114: bounded per-request ADMISSION control. A ceiling always
-            // applies — `ServerLimits::default()` carries a per-core one — because
-            // without it a single client holding a valid mTLS certificate drives
-            // unbounded concurrent work, each request buffering up to
-            // --max-body-bytes BEFORE the verify gate. `--max-in-flight` overrides the
-            // per-core ceiling directly; `--max-in-flight-total` sets a fleet-wide
-            // target that async_fleet divides evenly across cores (lock-free: each
-            // core enforces only its own share). The two are ALTERNATIVES —
-            // `second_admission_limit` refuses an argument list naming both.
-            "--max-in-flight" => {
-                let n: usize = value
-                    .parse()
-                    .map_err(|_| "invalid --max-in-flight".to_string())?;
-                if n == 0 {
-                    return Err("--max-in-flight must be > 0; there is no \"no ceiling\" \
-                                setting, because unbounded in-flight requests are \
-                                attacker-controlled buffering ahead of the verify gate"
-                        .to_string());
-                }
-                second_admission_limit(in_flight_limit, "--max-in-flight")?;
-                in_flight_limit = crate::config_state::InFlightLimitRequest::PerCore(
-                    std::num::NonZeroUsize::new(n).expect("zero is refused above"),
-                );
-            }
-            // MCPRE-116 / ADR-MCPS-023 §A1: how long one mTLS connection may serve
-            // before it is gracefully closed and the peer must re-handshake. The
-            // client-cert chain, its CRL status and its validity window are checked at
-            // the handshake and NOWHERE else, so this is what bounds revocation
-            // latency for a peer that simply keeps its connection open.
-            "--max-connection-age-secs" => {
-                limits.max_connection_age = parse_timeout(value, "--max-connection-age-secs")?;
-            }
-            // MCPRE-115 (ADR-MCPRE-051 §6): the bounded drain window. Exposed because
-            // the k8s side of the invariant
-            // (`request_deadline <= drain_grace < terminationGracePeriodSeconds`,
-            // minus any preStop delay) cannot be satisfied from the chart alone while
-            // this value is a hardcoded constant.
-            "--drain-grace-secs" => {
-                limits.drain_grace = Duration::from_secs(
-                    value
-                        .parse()
-                        .map_err(|_| "invalid --drain-grace-secs".to_string())?,
-                );
-            }
-            "--max-in-flight-total" => {
-                let n: usize = value
-                    .parse()
-                    .map_err(|_| "invalid --max-in-flight-total".to_string())?;
-                if n == 0 {
-                    return Err(
-                        "--max-in-flight-total must be > 0 (omit it to keep the per-core \
-                         default ceiling)"
-                            .to_string(),
-                    );
-                }
-                second_admission_limit(in_flight_limit, "--max-in-flight-total")?;
-                in_flight_limit = crate::config_state::InFlightLimitRequest::FleetTotal(
-                    std::num::NonZeroUsize::new(n).expect("zero is refused above"),
-                );
-            }
-            "--max-client-cert-lifetime" => max_client_cert_lifetime = parse_cert_lifetime(value)?,
-            "--workers-per-shard" => {
-                // Sharding and thread count are not interchangeable: at an identical 16
-                // threads, 8 shards x 2 workers measured 19,910 rps against 44,816 for
-                // 2 shards x 8, because Tokio steals work only within one runtime.
-                workers_per_shard = value.parse().map_err(|_| {
-                    "invalid --workers-per-shard (expected a non-negative integer; \
-                     0/1 = single-threaded shard)"
-                        .to_string()
-                })?;
-            }
-            "--cores" => {
-                // ADR-MCPRE-051 §1: pin the per-core worker count. `0` = auto (one
-                // per core). An explicit count makes the 1→N linear-scaling
-                // benchmark reproducible and can cap workers below the core count.
-                cores = value.parse().map_err(|_| {
-                    "invalid --cores (expected a non-negative integer; 0 = auto)".to_string()
-                })?;
-            }
-            // ADR-MCPRE-052 §4 delegated-key TTL `T` (seconds).
-            "--delegated-ttl-secs" => {
-                delegated_ttl_secs = Some(value.parse().map_err(|_| {
-                    "invalid --delegated-ttl-secs (expected a positive integer)".to_string()
-                })?);
-            }
-            // ADR-MCPRE-052 §4 rotation-overlap window `O` (seconds; 0 < O < T).
-            "--delegated-overlap-secs" => {
-                delegated_overlap_secs = Some(value.parse().map_err(|_| {
-                    "invalid --delegated-overlap-secs (expected a positive integer)".to_string()
-                })?);
-            }
-            // ADR-MCPRE-052 §7 trust epoch minted into every credential (the hard
-            // gate). Required under delegated-required; coordinated with verifiers.
-            "--delegated-trust-epoch" => delegated_trust_epoch = Some(value.clone()),
-            // ADR-MCPRE-052: the root issuer key id the credential chains to. Defaults
-            // to --server-key-id.
-            "--delegated-issuer-kid" => delegated_issuer_kid = Some(value.clone()),
-            // ADR-MCPRE-052: the audience-scope hash the delegated key is scoped to.
-            // Defaults to --audience.
-            "--delegated-audience-hash" => delegated_audience_hash = Some(value.clone()),
-            other => return Err(format!("unknown flag {other}")),
-        }
+        flags.take(flag, value)?;
         i += 2;
     }
-
-    let require =
-        |opt: Option<String>, name: &str| opt.ok_or_else(|| format!("missing required {name}"));
-    // #59/#60/#61: which custody holds the channel key is one tagged value, and the family
-    // assembles it — including the argv contradiction of naming both arms, which no request
-    // can carry any more.
-    let (response_signing, channel_key) = signing_source.finish()?;
-
-    // ADR-MCPRE-052 §4: the rotation window an operator did not state. Applying it is the
-    // CLI's job — a default is what an omitted flag means — but choosing the values is not,
-    // so they are `DelegatedSigning`'s constants, checked there against the same
-    // `0 < overlap < ttl` guard they have to survive.
-    let delegated_ttl_secs_final = delegated_ttl_secs
-        .unwrap_or(crate::config_state::delegated_signing::DEFAULT_DELEGATED_TTL_SECS);
-    let delegated_overlap_secs_final = delegated_overlap_secs
-        .unwrap_or(crate::config_state::delegated_signing::DEFAULT_DELEGATED_OVERLAP_SECS);
-
-    let config = DeploymentRequest {
-        bind: require(bind, "--bind")?,
-        audience: require(audience, "--audience")?,
-        server_signer: require(server_signer, "--server-signer")?,
-        server_key_id: require(server_key_id, "--server-key-id")?,
-        max_clock_skew,
-        mcp_protocol_versions,
-        // The RFC 9421 `@target-uri` binding (ADR-MCPRE-050). REQUIRED; what shape it must
-        // have is [`target_uri_violation`], at the boundary.
-        target_uri: require(target_uri, "--target-uri")?,
-        // REQUIRED. It used to default to the placeholder `example.com`, which the
-        // Helm chart refuses outright as a shared-identity hazard — so the binary
-        // silently accepted the one value the chart exists to reject, and a
-        // hand-rolled or scripted deployment inherited an identity coordinate shared
-        // with every other install that also never set it.
-        trust_domain: require(trust_domain, "--trust-domain")?,
-        route,
-        response_signing,
-        channel_credential: ChannelCredentialRequest {
-            credential_chain: require(tls_cert, "--tls-cert")?,
-            key: channel_key,
-        },
-        peer_trust_anchors: require(client_ca, "--client-ca")?,
-        inner_http_urls,
-        cores,
-        workers_per_shard,
-        in_flight_limit,
-        peer_revocation: crate::deployment_request::PeerRevocationRequest {
-            lists: crate::deployment_request::RevocationListRequest {
-                paths: client_crl_paths,
-                reload_secs: client_crl_reload_secs,
-            },
-            online: revocation_flags::online_evidence(
-                require_online_revocation,
-                ocsp_responder_url,
-            )?,
-        },
-        trust_path: require(trust_path, "--trust")?,
-        admission: admission.finish()?,
-        audit_sink,
-        retained_evidence_dir,
-        verified_context,
-        replay: storage_flags::replay(
-            replay_durability_tier,
-            replay_redis_url,
-            cpstore_etcd_endpoint,
-        )?,
-        continuation_control: crate::deployment_request::ContinuationStoreRequest {
-            shared: storage_flags::shared(continuation_control_redis_url),
-        },
-        request_signer_currency: {
-            currency.take_epoch(storage_flags::trust_epoch(
-                trust_epoch_redis_url,
-                trust_epoch_key,
-            )?);
-            currency.finish()?
-        },
-        peer_identity: peer_identity.finish()?,
-        authorization: authorization.finish(),
-        allow_group_readable_key_files,
-        limits,
-        max_client_cert_lifetime,
-        fleet,
-        delegated_signing: crate::deployment_request::DelegatedSigningRequest {
-            ttl_secs: delegated_ttl_secs_final,
-            overlap_secs: delegated_overlap_secs_final,
-            trust_epoch: delegated_trust_epoch,
-            issuer_kid: delegated_issuer_kid,
-            audience_hash: delegated_audience_hash,
-        },
-    };
-
     // Whether the deployment this argument list describes is one that may run is not the
     // parser's question, and the answer is the same however the request was built. Every
     // violation is reported, not the first — a command line missing four things is worth
     // one pass, not four.
-    crate::config_state::validation::ValidatedDeployment::try_from(config)
+    crate::config_state::validation::ValidatedDeployment::try_from(flags.finish()?)
         .map(crate::config_state::validation::ValidatedDeployment::into_inner)
 }
 
@@ -1024,10 +679,10 @@ pub fn build_ocsp_checker(config: &DeploymentRequest) -> Option<crate::ocsp::Ocs
 mod tests {
     use super::build_attested_ingress_binding;
     use super::parse_args;
-    use super::AuditSinkKind;
     use super::DeploymentRequest;
     use super::IdentityPolicy;
     use crate::config_state::validation::unsafe_config_violations;
+    use crate::deployment_request::AuditSinkKind;
     use crate::deployment_request::AuthzKind;
     use crate::deployment_request::{
         AwsKmsSigningSourceRequest, GcpKmsSigningSourceRequest, Pkcs11SigningSourceRequest,

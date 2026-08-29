@@ -12,18 +12,86 @@
 //! configuration left to refuse and the parser is the one place that still sees the pair
 //! (ADR-MCPRE-067 §7, and the owner ruling on stray CLI values).
 
+use crate::deployment_request::ContinuationStoreRequest;
 use crate::deployment_request::{
     ReplayStorageRequest, ReplayStoreRequest, SharedStoreRequest, TrustEpochSource,
     TrustEpochStoreRequest,
 };
 use crate::replay_tier::ReplayDurabilityTier;
 
+/// The storage inputs, as they accumulate across the argument list.
+#[derive(Default)]
+pub(super) struct StorageFlags {
+    replay_redis_url: Option<String>,
+    cpstore_etcd_endpoint: Option<String>,
+    durability: Option<ReplayDurabilityTier>,
+    continuation_url: Option<String>,
+    trust_epoch_url: Option<String>,
+    trust_epoch_key: Option<String>,
+}
+
+/// Where one deployment's shared state lives.
+pub(super) struct SharedState {
+    pub(super) replay: ReplayStorageRequest,
+    pub(super) continuation: ContinuationStoreRequest,
+    pub(super) trust_epoch: TrustEpochStoreRequest,
+}
+
+impl StorageFlags {
+    /// Whether this value-taking flag belongs to the family.
+    pub(super) fn owns(flag: &str) -> bool {
+        matches!(
+            flag,
+            "--replay-redis-url"
+                | "--cpstore-etcd-endpoint"
+                | "--replay-durability-tier"
+                | "--continuation-control-redis-url"
+                | "--trust-epoch-redis-url"
+                | "--trust-epoch-key"
+        )
+    }
+
+    /// Read one flag of the family. [`Self::owns`] decided it is one.
+    pub(super) fn take(&mut self, flag: &str, value: &str) -> Result<(), String> {
+        let held = || Some(value.to_string());
+        match flag {
+            "--replay-redis-url" => self.replay_redis_url = held(),
+            // #69: the CP / etcd endpoint for the LINEARIZABLE durability tier.
+            "--cpstore-etcd-endpoint" => self.cpstore_etcd_endpoint = held(),
+            "--replay-durability-tier" => {
+                self.durability = Some(ReplayDurabilityTier::parse(value)?)
+            }
+            "--continuation-control-redis-url" => self.continuation_url = held(),
+            "--trust-epoch-redis-url" => self.trust_epoch_url = held(),
+            _ => self.trust_epoch_key = held(),
+        }
+        Ok(())
+    }
+
+    /// Where each role's state lives. The trust epoch is handed to the currency family
+    /// rather than kept here: only the pushing posture reads one, and that family owns the
+    /// selection it belongs to.
+    pub(super) fn finish(self) -> Result<SharedState, String> {
+        Ok(SharedState {
+            replay: replay(
+                self.durability,
+                self.replay_redis_url,
+                self.cpstore_etcd_endpoint,
+            )?,
+            continuation: ContinuationStoreRequest {
+                shared: shared(self.continuation_url),
+            },
+            trust_epoch: trust_epoch(self.trust_epoch_url, self.trust_epoch_key)?,
+        })
+    }
+}
+
 /// The replay store and the durability claimed for it.
 ///
 /// The two are independent: a deployment states a tier and states a store, and whether the
 /// store can deliver the tier is the configuration boundary's relation. What cannot be
 /// stated at all is two stores.
-pub(super) fn replay(
+fn replay(
     durability: Option<ReplayDurabilityTier>,
     redis_url: Option<String>,
     etcd_endpoint: Option<String>,
@@ -52,7 +120,7 @@ pub(super) fn replay(
 /// A key with no store names a place in a store this deployment does not have. That was
 /// CF-04 at the boundary; the coordinate now travels inside the source, so only a command
 /// line can still say it.
-pub(super) fn trust_epoch(
+fn trust_epoch(
     redis_url: Option<String>,
     key: Option<String>,
 ) -> Result<TrustEpochStoreRequest, String> {
@@ -71,7 +139,7 @@ pub(super) fn trust_epoch(
 }
 
 /// A role served by whichever shared store the operator named, or by none.
-pub(super) fn shared(url: Option<String>) -> Option<SharedStoreRequest> {
+fn shared(url: Option<String>) -> Option<SharedStoreRequest> {
     url.map(SharedStoreRequest::redis)
 }
 

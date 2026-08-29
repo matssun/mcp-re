@@ -1379,9 +1379,18 @@ scheduled**; `AGENT_INSTRUCTIONS` §9's do-not-delete / do-not-wire-up prohibiti
 
 ## EX-007 — `mcp-re-proxy/src/cli.rs` — **census complete, disposition: move the materialization out**
 
-**Status:** `reviewed-action-required`. **Measured:** 1170 production lines on `main` @
-`7ec8f92` — the registry and the campaign index both said 1177, before the ADR-MCPRE-065 §11
-authorization-flag family moved to its own child module. **Component blueprint:**
+**Status:** `reviewed-action-required`. **Measured:** 678 production lines after
+ADR-MCPRE-067 Phase 7; 1170 on `main` @ `7ec8f92` when the census was taken — and the
+registry and the campaign index both said 1177 before the ADR-MCPRE-065 §11
+authorization-flag family moved to its own child module.
+
+**ADR-MCPRE-067 Phase 7 discharged the argv-transport half of this disposition.**
+`parse_args` is **22 production lines** — orchestration over fourteen flag families, each of
+which owns one semantic question's spelling — where it was 537 and held every flag's grammar
+in one match. The ADR-MCPRE-058 §14 exception that covered it is therefore SPENT rather than
+revoked: it was granted over a 79-arm dispatch whose arms were one line each, and there is
+no such function left to except. What keeps this disposition open is the OTHER half the
+census named: capability materialization still lives here, and Phase 8 is where it moves. **Component blueprint:**
 [`components/cli-and-materialization.md`](components/cli-and-materialization.md).
 **Census issue:** [#578](https://github.com/matssun/mcp-re/issues/578) (MCPRE-142).
 

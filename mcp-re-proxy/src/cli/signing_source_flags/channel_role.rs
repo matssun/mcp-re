@@ -86,7 +86,7 @@ mod tests {
     /// this is where it is answered — the boundary has no such configuration to refuse.
     #[test]
     fn naming_both_custodies_for_one_channel_key_is_refused_by_the_adapter() {
-        let mut flags = SigningSourceFlags::new();
+        let mut flags = SigningSourceFlags::default();
         flags.take("--tls-key", "/key").expect("a value flag");
         flags
             .take("--pkcs11-tls-key-label", "tls")
@@ -104,20 +104,20 @@ mod tests {
     #[test]
     fn either_arm_alone_and_neither_are_coherent_command_lines() {
         let exported = {
-            let mut flags = SigningSourceFlags::new();
+            let mut flags = SigningSourceFlags::default();
             flags.take("--tls-key", "/key").expect("a value flag");
             flags.channel_key_request().expect("one arm is coherent")
         };
         assert!(matches!(exported, ChannelKeyRequest::ExportedFile(_)));
         let delegated = {
-            let mut flags = SigningSourceFlags::new();
+            let mut flags = SigningSourceFlags::default();
             flags
                 .take("--aws-kms-tls-key-id", "alias/tls")
                 .expect("a value flag");
             flags.channel_key_request().expect("one arm is coherent")
         };
         assert!(matches!(delegated, ChannelKeyRequest::Delegated(_)));
-        let neither = SigningSourceFlags::new()
+        let neither = SigningSourceFlags::default()
             .channel_key_request()
             .expect("naming neither is not an argv contradiction");
         assert_eq!(neither, ChannelKeyRequest::default());

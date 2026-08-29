@@ -9,10 +9,72 @@
 //! configuration-boundary clause; the pair cannot be built any more, so the parser — the
 //! one place that still sees both — answers it, with the sentence the boundary used to.
 
-use crate::deployment_request::{OcspResponderRequest, OnlineRevocationEvidenceRequest};
+use crate::deployment_request::{
+    OcspResponderRequest, OnlineRevocationEvidenceRequest, PeerRevocationRequest,
+    RevocationListRequest,
+};
+
+/// The revocation inputs, as they accumulate across the argument list.
+#[derive(Default)]
+pub(super) struct RevocationFlags {
+    list_paths: Vec<String>,
+    reload_secs: Option<u64>,
+    require_online: bool,
+    responder_url: Option<String>,
+}
+
+impl RevocationFlags {
+    /// Whether this value-taking flag belongs to the family.
+    pub(super) fn owns(flag: &str) -> bool {
+        matches!(
+            flag,
+            "--client-crl" | "--client-crl-reload-secs" | "--client-ocsp" | "--ocsp-responder-url"
+        )
+    }
+
+    /// Read one flag of the family. [`Self::owns`] decided it is one.
+    pub(super) fn take(&mut self, flag: &str, value: &str) -> Result<(), String> {
+        match flag {
+            // #3839: repeatable and/or comma-separated list paths. Splitting is the CLI's
+            // encoding; whether a resulting path names a file is the boundary's, so a
+            // trailing comma reaches it as the empty path it produced.
+            "--client-crl" => self.list_paths.extend(value.split(',').map(str::to_string)),
+            // ADR-MCPRE-051 §6 (MCPRE-116): in-process reload cadence, in whole seconds.
+            // Whether zero is a cadence is the boundary's question.
+            "--client-crl-reload-secs" => {
+                self.reload_secs = Some(value.parse().map_err(|_| {
+                    "invalid --client-crl-reload-secs (expected a positive integer)".to_string()
+                })?)
+            }
+            "--client-ocsp" => {
+                self.require_online = match value {
+                    "off" => false,
+                    "require" => true,
+                    other => return Err(format!("unknown --client-ocsp '{other}' (off|require)")),
+                }
+            }
+            _ => self.responder_url = Some(value.to_string()),
+        }
+        Ok(())
+    }
+
+    /// How this deployment establishes that a peer credential is still current.
+    ///
+    /// The two mechanisms COMPOSE, so this is a struct of both rather than a choice
+    /// between them; only the online half has a selection to assemble.
+    pub(super) fn finish(self) -> Result<PeerRevocationRequest, String> {
+        Ok(PeerRevocationRequest {
+            lists: RevocationListRequest {
+                paths: self.list_paths,
+                reload_secs: self.reload_secs,
+            },
+            online: online_evidence(self.require_online, self.responder_url)?,
+        })
+    }
+}
 
 /// Whether online revocation evidence is required, and the responder that would answer.
-pub(super) fn online_evidence(
+fn online_evidence(
     require: bool,
     responder_url: Option<String>,
 ) -> Result<OnlineRevocationEvidenceRequest, String> {

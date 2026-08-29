@@ -116,7 +116,7 @@ mod tests {
 
     /// Read a signing-source command line and assemble it.
     fn parse(pairs: &[(&str, &str)], switches: &[&str]) -> Result<(), String> {
-        let mut flags = SigningSourceFlags::new();
+        let mut flags = SigningSourceFlags::default();
         for (flag, value) in pairs {
             flags.take(flag, value)?;
         }

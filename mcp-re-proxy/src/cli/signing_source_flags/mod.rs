@@ -58,10 +58,10 @@ pub(super) struct SigningSourceFlags {
     tls_key: Option<String>,
 }
 
-impl SigningSourceFlags {
+impl Default for SigningSourceFlags {
     /// A file-backed source naming nothing, which is what an operator who set no
     /// signing-source flag has asked for.
-    pub(super) fn new() -> Self {
+    fn default() -> Self {
         SigningSourceFlags {
             mechanism: Mechanism::File,
             seed: None,
@@ -74,7 +74,9 @@ impl SigningSourceFlags {
             tls_key: None,
         }
     }
+}
 
+impl SigningSourceFlags {
     /// Whether this value-taking flag belongs to the family.
     pub(super) fn owns(flag: &str) -> bool {
         matches!(

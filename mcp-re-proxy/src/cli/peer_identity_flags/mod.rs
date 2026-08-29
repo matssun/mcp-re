@@ -15,6 +15,10 @@
 //! carries beside a form, it is the acknowledgement the attested form is BUILT from, so its
 //! absence is refused here and cannot be stated anywhere else.
 
+mod stray_value;
+
+use stray_value::split_key;
+
 use crate::deployment_request::{
     AttestedIngressRequest, ChannelCredentialIdentityRequest, IngressAssertionRequest,
     PeerIdentityEvidenceRequest, PinnedChannelAcknowledgement,
@@ -50,8 +54,57 @@ pub(super) struct PeerIdentityFlags {
 }
 
 impl PeerIdentityFlags {
+    /// Whether this value-taking flag belongs to the family.
+    pub(super) fn owns(flag: &str) -> bool {
+        matches!(
+            flag,
+            "--transport-binding"
+                | "--transport-identity-source"
+                | "--ingress-lb-key"
+                | "--ingress-attestor-key"
+                | "--ingress-identity"
+                | "--ingress-audience"
+        )
+    }
+
+    /// Read one value-taking flag of the family. [`Self::owns`] decided it is one.
+    pub(super) fn take(&mut self, flag: &str, value: &str) -> Result<(), String> {
+        match flag {
+            "--transport-binding" => self.take_form(value)?,
+            "--transport-identity-source" => self.take_identity_field(value)?,
+            // ADR-MCPS-023: a trusted verification key, as
+            // `<keyid>:<base64url-ed25519-pub>`. Repeatable. The key id is the opaque label
+            // an assertion stamps; that the body decodes to a 32-byte Ed25519 key is the
+            // configuration boundary's, and an unknown key id fails closed at verification.
+            // The two flags are DISTINCT so a Tier-3 LB key can never be mistaken for a
+            // Mode-C attestor key.
+            "--ingress-lb-key" | "--ingress-attestor-key" => {
+                let (key_id, key_b64) = split_key(flag, value)?;
+                if flag == "--ingress-lb-key" {
+                    self.take_lb_key(key_id, key_b64);
+                } else {
+                    self.take_attestor_key(key_id, key_b64);
+                }
+            }
+            // ADR-MCPS-023 §C: a trusted ingress identity (repeatable), and the node's own
+            // audience, which a v2 assertion's `audience` must equal.
+            "--ingress-identity" => self.take_identity(value.to_string()),
+            _ => self.take_audience(value.to_string()),
+        }
+        Ok(())
+    }
+
+    /// Read one valueless flag of the family, reporting whether it was one.
+    pub(super) fn take_switch(&mut self, flag: &str) -> bool {
+        if flag == "--ingress-pinned-mtls" {
+            self.take_pinned_channel();
+            return true;
+        }
+        false
+    }
+
     /// Read `--transport-binding`.
-    pub(super) fn take_form(&mut self, value: &str) -> Result<(), String> {
+    fn take_form(&mut self, value: &str) -> Result<(), String> {
         // `none` is deliberately not a selectable value: the accepted forms all bind the
         // request signer to something the node verified. `Unbound` remains a form a
         // programmatic request can name, and the configuration boundary refuses it there.
@@ -70,7 +123,7 @@ impl PeerIdentityFlags {
     }
 
     /// Read `--transport-identity-source`.
-    pub(super) fn take_identity_field(&mut self, value: &str) -> Result<(), String> {
+    fn take_identity_field(&mut self, value: &str) -> Result<(), String> {
         self.identity_field = match value {
             "uri_san" => IdentityPolicy::UriSan,
             "dns_san" => IdentityPolicy::DnsSan,
@@ -85,27 +138,27 @@ impl PeerIdentityFlags {
     }
 
     /// Read one `--ingress-lb-key`.
-    pub(super) fn take_lb_key(&mut self, key_id: String, key_b64: String) {
+    fn take_lb_key(&mut self, key_id: String, key_b64: String) {
         self.lb_keys.push((key_id, key_b64));
     }
 
     /// Read one `--ingress-attestor-key`.
-    pub(super) fn take_attestor_key(&mut self, key_id: String, key_b64: String) {
+    fn take_attestor_key(&mut self, key_id: String, key_b64: String) {
         self.attestor_keys.push((key_id, key_b64));
     }
 
     /// Read one `--ingress-identity`.
-    pub(super) fn take_identity(&mut self, identity: String) {
+    fn take_identity(&mut self, identity: String) {
         self.identities.push(identity);
     }
 
     /// Read `--ingress-audience`.
-    pub(super) fn take_audience(&mut self, audience: String) {
+    fn take_audience(&mut self, audience: String) {
         self.audience = Some(audience);
     }
 
     /// Read `--ingress-pinned-mtls`.
-    pub(super) fn take_pinned_channel(&mut self) {
+    fn take_pinned_channel(&mut self) {
         self.pinned_channel = true;
     }
 
@@ -133,57 +186,6 @@ impl PeerIdentityFlags {
                 })
             }
         })
-    }
-
-    /// A value belonging to a form this command line did not name.
-    ///
-    /// After assembly the form has nowhere to put it, so this is the last place it is
-    /// visible. The audience is checked for PRESENCE only; whether it names anything is the
-    /// configuration boundary's, because an assembled request can still carry an empty one.
-    fn stray_value_refusal(&self) -> Result<(), String> {
-        let lb = matches!(self.form, Form::IngressAssertion);
-        let attested = matches!(self.form, Form::AttestedIngress);
-        let stray: [(bool, &str); 5] = [
-            (
-                !self.lb_keys.is_empty() && !lb,
-                "--ingress-lb-key|lb-assertion",
-            ),
-            (
-                !self.attestor_keys.is_empty() && !attested,
-                "--ingress-attestor-key|attested-ingress",
-            ),
-            (
-                !self.identities.is_empty() && !attested,
-                "--ingress-identity|attested-ingress",
-            ),
-            (
-                self.audience.is_some() && !attested,
-                "--ingress-audience|attested-ingress",
-            ),
-            (
-                self.pinned_channel && !attested,
-                "--ingress-pinned-mtls|attested-ingress",
-            ),
-        ];
-        for (is_stray, case) in stray {
-            if is_stray {
-                let (flag, form) = case.split_once('|').unwrap_or((case, "exact"));
-                return Err(format!(
-                    "{flag} has no effect without --transport-binding {form}"
-                ));
-            }
-        }
-        // The acknowledgement is what the attested form is built from, so its absence is a
-        // command line that cannot name the form at all.
-        if attested && !self.pinned_channel {
-            return Err(
-                "--transport-binding attested-ingress requires --ingress-pinned-mtls: the \
-                 attestor→node hop MUST be a pinned mTLS channel (ADR-MCPS-023 §C2); \
-                 acknowledge it explicitly or do not enable attested ingress"
-                    .to_string(),
-            );
-        }
-        Ok(())
     }
 }
 

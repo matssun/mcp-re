@@ -12,10 +12,9 @@
 //! value SAYS: an authority that names nothing, or a key that does not decode, is still the
 //! configuration boundary's.
 
-use crate::deployment_request::{
-    AdmissionAvailabilityRequest, AdmissionGateRequest, AdmissionRequest, SharedStoreRequest,
-};
-use std::num::NonZeroU64;
+mod availability;
+
+use crate::deployment_request::{AdmissionGateRequest, AdmissionRequest, SharedStoreRequest};
 
 /// How strictly the gate is applied, before its inputs are known.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -38,8 +37,34 @@ pub(super) struct AdmissionFlags {
 }
 
 impl AdmissionFlags {
+    /// Whether this value-taking flag belongs to the family.
+    pub(super) fn owns(flag: &str) -> bool {
+        matches!(
+            flag,
+            "--admission"
+                | "--admission-authority-kid"
+                | "--admission-authority-pubkey"
+                | "--admission-redis-url"
+                | "--admission-degraded-bound-secs"
+                | "--admission-allow-degraded"
+        )
+    }
+
+    /// Read one flag of the family. [`Self::owns`] decided it is one.
+    pub(super) fn take(&mut self, flag: &str, value: &str) -> Result<(), String> {
+        match flag {
+            "--admission" => self.take_strictness(value)?,
+            "--admission-authority-kid" => self.take_authority_kid(value.to_string()),
+            "--admission-authority-pubkey" => self.take_authority_pubkey(value.to_string()),
+            "--admission-redis-url" => self.take_store_url(value.to_string()),
+            "--admission-degraded-bound-secs" => self.take_degraded_bound(value)?,
+            _ => self.take_allow_degraded(value)?,
+        }
+        Ok(())
+    }
+
     /// Read `--admission`.
-    pub(super) fn take_strictness(&mut self, value: &str) -> Result<(), String> {
+    fn take_strictness(&mut self, value: &str) -> Result<(), String> {
         self.strictness = match value {
             "off" => Strictness::Off,
             "optional" => Strictness::Optional,
@@ -54,40 +79,18 @@ impl AdmissionFlags {
     }
 
     /// Read `--admission-authority-kid`.
-    pub(super) fn take_authority_kid(&mut self, value: String) {
+    fn take_authority_kid(&mut self, value: String) {
         self.authority_kid = Some(value);
     }
 
     /// Read `--admission-authority-pubkey`.
-    pub(super) fn take_authority_pubkey(&mut self, value: String) {
+    fn take_authority_pubkey(&mut self, value: String) {
         self.authority_pubkey_b64url = Some(value);
     }
 
     /// Read `--admission-redis-url`.
-    pub(super) fn take_store_url(&mut self, value: String) {
+    fn take_store_url(&mut self, value: String) {
         self.store_url = Some(value);
-    }
-
-    /// Read `--admission-degraded-bound-secs`.
-    pub(super) fn take_degraded_bound(&mut self, value: &str) -> Result<(), String> {
-        self.degraded_bound_secs = Some(value.parse().map_err(|_| {
-            format!("--admission-degraded-bound-secs must be an integer, got {value:?}")
-        })?);
-        Ok(())
-    }
-
-    /// Read `--admission-allow-degraded`.
-    pub(super) fn take_allow_degraded(&mut self, value: &str) -> Result<(), String> {
-        self.allow_degraded = Some(match value {
-            "true" => true,
-            "false" => false,
-            other => {
-                return Err(format!(
-                    "--admission-allow-degraded must be true|false, got {other:?}"
-                ))
-            }
-        });
-        Ok(())
     }
 
     /// The admission form this command line names, with its own inputs.
@@ -155,38 +158,6 @@ impl AdmissionFlags {
             );
         }
         Ok(())
-    }
-
-    /// What this deployment does when the authority is unreachable.
-    ///
-    /// The two illegal cells of the old table are refused here because only a command line
-    /// can state them: a bound where nothing reads it, and a degraded window of zero width.
-    /// After assembly the availability is one tagged value and the bound is a `NonZeroU64`.
-    fn availability(&self) -> Result<AdmissionAvailabilityRequest, String> {
-        if self.allow_degraded != Some(true) {
-            if self.degraded_bound_secs.is_some_and(|bound| bound != 0) {
-                return Err(
-                    "--admission-degraded-bound-secs is set but --admission-allow-degraded \
-                     is false; the bound is read only when degraded mode is on, so this \
-                     window can never open. Pass --admission-allow-degraded true to use it, \
-                     or remove it to fail closed on an unreachable authority"
-                        .to_string(),
-                );
-            }
-            return Ok(AdmissionAvailabilityRequest::FailClosed);
-        }
-        let bound = self.degraded_bound_secs.unwrap_or(0);
-        let bound_secs = u64::try_from(bound)
-            .ok()
-            .and_then(NonZeroU64::new)
-            .ok_or_else(|| {
-                "--admission-degraded-bound-secs must be > 0 when --admission-allow-degraded \
-                 is true: the PEP serves an unreachable authority for P + --max-clock-skew \
-                 seconds, so a zero P still admits a revoked workload for the skew tolerance \
-                 while claiming no window was configured"
-                    .to_string()
-            })?;
-        Ok(AdmissionAvailabilityRequest::Degraded { bound_secs })
     }
 }
 

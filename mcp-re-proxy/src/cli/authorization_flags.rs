@@ -17,14 +17,16 @@ pub(super) struct AuthorizationFlags {
     request: AuthorizationRequest,
 }
 
-impl AuthorizationFlags {
+impl Default for AuthorizationFlags {
     /// Nothing selected, no parameters supplied.
-    pub(super) fn new() -> Self {
+    fn default() -> Self {
         AuthorizationFlags {
             request: AuthorizationRequest::off(),
         }
     }
+}
 
+impl AuthorizationFlags {
     /// Whether this flag belongs to the family.
     pub(super) fn owns(flag: &str) -> bool {
         matches!(
@@ -102,7 +104,7 @@ mod tests {
     fn taken(
         pairs: &[(&str, &str)],
     ) -> Result<crate::deployment_request::AuthorizationRequest, String> {
-        let mut flags = AuthorizationFlags::new();
+        let mut flags = AuthorizationFlags::default();
         for (flag, value) in pairs {
             flags.take(flag, value)?;
         }

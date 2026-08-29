@@ -35,14 +35,39 @@ impl Default for CurrencyFlags {
 }
 
 impl CurrencyFlags {
+    /// Whether this value-taking flag belongs to the family.
+    pub(super) fn owns(flag: &str) -> bool {
+        matches!(flag, "--revocation-tier" | "--trust-reload-secs")
+    }
+
+    /// Read one flag of the family. [`Self::owns`] decided it is one.
+    pub(super) fn take(&mut self, flag: &str, value: &str) -> Result<(), String> {
+        if flag == "--revocation-tier" {
+            return self.take_tier(value);
+        }
+        // ADR-MCPS-021 Axis 2: re-read the trust store on a cadence, so removing a
+        // compromised request-signer key from `--trust` takes effect without restarting
+        // every replica. A zero cadence has always meant the read-once posture on the
+        // command line, so it is normalised away rather than carried into a tier that would
+        // spin on it. A programmatically built request can still say `Some(0)`, and the
+        // configuration boundary still refuses it there.
+        let secs: u64 = value
+            .parse()
+            .map_err(|_| "invalid --trust-reload-secs".to_string())?;
+        if secs > 0 {
+            self.take_reload_secs(secs);
+        }
+        Ok(())
+    }
+
     /// Read `--revocation-tier`.
-    pub(super) fn take_tier(&mut self, value: &str) -> Result<(), String> {
+    fn take_tier(&mut self, value: &str) -> Result<(), String> {
         self.tier = RevocationTier::parse(value)?;
         Ok(())
     }
 
     /// Read `--trust-reload-secs`.
-    pub(super) fn take_reload_secs(&mut self, secs: u64) {
+    fn take_reload_secs(&mut self, secs: u64) {
         self.reload_secs = Some(secs);
     }
 

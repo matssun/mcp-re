@@ -154,7 +154,7 @@ review_ref = "EX-006 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/cli.rs"
-baseline_prod_loc = 1170
+baseline_prod_loc = 678
 baseline_sha = "7ec8f92"
 status = "reviewed-action-required"
 review_ref = "EX-007 in docs/architecture/review-dispositions.md"
@@ -305,7 +305,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/tls_plane.rs"
-baseline_prod_loc = 679
+baseline_prod_loc = 678
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
