@@ -782,11 +782,6 @@ pub(crate) mod fault_accept_any {
     }
 }
 
-/// Reading the configured CRL files, which is a TLS concern and was a CLI one.
-///
-/// It moved here with `ChannelEstablishmentPlan`: the TLS plane is the only caller, and reaching for it
-/// through `cli` was the last thing keeping a configuration module named in a plane that
-/// no longer takes configuration.
 #[cfg(test)]
 mod delegated_credential_key_correspondence_tests {
     //! ADR-MCPRE-063 Slice 2 — characterization of the credential/key correspondence
