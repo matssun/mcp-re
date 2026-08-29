@@ -1355,7 +1355,7 @@ fn load_harness_smoke() {
         // proxy signs with a short-lived DELEGATED key that chains to the root
         // (`SERVER_KEY_ID`) via an inline credential. `server_resolve` anchors that root
         // on the Response slot; the delegated verifier follows the credential to it.
-        let expectation = ResponseExpectation::for_signed(signed);
+        let expectation = ResponseExpectation::for_signed(&signed);
         let policy = DelegationPolicy::new(
             vec![AUDIENCE.to_string()],
             AUDIENCE,
