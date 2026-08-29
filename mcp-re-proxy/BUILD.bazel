@@ -404,6 +404,7 @@ _PROXY_LIB_SRCS = [
     "src/reloading_trust.rs",
     # Per-request client-cert revocation: the revoked-serial index the serving path
     # consults on every request, since rustls consults the CRLs at the handshake alone.
+    "src/client_crl_publication.rs",
     "src/client_revocation.rs",
     "src/stage_timers.rs",
     "src/blocking_mtls_harness/connection.rs",

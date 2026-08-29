@@ -92,7 +92,7 @@ status = "unreviewed"
 # ESTABLISHED and c81df3e never contained a 1013-line tls.rs.
 [[debt]]
 path = "mcp-re-proxy/src/tls.rs"
-baseline_prod_loc = 867
+baseline_prod_loc = 680
 baseline_sha = "94fcc0a"
 status = "reviewed-action-required"
 review_ref = "EX-004 in docs/architecture/review-dispositions.md"

@@ -780,6 +780,53 @@ It is an exception for **this file at this size**, not for the subtree and not f
 `tls.rs` — EX-004 stays `reviewed-action-required` until #574 lands and its census is
 re-run. Review granularity equals exception granularity.
 
+### EX-004 re-census on the current tree, 2026-08-29
+
+**Measured: 679 production lines**, down from 1907 at the census and 867 at the registered
+baseline. The old census's implementation map is stale as a map — ADR-MCPRE-063 and
+ADR-MCPRE-067 moved several of its candidate authorities out — so this re-run measures what
+is actually there rather than re-deriving the old list.
+
+| candidate authority (original census) | where it is now |
+|---|---|
+| identity interpretation | **left** — `transport/identity.rs`, ADR-MCPRE-063 Slice 1 |
+| delegated resolver validation | **left** — `delegated_tls::DelegatedCertResolver::materialize`; what remains here is one refusal rendering |
+| CRL mechanism posture | **left in this pass** — `client_crl_publication` |
+| serving/options vocabulary | **stays** — `ServerLimits`, `ServerOptions`, `TlsError`, the ingress-assertion header name |
+| per-request peer admission | **stays** — `served_channel_peer`, `authenticated_peer`, `currency_policy` |
+| header hygiene | **stays** — the ingress-assertion header extraction, fail-closed on duplicates |
+| shared refusal vocabulary | **stays** — `transport_binding_failure`, four lines |
+
+**The extraction this pass made, and why its owner was obvious.** `CrlFreshness`,
+`CrlPosture`, `crl_posture`, `crl_freshness`, `crl_next_update_required` and
+`load_client_crls` read a PUBLISHED RFC 5280 document and classify what it says about its own
+currency. **The serving path never calls any of them** — the sole consumer is
+`tls_plane`, at startup and on reload. They sat in the listener module without the listener
+using them, which is what made the boundary obvious rather than a judgement call.
+
+They are a top-level owner rather than a child of `client_revocation` for a reason the
+ratchet surfaced: adding a child would have grown that registered facade, and the two are
+siblings rather than parent and child anyway — `client_revocation` matches a peer's serial
+against a loaded index per REQUEST, and this reads a document's own freshness at STARTUP.
+Different consumers, different instants, different questions.
+
+The names stay CRL-named. This is a mechanism leaf and ADR-MCPRE-067 §3 says so.
+
+### §8 question 2 on the remainder — **ONE**, and it is returned as a §14 candidate
+
+What is left is *what one TLS listener is configured with, and what it decides about the peer
+on one served request*. The options vocabulary is that listener's configuration; the peer
+admission is that listener's per-request question, and it is already a FACADE — it parses no
+certificate, compares no clock, consults no CRL and decides no identity, because
+ADR-MCPRE-064's authorities own all four. The header extraction and the refusal rendering are
+that same request's transport boundary.
+
+Question 1 needs no "and" that spans two subjects: *this listener, this request*. The
+original census's answer needed one, and the three authorities that made it need one have
+left.
+
+**Returned as a candidate §14 reviewed exception at 679 lines.** Not granted here.
+
 ## EX-004 — `mcp-re-http-profile/src/scitt.rs` — **census complete, disposition: decompose**
 
 **Status:** `reviewed-action-required`. **Measured:** 1629 production lines on `main` @

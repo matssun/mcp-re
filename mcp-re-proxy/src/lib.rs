@@ -176,6 +176,9 @@ pub mod revocation_tier;
 // revocation authority; fail-closed on store/revocation outage.
 /// Per-request client-certificate revocation — what makes a warm connection safe to
 /// keep, since rustls consults the CRLs at the handshake and never again.
+/// What a PUBLISHED client CRL says about its own currency — read at startup and on
+/// reload by `tls_plane`, never on the serving path.
+pub mod client_crl_publication;
 pub mod client_revocation;
 /// The re-readable trust store the revocation tiers resolve against — what makes
 /// "the store is consulted on every verification" a true statement about a running
