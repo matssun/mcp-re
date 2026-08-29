@@ -860,9 +860,9 @@ nt_rust_test(
         "MCP_RE_APP_SRC": "$(rlocationpath src/app.rs)",
         "MCP_RE_HTTP_PROFILE_SERVE_SRC": "$(rlocationpath src/http_profile_serve/mod.rs)",
         "MCP_RE_DELEGATED_WIRING_SRC": "$(rlocationpath src/delegated_wiring.rs)",
-        "MCP_RE_REPLAY_PLANE_SRC": "$(rlocationpath src/replay_plane.rs)",
-        "MCP_RE_SIGNING_PLANE_SRC": "$(rlocationpath src/signing_plane.rs)",
-        "MCP_RE_TLS_PLANE_SRC": "$(rlocationpath src/tls_plane.rs)",
+        "MCP_RE_REPLAY_PLANE_SRC": "$(rlocationpath src/replay_plane/mod.rs)",
+        "MCP_RE_SIGNING_PLANE_SRC": "$(rlocationpath src/signing_plane/mod.rs)",
+        "MCP_RE_TLS_PLANE_SRC": "$(rlocationpath src/tls_plane/mod.rs)",
         "MCP_RE_TRUST_PLANE_SRC": "$(rlocationpath src/trust_plane/mod.rs)",
     },
     deps = [

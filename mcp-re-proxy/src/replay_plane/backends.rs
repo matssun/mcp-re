@@ -29,8 +29,9 @@ pub(super) fn establish_etcd(
     {
         eprintln!("mcp-re-proxy: replay tier = shared (CP/linearizable; async etcd backend)");
         eprintln!("mcp-re-proxy: {}", tier.startup_audit_line("etcd"));
-        let store =
-            Arc::new(crate::async_etcd_store::EtcdAsyncAtomicReplayStore::connect(endpoint));
+        let store = std::sync::Arc::new(
+            crate::async_etcd_store::EtcdAsyncAtomicReplayStore::connect(endpoint),
+        );
         return Ok((
             AsyncReplayTier::new(store, freshness),
             ProxyDispatchConfig {
@@ -85,7 +86,7 @@ pub(super) fn establish_redis(
             store = store.with_wait_quorum(quorum, timeout_ms);
         }
         return Ok((
-            AsyncReplayTier::new(Arc::new(store), freshness),
+            AsyncReplayTier::new(std::sync::Arc::new(store), freshness),
             ProxyDispatchConfig {
                 fleet_strict: true,
                 tier: Some(tier.clone()),

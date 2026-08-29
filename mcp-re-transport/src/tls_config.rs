@@ -106,7 +106,7 @@ impl ClientTlsConfig {
                 .map_err(|e| TransportError::Config(e.to_string()))?
                 .dangerous()
                 .with_custom_certificate_verifier(Arc::new(
-                    fault_accept_any::AcceptAnyServerVerifier::new(provider),
+                    crate::fault_accept_any::AcceptAnyServerVerifier::new(provider),
                 ))
                 .with_client_auth_cert(client_chain, client_key)
                 .map_err(|e| TransportError::Config(e.to_string()))?
