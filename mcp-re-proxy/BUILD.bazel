@@ -182,6 +182,13 @@ _PROXY_LIB_SRCS = [
     "src/deployment_request/signing_source/mod.rs",
     "src/deployment_request/signing_source/pkcs11_source.rs",
     "src/deployment_request/signing_source/response_role.rs",
+    "src/cli/storage_flags.rs",
+    "src/deployment_request/storage/admission_storage.rs",
+    "src/deployment_request/storage/continuation_storage.rs",
+    "src/deployment_request/storage/mod.rs",
+    "src/deployment_request/storage/replay_storage.rs",
+    "src/deployment_request/storage/shared_store.rs",
+    "src/deployment_request/storage/trust_epoch_storage.rs",
     # ADR-MCPS-028 §C: native GCP Cloud KMS Ed25519 response signer (blocking ureq
     # HTTPS + OAuth2 bearer; behind #[cfg(feature = "gcp_kms_keysource")], cfg'd out
     # of the default build). No async google-cloud SDK (ADR-MCPS-018 lean-sync).

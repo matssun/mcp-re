@@ -125,7 +125,7 @@ async fn main() {
                 {
                     let mut store = RedisAtomicReplayStore::connect(&url)
                         .unwrap_or_else(|e| panic!("connect redis {url}: {e:?}"));
-                    if let ReplayDurabilityTier::RedisWaitQuorum { quorum, timeout_ms } = tier {
+                    if let ReplayDurabilityTier::QuorumAcknowledged { quorum, timeout_ms } = tier {
                         store = store.with_wait_quorum(quorum, timeout_ms);
                     }
                     eprintln!("{}", tier.startup_audit_line("redis"));

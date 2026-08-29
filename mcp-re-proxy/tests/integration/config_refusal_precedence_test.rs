@@ -182,7 +182,7 @@ fn the_boundary_refuses_in_this_order() {
     config.limits.write_timeout = None;
     config.limits.request_deadline = None;
     config.identity_source = IdentityPolicy::CnLegacy;
-    config.replay_durability_tier = None;
+    config.replay.durability = None;
     config.binding = BindingKind::None;
 
     let order = keys(&mcp_re_proxy::config_state::validation::unsafe_config_violations(&config));
@@ -305,7 +305,7 @@ fn the_boundary_reports_every_violation_not_the_first() {
     let mut config = legal();
     config.authorization.kind = AuthzKind::Reference;
     config.identity_source = IdentityPolicy::CnLegacy;
-    config.replay_durability_tier = None;
+    config.replay.durability = None;
 
     let refusal = mcp_re_proxy::config_state::validation::ValidatedDeployment::try_from(config)
         .expect_err("three violations must refuse");

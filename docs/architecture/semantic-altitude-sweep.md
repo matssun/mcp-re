@@ -75,7 +75,7 @@ is a genuine violation by the replacement test; none is Phase 2's.
 | ~~`tls::IdentityStrategy::DirectTls`, `startup_plan::identity_strategy`~~ | how the peer's identity reaches this node | **3 — done** |
 | ~~`startup_plan::TlsPlan`~~ | what must hold to establish authenticated channels | **3 — done** |
 | `materializing_runtime::install_tls` / `tls` | ruled a mechanism leaf: it installs a `TlsPlane`, and a rustls plane is entitled to say so | **3 — ruled** |
-| `DeploymentRequest`'s 5 Redis/etcd locator fields | where shared replay, continuation and admission state live | 4 |
+| ~~`DeploymentRequest`'s 5 Redis/etcd locator fields~~ | where shared replay, continuation, admission and trust-epoch state live | **4 — done** |
 | `config_state::transport::CrlRevocationState`, `crl_posture`, `crl_plan` | the credential-currency posture and its latency bound | 5 |
 | `deployment_request::OcspKind`, `config_state::validation::residue::ocsp_*` | whether online revocation evidence is required | 5 |
 | `key_source::KeySource`'s `tls_server_cert_chain` / `tls_server_key` / `client_ca_roots` | ruled a mechanism leaf in Phase 3: the trait returns rustls types to a rustls listener, so its proposition genuinely IS "a rustls signing key used by a TLS listener". Only its LOCATION moves | 8 |
@@ -102,6 +102,28 @@ The custody fact is REUSED, not duplicated: both roles project the Phase-2
 `PrivateKeyExposure`, and a test asserts they answer the same question with different
 values for one fixture — which is what keeps the roles separate owners that share a
 projection rather than one owner with two names.
+
+### B.4 — what Phase 4 produced
+
+Four semantic roles, four owners, one shared mechanism payload. That three of them are
+usually served by the same Redis is a deployment choice, not evidence that they are one
+fact — so the sharing is at the mechanism layer and nowhere above it.
+
+| before | after |
+|---|---|
+| `replay_redis_url` + `cpstore_etcd_endpoint` + `replay_durability_tier` | `replay: ReplayStorageRequest { durability, store: Option<ReplayStoreRequest> }` — one store slot |
+| `continuation_control_redis_url` | `continuation_control: ContinuationStoreRequest { shared: Option<SharedStoreRequest> }` |
+| `admission_redis_url` | `admission_store: AdmissionStoreRequest` |
+| `trust_epoch_redis_url` + `trust_epoch_key` | `trust_epoch: TrustEpochStoreRequest`, the key INSIDE `TrustEpochSource` |
+| `ReplayDurabilityTier::RedisWaitQuorum` / `RedisAsyncBounded` | `QuorumAcknowledged` / `AsyncReplicatedBounded` — the `wire_name()` and `guarantee()` strings are unchanged, because those are an ADR-MCPS-020 published vocabulary and not a type name |
+| the replay `SharedRedis`/`SharedLinearizable` forbidden columns (2 refusals) | **deleted** — one store slot, so naming one backend is how the other stops being named. What is left is one relation: a store that cannot deliver the declared tier |
+| CF-04, the trust-epoch key with no store | **deleted** — the coordinate travels inside the source |
+
+Both deleted clauses had an argv form that survives, and `cli::storage_flags` answers both
+with the sentences the boundary used to.
+
+`SharedStoreRequest` is a one-variant enum on purpose: it is the seam a second backend
+arrives at, and its three consumers already read a selection rather than a Redis URL.
 
 ### C — mechanism-selection boundary (legitimate; a provider name is correct here)
 

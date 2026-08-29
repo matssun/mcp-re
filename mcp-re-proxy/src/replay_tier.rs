@@ -35,15 +35,15 @@
 /// asserted by the operator for the rest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReplayDurabilityTier {
-    /// Async Redis replication + failover (vanilla Sentinel/Cluster). Replay-safe
-    /// in steady state; a failover or restart-with-state-loss may reopen a replay
-    /// window bounded by the freshness window. Cheap, standard ops.
-    RedisAsyncBounded,
+    /// Asynchronous replication + failover (Redis Sentinel/Cluster today). Replay-safe in
+    /// steady state; a failover or restart-with-state-loss may reopen a replay window
+    /// bounded by the freshness window.
+    AsyncReplicatedBounded,
 
-    /// Redis `SET NX` + `WAIT <quorum> <timeout>`. Materially reduces failover
-    /// replay risk; a `WAIT` timeout or insufficient acks fail closed. **Not**
-    /// linearizable / not unconditional. Per-call latency cost.
-    RedisWaitQuorum {
+    /// Durable once a quorum of replicas has acknowledged the insert within a bound, and
+    /// fails closed otherwise (Redis `SET NX` + `WAIT <q> <t>` today). **Not**
+    /// linearizable. Per-call latency cost.
+    QuorumAcknowledged {
         /// Replica acknowledgements required before the insert is considered
         /// durable (the `numreplicas` argument to Redis `WAIT`).
         quorum: u32,
@@ -79,7 +79,7 @@ impl ReplayDurabilityTier {
     pub fn parse(value: &str) -> Result<ReplayDurabilityTier, String> {
         let lower = value.trim().to_lowercase();
         match lower.as_str() {
-            "redis-async" => Ok(ReplayDurabilityTier::RedisAsyncBounded),
+            "redis-async" => Ok(ReplayDurabilityTier::AsyncReplicatedBounded),
             "linearizable" => Ok(ReplayDurabilityTier::Linearizable),
             "single-store-fail-closed" => Ok(ReplayDurabilityTier::SingleStoreFailClosed),
             other => {
@@ -121,17 +121,17 @@ impl ReplayDurabilityTier {
                         "redis-wait-quorum takes exactly ':<quorum>:<timeout_ms>' (got '{value}')"
                     ));
                 }
-                Ok(ReplayDurabilityTier::RedisWaitQuorum { quorum, timeout_ms })
+                Ok(ReplayDurabilityTier::QuorumAcknowledged { quorum, timeout_ms })
             }
         }
     }
 
-    /// The semantic wire name operators quote (ADR-MCPS-020). Stable, uppercase,
-    /// backend-agnostic — used in config, startup logs, and audit records.
+    /// The wire name operators quote (ADR-MCPS-020) — a PUBLISHED vocabulary, so it does
+    /// not move when a type name does. Two spell Redis, which is a fact about that ADR.
     pub fn wire_name(&self) -> &'static str {
         match self {
-            ReplayDurabilityTier::RedisAsyncBounded => "REDIS_ASYNC",
-            ReplayDurabilityTier::RedisWaitQuorum { .. } => "REDIS_WAIT_QUORUM",
+            ReplayDurabilityTier::AsyncReplicatedBounded => "REDIS_ASYNC",
+            ReplayDurabilityTier::QuorumAcknowledged { .. } => "REDIS_WAIT_QUORUM",
             ReplayDurabilityTier::Linearizable => "LINEARIZABLE",
             ReplayDurabilityTier::SingleStoreFailClosed => "SINGLE_STORE_FAIL_CLOSED",
         }
@@ -144,11 +144,11 @@ impl ReplayDurabilityTier {
     /// "unconditional".
     pub fn guarantee(&self) -> &'static str {
         match self {
-            ReplayDurabilityTier::RedisAsyncBounded => {
+            ReplayDurabilityTier::AsyncReplicatedBounded => {
                 "replay-safe in steady state; a failover or restart-with-state-loss \
                  may reopen a replay window bounded by the freshness window"
             }
-            ReplayDurabilityTier::RedisWaitQuorum { .. } => {
+            ReplayDurabilityTier::QuorumAcknowledged { .. } => {
                 "materially reduced failover replay risk; WAIT timeout or insufficient \
                  acks fail closed; not linearizable / not unconditional"
             }
@@ -189,7 +189,7 @@ impl ReplayDurabilityTier {
     pub fn meets_strict_production_minimum(&self) -> bool {
         matches!(
             self,
-            ReplayDurabilityTier::RedisWaitQuorum { .. } | ReplayDurabilityTier::Linearizable
+            ReplayDurabilityTier::QuorumAcknowledged { .. } | ReplayDurabilityTier::Linearizable
         )
     }
 
@@ -203,10 +203,10 @@ impl ReplayDurabilityTier {
     /// "WAIT timeout or insufficient acks fail closed".
     pub fn wait_quorum_params(&self) -> Option<(u32, u64)> {
         match self {
-            ReplayDurabilityTier::RedisWaitQuorum { quorum, timeout_ms } => {
+            ReplayDurabilityTier::QuorumAcknowledged { quorum, timeout_ms } => {
                 Some((*quorum, *timeout_ms))
             }
-            ReplayDurabilityTier::RedisAsyncBounded
+            ReplayDurabilityTier::AsyncReplicatedBounded
             | ReplayDurabilityTier::Linearizable
             | ReplayDurabilityTier::SingleStoreFailClosed => None,
         }
@@ -219,8 +219,8 @@ mod tests {
 
     fn all_tiers() -> Vec<ReplayDurabilityTier> {
         vec![
-            ReplayDurabilityTier::RedisAsyncBounded,
-            ReplayDurabilityTier::RedisWaitQuorum {
+            ReplayDurabilityTier::AsyncReplicatedBounded,
+            ReplayDurabilityTier::QuorumAcknowledged {
                 quorum: 1,
                 timeout_ms: 200,
             },
@@ -233,7 +233,7 @@ mod tests {
     fn parse_round_trips_the_simple_tiers() {
         assert_eq!(
             ReplayDurabilityTier::parse("redis-async"),
-            Ok(ReplayDurabilityTier::RedisAsyncBounded)
+            Ok(ReplayDurabilityTier::AsyncReplicatedBounded)
         );
         assert_eq!(
             ReplayDurabilityTier::parse("LINEARIZABLE"),
@@ -249,7 +249,7 @@ mod tests {
     fn parse_wait_quorum_extracts_quorum_and_timeout() {
         assert_eq!(
             ReplayDurabilityTier::parse("redis-wait-quorum:2:500"),
-            Ok(ReplayDurabilityTier::RedisWaitQuorum {
+            Ok(ReplayDurabilityTier::QuorumAcknowledged {
                 quorum: 2,
                 timeout_ms: 500
             })
@@ -269,11 +269,11 @@ mod tests {
     #[test]
     fn wire_names_are_the_semantic_adr_names() {
         assert_eq!(
-            ReplayDurabilityTier::RedisAsyncBounded.wire_name(),
+            ReplayDurabilityTier::AsyncReplicatedBounded.wire_name(),
             "REDIS_ASYNC"
         );
         assert_eq!(
-            ReplayDurabilityTier::RedisWaitQuorum {
+            ReplayDurabilityTier::QuorumAcknowledged {
                 quorum: 2,
                 timeout_ms: 500
             }
@@ -302,7 +302,7 @@ mod tests {
             Some((3, 750))
         );
         for tier in [
-            ReplayDurabilityTier::RedisAsyncBounded,
+            ReplayDurabilityTier::AsyncReplicatedBounded,
             ReplayDurabilityTier::Linearizable,
             ReplayDurabilityTier::SingleStoreFailClosed,
         ] {
@@ -363,17 +363,17 @@ mod tests {
         // The tier-claim ceiling: a REDIS_ASYNC deployment's surfaced guarantee is
         // its own bounded-window claim, never the LINEARIZABLE one.
         assert_ne!(
-            ReplayDurabilityTier::RedisAsyncBounded.guarantee(),
+            ReplayDurabilityTier::AsyncReplicatedBounded.guarantee(),
             ReplayDurabilityTier::Linearizable.guarantee()
         );
-        assert!(ReplayDurabilityTier::RedisAsyncBounded
+        assert!(ReplayDurabilityTier::AsyncReplicatedBounded
             .guarantee()
             .contains("bounded by the freshness window"));
     }
 
     #[test]
     fn startup_audit_line_carries_backend_tier_and_guarantee_no_nonce() {
-        let line = ReplayDurabilityTier::RedisWaitQuorum {
+        let line = ReplayDurabilityTier::QuorumAcknowledged {
             quorum: 2,
             timeout_ms: 500,
         }
@@ -387,14 +387,14 @@ mod tests {
 
     #[test]
     fn strict_production_minimum_is_wait_quorum_or_stronger() {
-        assert!(ReplayDurabilityTier::RedisWaitQuorum {
+        assert!(ReplayDurabilityTier::QuorumAcknowledged {
             quorum: 1,
             timeout_ms: 100
         }
         .meets_strict_production_minimum());
         assert!(ReplayDurabilityTier::Linearizable.meets_strict_production_minimum());
         // Weaker tiers do NOT meet the strict-production minimum.
-        assert!(!ReplayDurabilityTier::RedisAsyncBounded.meets_strict_production_minimum());
+        assert!(!ReplayDurabilityTier::AsyncReplicatedBounded.meets_strict_production_minimum());
         assert!(!ReplayDurabilityTier::SingleStoreFailClosed.meets_strict_production_minimum());
     }
 }

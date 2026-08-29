@@ -152,7 +152,10 @@ mod tests {
         let mut config = crate::config_state::test_support::legal_config();
         config.revocation_tier = crate::revocation_tier::RevocationTier::Push { t_secs: 30 };
         config.trust_reload_secs = Some(15);
-        config.trust_epoch_redis_url = Some("redis://127.0.0.1:6379".to_string());
+        config.trust_epoch.source = Some(crate::deployment_request::TrustEpochSource::redis(
+            "redis://127.0.0.1:6379",
+            None,
+        ));
         ValidatedDeployment::try_from(config).expect("a legal push-networked deployment")
     }
 

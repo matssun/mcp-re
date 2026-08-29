@@ -282,7 +282,7 @@ pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<AdmissionSta
         config.admission,
         config.admission_authority_kid.as_deref(),
         config.admission_authority_pubkey_b64url.as_deref(),
-        config.admission_redis_url.as_deref(),
+        config.admission_store.locator(),
         config.admission_allow_degraded,
         config.admission_degraded_bound_secs,
     ) {
@@ -519,7 +519,9 @@ mod tests {
         config.admission = kind;
         config.admission_authority_kid = Some("authority-1".to_string());
         config.admission_authority_pubkey_b64url = Some(valid_pubkey());
-        config.admission_redis_url = Some("redis://127.0.0.1:6379".to_string());
+        config.admission_store.authoritative = Some(
+            crate::deployment_request::SharedStoreRequest::redis("redis://127.0.0.1:6379"),
+        );
     }
 
     /// A real key, since the guard decodes it to a curve point rather than shape-checking:
@@ -615,7 +617,7 @@ mod tests {
     fn a_refused_configuration_recognises_no_state() {
         let (state, violations) = run(|c| {
             enforcing(c, AdmissionKind::Required);
-            c.admission_redis_url = None;
+            c.admission_store.authoritative = None;
         });
         assert!(state.is_none(), "a state was built over a refusal");
         assert!(!violations.is_empty());
@@ -644,7 +646,7 @@ mod tests {
             }),
             ("--admission-redis-url", |c| {
                 enforcing(c, AdmissionKind::Required);
-                c.admission_redis_url = None;
+                c.admission_store.authoritative = None;
             }),
         ];
         for (flag, mutate) in cases {
@@ -680,7 +682,9 @@ mod tests {
             }) as fn(&mut DeploymentRequest),
             |c: &mut DeploymentRequest| c.admission_authority_pubkey_b64url = Some(valid_pubkey()),
             |c: &mut DeploymentRequest| {
-                c.admission_redis_url = Some("redis://127.0.0.1:6379".to_string())
+                c.admission_store.authoritative = Some(
+                    crate::deployment_request::SharedStoreRequest::redis("redis://127.0.0.1:6379"),
+                )
             },
         ] {
             let (state, violations) = run(|c| {

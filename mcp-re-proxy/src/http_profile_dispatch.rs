@@ -318,7 +318,7 @@ mod tests {
     #[test]
     fn a_sub_minimum_tier_is_refused_before_the_store_is_touched() {
         for tier in [
-            ReplayDurabilityTier::RedisAsyncBounded,
+            ReplayDurabilityTier::AsyncReplicatedBounded,
             ReplayDurabilityTier::SingleStoreFailClosed,
         ] {
             let cache = WitnessCache::new();

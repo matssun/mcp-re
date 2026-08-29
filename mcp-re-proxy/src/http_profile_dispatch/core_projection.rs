@@ -53,7 +53,7 @@ mod tests {
     fn an_unusable_tier_and_an_undeclared_one_are_one_verdict() {
         assert_eq!(
             McpReError::from(&ProxyDispatchError::SubMinimumReplayTier(
-                ReplayDurabilityTier::RedisAsyncBounded
+                ReplayDurabilityTier::AsyncReplicatedBounded
             )),
             McpReError::from(&ProxyDispatchError::NoDeclaredReplayTier)
         );

@@ -1476,6 +1476,13 @@ assumptions = []
 # Both directions of each witness rule: the states that REQUIRE a cadence carry one and are
 # refused without it, and the one state whose cadence is OPTIONAL keeps both postures — so
 # a green lane cannot mean the witness rule was over-applied.
+#
+# One witness left this unit rather than this list: the epoch KEY beside no epoch store was
+# a column here (CF-04) until ADR-MCPRE-067 Phase 4 moved the coordinate inside
+# `TrustEpochSource`, where a key with no store cannot be constructed. The proposition is
+# stronger and it is no longer this classifier's, so it is not restated here — its evidence
+# lives with the type, in `deployment_request::storage::trust_epoch_storage`, and with the
+# CLI adapter that still sees the argv form.
 tested_symbols = [
   "lib#config_state::trust_revocation::tests::live_and_push_require_a_cadence",
   "lib#config_state::trust_revocation::tests::bounded_cache_does_not_require_a_cadence",
@@ -1485,7 +1492,6 @@ tested_symbols = [
   "lib#config_state::trust_revocation::tests::a_programmatic_config_cannot_spin_the_trust_reloader",
   "lib#config_state::trust_revocation::tests::the_epoch_source_is_what_splits_push_in_two",
   "lib#config_state::trust_revocation::tests::an_epoch_source_under_a_tier_that_cannot_consume_it_is_refused",
-  "lib#config_state::trust_revocation::tests::an_epoch_key_without_an_epoch_store_is_refused",
   "lib#config_state::trust_revocation::tests::push_networked_requires_its_url_to_be_a_url",
   "lib#config_state::trust_document::tests::a_locator_that_names_nothing_resolves_no_source",
   "lib#config_state::trust_document::tests::the_stored_path_is_the_operators_string_verbatim",
