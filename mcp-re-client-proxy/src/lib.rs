@@ -18,7 +18,10 @@
 pub mod manifest_floor;
 pub mod proxy;
 pub mod route;
+
 pub mod transport;
+/// What a VERIFIED outcome means to a plain MCP client.
+mod verified_outcome;
 
 pub use manifest_floor::FileManifestFloor;
 pub use proxy::CallParams;

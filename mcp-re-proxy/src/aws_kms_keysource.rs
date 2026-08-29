@@ -195,50 +195,49 @@ impl KmsHttpClient for UreqKmsClient {
         if let Some(token) = &signed.security_token {
             req = req.set("X-Amz-Security-Token", token);
         }
+        read_kms_response(req.send_bytes(body))
+    }
+}
 
-        // Transport / non-2xx failures are NotFound (could not obtain material from
-        // the source), mirroring the PKCS#11 backend's convention. KMS's JSON error
-        // body is surfaced for diagnosis.
-        match req.send_bytes(body) {
-            Ok(resp) => {
-                // Bound the success-path read: the KMS endpoint is operator-
-                // overridable (`--aws-kms-endpoint`), so a substituted/MITM endpoint
-                // could otherwise stream an arbitrarily large body and drive unbounded
-                // memory growth on the blocking signing thread. A GetPublicKey/Sign
-                // JSON response is well under a KB; cap at 256 KiB like the GCP sibling
-                // and fail closed if the body exceeds the cap.
-                let mut buf = Vec::new();
-                resp.into_reader()
-                    // Read cap+1 so a body whose length is EXACTLY the cap is
-                    // accepted; only a body strictly larger (len > cap) is rejected.
-                    .take(MAX_KMS_RESPONSE_BYTES + 1)
-                    .read_to_end(&mut buf)
-                    .map_err(|e| {
-                        RemoteSignerFailure::rendered(KeyError::NotFound(format!(
-                            "aws-kms: read response body: {e}"
-                        )))
-                    })?;
-                if buf.len() as u64 > MAX_KMS_RESPONSE_BYTES {
-                    return Err(RemoteSignerFailure::malformed(format!(
-                        "aws-kms: response body exceeds {MAX_KMS_RESPONSE_BYTES}-byte cap"
-                    )));
-                }
-                Ok(buf)
+/// Read what KMS answered — a `NotFound` for transport and non-2xx failures, mirroring the
+/// PKCS#11 backend, with KMS's JSON error body surfaced for diagnosis.
+///
+/// BOTH bodies are capped, and the second is why this is its own function: the endpoint is
+/// operator-overridable (`--aws-kms-endpoint`), so a substituted or MITM one could stream an
+/// arbitrarily large body and grow memory without bound on the blocking signing thread.
+/// Capping only the success path left that trivially bypassable — the same endpoint controls
+/// this path by returning any non-2xx status, and `into_string()` reads ~10 MiB.
+fn read_kms_response(
+    outcome: Result<ureq::Response, ureq::Error>,
+) -> Result<Vec<u8>, RemoteSignerFailure> {
+    match outcome {
+        Ok(resp) => {
+            // A GetPublicKey/Sign JSON response is well under a KB; cap at 256 KiB like
+            // the GCP sibling and fail closed if the body exceeds the cap.
+            let mut buf = Vec::new();
+            resp.into_reader()
+                // Read cap+1 so a body whose length is EXACTLY the cap is
+                // accepted; only a body strictly larger (len > cap) is rejected.
+                .take(MAX_KMS_RESPONSE_BYTES + 1)
+                .read_to_end(&mut buf)
+                .map_err(|e| {
+                    RemoteSignerFailure::rendered(KeyError::NotFound(format!(
+                        "aws-kms: read response body: {e}"
+                    )))
+                })?;
+            if buf.len() as u64 > MAX_KMS_RESPONSE_BYTES {
+                return Err(RemoteSignerFailure::malformed(format!(
+                    "aws-kms: response body exceeds {MAX_KMS_RESPONSE_BYTES}-byte cap"
+                )));
             }
-            Err(ureq::Error::Status(code, resp)) => {
-                // The SUCCESS path above is capped for a stated reason — a substituted or
-                // operator-overridden endpoint must not be able to drive unbounded memory
-                // growth on the blocking signing thread. That endpoint controls this branch
-                // just as fully, by returning any non-2xx status, so `into_string()`'s
-                // ~10 MiB read left the guard trivially bypassable. Bounded like the GCP
-                // sibling's `read_error_body`.
-                Err(RemoteSignerFailure::status_body(
-                    code,
-                    read_error_body(resp),
-                ))
-            }
-            Err(e) => Err(RemoteSignerFailure::transport(format!("transport: {e}"))),
+            Ok(buf)
         }
+        // Bounded like the GCP sibling's `read_error_body`.
+        Err(ureq::Error::Status(code, resp)) => Err(RemoteSignerFailure::status_body(
+            code,
+            read_error_body(resp),
+        )),
+        Err(e) => Err(RemoteSignerFailure::transport(format!("transport: {e}"))),
     }
 }
 

@@ -332,6 +332,9 @@ fn bearer_token(authorization_header: &str) -> Option<&str> {
     }
 }
 
+/// The checks that cannot be expressed in the type.
+mod validation;
+
 impl ClientConfig {
     /// Parse a configuration document.
     pub fn from_json(bytes: &[u8]) -> Result<Self, ConfigError> {
@@ -354,144 +357,17 @@ impl ClientConfig {
     /// Public because every field of this struct is public and the type derives
     /// `Deserialize`: a consumer that builds or mutates a config rather than going
     /// through [`ClientConfig::from_json`] must be able to re-establish the invariant,
+    /// The checks that cannot be expressed in the type: non-empty collections, unique
+    /// route ids, a resolvable binding source, and the loopback guard.
+    ///
+    /// Public because every field of this struct is public and the type derives
+    /// `Deserialize`: a consumer that builds or mutates a config rather than going
+    /// through [`ClientConfig::from_json`] must be able to re-establish the invariant,
     /// and [`crate::build`] runs it on whatever it is handed for the same reason.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if !self.local.allow_non_loopback && !self.local.bind.ip().is_loopback() {
-            return Err(err(format!(
-                "local.bind {} is not a loopback address. The local leg is \
-                 unauthenticated, so binding it off-host offers this client's signing \
-                 key as a service to the network. Set local.allow_non_loopback if that \
-                 is genuinely intended.",
-                self.local.bind
-            )));
-        }
-        if self.local.request_lifetime_secs <= 0 {
-            return Err(err("local.request_lifetime_secs must be positive"));
-        }
-        if self.local.max_in_flight == 0 {
-            return Err(err("local.max_in_flight must be positive"));
-        }
-        if self.trust.org_keys.is_empty() {
-            return Err(err(
-                "trust.org_keys is empty: a client that pins no manifest-signing key \
-                 accepts a trust-anchor manifest signed by anyone",
-            ));
-        }
-        if self.delegation.verifier_audiences.is_empty() {
-            return Err(err("delegation.verifier_audiences is empty"));
-        }
-        if self.delegation.accepted_epochs.is_empty() {
-            return Err(err("delegation.accepted_epochs is empty"));
-        }
-        if !(0..=MAX_CLOCK_SKEW_SECS).contains(&self.delegation.max_clock_skew) {
-            return Err(err(format!(
-                "delegation.max_clock_skew {} is outside 0..={MAX_CLOCK_SKEW_SECS}. The value \
-                 widens the delegated credential's nbf/exp window directly, so an unbounded one \
-                 accepts a server credential long past its exp — while the response-signature \
-                 freshness gate silently reverts to the profile default, leaving no symptom",
-                self.delegation.max_clock_skew
-            )));
-        }
-        if !(1..=MAX_MANIFEST_RELOAD_SECS).contains(&self.trust.reload_secs) {
-            return Err(err(format!(
-                "trust.reload_secs {} is outside 1..={MAX_MANIFEST_RELOAD_SECS}. Withdrawing \
-                 anchors whose manifest has passed its expires_at happens in a refresh cycle and \
-                 nowhere else, so 0 leaves an expired trust picture verifying forever and a long \
-                 cadence is how long it keeps doing so",
-                self.trust.reload_secs
-            )));
-        }
-        if self.routes.is_empty() {
-            return Err(err("routes is empty"));
-        }
-        if let Some(default_route) = &self.local.default_route {
-            if !self.routes.iter().any(|r| &r.route_id == default_route) {
-                return Err(err(format!(
-                    "local.default_route {default_route:?} names no configured route"
-                )));
-            }
-        }
-        let mut seen = std::collections::HashSet::new();
-        for route in &self.routes {
-            if !seen.insert(route.route_id.as_str()) {
-                return Err(err(format!(
-                    "duplicate route_id {:?}: a later route would silently replace an \
-                     earlier one, including its bindings",
-                    route.route_id
-                )));
-            }
-            if route.artifact_bindings.is_empty() {
-                return Err(err(format!(
-                    "route {:?} has no artifact_bindings; the server rejects a request \
-                     whose evidence block carries none",
-                    route.route_id
-                )));
-            }
-            for binding in &route.artifact_bindings {
-                if let BindingSource::Header { name } = &binding.source {
-                    let Some(header) = route
-                        .extra_headers
-                        .iter()
-                        .find(|h| h.name.eq_ignore_ascii_case(name))
-                    else {
-                        return Err(err(format!(
-                            "route {:?} binds header {name:?}, which it does not send: \
-                             the binding would digest nothing the server sees",
-                            route.route_id
-                        )));
-                    };
-                    if binding.artifact_type == ArtifactType::OauthDpop
-                        && bearer_token(&header.value).is_none()
-                    {
-                        return Err(err(format!(
-                            "route {:?} binds an oauth-dpop artifact to header {name:?}, whose \
-                             value is not a Bearer credential: the verifier digests the token \
-                             after the Bearer scheme, so there is nothing here it can match",
-                            route.route_id
-                        )));
-                    }
-                }
-                match (binding.artifact_type, &binding.source) {
-                    // The verifier takes the DPoP credential from the request's covered
-                    // `Authorization` header, never from anything the caller restates, so
-                    // that header is the only place a digest can commit to transmitted
-                    // bytes. A literal or a file digests a value that only has to match
-                    // by coincidence — the binding-to-nothing this type documents.
-                    (ArtifactType::OauthDpop, BindingSource::Header { name })
-                        if !name.eq_ignore_ascii_case(AUTHORIZATION) =>
-                    {
-                        return Err(err(format!(
-                            "route {:?} binds an oauth-dpop artifact to header {name:?}; the \
-                             verifier reads the access token from {AUTHORIZATION:?} and no \
-                             other header",
-                            route.route_id
-                        )))
-                    }
-                    (ArtifactType::OauthDpop, BindingSource::Header { .. }) => {}
-                    (ArtifactType::OauthDpop, _) => {
-                        return Err(err(format!(
-                            "route {:?} sources an oauth-dpop artifact from config rather than \
-                             from the {AUTHORIZATION:?} header it sends: the digest would cover \
-                             a restated value the request need not carry, which is a binding to \
-                             nothing",
-                            route.route_id
-                        )))
-                    }
-                    // The mTLS binding commits to the DER of the client certificate the
-                    // TLS layer presents. A literal cannot be that, at any length.
-                    (ArtifactType::OauthMtls, BindingSource::Literal { .. }) => {
-                        return Err(err(format!(
-                            "route {:?} sources an oauth-mtls artifact from a literal; the \
-                             binding must digest the DER of the client certificate this client \
-                             presents, which config text cannot restate",
-                            route.route_id
-                        )))
-                    }
-                    _ => {}
-                }
-            }
-        }
-        Ok(())
+        validation::check_local(&self.local)?;
+        validation::check_trust_and_delegation(self)?;
+        validation::check_routes(self)
     }
 }
 

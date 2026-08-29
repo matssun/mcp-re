@@ -13,6 +13,11 @@
 # `clippy::unwrap_used` is absent by design: it was measured at 0 production sites across
 # the workspace and is denied at zero. The first production `unwrap` fails the gate.
 #
+# `too_many_lines` reached 0 across every crate in MCPRE-175 and its entries are kept at 0
+# rather than removed: an entry at zero is a measured fact that the campaign closed the
+# backlog, and removing it would make the next long function look like a file nobody had
+# ever counted.
+#
 # WHEN YOU TOUCH AN `arithmetic_side_effects` SITE, there are three legitimate outcomes
 # (ADR-MCPRE-061 §6.6). Pick the one that is true; do not pick the quiet one:
 #   1. overflow is a real possibility -> checked_add/checked_sub/checked_mul, handled;
@@ -51,7 +56,7 @@ count = 0
 [[debt]]
 crate = "mcp-re-client-proxy"
 lint = "excessive_nesting"
-count = 5
+count = 2
 
 [[debt]]
 crate = "mcp-re-client-proxy"
@@ -61,7 +66,7 @@ count = 1
 [[debt]]
 crate = "mcp-re-client-proxy"
 lint = "too_many_lines"
-count = 1
+count = 0
 
 [[debt]]
 crate = "mcp-re-client"
@@ -86,7 +91,7 @@ count = 5
 [[debt]]
 crate = "mcp-re-client"
 lint = "too_many_lines"
-count = 3
+count = 0
 
 [[debt]]
 crate = "mcp-re-core"
@@ -126,12 +131,12 @@ count = 1
 [[debt]]
 crate = "mcp-re-http-profile"
 lint = "arithmetic_side_effects"
-count = 29
+count = 28
 
 [[debt]]
 crate = "mcp-re-http-profile"
 lint = "excessive_nesting"
-count = 30
+count = 18
 
 [[debt]]
 crate = "mcp-re-http-profile"
@@ -141,12 +146,12 @@ count = 8
 [[debt]]
 crate = "mcp-re-http-profile"
 lint = "indexing_slicing"
-count = 10
+count = 9
 
 [[debt]]
 crate = "mcp-re-http-profile"
 lint = "too_many_lines"
-count = 7
+count = 0
 
 [[debt]]
 crate = "mcp-re-proxy"
@@ -156,7 +161,7 @@ count = 42
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "excessive_nesting"
-count = 92
+count = 87
 
 [[debt]]
 crate = "mcp-re-proxy"
@@ -171,7 +176,7 @@ count = 40
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "too_many_lines"
-count = 9
+count = 0
 
 [[debt]]
 crate = "mcp-re-test-paths"
@@ -201,4 +206,4 @@ count = 3
 [[debt]]
 crate = "mcp-re-transport"
 lint = "too_many_lines"
-count = 1
+count = 0
