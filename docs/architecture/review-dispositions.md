@@ -1281,7 +1281,7 @@ ended (`tls.rs` was reported 679 and is 674; `response.rs` was reported 367 and 
 | `mcp-re-proxy/src/transport/ingress/v2.rs` | 673 | EX-005 |
 | `mcp-re-proxy/src/tls.rs` | 674 | EX-004 |
 | `mcp-re-client-core/src/response.rs` | 362 | EX-010 |
-| `mcp-re-proxy/src/http_profile_serve/mod.rs` | 1108 | EX-010 |
+| `mcp-re-proxy/src/http_profile_serve/mod.rs` | 529 | EX-010 |
 | `mcp-re-proxy/src/key_source.rs` | 359 | EX-008 |
 | `mcp-re-proxy/src/kms_keysource/mod.rs` | 202 | EX-008 |
 | `mcp-re-proxy/src/gcp_kms_keysource.rs` | 1143 | EX-008 |
@@ -1300,9 +1300,9 @@ about one served request; one verification proposition reached by two carriers; 
 composition root; one custody seam; one protocol mapping; one provider adapter and the
 authentication machinery its operations require.
 
-**Size ordered the reviews; it did not decide them.** `http_profile_serve/mod.rs` at 1108
-lines is the largest unit in the tree and is granted, while nothing in the `unreviewed` tail
-is granted anything — because the censuses are what differ, not the line counts.
+**Size ordered the reviews; it did not decide them.** `http_profile_serve/mod.rs` was the
+largest unit in the tree when it was granted, while nothing in the `unreviewed` tail is
+granted anything — because the censuses are what differ, not the line counts.
 
 ### What a file-level grant does NOT cover
 
@@ -1315,12 +1315,13 @@ over the 60-line trigger and neither has a §14 record:
 | `http_profile_serve::HttpProfileProxy::handle` | **218** | the serving pipeline assembly |
 | `aws_kms_keysource::…::post_kms` | 62 | two lines over |
 
-Both are held by `scripts/clippy_ratchet_gate.py` at their baseline and neither may grow.
-`handle` is the one worth naming: the file-level grant rests on it being ASSEMBLY, and a
-218-line assembly is exactly the unit a function-level census would examine next. That is
-recorded here rather than opened, because no such census was asked for.
+Both were held by `scripts/clippy_ratchet_gate.py` at their baseline and neither could grow.
+`handle` was the one worth naming: the file-level grant rests on it being ASSEMBLY, and a
+218-line assembly is exactly the unit a function-level census examines next.
 
-The other seven granted files contain no function over the trigger.
+**That census was performed on 2026-08-29 (MCPRE-175) and DECLINED an exception**, which is
+what the entry below records. The other seven granted files contain no function over the
+trigger.
 
 ## EX-010 — the two theorem-owner roots — **re-censused 2026-08-29, both returned as §14 candidates**
 
@@ -1381,14 +1382,44 @@ The two longest remaining methods were checked for a hidden authority and neithe
 `answer_notification` calls the profile's `sign_delegated_accepted_202` and mints a response.
 Both are wiring, and their owners are next door.
 
-**GRANTED 2026-08-29** at the measured **1108** production lines (`b142a7a`), and it is the
-largest unit in the tree. ONE assembly/composition authority: it owns stage ordering, which
-owner is invoked next, the execution threshold, and the assembly of the serving pipeline — and
-it does not re-decide stage semantics. Size ordered its review; it did not overrule the
-authority census.
+**GRANTED 2026-08-29** at the measured **1108** production lines (`b142a7a`). ONE
+assembly/composition authority: it owns stage ordering, which owner is invoked next, the
+execution threshold, and the assembly of the serving pipeline — and it does not re-decide
+stage semantics. Size ordered its review; it did not overrule the authority census.
 
-The grant is FILE-level. `handle` at **218** lines is over the function trigger, carries no
-§14 record of its own, and is held at its baseline by the clippy ratchet.
+The grant is FILE-level, and the function-level census it deferred was performed the same
+day.
+
+#### The `handle` census (MCPRE-175) — an exception DECLINED, and the work done
+
+`handle` at 218 lines was asked the §8 questions on its own, and question 2 answered
+**four**, not one. The assembly is one authority, but it is a *sequence of regions*, and the
+regions are independently describable by what the exchange has SPENT when each finishes:
+
+| region | what has been spent | now |
+|---|---|---|
+| pre-admission | nothing — every refusal is free | `pre_admission/` |
+| answering commitment | a nonce, and a human's approval | `answering_commitment.rs` |
+| dispatch commitment | a durable retention marker | `dispatch_commitment.rs` |
+| post-dispatch | the backend has acted | `reply_assembly/` |
+
+That is a real seam, not a line count: it is the same distinction the request relation
+already encodes, and each region's ordering claim is only true *within* the region. So
+**outcome A — decompose** — and the regions moved into the owner's own subtree, where the
+declaration line is absorbed by the file that is shrinking.
+
+`handle` is now **56** lines and reads as the complete state progression. The file fell
+**1108 → 529** production lines, and the registry baseline moved with it. The FILE-level
+grant above stands on the same census; nothing here re-opens it.
+
+Two things changed shape in the move and are worth naming:
+
+- `SignedReply` carries the reply CLASS, not the terminal event. The class is what the
+  classifier read; which terminal it selects stays the assembly's statement, made where the
+  reply is served — so `exchange_transition_ownership_test` can still see it.
+- That test's scope became **the serving path**, not `mod.rs`. A scan of the assembly file
+  alone would have reported a clean pass over a pipeline that had mostly moved elsewhere.
+  A gate's scope is part of its measurement.
 
 ## EX-006 — `mcp-re-proxy/src/ocsp.rs` — **census complete; actions 1 and 2 landed; the protocol remainder is a reviewed exception**
 

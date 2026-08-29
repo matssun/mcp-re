@@ -61,8 +61,8 @@
 # response-signing authority that already owned the refusal half: 1146 -> 1108.
 [[debt]]
 path = "mcp-re-proxy/src/http_profile_serve/mod.rs"
-baseline_prod_loc = 1108
-baseline_sha = "b142a7a"
+baseline_prod_loc = 529
+baseline_sha = "255465e"
 status = "reviewed-exception"
 review_ref = "EX-010 in docs/architecture/review-dispositions.md"
 

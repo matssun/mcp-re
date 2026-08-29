@@ -60,6 +60,41 @@ pub(super) const SOURCE_FALLBACKS: &[(&str, &str)] = &[
         "MCP_RE_HTTP_PROFILE_SERVE_SRC",
         "mcp-re-proxy/src/http_profile_serve/mod.rs",
     ),
+    // The pipeline's regions. The transition-ownership rule's scope is THE SERVING
+    // PATH, not one file of it: a region that kept its own `advance` beside a stage
+    // would otherwise be out of scope and the guard would report a clean pass.
+    (
+        "MCP_RE_SERVE_PRE_ADMISSION_SRC",
+        "mcp-re-proxy/src/http_profile_serve/pre_admission/mod.rs",
+    ),
+    (
+        "MCP_RE_SERVE_PRE_ADMISSION_STANDING_SRC",
+        "mcp-re-proxy/src/http_profile_serve/pre_admission/standing.rs",
+    ),
+    (
+        "MCP_RE_SERVE_PRE_ADMISSION_ACTION_SRC",
+        "mcp-re-proxy/src/http_profile_serve/pre_admission/action.rs",
+    ),
+    (
+        "MCP_RE_SERVE_ANSWERING_COMMITMENT_SRC",
+        "mcp-re-proxy/src/http_profile_serve/answering_commitment.rs",
+    ),
+    (
+        "MCP_RE_SERVE_DISPATCH_COMMITMENT_SRC",
+        "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs",
+    ),
+    (
+        "MCP_RE_SERVE_REPLY_ASSEMBLY_SRC",
+        "mcp-re-proxy/src/http_profile_serve/reply_assembly/mod.rs",
+    ),
+    (
+        "MCP_RE_SERVE_REPLY_NOTIFICATION_SRC",
+        "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs",
+    ),
+    (
+        "MCP_RE_SERVE_REPLY_ACCEPTED_SRC",
+        "mcp-re-proxy/src/http_profile_serve/reply_assembly/accepted.rs",
+    ),
     (
         "MCP_RE_TRUST_PLANE_SRC",
         "mcp-re-proxy/src/trust_plane/mod.rs",

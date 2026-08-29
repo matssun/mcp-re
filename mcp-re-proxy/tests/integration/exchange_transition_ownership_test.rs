@@ -34,15 +34,16 @@
 
 use std::collections::BTreeSet;
 
-/// The transitions `handle` states itself, and why each is the assembly's fact.
+/// The transitions the assembly states itself, and why each is the assembly's fact.
 ///
 /// A stage establishes what its own work justifies. These six are not any stage's: they
 /// are established by the shape of the pipeline around the stages, so there is no function
-/// whose success could carry them.
+/// whose success could carry them. "The assembly" is `handle` together with its region
+/// functions — the code that COMPOSES stages rather than performing one.
 const ASSEMBLY_OWNED: &[(&str, &str)] = &[
     (
         "ContinuationRetired",
-        "decided by `handle` from a `Retirement`, not by the store call: three of the four \
+        "decided by the answering-commitment region from a `Retirement`, not by the \
          outcomes do not proceed, and which of them spends a human's approval is a fact \
          about the exchange rather than about the call",
     ),
@@ -70,7 +71,7 @@ const ASSEMBLY_OWNED: &[(&str, &str)] = &[
     ),
     (
         "OpenLegResponseServed",
-        "the other terminal, chosen from the same reply class. Both are `handle` deciding \
+        "the other terminal, chosen from the same reply class. Both are the assembly \
          which claim this reply makes, not a step either of them performs",
     ),
 ];
@@ -120,16 +121,42 @@ fn production_half(source: &str) -> String {
     mcp_re_test_paths::rust_source::production_half(source)
 }
 
+/// Every source file of the serving path — the assembly and each of its regions.
+///
+/// The property is about THE SERVING PATH, not about one file of it. When the pipeline
+/// became one module per region, a scan of `mod.rs` alone would have reported a clean pass
+/// over an assembly that no longer contains most of the pipeline, and a region that kept an
+/// `advance` beside a stage would simply have been out of scope. A gate's scope is part of
+/// its measurement.
+const SERVING_PATH: &[&str] = &[
+    "MCP_RE_HTTP_PROFILE_SERVE_SRC",
+    "MCP_RE_SERVE_PRE_ADMISSION_SRC",
+    "MCP_RE_SERVE_PRE_ADMISSION_STANDING_SRC",
+    "MCP_RE_SERVE_PRE_ADMISSION_ACTION_SRC",
+    "MCP_RE_SERVE_ANSWERING_COMMITMENT_SRC",
+    "MCP_RE_SERVE_DISPATCH_COMMITMENT_SRC",
+    "MCP_RE_SERVE_REPLY_ASSEMBLY_SRC",
+    "MCP_RE_SERVE_REPLY_NOTIFICATION_SRC",
+    "MCP_RE_SERVE_REPLY_ACCEPTED_SRC",
+];
+
 fn serving_source() -> String {
-    let path = mcp_re_test_paths::resolve_runfile("MCP_RE_HTTP_PROFILE_SERVE_SRC");
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"))
+    let mut whole = String::new();
+    for key in SERVING_PATH {
+        let path = mcp_re_test_paths::resolve_runfile(key);
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+        // Each file's production half separately: concatenating first would let one file's
+        // unterminated test region swallow the next file's production code.
+        whole.push_str(&mcp_re_test_paths::rust_source::production_half(&text));
+        whole.push('\n');
+    }
+    whole
 }
 
 /// A stage's event is never also stated by the assembly.
 #[test]
 fn no_transition_a_stage_establishes_is_also_advanced_by_the_serving_path() {
-    let source = serving_source();
-    let production = production_half(&source);
+    let production = serving_source();
     let production = production.as_str();
     let by_stages = events_named_in(production, "Established::new(");
     let by_assembly = events_named_in(production, ".advance(");
@@ -152,9 +179,8 @@ fn no_transition_a_stage_establishes_is_also_advanced_by_the_serving_path() {
 /// The assembly states exactly the six transitions that are its own.
 #[test]
 fn the_serving_path_states_only_the_assembly_s_own_transitions() {
-    let source = serving_source();
     let declared: BTreeSet<String> = ASSEMBLY_OWNED.iter().map(|(e, _)| e.to_string()).collect();
-    let actual = events_named_in(&production_half(&source), ".advance(");
+    let actual = events_named_in(&serving_source(), ".advance(");
 
     let undeclared: Vec<&String> = actual.difference(&declared).collect();
     assert!(
