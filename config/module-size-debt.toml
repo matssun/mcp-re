@@ -62,8 +62,9 @@
 [[debt]]
 path = "mcp-re-proxy/src/http_profile_serve/mod.rs"
 baseline_prod_loc = 1108
-baseline_sha = "f0fc5d8"
-status = "unreviewed"
+baseline_sha = "b142a7a"
+status = "reviewed-exception"
+review_ref = "EX-010 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/tls_listener_state/mod.rs"
@@ -92,9 +93,9 @@ status = "unreviewed"
 # ESTABLISHED and c81df3e never contained a 1013-line tls.rs.
 [[debt]]
 path = "mcp-re-proxy/src/tls.rs"
-baseline_prod_loc = 680
-baseline_sha = "94fcc0a"
-status = "reviewed-action-required"
+baseline_prod_loc = 674
+baseline_sha = "b142a7a"
+status = "reviewed-exception"
 review_ref = "EX-004 in docs/architecture/review-dispositions.md"
 
 # EX-003's disposition is implemented. `verify.rs` no longer exists: 1373 production lines
@@ -143,15 +144,15 @@ review_ref = "EX-005 in docs/architecture/review-dispositions.md"
 [[debt]]
 path = "mcp-re-proxy/src/transport/ingress/v1.rs"
 baseline_prod_loc = 334
-baseline_sha = "94fcc0a"
-status = "reviewed-action-required"
+baseline_sha = "b142a7a"
+status = "reviewed-exception"
 review_ref = "EX-005 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/transport/ingress/v2.rs"
 baseline_prod_loc = 673
-baseline_sha = "94fcc0a"
-status = "reviewed-action-required"
+baseline_sha = "b142a7a"
+status = "reviewed-exception"
 review_ref = "EX-005 in docs/architecture/review-dispositions.md"
 
 # EX-006 action 1: the outbound-fetch/SSRF authority — which is not RFC 6960's — left for
@@ -188,9 +189,9 @@ review_ref = "EX-007 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/gcp_kms_keysource.rs"
-baseline_prod_loc = 1149
-baseline_sha = "d1fc5fa"
-status = "reviewed-action-required"
+baseline_prod_loc = 1143
+baseline_sha = "b142a7a"
+status = "reviewed-exception"
 review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 
 # The registered 1108 was already stale by 87 lines: PR #673 made delegated-response trust
@@ -216,9 +217,10 @@ review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 # The SHA moves with the number.
 [[debt]]
 path = "mcp-re-client-core/src/response.rs"
-baseline_prod_loc = 368
-baseline_sha = "5d35191"
-status = "unreviewed"
+baseline_prod_loc = 362
+baseline_sha = "b142a7a"
+status = "reviewed-exception"
+review_ref = "EX-010 in docs/architecture/review-dispositions.md"
 
 # MCPRE-154 relocated the shutdown-drain authority and the EX-002 census was re-run on the
 # result: one authority remains and it is the composition root itself, so the disposition
@@ -318,9 +320,9 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/aws_kms_keysource.rs"
-baseline_prod_loc = 694
-baseline_sha = "d1fc5fa"
-status = "reviewed-action-required"
+baseline_prod_loc = 668
+baseline_sha = "b142a7a"
+status = "reviewed-exception"
 review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 
 [[debt]]
@@ -555,8 +557,8 @@ status = "unreviewed"
 [[debt]]
 path = "mcp-re-proxy/src/key_source.rs"
 baseline_prod_loc = 359
-baseline_sha = "d1fc5fa"
-status = "reviewed-action-required"
+baseline_sha = "b142a7a"
+status = "reviewed-exception"
 review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 
 [[debt]]
@@ -717,8 +719,8 @@ status = "unreviewed"
 # that owner's refusal into the KMS key vocabulary.
 path = "mcp-re-proxy/src/kms_keysource/mod.rs"
 baseline_prod_loc = 202
-baseline_sha = "1b31c60"
-status = "reviewed-action-required"
+baseline_sha = "b142a7a"
+status = "reviewed-exception"
 review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 
 [[debt]]

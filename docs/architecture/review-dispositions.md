@@ -825,7 +825,11 @@ Question 1 needs no "and" that spans two subjects: *this listener, this request*
 original census's answer needed one, and the three authorities that made it need one have
 left.
 
-**Returned as a candidate §14 reviewed exception at 679 lines.** Not granted here.
+~~**Returned as a candidate §14 reviewed exception.** Not granted here.~~ — **GRANTED
+2026-08-29** at the measured **674** production lines (`b142a7a`). The re-census answers ONE
+authority: *what one TLS listener is configured with, and what it decides about the peer on
+one served request.* Identity interpretation, delegated resolver validation and CRL
+publication have all left for their owners.
 
 ## EX-004 — `mcp-re-http-profile/src/scitt.rs` — **census complete, disposition: decompose**
 
@@ -1139,7 +1143,7 @@ Identity policy, header view, routing-header hygiene and the binding capability 
 aspects of one request's relation to its channel. The exception does **not** extend to
 `ingress/`, which is a different capability with the opposite change rule.
 
-### `ingress/` — split by FROZEN FORMAT, and the two halves returned for disposition
+### `ingress/` — split by FROZEN FORMAT, and both halves subsequently excepted
 
 The 1012-line file was **not** granted an exception. Its own source already drew the
 boundary, and the split follows it exactly:
@@ -1166,11 +1170,12 @@ wire vocabulary.
 Neither mode was made selectable and Mode B/C deployment reachability is unchanged: the
 retention rule still sits at the top of the facade, where a reader meets it first.
 
-**Both remain `reviewed-action-required`, returned for disposition.** `v2.rs` at 673 lines
-is the strongest §14 candidate of the two: it is one frozen format's complete definition,
-and decomposing it further would fragment a wire format whose parts are meaningless apart.
-`v1.rs` at 334 is the same shape at a third the size. Whether either is excepted is the
-owner's call on the Mode-C capability's future, which this split does not pre-empt.
+**Both are now `reviewed-exception`, granted 2026-08-29.** Each file owns ONE independently
+frozen wire protocol whose vocabulary, signing preimage, parser, verifier and refusal
+vocabulary must agree as one definition; splitting either purely for LOC would create
+additional agreement seams rather than another semantic owner. The v1/v2 split itself is the
+correct decomposition, the cross-version disjointness control stays at the facade, and
+neither mode becomes selectable. Measured at `b142a7a`: v1 **334**, v2 **673**.
 
 ## EX-009 — `mcp-re-client-core/src/response.rs` — **census re-run, disposition: decompose the classification half**
 
@@ -1260,6 +1265,63 @@ agreement, and the three negative controls that pin the semantics are unchanged:
 issuer accepts the chained root, another issuer fails closed, and pinning the rotating
 delegated kid is refused.
 
+## §14 grants of 2026-08-29 — the nine completed censuses
+
+The owner granted ADR-MCPRE-061 §14 reviewed exceptions to all nine units whose censuses
+were complete and whose remainders had been returned as candidates. This section is the
+index; each unit's reasoning stays in its own EX record.
+
+**Measured by `scripts/module_size_gate.py --emit-registry` at `b142a7a`**, not copied from
+campaign prose — two numbers quoted during the campaign were already stale by the time it
+ended (`tls.rs` was reported 679 and is 674; `response.rs` was reported 367 and is 362).
+
+| unit | production lines | record |
+|---|---:|---|
+| `mcp-re-proxy/src/transport/ingress/v1.rs` | 334 | EX-005 |
+| `mcp-re-proxy/src/transport/ingress/v2.rs` | 673 | EX-005 |
+| `mcp-re-proxy/src/tls.rs` | 674 | EX-004 |
+| `mcp-re-client-core/src/response.rs` | 362 | EX-010 |
+| `mcp-re-proxy/src/http_profile_serve/mod.rs` | 1108 | EX-010 |
+| `mcp-re-proxy/src/key_source.rs` | 359 | EX-008 |
+| `mcp-re-proxy/src/kms_keysource/mod.rs` | 202 | EX-008 |
+| `mcp-re-proxy/src/gcp_kms_keysource.rs` | 1143 | EX-008 |
+| `mcp-re-proxy/src/aws_kms_keysource.rs` | 668 | EX-008 |
+
+`reviewed-action-required` goes **7 → 0**. Every remaining registry entry is either a
+granted exception (15) or `unreviewed` (82) — and `unreviewed` means *nobody has looked*,
+not *defective*.
+
+### The one rule these grants share
+
+Each unit owns ONE authority, and in every case decomposing it further would create
+**agreement seams rather than owners**: a frozen wire format whose vocabulary, preimage,
+parser, verifier and refusals must agree as one definition; a listener and what it decides
+about one served request; one verification proposition reached by two carriers; one
+composition root; one custody seam; one protocol mapping; one provider adapter and the
+authentication machinery its operations require.
+
+**Size ordered the reviews; it did not decide them.** `http_profile_serve/mod.rs` at 1108
+lines is the largest unit in the tree and is granted, while nothing in the `unreviewed` tail
+is granted anything — because the censuses are what differ, not the line counts.
+
+### What a file-level grant does NOT cover
+
+**Review granularity equals exception granularity**, so these nine grants are about FILE
+size and say nothing about any function inside them. Two functions in the granted set are
+over the 60-line trigger and neither has a §14 record:
+
+| function | lines | note |
+|---|---:|---|
+| `http_profile_serve::HttpProfileProxy::handle` | **218** | the serving pipeline assembly |
+| `aws_kms_keysource::…::post_kms` | 62 | two lines over |
+
+Both are held by `scripts/clippy_ratchet_gate.py` at their baseline and neither may grow.
+`handle` is the one worth naming: the file-level grant rests on it being ASSEMBLY, and a
+218-line assembly is exactly the unit a function-level census would examine next. That is
+recorded here rather than opened, because no such census was asked for.
+
+The other seven granted files contain no function over the trigger.
+
 ## EX-010 — the two theorem-owner roots — **re-censused 2026-08-29, both returned as §14 candidates**
 
 Re-censused because theorem work is about to rely on their semantic stability, and **not** as
@@ -1296,7 +1358,10 @@ stated twice — once over a `ResponseExpectation`, once over an `Option<&str>` 
 function. A bodyless 202 has no response block to hang a `ResponseExpectation` on, which is
 why the coordinate rather than the expectation is the right parameter.
 
-**Returned as a §14 candidate.** Not granted here.
+**GRANTED 2026-08-29** at the measured **362** production lines (`b142a7a`). One
+delegated-response-verification authority: the bodied response and the bodyless 202 differ by
+carrier, not proposition, and consume the same trust authority, policy, issuer pin and
+refusal semantics. The repository has already demonstrated what splitting that rule costs.
 
 ### `mcp-re-proxy/src/http_profile_serve/mod.rs` — **1108 production lines, assembly**
 
@@ -1316,9 +1381,14 @@ The two longest remaining methods were checked for a hidden authority and neithe
 `answer_notification` calls the profile's `sign_delegated_accepted_202` and mints a response.
 Both are wiring, and their owners are next door.
 
-**Returned as a §14 candidate at band 4.** It is the largest unit in the tree, and size is
-what puts it first in the queue rather than what decides it. Granting or refusing is the
-owner's call.
+**GRANTED 2026-08-29** at the measured **1108** production lines (`b142a7a`), and it is the
+largest unit in the tree. ONE assembly/composition authority: it owns stage ordering, which
+owner is invoked next, the execution threshold, and the assembly of the serving pipeline — and
+it does not re-decide stage semantics. Size ordered its review; it did not overrule the
+authority census.
+
+The grant is FILE-level. `handle` at **218** lines is over the function trigger, carries no
+§14 record of its own, and is held at its baseline by the clippy ratchet.
 
 ## EX-006 — `mcp-re-proxy/src/ocsp.rs` — **census complete; actions 1 and 2 landed; the protocol remainder is a reviewed exception**
 
@@ -1942,10 +2012,14 @@ every source implements) and is under its own registered baseline. `kms_keysourc
 ONE authority (the provider-agnostic Ed25519 protocol mapping) at 202 lines — two over the
 threshold, and its operands now live below it.
 
-**The two provider transports are each ONE authority and are returned as §14 candidates.**
-`gcp_kms_keysource.rs` at 1143 is one provider's transport and authentication: the Cloud KMS
-REST mapping plus the access-token mechanism (metadata server, service-account JWT
-assertion, token cache) the census already named as its remaining bulk. `aws_kms_keysource.rs`
-at 668 is the same shape — SigV4 signing, the STS/IRSA credential path, and the KMS JSON
-protocol. **Neither is split provider-from-itself**, which this census forbade and which
-shaving either file would amount to.
+**All four EX-008 units were GRANTED §14 exceptions on 2026-08-29**, measured at `b142a7a`:
+
+| unit | lines | the one authority |
+|---|---:|---|
+| `key_source.rs` | 359 | the custody seam every source implements |
+| `kms_keysource/mod.rs` | 202 | the provider-independent Ed25519 KMS protocol mapping |
+| `gcp_kms_keysource.rs` | 1143 | one GCP provider adapter — token acquisition, cache and authentication are subordinate mechanism machinery required to execute authenticated Cloud KMS operations |
+| `aws_kms_keysource.rs` | 668 | one AWS provider adapter — SigV4, STS and IRSA are subordinate authentication machinery for that provider's KMS operations |
+
+**Neither provider is split from itself**, which this census forbade and which shaving either
+file would amount to. EX-008's five remediation findings are discharged.
