@@ -34,13 +34,15 @@
 use serde_json::Value;
 
 use crate::error::HttpProfileError;
-use crate::ids::MCP_METHOD_HEADER;
-use crate::ids::MCP_NAME_HEADER;
 use crate::ids::MCP_PROTOCOL_VERSION_HEADER;
 use crate::mcp_name_source::mcp_name_source;
 use crate::mcp_name_source::McpNameSource;
 use crate::message::single_header;
 use crate::message::HttpRequest;
+
+/// The bodied contract: three covered headers, each checked against the protected body it
+/// claims to describe.
+mod agreement;
 
 /// The verifier-local MCP transport contract (§4.1).
 ///
@@ -122,111 +124,6 @@ impl McpTransportPolicy {
                 return Err(HttpProfileError::McpProtocolVersionUnsupported);
             }
         }
-        Ok(())
-    }
-
-    /// Enforce the transport contract against a VERIFIED request.
-    ///
-    /// Preconditions the caller guarantees: the signature verified, so any covered
-    /// header this reads is signed, and the body matched its covered
-    /// `content-digest`. Nothing here re-checks the signature — it reads protected
-    /// values and applies the deployment's contract to them.
-    pub fn enforce(&self, request: &HttpRequest) -> Result<(), HttpProfileError> {
-        let body: Value = serde_json::from_slice(&request.body)
-            .map_err(|_| HttpProfileError::MalformedEvidence("body json"))?;
-        let body_method = body.get("method").and_then(Value::as_str);
-        let params = body.get("params");
-
-        // Whether this request carries ANY of the transport headers. A request
-        // with none of them is a candidate for legacy treatment; one that carries
-        // some but not all is not "legacy", it is malformed for its own version.
-        let method_hdr = single_header(&request.headers, MCP_METHOD_HEADER)?;
-        let version_hdr = single_header(&request.headers, MCP_PROTOCOL_VERSION_HEADER)?;
-        let name_hdr = single_header(&request.headers, MCP_NAME_HEADER)?;
-        let carries_any = method_hdr.is_some() || version_hdr.is_some() || name_hdr.is_some();
-        let legacy = self.allow_legacy_header_omission && !carries_any;
-
-        // --- Mcp-Method: presence, then agreement with the protected body -------
-        match method_hdr {
-            Some(h) => {
-                if let Some(bm) = body_method {
-                    if h.trim() != bm {
-                        return Err(HttpProfileError::McpMethodDivergence);
-                    }
-                }
-            }
-            None => {
-                if self.require_mcp_method && !legacy {
-                    return Err(HttpProfileError::McpTransportHeaderMissing(
-                        MCP_METHOD_HEADER,
-                    ));
-                }
-            }
-        }
-
-        // --- MCP-Protocol-Version: presence, supported set, body agreement ------
-        match version_hdr {
-            Some(h) => {
-                let v = h.trim();
-                if !self.supported_protocol_versions.iter().any(|s| s == v) {
-                    return Err(HttpProfileError::McpProtocolVersionUnsupported);
-                }
-                // Unlike `Mcp-Method`/`Mcp-Name`, an absent body value is the norm
-                // rather than a gap: the body declares a protocol version only in
-                // `_meta`, which most messages omit. The header is not unconstrained
-                // in that case — it was just checked against the supported set above —
-                // so there is nothing to fail closed on.
-                if let Some(body_version) = self.body_protocol_version(&body, params) {
-                    if body_version != v {
-                        // The covered header and the covered body name different
-                        // protocol versions: the signer contradicting itself.
-                        return Err(HttpProfileError::McpTransportDivergence(
-                            MCP_PROTOCOL_VERSION_HEADER,
-                        ));
-                    }
-                }
-            }
-            None => {
-                if self.require_protocol_version_header && !legacy {
-                    return Err(HttpProfileError::McpTransportHeaderMissing(
-                        MCP_PROTOCOL_VERSION_HEADER,
-                    ));
-                }
-            }
-        }
-
-        // --- Mcp-Name: required for selected methods, agreement with params -----
-        if let Some(bm) = body_method {
-            if let Some((_, source)) = self.mcp_name_required.iter().find(|(m, _)| m == bm) {
-                match name_hdr {
-                    Some(h) => {
-                        // Agreement is checked whenever the header is present, even
-                        // under legacy omission — the flag never licenses a lie.
-                        //
-                        // The method is one that REQUIRES this header, so the params
-                        // value it mirrors must exist. When it does not, there is
-                        // nothing for the signed header to agree with and its value
-                        // would be unconstrained; fail closed rather than let an
-                        // absent `params.name`/`params.uri` license an arbitrary
-                        // covered name.
-                        let Some(expected) = params.and_then(|p| source.extract(p)) else {
-                            return Err(HttpProfileError::McpTransportDivergence(MCP_NAME_HEADER));
-                        };
-                        if h.trim() != expected {
-                            return Err(HttpProfileError::McpTransportDivergence(MCP_NAME_HEADER));
-                        }
-                    }
-                    None => {
-                        if !legacy {
-                            return Err(HttpProfileError::McpTransportHeaderMissing(
-                                MCP_NAME_HEADER,
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-
         Ok(())
     }
 

@@ -121,36 +121,53 @@ fn production_half(source: &str) -> String {
     mcp_re_test_paths::rust_source::production_half(source)
 }
 
-/// Every source file of the serving path — the assembly and each of its regions.
+/// Every production line of the serving path — the assembly and every region under it.
 ///
 /// The property is about THE SERVING PATH, not about one file of it. When the pipeline
 /// became one module per region, a scan of `mod.rs` alone would have reported a clean pass
 /// over an assembly that no longer contains most of the pipeline, and a region that kept an
 /// `advance` beside a stage would simply have been out of scope. A gate's scope is part of
 /// its measurement.
-const SERVING_PATH: &[&str] = &[
-    "MCP_RE_HTTP_PROFILE_SERVE_SRC",
-    "MCP_RE_SERVE_PRE_ADMISSION_SRC",
-    "MCP_RE_SERVE_PRE_ADMISSION_STANDING_SRC",
-    "MCP_RE_SERVE_PRE_ADMISSION_ACTION_SRC",
-    "MCP_RE_SERVE_ANSWERING_COMMITMENT_SRC",
-    "MCP_RE_SERVE_DISPATCH_COMMITMENT_SRC",
-    "MCP_RE_SERVE_REPLY_ASSEMBLY_SRC",
-    "MCP_RE_SERVE_REPLY_NOTIFICATION_SRC",
-    "MCP_RE_SERVE_REPLY_ACCEPTED_SRC",
-];
-
+///
+/// The scope is the DIRECTORY the anchor file sits in, walked, rather than a list of region
+/// files: a list would have to learn about the next region, and the failure mode of a stale
+/// list is a clean pass over unmeasured code. Under Bazel the directory is the runfiles
+/// copy, which the target's `glob` populates; under cargo it is the source tree.
 fn serving_source() -> String {
+    let anchor = mcp_re_test_paths::resolve_runfile("MCP_RE_HTTP_PROFILE_SERVE_SRC");
+    let root = anchor
+        .parent()
+        .unwrap_or_else(|| panic!("{anchor:?} has no parent directory"))
+        .to_path_buf();
+    let mut files = Vec::new();
+    collect_rust_files(&root, &mut files);
+    files.sort();
+    assert!(
+        files.len() > 1,
+        "the serving path is one file at {root:?} — the walk found no regions, and every \
+         assertion below would then be about the assembly alone"
+    );
     let mut whole = String::new();
-    for key in SERVING_PATH {
-        let path = mcp_re_test_paths::resolve_runfile(key);
+    for path in files {
         let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
         // Each file's production half separately: concatenating first would let one file's
         // unterminated test region swallow the next file's production code.
-        whole.push_str(&mcp_re_test_paths::rust_source::production_half(&text));
+        whole.push_str(&production_half(&text));
         whole.push('\n');
     }
     whole
+}
+
+fn collect_rust_files(dir: &std::path::Path, into: &mut Vec<std::path::PathBuf>) {
+    let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read dir {dir:?}: {e}"));
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rust_files(&path, into);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            into.push(path);
+        }
+    }
 }
 
 /// A stage's event is never also stated by the assembly.

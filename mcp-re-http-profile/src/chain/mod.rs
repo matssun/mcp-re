@@ -52,20 +52,26 @@ use sha2::Sha256;
 
 use crate::block::ArtifactBinding;
 use crate::block::AudienceTuple;
-use crate::block::HttpRequestEvidenceBlock;
 use crate::block::ResolverOutcome;
-use crate::body::extract_meta_block;
 use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
-use crate::ids::REQUEST_EVIDENCE_BLOCK_KEY;
-use crate::ids::REQUEST_LABEL;
-use crate::ids::RESPONSE_LABEL;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 use crate::policy::VerifierPolicy;
 use crate::verifier::Verifier;
 use crate::verify::floor::signature_input::parse_signature_input_for;
 use crate::verify::DelegationExpectations;
+
+/// What makes ONE retained hop part of a complete record — and, for each way it can fail,
+/// which [`IncompleteReason`] the label names.
+mod hop;
+
+/// What makes the SET of hops a whole record: the link back, and the turn's place in the
+/// chain's shape.
+mod record;
+
+use hop::ChainVerification;
+use hop::HopPosition;
 
 /// The retained evidence for ONE hop (§9.2): the complete request and response
 /// messages as they went over the wire.
@@ -348,241 +354,23 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
         };
     }
 
+    let verification = ChainVerification {
+        verifier,
+        expect,
+        audit,
+        is_revoked,
+        now,
+    };
     for (i, hop) in hops.iter().enumerate() {
-        // 0. Each message is verified at its own covered `created`, bounded above
-        //    by the audit instant. See [`hop_instant`] for why a retained record
-        //    cannot be held to the live clock.
-        let request_at = match hop_instant(
-            &hop.request.headers,
-            REQUEST_LABEL,
-            "request signature-input",
-            verifier.policy(),
-            now,
-        ) {
-            Ok(t) => t,
-            Err(HopInstantError::Unreadable(e)) => {
-                return incomplete(
-                    hop_evidence,
-                    i,
-                    IncompleteReason::RequestUnverifiable(e),
-                    submitted,
-                )
-            }
-            Err(HopInstantError::AfterAuditInstant) => {
-                return incomplete(
-                    hop_evidence,
-                    i,
-                    IncompleteReason::HopAfterAuditInstant,
-                    submitted,
-                )
-            }
+        let position = HopPosition {
+            index: i,
+            previous: hop_evidence.last(),
+            is_last: i + 1 == hops.len(),
         };
-        let response_at = match hop_instant(
-            &hop.response.headers,
-            RESPONSE_LABEL,
-            "response signature-input",
-            verifier.policy(),
-            now,
-        ) {
-            Ok(t) => t,
-            Err(HopInstantError::Unreadable(e)) => {
-                return incomplete(
-                    hop_evidence,
-                    i,
-                    IncompleteReason::ResponseUnverifiable(e),
-                    submitted,
-                )
-            }
-            Err(HopInstantError::AfterAuditInstant) => {
-                return incomplete(
-                    hop_evidence,
-                    i,
-                    IncompleteReason::HopAfterAuditInstant,
-                    submitted,
-                )
-            }
-        };
-
-        // 1. The hop's request must verify on its own.
-        let verified_req = match verifier.verify_request_floor(&hop.request, request_at) {
-            Ok(v) => v,
-            Err(e) => {
-                return incomplete(
-                    hop_evidence,
-                    i,
-                    IncompleteReason::RequestUnverifiable(e),
-                    submitted,
-                )
-            }
-        };
-
-        // 1b. The request evidence block itself, not merely the signature over it.
-        //
-        //     Step 1 runs the MINIMAL proof path, which stops at the RFC 9421
-        //     signature and the MCP transport contract: it never looks inside the
-        //     block. A hop with no block at all, or one whose block fails its own
-        //     structural rules, or one whose audience names a target other than the
-        //     URI the request was actually sent to, verified all the same — so a
-        //     record could be labelled `Complete`, and a Signed Statement issued over
-        //     it, while containing requests the enforcement boundary would have
-        //     refused. "Served" and "accounted for" have to be the same verdict.
-        //
-        //     The audience tuple and `artifact_bindings[]` are enforced through the
-        //     SAME function the live path uses, against the caller-supplied
-        //     [`ChainAudit`]. One implementation, so an auditor's `Complete` cannot
-        //     mean less than an admission.
-        let block: HttpRequestEvidenceBlock = match extract_meta_block(
-            &hop.request.body,
-            REQUEST_EVIDENCE_BLOCK_KEY,
-            "request evidence block",
-        ) {
-            Ok(b) => b,
-            Err(e) => {
-                return incomplete(
-                    hop_evidence,
-                    i,
-                    IncompleteReason::RequestUnverifiable(e),
-                    submitted,
-                )
-            }
-        };
-        if let Err(e) = block.validate(&verified_req.profile_id) {
-            return incomplete(
-                hop_evidence,
-                i,
-                IncompleteReason::RequestUnverifiable(e),
-                submitted,
-            );
+        match verification.verify_hop(hop, &position) {
+            Ok(evidence) => hop_evidence.push(evidence),
+            Err(reason) => return incomplete(hop_evidence, i, reason, submitted),
         }
-        if let Err(e) = crate::verify::enforce_full_profile_bindings(
-            &hop.request,
-            &block,
-            audit.expected_audience,
-            audit.artifact_material,
-        ) {
-            return incomplete(
-                hop_evidence,
-                i,
-                IncompleteReason::RequestUnverifiable(e),
-                submitted,
-            );
-        }
-
-        // 2. The hop's response must verify AND be bound to that request.
-        let verified_rsp = match verifier.verify_delegated_bound_response(
-            &hop.response,
-            &hop.request,
-            &verified_req.evidence,
-            expect,
-            is_revoked,
-            response_at,
-        ) {
-            Ok(v) => v,
-            Err(e) => {
-                return incomplete(
-                    hop_evidence,
-                    i,
-                    IncompleteReason::ResponseUnverifiable(e),
-                    submitted,
-                )
-            }
-        };
-
-        // 3. Re-link to the previous hop. Every hop after the first MUST carry a
-        //    continuation naming its predecessor's two handles. This is where a
-        //    missing middle hop is caught: hop i's continuation names hop i-1, so if
-        //    i-1 is absent from the record the hop we DO have in that slot does not
-        //    match.
-        //
-        //    Hop 0 OPENS the record, and that is a claim about the record, not a
-        //    licence to skip the check. A hop 0 that carries a continuation names a
-        //    predecessor the record cannot produce: the call started before the
-        //    evidence does. Accepting it labelled a front-truncated record
-        //    `Complete` — submit hops 1 and 2 of a real R0→S0→R1→S1→R2→S2 call and
-        //    every remaining hop verifies, hop 2 re-links to hop 1, hop 2 is
-        //    terminal — so a Signed Statement could commit to a whole call record
-        //    with the opening turns, their audience and their artifact bindings
-        //    missing. It lands on the same reason as the missing middle, which is
-        //    what it is: a continuation naming evidence that is not in the record.
-        match (i, block.continuation.as_ref()) {
-            (0, None) => {}
-            (0, Some(_)) => {
-                return incomplete(
-                    hop_evidence,
-                    i,
-                    IncompleteReason::ContinuationDoesNotLink,
-                    submitted,
-                )
-            }
-            (_, None) => {
-                return incomplete(
-                    hop_evidence,
-                    i,
-                    IncompleteReason::MissingContinuation,
-                    submitted,
-                )
-            }
-            (_, Some(c)) => {
-                let prev: &HopEvidence = &hop_evidence[i - 1];
-                let links = c.previous_request_evidence.digest_value
-                    == prev.request_evidence.digest_value
-                    && c.previous_request_evidence.digest_alg == prev.request_evidence.digest_alg
-                    && c.input_required_response_evidence.digest_value
-                        == prev.response_evidence.digest_value
-                    && c.input_required_response_evidence.digest_alg
-                        == prev.response_evidence.digest_alg;
-                if !links {
-                    return incomplete(
-                        hop_evidence,
-                        i,
-                        IncompleteReason::ContinuationDoesNotLink,
-                        submitted,
-                    );
-                }
-            }
-        }
-
-        // 4. Chain shape: every hop but the last awaits input; the last is
-        //    terminal. The classification is read from the response body that
-        //    just verified in step 2 — protected content, not an assertion
-        //    travelling beside it.
-        let outcome = classify_verified_response(&hop.response.body);
-        let is_last = i + 1 == hops.len();
-        match (is_last, outcome) {
-            (_, HopOutcome::Unrecognized) => {
-                return incomplete(
-                    hop_evidence,
-                    i,
-                    IncompleteReason::UnrecognizedResultType,
-                    submitted,
-                )
-            }
-            (false, HopOutcome::Terminal) => {
-                return incomplete(
-                    hop_evidence,
-                    i,
-                    IncompleteReason::NonTerminalExpected,
-                    submitted,
-                )
-            }
-            (true, HopOutcome::InputRequired) => {
-                return incomplete(
-                    hop_evidence,
-                    i,
-                    IncompleteReason::TerminalExpected,
-                    submitted,
-                )
-            }
-            _ => {}
-        }
-
-        hop_evidence.push(HopEvidence {
-            request_evidence: verified_req.evidence.clone(),
-            response_evidence: verified_rsp
-                .signature_facts
-                .response_signature_base_digest
-                .clone(),
-        });
     }
 
     ChainReconstruction {

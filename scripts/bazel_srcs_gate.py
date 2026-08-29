@@ -46,11 +46,49 @@ REPO = Path(__file__).resolve().parent.parent
 
 MOD_DECL = re.compile(r"^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?mod[ \t]+([a-z0-9_]+)[ \t]*;", re.M)
 SRC_ENTRY = re.compile(r'"(src/[A-Za-z0-9_/]+\.rs)"')
-# A glob that reaches into `src/` — the only construct that makes a library's source
-# list undriftable. A glob over `tests/` says nothing about `src/`.
+# A glob reaching into `src/`. Undriftable ONLY when it is the value of a `srcs`
+# attribute — see `library_globs_src`.
 SRC_GLOB = re.compile(r'glob\(\s*\[[^]]*"src/')
+SRCS_ATTR = re.compile(r"\bsrcs\s*=")
 
 IDENT = re.compile(r"[A-Za-z0-9_]")
+
+
+def attribute_value(text: str, start: int) -> str:
+    """The text of one Starlark attribute value beginning at `start`.
+
+    Delimiter-balanced, so a value spanning several lines — `glob([...]) + [...]` — is read
+    whole and the next attribute is not read at all.
+    """
+    depth = 0
+    for i in range(start, len(text)):
+        ch = text[i]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            if depth == 0:
+                return text[start:i]
+            depth -= 1
+        elif ch == "," and depth == 0:
+            return text[start:i]
+    return text[start:]
+
+
+def library_globs_src(build_text: str) -> bool:
+    """Whether any `srcs` attribute globs into `src/` — the one construct that makes a
+    library's source list undriftable.
+
+    The ATTRIBUTE is part of the question, not just the word `glob`. A glob over `tests/`
+    says nothing about `src/`, and neither does one in `data`: a test target's runfiles are
+    not what the compiler is handed. Without this distinction, one
+    `data = glob(["src/.../**/*.rs"])` on an unrelated test target exempted the WHOLE crate
+    from this gate — a clean pass over a hand-listed library nobody was checking any more.
+    A gate's scope is part of its measurement.
+    """
+    for match in SRCS_ATTR.finditer(build_text):
+        if SRC_GLOB.search(attribute_value(build_text, match.end())):
+            return True
+    return False
 
 
 def strip_noncode(text: str) -> str:
@@ -210,7 +248,7 @@ def check_crate(crate: Path) -> list[str]:
     if not build.is_file() or not lib.is_file():
         return []
     build_text = build.read_text(errors="replace")
-    if SRC_GLOB.search(build_text):
+    if library_globs_src(build_text):
         return []  # cannot drift
 
     listed = set(SRC_ENTRY.findall(build_text))
@@ -249,7 +287,7 @@ def checked_crates(root: Path) -> list[str]:
         if not crate.is_dir() or not build.is_file() or not lib.is_file():
             continue
         text = build.read_text(errors="replace")
-        if SRC_GLOB.search(text) or not SRC_ENTRY.search(text):
+        if library_globs_src(text) or not SRC_ENTRY.search(text):
             continue
         names.append(crate.name)
     return names
@@ -390,6 +428,29 @@ def selftest() -> int:  # noqa: C901 — a control per property, each one named
         'test_srcs = glob(["tests/integration/*.rs"]) + ["src/lib.rs"]\n',
         {"lib.rs": LIB, "alpha.rs": "", "beta.rs": ""},
         "mod beta",
+    )
+    ok &= case(
+        "a `data` glob over src/ does NOT exempt a hand-listed library",
+        # The measured regression: a test target listing serving sources in `data` so its
+        # runfiles contain them made the whole crate read as undriftable, and the gate
+        # reported a clean pass over a library nobody was checking any more.
+        'srcs = ["src/lib.rs", "src/alpha.rs"],\n'
+        "nt_rust_test(\n"
+        '    srcs = glob(["tests/integration/*.rs"]),\n'
+        '    data = glob(["src/**/*.rs"]),\n'
+        ")\n",
+        {"lib.rs": LIB, "alpha.rs": "", "beta.rs": ""},
+        "mod beta",
+    )
+    ok &= case(
+        "a multi-line srcs glob over src/ is still exempt",
+        "srcs = glob([\n"
+        '        "src/**/*.rs",\n'
+        "    ]) + [\n"
+        '        "src/lib.rs",\n'
+        "    ],\n",
+        {"lib.rs": LIB, "alpha.rs": "", "beta.rs": ""},
+        None,
     )
     ok &= case(
         "a listed file that does not exist",

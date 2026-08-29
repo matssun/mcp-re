@@ -23,10 +23,7 @@
 //! returns the delegated key it needs. `alg` is pinned to `EdDSA`; no agility.
 
 use mcp_re_core::b64url_decode;
-use mcp_re_core::b64url_encode;
 use mcp_re_core::verify_ed25519_with;
-use mcp_re_core::McpReError;
-use mcp_re_core::SigningKey;
 use mcp_re_core::VerificationKey;
 use serde::Deserialize;
 use serde::Serialize;
@@ -165,6 +162,16 @@ fn bounded_skew(configured: i64) -> i64 {
     configured.clamp(0, VerifierPolicy::MAX_CLOCK_SKEW_BOUND)
 }
 
+/// ADR-MCPRE-052 §3 steps 2–8: what must hold before a delegated key may be believed.
+mod verify;
+pub use verify::verify_delegation_credential;
+
+/// Minting a credential — the root custody seam, which is a different authority from
+/// deciding whether one may be believed.
+mod issue;
+pub use issue::issue_delegation_credential;
+pub use issue::issue_delegation_credential_with_signer;
+
 /// The verifier's expectations for the credential scope + freshness
 /// (ADR-MCPRE-052 §3). The caller supplies these from the active profile, the
 /// verified request context, and the deployment's epoch policy.
@@ -187,179 +194,6 @@ pub struct DelegationVerifyParams<'a> {
     /// The active accepted trust-epoch set — default `{ current }`, optionally
     /// `{ current, previous }` under a bounded rollout window (§3 step 6).
     pub accepted_epochs: &'a [&'a str],
-}
-
-/// Verify a compact JWS delegation credential against the root and the expected
-/// scope (ADR-MCPRE-052 §3 steps 2–7), returning the delegated key for the
-/// response-signature check (step 8).
-///
-/// - `resolve_root(issuer_kid) -> Some(root_key)` resolves the credential's
-///   `issuer_kid` to a trusted **root** anchor (the existing trust resolver /
-///   by-`key_id` trust map); `None` ⇒ untrusted issuer.
-/// - `is_revoked(id) -> bool` reports whether the credential's `delegated_kid`,
-///   `issuer_kid`, or `jti` is revoked at the current trust epoch (consulted with
-///   each in turn).
-///
-/// Trust flows ONLY through the credential to the root: a delegated key is never
-/// enrolled out of band, so a first-seen `delegated_kid` verifies from the
-/// credential alone.
-pub fn verify_delegation_credential(
-    compact_jws: &str,
-    params: &DelegationVerifyParams<'_>,
-    resolve_root: impl Fn(&str) -> Option<VerificationKey>,
-    is_revoked: impl Fn(&str) -> bool,
-) -> Result<VerifiedDelegation, HttpProfileError> {
-    // --- structure: exactly three base64url segments -------------------------
-    let (header_seg, payload_seg, sig_seg) = split_compact_jws(compact_jws)?;
-
-    // --- header: typ + alg pinning (step 3) ----------------------------------
-    let header: DelegationHeader = decode_json(header_seg)?;
-    if header.typ != DELEGATION_TYP || header.alg != DELEGATION_ALG {
-        // Wrong media type or any alg other than EdDSA (incl. `none`).
-        return Err(HttpProfileError::DelegationCredentialInvalid);
-    }
-
-    let claims: DelegationClaims = decode_json(payload_seg)?;
-
-    // Header kid must name the claims' issuer_kid — the credential is internally
-    // consistent about which root signed it (step 3).
-    if header.kid != claims.issuer_kid {
-        return Err(HttpProfileError::DelegationCredentialInvalid);
-    }
-
-    // --- issuer → trusted root anchor (step 2) -------------------------------
-    let root_key =
-        resolve_root(&claims.issuer_kid).ok_or(HttpProfileError::DelegationIssuerUntrusted)?;
-
-    // --- root signature over the JWS signing input (step 3) ------------------
-    let signing_input = format!("{header_seg}.{payload_seg}");
-    verify_ed25519_with(
-        signing_input.as_bytes(),
-        sig_seg,
-        &root_key,
-        McpReError::DelegationCredentialInvalid,
-    )
-    .map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
-
-    // --- freshness (step 4) --------------------------------------------------
-    // nbf ≤ now ≤ exp, widened by the BOUNDED skew on both edges.
-    let skew = bounded_skew(params.max_clock_skew);
-    if params.now + skew < claims.nbf || params.now - skew > claims.exp {
-        return Err(HttpProfileError::DelegationCredentialExpired);
-    }
-
-    // --- scope (step 5) ------------------------------------------------------
-    if !params
-        .verifier_audiences
-        .iter()
-        .any(|a| claims.aud.contains(a))
-    {
-        return Err(HttpProfileError::DelegationAudienceMismatch);
-    }
-    if claims.mcp_re_profile != params.expected_profile {
-        return Err(HttpProfileError::DelegationProfileMismatch);
-    }
-    if claims.mcp_re_audience_hash != params.expected_audience_hash
-        || claims.mcp_re_server_signer != params.expected_server_signer
-    {
-        return Err(HttpProfileError::DelegationAudienceMismatch);
-    }
-    if claims.mcp_re_key_use != KEY_USE_RESPONSE_SIGNING {
-        return Err(HttpProfileError::DelegationKeyUseInvalid);
-    }
-
-    // --- trust epoch: hard gate (step 6) -------------------------------------
-    if !params
-        .accepted_epochs
-        .iter()
-        .any(|e| *e == claims.trust_epoch)
-    {
-        return Err(HttpProfileError::DelegationTrustEpochStale);
-    }
-
-    // --- revocation (step 7) -------------------------------------------------
-    // Consult the revocation seam with every identifier the credential carries: the
-    // delegated key, its root anchor, and the per-credential jti. Any hit fails closed.
-    if is_revoked(&claims.delegated_kid)
-        || is_revoked(&claims.issuer_kid)
-        || is_revoked(&claims.jti)
-    {
-        return Err(HttpProfileError::DelegationRevoked);
-    }
-
-    // --- cnf.jwk → delegated key (for step 8) --------------------------------
-    let jwk = &claims.cnf.jwk;
-    if jwk.kty != JWK_KTY_OKP || jwk.crv != JWK_CRV_ED25519 || jwk.kid != claims.delegated_kid {
-        // A self-inconsistent cnf (wrong key type, or a jwk.kid that is not the
-        // credential's delegated_kid) is an invalid credential.
-        return Err(HttpProfileError::DelegationCredentialInvalid);
-    }
-    let delegated_key = VerificationKey::from_b64url(&jwk.x)
-        .map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
-
-    Ok(VerifiedDelegation {
-        delegated_key,
-        delegated_kid: claims.delegated_kid,
-        server_signer: claims.mcp_re_server_signer,
-        issuer_kid: claims.issuer_kid,
-        nbf: claims.nbf,
-        exp: claims.exp,
-        trust_epoch: claims.trust_epoch,
-    })
-}
-
-/// Bytes in a raw Ed25519 signature (RFC 8032 / RFC 8037 `EdDSA`). The external
-/// root-signer seam MUST return exactly this — a KMS/HSM that hands back a
-/// DER-wrapped or truncated signature is a contract violation, caught here rather
-/// than emitted as a malformed credential (mirrors the response-signer seam).
-const ED25519_SIGNATURE_LEN: usize = 64;
-
-/// Issue (mint) a compact JWS delegation credential using an EXTERNAL root signer
-/// — the Cloud KMS / HSM custody seam (ADR-MCPS-028), where the ADR-MCPRE-052 §2
-/// root is held OFF the hot path and signs ONLY the credential at issuance /
-/// rotation. The root private key never has to exist in this process.
-///
-/// `sign_root` receives the exact JWS signing input
-/// (`base64url(header) "." base64url(claims)`, ASCII) and MUST return exactly the
-/// 64 raw Ed25519 signature bytes (RFC 8037); any other length is rejected
-/// `DelegationCredentialInvalid` rather than emitted. This is the KMS-capable
-/// sibling of [`issue_delegation_credential`] (which requires an in-process
-/// [`SigningKey`]); both route through the same builder, so the compact-JWS wire
-/// bytes are identical for the same key and claims.
-///
-/// The caller builds a consistent pair: `typ`/`alg` pinned, header `kid` ==
-/// claims `issuer_kid`, and `cnf.jwk` == the delegated key.
-pub fn issue_delegation_credential_with_signer(
-    header: &DelegationHeader,
-    claims: &DelegationClaims,
-    sign_root: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
-) -> Result<String, HttpProfileError> {
-    let h = b64url_encode(&serde_json::to_vec(header).expect("delegation header serializes"));
-    let p = b64url_encode(&serde_json::to_vec(claims).expect("delegation claims serialize"));
-    let signing_input = format!("{h}.{p}");
-    let sig = sign_root(signing_input.as_bytes())?;
-    if sig.len() != ED25519_SIGNATURE_LEN {
-        return Err(HttpProfileError::DelegationCredentialInvalid);
-    }
-    Ok(format!("{h}.{p}.{}", b64url_encode(&sig)))
-}
-
-/// Issue (mint) a compact JWS delegation credential with an IN-PROCESS root key
-/// (ADR-MCPRE-052 §1) — the software-key path. Routes through
-/// [`issue_delegation_credential_with_signer`], so it is wire-identical to the
-/// KMS/HSM seam for the same key and claims. Production with the root in KMS/HSM
-/// uses the signer seam instead, keeping the root off the hot path.
-pub fn issue_delegation_credential(
-    root_key: &SigningKey,
-    header: &DelegationHeader,
-    claims: &DelegationClaims,
-) -> String {
-    issue_delegation_credential_with_signer(header, claims, |input| {
-        // `SigningKey::sign` returns Base64URL; decode to the raw 64 bytes the
-        // seam contract speaks. An in-process Ed25519 signer is always 64 bytes.
-        Ok(b64url_decode(&root_key.sign(input)).expect("own signature is valid base64url"))
-    })
-    .expect("in-process Ed25519 signer yields a 64-byte signature")
 }
 
 /// Split a compact JWS into its three base64url segments. Not exactly three parts,
@@ -385,6 +219,7 @@ fn decode_json<T: for<'de> Deserialize<'de>>(segment: &str) -> Result<T, HttpPro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mcp_re_core::SigningKey;
 
     const PROFILE: &str = "mcp-re-http-v1";
     const AUD: &str = "did:example:verifier";

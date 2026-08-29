@@ -18,54 +18,126 @@ use crate::sigbase::SignatureParams;
 
 use super::sf_dictionary::split_parameters;
 
+/// The ONE wire spelling this profile emits for the parameter tail.
+///
+/// EXACTLY `;k=v;k=v` — no space around a `;`, no empty slot, no trailing `;`.
+/// `(...) ;created=1;` used to parse identically to `(...);created=1`, which is the same
+/// wire-spelling collapse the inner-list check refuses: the base is rebuilt from parsed
+/// values, so both spellings verify under one signature and the raw header stops matching
+/// the signed bytes. The inner list is held to the same rule in `covered_components`.
+fn check_tail_spelling(param_tail: &str) -> Result<(), HttpProfileError> {
+    let spacing = || HttpProfileError::MalformedEvidence("signature parameter spacing");
+    if param_tail.is_empty() {
+        return Ok(());
+    }
+    if !param_tail.starts_with(';') {
+        return Err(spacing());
+    }
+    // Only the segment before the FIRST `;` may be empty (there is nothing before it);
+    // every other empty segment is a stray or trailing `;`.
+    if split_parameters(param_tail)
+        .iter()
+        .skip(1)
+        .any(|seg| seg.is_empty())
+    {
+        return Err(spacing());
+    }
+    // No space or tab OUTSIDE a quoted value. Inside one it is a legitimate byte of a
+    // keyid or nonce (`validate_sf_string` admits printable ASCII); outside, it is a
+    // spelling this profile never emits and would normalise away.
+    let mut in_quotes = false;
+    let mut escaped = false;
+    for b in param_tail.bytes() {
+        match b {
+            _ if escaped => escaped = false,
+            b'\\' if in_quotes => escaped = true,
+            b'"' => in_quotes = !in_quotes,
+            b' ' | b'\t' if !in_quotes => return Err(spacing()),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// A parameter's canonical position in the closed, ordered set.
+///
+/// Strict Structured Fields (MCPRE-98): the profile's parameter set is closed AND ordered.
+/// The verifier normalizes to a canonical order when rebuilding the base, so a reordered
+/// wire form would silently verify under the same signature; it is rejected structurally
+/// instead. A rank that does not strictly increase catches reordering and duplication with
+/// one comparison.
+///
+/// An unknown parameter would change the signature base this verifier rebuilds, so it fails
+/// closed rather than sign-what-you-did-not-say.
+fn parameter_rank(key: &str) -> Result<i32, HttpProfileError> {
+    match key {
+        "created" => Ok(0),
+        "expires" => Ok(1),
+        "nonce" => Ok(2),
+        "keyid" => Ok(3),
+        "alg" => Ok(4),
+        "tag" => Ok(5),
+        _ => Err(HttpProfileError::MalformedEvidence(
+            "unknown signature parameter",
+        )),
+    }
+}
+
+/// A quoted-string parameter's value, held to exactly what this profile will EMIT
+/// (`sigbase::validate_sf_string`): printable ASCII with no `"` and no `\`.
+///
+/// The escape forms RFC 8941 permits are refused rather than decoded. The verifier rebuilds
+/// `@signature-params` from these parsed values and re-serializes them canonically, so
+/// decoding `\"` would make two wire spellings collapse to one signature base — the same
+/// defect the profile already refuses for `created=+1` (see [`parse_i64`]). Refusing keeps
+/// the received bytes and the signed bytes in one-to-one correspondence.
+fn unquote(v: &str) -> Result<String, HttpProfileError> {
+    let inner = v
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .ok_or(HttpProfileError::MalformedEvidence(
+            "quoted signature parameter",
+        ))?;
+    crate::sigbase::validate_sf_string(inner, "quoted signature parameter")?;
+    Ok(inner.to_owned())
+}
+
+/// Read one already-ranked parameter into the parsed set.
+///
+/// The key has passed [`parameter_rank`], so the match is exhaustive over the closed set and
+/// there is no fallthrough to guess about.
+fn assign(params: &mut SignatureParams, key: &str, v: &str) -> Result<(), HttpProfileError> {
+    match key {
+        "created" => params.created = Some(parse_i64(v)?),
+        "expires" => params.expires = Some(parse_i64(v)?),
+        "nonce" => {
+            let nonce = unquote(v)?;
+            // A nonce is carried VERBATIM into the node-local replay key and retained for
+            // up to `expires + skew`, and that tier bounds entry COUNT, not entry SIZE.
+            // Without a length bound an authenticated client could pad each nonce to the
+            // header limit and pin ~3 orders of magnitude more memory per admitted request,
+            // ending in a self-inflicted `replay_cache_unavailable` for the whole replica.
+            // The same bound is applied where the signer SERIALIZES the parameter
+            // (`sigbase::validate_nonce_length`), so a value this profile cannot carry is
+            // never emitted either.
+            crate::sigbase::validate_nonce_length(&nonce)?;
+            params.nonce = Some(nonce);
+        }
+        "keyid" => params.keyid = Some(unquote(v)?),
+        "alg" => params.alg = Some(unquote(v)?),
+        "tag" => params.tag = Some(unquote(v)?),
+        _ => unreachable!("parameter_rank is exhaustive over the closed set"),
+    }
+    Ok(())
+}
+
 /// Parse the `;k=v;k=v` tail that follows the inner list.
 pub(super) fn parse_signature_parameters(
     param_tail: &str,
 ) -> Result<SignatureParams, HttpProfileError> {
+    check_tail_spelling(param_tail)?;
     let mut params = SignatureParams::default();
     let mut last_param_rank: i32 = -1;
-    // The parameter tail is EXACTLY `;k=v;k=v` — no space around a `;`, no empty
-    // slot, no trailing `;`. `(...) ;created=1;` used to parse identically to
-    // `(...);created=1`, which is the same wire-spelling collapse the inner-list check
-    // refuses: the base is rebuilt from parsed values, so both spellings verify
-    // under one signature and the raw header stops matching the signed bytes. The inner list
-    // is held to the same rule in `covered_components`.
-    if !param_tail.is_empty() {
-        if !param_tail.starts_with(';') {
-            return Err(HttpProfileError::MalformedEvidence(
-                "signature parameter spacing",
-            ));
-        }
-        // Only the segment before the FIRST `;` may be empty (there is nothing before
-        // it); every other empty segment is a stray or trailing `;`.
-        if split_parameters(param_tail)
-            .iter()
-            .skip(1)
-            .any(|seg| seg.is_empty())
-        {
-            return Err(HttpProfileError::MalformedEvidence(
-                "signature parameter spacing",
-            ));
-        }
-        // No space or tab OUTSIDE a quoted value. Inside one it is a legitimate byte of
-        // a keyid or nonce (`validate_sf_string` admits printable ASCII); outside, it
-        // is a spelling this profile never emits and would normalise away.
-        let mut in_quotes = false;
-        let mut escaped = false;
-        for b in param_tail.bytes() {
-            match b {
-                _ if escaped => escaped = false,
-                b'\\' if in_quotes => escaped = true,
-                b'"' => in_quotes = !in_quotes,
-                b' ' | b'\t' if !in_quotes => {
-                    return Err(HttpProfileError::MalformedEvidence(
-                        "signature parameter spacing",
-                    ))
-                }
-                _ => {}
-            }
-        }
-    }
     for p in split_parameters(param_tail) {
         if p.is_empty() {
             continue;
@@ -73,77 +145,18 @@ pub(super) fn parse_signature_parameters(
         let (k, v) = p
             .split_once('=')
             .ok_or(HttpProfileError::MalformedEvidence("signature parameter"))?;
-        // A quoted string parameter, held to exactly what this profile will EMIT
-        // (`sigbase::validate_sf_string`): printable ASCII with no `"` and no `\`.
-        //
-        // The escape forms RFC 8941 permits are refused rather than decoded. The
-        // verifier rebuilds `@signature-params` from these parsed values and
-        // re-serializes them canonically, so decoding `\"` would make two wire
-        // spellings collapse to one signature base — the same defect the profile
-        // already refuses for `created=+1` (see `parse_i64`). Refusing keeps the
-        // received bytes and the signed bytes in one-to-one correspondence.
-        let unquote = |v: &str| -> Result<String, HttpProfileError> {
-            let inner = v
-                .strip_prefix('"')
-                .and_then(|s| s.strip_suffix('"'))
-                .ok_or(HttpProfileError::MalformedEvidence(
-                    "quoted signature parameter",
-                ))?;
-            crate::sigbase::validate_sf_string(inner, "quoted signature parameter")?;
-            Ok(inner.to_owned())
-        };
-        // Strict Structured Fields (MCPRE-98): the profile's parameter set is
-        // closed AND ordered. The verifier normalizes to a canonical order when
-        // rebuilding the base, so a reordered wire form would silently verify;
-        // reject it structurally instead. `rank` is the canonical position; a
-        // key that is not strictly after the previous one (reordered OR
-        // duplicated) fails closed.
-        let rank = match k {
-            "created" => 0,
-            "expires" => 1,
-            "nonce" => 2,
-            "keyid" => 3,
-            "alg" => 4,
-            "tag" => 5,
-            // Unknown parameters would change the signature base this verifier
-            // rebuilds; fail closed rather than sign-what-you-did-not-say.
-            _ => {
-                return Err(HttpProfileError::MalformedEvidence(
-                    "unknown signature parameter",
-                ))
-            }
-        };
+        let rank = parameter_rank(k)?;
         if rank <= last_param_rank {
             return Err(HttpProfileError::MalformedEvidence(
                 "signature parameter order",
             ));
         }
         last_param_rank = rank;
-        match k {
-            "created" => params.created = Some(parse_i64(v)?),
-            "expires" => params.expires = Some(parse_i64(v)?),
-            "nonce" => {
-                let nonce = unquote(v)?;
-                // A nonce is carried VERBATIM into the node-local replay key and
-                // retained for up to `expires + skew`, and that tier bounds entry
-                // COUNT, not entry SIZE. Without a length bound an authenticated
-                // client could pad each nonce to the header limit and pin ~3 orders of
-                // magnitude more memory per admitted request, ending in a self-inflicted
-                // `replay_cache_unavailable` for the whole replica. The same bound is
-                // applied where the signer SERIALIZES the parameter
-                // (`sigbase::validate_nonce_length`), so a value this profile cannot
-                // carry is never emitted either.
-                crate::sigbase::validate_nonce_length(&nonce)?;
-                params.nonce = Some(nonce);
-            }
-            "keyid" => params.keyid = Some(unquote(v)?),
-            "alg" => params.alg = Some(unquote(v)?),
-            "tag" => params.tag = Some(unquote(v)?),
-            _ => unreachable!("rank match above is exhaustive over the closed set"),
-        }
+        assign(&mut params, k, v)?;
     }
     Ok(params)
 }
+
 /// Leak-free integer parse for created/expires, restricted to the ONE spelling
 /// RFC 8941 §3.3.1 allows: optional `-`, then digits with no leading zero (except
 /// `0` itself).

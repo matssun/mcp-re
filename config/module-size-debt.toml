@@ -314,8 +314,8 @@ status = "unreviewed"
 # progress — and the number falls to 707 because the actor projection left with it.
 [[debt]]
 path = "mcp-re-http-profile/src/bodyless/mod.rs"
-baseline_prod_loc = 707
-baseline_sha = "c744e2a"
+baseline_prod_loc = 529
+baseline_sha = "255465e"
 status = "unreviewed"
 
 [[debt]]
@@ -345,9 +345,9 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-http-profile/src/chain.rs"
-baseline_prod_loc = 660
-baseline_sha = "d1fc5fa"
+path = "mcp-re-http-profile/src/chain/mod.rs"
+baseline_prod_loc = 447
+baseline_sha = "255465e"
 status = "unreviewed"
 
 [[debt]]
@@ -531,9 +531,9 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-http-profile/src/delegation.rs"
-baseline_prod_loc = 384
-baseline_sha = "d1fc5fa"
+path = "mcp-re-http-profile/src/delegation/mod.rs"
+baseline_prod_loc = 218
+baseline_sha = "255465e"
 status = "unreviewed"
 
 [[debt]]
@@ -649,12 +649,6 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-http-profile/src/mcp_transport.rs"
-baseline_prod_loc = 250
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
 path = "mcp-re-proxy/src/managed_worker.rs"
 baseline_prod_loc = 268
 baseline_sha = "d1fc5fa"
@@ -681,12 +675,6 @@ status = "unreviewed"
 [[debt]]
 path = "mcp-re-http-profile/src/dispatch.rs"
 baseline_prod_loc = 243
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-http-profile/src/body.rs"
-baseline_prod_loc = 247
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
