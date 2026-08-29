@@ -49,25 +49,36 @@ pub(crate) fn read_error_body(resp: ureq::Response) -> String {
 mod tests {
     use super::*;
 
-    /// The cap is a bound on what a remote can make this process buffer, so what matters is
-    /// that it is finite and modest — not its exact value.
+    /// The cap is a BOUND on what a remote can make this process buffer, so the property is
+    /// that a long body is truncated — not that the constant equals its own literal.
     #[test]
-    fn the_error_body_cap_bounds_what_a_remote_can_make_us_buffer() {
-        assert_eq!(MAX_ERROR_BODY_BYTES, 8 * 1024);
-        assert!(
-            MAX_ERROR_BODY_BYTES > 0,
-            "a zero cap would render no diagnostic at all"
+    fn an_over_long_error_body_is_truncated_to_the_cap() {
+        let huge = "x".repeat((MAX_ERROR_BODY_BYTES as usize) * 2);
+        let response = ureq::Response::new(500, "Internal Server Error", &huge)
+            .expect("a response over a plain body");
+        assert_eq!(
+            read_error_body(response).len(),
+            MAX_ERROR_BODY_BYTES as usize,
+            "a remote must not be able to choose how much this process buffers"
         );
     }
 
+    /// A body under the cap arrives whole: the bound truncates, it does not always cut.
+    #[test]
+    fn a_short_error_body_is_returned_intact() {
+        let body = r#"{"__type":"ThrottlingException"}"#;
+        let response = ureq::Response::new(400, "Bad Request", body).expect("a response");
+        assert_eq!(read_error_body(response), body);
+    }
+
     /// The timeout is what makes a slow signer a fast refusal rather than a queue on the
-    /// handshake path.
+    /// handshake path. Asserted as a bound, because the property is "short enough to refuse".
     #[test]
     fn the_network_timeout_is_short_enough_to_refuse_rather_than_queue() {
-        assert_eq!(NETWORK_TIMEOUT, Duration::from_secs(5));
+        let ceiling = Duration::from_secs(10);
         assert!(
-            NETWORK_TIMEOUT <= Duration::from_secs(10),
-            "these calls sit on the handshake path; a long wait is a queue"
+            NETWORK_TIMEOUT <= ceiling,
+            "these calls sit on the handshake path; {NETWORK_TIMEOUT:?} would be a queue"
         );
     }
 }
