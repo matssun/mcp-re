@@ -377,7 +377,7 @@ pub(crate) fn admission_currency(
     let (kid, key, url, availability) = (
         gate.authority_kid().to_string(),
         gate.authority().clone(),
-        gate.redis_url(),
+        gate.record_store(),
         gate.availability(),
     );
     // The two `AdmissionPolicy` flags are a PROJECTION of one posture rather than two

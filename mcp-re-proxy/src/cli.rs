@@ -1,14 +1,21 @@
-//! The production `mcp-re-proxy` command line, and the validation boundary it hands to.
+//! The production `mcp-re-proxy` command line: argv to a [`DeploymentRequest`].
 //!
-//! Three things live here, and the order is the pipeline:
+//! One authority lives here — reading an argument list — and it is three collaborating
+//! parts, in pipeline order:
 //!
-//! - [`parse_args`] — argv to a [`DeploymentRequest`]. Syntax, provenance and the CLI's own
-//!   defaults; it decides no deployment legality, which is why any other way of building a
-//!   request reaches the same answer.
-//! - [`ValidatedDeployment`] and [`unsafe_config_violations`] — the layer-A boundary every
-//!   request meets however it was built.
-//! - the builders that materialize a validated deployment into a [`KeySource`], consulted
-//!   by `app::run`.
+//! - [`Flags`], the accumulator, and its routing table: each flag is dispatched to the one
+//!   family that owns its meaning. The families are the `cli::*_flags` children.
+//! - [`refused_or_unknown`], the answer for a flag no family owns, including the one
+//!   spelling recognised only to refuse it.
+//! - [`parse_args`], which composes the families' products into a request and hands it to
+//!   the layer-A boundary.
+//!
+//! Nothing here decides deployment legality. Whether the deployment a coherent command line
+//! describes may RUN is
+//! [`crate::config_state::validation::ValidatedDeployment`]'s, and materializing a
+//! validated deployment into runtime capabilities belongs to each capability's owner
+//! (ADR-MCPRE-067 Phase 8) — so any other way of building a request reaches the same
+//! answer.
 //!
 //! The request model itself is [`crate::deployment_request`], deliberately outside this
 //! module: the configuration state machines read a request without depending on the parser.
@@ -27,8 +34,6 @@ mod runtime_flags;
 mod serving_flags;
 mod signing_source_flags;
 mod storage_flags;
-
-use std::time::Duration;
 
 use crate::deployment_request::DeploymentRequest;
 
@@ -221,104 +226,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     // one pass, not four.
     crate::config_state::validation::ValidatedDeployment::try_from(flags.finish()?)
         .map(crate::config_state::validation::ValidatedDeployment::into_inner)
-}
-
-/// Refuse a SECOND admission limit: the two flags are alternative ways to state one, so
-/// naming both — or the same one twice — is a refusal rather than a precedence question.
-///
-/// They are not two values to reconcile. One bounds each core directly and the other is
-/// divided evenly across the resolved cores, so which aggregate a total implies is not
-/// known until the core count is; equivalence is a property of the host, not of the
-/// request. There is therefore no "they agree" case to exempt.
-///
-/// The rule the chart already enforced (`_helpers.tpl`: "set one OR the other, not both").
-///
-/// # Why this is the parser's job and not the boundary's
-///
-/// [`InFlightLimitRequest`](crate::config_state::InFlightLimitRequest) holds ONE limit, so
-/// a `DeploymentRequest` naming both cannot be constructed — by a parser, an embedder or a test — and
-/// the boundary has no such state left to refuse. What remains is only reachable while
-/// READING an argument list, where "already set" is a fact about the input rather than
-/// about the request: without this, the second flag would silently overwrite the first.
-fn second_admission_limit(
-    current: crate::config_state::InFlightLimitRequest,
-    flag: &str,
-) -> Result<(), String> {
-    let stated = match current {
-        crate::config_state::InFlightLimitRequest::Unspecified => return Ok(()),
-        crate::config_state::InFlightLimitRequest::PerCore(n) => {
-            format!("--max-in-flight {n}")
-        }
-        crate::config_state::InFlightLimitRequest::FleetTotal(n) => {
-            format!("--max-in-flight-total {n}")
-        }
-    };
-    Err(format!(
-        "{stated} already states the admission limit; {flag} would state it a second time. \
-         --max-in-flight bounds each core directly and --max-in-flight-total is divided \
-         evenly across the resolved cores, so the two cannot be checked against each other \
-         before the core count is known. Set one."
-    ))
-}
-
-/// Parse a timeout in whole seconds; `0` disables the timeout (`None`). The
-/// value is CAPPED at [`MAX_INNER_READ_TIMEOUT_SECS`] (1 day) and an over-cap
-/// value is REJECTED loudly. This matters for `--request-deadline-secs`, whose
-/// value is later added to `Instant::now()` in the fail-closed deadline reader
-/// (`tls::DeadlineStream`): an absurdly large value would overflow `checked_add`
-/// and — if not rejected here — silently DISABLE the slow-loris defense. Bounding
-/// at parse time keeps the control fail-closed.
-fn parse_timeout(value: &str, flag: &str) -> Result<Option<Duration>, String> {
-    let secs: u64 = value.parse().map_err(|_| format!("invalid {flag}"))?;
-    if secs > MAX_INNER_READ_TIMEOUT_SECS {
-        return Err(format!(
-            "{flag} must be <= {MAX_INNER_READ_TIMEOUT_SECS} seconds (1 day); got {secs}"
-        ));
-    }
-    Ok(if secs == 0 {
-        None
-    } else {
-        Some(Duration::from_secs(secs))
-    })
-}
-
-/// The maximum accepted `--inner-read-timeout-secs` (MCPS-074): 1 day. Generous
-/// for any legitimate inner yet far below the range that would overflow
-/// `Instant::now() + timeout` in the deadline reader, making that overflow
-/// practically unreachable (the `checked_add` there is defense-in-depth).
-const MAX_INNER_READ_TIMEOUT_SECS: u64 = 86_400;
-
-/// Parse a client-cert lifetime: a number with an optional `h`/`m`/`s` suffix
-/// (bare = seconds), or `none`/`0` to disable enforcement. E.g. `1h`, `30m`,
-/// `3600`, `none`.
-fn parse_cert_lifetime(value: &str) -> Result<Option<Duration>, String> {
-    if value == "none" {
-        return Ok(None);
-    }
-    let (digits, multiplier) = match value.strip_suffix('h') {
-        Some(d) => (d, 3600),
-        None => match value.strip_suffix('m') {
-            Some(d) => (d, 60),
-            None => (value.strip_suffix('s').unwrap_or(value), 1),
-        },
-    };
-    let n: u64 = digits.parse().map_err(|_| {
-        format!("invalid --max-client-cert-lifetime '{value}' (e.g. 1h, 30m, 3600, none)")
-    })?;
-    // Checked, because the wrapped product is a DIFFERENT lifetime rather than a larger
-    // one: `5124095576030432h` wraps to 3584s, under the ceiling, so nothing downstream
-    // refuses it and the deployment enforces a bound the operator never wrote.
-    let secs = n.checked_mul(multiplier).ok_or_else(|| {
-        format!(
-            "--max-client-cert-lifetime '{value}' does not fit in seconds; the ceiling is {}s",
-            crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME.as_secs()
-        )
-    })?;
-    Ok(if secs == 0 {
-        None
-    } else {
-        Some(Duration::from_secs(secs))
-    })
 }
 
 #[cfg(test)]
@@ -2271,7 +2178,7 @@ mod tests {
         // slow-loris defense. Parse-time capping rejects it LOUDLY so the control
         // can never be turned off by out-of-range input. The boundary (cap exactly)
         // is accepted; cap+1 is rejected.
-        let cap = super::MAX_INNER_READ_TIMEOUT_SECS;
+        let cap = super::runtime_flags::MAX_INNER_READ_TIMEOUT_SECS;
         let mut at_cap = minimal_durable();
         at_cap.splice(0..0, args(&["--request-deadline-secs", &cap.to_string()]));
         let config = parse_args(&at_cap).expect("the cap value itself is accepted");

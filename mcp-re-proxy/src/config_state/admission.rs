@@ -101,14 +101,14 @@ enum AdmissionKindState {
     Optional {
         authority_kid: String,
         authority: VerificationKey,
-        redis_url: String,
+        record_store: String,
         availability: AdmissionAvailability,
     },
     /// Enforced always: a call with no admission evidence is refused.
     Required {
         authority_kid: String,
         authority: VerificationKey,
-        redis_url: String,
+        record_store: String,
         availability: AdmissionAvailability,
     },
 }
@@ -135,7 +135,7 @@ pub struct EnforcedAdmission<'a> {
     posture: AdmissionPosture,
     authority_kid: &'a str,
     authority: &'a VerificationKey,
-    redis_url: &'a str,
+    record_store: &'a str,
     availability: AdmissionAvailability,
 }
 
@@ -156,8 +156,8 @@ impl<'a> EnforcedAdmission<'a> {
     }
 
     /// The shared authoritative record currency is compared against.
-    pub fn redis_url(&self) -> &'a str {
-        self.redis_url
+    pub fn record_store(&self) -> &'a str {
+        self.record_store
     }
 
     /// What this deployment does when that record cannot be reached.
@@ -185,13 +185,13 @@ impl PartialEq for AdmissionState {
                 AdmissionKindState::Optional {
                     authority_kid: a_kid,
                     authority: a_key,
-                    redis_url: a_url,
+                    record_store: a_url,
                     availability: a_av,
                 },
                 AdmissionKindState::Optional {
                     authority_kid: b_kid,
                     authority: b_key,
-                    redis_url: b_url,
+                    record_store: b_url,
                     availability: b_av,
                 },
             )
@@ -199,13 +199,13 @@ impl PartialEq for AdmissionState {
                 AdmissionKindState::Required {
                     authority_kid: a_kid,
                     authority: a_key,
-                    redis_url: a_url,
+                    record_store: a_url,
                     availability: a_av,
                 },
                 AdmissionKindState::Required {
                     authority_kid: b_kid,
                     authority: b_key,
-                    redis_url: b_url,
+                    record_store: b_url,
                     availability: b_av,
                 },
             ) => {
@@ -234,30 +234,30 @@ impl AdmissionState {
     /// this machine's semantics; both are handed over in one value so no consumer can pair
     /// a posture with an authority the validator did not pair it with.
     pub fn enforced(&self) -> Option<EnforcedAdmission<'_>> {
-        let (posture, authority_kid, authority, redis_url, availability) = match &self.kind {
+        let (posture, authority_kid, authority, record_store, availability) = match &self.kind {
             AdmissionKindState::Off => return None,
             AdmissionKindState::Optional {
                 authority_kid,
                 authority,
-                redis_url,
+                record_store,
                 availability,
             } => (
                 AdmissionPosture::Optional,
                 authority_kid,
                 authority,
-                redis_url,
+                record_store,
                 availability,
             ),
             AdmissionKindState::Required {
                 authority_kid,
                 authority,
-                redis_url,
+                record_store,
                 availability,
             } => (
                 AdmissionPosture::Required,
                 authority_kid,
                 authority,
-                redis_url,
+                record_store,
                 availability,
             ),
         };
@@ -265,7 +265,7 @@ impl AdmissionState {
             posture,
             authority_kid,
             authority,
-            redis_url,
+            record_store,
             availability: *availability,
         })
     }
@@ -285,7 +285,7 @@ pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<AdmissionSta
     let Some(AdmissionAuthority {
         kid,
         key,
-        redis_url,
+        record_store,
         availability,
     }) = authority
     else {
@@ -311,7 +311,7 @@ pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<AdmissionSta
             kind: AdmissionKindState::Optional {
                 authority_kid: kid,
                 authority: key,
-                redis_url,
+                record_store,
                 availability,
             },
         },
@@ -319,7 +319,7 @@ pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<AdmissionSta
             kind: AdmissionKindState::Required {
                 authority_kid: kid,
                 authority: key,
-                redis_url,
+                record_store,
                 availability,
             },
         },
@@ -346,7 +346,7 @@ pub(crate) struct AdmissionAuthority {
     /// The key that verifies it.
     pub(crate) key: VerificationKey,
     /// The shared authoritative record currency is compared against.
-    pub(crate) redis_url: String,
+    pub(crate) record_store: String,
     /// What this deployment does when that record cannot be reached. Derived here because
     /// the two flags behind it are legal only in the combinations this function accepts.
     pub(crate) availability: AdmissionAvailability,
@@ -408,10 +408,10 @@ pub(crate) fn validated_admission_authority(
                 .to_string(),
         );
     };
-    let redis_url = gate.store.locator();
-    if !redis_url.contains("://") {
+    let record_store = gate.store.locator();
+    if !record_store.contains("://") {
         return Err(format!(
-            "--admission-redis-url {redis_url:?} is not a URL: it names the shared \
+            "--admission-redis-url {record_store:?} is not a URL: it names the shared \
              authoritative record currency is compared against, so a value that cannot name \
              a store leaves every call failing closed on an unreachable authority"
         ));
@@ -419,7 +419,7 @@ pub(crate) fn validated_admission_authority(
     Ok(Some(AdmissionAuthority {
         kid: gate.authority_kid.clone(),
         key,
-        redis_url: redis_url.to_string(),
+        record_store: record_store.to_string(),
         availability: match gate.availability {
             AdmissionAvailabilityRequest::FailClosed => AdmissionAvailability::FailClosed,
             AdmissionAvailabilityRequest::Degraded { bound_secs } => {
@@ -506,7 +506,7 @@ mod tests {
             .expect("a complete admission configuration selects the enforcing state");
         assert_eq!(gate.posture(), AdmissionPosture::Required);
         assert_eq!(gate.authority_kid(), "authority-1");
-        assert_eq!(gate.redis_url(), "redis://127.0.0.1:6379");
+        assert_eq!(gate.record_store(), "redis://127.0.0.1:6379");
         assert_eq!(gate.authority().to_b64url(), valid_pubkey());
         assert_eq!(gate.availability(), AdmissionAvailability::FailClosed);
     }

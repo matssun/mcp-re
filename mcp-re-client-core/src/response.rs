@@ -24,7 +24,6 @@ use mcp_re_http_profile::DelegationExpectations;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::SignerSlot;
@@ -36,42 +35,10 @@ use mcp_re_http_profile::VerifiedMcpResponse;
 use crate::result_classification::classify_result;
 use crate::result_classification::ClassifiedResponse;
 
+use crate::response_expectation::ResponseExpectation;
+
 use crate::execution_contract::rejection_receipt;
 use crate::execution_contract::ExecutionContract;
-
-/// What the client expects of the bound response for one outstanding request: the
-/// exact request it sent (for the `;req` binding), the [`RequestEvidence`] handle
-/// the response must bind, and an optional pinned server signer.
-#[derive(Debug, Clone)]
-pub struct ResponseExpectation {
-    /// The exact [`HttpRequest`] the client signed and sent.
-    pub request: HttpRequest,
-    /// The [`RequestEvidence`] handle the response's `request_evidence` must equal.
-    pub request_evidence: RequestEvidence,
-    /// The server signer policy expects for this route/audience, if pinned. When
-    /// `Some`, the verified server signer keyid MUST equal it (unexpected → fail
-    /// closed) even if some other signer would independently resolve.
-    pub expected_server_signer_keyid: Option<String>,
-}
-
-impl ResponseExpectation {
-    /// Build an expectation from the sent request and its evidence handle, with no
-    /// pinned signer (resolver scope governs).
-    pub fn new(request: HttpRequest, request_evidence: RequestEvidence) -> Self {
-        ResponseExpectation {
-            request,
-            request_evidence,
-            expected_server_signer_keyid: None,
-        }
-    }
-
-    /// Pin the expected server signer keyid. A verified-but-unexpected signer then
-    /// fails closed.
-    pub fn with_expected_server_signer(mut self, keyid: impl Into<String>) -> Self {
-        self.expected_server_signer_keyid = Some(keyid.into());
-        self
-    }
-}
 
 /// Verify a signed RFC 9421 response and confirm it binds the expected request.
 ///
@@ -87,8 +54,8 @@ pub fn verify_signed_response<R: Into<ResolverOutcome>>(
 ) -> Result<VerifiedMcpResponse, HttpProfileError> {
     let verified = verifier.verify_bound_response(
         response,
-        &expectation.request,
-        &expectation.request_evidence,
+        expectation.request(),
+        expectation.request_evidence(),
         now,
     )?;
 
@@ -107,7 +74,7 @@ fn enforce_expected_server_signer(
     expectation: &ResponseExpectation,
     verified: &VerifiedMcpResponse,
 ) -> Result<(), HttpProfileError> {
-    if let Some(expected) = &expectation.expected_server_signer_keyid {
+    if let Some(expected) = &expectation.pinned_server_signer() {
         if &verified.floor.resolved_server_actor.identity.keyid != expected {
             return Err(HttpProfileError::ResponseBindingMismatch);
         }
@@ -135,7 +102,7 @@ fn check_expected_server_signer(
     expectation: &ResponseExpectation,
     issuer_kid: &str,
 ) -> Result<(), HttpProfileError> {
-    let Some(pinned) = expectation.expected_server_signer_keyid.as_deref() else {
+    let Some(pinned) = expectation.pinned_server_signer() else {
         return Ok(());
     };
     if issuer_kid == pinned {
@@ -260,8 +227,8 @@ fn verify_delegated_response_under(
     if (200..300).contains(&response.status) {
         let verified = verifier.verify_delegated_bound_response(
             response,
-            &expectation.request,
-            &expectation.request_evidence,
+            expectation.request(),
+            expectation.request_evidence(),
             expect,
             is_revoked,
             now,
@@ -278,8 +245,8 @@ fn verify_delegated_response_under(
     // direct-root rejection fails closed here (no downgrade, no unsigned acceptance).
     match verifier.verify_delegated_bound_response(
         response,
-        &expectation.request,
-        &expectation.request_evidence,
+        expectation.request(),
+        expectation.request_evidence(),
         expect,
         is_revoked,
         now,
@@ -303,7 +270,7 @@ fn verify_delegated_response_under(
                     // that verifies here is not yet an answer to THIS request. Confirm the
                     // server produced it for the bytes this client sent before reporting a
                     // refusal at all.
-                    check_unbound_receipt_is_about_this_request(response, &expectation.request)?;
+                    check_unbound_receipt_is_about_this_request(response, expectation.request())?;
                     let (wire_code, execution) = rejection_receipt(&response.body);
                     Ok(VerifiedDelegatedResponse {
                         verified: DelegatedResponseEvidence::Unbound(verified),
@@ -630,7 +597,7 @@ mod delegated_tests {
         .expect("client signs request")
     }
     fn expectation(signed: &crate::SignedRequest) -> ResponseExpectation {
-        ResponseExpectation::new(signed.request().clone(), signed.evidence().clone())
+        ResponseExpectation::for_signed(signed)
     }
     fn success_body() -> Vec<u8> {
         br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()

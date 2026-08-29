@@ -130,25 +130,35 @@ owners state different things about the same value.
 
 ### Q8 — What public interface exists only because tests need it?
 
-**None found.** Every public item has a production consumer outside this file — `TrustedIssuerSet`
-(32 refs), `classify_result` (31), `DelegationPolicy` (30), `verify_delegated_accepted_202` (30),
-`StaticRevocationList` (27), `ResponseExpectation` (17), `ExecutionContract` (10),
-`continuation_state` (10, incl. both SDK bindings and the client proxy),
-`verify_delegated_response_anchored` (7), `verify_signed_response` (3),
-`verify_and_classify_response` (1). Consumers: `mcp-re-client-proxy`, `mcp-re-client`,
-`mcp-re-host`, `sdk/python`, `sdk/typescript`, `mcp-re-conformance`, and the proxy's async
-integration lanes.
+**Corrected at the ADR-MCPRE-067 Phase-9 re-run — the original answer counted textual
+references and reported them as consumers.** Three of the numbers below were reference counts
+over the whole repository, and a reference is not a consumer: `verify_signed_response`'s "3"
+was its own definition, its `pub use` in `lib.rs`, and a *comment* in `mcp-re-host` explaining
+that it is deliberately NOT re-exported.
 
-`verify_and_classify_response` has a single consumer and is the one candidate for narrowing.
+Re-measured by call site rather than by grep count:
+
+| item | production consumers outside this file |
+|---|---|
+| `TrustedIssuerSet`, `classify_result`, `DelegationPolicy`, `verify_delegated_accepted_202`, `StaticRevocationList`, `ResponseExpectation`, `ExecutionContract`, `continuation_state` | real — `mcp-re-client-proxy`, `mcp-re-client`, `mcp-re-host`, `sdk/python`, `sdk/typescript`, `mcp-re-conformance`, the proxy's async integration lanes |
+| `verify_signed_response` | **none** — no caller anywhere in the repository, including tests |
+| `verify_and_classify_response` | **none** — no caller anywhere in the repository |
+| `verify_delegated_response_anchored` | **the item no longer exists**; PR #673 replaced it with the one-trust-authority seam |
+
+So the honest answer to Q8 is not "none found". Two public functions have **no consumer at
+all** — not a test, not a fixture, not a conformance vector. Whether they remain a supported
+contract is deviation 5 below, and it is an owner decision rather than a census finding.
 
 ### Q9 — What branches are unreachable under the current legality model?
 
-None found. Both direct-root and delegated paths are reachable; the four `TrustedIssuerSet`
-states, the bound/unbound receipt fallback and the 202 path all have production consumers.
+**Corrected at the Phase-9 re-run, for the same reason as Q8.** The four `TrustedIssuerSet`
+states, the bound/unbound receipt fallback and the 202 path do all have production consumers.
 
-`enforce_expected_server_signer` (A) is documented *"Direct-root mode only"* — reachable, but see
-the note in §4: the repository's governing rule is that **delegated-required is the only
-response-signing mode**, which makes A's future an open question rather than dead code today.
+The direct-root path does **not**. `enforce_expected_server_signer` (A) is documented *"Direct-root
+mode only"*, and its only caller is `verify_signed_response`, which has no caller. It is therefore
+unreachable from anywhere in this repository — the original "reachable" rested on the same
+reference count Q8 corrects. The governing rule that **delegated-required is the only
+response-signing mode** is what left it that way; see deviation 5.
 
 ### Q10 — What facts are represented more than once?
 
@@ -168,10 +178,15 @@ response-signing mode**, which makes A's future an open question rather than dea
   callers outside the crate. `clippy::partial_pub_fields` is what forced the last step: sealing
   one field beside three `pub` siblings tells a reader which field somebody sealed, not which one
   carries an invariant.
-- `ResponseExpectation` — `request`, `request_evidence` and `expected_server_signer_keyid` are all
-  `pub`, so an expectation can pair one exchange's request with another's evidence handle. THM-0018's
-  own caveat covers this: a caller supplying a handle from the wrong exchange gets a verified
-  response bound to the wrong request.
+- ~~`ResponseExpectation` — `request`, `request_evidence` and `expected_server_signer_keyid` are
+  all `pub`, so an expectation can pair one exchange's request with another's evidence handle~~ —
+  **CLOSED for the in-process half at the Phase-9 re-run.** The three fields are private, the type
+  lives in its own `response_expectation.rs`, and `for_signed(&SignedRequest)` takes the owner that
+  produced the pair rather than two halves — the five in-tree call sites were all destructuring
+  `SignedRequest`'s sealed representation and re-pairing it (R-COMPOSE). `new(request, evidence)`
+  remains for the FFI seam, where both SDK bindings rebuild the halves from scalars and no owner
+  survives to be taken instead; THM-0018's caveat still covers that path, and per
+  `docs/dev/sealed-owners.md` sealing past an external seam would be theatre.
 - `TrustedIssuerSet` — a kid may be in `current` and `retired` simultaneously. The contradiction is
   resolved at *read* time (retirement wins) rather than made unconstructible. The read-time rule is
   correct and fails safe; the state remains representable.
@@ -226,15 +241,31 @@ client-proxy  mcp-re-client  sdk/python  sdk/typescript      injects the live re
 
 ## 4. Known deviations
 
-1. **Q7.1 — the resolver/revocation pairing is convention, not type.** The highest-value
-   correction in this census.
-2. **Q6 — `delegation_issuer_kid` re-derives a verified fact from untrusted bytes.**
-3. **Q11 — three public-field carriers**, one self-documented.
-4. **Q12 — zero theorems over this crate.**
-5. **`enforce_expected_server_signer` is documented "direct-root mode only"**, while the governing
-   repository rule is that **delegated-required is the only response-signing mode**. Whether the
-   direct-root client path is still a supported contract is a question for its owner; this census
-   records it and does not answer it.
+1. ~~**Q7.1 — the resolver/revocation pairing is convention, not type.**~~ — **CLOSED**, PR #673.
+   The verifier takes one trust authority; `resolve_root` is `pub(crate)`; `resolve_issuer` fails
+   closed on a revoked issuer without consulting the caller's revocation half.
+2. ~~**Q6 — `delegation_issuer_kid` re-derives a verified fact from untrusted bytes.**~~ —
+   **CLOSED.** `verify_delegated_accepted_202_pinned` compares the pin against
+   `AcknowledgedDelegation::issuer_kid()`, the verified product's anchor, and the function's own
+   doc records that it used to re-parse the header. Its negative control is in
+   `delegated_tests` (pinned-to-chained-root accepts, pinned-to-other-root fails closed,
+   pinning the rotating delegated kid is not what the pin means).
+3. **Q11 — the public-field carriers.** `DelegationPolicy` closed earlier;
+   `ResponseExpectation` closed for the in-process half at the Phase-9 re-run (see Q11).
+   `TrustedIssuerSet`'s current/retired contradiction remains representable and is resolved at
+   read time — ruled correct and fail-safe, not a defect.
+4. **Q12 — zero theorems over this crate.** Unchanged, and deliberately untouched: theorem work
+   is frozen until the ADR-MCPRE-067 closure lands.
+5. **`enforce_expected_server_signer` is documented "direct-root mode only"** — and the Phase-9
+   re-measurement sharpened the question rather than answering it. It is not merely at odds with
+   the governing delegated-required rule: it is **unreachable**, because its only caller
+   `verify_signed_response` has no caller anywhere, and `verify_and_classify_response` has none
+   either. `mcp-re-host` deliberately does not re-export the direct-root verifier and justifies
+   keeping it reachable at `mcp_re_client_core::verify_signed_response` for *"negative-test
+   fixtures"* — a stated purpose no fixture exercises. Deleting the two functions,
+   `enforce_expected_server_signer` and the direct-root half of `ResponseExpectation`'s pin is a
+   change to a published crate's public API, so **this remains the one owner decision this
+   census hands up**, now with the measurement it was missing.
 6. **The unbound-receipt binding is a BYTE binding, not an instance binding** — two transmissions
    of identical bytes share it. Correctly disclosed to the caller as `bound: false`; recorded here
    so no consumer treats it as instance-level.
@@ -259,13 +290,35 @@ Not a §14 exception: eight authorities, three of them independent of the file's
 
 Follow-up work gets its own issues, per this census's own terms. **No code changes in #580.**
 
+### 5.1 — status of the five moves, re-measured at the ADR-MCPRE-067 Phase-9 closure
+
+Measured with `scripts/module_size_gate.py::production_lines` on the Phase-9 tip; `response.rs`
+was **1114** at the census (`def5de1`), 1105 in the implementation map, 1021 after PR #673.
+
+| move | status | where it landed | prod lines |
+|---|---|---|---|
+| `TrustedIssuerSet` → its own module | **done** | `delegated_trust/anchors.rs` + `manifest_validity.rs` | 195 + 45 |
+| `ExecutionContract` + `rejection_receipt` → their own module | **done** | `execution_contract.rs` | 162 |
+| `RevocationSource` + `StaticRevocationList` → beside the lifecycle | **done** | `delegated_trust/revocation.rs` + `mod.rs` | 87 + 117 |
+| seal the resolver/revocation pairing (Q7.1) | **done**, PR #673 | `delegated_trust/mod.rs` | — |
+| take the issuer kid from the verified product on the 202 path (Q6) | **done** | `response.rs::verify_delegated_accepted_202_pinned` | — |
+
+Two further extractions the census did not name also landed: `DelegationPolicy` →
+`delegation_policy.rs` (149), result classification → `result_classification.rs` (93), and at
+this closure `ResponseExpectation` → `response_expectation.rs` (86).
+
+**`response.rs` is now 435 production lines**, out of ADR-MCPRE-061 §5.3's band-3 (>1,000)
+range entirely. Of the eight authorities in Q2, A and B remain in the file alongside G and H;
+A is the unreachable direct-root path of deviation 5, and removing it is the owner decision,
+not a size question.
+
 ---
 
 ## 6. Completion criteria
 
 - [x] All twelve questions answered
 - [x] Blueprint committed and linked from `docs/architecture/README.md`
-- [x] Implementation map measured with `scripts/module_size_gate.py` at a stated SHA (`def5de1`, 1105 lines)
+- [x] Implementation map measured with `scripts/module_size_gate.py` at a stated SHA (`def5de1`, 1105 lines); re-measured at the ADR-MCPRE-067 Phase-9 closure — see §5.1
 - [x] Theorem inventory distinguishes *in registry* / *gap* honestly
 - [x] Test/evidence inventory names the lane and confirms it is not vacuous
 - [x] Outcome recorded: **decomposition**

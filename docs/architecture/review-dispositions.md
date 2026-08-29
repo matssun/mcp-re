@@ -1377,12 +1377,14 @@ was reviewed here, and belongs in its own module.
 scheduled**; `AGENT_INSTRUCTIONS` §9's do-not-delete / do-not-wire-up prohibitions stand.
 
 
-## EX-007 — `mcp-re-proxy/src/cli.rs` — **census complete, disposition: move the materialization out**
+## EX-007 — `mcp-re-proxy/src/cli.rs` — **census complete; both moves landed, disposition now a candidate §14 exception awaiting ratification**
 
-**Status:** `reviewed-action-required`. **Measured:** 678 production lines after
-ADR-MCPRE-067 Phase 7; 1170 on `main` @ `7ec8f92` when the census was taken — and the
-registry and the campaign index both said 1177 before the ADR-MCPRE-065 §11
-authorization-flag family moved to its own child module.
+**Status:** `reviewed-action-required`, and the action required is no longer code — it is the
+owner's ruling on the candidate exception recorded at the end of this entry.
+**Measured:** **230 production lines** after ADR-MCPRE-067 Phase 9; 331 after Phase 8;
+678 after Phase 7; 1170 on `main` @ `7ec8f92` when the census was taken — and the registry
+and the campaign index both said 1177 before the ADR-MCPRE-065 §11 authorization-flag family
+moved to its own child module.
 
 **ADR-MCPRE-067 Phase 7 discharged the argv-transport half of this disposition.**
 `parse_args` is **22 production lines** — orchestration over fourteen flag families, each of
@@ -1468,6 +1470,64 @@ in the file by an order of magnitude, and it is the one that builds key custody.
 
 `parse_args` keeps its ADR-058 exception. `cli.rs` stays `reviewed-action-required` until the
 moves land and this census is re-run.
+
+### Phase-9 re-run — the moves landed, and the remainder was re-examined
+
+**A, B and C are all discharged.** Phase 8 moved C (capability materialization) to
+`capability_materialization::*` and B (`key_file_mode_is_insecure`) to the policy that owns
+it. Phase 9 finished A's residue: three helpers whose owners were already decided by their
+consumers moved to those consumers —
+
+| helper | moved to | sole consumer before the move |
+|---|---|---|
+| `parse_timeout` + `MAX_INNER_READ_TIMEOUT_SECS` | `cli::runtime_flags::connection_limits` | `runtime_flags::take_limit` |
+| `second_admission_limit` | `cli::runtime_flags::admission_ceiling` | `runtime_flags::take_admission` |
+| `parse_cert_lifetime` | `cli::channel_flags` | `channel_flags::take` |
+
+`require` stayed: four families call it, so it is genuinely a shared CLI helper rather than
+one family's rule sitting in the wrong file. The module documentation was corrected — it
+still described `ValidatedDeployment`, `unsafe_config_violations` and the `KeySource`
+builders as living here, none of which do.
+
+Moving `parse_timeout` into `runtime_flags.rs` pushed **that** file to 223 lines, and the
+ratchet refused it. The threshold did its job: `runtime_flags` had named two subordinate
+concerns in its own module doc, and a third — the admission ceiling, which owns the only
+"these two spellings are alternatives" refusal in the CLI — was sitting beside them. It is
+now the directory idiom the rest of `cli/` already uses: `runtime_flags/mod.rs` (82),
+`connection_limits.rs` (82), `admission_ceiling.rs` (88).
+
+### §8 question 2, re-run on the exact remainder — **ONE**
+
+What is left is `Flags`, its two routing methods, `finish`, `refused_or_unknown`, `require`
+and `parse_args`. Every one of them is part of a single authority: **reading one argument
+list into the request it describes.**
+
+| part | what it is |
+|---|---|
+| `Flags` + `take_switch` + `take` | the accumulator and its routing table — a table, not a decision; each family owns its flags' meaning |
+| `finish` | composition. One line per semantic field, transporting products the families already decided (§8 q5) |
+| `refused_or_unknown` | the routing table's answer for the empty case, including the one spelling recognised only to refuse it |
+| `require` | a shared "this flag was not supplied" helper over four families |
+| `parse_args` | the loop, and the hand-off to the layer-A boundary |
+
+Question 1 needs no "and": the unit owns *the mapping from a flat argv to a
+`DeploymentRequest`*. Nothing here decides deployment legality, and Phase 8's own census
+question — does the parser re-decide what `config_state::*` owns — was answered **no** and
+still is.
+
+The 230 lines are dominated by the family list stated three times: once as a field, once as
+a routing arm, once as a composition line (§8 q10). That is one table in three projections
+that the type system requires, and splitting it across three files would put one table in
+three places. **Decomposition here would damage the reasoning rather than clarify it**, which
+is the ADR-MCPRE-061 B-case condition.
+
+### Candidate disposition
+
+**`cli.rs` at 230 lines is returned as a candidate §14 reviewed exception, not granted one.**
+The census is complete and its answer is ONE authority; the grant itself is the owner's, and
+this record does not self-issue it. Until that ruling, the status stays
+`reviewed-action-required` with the required action being the ruling — a completed census
+that declines to grant itself an exception stays distinguishable from an unperformed one.
 
 ## EX-008 — the KMS key-custody axis — **census complete, disposition: one common owner, no per-provider split**
 

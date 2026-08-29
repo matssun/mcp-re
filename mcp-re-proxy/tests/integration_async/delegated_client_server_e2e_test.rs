@@ -520,7 +520,7 @@ fn expectation_with_pin(
     signed: &mcp_re_client_core::SignedRequest,
     pin: Option<&str>,
 ) -> ResponseExpectation {
-    let base = ResponseExpectation::new(signed.request().clone(), signed.evidence().clone());
+    let base = ResponseExpectation::for_signed(signed);
     match pin {
         Some(kid) => base.with_expected_server_signer(kid),
         None => base,

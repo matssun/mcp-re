@@ -152,10 +152,17 @@ baseline_sha = "d7abd3e"
 status = "reviewed-exception"
 review_ref = "EX-006 in docs/architecture/review-dispositions.md"
 
+# ADR-MCPRE-067 Phase 8 moved capability materialization to its owners (678 -> 331), and
+# Phase 9 moved the last three argv helpers to the flag families that were their sole
+# consumers (331 -> 230). The SHA moves WITH the number: this field records where a
+# measurement was ESTABLISHED, and 7ec8f92 never contained a 230-line cli.rs. EX-007's
+# census was re-run on the remainder and answered ONE authority; the entry stays
+# `reviewed-action-required` because the required action is now the owner's ruling on the
+# candidate §14 exception, which this registry does not self-issue.
 [[debt]]
 path = "mcp-re-proxy/src/cli.rs"
-baseline_prod_loc = 331
-baseline_sha = "7ec8f92"
+baseline_prod_loc = 230
+baseline_sha = "5d35191"
 status = "reviewed-action-required"
 review_ref = "EX-007 in docs/architecture/review-dispositions.md"
 
@@ -181,10 +188,15 @@ review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 # anything while the type lived in the same module as the function that destructured it.
 # Module privacy is the only in-crate lever, so authority E moved to `delegation_policy.rs`:
 # 564 -> 470.
+# The #580 census's decomposition landed across PR #673 and the ADR-MCPRE-067 Phase-9
+# closure: the trust-anchor lifecycle, the revocation seam, the execution contract, the
+# delegation policy, result classification and finally `ResponseExpectation` all left for
+# their own owners. 1114 at the census -> 1021 after #673 -> 435 here. The SHA moves with
+# the number; 9306f23 never contained a 435-line response.rs.
 [[debt]]
 path = "mcp-re-client-core/src/response.rs"
-baseline_prod_loc = 470
-baseline_sha = "9306f23"
+baseline_prod_loc = 435
+baseline_sha = "5d35191"
 status = "unreviewed"
 
 # MCPRE-154 relocated the shutdown-drain authority and the EX-002 census was re-run on the

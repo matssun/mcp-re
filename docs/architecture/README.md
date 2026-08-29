@@ -163,6 +163,15 @@ size orders the queue while §8 question 2 decides the outcome:
 Every band-3 hotspot now has a component blueprint. The `response.rs` gap this index carried is
 closed by [`components/client-response-verification.md`](components/client-response-verification.md).
 
+**The numbers in that table are the measurements each census was taken at, and two of the units
+have since left band 3 entirely** — recorded here rather than edited into the rows, because a
+census's measurement is part of the census.
+
+| unit | at census | now | what moved |
+|---:|---:|---:|---|
+| `mcp-re-proxy/src/cli.rs` | 1170 | **230** | ADR-MCPRE-067 Phases 7-9: fourteen flag families, capability materialization to its owners, then the last three argv helpers to the families that were their sole consumers. EX-007's authority question re-run on the remainder answers ONE, returned as a candidate §14 exception |
+| `mcp-re-client-core/src/response.rs` | 1105 | **435** | the trust-anchor lifecycle, the revocation seam, the execution contract, the delegation policy, result classification and `ResponseExpectation`, each to its own owner. The resolver/revocation pairing is a type now (PR #673) |
+
 All six censuses are complete, and the six reached their dispositions for six different
 reasons — semantic ownership; reachability; a general control hiding inside a protocol module;
 a pipeline whose first and last stages never call each other; one rule implemented twice behind
