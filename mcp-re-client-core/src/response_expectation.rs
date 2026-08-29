@@ -110,7 +110,10 @@ mod tests {
         let (request, evidence) = parts();
         let expectation = ResponseExpectation::new(request.clone(), evidence.clone());
         assert_eq!(expectation.request().target_uri, request.target_uri);
-        assert_eq!(expectation.request_evidence().digest_value, evidence.digest_value);
+        assert_eq!(
+            expectation.request_evidence().digest_value,
+            evidence.digest_value
+        );
     }
 
     /// An unpinned route reports no pin, and pinning one reports it. The pin is the only
