@@ -268,7 +268,7 @@ const SOURCE_ENVS: &[(&str, &str)] = &[
     // the both-KMS-features `proxy_ext_unit_test`. All three sources are read
     // from DISK the same way (runfile via the guard BUILD `data`).
     (
-        "mcp-re-proxy/src/kms_keysource.rs",
+        "mcp-re-proxy/src/kms_keysource/mod.rs",
         "MCP_RE_SRC_KMS_KEYSOURCE",
     ),
     (

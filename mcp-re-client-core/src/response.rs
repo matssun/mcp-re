@@ -141,6 +141,9 @@ fn verify_delegated_response_under(
     verifier_policy: &mcp_re_http_profile::VerifierPolicy,
     now: i64,
 ) -> Result<VerifiedDelegatedResponse, HttpProfileError> {
+    // The route's pinned issuer, read once: all three arms below apply the same rule to the
+    // same coordinate, and reading it per arm is how one of them comes to be missed.
+    let pinned = expectation.expected_issuer_kid();
     // Adapt the one trust authority to the http-profile verifier's two closure forms.
     // Both halves come from the SAME value, so a resolver that answers cannot be paired
     // with a revocation source that does not.
@@ -162,10 +165,7 @@ fn verify_delegated_response_under(
             is_revoked,
             now,
         )?;
-        check_expected_issuer(
-            expectation.expected_issuer_kid(),
-            &verified.delegation_issuer_kid,
-        )?;
+        check_expected_issuer(pinned, &verified.delegation_issuer_kid)?;
         return Ok(VerifiedDelegatedResponse {
             verified: DelegatedResponseEvidence::Bound(verified),
             outcome: DelegatedOutcome::Success,
@@ -184,10 +184,7 @@ fn verify_delegated_response_under(
         now,
     ) {
         Ok(verified) => {
-            check_expected_issuer(
-                expectation.expected_issuer_kid(),
-                &verified.delegation_issuer_kid,
-            )?;
+            check_expected_issuer(pinned, &verified.delegation_issuer_kid)?;
             let (wire_code, execution) = rejection_receipt(&response.body);
             Ok(VerifiedDelegatedResponse {
                 verified: DelegatedResponseEvidence::Bound(verified),
@@ -200,10 +197,7 @@ fn verify_delegated_response_under(
         Err(bound_err) => {
             match verifier.verify_delegated_unbound_response(response, expect, is_revoked, now) {
                 Ok(verified) => {
-                    check_expected_issuer(
-                        expectation.expected_issuer_kid(),
-                        &verified.delegation_issuer_kid,
-                    )?;
+                    check_expected_issuer(pinned, &verified.delegation_issuer_kid)?;
                     // The unbound signature binds nothing about the request, so a receipt
                     // that verifies here is not yet an answer to THIS request. Confirm the
                     // server produced it for the bytes this client sent before reporting a

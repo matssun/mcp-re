@@ -24,8 +24,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mcp_re_proxy::async_serve;
-use mcp_re_proxy::client_crl_publication::ClientRevocationIndex;
-use mcp_re_proxy::client_crl_publication::SharedClientRevocation;
+use mcp_re_proxy::client_revocation::ClientRevocationIndex;
+use mcp_re_proxy::client_revocation::SharedClientRevocation;
 use mcp_re_proxy::config_snapshot::ServerConfigSnapshot;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::ServerLimits;
