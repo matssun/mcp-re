@@ -163,6 +163,12 @@ size orders the queue while §8 question 2 decides the outcome:
 Every band-3 hotspot now has a component blueprint. The `response.rs` gap this index carried is
 closed by [`components/client-response-verification.md`](components/client-response-verification.md).
 
+**Every census in that table is now closed.** The nine units whose remainders were returned as
+candidates were granted ADR-MCPRE-061 §14 reviewed exceptions on 2026-08-29 — see *§14 grants
+of 2026-08-29* in [`review-dispositions.md`](review-dispositions.md) for the index and the
+per-unit records. The registry holds **0 `reviewed-action-required`**, 15 granted exceptions,
+and 82 `unreviewed` entries that nobody has yet examined.
+
 **The numbers in that table are the measurements each census was taken at, and two of the units
 have since left band 3 entirely** — recorded here rather than edited into the rows, because a
 census's measurement is part of the census.
