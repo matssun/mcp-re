@@ -1260,6 +1260,66 @@ agreement, and the three negative controls that pin the semantics are unchanged:
 issuer accepts the chained root, another issuer fails closed, and pinning the rotating
 delegated kid is refused.
 
+## EX-010 — the two theorem-owner roots — **re-censused 2026-08-29, both returned as §14 candidates**
+
+Re-censused because theorem work is about to rely on their semantic stability, and **not** as
+part of any sweep of the 84 `unreviewed` registry entries. `unreviewed` means unknown, not
+defective; these two are here because this campaign changed them.
+
+### `mcp-re-client-core/src/response.rs` — **367 production lines, ONE authority**
+
+1114 at the sixth census, 1021 after PR #673, 435 after the extractions, 368 after the
+direct-root removal, **367** after this pass.
+
+The question asked was whether delegated response verification and the 202 acknowledgement
+are one authority with two products, or two owners. **One**, and the evidence is in their
+inputs:
+
+| | bodied reply | bodyless 202 |
+|---|---|---|
+| trust | `&dyn DelegatedResponseTrust` | the same |
+| policy | `&DelegationPolicy` | the same |
+| pin coordinate | the credential's ROOT ISSUER kid | the same |
+| refusal on a wrong pin | `ResponseBindingMismatch` | the same |
+| what differs | it has a response block to bind | it has none, so it binds the request digest instead |
+
+The difference is the CARRIER, not the proposition: *this is a genuine delegated-signed
+answer from a trusted anchor, and it is an answer to what I sent*. Splitting them would put
+the same trust, policy and pin logic in two files — **and the repository has already run that
+experiment.** The pin was once enforced on replies and silently absent on one-way
+notifications, so an operator's configured control read as enabled and did not run on half
+the traffic. That is what two owners over one proposition costs.
+
+**One small correction this re-census made rather than recorded.** The pin rule was still
+stated twice — once over a `ResponseExpectation`, once over an `Option<&str>` inline in the
+202 path. `check_expected_issuer` now takes the coordinate itself, so both shapes apply one
+function. A bodyless 202 has no response block to hang a `ResponseExpectation` on, which is
+why the coordinate rather than the expectation is the right parameter.
+
+**Returned as a §14 candidate.** Not granted here.
+
+### `mcp-re-proxy/src/http_profile_serve/mod.rs` — **1108 production lines, assembly**
+
+1764 before the decomposition campaign, 1108 now, registry-`unreviewed` throughout — so this
+is its first authority question, not a repeat of that campaign.
+
+**What is left is assembly and composition, and the file says so about itself.** `handle`'s
+own doc: it owns *"the pipeline itself — which step follows which, and where the execution
+threshold lies"*, it *"does not advance the request machine"*, and it *"never re-decides what
+a failure means"*. Each stage method is an adapter onto an extracted owner —
+`signing_window`, `receipt`, `body_boundary`, `continuation`, `reply`, `inner_plane`,
+`retention`, `request_admission` — and the builder half is composition, which is a
+composition root's job.
+
+The two longest remaining methods were checked for a hidden authority and neither is one:
+`retain_accepted` calls `Retention::complete` and mints a refusal from what comes back;
+`answer_notification` calls the profile's `sign_delegated_accepted_202` and mints a response.
+Both are wiring, and their owners are next door.
+
+**Returned as a §14 candidate at band 4.** It is the largest unit in the tree, and size is
+what puts it first in the queue rather than what decides it. Granting or refusing is the
+owner's call.
+
 ## EX-006 — `mcp-re-proxy/src/ocsp.rs` — **census complete; actions 1 and 2 landed; the protocol remainder is a reviewed exception**
 
 **Status:** `reviewed-exception`, granted 2026-08-28 by the repository owner over the
