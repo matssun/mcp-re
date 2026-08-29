@@ -445,6 +445,8 @@ _PROXY_LIB_SRCS = [
     "src/async_serve/core_admission.rs",
     "src/async_serve/body_budget.rs",
     "src/async_serve/connection.rs",
+    "src/async_serve/http_limits.rs",
+    "src/async_serve/inbound.rs",
     "src/async_serve/request.rs",
     # MCPRE-113 (ADR-MCPRE-051 §1): the per-core serving fleet (per-core tokio
     # runtimes + SO_REUSEPORT listeners + Linux CPU pinning) — the production data
@@ -452,7 +454,16 @@ _PROXY_LIB_SRCS = [
     "src/async_fleet.rs",
     # MCPRE-117 (ADR-MCPRE-051 §4): the async authoritative replay tier (async store
     # contract + L1-never-Fresh wrapper) — the only replay path.
-    "src/async_replay.rs",
+    "src/async_replay/mod.rs",
+    # ADR-MCPRE-061: the tier's own authorities — the retention arithmetic, the reference
+    # L2, the per-replica account above the backend seam, and the dormant L1.
+    "src/async_replay/bounds.rs",
+    "src/async_replay/retained_set.rs",
+    "src/async_replay/local_refusals.rs",
+    "src/async_replay/in_memory.rs",
+    "src/async_replay/retention_ledger.rs",
+    "src/async_replay/charge.rs",
+    "src/async_replay/l1_fast_reject.rs",
     # ADR-MCPRE-051 §3: the async inner-server seam — the only inner path; the
     # serving path awaits it (a stdio server is fronted by mcp-re-stdio-bridge over HTTP).
     "src/async_inner.rs",

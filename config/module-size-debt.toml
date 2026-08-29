@@ -240,10 +240,16 @@ baseline_prod_loc = 938
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
+# MCPRE-175 gave the async replay tier an owner subtree. The file held the seam, the
+# reference L2, the per-replica retention account and the dormant L1 at once, so it became
+# `async_replay/mod.rs` plus `bounds.rs`, `retained_set.rs`, `local_refusals.rs`,
+# `in_memory.rs`, `retention_ledger.rs`, `charge.rs` and `l1_fast_reject.rs`. The debt moves
+# WITH the file — dropping the entry because the path changed would launder 924 registered
+# lines as progress.
 [[debt]]
-path = "mcp-re-proxy/src/async_replay.rs"
-baseline_prod_loc = 924
-baseline_sha = "d1fc5fa"
+path = "mcp-re-proxy/src/async_replay/mod.rs"
+baseline_prod_loc = 248
+baseline_sha = "255465e"
 status = "unreviewed"
 
 # MCPRE-175 gave the async listener an owner subtree. `async_serve.rs` mixed four

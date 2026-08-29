@@ -268,9 +268,10 @@ pub(crate) mod control_runtime;
 // USE of the result, which the fleet drain discharges.
 pub(crate) mod replay_plane;
 // MCPRE-117 (ADR-MCPRE-051 §4): the async authoritative replay tier — the async
-// AtomicReplayStore + the per-core L1-never-Fresh fast-reject wrapper, so the
-// per-core data plane checks replay without blocking a runtime worker. Concrete
-// async in-memory/Redis/etcd backends plug into this contract.
+// AtomicReplayStore, so the per-core data plane checks replay without blocking a
+// runtime worker. Concrete async in-memory/Redis/etcd backends plug into this
+// contract. The per-core L1-never-Fresh wrapper lives here too and is DORMANT:
+// nothing wires one, and `async_replay::l1_fast_reject` says so.
 pub mod async_replay;
 // MCPRE (ADR-MCPRE-051 §3): the ASYNC inner-server seam — THE inner path. The async
 // serving path awaits it so the inner round-trip never blocks a per-core runtime
