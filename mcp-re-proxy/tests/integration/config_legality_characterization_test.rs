@@ -236,14 +236,22 @@ fn refused_at_the_boundary() {
         );
     }
 
-    // The last case to move. A responder URL beside `--client-ocsp off` is not a mode this
-    // deployment is in — nothing consults a responder there — so the deployment carried a
-    // revocation authority it never asked, and the operator had a configured one to point
-    // at. Refused only by the parser until now.
+    // The last case to move used to be here: a responder URL beside `--client-ocsp off`,
+    // an authority the deployment carried and never asked. It has no case any more, and
+    // that is the result — the responder travels inside
+    // `OnlineRevocationEvidenceRequest::Required`, so a programmatic request cannot name
+    // one under a mode that reads none. What survives is the VALUE clause, which is
+    // intra-mechanism and still reachable: an empty responder replaces a resolvable
+    // authority with none.
     let mut config = base();
-    config.ocsp_responder_url = Some("http://ocsp.example.com".to_string());
+    config.peer_revocation.online =
+        mcp_re_proxy::deployment_request::OnlineRevocationEvidenceRequest::Required(
+            mcp_re_proxy::deployment_request::OcspResponderRequest {
+                url: Some(String::new()),
+            },
+        );
     let refusal = ValidatedDeployment::try_from(config)
-        .expect_err("a responder no mode reads is a configured authority that answers nothing");
+        .expect_err("a responder that names nothing is an authority that answers nothing");
     assert!(refusal.contains("--ocsp-responder-url"), "{refusal}");
 
     // The same source under the tier that DOES consume it is the legal state, and is

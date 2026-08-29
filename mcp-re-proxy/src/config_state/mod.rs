@@ -61,6 +61,7 @@ pub mod channel_credential_custody;
 pub mod channel_key_material;
 pub mod client_credential_window;
 pub mod continuation_control;
+pub mod credential_currency_bound;
 pub(crate) mod cross_machine;
 pub mod custody;
 pub mod delegated_signing;
@@ -84,6 +85,7 @@ pub use channel_credential_custody::ChannelCredentialCustodyState;
 pub use channel_key_material::ChannelKeyMaterial;
 pub use client_credential_window::ClientCredentialWindow;
 pub use continuation_control::ContinuationControlState;
+pub use credential_currency_bound::{credential_currency_bound, CredentialCurrencyBound};
 pub use custody::{AwsCredentialMode, CustodyMaterial, CustodyState, PrivateKeyExposure};
 pub use delegated_signing::DelegatedSigningFacts;
 pub use evidence::{AuditState, RetentionState, VerifiedContextState};
@@ -446,8 +448,8 @@ pub(crate) mod test_support {
         cadence_secs: Option<u64>,
     ) -> super::CrlRevocationState {
         let mut config = legal_config();
-        config.client_crl_paths = paths.iter().map(|p| p.to_string()).collect();
-        config.client_crl_reload_secs = cadence_secs;
+        config.peer_revocation.lists.paths = paths.iter().map(|p| p.to_string()).collect();
+        config.peer_revocation.lists.reload_secs = cadence_secs;
         super::transport::classify_and_validate_crl(&config).0
     }
 

@@ -19,14 +19,17 @@
 mod authorization;
 mod inner_backend_display;
 mod kinds;
+mod revocation;
 mod secret_string;
 mod signing_source;
 mod storage;
 
 pub use authorization::AuthorizationRequest;
 pub(crate) use inner_backend_display::RedactedBackendUrls;
-pub use kinds::{
-    AdmissionKind, AuditSinkKind, AuthzKind, BindingKind, OcspKind, VerifiedContextKind,
+pub use kinds::{AdmissionKind, AuditSinkKind, AuthzKind, BindingKind, VerifiedContextKind};
+pub use revocation::{
+    OcspResponderRequest, OnlineRevocationEvidenceRequest, PeerRevocationRequest,
+    RevocationListRequest,
 };
 pub use secret_string::SecretString;
 pub use storage::{
@@ -92,38 +95,11 @@ pub struct DeploymentRequest {
     pub response_signing: ResponseSigningRequest,
     /// Location of the trust anchors a peer credential must chain to.
     pub peer_trust_anchors: String,
-    /// Paths to offline client-certificate revocation lists (CRLs), PEM or DER
-    /// (#3839). Each `--client-crl` value (comma-separated and/or repeated) adds a
-    /// file; empty disables revocation checking (the pre-#3839 behavior). OFFLINE
-    /// only — there is no online OCSP / distribution-point fetching.
-    ///
-    /// These bytes feed TWO checks: the handshake verifier, and the PER-REQUEST
-    /// revoked-serial index (`client_revocation`). The second is what makes revocation
-    /// take effect on a connection the peer is already holding — client authentication
-    /// runs on a full handshake only, so without it a keep-alive or HTTP/2 connection
-    /// serves every later request on a certificate nothing re-checks.
-    pub client_crl_paths: Vec<String>,
-    /// ADR-MCPRE-051 §6 (MCPRE-116) in-process CRL hot-reload cadence, in seconds.
-    /// `None` (default) keeps the static-snapshot posture (reload requires a
-    /// restart). `Some(n)` spawns a background task that every `n` seconds re-reads
-    /// the `--client-crl` files and atomically swaps in a rebuilt verifier AND a
-    /// rebuilt per-request revoked-serial index — so a refreshed CRL is honored
-    /// WITHOUT a restart, on established connections as well as new ones. A failed
-    /// reload keeps the last-good config (which still fails closed once its CRL passes
-    /// `nextUpdate`). Has no effect without `--client-crl`.
-    ///
-    /// This cadence is therefore the revocation-latency bound for every peer, not only
-    /// for peers that happen to reconnect.
-    pub client_crl_reload_secs: Option<u64>,
-    /// ONLINE OCSP client-cert revocation selection (#4030). `Off` (default) does
-    /// no online check; `Require` checks the leaf's OCSP responder at connection
-    /// time. Honored ONLY in an `online_ocsp` build; a default build fails closed
-    /// at construction when `Require` is selected.
-    pub client_ocsp: OcspKind,
-    /// Explicit OCSP responder URL overriding the leaf's AIA OCSP URL (#4030).
-    /// `None` uses the AIA URL from the certificate. Only meaningful when
-    /// `client_ocsp == Require`.
-    pub ocsp_responder_url: Option<String>,
+    /// How this deployment establishes that a peer credential is still current: the
+    /// published revocation lists it reads, and whether it requires online per-credential
+    /// evidence. The two mechanisms COMPOSE — configuring one says nothing about the other
+    /// (ADR-MCPRE-067 §7).
+    pub peer_revocation: PeerRevocationRequest,
     /// Path to the JSON trust file (request signers + authorization issuers).
     pub trust_path: String,
     /// ADR-MCPRE-051 §3: stateless Streamable-HTTP inner backend URL(s) for the

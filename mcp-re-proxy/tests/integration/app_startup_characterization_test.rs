@@ -304,7 +304,10 @@ fn a_programmatic_config_cannot_claim_an_ocsp_check_the_serving_path_never_makes
 
     // What an in-code caller can write. `parse_args` refuses the flag, so this is the
     // only shape the configuration can take.
-    config.client_ocsp = mcp_re_proxy::deployment_request::OcspKind::Require;
+    config.peer_revocation.online =
+        mcp_re_proxy::deployment_request::OnlineRevocationEvidenceRequest::Required(
+            mcp_re_proxy::deployment_request::OcspResponderRequest::default(),
+        );
 
     let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
         .expect_err("a claim the serving path cannot deliver must be refused however it was built");
@@ -1128,7 +1131,7 @@ fn a_programmatic_config_cannot_hot_spin_the_crl_reloader() {
     let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
 
     let mut config = parsed.clone();
-    config.client_crl_reload_secs = Some(0);
+    config.peer_revocation.lists.reload_secs = Some(0);
     let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
         .expect_err("a zero reload cadence must be refused");
     assert!(
@@ -1145,8 +1148,8 @@ fn a_programmatic_config_cannot_hot_spin_the_crl_reloader() {
     // would mask the property under test here.
     for cadence in [Some(30), None] {
         let mut config = parsed.clone();
-        config.client_crl_paths = vec![m.client_ca_path.to_string_lossy().into_owned()];
-        config.client_crl_reload_secs = cadence;
+        config.peer_revocation.lists.paths = vec![m.client_ca_path.to_string_lossy().into_owned()];
+        config.peer_revocation.lists.reload_secs = cadence;
         let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
             .expect_err("this fixture stops at an environmental step");
         assert!(

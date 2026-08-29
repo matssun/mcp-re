@@ -83,22 +83,6 @@ pub enum BindingKind {
     AttestedIngress,
 }
 
-/// ONLINE client-cert OCSP revocation selection (#4030). The online sibling of
-/// the offline `--client-crl` posture.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OcspKind {
-    /// No online OCSP check (the default). Revocation, if any, comes only from
-    /// the offline `--client-crl` set.
-    Off,
-    /// Require an online OCSP check at connection time. A verified client leaf is
-    /// rejected on `Revoked` (always) and, failing closed, on
-    /// `Unknown`/unreachable/timeout/parse error too (there is no soft-fail
-    /// relaxation). Honored ONLY in a build with the `online_ocsp` feature; a
-    /// default build parses it but FAILS CLOSED at construction (mirrors the
-    /// env-keysource / shared-replay gates).
-    Require,
-}
-
 /// Authorization-policy selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthzKind {

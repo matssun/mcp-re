@@ -17,7 +17,10 @@
 //! clauses were added in; this file records what it IS, so that changing it is a decision.
 
 use mcp_re_proxy::cli::{self};
-use mcp_re_proxy::deployment_request::{AuthzKind, BindingKind, DeploymentRequest, OcspKind};
+use mcp_re_proxy::deployment_request::{
+    AuthzKind, BindingKind, DeploymentRequest, OcspResponderRequest,
+    OnlineRevocationEvidenceRequest,
+};
 use mcp_re_proxy::IdentityPolicy;
 
 /// A legal configuration, from the parser, so every violation below is one this fixture
@@ -68,7 +71,6 @@ fn keys(violations: &[String]) -> Vec<&'static str> {
         // takes the first containment match, so the mode's own key would swallow it. Two
         // clauses about one flag, so neither key may be the bare flag name either.
         "--ocsp-responder-url is empty",
-        "--ocsp-responder-url has no effect",
         "--client-ocsp",
         "--revocation-list",
         "--authz",
@@ -141,11 +143,14 @@ fn keys(violations: &[String]) -> Vec<&'static str> {
 #[test]
 fn the_boundary_refuses_in_this_order() {
     let mut config = legal();
-    config.client_ocsp = OcspKind::Require;
     // Empty, not dangling: `require` is the one mode that WOULD read a responder, so this
-    // fixture can only provoke the value's own clause. The dangling clause needs a mode
-    // that reads none, and is pinned in `the_trust_and_fleet_clauses_keep_their_places`.
-    config.ocsp_responder_url = Some(String::new());
+    // fixture can only provoke the value's own clause. The dangling case is gone entirely
+    // — the responder lives inside the requiring selection, so there is no mode that reads
+    // none for it to dangle under.
+    config.peer_revocation.online =
+        OnlineRevocationEvidenceRequest::Required(OcspResponderRequest {
+            url: Some(String::new()),
+        });
     config.authorization.revocation_list_paths = vec!["/deny.json".to_string()];
     config.authorization.kind = AuthzKind::Reference;
     // A PKCS#11 channel key beside a file response-signing source: relation X2a. It used
@@ -171,8 +176,8 @@ fn the_boundary_refuses_in_this_order() {
     config.max_clock_skew = -1;
     config.limits.max_concurrent_connections = 0;
     config.limits.drain_grace = std::time::Duration::from_secs(0);
-    config.client_crl_paths = vec!["/crl.pem".to_string(), String::new()];
-    config.client_crl_reload_secs = Some(0);
+    config.peer_revocation.lists.paths = vec!["/crl.pem".to_string(), String::new()];
+    config.peer_revocation.lists.reload_secs = Some(0);
     config.delegated_trust_epoch = None;
     config.delegated_ttl_secs = 0;
     config.delegated_overlap_secs = 0;
@@ -267,10 +272,10 @@ fn the_trust_and_fleet_clauses_keep_their_places() {
     config.revocation_tier = mcp_re_proxy::revocation_tier::RevocationTier::Live;
     config.trust_reload_secs = None;
     config.fleet = true;
-    // A responder under the default `off` mode: configured, resolvable, and read by
-    // nothing. Pinned here because the fixture above must be in `require` to reach the
-    // mode clause, and `require` is the one mode this clause does not fire in.
-    config.ocsp_responder_url = Some("http://ocsp.example.com".to_string());
+    // The responder-under-`off` case used to be pinned here: configured, resolvable, and
+    // read by nothing. It is gone because the pair is gone — the responder travels inside
+    // `OnlineRevocationEvidenceRequest::Required`, so there is no `off` mode to configure
+    // one beside. The argv form is refused by `cli::revocation_flags`.
     // The zero-cadence clause shares this position with the missing-cadence clause above —
     // they are the same guard answering two ways, so only one can fire per run and they
     // are pinned together rather than each claiming its own slot.
@@ -280,7 +285,6 @@ fn the_trust_and_fleet_clauses_keep_their_places() {
     assert_eq!(
         order,
         vec![
-            "--ocsp-responder-url has no effect",
             // `lb-assertion` is refused twice: because the mode is not deployable, and
             // because its own required keys are absent. The order of the pair INVERTED
             // when the `ChannelBinding` machine took ownership — deliberately, and this is

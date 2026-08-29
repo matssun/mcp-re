@@ -201,15 +201,10 @@ pub fn classify_and_validate_binding(
 
 /// Recognise the CRL-revocation state. Total: the two fields name one.
 fn classify_crl(config: &DeploymentRequest) -> CrlRevocationState {
-    if config.client_crl_paths.is_empty() {
-        return CrlRevocationState {
-            paths: Vec::new(),
-            cadence_secs: None,
-        };
-    }
+    let lists = &config.peer_revocation.lists;
     CrlRevocationState {
-        paths: config.client_crl_paths.clone(),
-        cadence_secs: config.client_crl_reload_secs,
+        paths: lists.paths.clone(),
+        cadence_secs: lists.is_configured().then_some(lists.reload_secs).flatten(),
     }
 }
 
@@ -223,7 +218,7 @@ pub fn classify_and_validate_crl(config: &DeploymentRequest) -> (CrlRevocationSt
     // hold one path that names no file. Placed ahead of the cadence clauses because those
     // are about a different field: a member that names nothing is a defect in the control
     // the cadence would be re-reading.
-    if config.client_crl_paths.iter().any(|path| path.is_empty()) {
+    if state.paths().iter().any(String::is_empty) {
         violations.push(
             "--client-crl contains an empty path: every listed CRL must name a file, or the \
              deployment reports offline revocation as enforced while one of its lists \
@@ -231,7 +226,7 @@ pub fn classify_and_validate_crl(config: &DeploymentRequest) -> (CrlRevocationSt
                 .to_string(),
         );
     }
-    if config.client_crl_reload_secs == Some(0) {
+    if config.peer_revocation.lists.reload_secs == Some(0) {
         violations.push(
             "--client-crl-reload-secs 0 makes the CRL reloader spin: the cadence is the sleep \
              between re-reads, so zero re-reads every CRL and rebuilds the TLS verifier \
@@ -241,7 +236,7 @@ pub fn classify_and_validate_crl(config: &DeploymentRequest) -> (CrlRevocationSt
     }
     // Forbidden on `None`: a cadence names how often to re-read a set that is empty, so its
     // presence states a control the deployment does not have.
-    if !state.is_enforced() && config.client_crl_reload_secs.is_some() {
+    if !state.is_enforced() && config.peer_revocation.lists.reload_secs.is_some() {
         violations.push(
             "--client-crl-reload-secs has no effect without --client-crl: there is no \
              revocation list to re-read, so no revocation is enforced on either cadence"
@@ -619,14 +614,14 @@ mod tests {
             (
                 (vec!["/crl.pem".to_string()], None),
                 |c: &mut DeploymentRequest| {
-                    c.client_crl_paths = vec!["/crl.pem".to_string()];
+                    c.peer_revocation.lists.paths = vec!["/crl.pem".to_string()];
                 },
             ),
             (
                 (vec!["/crl.pem".to_string()], Some(300)),
                 |c: &mut DeploymentRequest| {
-                    c.client_crl_paths = vec!["/crl.pem".to_string()];
-                    c.client_crl_reload_secs = Some(300);
+                    c.peer_revocation.lists.paths = vec!["/crl.pem".to_string()];
+                    c.peer_revocation.lists.reload_secs = Some(300);
                 },
             ),
         ];
@@ -655,7 +650,7 @@ mod tests {
             vec![String::new()],
             vec!["/crl.pem".to_string(), String::new()],
         ] {
-            let (state, violations) = crl(|c| c.client_crl_paths = paths.clone());
+            let (state, violations) = crl(|c| c.peer_revocation.lists.paths = paths.clone());
             assert!(
                 state.is_enforced(),
                 "{paths:?} classified as no CRL control at all, which would hide the defect"
@@ -670,8 +665,8 @@ mod tests {
     #[test]
     fn a_zero_cadence_is_an_unbounded_reloader_not_a_disabled_one() {
         let (_, violations) = crl(|c| {
-            c.client_crl_paths = vec!["/crl.pem".to_string()];
-            c.client_crl_reload_secs = Some(0);
+            c.peer_revocation.lists.paths = vec!["/crl.pem".to_string()];
+            c.peer_revocation.lists.reload_secs = Some(0);
         });
         assert!(
             violations.iter().any(|v| v.contains("spin")),
@@ -681,7 +676,7 @@ mod tests {
 
     #[test]
     fn a_cadence_with_no_list_to_re_read_is_refused() {
-        let (state, violations) = crl(|c| c.client_crl_reload_secs = Some(300));
+        let (state, violations) = crl(|c| c.peer_revocation.lists.reload_secs = Some(300));
         assert!(!state.is_enforced());
         assert!(
             violations

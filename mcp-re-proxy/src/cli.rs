@@ -14,6 +14,7 @@
 //! module: the configuration state machines read a request without depending on the parser.
 
 mod authorization_flags;
+mod revocation_flags;
 mod signing_source_flags;
 mod storage_flags;
 
@@ -23,7 +24,7 @@ use mcp_re_core::VerificationKey;
 
 use crate::deployment_request::{
     AdmissionKind, AuditSinkKind, BindingKind, ChannelCredentialRequest, DeploymentRequest,
-    OcspKind, SecretString, VerifiedContextKind,
+    SecretString, VerifiedContextKind,
 };
 
 #[cfg(feature = "aws_kms_keysource")]
@@ -79,7 +80,7 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     let mut client_crl_reload_secs: Option<u64> = None;
     // #4030 online OCSP revocation: off by default; responder-URL override
     // optional; hard-fail (deny on indeterminate) by default.
-    let mut client_ocsp = OcspKind::Off;
+    let mut require_online_revocation = false;
     let mut ocsp_responder_url: Option<String> = None;
     let mut trust_path = None;
     let mut admission = AdmissionKind::Off;
@@ -246,9 +247,9 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
             "--trust" => trust_path = Some(value.clone()),
             // #4030 online OCSP revocation mode.
             "--client-ocsp" => {
-                client_ocsp = match value.as_str() {
-                    "off" => OcspKind::Off,
-                    "require" => OcspKind::Require,
+                require_online_revocation = match value.as_str() {
+                    "off" => false,
+                    "require" => true,
                     other => return Err(format!("unknown --client-ocsp '{other}' (off|require)")),
                 }
             }
@@ -587,14 +588,20 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
             key: channel_key,
         },
         peer_trust_anchors: require(client_ca, "--client-ca")?,
-        client_crl_paths,
         inner_http_urls,
         cores,
         workers_per_shard,
         in_flight_limit,
-        client_crl_reload_secs,
-        client_ocsp,
-        ocsp_responder_url,
+        peer_revocation: crate::deployment_request::PeerRevocationRequest {
+            lists: crate::deployment_request::RevocationListRequest {
+                paths: client_crl_paths,
+                reload_secs: client_crl_reload_secs,
+            },
+            online: revocation_flags::online_evidence(
+                require_online_revocation,
+                ocsp_responder_url,
+            )?,
+        },
         trust_path: require(trust_path, "--trust")?,
         admission,
         admission_authority_kid,
@@ -1059,14 +1066,17 @@ pub fn build_key_source(
 /// serve loop.
 #[cfg(feature = "online_ocsp")]
 pub fn build_ocsp_checker(config: &DeploymentRequest) -> Option<crate::ocsp::OcspChecker> {
-    match config.client_ocsp {
-        OcspKind::Off => None,
-        // Hard-fail (fail closed) always: OCSP has no soft-fail knob any more.
-        OcspKind::Require => Some(crate::ocsp::OcspChecker::new(
-            config.ocsp_responder_url.clone(),
+    // Hard-fail (fail closed) always: OCSP has no soft-fail knob any more.
+    config.peer_revocation.online.is_required().then(|| {
+        crate::ocsp::OcspChecker::new(
+            config
+                .peer_revocation
+                .online
+                .responder_override()
+                .map(str::to_string),
             false,
-        )),
-    }
+        )
+    })
 }
 
 #[cfg(test)]
@@ -1078,7 +1088,6 @@ mod tests {
     use super::DeploymentRequest;
     use super::Duration;
     use super::IdentityPolicy;
-    use super::OcspKind;
     use crate::config_state::validation::unsafe_config_violations;
     use crate::deployment_request::AuthzKind;
     use crate::deployment_request::{
@@ -3798,7 +3807,7 @@ mod tests {
     fn default_has_no_crls_and_fails_closed_on_unknown_status() {
         let config = parse_args(&minimal_durable()).expect("parse");
         assert!(
-            config.client_crl_paths.is_empty(),
+            config.peer_revocation.lists.paths.is_empty(),
             "no CRLs by default (revocation checking disabled until configured)"
         );
         // Unknown CRL revocation status is ALWAYS denied (fail closed) — there is no
@@ -3811,7 +3820,7 @@ mod tests {
         a.splice(0..0, args(&["--client-crl", "/etc/mcp-re/clients.crl"]));
         let config = parse_args(&a).expect("parse");
         assert_eq!(
-            config.client_crl_paths,
+            config.peer_revocation.lists.paths,
             vec!["/etc/mcp-re/clients.crl".to_string()]
         );
     }
@@ -3822,7 +3831,7 @@ mod tests {
         a.splice(0..0, args(&["--client-crl", "/a.crl,/b.crl,/c.crl"]));
         let config = parse_args(&a).expect("parse");
         assert_eq!(
-            config.client_crl_paths,
+            config.peer_revocation.lists.paths,
             vec![
                 "/a.crl".to_string(),
                 "/b.crl".to_string(),
@@ -3990,7 +3999,7 @@ mod tests {
         );
         let config = parse_args(&a).expect("parse");
         assert_eq!(
-            config.client_crl_paths,
+            config.peer_revocation.lists.paths,
             vec!["/a.crl".to_string(), "/b.crl".to_string()]
         );
     }
@@ -4014,13 +4023,13 @@ mod tests {
     #[test]
     fn default_has_online_ocsp_off_and_hard_fail() {
         let config = parse_args(&minimal_durable()).expect("parse");
-        assert_eq!(
-            config.client_ocsp,
-            OcspKind::Off,
-            "online OCSP is OFF by default (offline-CRL-only posture preserved)"
+        assert!(
+            !config.peer_revocation.online.is_required(),
+            "online revocation evidence is NOT required by default (the offline-list \
+             posture is preserved)"
         );
         // Online OCSP ALWAYS hard-fails on an indeterminate result — no soft-fail knob.
-        assert!(config.ocsp_responder_url.is_none());
+        assert!(config.peer_revocation.online.responder_override().is_none());
     }
 
     #[test]
