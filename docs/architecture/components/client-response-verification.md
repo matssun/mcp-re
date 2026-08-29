@@ -42,8 +42,8 @@ authority boundary. This one needs seven.
 
 | # | authority | items | prod lines (approx) | depends on the others? |
 |---|---|---|---|---|
-| **A** | Bound response verification + unexpected-signer pin (direct-root) | `ResponseExpectation`, `verify_signed_response`, `enforce_expected_server_signer`, `check_expected_server_signer` | ~85 | — |
-| **B** | Result classification / continuation | `ResultClass`, `ClassifiedResponse`, `verify_and_classify_response`, `classify_result`, `continuation_state` | ~80 | A (one call) |
+| **A** | ~~Bound response verification + unexpected-signer pin (direct-root)~~ — **DELETED 2026-08-29**; only `ResponseExpectation` (now `response_expectation.rs`) and the renamed `check_expected_issuer` survive | ~~`verify_signed_response`, `enforce_expected_server_signer`~~ | ~85 | — |
+| **B** | Result classification / continuation — **EXTRACTED** to `result_classification.rs`; `ClassifiedResponse` deleted with its only producer | `ResultClass`, `classify_result`, `continuation_state` | ~80 | — |
 | **C** | Delegated-credential revocation seam | `RevocationSource`, `StaticRevocationList` | ~60 | no |
 | **D** | **Trust-anchor lifecycle** — root rotation, overlap window, root revocation, manifest expiry | `TrustedIssuerSet` (four states, two resolver forms, `is_expired`, retirement-wins) | ~215 | no |
 | **E** | Delegation policy + clock-skew bounding — **EXTRACTED** to `delegation_policy.rs` | `DelegationPolicy`, `bounded_clock_skew`, `verifier_policy`, `with_expectations` | ~90 | no |
@@ -141,24 +141,26 @@ Re-measured by call site rather than by grep count:
 | item | production consumers outside this file |
 |---|---|
 | `TrustedIssuerSet`, `classify_result`, `DelegationPolicy`, `verify_delegated_accepted_202`, `StaticRevocationList`, `ResponseExpectation`, `ExecutionContract`, `continuation_state` | real — `mcp-re-client-proxy`, `mcp-re-client`, `mcp-re-host`, `sdk/python`, `sdk/typescript`, `mcp-re-conformance`, the proxy's async integration lanes |
-| `verify_signed_response` | **none** — no caller anywhere in the repository, including tests |
-| `verify_and_classify_response` | **none** — no caller anywhere in the repository |
+| `verify_signed_response` | **none** — no caller anywhere in the repository, including tests. **DELETED 2026-08-29** |
+| `verify_and_classify_response` | **none** — no caller anywhere in the repository. **DELETED 2026-08-29**, and `ClassifiedResponse` with it |
 | `verify_delegated_response_anchored` | **the item no longer exists**; PR #673 replaced it with the one-trust-authority seam |
 
-So the honest answer to Q8 is not "none found". Two public functions have **no consumer at
-all** — not a test, not a fixture, not a conformance vector. Whether they remain a supported
-contract is deviation 5 below, and it is an owner decision rather than a census finding.
+So the honest answer to Q8 was not "none found": two public functions had **no consumer at
+all** — not a test, not a fixture, not a conformance vector. **The owner ruled on 2026-08-29
+that they were not a supported contract, and they are deleted.** Q8's answer is now "none
+found" *because there is nothing left to find*, which is a different statement from the one
+this census originally made.
 
 ### Q9 — What branches are unreachable under the current legality model?
 
 **Corrected at the Phase-9 re-run, for the same reason as Q8.** The four `TrustedIssuerSet`
 states, the bound/unbound receipt fallback and the 202 path do all have production consumers.
 
-The direct-root path does **not**. `enforce_expected_server_signer` (A) is documented *"Direct-root
-mode only"*, and its only caller is `verify_signed_response`, which has no caller. It is therefore
-unreachable from anywhere in this repository — the original "reachable" rested on the same
-reference count Q8 corrects. The governing rule that **delegated-required is the only
-response-signing mode** is what left it that way; see deviation 5.
+The direct-root path did **not**. `enforce_expected_server_signer` (A) was documented
+*"Direct-root mode only"*, and its only caller was `verify_signed_response`, which had no
+caller — unreachable from anywhere in this repository, the original "reachable" resting on the
+same reference count Q8 corrects. **Resolved by deletion on 2026-08-29**: there is one
+verification contract now, so there is no second path whose reachability could be in question.
 
 ### Q10 — What facts are represented more than once?
 
@@ -256,16 +258,18 @@ client-proxy  mcp-re-client  sdk/python  sdk/typescript      injects the live re
    read time — ruled correct and fail-safe, not a defect.
 4. **Q12 — zero theorems over this crate.** Unchanged, and deliberately untouched: theorem work
    is frozen until the ADR-MCPRE-067 closure lands.
-5. **`enforce_expected_server_signer` is documented "direct-root mode only"** — and the Phase-9
-   re-measurement sharpened the question rather than answering it. It is not merely at odds with
-   the governing delegated-required rule: it is **unreachable**, because its only caller
-   `verify_signed_response` has no caller anywhere, and `verify_and_classify_response` has none
-   either. `mcp-re-host` deliberately does not re-export the direct-root verifier and justifies
-   keeping it reachable at `mcp_re_client_core::verify_signed_response` for *"negative-test
-   fixtures"* — a stated purpose no fixture exercises. Deleting the two functions,
-   `enforce_expected_server_signer` and the direct-root half of `ResponseExpectation`'s pin is a
-   change to a published crate's public API, so **this remains the one owner decision this
-   census hands up**, now with the measurement it was missing.
+5. ~~**`enforce_expected_server_signer` is documented "direct-root mode only"**~~ — **CLOSED by
+   owner ruling, 2026-08-29: direct-root client response verification is NOT a supported
+   contract.** `verify_signed_response`, `verify_and_classify_response`,
+   `enforce_expected_server_signer` and `ClassifiedResponse` are deleted, with no deprecated
+   wrapper — keeping a shim would keep the unsupported path alive. Recorded in `CHANGELOG.md`
+   as a deliberate pre-1.0 breaking public-API correction.
+
+   **The pin survives, renamed to the coordinate it actually compares.** The delegated path
+   compares it against the credential's root issuer kid, so `expected_server_signer_keyid` →
+   `expected_issuer_kid` and `with_expected_server_signer` → `with_expected_issuer_kid`. The
+   three negative controls are unchanged: a pinned issuer accepts the chained root, another
+   issuer fails closed, and pinning the rotating delegated kid is refused.
 6. **The unbound-receipt binding is a BYTE binding, not an instance binding** — two transmissions
    of identical bytes share it. Correctly disclosed to the caller as `bound: false`; recorded here
    so no consumer treats it as instance-level.
@@ -307,10 +311,12 @@ Two further extractions the census did not name also landed: `DelegationPolicy` 
 `delegation_policy.rs` (149), result classification → `result_classification.rs` (93), and at
 this closure `ResponseExpectation` → `response_expectation.rs` (86).
 
-**`response.rs` is now 435 production lines**, out of ADR-MCPRE-061 §5.3's band-3 (>1,000)
-range entirely. Of the eight authorities in Q2, A and B remain in the file alongside G and H;
-A is the unreachable direct-root path of deviation 5, and removing it is the owner decision,
-not a size question.
+**`response.rs` is now 368 production lines**, out of ADR-MCPRE-061 §5.3's band-3 (>1,000)
+range entirely — 435 before the direct-root removal. Of the eight authorities in Q2, A and B
+are gone from this file: B was extracted to `result_classification.rs`, and A was deleted
+outright by the owner's item-7 ruling apart from `ResponseExpectation` (its own module) and
+the renamed `check_expected_issuer`. What remains is G and H — delegated response
+verification and the 202 acknowledgement — which are the file's subject.
 
 ---
 

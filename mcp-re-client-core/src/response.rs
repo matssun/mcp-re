@@ -25,71 +25,24 @@ use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::ResolvedActor;
-use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
 use serde_json::Value;
-
-use mcp_re_http_profile::VerifiedMcpResponse;
-
-use crate::result_classification::classify_result;
-use crate::result_classification::ClassifiedResponse;
 
 use crate::response_expectation::ResponseExpectation;
 
 use crate::execution_contract::rejection_receipt;
 use crate::execution_contract::ExecutionContract;
 
-/// Verify a signed RFC 9421 response and confirm it binds the expected request.
-///
-/// `resolve_actor` is the client's trust seam (injected by the proxy/SDK; live
-/// trust + OCSP live behind it, so this pure module performs no I/O). On success
-/// returns the [`VerifiedMcpResponse`]; on any failure the precise frozen
-/// [`HttpProfileError`], fail-closed.
-pub fn verify_signed_response<R: Into<ResolverOutcome>>(
-    response: &HttpResponse,
-    verifier: &Verifier<'_, R>,
-    expectation: &ResponseExpectation,
-    now: i64,
-) -> Result<VerifiedMcpResponse, HttpProfileError> {
-    let verified = verifier.verify_bound_response(
-        response,
-        expectation.request(),
-        expectation.request_evidence(),
-        now,
-    )?;
-
-    enforce_expected_server_signer(expectation, &verified)?;
-
-    Ok(verified)
-}
-
-/// The unexpected-signer guard (client policy): a signer that verifies but is not the
-/// one policy bound to this route/audience fails closed.
-///
-/// Direct-root mode only. `resolved_server_actor.identity.keyid` is the keyid the
-/// response signature was accepted under, which on that path is the stable server
-/// signer the pin names.
-fn enforce_expected_server_signer(
-    expectation: &ResponseExpectation,
-    verified: &VerifiedMcpResponse,
-) -> Result<(), HttpProfileError> {
-    if let Some(expected) = &expectation.pinned_server_signer() {
-        if &verified.floor.resolved_server_actor.identity.keyid != expected {
-            return Err(HttpProfileError::ResponseBindingMismatch);
-        }
-    }
-    Ok(())
-}
-
-/// Enforce `expected_server_signer_keyid` on the DELEGATED path (C004b, resolved
-/// 2026-07-27).
+/// Enforce the route's pinned credential issuer (C004b, resolved 2026-07-27).
 ///
 /// The pin binds to the credential's ROOT ISSUER kid, not to the keyid the response
 /// signature verified under. That keyid is the DELEGATED kid — an RFC 7638 thumbprint
 /// that rotates every TTL by design — so pinning it would fail on the first rotation
 /// and means nothing about server identity. The issuer kid is the anchor the credential
-/// proves a chain to, and is what an operator means by "this server".
+/// proves a chain to, and is what an operator means by "this server". The type now says
+/// so: the field is `expected_issuer_kid`, because a name reading `server_signer` while
+/// the comparison is against an issuer is a second thing to keep in agreement.
 ///
 /// The interim behaviour this replaces refused any set pin outright, so an operator who
 /// configured one learned it was unenforced rather than believing a control that never
@@ -98,11 +51,11 @@ fn enforce_expected_server_signer(
 /// The "missing issuer is a contradiction" branch this used to carry is gone: the
 /// delegated products hold the issuer kid unconditionally, so an issuer-less delegated
 /// verdict is not a state that can be constructed. What remains is the comparison.
-fn check_expected_server_signer(
+fn check_expected_issuer(
     expectation: &ResponseExpectation,
     issuer_kid: &str,
 ) -> Result<(), HttpProfileError> {
-    let Some(pinned) = expectation.pinned_server_signer() else {
+    let Some(pinned) = expectation.expected_issuer_kid() else {
         return Ok(());
     };
     if issuer_kid == pinned {
@@ -110,28 +63,6 @@ fn check_expected_server_signer(
     } else {
         Err(HttpProfileError::ResponseBindingMismatch)
     }
-}
-
-/// Verify a signed RFC 9421 response AND classify its result body for the
-/// multi-round-trip flow. Classification runs ONLY after verification succeeds, so
-/// the class is never trusted from unverified bytes.
-///
-/// [`ResultClass::Unrecognized`] is returned rather than raised: this function's
-/// job is to report what the verified body says, and a caller inspecting a record
-/// may legitimately want to see it. A caller acting on a LIVE exchange must refuse
-/// it — [`continuation_state`] is the seam that does, and it is what the SDK
-/// bindings call.
-pub fn verify_and_classify_response<R: Into<ResolverOutcome>>(
-    response: &HttpResponse,
-    verifier: &Verifier<'_, R>,
-    expectation: &ResponseExpectation,
-    now: i64,
-) -> Result<ClassifiedResponse, HttpProfileError> {
-    let verified = verify_signed_response(response, verifier, expectation, now)?;
-    let body: Value = serde_json::from_slice(&response.body)
-        .map_err(|_| HttpProfileError::MalformedEvidence("response body"))?;
-    let class = classify_result(body.get("result"));
-    Ok(ClassifiedResponse { verified, class })
 }
 
 // ---- ADR-MCPRE-052 delegated-required client verification (MCPRE-122) --------
@@ -233,7 +164,7 @@ fn verify_delegated_response_under(
             is_revoked,
             now,
         )?;
-        check_expected_server_signer(expectation, &verified.delegation_issuer_kid)?;
+        check_expected_issuer(expectation, &verified.delegation_issuer_kid)?;
         return Ok(VerifiedDelegatedResponse {
             verified: DelegatedResponseEvidence::Bound(verified),
             outcome: DelegatedOutcome::Success,
@@ -252,7 +183,7 @@ fn verify_delegated_response_under(
         now,
     ) {
         Ok(verified) => {
-            check_expected_server_signer(expectation, &verified.delegation_issuer_kid)?;
+            check_expected_issuer(expectation, &verified.delegation_issuer_kid)?;
             let (wire_code, execution) = rejection_receipt(&response.body);
             Ok(VerifiedDelegatedResponse {
                 verified: DelegatedResponseEvidence::Bound(verified),
@@ -265,7 +196,7 @@ fn verify_delegated_response_under(
         Err(bound_err) => {
             match verifier.verify_delegated_unbound_response(response, expect, is_revoked, now) {
                 Ok(verified) => {
-                    check_expected_server_signer(expectation, &verified.delegation_issuer_kid)?;
+                    check_expected_issuer(expectation, &verified.delegation_issuer_kid)?;
                     // The unbound signature binds nothing about the request, so a receipt
                     // that verifies here is not yet an answer to THIS request. Confirm the
                     // server produced it for the bytes this client sent before reporting a
@@ -386,7 +317,7 @@ pub fn verify_delegated_accepted_202(
 /// [`verify_delegated_accepted_202`] with the route's PINNED server signer enforced.
 ///
 /// `expected_issuer_kid` is the same coordinate the bodied path pins
-/// (`check_expected_server_signer`): the credential's ROOT ISSUER kid, not the
+/// (`check_expected_issuer`): the credential's ROOT ISSUER kid, not the
 /// delegated kid that rotates every TTL. A verifying acknowledgement from some OTHER
 /// server whose credential chains to any trusted anchor and is scoped to this
 /// audience fails closed with `ResponseBindingMismatch`, exactly as it does on the
@@ -454,6 +385,7 @@ mod delegated_tests {
     use mcp_re_http_profile::DelegationClaims;
     use mcp_re_http_profile::DelegationHeader;
     use mcp_re_http_profile::RejectionReason;
+    use mcp_re_http_profile::ResolverOutcome;
     use mcp_re_http_profile::PROFILE_TAG;
     use serde_json::json;
     use serde_json::Map;
@@ -671,7 +603,7 @@ mod delegated_tests {
         let pinned = verify_delegated_response(
             &resp,
             &trust_with(StaticRevocationList::new()),
-            &expectation(&signed).with_expected_server_signer(ROOT_KID),
+            &expectation(&signed).with_expected_issuer_kid(ROOT_KID),
             &policy(),
             NOW,
         )
@@ -682,7 +614,7 @@ mod delegated_tests {
         let err = verify_delegated_response(
             &resp,
             &trust_with(StaticRevocationList::new()),
-            &expectation(&signed).with_expected_server_signer("some-other-root-kid"),
+            &expectation(&signed).with_expected_issuer_kid("some-other-root-kid"),
             &policy(),
             NOW,
         )
@@ -696,7 +628,7 @@ mod delegated_tests {
         let err = verify_delegated_response(
             &resp,
             &trust_with(StaticRevocationList::new()),
-            &expectation(&signed).with_expected_server_signer(&delegated_kid),
+            &expectation(&signed).with_expected_issuer_kid(&delegated_kid),
             &policy(),
             NOW,
         )
@@ -729,7 +661,7 @@ mod delegated_tests {
         verify_delegated_response(
             &resp,
             &trust_with(StaticRevocationList::new()),
-            &expectation(&signed).with_expected_server_signer(ROOT_KID),
+            &expectation(&signed).with_expected_issuer_kid(ROOT_KID),
             &policy(),
             NOW,
         )
@@ -737,7 +669,7 @@ mod delegated_tests {
         let err = verify_delegated_response(
             &resp,
             &trust_with(StaticRevocationList::new()),
-            &expectation(&signed).with_expected_server_signer("some-other-root-kid"),
+            &expectation(&signed).with_expected_issuer_kid("some-other-root-kid"),
             &policy(),
             NOW,
         )

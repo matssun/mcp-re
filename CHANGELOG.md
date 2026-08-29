@@ -12,6 +12,52 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Removed — the direct-root client response verification path (BREAKING, `mcp-re-client-core`)
+
+**Migration, in one line:** call `verify_delegated_response`, and rename the pin —
+`with_expected_server_signer(kid)` becomes `with_expected_issuer_kid(kid)`.
+
+```
+removed:   mcp_re_client_core::verify_signed_response
+           mcp_re_client_core::verify_and_classify_response
+           mcp_re_client_core::ClassifiedResponse
+
+renamed:   ResponseExpectation::with_expected_server_signer  ->  with_expected_issuer_kid
+```
+
+`verify_signed_response` accepted a response signed directly by any key the injected
+resolver returned for the Response slot — no credential chain, and no revocation seam on
+that call. **Delegated-required has been the only response-signing mode since
+ADR-MCPRE-052**, so what this API preserved was an unselected second security contract that
+contradicted the governing one. It had **no caller anywhere in the repository** — not a
+test, not a fixture, not a conformance vector — and the stated reason for keeping it
+public, negative-test fixtures, had no fixture behind it.
+
+`ClassifiedResponse` goes with it: `verify_and_classify_response` was its only producer, and
+its `verified` field was the direct-root verdict type. `ResultClass`, `classify_result` and
+`continuation_state` are unaffected and still exported — they are what the client proxy and
+both SDK bindings actually use.
+
+**No deprecated wrappers.** Keeping a shim alive would keep the unsupported path alive. This
+is a deliberate pre-1.0 public-API correction, taken now rather than carried toward 1.0.
+
+### Changed — the response pin says `issuer`, because that is what it compares (BREAKING, `mcp-re-client-core`)
+
+`ResponseExpectation`'s pin is compared against the delegation credential's **root issuer
+kid**, never against the response-signing kid — the latter is an RFC 7638 thumbprint that
+rotates every TTL by design, so pinning it would fail on the first rotation and would say
+nothing about server identity. The names now match the comparison:
+
+```
+expected_server_signer_keyid   ->  expected_issuer_kid
+with_expected_server_signer()  ->  with_expected_issuer_kid()
+```
+
+Behaviour is unchanged; the three negative controls are unchanged (a pinned issuer accepts
+the chained root, another issuer fails closed, and pinning the rotating delegated kid is
+refused). `mcp-re-client`'s `expected_server_keyid` route field keeps its published name.
+
+
 ### Removed — replay configuration is a durability tier and its witness; `--replay-cache` is gone (BREAKING)
 
 **Migration, in one line:** delete `--replay-cache` and `--replay-path` from your command

@@ -522,7 +522,7 @@ fn expectation_with_pin(
 ) -> ResponseExpectation {
     let base = ResponseExpectation::for_signed(signed);
     match pin {
-        Some(kid) => base.with_expected_server_signer(kid),
+        Some(kid) => base.with_expected_issuer_kid(kid),
         None => base,
     }
 }
