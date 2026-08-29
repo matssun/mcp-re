@@ -226,12 +226,13 @@ impl ClientProxy {
         // variants differ ONLY in where the trust anchors come from; the outcome
         // handling below is shared, so neither can drift into a laxer mapping.
         let mut expectation = ResponseExpectation::for_signed(&signed);
-        // The route's PINNED server signer, if it configured one. Without this the
-        // field was route bookkeeping that decided nothing: any server whose delegated
-        // credential chains to a trusted root and is scoped to this audience could
-        // answer for this route, which is precisely what the pin exists to refuse.
+        // The route's PINNED credential ISSUER, if it configured one: without it any
+        // server whose delegated credential chains to a trusted root and is scoped to
+        // this audience may answer for this route. The pin is the ISSUER and not the
+        // response-signing kid, which rotates every TTL; `route.expected_server_keyid`
+        // keeps its published name.
         if let Some(keyid) = &route.expected_server_keyid {
-            expectation = expectation.with_expected_server_signer(keyid.clone());
+            expectation = expectation.with_expected_issuer_kid(keyid.clone());
         }
         // A NOTIFICATION is answered with a signed bodyless 202, not a bodied reply,
         // so it takes its own verification path. Nothing below it applies: there is no

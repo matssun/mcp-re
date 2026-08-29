@@ -4,7 +4,9 @@
 //!
 //! Client-side mirror of the proxy's `verify_request_full` / `sign_response_full`:
 //! it constructs a signed **RFC 9421 + RFC 9530** request ([`build_signed_request`])
-//! and verifies the bound signed response ([`verify_signed_response`]). The sole
+//! and verifies the bound signed response ([`verify_delegated_response`]).
+//! Verification is **delegated-required**: a response signed directly by a root key
+//! fails closed, and there is no second entry point that would accept one. The sole
 //! carrier is RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest
 //! (ADR-MCPRE-050) — the signature rides in the HTTP `Signature`/`Signature-Input`
 //! and `Content-Digest` headers, not a JSON-RPC `_meta` block.
@@ -61,16 +63,13 @@ pub use request::build_signed_tool_call;
 pub use request::SignedRequest;
 pub use request::MIN_NONCE_CHARS;
 pub use request_signing_inputs::RequestSigningInputs;
-pub use response::verify_and_classify_response;
 pub use response::verify_delegated_accepted_202;
 pub use response::verify_delegated_response;
-pub use response::verify_signed_response;
 pub use response::DelegatedOutcome;
 pub use response::VerifiedDelegatedResponse;
 pub use response_expectation::ResponseExpectation;
 pub use result_classification::classify_result;
 pub use result_classification::continuation_state;
-pub use result_classification::ClassifiedResponse;
 pub use result_classification::ResultClass;
 pub use trust_manifest::load_signed_manifest;
 pub use trust_manifest::load_signed_manifest_with_floor;

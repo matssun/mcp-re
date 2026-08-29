@@ -1085,7 +1085,9 @@ pre-empt.
 
 **Status:** `unreviewed` in the registry, and this record does not change that on its own —
 it records the RE-RUN the MCPRE-172 parent asked for after items 2, 3 and 4 landed.
-**Measured:** 608 production lines, down from 1108 at the sixth census (#580 / PR #670).
+**Measured:** **368** production lines after the direct-root removal and the
+`ResponseExpectation` extraction; 435 before the removal; 608 at this re-run; 1108 at the
+sixth census (#580 / PR #670).
 **Parent:** [#672](https://github.com/matssun/mcp-re/issues/672). **Blueprint:**
 [`components/client-response-verification.md`](components/client-response-verification.md).
 
@@ -1107,7 +1109,7 @@ it records the RE-RUN the MCPRE-172 parent asked for after items 2, 3 and 4 land
 | # | authority | prod | what single fact it owns |
 |---|---|---:|---|
 | A | delegated response verification | ~370 | that a response is a genuine, request-bound, delegated-signed answer from a trusted anchor |
-| B | result classification | ~90 | what an MCP result MEANS — `ResultClass`, `classify_result`, `continuation_state`, `ClassifiedResponse` |
+| B | result classification | ~90 | what an MCP result MEANS — `ResultClass`, `classify_result`, `continuation_state` |
 
 A is the file's subject and belongs here. **B is not verification at all**: `classify_result`
 and `continuation_state` read a body's MCP lifecycle members and say nothing about whether
@@ -1123,18 +1125,49 @@ the credential header (item 2), and the pairing that let a revoked root resolve 
 
 ### §8 question 7 — what relationship exists only through call ordering?
 
-`enforce_expected_server_signer` / `check_expected_server_signer` remain a pair of free
-functions the verifier must remember to call after each of three verification arms. That is
-item 7 of the parent — *whether the "direct-root mode only" path is still a supported
-contract* — and it is deliberately **not answered here**: the question is its owner's, and
-inventing a direct-root contract to close it would be the over-claim ADR-061 exists to
-prevent.
+~~`enforce_expected_server_signer` / `check_expected_server_signer` remain a pair of free
+functions the verifier must remember to call after each of three verification arms.~~ —
+**halved by the owner's ruling on item 7, 2026-08-29.** `enforce_expected_server_signer` was
+the direct-root half and is deleted with the path it guarded. What remains is
+`check_expected_issuer`, called after each of three delegated arms — still an ordering
+relationship rather than a typed one, but now over ONE contract instead of two contradictory
+ones, and the pin's name states the coordinate it compares.
+
+**Item 7 is closed:** direct-root client response verification is NOT a supported contract;
+the unreachable public path is removed. See *The item-7 ruling* below.
 
 ### Disposition
 
-**Decompose B**, then re-run. A file that verifies signatures and also decides what an MCP
-result means is answering question 1 with an "and". This record does not schedule it: the
-parent's ruled order governs, and the classification half is a cleanup rather than a defect.
+~~**Decompose B**, then re-run.~~ — **done.** `ResultClass`, `classify_result` and
+`continuation_state` live in `result_classification.rs` (93 lines); `ClassifiedResponse` did
+not survive the item-7 ruling, because `verify_and_classify_response` was its only producer
+and its `verified` field was the direct-root verdict type. A is what is left, and it is the
+file's subject.
+
+### The item-7 ruling — direct-root is not a supported contract (owner, 2026-08-29)
+
+The measurement settled it rather than an argument about intent:
+
+| symbol | callers in this repository |
+|---|---|
+| `verify_signed_response` | **zero** — no test, no fixture, no conformance vector |
+| `verify_and_classify_response` | **zero** |
+| `verify_delegated_response_anchored` | already deleted by PR #673 |
+
+The production client contract is delegated-required: a response signed directly by a root
+key fails closed. Keeping `verify_signed_response` public therefore preserved no mode — it
+preserved an **unselected second security contract that contradicted the governing one** —
+and the stated justification for retaining it, negative-test fixtures, had no fixture behind
+it. Removed, with no deprecated wrapper, as a deliberate pre-1.0 public-API correction
+recorded in `CHANGELOG.md`.
+
+**The pin was preserved and renamed, not deleted.** The delegated path really does use it,
+against the credential's root issuer kid, so `expected_server_signer_keyid` became
+`expected_issuer_kid` and `with_expected_server_signer` became `with_expected_issuer_kid`.
+A name reading *signer* over a comparison against an *issuer* is a second thing to keep in
+agreement, and the three negative controls that pin the semantics are unchanged: a pinned
+issuer accepts the chained root, another issuer fails closed, and pinning the rotating
+delegated kid is refused.
 
 ## EX-006 — `mcp-re-proxy/src/ocsp.rs` — **census complete; actions 1 and 2 landed; the protocol remainder is a reviewed exception**
 
@@ -1377,10 +1410,10 @@ was reviewed here, and belongs in its own module.
 scheduled**; `AGENT_INSTRUCTIONS` §9's do-not-delete / do-not-wire-up prohibitions stand.
 
 
-## EX-007 — `mcp-re-proxy/src/cli.rs` — **census complete; both moves landed, disposition now a candidate §14 exception awaiting ratification**
+## EX-007 — `mcp-re-proxy/src/cli.rs` — **§14 REVIEWED EXCEPTION, granted 2026-08-29**
 
-**Status:** `reviewed-action-required`, and the action required is no longer code — it is the
-owner's ruling on the candidate exception recorded at the end of this entry.
+**Status:** `reviewed-exception`. The owner granted it over the post-Phase-9 remainder; the
+ruling and its reasoning are at the end of this entry.
 **Measured:** **230 production lines** after ADR-MCPRE-067 Phase 9; 331 after Phase 8;
 678 after Phase 7; 1170 on `main` @ `7ec8f92` when the census was taken — and the registry
 and the campaign index both said 1177 before the ADR-MCPRE-065 §11 authorization-flag family
@@ -1521,13 +1554,51 @@ that the type system requires, and splitting it across three files would put one
 three places. **Decomposition here would damage the reasoning rather than clarify it**, which
 is the ADR-MCPRE-061 B-case condition.
 
-### Candidate disposition
+### Disposition — §14 reviewed exception, GRANTED
 
-**`cli.rs` at 230 lines is returned as a candidate §14 reviewed exception, not granted one.**
-The census is complete and its answer is ONE authority; the grant itself is the owner's, and
-this record does not self-issue it. Until that ruling, the status stays
-`reviewed-action-required` with the required action being the ruling — a completed census
-that declines to grant itself an exception stays distinguishable from an unperformed one.
+**Owner ruling, 2026-08-29.** The 230-line remainder is approved as an ADR-MCPRE-061 §14
+reviewed exception, in the owner's words:
+
+> The re-census answers ONE authority: one argv sequence is routed through its flag families
+> and composed into one semantic `DeploymentRequest`. `parse_args` itself is 22 production
+> lines. The remaining size is dominated by three projections over the SAME family set —
+> `Flags` fields, routing arms, `finish`/composition lines. Splitting those projections
+> across files would fragment one routing/composition table rather than create another
+> semantic owner.
+
+This is a **B-case** in the ADR-MCPRE-061 sense and it meets that bar concretely: it names
+what decomposition would damage (one conceptual routing table, inspected in three places
+instead of one), what invariant requires locality (the family set is one list, and the type
+system requires it in three projections), and what compensates for the size (`parse_args` at
+22 lines, fourteen child modules each owning one semantic question's spelling, and the
+question-6 finding that the parser re-decides nothing `config_state::*` owns).
+
+**No further CLI decomposition for LOC.**
+
+### The ADR-MCPRE-058 exception is SPENT, and this is not its successor
+
+Two different exceptions over two different units, and the distinction is
+[review granularity equals exception granularity](#) again:
+
+| | ADR-MCPRE-058 | EX-007 |
+|---|---|---|
+| granularity | **function** — `parse_args` | **file** — `cli.rs` |
+| unit at grant | 722 production lines, a 79-arm dispatch | 230 production lines, one authority in three projections |
+| status | **spent** — there is no such function left to except; `parse_args` is 22 lines | **granted** |
+
+ADR-058 was not revoked and was never treated as evidence for this file's census. It simply
+has no subject any more. A reader must not read this grant as ADR-058 renewed at a larger
+scope: the earlier ruling covered a function, and a function-level exception never made its
+file one.
+
+### What an exception does NOT buy
+
+The ratchet applies to `reviewed-exception` exactly as to every other status: `cli.rs` is
+registered at 230 and **may not grow**. The three deviations
+[`components/cli-and-materialization.md`](components/cli-and-materialization.md) still lists
+as open are unaffected by this grant — the discarded validation proof, requiredness as a
+parser-only rule over public fields, and the 23 legality tests that test a neighbour's owner
+from inside this file. An exception is about SIZE; none of those three is a size finding.
 
 ## EX-008 — the KMS key-custody axis — **census complete, disposition: one common owner, no per-provider split**
 

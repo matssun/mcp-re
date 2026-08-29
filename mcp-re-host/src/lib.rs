@@ -40,13 +40,13 @@ pub use nonce::NONCE_BYTES;
 // client-facing entry point: it requires an inline delegation credential chaining to a
 // trusted root, consults the revocation seam, and applies the trust-epoch gate.
 //
-// The pre-052 direct-root verifier is deliberately NOT re-exported here. It accepts a
-// response signed directly by any key the injected resolver returns for the Response
+// The pre-052 direct-root verifier is GONE rather than merely unexported. It accepted a
+// response signed directly by any key the injected resolver returned for the Response
 // slot — no credential chain, no revocation seam on that call — which is exactly the
-// downgrade delegated-required forbids. Re-exporting it from the crate advertised as
-// the client-side ambassador handed every integrator that downgrade by default.
-// Integrators who genuinely need it (negative-test fixtures) can still reach it at
-// `mcp_re_client_core::verify_signed_response`.
+// downgrade delegated-required forbids. This note used to say it was retained for
+// negative-test fixtures; a measurement found no such fixture, and no caller anywhere,
+// so what the public API preserved was an unselected second security contract that
+// contradicted this one. Removed in the ADR-MCPRE-067 closure.
 pub use mcp_re_client_core::verify_delegated_response;
 pub use mcp_re_client_core::DelegatedOutcome;
 pub use mcp_re_client_core::DelegationPolicy;

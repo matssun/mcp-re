@@ -27,7 +27,6 @@
 //! reached the application as a completed tool result.
 
 use mcp_re_http_profile::HttpProfileError;
-use mcp_re_http_profile::VerifiedMcpResponse;
 use serde_json::Value;
 
 /// The MCP-RE round-trip classification of a verified response body
@@ -45,16 +44,6 @@ pub enum ResultClass {
     ///
     /// [`Terminal`]: ResultClass::Terminal
     Unrecognized,
-}
-
-/// A verified response plus its multi-round-trip classification (ADR-MCPS-047),
-/// read from the signed, verified body.
-#[derive(Debug, Clone)]
-pub struct ClassifiedResponse {
-    /// The verification verdict.
-    pub verified: VerifiedMcpResponse,
-    /// Terminal vs `InputRequiredResult`.
-    pub class: ResultClass,
 }
 
 /// Classify a (verified) `result` body through the profile's single discriminator

@@ -31,10 +31,14 @@ pub struct ResponseExpectation {
     request: HttpRequest,
     /// The [`RequestEvidence`] handle the response's `request_evidence` must equal.
     request_evidence: RequestEvidence,
-    /// The server signer policy expects for this route/audience, if pinned. When
-    /// `Some`, the verified server signer keyid MUST equal it (unexpected → fail
-    /// closed) even if some other signer would independently resolve.
-    expected_server_signer_keyid: Option<String>,
+    /// The credential ISSUER policy expects for this route/audience, if pinned.
+    ///
+    /// The anchor a delegated credential must prove a chain to — not the delegated
+    /// response-signing kid, which is an RFC 7638 thumbprint that rotates every TTL by
+    /// design, so pinning it would fail on the first rotation and would say nothing about
+    /// server identity. When `Some`, a response whose credential chains to any OTHER
+    /// trusted anchor fails closed.
+    expected_issuer_kid: Option<String>,
 }
 
 impl ResponseExpectation {
@@ -57,14 +61,14 @@ impl ResponseExpectation {
         ResponseExpectation {
             request,
             request_evidence,
-            expected_server_signer_keyid: None,
+            expected_issuer_kid: None,
         }
     }
 
-    /// Pin the expected server signer keyid. A verified-but-unexpected signer then
-    /// fails closed.
-    pub fn with_expected_server_signer(mut self, keyid: impl Into<String>) -> Self {
-        self.expected_server_signer_keyid = Some(keyid.into());
+    /// Pin the expected credential issuer kid. A response chaining to any other trusted
+    /// anchor then fails closed.
+    pub fn with_expected_issuer_kid(mut self, keyid: impl Into<String>) -> Self {
+        self.expected_issuer_kid = Some(keyid.into());
         self
     }
 
@@ -78,9 +82,9 @@ impl ResponseExpectation {
         &self.request_evidence
     }
 
-    /// The server signer this route pins, or `None` when resolver scope governs.
-    pub(crate) fn pinned_server_signer(&self) -> Option<&str> {
-        self.expected_server_signer_keyid.as_deref()
+    /// The credential issuer this route pins, or `None` when resolver scope governs.
+    pub(crate) fn expected_issuer_kid(&self) -> Option<&str> {
+        self.expected_issuer_kid.as_deref()
     }
 }
 
@@ -122,11 +126,11 @@ mod tests {
     fn a_pin_is_absent_until_it_is_set() {
         let (request, evidence) = parts();
         let expectation = ResponseExpectation::new(request, evidence);
-        assert_eq!(expectation.pinned_server_signer(), None);
+        assert_eq!(expectation.expected_issuer_kid(), None);
         assert_eq!(
             expectation
-                .with_expected_server_signer("root-kid")
-                .pinned_server_signer(),
+                .with_expected_issuer_kid("root-kid")
+                .expected_issuer_kid(),
             Some("root-kid")
         );
     }
