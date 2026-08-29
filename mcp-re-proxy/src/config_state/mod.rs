@@ -338,17 +338,18 @@ pub(crate) mod test_support {
 
     /// The same configuration with admission enforced under a named authority.
     pub(crate) fn enforcing_admission_config() -> DeploymentRequest {
-        use crate::deployment_request::AdmissionKind;
         let mut config = legal_config();
-        config.admission = AdmissionKind::Required;
-        config.admission_authority_kid = Some("authority-1".to_string());
-        config.admission_authority_pubkey_b64url = Some(
-            mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32])
-                .public_key()
-                .to_b64url(),
-        );
-        config.admission_store.authoritative = Some(
-            crate::deployment_request::SharedStoreRequest::redis("redis://127.0.0.1:6379"),
+        config.admission = crate::deployment_request::AdmissionRequest::Required(
+            crate::deployment_request::AdmissionGateRequest {
+                authority_kid: "authority-1".to_string(),
+                authority_pubkey_b64url: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32])
+                    .public_key()
+                    .to_b64url(),
+                store: crate::deployment_request::SharedStoreRequest::redis(
+                    "redis://127.0.0.1:6379",
+                ),
+                availability: crate::deployment_request::AdmissionAvailabilityRequest::FailClosed,
+            },
         );
         config
     }

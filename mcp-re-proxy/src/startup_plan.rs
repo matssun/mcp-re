@@ -1009,12 +1009,15 @@ mod tests {
     fn with_admission(
         mut config: crate::deployment_request::DeploymentRequest,
     ) -> crate::deployment_request::DeploymentRequest {
-        config.admission = crate::deployment_request::AdmissionKind::Required;
-        config.admission_authority_kid = Some("admission-root-1".to_string());
-        config.admission_authority_pubkey_b64url =
-            Some("1i8Bah79Hk_feT60LNhEceG6nwzwTRKHtcxx9hYofLg".to_string());
-        config.admission_store.authoritative = Some(
-            crate::deployment_request::SharedStoreRequest::redis("redis://127.0.0.1:6379"),
+        config.admission = crate::deployment_request::AdmissionRequest::Required(
+            crate::deployment_request::AdmissionGateRequest {
+                authority_kid: "admission-root-1".to_string(),
+                authority_pubkey_b64url: "1i8Bah79Hk_feT60LNhEceG6nwzwTRKHtcxx9hYofLg".to_string(),
+                store: crate::deployment_request::SharedStoreRequest::redis(
+                    "redis://127.0.0.1:6379",
+                ),
+                availability: crate::deployment_request::AdmissionAvailabilityRequest::FailClosed,
+            },
         );
         config
     }

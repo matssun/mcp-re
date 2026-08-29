@@ -29,20 +29,20 @@
 //! rather than ignored — a `--admission-redis-url` beside `--admission off` reads to an
 //! auditor as "admission is configured" while nothing is enforced.
 //!
-//! **`Off` forbids all five of its parameters**, the authority pubkey and the degraded
-//! window included. Two of the five used to slip through: the dangling clause named only
-//! the kid and the redis url, and the degraded window was caught only at `P = 0`, so a
-//! POSITIVE window beside `--admission off` was accepted.
+//! **`Off` has no parameters to forbid.** It used to forbid all five, and two of them
+//! slipped through for a while. The gate's inputs are members of
+//! [`AdmissionRequest`](crate::deployment_request::AdmissionRequest)'s enforcing forms now,
+//! so an unenforced request has nowhere to carry them and the dangling clauses have no
+//! configuration to examine (ADR-MCPRE-067 §7). `cli::admission_flags` answers the argv
+//! forms, which are the only ones that survive.
 //!
-//! **A degraded window is refused for a different reason on each side of that line.** With
-//! a gate, `P = 0` and `allow_degraded` on is not a disabled window: the PEP serves an
-//! unreachable authority for `P + max_clock_skew` seconds, so zero still admits a revoked
-//! workload for the skew tolerance while claiming no window was configured. With no gate,
-//! that argument is simply false — nothing is built, and no window of any width is opened.
-//! The setting is refused there because it dangles, which is the true reason, and the
-//! width clause now sits inside the enforcing branch where its own reasoning holds.
+//! The degraded table went the same way: its two refused cells — a bound where nothing
+//! reads it, and a window of zero width — are unrepresentable, because the availability is
+//! one tagged value and the bound is a `NonZeroU64` carried by the arm that opens a window.
 
-use crate::deployment_request::{AdmissionKind, DeploymentRequest};
+use crate::deployment_request::{
+    AdmissionAvailabilityRequest, AdmissionRequest, DeploymentRequest,
+};
 use mcp_re_core::VerificationKey;
 use std::num::NonZeroU64;
 
@@ -278,14 +278,7 @@ impl AdmissionState {
 /// first does not move. No state is recognised when it refuses: an enforcing state cannot
 /// be built without the witnesses that make it inhabitable.
 pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<AdmissionState>, Vec<String>) {
-    let authority = match validated_admission_authority(
-        config.admission,
-        config.admission_authority_kid.as_deref(),
-        config.admission_authority_pubkey_b64url.as_deref(),
-        config.admission_store.locator(),
-        config.admission_allow_degraded,
-        config.admission_degraded_bound_secs,
-    ) {
+    let authority = match validated_admission_authority(&config.admission) {
         Ok(authority) => authority,
         Err(refusal) => return (None, vec![refusal]),
     };
@@ -304,9 +297,9 @@ pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<AdmissionSta
         );
     };
     let state = match config.admission {
-        // `validated_admission_authority` yields an authority only for the enforcing
-        // kinds, so this arm is unreachable rather than a second reading of the selector.
-        AdmissionKind::Off => {
+        // `validated_admission_authority` yields an authority only for the enforcing forms,
+        // so this arm is unreachable rather than a second reading of the selector.
+        AdmissionRequest::NotEnforced => {
             return (
                 Some(AdmissionState {
                     kind: AdmissionKindState::Off,
@@ -314,7 +307,7 @@ pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<AdmissionSta
                 Vec::new(),
             )
         }
-        AdmissionKind::Optional => AdmissionState {
+        AdmissionRequest::Optional(_) => AdmissionState {
             kind: AdmissionKindState::Optional {
                 authority_kid: kid,
                 authority: key,
@@ -322,7 +315,7 @@ pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<AdmissionSta
                 availability,
             },
         },
-        AdmissionKind::Required => AdmissionState {
+        AdmissionRequest::Required(_) => AdmissionState {
             kind: AdmissionKindState::Required {
                 authority_kid: kid,
                 authority: key,
@@ -340,30 +333,6 @@ const MISSING_ADMISSION_AUTHORITY: &str =
     "--admission optional|required requires --admission-authority-kid and \
      --admission-authority-pubkey (an assertion is only evidence if the issuer is one this \
      deployment trusts)";
-
-/// Every authority parameter is refused beside `--admission off`, the pubkey included: the
-/// three are one setting, and half of a dangling authority is no less misleading than all
-/// of it.
-const DANGLING_ADMISSION_AUTHORITY: &str =
-    "--admission-authority-kid / --admission-authority-pubkey / --admission-redis-url are \
-     set but --admission is off; enable it or remove them";
-
-/// A window configured on an enforcing deployment that never opens it. Refused for
-/// unreachability rather than for width: the number is fine, nothing will ever read it.
-const INERT_DEGRADED_BOUND: &str =
-    "--admission-degraded-bound-secs is set but --admission-allow-degraded is false; the \
-     bound is read only when degraded mode is on, so this window can never open. Pass \
-     --admission-allow-degraded true to use it, or remove it to fail closed on an \
-     unreachable authority";
-
-/// The degraded window is refused beside `--admission off` for the same reason as the
-/// authority triple, and NOT because a window would be too wide: no gate is built, so no
-/// window is opened at all.
-const DANGLING_DEGRADED_WINDOW: &str =
-    "--admission-allow-degraded / --admission-degraded-bound-secs are set but --admission \
-     is off; a degraded window tolerates an UNREACHABLE ADMISSION AUTHORITY, and with the \
-     gate off there is no authority to be unreachable and no window to widen. Enable \
-     --admission or remove them";
 
 /// What an enforcing admission posture cannot exist without, established once.
 ///
@@ -405,106 +374,59 @@ pub(crate) struct AdmissionAuthority {
 /// A NEGATIVE bound does fail closed on every call, but it is refused by the same clause:
 /// a policy nobody can satisfy is not a safer spelling of "off".
 ///
-/// That argument is about a gate that EXISTS, so the clause sits inside the enforcing
-/// branch. It used to sit outside it, refusing `P = 0` under `--admission off` too, where
-/// the reasoning does not hold: nothing is built, so no assertion is served for any window.
-/// The setting is still refused there — by the dangling-parameter clause, which is the
-/// true reason — and a positive window under `off`, which the old placement accepted, is
-/// refused with it.
+/// That argument is about a gate that EXISTS, which is why the window is a `NonZeroU64`
+/// carried by the arm that opens one: every value the rule refused is a value the type no
+/// longer admits, and the clause that stated it lives in `cli::admission_flags`, where a
+/// flat command line can still say it.
 pub(crate) fn validated_admission_authority(
-    admission: AdmissionKind,
-    authority_kid: Option<&str>,
-    authority_pubkey_b64url: Option<&str>,
-    redis_url: Option<&str>,
-    allow_degraded: bool,
-    degraded_bound_secs: i64,
+    admission: &AdmissionRequest,
 ) -> Result<Option<AdmissionAuthority>, String> {
-    // Clause order within the enforcing branch is the order these checks always ran in, so
-    // the diagnostic a CLI user meets first does not change (§K1).
-    let authority = if admission == AdmissionKind::Off {
-        // `Off` is a decision about a gate, so EVERY admission parameter dangling beside
-        // it is refused. Each one reads to an auditor as "admission is configured" while
-        // nothing is enforced, and none of them has an operational meaning without a gate.
-        if authority_kid.is_some() || authority_pubkey_b64url.is_some() || redis_url.is_some() {
-            return Err(DANGLING_ADMISSION_AUTHORITY.to_string());
-        }
-        // Including the degraded window. Tolerating an unreachable authority is meaningless
-        // when there is no authority to be unreachable: `Off` builds no gate, so no window
-        // of any width is ever opened. A non-zero bound is refused whatever its sign — a
-        // negative one is no more meaningful here than a positive one.
-        if allow_degraded || degraded_bound_secs != 0 {
-            return Err(DANGLING_DEGRADED_WINDOW.to_string());
-        }
-        None
-    } else {
-        // Enforcing admission needs BOTH an authority to verify assertions against and a
-        // source to check currency against. With neither, the gate would verify nothing
-        // while looking enabled — the most dangerous of the three states, because the
-        // deployment believes it has admission control.
-        let Some(pubkey) = authority_pubkey_b64url else {
-            return Err(MISSING_ADMISSION_AUTHORITY.to_string());
-        };
-        let Some(kid) = authority_kid else {
-            return Err(MISSING_ADMISSION_AUTHORITY.to_string());
-        };
-        // Decoded HERE rather than where the verifier is built: an unusable authority key
-        // is a property of the configuration, and catching it at materialization left the
-        // composition root as the only thing between a programmatic config and a gate with
-        // no usable issuer. The key travels onward from here, so this is the only decode.
-        let Ok(key) = VerificationKey::from_b64url(pubkey) else {
-            return Err(
-                "--admission-authority-pubkey is not a valid base64url-no-pad 32-byte \
-                 Ed25519 public key"
-                    .to_string(),
-            );
-        };
-        let Some(redis_url) = redis_url else {
-            return Err(
-                "--admission optional|required requires --admission-redis-url (the shared \
-                 authoritative record; without it every call fails closed on an unreachable \
-                 authority)"
-                    .to_string(),
-            );
-        };
-        // The two flags become the posture they describe, and the two legal combinations
-        // are the only ones that produce one.
-        let availability = if !allow_degraded {
-            // Both readers of the bound sit behind `if !allow_degraded_mode` early returns
-            // — `check_admission` and `degraded_window_exhausted` — so with degraded mode
-            // off the value is not merely unused, it is unreachable. An operator who set a
-            // window and left the mode off has configured a tolerance this deployment will
-            // never apply, and is one restart away from believing it did.
-            if degraded_bound_secs != 0 {
-                return Err(INERT_DEGRADED_BOUND.to_string());
-            }
-            AdmissionAvailability::FailClosed
-        } else {
-            // Nested under the enforcing branch, where the rationale below is TRUE: a gate
-            // exists, and P is the width of the window it opens on an unreachable
-            // authority. Every value the narrowing rejects — negative, and zero — is a
-            // value this clause refuses, so the conversion decides nothing the rule has
-            // not already decided.
-            let Some(bound_secs) = u64::try_from(degraded_bound_secs)
-                .ok()
-                .and_then(NonZeroU64::new)
-            else {
-                return Err("--admission-allow-degraded true requires a positive \
-                     --admission-degraded-bound-secs (P). P is a FLOOR on the degraded \
-                     window, not the whole of it: the PEP serves an unreachable authority \
-                     for P + --max-clock-skew seconds, so P=0 still admits a revoked \
-                     workload for the skew tolerance while claiming no window was configured"
-                    .to_string());
-            };
-            AdmissionAvailability::BoundedDegraded { bound_secs }
-        };
-        Some(AdmissionAuthority {
-            kid: kid.to_string(),
-            key,
-            redis_url: redis_url.to_string(),
-            availability,
-        })
+    // Clause order is the order these checks always ran in, so the diagnostic a
+    // multiply-misconfigured deployment meets first does not change (§K1).
+    let Some(gate) = admission.gate() else {
+        // The unenforced form carries no gate inputs, so there is nothing to dangle. The
+        // two clauses that refused a dangling authority and a dangling degraded window are
+        // gone — a request cannot state either — and the argv forms are answered by
+        // `cli::admission_flags` (ADR-MCPRE-067 §7).
+        return Ok(None);
     };
-    Ok(authority)
+    // What SURVIVES is every clause about what a supplied value says. The gate is
+    // inhabited by its authority, so "enforcing with none" is unbuildable; an authority
+    // that NAMES NOTHING is still writable, and is still the most dangerous of the states
+    // because the deployment believes it has admission control.
+    if gate.authority_pubkey_b64url.trim().is_empty() || gate.authority_kid.trim().is_empty() {
+        return Err(MISSING_ADMISSION_AUTHORITY.to_string());
+    }
+    // Decoded HERE rather than where the verifier is built: an unusable authority key is a
+    // property of the configuration, and catching it at materialization left the
+    // composition root as the only thing between a programmatic config and a gate with no
+    // usable issuer. The key travels onward from here, so this is the only decode.
+    let Ok(key) = VerificationKey::from_b64url(&gate.authority_pubkey_b64url) else {
+        return Err(
+            "--admission-authority-pubkey is not a valid base64url-no-pad 32-byte \
+             Ed25519 public key"
+                .to_string(),
+        );
+    };
+    let redis_url = gate.store.locator();
+    if !redis_url.contains("://") {
+        return Err(format!(
+            "--admission-redis-url {redis_url:?} is not a URL: it names the shared \
+             authoritative record currency is compared against, so a value that cannot name \
+             a store leaves every call failing closed on an unreachable authority"
+        ));
+    }
+    Ok(Some(AdmissionAuthority {
+        kid: gate.authority_kid.clone(),
+        key,
+        redis_url: redis_url.to_string(),
+        availability: match gate.availability {
+            AdmissionAvailabilityRequest::FailClosed => AdmissionAvailability::FailClosed,
+            AdmissionAvailabilityRequest::Degraded { bound_secs } => {
+                AdmissionAvailability::BoundedDegraded { bound_secs }
+            }
+        },
+    }))
 }
 
 #[cfg(test)]
@@ -515,13 +437,23 @@ mod tests {
     /// A flag a case must name in its refusal, and the configuration that provokes it.
     type Case = (&'static str, fn(&mut DeploymentRequest));
 
-    fn enforcing(config: &mut DeploymentRequest, kind: AdmissionKind) {
-        config.admission = kind;
-        config.admission_authority_kid = Some("authority-1".to_string());
-        config.admission_authority_pubkey_b64url = Some(valid_pubkey());
-        config.admission_store.authoritative = Some(
-            crate::deployment_request::SharedStoreRequest::redis("redis://127.0.0.1:6379"),
-        );
+    /// A fully configured gate. Written through the request's own types, so a fixture
+    /// cannot assemble a form the model forbids.
+    fn gate() -> crate::deployment_request::AdmissionGateRequest {
+        crate::deployment_request::AdmissionGateRequest {
+            authority_kid: "authority-1".to_string(),
+            authority_pubkey_b64url: valid_pubkey(),
+            store: crate::deployment_request::SharedStoreRequest::redis("redis://127.0.0.1:6379"),
+            availability: AdmissionAvailabilityRequest::FailClosed,
+        }
+    }
+
+    fn enforcing(config: &mut DeploymentRequest, required: bool) {
+        config.admission = if required {
+            AdmissionRequest::Required(gate())
+        } else {
+            AdmissionRequest::Optional(gate())
+        };
     }
 
     /// A real key, since the guard decodes it to a curve point rather than shape-checking:
@@ -540,19 +472,19 @@ mod tests {
 
     #[test]
     fn every_legal_state_form_is_classified_and_accepted() {
-        let (state, violations) = run(|c| c.admission = AdmissionKind::Off);
+        let (state, violations) = run(|c| c.admission = AdmissionRequest::NotEnforced);
         assert!(violations.is_empty(), "{violations:?}");
         let state = state.expect("recognised");
         assert!(!state.is_enforced());
         assert!(state.enforced().is_none());
 
-        for kind in [AdmissionKind::Optional, AdmissionKind::Required] {
-            let (state, violations) = run(|c| enforcing(c, kind));
-            assert!(violations.is_empty(), "{kind:?} refused: {violations:?}");
+        for required in [false, true] {
+            let (state, violations) = run(|c| enforcing(c, required));
+            assert!(violations.is_empty(), "{required} refused: {violations:?}");
             let state = state.expect("recognised");
             assert_eq!(
                 state.enforced().map(|gate| gate.posture()),
-                Some(if kind == AdmissionKind::Required {
+                Some(if required {
                     AdmissionPosture::Required
                 } else {
                     AdmissionPosture::Optional
@@ -567,7 +499,7 @@ mod tests {
     /// downstream repeats the decode.
     #[test]
     fn an_enforcing_state_carries_the_authority_that_made_it_inhabitable() {
-        let (state, _) = run(|c| enforcing(c, AdmissionKind::Required));
+        let (state, _) = run(|c| enforcing(c, true));
         let state = state.expect("a complete admission configuration names a state");
         let gate = state
             .enforced()
@@ -579,15 +511,20 @@ mod tests {
         assert_eq!(gate.availability(), AdmissionAvailability::FailClosed);
     }
 
-    /// The two flags are CLASSIFIED, not carried. Layer A owns the distinction between
-    /// failing closed and tolerating a bounded window, so no consumer recombines a bool
-    /// and an integer into a posture — and the illegal combinations have no encoding.
+    /// The availability travels as ONE value from the request to the state. Layer A owns
+    /// the distinction between failing closed and tolerating a bounded window, so no
+    /// consumer recombines a bool and an integer into a posture — and after Phase 6 the
+    /// illegal combinations have no encoding on either side of the boundary.
     #[test]
     fn the_availability_posture_is_classified_from_the_two_flags() {
         let (state, _) = run(|c| {
-            enforcing(c, AdmissionKind::Required);
-            c.admission_allow_degraded = true;
-            c.admission_degraded_bound_secs = 90;
+            c.admission =
+                AdmissionRequest::Required(crate::deployment_request::AdmissionGateRequest {
+                    availability: AdmissionAvailabilityRequest::Degraded {
+                        bound_secs: NonZeroU64::new(90).expect("90 is not zero"),
+                    },
+                    ..gate()
+                });
         });
         let state = state.expect("a complete admission configuration names a state");
         let gate = state
@@ -605,7 +542,7 @@ mod tests {
     /// an empty string standing in for one.
     #[test]
     fn the_off_state_carries_nothing_because_it_verifies_nothing() {
-        let state = run(|c| c.admission = AdmissionKind::Off)
+        let state = run(|c| c.admission = AdmissionRequest::NotEnforced)
             .0
             .expect("off is a state");
         assert!(state.enforced().is_none());
@@ -616,8 +553,11 @@ mod tests {
     #[test]
     fn a_refused_configuration_recognises_no_state() {
         let (state, violations) = run(|c| {
-            enforcing(c, AdmissionKind::Required);
-            c.admission_store.authoritative = None;
+            c.admission =
+                AdmissionRequest::Required(crate::deployment_request::AdmissionGateRequest {
+                    authority_pubkey_b64url: "not-a-key".to_string(),
+                    ..gate()
+                });
         });
         assert!(state.is_none(), "a state was built over a refusal");
         assert!(!violations.is_empty());
@@ -626,27 +566,42 @@ mod tests {
     #[test]
     fn the_degraded_sub_state_is_accepted_with_a_positive_window() {
         let (_, violations) = run(|c| {
-            enforcing(c, AdmissionKind::Required);
-            c.admission_allow_degraded = true;
-            c.admission_degraded_bound_secs = 30;
+            c.admission =
+                AdmissionRequest::Required(crate::deployment_request::AdmissionGateRequest {
+                    availability: AdmissionAvailabilityRequest::Degraded {
+                        bound_secs: NonZeroU64::new(30).expect("30 is not zero"),
+                    },
+                    ..gate()
+                });
         });
         assert!(violations.is_empty(), "{violations:?}");
     }
 
     #[test]
     fn an_enforcing_state_names_every_value_it_cannot_verify_without() {
+        // The three values are MEMBERS of an applied gate, so "missing" is no longer a
+        // state: what a request can still say is that one of them names nothing.
         let cases: Vec<Case> = vec![
             ("--admission-authority", |c| {
-                enforcing(c, AdmissionKind::Required);
-                c.admission_authority_pubkey_b64url = None;
+                c.admission =
+                    AdmissionRequest::Required(crate::deployment_request::AdmissionGateRequest {
+                        authority_pubkey_b64url: String::new(),
+                        ..gate()
+                    });
             }),
             ("--admission-authority", |c| {
-                enforcing(c, AdmissionKind::Required);
-                c.admission_authority_kid = None;
+                c.admission =
+                    AdmissionRequest::Required(crate::deployment_request::AdmissionGateRequest {
+                        authority_kid: String::new(),
+                        ..gate()
+                    });
             }),
             ("--admission-redis-url", |c| {
-                enforcing(c, AdmissionKind::Required);
-                c.admission_store.authoritative = None;
+                c.admission =
+                    AdmissionRequest::Required(crate::deployment_request::AdmissionGateRequest {
+                        store: crate::deployment_request::SharedStoreRequest::redis(String::new()),
+                        ..gate()
+                    });
             }),
         ];
         for (flag, mutate) in cases {
@@ -661,8 +616,11 @@ mod tests {
     #[test]
     fn an_authority_key_that_cannot_verify_anything_is_refused() {
         let (_, violations) = run(|c| {
-            enforcing(c, AdmissionKind::Required);
-            c.admission_authority_pubkey_b64url = Some("not-a-key".to_string());
+            c.admission =
+                AdmissionRequest::Required(crate::deployment_request::AdmissionGateRequest {
+                    authority_pubkey_b64url: "not-a-key".to_string(),
+                    ..gate()
+                });
         });
         assert!(
             violations
@@ -672,142 +630,19 @@ mod tests {
         );
     }
 
-    /// `Off` forbids every AUTHORITY parameter, the pubkey included. The pubkey used to be
-    /// omitted from this clause while the module's own table said it was forbidden.
-    #[test]
-    fn every_authority_parameter_is_refused_beside_an_off_gate() {
-        for mutate in [
-            (|c: &mut DeploymentRequest| {
-                c.admission_authority_kid = Some("authority-1".to_string())
-            }) as fn(&mut DeploymentRequest),
-            |c: &mut DeploymentRequest| c.admission_authority_pubkey_b64url = Some(valid_pubkey()),
-            |c: &mut DeploymentRequest| {
-                c.admission_store.authoritative = Some(
-                    crate::deployment_request::SharedStoreRequest::redis("redis://127.0.0.1:6379"),
-                )
-            },
-        ] {
-            let (state, violations) = run(|c| {
-                c.admission = AdmissionKind::Off;
-                mutate(c);
-            });
-            assert!(state.is_none(), "a refused configuration named a state");
-            assert!(
-                violations.iter().any(|v| v.contains("--admission is off")),
-                "a dangling admission parameter was accepted: {violations:?}"
-            );
-        }
-    }
-
-    /// What a degraded cell is expected to be, and — when refused — WHICH mistake it is.
-    ///
-    /// Three refusals that a single "is it rejected" assertion would conflate. They are
-    /// different operator errors: a setting that applies to nothing, a setting that can
-    /// never be reached, and a window that is narrower than it claims.
-    #[derive(Debug, Clone, Copy)]
-    enum Cell {
-        /// Accepted, and it classifies to exactly this posture. `None` for `Off`, which
-        /// has no availability choice to make.
-        Legal(Option<AdmissionAvailability>),
-        /// No gate exists, so no admission-specific parameter means anything.
-        DanglingUnderOff,
-        /// A gate exists, but both readers of the bound return before consulting it.
-        UnreachableBound,
-        /// A gate exists and will open a window, but not the width that was asked for.
-        InvalidWidth,
-    }
-
-    impl Cell {
-        /// The phrase that identifies this refusal and no other.
-        fn marker(self) -> &'static str {
-            match self {
-                Cell::Legal(_) => unreachable!("a legal cell has no refusal to identify"),
-                Cell::DanglingUnderOff => "--admission is off",
-                Cell::UnreachableBound => "--admission-allow-degraded is false",
-                Cell::InvalidWidth => "P + --max-clock-skew",
-            }
-        }
-    }
-
-    /// The complete degraded truth table, asserted cell by cell.
-    ///
-    /// Eight conceptual cells plus negative-bound representatives on both sides. Two are
-    /// legal, and they are the two the sub-posture will encode: fail-closed, and bounded
-    /// degradation over a positive window. Everything else is refused, and the table pins
-    /// WHICH refusal, so that a future clause reordering cannot quietly answer one mistake
-    /// with another mistake's diagnostic.
-    #[test]
-    fn the_degraded_truth_table_is_complete_and_each_refusal_names_its_own_mistake() {
-        let bounded = |secs: u64| {
-            Some(AdmissionAvailability::BoundedDegraded {
-                bound_secs: NonZeroU64::new(secs).expect("a positive test bound"),
-            })
-        };
-        let fail_closed = Some(AdmissionAvailability::FailClosed);
-        let cases: &[(bool, bool, i64, Cell)] = &[
-            // gate off: nothing admission-specific may be configured
-            (false, false, 0, Cell::Legal(None)),
-            (false, false, 30, Cell::DanglingUnderOff),
-            (false, false, -30, Cell::DanglingUnderOff),
-            (false, true, 0, Cell::DanglingUnderOff),
-            (false, true, 30, Cell::DanglingUnderOff),
-            // gate on
-            (true, false, 0, Cell::Legal(fail_closed)),
-            (true, false, 30, Cell::UnreachableBound),
-            (true, false, -30, Cell::UnreachableBound),
-            (true, true, 0, Cell::InvalidWidth),
-            (true, true, -30, Cell::InvalidWidth),
-            (true, true, 30, Cell::Legal(bounded(30))),
-        ];
-        for &(gate, allow, bound, expected) in cases {
-            let (state, violations) = run(|c| {
-                if gate {
-                    enforcing(c, AdmissionKind::Required);
-                } else {
-                    c.admission = AdmissionKind::Off;
-                }
-                c.admission_allow_degraded = allow;
-                c.admission_degraded_bound_secs = bound;
-            });
-            let at = format!("gate={gate} allow={allow} P={bound}");
-            let Cell::Legal(posture) = expected else {
-                assert!(
-                    state.is_none(),
-                    "{at}: a refused configuration named a state"
-                );
-                let marker = expected.marker();
-                assert!(
-                    violations.iter().any(|v| v.contains(marker)),
-                    "{at}: expected {expected:?} ({marker}), got {violations:?}"
-                );
-                continue;
-            };
-            assert!(violations.is_empty(), "{at}: refused — {violations:?}");
-            let classified = match state {
-                Some(state) => state.enforced().map(|gate| gate.availability()),
-                None => panic!("{at}: accepted but named no state"),
-            };
-            assert_eq!(classified, posture, "{at}: classified to the wrong posture");
-        }
-    }
-
-    /// The `Off` half of the table again, from the other direction: the width argument is
-    /// never the reason given when no gate exists, because no window is opened at all.
-    #[test]
-    fn no_refusal_under_an_off_gate_argues_about_window_width() {
-        for (allow, bound) in [(true, 30), (true, 0), (false, 30)] {
-            let (_, violations) = run(|c| {
-                c.admission = AdmissionKind::Off;
-                c.admission_allow_degraded = allow;
-                c.admission_degraded_bound_secs = bound;
-            });
-            for refusal in &violations {
-                assert!(
-                    !refusal.contains("P + --max-clock-skew"),
-                    "allow={allow} P={bound}: the width argument must not be given \
-                     with no gate: {refusal}"
-                );
-            }
-        }
-    }
+    // Three tests left this module with the states they examined, and their absence is
+    // the result:
+    //
+    // * every authority parameter refused beside an off gate;
+    // * the complete degraded truth table, cell by cell, with each refusal identified;
+    // * that no refusal under an off gate argues about window width.
+    //
+    // All three are about a SELECTION beside a value that belongs to another selection —
+    // exactly what ADR-MCPRE-067 Phase 6 made unbuildable. The gate's inputs are members of
+    // the enforcing forms and the degraded bound is a `NonZeroU64` on the arm that opens a
+    // window, so none of those configurations can be constructed to be refused.
+    //
+    // The mistakes are still expressible on a flat command line, and the table moved there
+    // whole: `cli::admission_flags::tests::the_degraded_truth_table_...` drives the same
+    // cells through the adapter and pins the same per-mistake diagnostics.
 }

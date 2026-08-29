@@ -16,6 +16,7 @@
 //! Nothing here validates. A type in this module can hold a combination no deployment may
 //! run, and must be able to: refusing a state requires representing it first.
 
+mod admission;
 mod authorization;
 mod inner_backend_display;
 mod kinds;
@@ -25,9 +26,10 @@ mod secret_string;
 mod signing_source;
 mod storage;
 
+pub use admission::{AdmissionAvailabilityRequest, AdmissionGateRequest, AdmissionRequest};
 pub use authorization::AuthorizationRequest;
 pub(crate) use inner_backend_display::RedactedBackendUrls;
-pub use kinds::{AdmissionKind, AuditSinkKind, AuthzKind, VerifiedContextKind};
+pub use kinds::{AuditSinkKind, AuthzKind, VerifiedContextKind};
 pub use peer_identity::{
     AttestedIngressRequest, ChannelCredentialIdentityRequest, IngressAssertionRequest,
     PeerIdentityEvidenceRequest, PinnedChannelAcknowledgement,
@@ -38,9 +40,8 @@ pub use revocation::{
 };
 pub use secret_string::SecretString;
 pub use storage::{
-    AdmissionStoreRequest, ContinuationStoreRequest, EtcdStoreRequest, RedisStoreRequest,
-    ReplayStorageRequest, ReplayStoreRequest, SharedStoreRequest, TrustEpochSource,
-    TrustEpochStoreRequest,
+    ContinuationStoreRequest, EtcdStoreRequest, RedisStoreRequest, ReplayStorageRequest,
+    ReplayStoreRequest, SharedStoreRequest, TrustEpochSource, TrustEpochStoreRequest,
 };
 
 pub use signing_source::{
@@ -164,30 +165,11 @@ pub struct DeploymentRequest {
     /// a different fact from admission's. The three may name one Redis; that is then an
     /// operator's deployment choice rather than an alias the configuration forces.
     pub continuation_control: ContinuationStoreRequest,
-    /// MCPRE-493: what a request carrying NO admission evidence means here —
-    /// `off` (admission not enforced at all), `optional`, or `required`. Anything
-    /// but `off` requires an authority to verify assertions against and a source to
-    /// check currency against; a gate with neither would verify nothing.
-    pub admission: AdmissionKind,
-    /// The admission authority's root key id, as named in an assertion's
-    /// `issuer_kid`. A kid never introduces trust: an assertion naming any other
-    /// issuer is refused.
-    pub admission_authority_kid: Option<String>,
-    /// The admission authority's Ed25519 public key, base64url, no padding.
-    pub admission_authority_pubkey_b64url: Option<String>,
-    /// Where the shared authoritative admission record lives — the store a revocation is
-    /// written to and every replica reads. Separate from `replay` on purpose: admission
-    /// state and replay state have different owners, lifetimes and blast radii, and
-    /// collapsing them would make one outage two.
-    pub admission_store: AdmissionStoreRequest,
-    /// P (seconds): how long a replica may keep serving on the LAST-KNOWN state when
-    /// the authority is unreachable. Meaningful only with
-    /// `admission_allow_degraded`.
-    pub admission_degraded_bound_secs: i64,
-    /// Whether degraded mode is permitted at all. Off by default: an unreachable
-    /// authority fails closed. Enabling it trades a bounded window of stale-admission
-    /// risk for availability, and that is a deployment's call to make explicitly.
-    pub admission_allow_degraded: bool,
+    /// Whether a call must carry admission evidence, and what verifies it. One tagged
+    /// value: the gate's authority, record and availability are members of the two
+    /// enforcing forms, so there is no `off` to hang them from and the five dangling
+    /// clauses have no configuration left to examine (ADR-MCPRE-067 §7).
+    pub admission: AdmissionRequest,
     /// ADR-MCPS-021 Axis 2: how often `--trust` is re-read, in seconds. `None` means
     /// read once at startup — under which no revocation tier can revoke a
     /// request-signer key on a running replica, because every tier resolves against

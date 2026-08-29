@@ -13,6 +13,7 @@
 //! The request model itself is [`crate::deployment_request`], deliberately outside this
 //! module: the configuration state machines read a request without depending on the parser.
 
+mod admission_flags;
 mod authorization_flags;
 mod peer_identity_flags;
 mod revocation_flags;
@@ -24,8 +25,7 @@ use std::time::Duration;
 use mcp_re_core::VerificationKey;
 
 use crate::deployment_request::{
-    AdmissionKind, AuditSinkKind, ChannelCredentialRequest, DeploymentRequest, SecretString,
-    VerifiedContextKind,
+    AuditSinkKind, ChannelCredentialRequest, DeploymentRequest, SecretString, VerifiedContextKind,
 };
 
 #[cfg(feature = "aws_kms_keysource")]
@@ -84,12 +84,7 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     let mut require_online_revocation = false;
     let mut ocsp_responder_url: Option<String> = None;
     let mut trust_path = None;
-    let mut admission = AdmissionKind::Off;
-    let mut admission_authority_kid: Option<String> = None;
-    let mut admission_authority_pubkey_b64url: Option<String> = None;
-    let mut admission_redis_url: Option<String> = None;
-    let mut admission_degraded_bound_secs: i64 = 0;
-    let mut admission_allow_degraded = false;
+    let mut admission = admission_flags::AdmissionFlags::default();
     let mut trust_reload_secs: Option<u64> = None;
     let mut audit_sink = AuditSinkKind::Stderr;
     let mut retained_evidence_dir: Option<String> = None;
@@ -250,18 +245,7 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
             }
             // #4030 AIA-override responder URL.
             "--ocsp-responder-url" => ocsp_responder_url = Some(value.clone()),
-            "--admission" => {
-                admission = match value.as_str() {
-                    "off" => AdmissionKind::Off,
-                    "optional" => AdmissionKind::Optional,
-                    "required" => AdmissionKind::Required,
-                    other => {
-                        return Err(format!(
-                            "--admission must be off|optional|required, got {other:?}"
-                        ))
-                    }
-                }
-            }
+            "--admission" => admission.take_strictness(value)?,
             // ADR-MCPS-021 Axis 2: re-read the trust store on a cadence, so removing
             // a compromised request-signer key from `--trust` takes effect without
             // restarting every replica. `0` disables, which is the historical
@@ -300,27 +284,11 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
                     }
                 }
             }
-            "--admission-authority-kid" => admission_authority_kid = Some(value.clone()),
-            "--admission-authority-pubkey" => {
-                admission_authority_pubkey_b64url = Some(value.clone())
-            }
-            "--admission-redis-url" => admission_redis_url = Some(value.clone()),
-            "--admission-degraded-bound-secs" => {
-                admission_degraded_bound_secs = value.parse().map_err(|_| {
-                    format!("--admission-degraded-bound-secs must be an integer, got {value:?}")
-                })?
-            }
-            "--admission-allow-degraded" => {
-                admission_allow_degraded = match value.as_str() {
-                    "true" => true,
-                    "false" => false,
-                    other => {
-                        return Err(format!(
-                            "--admission-allow-degraded must be true|false, got {other:?}"
-                        ))
-                    }
-                }
-            }
+            "--admission-authority-kid" => admission.take_authority_kid(value.clone()),
+            "--admission-authority-pubkey" => admission.take_authority_pubkey(value.clone()),
+            "--admission-redis-url" => admission.take_store_url(value.clone()),
+            "--admission-degraded-bound-secs" => admission.take_degraded_bound(value)?,
+            "--admission-allow-degraded" => admission.take_allow_degraded(value)?,
             "--replay-redis-url" => replay_redis_url = Some(value.clone()),
             "--continuation-control-redis-url" => {
                 continuation_control_redis_url = Some(value.clone())
@@ -570,14 +538,7 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
             )?,
         },
         trust_path: require(trust_path, "--trust")?,
-        admission,
-        admission_authority_kid,
-        admission_authority_pubkey_b64url,
-        admission_store: crate::deployment_request::AdmissionStoreRequest {
-            authoritative: storage_flags::shared(admission_redis_url),
-        },
-        admission_degraded_bound_secs,
-        admission_allow_degraded,
+        admission: admission.finish()?,
         trust_reload_secs,
         audit_sink,
         retained_evidence_dir,
@@ -1056,7 +1017,6 @@ mod tests {
     use super::parse_args;
     use super::AuditSinkKind;
     use super::DeploymentRequest;
-    use super::Duration;
     use super::IdentityPolicy;
     use crate::config_state::validation::unsafe_config_violations;
     use crate::deployment_request::AuthzKind;
@@ -1404,324 +1364,23 @@ mod tests {
         ])
     }
 
-    /// The degraded-window rule was the LAST parse-only admission invariant, and unlike
-    /// the others nothing downstream re-checked it: the composition root passed
-    /// `allow_degraded` and P straight into `AdmissionPolicy`. So a `DeploymentRequest` built in code
-    /// reached the serving path with degraded mode on and no window configured, and got
-    /// one `--max-clock-skew` wide — a revoked workload served against an unreachable
-    /// authority on a deployment that asked for no degraded window at all.
-    ///
-    /// Reached by mutating a parsed config, because `parse_args` now consults the same
-    /// predicate: going through it would prove only that SOMETHING refused.
-    #[test]
-    fn a_programmatic_config_cannot_open_a_degraded_window_it_did_not_configure() {
-        // The dangerous shape: the gate is ENABLED, so the window it opens is real.
-        let mut a = minimal_durable();
-        a.splice(0..0, admission_args("required"));
-        let mut config = parse_args(&a).expect("a complete admission config parses");
-        config.admission_allow_degraded = true;
-        config.admission_degraded_bound_secs = 0;
-        let violations = unsafe_config_violations(&config);
-        assert!(
-            violations
-                .iter()
-                .any(|v| v.contains("--admission-degraded-bound-secs")),
-            "the validation boundary must refuse a zero degraded window on an ENABLED \
-             gate, got {violations:?}"
-        );
+    // The two programmatic degraded cases that used to be here are gone, and their
+    // absence is the result. One set a zero-width window on an enabled gate; the other set
+    // one beside `--admission off`. ADR-MCPRE-067 Phase 6 made the availability a tagged
+    // value whose window is a `NonZeroU64` carried by the arm that opens one, and moved the
+    // gate's inputs inside the enforcing forms — so neither mutation compiles. The argv
+    // forms survive and `cli::admission_flags` refuses both, naming the clock-skew term.
 
-        // And with the gate off, where the setting enforces nothing but still reads as
-        // configured to anyone auditing the deployment. Refused as a DANGLING parameter:
-        // the width argument above does not apply, because no window is opened at all.
-        let mut off = parse_args(&minimal_durable()).expect("the base config parses");
-        off.admission_allow_degraded = true;
-        off.admission_degraded_bound_secs = 0;
-        assert!(
-            unsafe_config_violations(&off)
-                .iter()
-                .any(|v| v.contains("--admission is off")),
-            "a degraded window without a gate is still a setting that reads as enforced"
-        );
-    }
-
-    /// A flag a case must name in its refusal, and the mutation that provokes it.
-    type Case = (&'static str, fn(&mut DeploymentRequest));
-
-    /// A parsed baseline to mutate, for the boundary-gap controls below.
-    ///
-    /// Parsed rather than a struct literal for the reason `legal_config` gives: a test that
-    /// expects a refusal must be measuring its own mutation, not a defect it inherited.
-    fn parsed_baseline() -> DeploymentRequest {
-        parse_args(&minimal_durable()).expect("the base config parses")
-    }
-
-    /// Whether the boundary reports a violation containing `needle`.
-    fn boundary_reports(config: &DeploymentRequest, needle: &str) -> bool {
-        unsafe_config_violations(config)
-            .iter()
-            .any(|v| v.contains(needle))
-    }
-
-    /// G1 and G2. The deployment's identity coordinates, when present but meaningless.
-    ///
-    /// Requiredness for these lives in `parse_args`'s `require` closure, and the fields are
-    /// public `String`s — so an embedder or a test that builds the struct reaches the
-    /// serving path with an empty coordinate and no parser runs. Nothing downstream
-    /// dereferences them either: they are minted into what the proxy signs and compared by
-    /// verifiers, so an empty one fails no startup step, it just stops distinguishing this
-    /// deployment.
-    ///
-    /// Each case names ONE field, and the positive control below drives the same guard with
-    /// the baseline's real values, so a predicate that rejected everything would fail there.
-    #[test]
-    fn an_identity_coordinate_that_is_present_but_empty_is_refused() {
-        let cases: Vec<Case> = vec![
-            ("--trust-domain", |c| c.trust_domain = String::new()),
-            ("--audience", |c| c.audience = String::new()),
-            ("--server-signer", |c| c.server_signer = String::new()),
-            ("--server-key-id", |c| c.server_key_id = String::new()),
-            // Whitespace is not a coordinate either, and it is what a templated
-            // deployment produces when a variable resolves to nothing.
-            ("--trust-domain", |c| c.trust_domain = "   ".to_string()),
-        ];
-        for (flag, mutate) in cases {
-            let mut config = parsed_baseline();
-            mutate(&mut config);
-            assert!(
-                boundary_reports(&config, flag),
-                "{flag}: the boundary admitted an empty identity coordinate — {:?}",
-                unsafe_config_violations(&config)
-            );
-        }
-    }
-
-    /// The positive half of the clause above: the smallest meaningful value passes it.
-    #[test]
-    fn a_one_character_identity_coordinate_is_not_refused_as_empty() {
-        let mut config = parsed_baseline();
-        config.trust_domain = "a".to_string();
-        config.audience = "b".to_string();
-        config.server_signer = "c".to_string();
-        config.server_key_id = "d".to_string();
-        for flag in [
-            "--trust-domain is empty",
-            "--audience is empty",
-            "--server-signer is empty",
-            "--server-key-id is empty",
-        ] {
-            assert!(
-                !boundary_reports(&config, flag),
-                "{flag} fired on a one-character coordinate"
-            );
-        }
-    }
-
-    /// G2, the locator half. These ARE dereferenced at startup, so an empty one eventually
-    /// fails — but only as an observation about the environment, and after two planes have
-    /// established resources. That a string names nothing is knowable here (ADR-MCPRE-056
-    /// §5.1), and it reads as the configuration defect it is rather than as a missing file.
-    #[test]
-    fn a_required_locator_that_is_present_but_empty_is_refused() {
-        let cases: Vec<Case> = vec![
-            ("--bind", |c| c.bind = String::new()),
-            ("--tls-cert", |c| {
-                c.channel_credential.credential_chain = String::new()
-            }),
-            ("--client-ca", |c| c.peer_trust_anchors = String::new()),
-            ("--trust is empty", |c| c.trust_path = String::new()),
-        ];
-        for (flag, mutate) in cases {
-            let mut config = parsed_baseline();
-            mutate(&mut config);
-            assert!(
-                boundary_reports(&config, flag),
-                "{flag}: the boundary admitted a locator that names nothing — {:?}",
-                unsafe_config_violations(&config)
-            );
-        }
-
-        // Positive half: the baseline's own locators, which name something.
-        let clean = parsed_baseline();
-        for flag in [
-            "--bind is empty",
-            "--tls-cert is empty",
-            "--client-ca is empty",
-            "--trust is empty",
-        ] {
-            assert!(
-                !boundary_reports(&clean, flag),
-                "{flag} fired on a real path"
-            );
-        }
-    }
-
-    /// The freshness tolerance, which the parser bounded and the boundary did not — so a
-    /// programmatic config reached `VerifierPolicy::new` and failed there, after the trust
-    /// and TLS planes had already read files and started workers.
-    #[test]
-    fn a_clock_skew_outside_the_bound_is_refused() {
-        for skew in [
-            -1,
-            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND + 1,
-        ] {
-            let mut config = parsed_baseline();
-            config.max_clock_skew = skew;
-            assert!(
-                boundary_reports(&config, "--max-clock-skew"),
-                "skew {skew} admitted — {:?}",
-                unsafe_config_violations(&config)
-            );
-        }
-
-        // Both ends of the legal range pass the same guard.
-        for skew in [0, mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND] {
-            let mut config = parsed_baseline();
-            config.max_clock_skew = skew;
-            assert!(
-                !boundary_reports(&config, "--max-clock-skew"),
-                "skew {skew} is inside the bound and must not be refused"
-            );
-        }
-    }
-
-    /// G5. A list holding `""` is not an empty list, so the presence clause is satisfied
-    /// while the pool carries a member no request can reach.
-    #[test]
-    fn an_inner_plane_holding_an_empty_url_is_refused() {
-        let mut config = parsed_baseline();
-        config
-            .inner_http_urls
-            .push(" ".repeat(3).trim_end().to_string());
-        config.inner_http_urls.push(String::new());
-        assert!(
-            boundary_reports(&config, "--inner-http-url contains an empty URL"),
-            "{:?}",
-            unsafe_config_violations(&config)
-        );
-
-        // Positive half: the baseline's own list, which names one real backend.
-        let clean = parsed_baseline();
-        assert!(!boundary_reports(
-            &clean,
-            "--inner-http-url contains an empty URL"
-        ));
-    }
-
-    /// G3. Zero drain grace is legally present and materially changes SIGTERM: every
-    /// admitted request is abandoned rather than allowed to finish.
-    #[test]
-    fn a_zero_drain_window_is_refused() {
-        let mut config = parsed_baseline();
-        config.limits.drain_grace = Duration::from_secs(0);
-        assert!(
-            boundary_reports(&config, "--drain-grace-secs 0"),
-            "{:?}",
-            unsafe_config_violations(&config)
-        );
-
-        // One second is a bad idea and a legal window; this guard is about zero.
-        let mut ok = parsed_baseline();
-        ok.limits.drain_grace = Duration::from_secs(1);
-        assert!(!boundary_reports(&ok, "--drain-grace-secs 0"));
-    }
-
-    /// G4. Same class as the drain window: present, and zero.
-    #[test]
-    fn a_zero_connection_ceiling_is_refused() {
-        let mut config = parsed_baseline();
-        config.limits.max_concurrent_connections = 0;
-        assert!(
-            boundary_reports(&config, "--max-connections 0"),
-            "{:?}",
-            unsafe_config_violations(&config)
-        );
-
-        let mut ok = parsed_baseline();
-        ok.limits.max_concurrent_connections = 1;
-        assert!(!boundary_reports(&ok, "--max-connections 0"));
-    }
-
-    /// G6. The attested-ingress witnesses, present but naming nothing.
-    ///
-    /// Asserted on the clause itself rather than on an empty violation list, because
-    /// `attested-ingress` may be refused independently by the `ChannelBinding` machine and
-    /// every violation is reported — so an empty-list assertion would prove nothing about
-    /// THIS clause either way.
-    #[test]
-    fn an_ingress_witness_that_is_present_but_empty_is_refused() {
-        /// A Mode-C form over one attestor key, written as a literal so the pinned-channel
-        /// acknowledgement stays visible.
-        fn attested_form(
-            identities: Vec<String>,
-            audience: String,
-        ) -> crate::deployment_request::PeerIdentityEvidenceRequest {
-            crate::deployment_request::PeerIdentityEvidenceRequest::AttestedIngress(
-                crate::deployment_request::AttestedIngressRequest {
-                    asserted_identity_kind: IdentityPolicy::UriSan,
-                    attestor_keys: vec![("attestor-1".to_string(), attestor_pub_b64())],
-                    identities,
-                    audience,
-                    pinned_channel:
-                        crate::deployment_request::PinnedChannelAcknowledgement::acknowledged(),
-                },
-            )
-        }
-
-        let attested = |c: &mut DeploymentRequest| {
-            c.peer_identity = attested_form(
-                vec!["ingress-1".to_string()],
-                "https://mcp.example.com/mcp".to_string(),
-            );
-        };
-
-        let mut empty_identity = parsed_baseline();
-        empty_identity.peer_identity = attested_form(
-            vec!["ingress-1".to_string(), String::new()],
-            "https://mcp.example.com/mcp".to_string(),
-        );
-        assert!(
-            boundary_reports(&empty_identity, "--ingress-identity is empty"),
-            "{:?}",
-            unsafe_config_violations(&empty_identity)
-        );
-
-        let mut empty_audience = parsed_baseline();
-        empty_audience.peer_identity =
-            attested_form(vec!["ingress-1".to_string()], "  ".to_string());
-        assert!(
-            boundary_reports(&empty_audience, "--ingress-audience is empty"),
-            "{:?}",
-            unsafe_config_violations(&empty_audience)
-        );
-
-        // Positive half: with both witnesses meaningful, neither clause fires.
-        let mut ok = parsed_baseline();
-        attested(&mut ok);
-        assert!(!boundary_reports(&ok, "--ingress-identity is empty"));
-        assert!(!boundary_reports(&ok, "--ingress-audience is empty"));
-    }
-
-    /// The refusal states the REASON, and the reason is not "zero is not a policy".
-    ///
-    /// P is a floor on the degraded window, never the whole of it — the PEP serves an
-    /// unreachable authority for `P + --max-clock-skew` seconds. An operator told only
-    /// that zero is disallowed would reasonably set P=1 and believe they had a one-second
-    /// window. Pinned against the profile-layer test that measures the real width.
-    ///
-    /// Asked of an ENFORCING deployment, because that is the only place the width argument
-    /// is true: with the gate off no window is opened, and the refusal there is about a
-    /// dangling parameter instead.
+    /// The refusal has to tell the operator the skew term widens the window. It moved to
+    /// the parser with the state it refuses — the request cannot hold a zero-width window
+    /// any more — so this asks the command line, which is where the pair is still statable.
     #[test]
     fn the_degraded_window_refusal_names_the_clock_skew_term() {
         let mut a = minimal_durable();
         a.splice(0..0, admission_args("required"));
-        let mut config = parse_args(&a).expect("a complete admission config parses");
-        config.admission_allow_degraded = true;
-        config.admission_degraded_bound_secs = 0;
-        let refusal = unsafe_config_violations(&config)
-            .into_iter()
-            .find(|v| v.contains("--admission-degraded-bound-secs"))
-            .expect("refused");
+        a.push("--admission-allow-degraded".into());
+        a.push("true".into());
+        let refusal = parse_args(&a).expect_err("a zero-width degraded window is refused");
         assert!(
             refusal.contains("--max-clock-skew"),
             "the operator has to be told the skew term widens the window, got: {refusal}"
@@ -1734,11 +1393,15 @@ mod tests {
     #[test]
     fn a_programmatic_config_cannot_carry_an_undecodable_admission_authority_key() {
         let mut config = parse_args(&minimal_durable()).expect("the base config parses");
-        config.admission = super::AdmissionKind::Required;
-        config.admission_authority_kid = Some("admission-root-1".to_string());
-        config.admission_authority_pubkey_b64url = Some("not-a-key".to_string());
-        config.admission_store.authoritative = Some(
-            crate::deployment_request::SharedStoreRequest::redis("redis://127.0.0.1:6379"),
+        config.admission = crate::deployment_request::AdmissionRequest::Required(
+            crate::deployment_request::AdmissionGateRequest {
+                authority_kid: "admission-root-1".to_string(),
+                authority_pubkey_b64url: "not-a-key".to_string(),
+                store: crate::deployment_request::SharedStoreRequest::redis(
+                    "redis://127.0.0.1:6379",
+                ),
+                availability: crate::deployment_request::AdmissionAvailabilityRequest::FailClosed,
+            },
         );
         let violations = unsafe_config_violations(&config);
         assert!(
@@ -1768,7 +1431,10 @@ mod tests {
         // A deployment that has not asked for admission must not get a gate it did
         // not configure — and, more importantly, must not believe it has one.
         let config = parse_args(&minimal_durable()).expect("parses");
-        assert_eq!(config.admission, super::AdmissionKind::Off);
+        assert_eq!(
+            config.admission,
+            crate::deployment_request::AdmissionRequest::NotEnforced
+        );
     }
 
     #[test]
@@ -1778,8 +1444,11 @@ mod tests {
             a.splice(0..0, admission_args(mode));
             let config =
                 parse_args(&a).unwrap_or_else(|e| panic!("--admission {mode} must parse: {e}"));
-            assert_ne!(config.admission, super::AdmissionKind::Off);
-            assert!(config.admission_store.authoritative.is_some());
+            assert!(config.admission.is_enforced());
+            assert!(config
+                .admission
+                .gate()
+                .is_some_and(|gate| gate.store.locator().contains("://")));
         }
     }
 
@@ -1852,8 +1521,13 @@ mod tests {
         a.push("--admission-degraded-bound-secs".into());
         a.push("120".into());
         let config = parse_args(&a).expect("a bounded degraded window parses");
-        assert!(config.admission_allow_degraded);
-        assert_eq!(config.admission_degraded_bound_secs, 120);
+        assert_eq!(
+            config
+                .admission
+                .gate()
+                .map(|gate| gate.availability.bound_secs()),
+            Some(Some(120))
+        );
     }
 
     #[test]

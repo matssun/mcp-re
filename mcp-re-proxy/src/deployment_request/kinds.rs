@@ -7,23 +7,9 @@
 //! nothing here knows that a command line exists. That is what lets the configuration
 //! state model read a request without depending on the parser that usually builds one.
 //!
-//! Not every variant is a deployment a `ValidatedDeployment` can be in. [`BindingKind`]
-//! has three the boundary refuses outright; they are input forms the model must be able to
-//! REPRESENT in order to refuse, which is a different thing from admitting them.
-
-/// Replay-cache backend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AdmissionKind {
-    /// Admission is not enforced. A call's admission binding, if it carries one, is
-    /// verified evidence that decides nothing — the pre-MCPRE-493 behaviour.
-    Off,
-    /// Enforced when present. For a rollout that has not reached every client yet.
-    Optional,
-    /// Enforced always: a call with no admission evidence is refused. The only
-    /// setting under which "every served call acted under a current admission" is a
-    /// true statement about this deployment.
-    Required,
-}
+//! Not every variant is a deployment a `ValidatedDeployment` can be in. Some are input
+//! forms the model must be able to REPRESENT in order to refuse, which is a different thing
+//! from admitting them.
 
 /// Where the ADR-MCPS-035 per-request security record goes.
 ///
