@@ -236,8 +236,8 @@ review_ref = "EX-002 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-transport/src/lib.rs"
-baseline_prod_loc = 938
-baseline_sha = "d1fc5fa"
+baseline_prod_loc = 234
+baseline_sha = "255465e"
 status = "unreviewed"
 
 # MCPRE-175 gave the async replay tier an owner subtree. The file held the seam, the

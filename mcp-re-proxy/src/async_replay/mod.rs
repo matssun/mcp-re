@@ -19,19 +19,6 @@
 //! Fail-closed posture (ADR-MCPS-020, unchanged): any L2 operational failure surfaces
 //! as [`ReplayStoreError::Unavailable`] ⇒ `mcp-re.replay_cache_unavailable`, never a
 //! silent "allow".
-//!
-//! # What lives where
-//!
-//! | module | authority |
-//! |---|---|
-//! | this one | the seam, and the [`AsyncReplayTier`] the serving path awaits |
-//! | [`bounds`] | how much retention there is, and whose share of it one actor may hold |
-//! | [`retained_set`] | what the reference L2 is holding, and how it stops holding it |
-//! | [`local_refusals`] | when the reference L2 says no instead of recording |
-//! | [`in_memory`] | the reference L2 itself: the atomic op under its lock |
-//! | [`retention_ledger`] | the per-replica account, above the backend seam |
-//! | [`charge`] | one reservation against that account, and the three ways it ends |
-//! | [`l1_fast_reject`] | the dormant per-core L1 |
 
 use std::future::Future;
 use std::pin::Pin;
