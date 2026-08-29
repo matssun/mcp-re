@@ -15,6 +15,7 @@
 
 mod admission_flags;
 mod authorization_flags;
+mod currency_flags;
 mod peer_identity_flags;
 mod revocation_flags;
 mod signing_source_flags;
@@ -85,7 +86,7 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     let mut ocsp_responder_url: Option<String> = None;
     let mut trust_path = None;
     let mut admission = admission_flags::AdmissionFlags::default();
-    let mut trust_reload_secs: Option<u64> = None;
+
     let mut audit_sink = AuditSinkKind::Stderr;
     let mut retained_evidence_dir: Option<String> = None;
     let mut verified_context = VerifiedContextKind::Disabled;
@@ -101,9 +102,7 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     // ADR-MCPS-021 Axis 2: revocation tier. Defaults to Tier 1 bounded-cache with
     // the deployment-default window T, so an absent flag preserves the existing
     // Tier-1 posture exactly.
-    let mut revocation_tier = crate::revocation_tier::RevocationTier::BoundedCache {
-        t_secs: crate::trust_plane::DEFAULT_T_SECS,
-    };
+    let mut currency = currency_flags::CurrencyFlags::default();
     let mut peer_identity = peer_identity_flags::PeerIdentityFlags::default();
     // ADR-MCPS-023 Tier 3 (issue #71): repeatable trusted LB verification keys for
     // request-bound ingress assertions, as (key_id, base64url-ed25519-pub) pairs.
@@ -254,7 +253,13 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
                 let secs: u64 = value
                     .parse()
                     .map_err(|_| "invalid --trust-reload-secs".to_string())?;
-                trust_reload_secs = (secs > 0).then_some(secs);
+                // A zero cadence has always meant the read-once posture on the command
+                // line, so it is normalised away rather than carried into a tier that would
+                // spin on it. A programmatically built request can still say `Some(0)`, and
+                // the configuration boundary still refuses it there.
+                if secs > 0 {
+                    currency.take_reload_secs(secs);
+                }
             }
             // ADR-MCPS-035: the per-request security record. Without this the
             // emission points exist and nothing consumes them, so a deployment has no
@@ -301,9 +306,7 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
                 replay_durability_tier =
                     Some(crate::replay_tier::ReplayDurabilityTier::parse(value)?)
             }
-            "--revocation-tier" => {
-                revocation_tier = crate::revocation_tier::RevocationTier::parse(value)?
-            }
+            "--revocation-tier" => currency.take_tier(value)?,
             "--transport-binding" => peer_identity.take_form(value)?,
             // ADR-MCPS-023 Tier 3 (issue #71): a trusted LB verification key for
             // request-bound ingress assertions, as `<keyid>:<base64url-ed25519-pub>`.
@@ -539,7 +542,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
         },
         trust_path: require(trust_path, "--trust")?,
         admission: admission.finish()?,
-        trust_reload_secs,
         audit_sink,
         retained_evidence_dir,
         verified_context,
@@ -551,8 +553,13 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
         continuation_control: crate::deployment_request::ContinuationStoreRequest {
             shared: storage_flags::shared(continuation_control_redis_url),
         },
-        trust_epoch: storage_flags::trust_epoch(trust_epoch_redis_url, trust_epoch_key)?,
-        revocation_tier,
+        request_signer_currency: {
+            currency.take_epoch(storage_flags::trust_epoch(
+                trust_epoch_redis_url,
+                trust_epoch_key,
+            )?);
+            currency.finish()?
+        },
         peer_identity: peer_identity.finish()?,
         authorization: authorization.finish(),
         allow_group_readable_key_files,
@@ -3381,24 +3388,34 @@ mod tests {
         // the deployment-default window T (existing behavior unchanged).
         let config = parse_args(&minimal_durable()).expect("parse");
         assert_eq!(
-            config.revocation_tier,
-            crate::revocation_tier::RevocationTier::BoundedCache {
-                t_secs: crate::trust_plane::DEFAULT_T_SECS
+            config.request_signer_currency,
+            crate::deployment_request::RequestSignerCurrencyRequest::BoundedCache {
+                t_secs: crate::trust_plane::DEFAULT_T_SECS,
+                reload_secs: None,
             }
         );
     }
 
     #[test]
     fn parses_each_revocation_tier() {
+        use crate::deployment_request::RequestSignerCurrencyRequest as Currency;
+        use crate::deployment_request::TrustEpochStoreRequest;
         for (flag, expected) in [
             (
                 "bounded-cache:90",
-                crate::revocation_tier::RevocationTier::BoundedCache { t_secs: 90 },
+                Currency::BoundedCache {
+                    t_secs: 90,
+                    reload_secs: Some(30),
+                },
             ),
-            ("live", crate::revocation_tier::RevocationTier::Live),
+            ("live", Currency::Live { reload_secs: 30 }),
             (
                 "push:30",
-                crate::revocation_tier::RevocationTier::Push { t_secs: 30 },
+                Currency::Push {
+                    t_secs: 30,
+                    reload_secs: 30,
+                    epoch: TrustEpochStoreRequest::default(),
+                },
             ),
         ] {
             let mut a = minimal_durable();
@@ -3410,7 +3427,7 @@ mod tests {
                 args(&["--revocation-tier", flag, "--trust-reload-secs", "30"]),
             );
             let config = parse_args(&a).unwrap_or_else(|e| panic!("parse {flag}: {e}"));
-            assert_eq!(config.revocation_tier, expected, "flag {flag}");
+            assert_eq!(config.request_signer_currency, expected, "flag {flag}");
         }
     }
 
@@ -3972,18 +3989,16 @@ mod tests {
         let config = parse_args(&a).expect("push + trust-epoch must parse");
         assert_eq!(
             config
-                .trust_epoch
-                .source
-                .as_ref()
-                .map(crate::deployment_request::TrustEpochSource::locator),
+                .request_signer_currency
+                .epoch()
+                .and_then(crate::deployment_request::TrustEpochStoreRequest::locator),
             Some("redis://127.0.0.1:6379")
         );
         assert_eq!(
             config
-                .trust_epoch
-                .source
-                .as_ref()
-                .and_then(crate::deployment_request::TrustEpochSource::key),
+                .request_signer_currency
+                .epoch()
+                .and_then(crate::deployment_request::TrustEpochStoreRequest::key),
             Some("mcp-re:trust:epoch")
         );
     }

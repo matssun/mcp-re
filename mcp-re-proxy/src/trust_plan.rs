@@ -150,12 +150,17 @@ mod tests {
     /// one accepted deployment rather than from a literal.
     fn push_networked() -> ValidatedDeployment {
         let mut config = crate::config_state::test_support::legal_config();
-        config.revocation_tier = crate::revocation_tier::RevocationTier::Push { t_secs: 30 };
-        config.trust_reload_secs = Some(15);
-        config.trust_epoch.source = Some(crate::deployment_request::TrustEpochSource::redis(
-            "redis://127.0.0.1:6379",
-            None,
-        ));
+        config.request_signer_currency =
+            crate::deployment_request::RequestSignerCurrencyRequest::Push {
+                t_secs: 30,
+                reload_secs: 15,
+                epoch: crate::deployment_request::TrustEpochStoreRequest {
+                    source: Some(crate::deployment_request::TrustEpochSource::redis(
+                        "redis://127.0.0.1:6379",
+                        None,
+                    )),
+                },
+            };
         ValidatedDeployment::try_from(config).expect("a legal push-networked deployment")
     }
 

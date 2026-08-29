@@ -101,16 +101,10 @@ fn refused_at_the_boundary() {
         ValidatedDeployment::try_from(config).expect_err("a deployment must name an inner server");
     assert!(refusal.contains("--inner-http-url"), "{refusal}");
 
-    // MCPS-84 / atlas X8. Admitted before: the deployment believed a networked trust
-    // invalidation was active while no tier consumed it.
-    let mut config = base();
-    config.trust_epoch.source = Some(mcp_re_proxy::deployment_request::TrustEpochSource::redis(
-        "redis://127.0.0.1:6379",
-        None,
-    ));
-    let refusal =
-        ValidatedDeployment::try_from(config).expect_err("an epoch source under a non-Push tier");
-    assert!(refusal.contains("--trust-epoch-redis-url"), "{refusal}");
+    // MCPS-84 / atlas X8 used to be pinned here: an epoch source under a tier that
+    // consumes none, which the deployment believed was an active networked invalidation.
+    // It is gone because only the pushing posture has a field for one — the mutation cannot
+    // be written (ADR-MCPRE-067 §7). The argv form is refused by `cli::currency_flags`.
 
     // Atlas §C.3. `--key-source file` with no seed is the `FileSeed` state missing the one
     // parameter it cannot start without: nothing else in that state supplies the
@@ -257,12 +251,17 @@ fn refused_at_the_boundary() {
     // The same source under the tier that DOES consume it is the legal state, and is
     // recognised as such rather than merely permitted.
     let mut config = base();
-    config.revocation_tier = mcp_re_proxy::revocation_tier::RevocationTier::Push { t_secs: 30 };
-    config.trust_reload_secs = Some(30);
-    config.trust_epoch.source = Some(mcp_re_proxy::deployment_request::TrustEpochSource::redis(
-        "redis://127.0.0.1:6379",
-        None,
-    ));
+    config.request_signer_currency =
+        mcp_re_proxy::deployment_request::RequestSignerCurrencyRequest::Push {
+            t_secs: 30,
+            reload_secs: 30,
+            epoch: mcp_re_proxy::deployment_request::TrustEpochStoreRequest {
+                source: Some(mcp_re_proxy::deployment_request::TrustEpochSource::redis(
+                    "redis://127.0.0.1:6379",
+                    None,
+                )),
+            },
+        };
     let validated = ValidatedDeployment::try_from(config).expect("push + epoch source is legal");
     assert!(
         validated.state().trust_revocation().has_networked_epoch(),

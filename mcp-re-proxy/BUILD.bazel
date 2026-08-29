@@ -182,6 +182,8 @@ _PROXY_LIB_SRCS = [
     "src/deployment_request/signing_source/mod.rs",
     "src/deployment_request/signing_source/pkcs11_source.rs",
     "src/deployment_request/signing_source/response_role.rs",
+    "src/cli/currency_flags.rs",
+    "src/deployment_request/request_signer_currency/mod.rs",
     "src/cli/admission_flags.rs",
     "src/deployment_request/admission/availability.rs",
     "src/deployment_request/admission/gate.rs",

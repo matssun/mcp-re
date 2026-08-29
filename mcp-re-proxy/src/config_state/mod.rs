@@ -368,6 +368,38 @@ pub(crate) mod test_support {
         super::evidence::classify(&config).1
     }
 
+    /// The posture a published tier plus its material names.
+    ///
+    /// The tier vocabulary is what a test is written in; the union is what the request
+    /// holds. In production the CLI adapter performs this mapping, and this is its fixture
+    /// twin — so a fixture cannot state an epoch source under a tier that reads none.
+    fn currency_posture(
+        tier: crate::revocation_tier::RevocationTier,
+        reload_secs: Option<u64>,
+        epoch: Option<(&str, &str)>,
+    ) -> crate::deployment_request::RequestSignerCurrencyRequest {
+        use crate::deployment_request::RequestSignerCurrencyRequest as Currency;
+        let source = epoch.map(|(url, key)| {
+            crate::deployment_request::TrustEpochSource::redis(url, Some(key.to_string()))
+        });
+        match tier {
+            crate::revocation_tier::RevocationTier::BoundedCache { t_secs } => {
+                Currency::BoundedCache {
+                    t_secs,
+                    reload_secs,
+                }
+            }
+            crate::revocation_tier::RevocationTier::Live => Currency::Live {
+                reload_secs: reload_secs.unwrap_or_default(),
+            },
+            crate::revocation_tier::RevocationTier::Push { t_secs } => Currency::Push {
+                t_secs,
+                reload_secs: reload_secs.unwrap_or_default(),
+                epoch: crate::deployment_request::TrustEpochStoreRequest { source },
+            },
+        }
+    }
+
     /// The trust-revocation state a deployment with these settings reaches.
     ///
     /// Built through the classifier, so a test names a posture a configuration could
@@ -378,11 +410,7 @@ pub(crate) mod test_support {
         epoch: Option<(&str, &str)>,
     ) -> super::TrustRevocationState {
         let mut config = legal_config();
-        config.revocation_tier = tier;
-        config.trust_reload_secs = reload_secs;
-        config.trust_epoch.source = epoch.map(|(url, key)| {
-            crate::deployment_request::TrustEpochSource::redis(url, Some(key.to_string()))
-        });
+        config.request_signer_currency = currency_posture(tier, reload_secs, epoch);
         super::trust_revocation::classify_and_validate(&config)
             .0
             .expect("the requested revocation posture is legal")
@@ -417,11 +445,7 @@ pub(crate) mod test_support {
         epoch: Option<(&str, &str)>,
     ) -> crate::startup_plan::TrustPlan {
         let mut config = legal_config();
-        config.revocation_tier = tier;
-        config.trust_reload_secs = reload_secs;
-        config.trust_epoch.source = epoch.map(|(url, key)| {
-            crate::deployment_request::TrustEpochSource::redis(url, Some(key.to_string()))
-        });
+        config.request_signer_currency = currency_posture(tier, reload_secs, epoch);
         let validated = super::validation::ValidatedDeployment::try_from(config)
             .expect("the requested trust posture is a legal deployment");
         let epoch_plan = crate::startup_plan::TrustEpochPlan::from_validated(&validated);

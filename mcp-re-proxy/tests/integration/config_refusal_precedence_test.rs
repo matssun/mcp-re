@@ -271,8 +271,10 @@ fn the_boundary_refuses_in_this_order() {
 #[test]
 fn the_trust_and_fleet_clauses_keep_their_places() {
     let mut config = legal();
-    config.revocation_tier = mcp_re_proxy::revocation_tier::RevocationTier::Live;
-    config.trust_reload_secs = None;
+    // A live tier with a zero cadence: the tier carries one, so "absent" is not a state,
+    // and what a request can still say is that the cadence spins the reloader.
+    config.request_signer_currency =
+        mcp_re_proxy::deployment_request::RequestSignerCurrencyRequest::Live { reload_secs: 0 };
     config.fleet = true;
     // The responder-under-`off` case used to be pinned here: configured, resolvable, and
     // read by nothing. It is gone because the pair is gone — the responder travels inside
@@ -300,7 +302,9 @@ fn the_trust_and_fleet_clauses_keep_their_places() {
             // way round; previously the undeployability came after every unrelated limit.
             "--transport-binding lb-assertion places",
             "--ingress-",
-            "--revocation-tier live|push requires",
+            // The "requires a cadence" clause is gone — a live tier carries one — so what
+            // this slot pins is the clause about the cadence's VALUE, from the same guard.
+            "--trust-reload-secs 0",
         ],
         "the boundary's refusal order changed"
     );
@@ -373,8 +377,8 @@ fn the_deprecated_identity_field_takes_the_channel_binding_slot() {
 #[test]
 fn the_zero_cadence_clause_takes_the_cadence_slot() {
     let mut config = legal();
-    config.revocation_tier = mcp_re_proxy::revocation_tier::RevocationTier::Live;
-    config.trust_reload_secs = Some(0);
+    config.request_signer_currency =
+        mcp_re_proxy::deployment_request::RequestSignerCurrencyRequest::Live { reload_secs: 0 };
     config.fleet = true;
     config.peer_identity =
         mcp_re_proxy::deployment_request::PeerIdentityEvidenceRequest::IngressAssertion(

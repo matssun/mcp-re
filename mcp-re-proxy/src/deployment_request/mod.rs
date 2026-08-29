@@ -21,6 +21,7 @@ mod authorization;
 mod inner_backend_display;
 mod kinds;
 mod peer_identity;
+mod request_signer_currency;
 mod revocation;
 mod secret_string;
 mod signing_source;
@@ -34,6 +35,7 @@ pub use peer_identity::{
     AttestedIngressRequest, ChannelCredentialIdentityRequest, IngressAssertionRequest,
     PeerIdentityEvidenceRequest, PinnedChannelAcknowledgement,
 };
+pub use request_signer_currency::RequestSignerCurrencyRequest;
 pub use revocation::{
     OcspResponderRequest, OnlineRevocationEvidenceRequest, PeerRevocationRequest,
     RevocationListRequest,
@@ -170,11 +172,6 @@ pub struct DeploymentRequest {
     /// enforcing forms, so there is no `off` to hang them from and the five dangling
     /// clauses have no configuration left to examine (ADR-MCPRE-067 §7).
     pub admission: AdmissionRequest,
-    /// ADR-MCPS-021 Axis 2: how often `--trust` is re-read, in seconds. `None` means
-    /// read once at startup — under which no revocation tier can revoke a
-    /// request-signer key on a running replica, because every tier resolves against
-    /// that one snapshot. Enabling it bounds the exposure window at the cadence.
-    pub trust_reload_secs: Option<u64>,
     /// ADR-MCPS-035: where the per-request security record goes. `Stderr` by default,
     /// because the absent case has to be the safe one: an invocation that does not go
     /// through the Helm chart — the container run directly, a harness, a hand-rolled
@@ -196,22 +193,12 @@ pub struct DeploymentRequest {
     /// forwarded to the inner server. `Disabled` by default because `Trusted` asserts
     /// an unverifiable property of the inner channel.
     pub verified_context: VerifiedContextKind,
-    /// MCPS-84 (ADR-MCPS-049 W2): where the networked trust-epoch invalidation source
-    /// lives (ADR-021 Tier 3 / `--revocation-tier push`). When configured, the Push tier
-    /// watches its monotonic epoch key and flushes the trust cache on an advance; when
-    /// absent, Push runs at its inert bounded-`T` fallback.
-    ///
-    /// The key travels inside the source, so a coordinate in a store this configuration
-    /// does not have cannot be stated (ADR-MCPRE-067 §7).
-    pub trust_epoch: TrustEpochStoreRequest,
-    /// Declared revocation tier (ADR-MCPS-021 Axis 2). Selects how strong a
-    /// revocation-propagation window the deployment asserts: Tier 1
-    /// (`bounded-cache:<T>`, the default), Tier 2 (`live`), or Tier 3
-    /// (`push:<T>`). The proxy surfaces the tier's own honest guarantee and
-    /// CANNOT surface a window stronger than the configured tier proves. Defaults
-    /// to bounded-cache with the deployment-default window `T` so absent-flag
-    /// behavior is byte-for-byte the Tier-1 posture.
-    pub revocation_tier: crate::revocation_tier::RevocationTier,
+    /// How current this deployment's belief about a request signer is: which ADR-MCPS-021
+    /// posture it asserts, and the material that posture is inhabited by. One tagged value,
+    /// so the re-read cadence belongs to the tiers that need one and the epoch source to
+    /// the only tier that reads one — which is what relation X8 used to have to say
+    /// (ADR-MCPRE-067 §7).
+    pub request_signer_currency: RequestSignerCurrencyRequest,
     /// Which evidence carries the peer's identity to this node, and the material that
     /// form verifies with. One tagged value: an attested-ingress selection has nowhere to
     /// put a load-balancer key, so the five clauses that refused a value belonging to an
