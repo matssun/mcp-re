@@ -71,17 +71,37 @@ is a genuine violation by the replacement test; none is Phase 2's.
 
 | unit | the durable proposition | phase |
 |---|---|---|
-| `config_state::tls_custody::TlsCustodyState`, `DelegatedTlsKey` | whether the channel-establishment key may leave the device | 3 |
-| `tls::IdentityStrategy::DirectTls`, `startup_plan::identity_strategy` | how the peer's identity reaches this node | 3 |
-| `startup_plan::TlsPlan`, `materializing_runtime::install_tls` / `tls` | the listener's credential material | 3 |
+| ~~`config_state::tls_custody::TlsCustodyState`, `DelegatedTlsKey`~~ | whether the channel-establishment key may leave the device | **3 — done** |
+| ~~`tls::IdentityStrategy::DirectTls`, `startup_plan::identity_strategy`~~ | how the peer's identity reaches this node | **3 — done** |
+| ~~`startup_plan::TlsPlan`~~ | what must hold to establish authenticated channels | **3 — done** |
+| `materializing_runtime::install_tls` / `tls` | ruled a mechanism leaf: it installs a `TlsPlane`, and a rustls plane is entitled to say so | **3 — ruled** |
 | `DeploymentRequest`'s 5 Redis/etcd locator fields | where shared replay, continuation and admission state live | 4 |
 | `config_state::transport::CrlRevocationState`, `crl_posture`, `crl_plan` | the credential-currency posture and its latency bound | 5 |
 | `deployment_request::OcspKind`, `config_state::validation::residue::ocsp_*` | whether online revocation evidence is required | 5 |
-| `key_source::KeySource`'s `tls_server_cert_chain` / `tls_server_key` / `client_ca_roots` | the material a listener is built from | 3, with the Phase-8 materialization move |
+| `key_source::KeySource`'s `tls_server_cert_chain` / `tls_server_key` / `client_ca_roots` | ruled a mechanism leaf in Phase 3: the trait returns rustls types to a rustls listener, so its proposition genuinely IS "a rustls signing key used by a TLS listener". Only its LOCATION moves | 8 |
 
 `scripts/semantic_altitude_gate.py` carries the same list as its `NOT_YET_MIGRATED`
 registry, so the boundary states which families it is not yet checking instead of
-reporting a clean "OK" over them.
+reporting a clean "OK" over them. Phase 3 moved `tls` out of that registry and into
+`MIGRATED`, joined by `x509`; `mtls` entered `NOT_YET_MIGRATED` when the gate measured
+`ingress_pinned_mtls`, a field no phase before 6 reaches.
+
+### B.3 — what Phase 3 produced
+
+| before | after |
+|---|---|
+| `TlsCustodyState` with `is_delegated()` + four mechanism-named `Option` getters | `ChannelCredentialCustodyState` with `exposure() -> PrivateKeyExposure` and one `material() -> ChannelKeyMaterial` payload projection |
+| `DeploymentRequest.tls_key` + `channel_credential.delegated: Option<..>` | `channel_credential.key: ChannelKeyRequest` — `ExportedFile` XOR `Delegated` |
+| `DeploymentRequest.tls_cert` | `channel_credential.credential_chain` |
+| `DeploymentRequest.client_ca` | `peer_trust_anchors` |
+| `IdentityStrategy { DirectTls, LbAssertion }` in `tls.rs` | `PeerIdentityProvenance { ChannelCredential, IngressAssertion }` in `communication_assurance/` |
+| `TlsPlan` | `ChannelEstablishmentPlan` |
+| relation X2b + `validate_tls_signing_exclusivity` | **deleted** — the pair is unconstructible; the argv form is refused by `cli::signing_source_flags::channel_role` |
+
+The custody fact is REUSED, not duplicated: both roles project the Phase-2
+`PrivateKeyExposure`, and a test asserts they answer the same question with different
+values for one fixture — which is what keeps the roles separate owners that share a
+projection rather than one owner with two names.
 
 ### C — mechanism-selection boundary (legitimate; a provider name is correct here)
 

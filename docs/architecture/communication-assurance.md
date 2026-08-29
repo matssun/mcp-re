@@ -1282,7 +1282,7 @@ id. Rendering the typed reason on the wire is a separate decision this migration
 
 ### 14.3 Why currency consumes the ACCEPTANCE, not the authenticated peer
 
-Gating currency on authentication would stop checking it under `IdentityStrategy::LbAssertion`,
+Gating currency on authentication would stop checking it under `PeerIdentityProvenance::IngressAssertion`,
 where no transport identity is derived at all and the credential the mechanism accepted is
 still the one holding the connection open. That would be a regression introduced by tidiness.
 So the currency authority takes `Option<&MechanismVerifiedCredentialEvidence>`, and the serving

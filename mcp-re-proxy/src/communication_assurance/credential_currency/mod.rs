@@ -57,7 +57,7 @@
 //! Not identity, not authentication, not admission, not authorization. It is a predicate on
 //! an accepted credential at an instant, and it says nothing about who the peer is — which
 //! is why it consumes the ACCEPTANCE rather than the authenticated peer. Under
-//! `IdentityStrategy::LbAssertion` no transport identity is derived at all and currency
+//! `PeerIdentityProvenance::IngressAssertion` no transport identity is derived at all and currency
 //! still applies to the credential the mechanism accepted; an authority gated on
 //! authentication would silently stop checking currency in exactly that deployment.
 //!

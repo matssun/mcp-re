@@ -161,7 +161,7 @@ count = 107
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "expect_used"
-count = 35
+count = 34
 
 [[debt]]
 crate = "mcp-re-proxy"

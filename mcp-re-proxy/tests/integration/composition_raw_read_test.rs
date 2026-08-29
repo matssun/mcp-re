@@ -53,7 +53,7 @@ const ORDINARY: &[(&str, &str)] = &[
          environment act",
     ),
     (
-        "client_ca",
+        "peer_trust_anchors",
         "a locator: which roots are loaded. How a loaded root is used is the TLS plane's, \
          and whether the file may be group-readable is KeyFileAccessPolicy's",
     ),
@@ -74,7 +74,12 @@ const ORDINARY: &[(&str, &str)] = &[
         "the RFC 9421 @target-uri the signature base is reconstructed against; layer A \
          checked its shape, and the value is a coordinate rather than a posture",
     ),
-    ("tls_cert", "a locator, for the same reason as client_ca"),
+    (
+        "channel_credential",
+        "read for its credential-chain locator alone, for the same reason as \
+         peer_trust_anchors. WHICH custody holds the channel key is not read here: that is \
+         ChannelCredentialCustodyState's, and the composition root consumes its projection",
+    ),
     (
         "trust_domain",
         "the deployment's own trust-domain coordinate; ServerIdentity owns what is built \

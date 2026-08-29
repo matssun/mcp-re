@@ -21,13 +21,13 @@ use std::time::Duration;
 use mcp_re_core::VerificationKey;
 
 use crate::deployment_request::{
-    AdmissionKind, AuditSinkKind, BindingKind, DeploymentRequest, OcspKind, SecretString,
-    VerifiedContextKind,
+    AdmissionKind, AuditSinkKind, BindingKind, ChannelCredentialRequest, DeploymentRequest,
+    OcspKind, SecretString, VerifiedContextKind,
 };
 
 #[cfg(feature = "aws_kms_keysource")]
 use crate::config_state::AwsCredentialMode;
-use crate::config_state::TlsCustodyState;
+use crate::config_state::ChannelCredentialCustodyState;
 use crate::config_state::{CustodyMaterial, CustodyState};
 // MCPS-076 (audit gap G-3): EnvKeySource is dev/CI-only — compiled only under the
 // non-default `dev_env_key_source` feature.
@@ -61,7 +61,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     let mut signing_source = signing_source_flags::SigningSourceFlags::new();
     let mut allow_group_readable_key_files = false;
     let mut tls_cert = None;
-    let mut tls_key = None;
     let mut client_ca = None;
     // #3839 offline CRL revocation: zero or more CRL file paths, fail-closed on
     // unknown status by default.
@@ -223,7 +222,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
                 )
             }
             "--tls-cert" => tls_cert = Some(value.clone()),
-            "--tls-key" => tls_key = Some(value.clone()),
             "--client-ca" => client_ca = Some(value.clone()),
             // #3839: repeatable and/or comma-separated CRL file paths. Splitting is the
             // CLI's encoding; whether a resulting path names a file is the
@@ -551,12 +549,10 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
 
     let require =
         |opt: Option<String>, name: &str| opt.ok_or_else(|| format!("missing required {name}"));
-    // #59/#60/#61: a delegated channel key makes the handshake key device-resident, and
-    // that decides whether `--tls-key` names a file this deployment reads. Read here
-    // because it is what the struct literal below needs, not as a check: whether the two
-    // custodies may be asserted together is relation X2b's.
-    let has_delegated_tls = signing_source.has_delegated_channel_key();
-    let (response_signing, channel_credential) = signing_source.finish()?;
+    // #59/#60/#61: which custody holds the channel key is one tagged value, and the family
+    // assembles it — including the argv contradiction of naming both arms, which no request
+    // can carry any more.
+    let (response_signing, channel_key) = signing_source.finish()?;
 
     // ADR-MCPRE-052 §4: the rotation window an operator did not state. Applying it is the
     // CLI's job — a default is what an omitted flag means — but choosing the values is not,
@@ -585,18 +581,11 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
         trust_domain: require(trust_domain, "--trust-domain")?,
         route,
         response_signing,
-        tls_cert: require(tls_cert, "--tls-cert")?,
-        // #59: on the DELEGATED TLS path the TLS key is token-resident and never
-        // read from disk, so an exported `--tls-key` is not merely optional — it is
-        // forbidden (the exclusivity guard above rejected it). The path is therefore
-        // unused; default it to empty rather than requiring a file that must not be
-        // consulted. On the non-delegated path `--tls-key` stays required.
-        tls_key: if has_delegated_tls {
-            tls_key.unwrap_or_default()
-        } else {
-            require(tls_key, "--tls-key")?
+        channel_credential: ChannelCredentialRequest {
+            credential_chain: require(tls_cert, "--tls-cert")?,
+            key: channel_key,
         },
-        client_ca: require(client_ca, "--client-ca")?,
+        peer_trust_anchors: require(client_ca, "--client-ca")?,
         client_crl_paths,
         inner_http_urls,
         cores,
@@ -631,7 +620,6 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
         ingress_audience,
         ingress_pinned_mtls,
         authorization: authorization.finish(),
-        channel_credential,
         allow_group_readable_key_files,
         limits,
         max_client_cert_lifetime,
@@ -860,11 +848,12 @@ pub fn build_attested_ingress_binding(
 /// carried by the exported TLS-custody state.
 pub fn build_key_source(
     custody: &CustodyState,
-    tls_custody: &TlsCustodyState,
+    channel_credential_custody: &ChannelCredentialCustodyState,
     tls_cert: &str,
     client_ca: &str,
 ) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
-    let tls_key = tls_custody.exported_key_path().unwrap_or("");
+    let channel_material = channel_credential_custody.material();
+    let tls_key = channel_material.exported_key_path().unwrap_or("");
     match custody.material() {
         CustodyMaterial::FileSeed { seed_path } => Ok(Box::new(FileKeySource {
             signing_key_seed_path: seed_path.to_string(),
@@ -910,7 +899,7 @@ pub fn build_key_source(
                 tls_cert,
                 tls_key,
                 client_ca,
-                tls_custody.delegated_pkcs11_label(),
+                channel_material.pkcs11_key_label(),
             )?))
         }
         // Default build: the PKCS#11 backend is not compiled, so `--key-source
@@ -958,7 +947,7 @@ pub fn build_key_source(
             // delegated TLS handshake signature; the proxy then never reads `--tls-key`
             // from disk (the exclusivity guard already forbade it). `None` keeps the
             // file-backed TLS path.
-            match tls_custody.delegated_aws_key_id() {
+            match channel_material.aws_key_id() {
                 Some(tls_key_id) => {
                     let tls_kms_config = crate::aws_kms_keysource::AwsKmsConfig {
                         region: region.to_string(),
@@ -1019,7 +1008,7 @@ pub fn build_key_source(
             let tls = FileKeySource::tls_only(tls_cert, tls_key, client_ca);
             // #61: the GCP counterpart of #60 — a SECOND, DISTINCT key version custodies
             // the TLS server key, and the proxy never reads `--tls-key` from disk.
-            match tls_custody.delegated_gcp_key_version() {
+            match channel_material.gcp_key_version() {
                 Some(tls_key_version) => {
                     let tls_kms_config = crate::gcp_kms_keysource::GcpKmsConfig {
                         key_version_name: tls_key_version.to_string(),
@@ -1127,7 +1116,10 @@ mod tests {
     fn channel_key(
         config: &DeploymentRequest,
     ) -> Option<&crate::deployment_request::DelegatedChannelKeyRequest> {
-        config.channel_credential.delegated.as_ref()
+        match &config.channel_credential.key {
+            crate::deployment_request::ChannelKeyRequest::Delegated(delegated) => Some(delegated),
+            crate::deployment_request::ChannelKeyRequest::ExportedFile(_) => None,
+        }
     }
 
     /// The admission-limit request holds `NonZeroUsize`, because both flags refuse 0.
@@ -1235,6 +1227,19 @@ mod tests {
                 "{endpoint:?} does not name a literal host and must be refused"
             );
         }
+    }
+
+    /// `minimal()` with the exported channel key removed, for a command line that names a
+    /// DELEGATED one. The two are the arms of one tagged value now, so naming both is an
+    /// argv contradiction the parser answers before any boundary relation is asked.
+    fn minimal_delegating_the_channel_key() -> Vec<String> {
+        let mut a = minimal();
+        let at = a
+            .iter()
+            .position(|v| v == "--tls-key")
+            .expect("minimal names one");
+        a.drain(at..at + 2);
+        a
     }
 
     fn minimal() -> Vec<String> {
@@ -1368,9 +1373,9 @@ mod tests {
     /// `.contains()` assertion cannot see when it is one of three: all three appear.
     #[test]
     fn a_command_line_wrong_three_ways_is_answered_about_all_three() {
-        // A shared replay store with no durability tier, a PKCS#11 TLS label on a source
+        // A shared replay store with no durability tier, a PKCS#11 channel key on a source
         // that is not PKCS#11, and an LB key with no lb-assertion binding.
-        let mut a = minimal();
+        let mut a = minimal_delegating_the_channel_key();
         a.splice(
             0..0,
             args(&[
@@ -1528,8 +1533,10 @@ mod tests {
     fn a_required_locator_that_is_present_but_empty_is_refused() {
         let cases: Vec<Case> = vec![
             ("--bind", |c| c.bind = String::new()),
-            ("--tls-cert", |c| c.tls_cert = String::new()),
-            ("--client-ca", |c| c.client_ca = String::new()),
+            ("--tls-cert", |c| {
+                c.channel_credential.credential_chain = String::new()
+            }),
+            ("--client-ca", |c| c.peer_trust_anchors = String::new()),
             ("--trust is empty", |c| c.trust_path = String::new()),
         ];
         for (flag, mutate) in cases {
@@ -2879,14 +2886,14 @@ mod tests {
     ) -> Result<Box<dyn super::KeySource + Send + Sync>, super::KeyError> {
         let (custody, violations) = crate::config_state::custody::classify_and_validate(config);
         assert!(violations.is_empty(), "fixture refused: {violations:?}");
-        let (tls_custody, violations) =
-            crate::config_state::tls_custody::classify_and_validate(config);
+        let (channel_credential_custody, violations) =
+            crate::config_state::channel_credential_custody::classify_and_validate(config);
         assert!(violations.is_empty(), "fixture refused: {violations:?}");
         super::build_key_source(
             &custody.expect("the fixture names a custody state"),
-            &tls_custody.expect("the fixture names a TLS custody state"),
-            &config.tls_cert,
-            &config.client_ca,
+            &channel_credential_custody.expect("the fixture names a TLS custody state"),
+            &config.channel_credential.credential_chain,
+            &config.peer_trust_anchors,
         )
     }
 
@@ -3082,7 +3089,7 @@ mod tests {
     /// nothing (a false belief the TLS key is KMS-resident), so it must fail closed.
     #[test]
     fn aws_kms_tls_key_id_without_aws_kms_fails_closed() {
-        let mut a = minimal();
+        let mut a = minimal_delegating_the_channel_key();
         a.splice(0..0, args(&["--aws-kms-tls-key-id", "alias/mcp-re-tls"]));
         let err = parse_args(&a).unwrap_err();
         assert!(
@@ -3211,7 +3218,7 @@ mod tests {
     /// closed.
     #[test]
     fn gcp_kms_tls_key_version_without_gcp_kms_fails_closed() {
-        let mut a = minimal();
+        let mut a = minimal_delegating_the_channel_key();
         a.splice(
             0..0,
             args(&[

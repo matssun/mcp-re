@@ -30,9 +30,10 @@ pub use kinds::{
 pub use secret_string::SecretString;
 pub use signing_source::{
     AwsKmsChannelKeyRequest, AwsKmsSigningSourceRequest, ChannelCredentialRequest,
-    DelegatedChannelKeyRequest, EnvironmentSigningSourceRequest, FileSigningSourceRequest,
-    GcpKmsChannelKeyRequest, GcpKmsSigningSourceRequest, Pkcs11ChannelKeyRequest,
-    Pkcs11SigningSourceRequest, ResponseSigningRequest, SigningSourceRequest,
+    ChannelKeyRequest, DelegatedChannelKeyRequest, EnvironmentSigningSourceRequest,
+    ExportedChannelKeyRequest, FileSigningSourceRequest, GcpKmsChannelKeyRequest,
+    GcpKmsSigningSourceRequest, Pkcs11ChannelKeyRequest, Pkcs11SigningSourceRequest,
+    ResponseSigningRequest, SigningSourceRequest,
 };
 
 use std::time::Duration;
@@ -82,12 +83,8 @@ pub struct DeploymentRequest {
     /// different custody source" refusals that explained the flat shape no longer have a
     /// configuration to refuse (ADR-MCPRE-067 §7).
     pub response_signing: ResponseSigningRequest,
-    /// Location of the PEM TLS server certificate chain.
-    pub tls_cert: String,
-    /// Location of the PEM TLS server private key.
-    pub tls_key: String,
-    /// Location of the PEM client-CA trust anchors.
-    pub client_ca: String,
+    /// Location of the trust anchors a peer credential must chain to.
+    pub peer_trust_anchors: String,
     /// Paths to offline client-certificate revocation lists (CRLs), PEM or DER
     /// (#3839). Each `--client-crl` value (comma-separated and/or repeated) adds a
     /// file; empty disables revocation checking (the pre-#3839 behavior). OFFLINE
@@ -304,8 +301,8 @@ pub struct DeploymentRequest {
     /// A separate role from [`response_signing`](Self::response_signing), and separate
     /// structurally: the delegated channel key object is not reachable from the
     /// response-signing selection and cannot be read where that key was meant
-    /// (ADR-MCPRE-067 §10). Absent means the exported posture, where the channel private
-    /// key is read from `tls_key`.
+    /// (ADR-MCPRE-067 §10). Which custody holds the channel key is the tagged
+    /// [`ChannelKeyRequest`], so the two cannot both be asserted.
     pub channel_credential: ChannelCredentialRequest,
     /// Connection resource limits (DoS defense).
     pub limits: ServerLimits,

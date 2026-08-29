@@ -17,7 +17,7 @@ use crate::clock::now_unix;
 use crate::config_snapshot;
 use crate::config_state::ChannelBindingState;
 use crate::config_state::CustodyState;
-use crate::config_state::TlsCustodyState;
+use crate::config_state::{ChannelCredentialCustodyState, PrivateKeyExposure};
 use crate::http_inner::HttpInnerPool;
 use crate::startup_posture::PostureLog;
 use crate::startup_posture::Seam;
@@ -212,25 +212,19 @@ fn process_gids() -> Vec<u32> {
 /// lands in the pod": a Secret mounted with Kubernetes' default 0644 booted silently.
 fn key_files_read_from_disk<'a>(
     custody: &'a CustodyState,
-    tls_custody: &'a TlsCustodyState,
+    channel_credential_custody: &'a ChannelCredentialCustodyState,
 ) -> Vec<&'a str> {
     // Under `EnvSeed` NOTHING is on disk: every locator this deployment carries names an
-    // environment variable, including the TLS ones. The old field test compared
-    // `key_source == File` for the seed but not for `--tls-key`, so an env-var NAME was
-    // stat'ed as a path — harmless only because a missing file passes the check. Phrasing
-    // the projection over the state removes the case instead of adding a condition for it.
-    // Under `EnvSeed` NOTHING is on disk: every locator this deployment carries names an
-    // environment variable, including the TLS ones — which is why custody answers that and
-    // the TLS machine does not. The old field test compared `key_source == File` for the
-    // seed but not for `--tls-key`, so an env-var NAME was stat'ed as a path, harmless only
-    // because a missing file passes the check.
+    // environment variable, the channel ones included — which is why custody answers that
+    // and the channel machine does not. Phrasing the projection over the state removes the
+    // case instead of adding a condition for it.
     if !custody.locators_are_filesystem_paths() {
         return Vec::new();
     }
     let mut paths = custody.disk_secret_paths();
-    // And the handshake key, only where custody EXPORTS one. Delegated custody keeps it on
-    // the device, and X2b has already refused a file copy beside it.
-    paths.extend(tls_custody.exported_key_path());
+    // And the handshake key, only where custody EXPORTS one. Non-exporting custody keeps
+    // it on the device, and the tagged request carries no file beside it to read.
+    paths.extend(channel_credential_custody.material().exported_key_path());
     paths
 }
 
@@ -331,7 +325,7 @@ fn channel_binding_effects(state: ChannelBindingState) -> ChannelBindingEffects 
 // every classification this function used to perform inline now lives in `startup_plan`
 // (pure) or `config_state` (layer A), and every resource with a teardown obligation lives
 // in the plane that owns it. What remains is the assembly itself — the part whose content
-// IS the order and the ownership. Regions that are neither leave: `identity_strategy` was
+// IS the order and the ownership. Regions that are neither leave: the identity seam was
 // the most recent, a pure three-way selection that had become readable only by reading an
 // `if` inside a 300-line body.
 //
@@ -403,7 +397,10 @@ fn run_validated(
     // A group/world-readable key file is a HARD error (refuse startup). The other
     // guards are parse-time and already enforced inside `cli::parse_args`; this one is
     // filesystem-dependent so it lives here.
-    for path in key_files_read_from_disk(config.state().custody(), config.state().tls_custody()) {
+    for path in key_files_read_from_disk(
+        config.state().custody(),
+        config.state().channel_credential_custody(),
+    ) {
         check_key_file_perms(path, config.state().key_file_access())?;
     }
     // A disabled (`none`/`0`) or over-ceiling `--max-client-cert-lifetime` is
@@ -421,9 +418,9 @@ fn run_validated(
     // `signing_key()` export call on the wiring path anymore.
     let key_source = cli::build_key_source(
         config.state().custody(),
-        config.state().tls_custody(),
-        &values.tls_cert,
-        &values.client_ca,
+        config.state().channel_credential_custody(),
+        &values.channel_credential.credential_chain,
+        &values.peer_trust_anchors,
     )
     .map_err(|e| e.to_string())?;
     let server_chain = key_source
@@ -468,7 +465,7 @@ fn run_validated(
         crate::startup_plan::TrustPlan::from_validated(config, response_kid.clone(), trust_epoch);
     // Transport custody and the offline client-cert revocation posture, both already
     // classified by layer A (ADR-MCPRE-056 §8).
-    let tls_plan = crate::startup_plan::TlsPlan::from_validated(config);
+    let tls_plan = crate::startup_plan::ChannelEstablishmentPlan::from_validated(config);
     // Response-signing custody. The SECOND consumer of both shared decisions, and it
     // receives them the same way the first did — from here, not from its sibling.
     let signing_plan = crate::startup_plan::SigningPlan::from_validated(
@@ -609,7 +606,7 @@ fn run_validated(
         startup_now_unix,
         Arc::clone(&shutdown),
     )?);
-    let is_delegated_tls = building.tls().is_delegated();
+    let handshake_key_may_block = building.tls().key_exposure() == PrivateKeyExposure::NonExporting;
     let client_revocation = building.tls().revocation();
     let config_snapshot = building.tls().snapshot();
 
@@ -637,7 +634,7 @@ fn run_validated(
     // The delegated-TLS custody paths sign the handshake through a KMS or a PKCS#11
     // token, synchronously, inside rustls' `Signer::sign` — so the serving runtime
     // shape has to account for a blocking signer (see `async_fleet`).
-    if is_delegated_tls {
+    if handshake_key_may_block {
         eprintln!(
             "mcp-re-proxy: TLS custody = DELEGATED: the handshake signature is a blocking \
              KMS/PKCS#11 call inside rustls' synchronous signer, so each core serves on a \
@@ -648,8 +645,8 @@ fn run_validated(
     // Which field the connection seam reads the client's identity from. Decided purely,
     // from configuration alone, in `startup_plan` — the three modes are mutually
     // exclusive and `parse_args` already refused the combinations.
-    let identity_strategy =
-        crate::startup_plan::identity_strategy(config.state().channel_binding());
+    let peer_identity_provenance =
+        crate::startup_plan::peer_identity_provenance(config.state().channel_binding());
 
     // #4030 ONLINE OCSP client-cert revocation. Attached to `ServerOptions` below rather
     // than to the PEP, because revocation is decided during the TLS handshake.
@@ -668,7 +665,7 @@ fn run_validated(
     limits.max_in_flight_requests = in_flight_limit.per_core();
     let serve_options = ServerOptions {
         identity_policy,
-        identity_strategy,
+        peer_identity_provenance,
         limits,
         // From the owner, not the request: the lifetime and the connection age are one
         // fact, and reading the lifetime raw here would be the relation split back into
@@ -680,7 +677,7 @@ fn run_validated(
         target_uri: values.target_uri.clone(),
         // The delegated-TLS custody paths sign the handshake through a KMS or a
         // PKCS#11 token, synchronously, inside rustls' `Signer::sign`.
-        tls_signing_may_block: is_delegated_tls,
+        tls_signing_may_block: handshake_key_may_block,
     };
 
     // ADR-MCPRE-051 §3: the async inner plane — a per-core pooled hyper client to
@@ -1107,16 +1104,16 @@ mod tests {
         config: &crate::deployment_request::DeploymentRequest,
     ) -> (
         crate::config_state::CustodyState,
-        crate::config_state::TlsCustodyState,
+        crate::config_state::ChannelCredentialCustodyState,
     ) {
         let (custody, violations) = crate::config_state::custody::classify_and_validate(config);
         assert!(violations.is_empty(), "fixture refused: {violations:?}");
-        let (tls_custody, violations) =
-            crate::config_state::tls_custody::classify_and_validate(config);
+        let (channel_credential_custody, violations) =
+            crate::config_state::channel_credential_custody::classify_and_validate(config);
         assert!(violations.is_empty(), "fixture refused: {violations:?}");
         (
             custody.expect("the fixture names a custody state"),
-            tls_custody.expect("the fixture names a TLS custody state"),
+            channel_credential_custody.expect("the fixture names a TLS custody state"),
         )
     }
 
@@ -1127,17 +1124,17 @@ mod tests {
     fn the_pkcs11_pin_file_is_permission_checked() {
         use crate::app::key_files_read_from_disk;
         let config = config_with("pkcs11", "", "/tls.key");
-        let (custody, tls_custody) = custody_states(&config);
-        let files = key_files_read_from_disk(&custody, &tls_custody);
+        let (custody, channel_credential_custody) = custody_states(&config);
+        let files = key_files_read_from_disk(&custody, &channel_credential_custody);
         assert!(
             files.contains(&"/etc/mcp-re/pin"),
             "the PIN file must be checked; got {files:?}"
         );
         // And it is NOT claimed for a source that reads no PIN.
         let file_config = config_with("file", "/seed", "/tls.key");
-        let (custody, tls_custody) = custody_states(&file_config);
+        let (custody, channel_credential_custody) = custody_states(&file_config);
         assert!(
-            !key_files_read_from_disk(&custody, &tls_custody)
+            !key_files_read_from_disk(&custody, &channel_credential_custody)
                 .iter()
                 .any(|p| p.contains("pin")),
             "file custody reads no PIN file"
@@ -1212,8 +1209,8 @@ mod tests {
         // `dev_env_key_source` build, so it cannot be constructed here.
         for source in ["file", "pkcs11", "aws-kms", "gcp-kms"] {
             let config = config_with(source, "/seed", "/tls.key");
-            let (custody, tls_custody) = custody_states(&config);
-            let checked = key_files_read_from_disk(&custody, &tls_custody);
+            let (custody, channel_credential_custody) = custody_states(&config);
+            let checked = key_files_read_from_disk(&custody, &channel_credential_custody);
             assert!(
                 checked.contains(&"/tls.key"),
                 "{source}: the TLS key lands on disk and must be permission-checked"
@@ -1234,9 +1231,9 @@ mod tests {
         use crate::app::key_files_read_from_disk;
 
         let config = config_with("gcp-kms", "", "");
-        let (custody, tls_custody) = custody_states(&config);
+        let (custody, channel_credential_custody) = custody_states(&config);
         assert!(
-            key_files_read_from_disk(&custody, &tls_custody).is_empty(),
+            key_files_read_from_disk(&custody, &channel_credential_custody).is_empty(),
             "delegated TLS + KMS custody reads no private key from disk"
         );
     }

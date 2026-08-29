@@ -10,7 +10,7 @@
 //!
 //! Currency is a predicate on a credential at an instant and says nothing about who the
 //! peer is. Gating it on authentication would stop checking currency under
-//! `IdentityStrategy::LbAssertion`, where no transport identity is derived at all and the
+//! `PeerIdentityProvenance::IngressAssertion`, where no transport identity is derived at all and the
 //! credential the mechanism accepted is still the one holding the connection open. The
 //! composition that DOES need an authenticated peer derives currency from that peer's own
 //! acceptance — see [`super::super::current_authenticated_peer`].

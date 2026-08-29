@@ -14,9 +14,9 @@
 //! interchangeable claims, and every posture statement derived from them would inherit
 //! the confusion.
 
+use crate::communication_assurance::peer_identity_provenance::PeerIdentityProvenance;
 use crate::config_state::validation::ValidatedDeployment;
 use crate::config_state::ChannelBindingState;
-use crate::tls::IdentityStrategy;
 
 /// The replay plan and the store view materialization reads it through.
 ///
@@ -111,15 +111,15 @@ pub fn response_issuer_kid(config: &ValidatedDeployment) -> String {
     config.state().delegated_signing().issuer_kid().to_string()
 }
 
-/// Where the connection seam reads the client's identity from.
+/// Where the connection seam reads the peer's identity from.
 ///
 /// Derived from the channel-binding OWNER, not from the request. `ChannelBindingState` is
 /// what layer A decided the deployment's identity binding is, and both of its states read
 /// the verified peer certificate — they differ in which SAN, which is the identity policy's
 /// business and not this seam's.
 ///
-/// The match is exhaustive over the owner's states on purpose. The other two
-/// `IdentityStrategy` arms serve capabilities the boundary refuses and
+/// The match is exhaustive over the owner's states on purpose. The other
+/// `PeerIdentityProvenance` arm serves a capability the boundary refuses and
 /// `docs/AGENT_INSTRUCTIONS.md` item 9 retains deliberately (Mode B / Mode C); they stay
 /// compiled and tested. What is gone is composition BRANCHING on raw request fields to
 /// reach them: no `ValidatedDeployment` could ever satisfy those branches, because a
@@ -127,10 +127,10 @@ pub fn response_issuer_kid(config: &ValidatedDeployment) -> String {
 /// deployment at all. If a refused mode is ever admitted, it becomes a state here and this
 /// match stops compiling — which is where the arm should be wired, rather than in an `if`
 /// that silently never fires.
-pub fn identity_strategy(binding: ChannelBindingState) -> IdentityStrategy {
+pub fn peer_identity_provenance(binding: ChannelBindingState) -> PeerIdentityProvenance {
     match binding {
         ChannelBindingState::ExactUriSan | ChannelBindingState::ExactDnsSan => {
-            IdentityStrategy::DirectTls
+            PeerIdentityProvenance::ChannelCredential
         }
     }
 }
@@ -282,35 +282,39 @@ impl SigningPlan {
 /// its own validated state, not a value planning rebuilds from the state's paths.
 pub use crate::config_state::transport::ClientRevocationPlan;
 
-/// What the TLS plane must establish (ADR-MCPRE-056 §8).
+/// What must hold for this node to establish authenticated channels (ADR-MCPRE-056 §8).
 ///
-/// Three classified states. The certificate lifetime and the connection-age bound used to
+/// Three classified states, none of them protocol vocabulary: the custody of this node's
+/// own channel credential, the currency posture it holds peer credentials to, and the
+/// window a peer credential authorizes traffic for. The mechanism that consumes them is
+/// `TlsPlane`, and it is the plane — not the plan — that is entitled to say rustls
+/// (ADR-MCPRE-067 §5, §6). The certificate lifetime and the connection-age bound used to
 /// travel here as two `Option<Duration>` inputs, with a doc comment claiming their
 /// compatibility "was settled at layer A" — which was not true: relation X5 compared the
 /// connection age against the ceiling CONSTANT and never against the configured lifetime.
 /// `ClientCredentialWindow` states the relation over the chosen values and owns both, so
 /// the plan carries one fact instead of two durations that could disagree.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TlsPlan {
-    /// Whether the handshake key can leave the device it lives on.
-    pub custody: crate::config_state::TlsCustodyState,
-    /// The offline client-certificate revocation posture.
+pub struct ChannelEstablishmentPlan {
+    /// Whether this node's channel-establishment key can leave the signer holding it.
+    pub custody: crate::config_state::ChannelCredentialCustodyState,
+    /// The offline peer-credential revocation posture.
     pub client_revocation: ClientRevocationPlan,
     /// How long a client credential authorizes traffic, and how long one connection may
     /// serve on a single handshake — the pair that makes the exposure window honest.
     pub credential_window: crate::config_state::ClientCredentialWindow,
 }
 
-impl TlsPlan {
+impl ChannelEstablishmentPlan {
     /// Project the plan from the retained classification and the validated inputs.
     ///
     /// **Infallible, deliberately.** Whether this binary has a PKCS#11, AWS or GCP backend
     /// for delegated custody is a fact about the BUILD, and making this fallible for it
     /// would collapse the A/B split: the request is coherent either way, and only
     /// materialization can say whether this executable can serve it.
-    pub fn from_validated(config: &ValidatedDeployment) -> TlsPlan {
-        TlsPlan {
-            custody: config.state().tls_custody().clone(),
+    pub fn from_validated(config: &ValidatedDeployment) -> ChannelEstablishmentPlan {
+        ChannelEstablishmentPlan {
+            custody: config.state().channel_credential_custody().clone(),
             client_revocation: config.state().crl_revocation().client_revocation_plan(),
             credential_window: config.state().client_credential_window(),
         }
@@ -409,12 +413,12 @@ mod tests {
         crate::cli::parse_args(&base_argv(extra))
     }
 
-    fn strategy_for(extra: &[&str]) -> IdentityStrategy {
+    fn strategy_for(extra: &[&str]) -> PeerIdentityProvenance {
         let mut argv: Vec<&str> = SHARED_REDIS.to_vec();
         argv.extend_from_slice(extra);
         let config = parse(&argv).expect("args parse");
         let validated = ValidatedDeployment::try_from(config).expect("config validates");
-        identity_strategy(validated.state().channel_binding())
+        peer_identity_provenance(validated.state().channel_binding())
     }
 
     /// A deployable configuration reads identity from the verified peer certificate.
@@ -424,7 +428,10 @@ mod tests {
     /// "the default among two" but "the one that exists".
     #[test]
     fn a_deployable_configuration_reads_the_verified_peer_certificate() {
-        assert!(matches!(strategy_for(&[]), IdentityStrategy::DirectTls));
+        assert!(matches!(
+            strategy_for(&[]),
+            PeerIdentityProvenance::ChannelCredential
+        ));
     }
 
     /// The `LbAssertion` arm is unreachable through the boundary, and that is the property
@@ -449,7 +456,7 @@ mod tests {
             assert!(
                 parse(&argv).is_err(),
                 "{extra:?} must be refused at the boundary; if it now starts, \
-                 identity_strategy has a reachable arm with no test"
+                 peer_identity_provenance has a reachable arm with no test"
             );
         }
     }
@@ -976,12 +983,12 @@ mod tests {
     /// configured lifetime. The plan now carries the pair as one owned fact, so the
     /// assertion is about a window rather than about two durations.
     #[test]
-    fn the_tls_plan_carries_the_classified_custody_and_the_credential_window() {
+    fn the_channel_plan_carries_the_classified_custody_and_the_credential_window() {
         let config = validated(&["--max-client-cert-lifetime", "3600"]);
-        let plan = TlsPlan::from_validated(&config);
+        let plan = ChannelEstablishmentPlan::from_validated(&config);
         assert_eq!(
             plan.custody,
-            crate::config_state::test_support::tls_custody_exported("/nonexistent/key"),
+            crate::config_state::test_support::channel_custody_exported("/nonexistent/key"),
             "the fixture's TLS key is an exported file, and the plan carries its path"
         );
         assert_eq!(

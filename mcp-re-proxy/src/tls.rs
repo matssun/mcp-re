@@ -41,6 +41,7 @@ use crate::communication_assurance::credential_currency::CredentialCurrencyPolic
 use crate::communication_assurance::credential_currency::CredentialCurrencyRefusal;
 use crate::communication_assurance::current_authenticated_peer::current_authenticated_peer;
 use crate::communication_assurance::current_authenticated_peer::CurrentPeerRefusal;
+use crate::communication_assurance::peer_identity_provenance::PeerIdentityProvenance;
 use crate::communication_assurance::AuthenticatedChannelPeer;
 use crate::communication_assurance::MechanismVerifiedCredentialEvidence;
 use crate::transport::IdentityPolicy;
@@ -182,40 +183,17 @@ impl Default for ServerLimits {
 /// is ever read — a duplicate signals a downstream injection attempt.
 pub const MCP_INGRESS_ASSERTION_HEADER: &str = "mcp-ingress-assertion";
 
-/// Where the served request's verified transport identity comes from. These are
-/// mutually exclusive: a connection is bound EITHER by a locally-terminated mTLS
-/// client certificate OR by an LB-signed request-bound ingress assertion — never
-/// both. The serve loop honours the one chosen strategy and never mixes them on a
-/// single connection.
-#[derive(Debug, Clone, Default)]
-pub enum IdentityStrategy {
-    /// Direct mTLS: the identity is the configured field of the verified peer
-    /// (leaf) certificate. This is the default and leaves the local-TLS path
-    /// fully intact.
-    #[default]
-    DirectTls,
-    /// ADR-MCPS-023 Tier 3 (issue #71): the verified transport identity comes from
-    /// an LB-signed, request-bound ingress assertion presented in the
-    /// [`MCP_INGRESS_ASSERTION_HEADER`]. The identity CANNOT be resolved at the
-    /// connection seam (the assertion binds the request hash, known only after
-    /// object verification), so under this strategy [`resolve_identity`] yields
-    /// `None` and the serve loop instead extracts the raw assertion header and
-    /// hands it to the post-verification check (`Proxy::with_lb_assertion`). The
-    /// local client certificate is NOT consulted for identity.
-    LbAssertion,
-}
-
 /// How the serve loop turns a connection into a served request: which client-cert
 /// field is the authoritative identity, the resource limits, and the maximum
 /// client-certificate lifetime.
 #[derive(Debug, Clone, Default)]
 pub struct ServerOptions {
     /// The authoritative client-certificate identity field (no implicit fallback).
-    /// Used for [`IdentityStrategy::DirectTls`].
+    /// Used for [`PeerIdentityProvenance::ChannelCredential`].
     pub identity_policy: IdentityPolicy,
     /// Where the request's verified transport identity is taken from. Mutually
     /// exclusive by construction.
-    pub identity_strategy: IdentityStrategy,
+    pub peer_identity_provenance: PeerIdentityProvenance,
     /// Connection resource limits (DoS defense).
     pub limits: ServerLimits,
     /// Maximum allowed client-certificate validity span
@@ -452,11 +430,11 @@ pub(crate) fn validated_delegated_resolver(
 /// the deployment's controls established — for both direct-TLS serving paths
 /// (ADR-MCPRE-064 Slice 4, issue #623).
 ///
-/// The strategy dispatch is the only decision here. Under [`IdentityStrategy::DirectTls`]
+/// The strategy dispatch is the only decision here. Under [`PeerIdentityProvenance::ChannelCredential`]
 /// the peer comes from the ADR-MCPRE-064 authorities: the mechanism's own acceptance plus
 /// the configured identity policy authenticate it, and the deployment's currency policy
 /// then either makes it a CURRENT peer or leaves it explicitly unexamined. Under
-/// [`IdentityStrategy::LbAssertion`] there is no channel peer, unchanged.
+/// [`PeerIdentityProvenance::IngressAssertion`] there is no channel peer, unchanged.
 ///
 /// **Nothing but the acceptance and the deployment's own policies is supplied.** There is
 /// no certificate parameter, no leaf parameter, no chain and no identity — which is what
@@ -508,11 +486,11 @@ fn authenticated_peer(
     accepted: Option<&MechanismVerifiedCredentialEvidence>,
     options: &ServerOptions,
 ) -> Option<AuthenticatedRelationshipPeerFacts> {
-    match &options.identity_strategy {
-        IdentityStrategy::DirectTls => {
+    match &options.peer_identity_provenance {
+        PeerIdentityProvenance::ChannelCredential => {
             authenticate_relationship_peer(accepted?.clone(), options.identity_policy.into()).ok()
         }
-        IdentityStrategy::LbAssertion => None,
+        PeerIdentityProvenance::IngressAssertion => None,
     }
 }
 
@@ -577,7 +555,7 @@ fn transport_binding_failure(request: &[u8]) -> Vec<u8> {
 }
 
 /// Extract the raw Tier-3 ingress-assertion header value to hand to the
-/// post-verification LB check (issue #71), under the [`IdentityStrategy::LbAssertion`]
+/// post-verification LB check (issue #71), under the [`PeerIdentityProvenance::IngressAssertion`]
 /// strategy ONLY. The header is fetched case-insensitively and fails CLOSED on a
 /// DUPLICATE: a single header value is returned only when EXACTLY one is present.
 ///
@@ -590,8 +568,8 @@ pub(crate) fn assertion_header<'a>(
     options: &ServerOptions,
     headers: &'a RequestHeaders,
 ) -> Option<&'a str> {
-    match &options.identity_strategy {
-        IdentityStrategy::LbAssertion => {
+    match &options.peer_identity_provenance {
+        PeerIdentityProvenance::IngressAssertion => {
             // Fail closed on a duplicated trust header before reading any value.
             if headers.count(MCP_INGRESS_ASSERTION_HEADER) != 1 {
                 return None;
@@ -1050,7 +1028,7 @@ mod crl_next_update_tests {
 
 /// Reading the configured CRL files, which is a TLS concern and was a CLI one.
 ///
-/// It moved here with `TlsPlan`: the TLS plane is the only caller, and reaching for it
+/// It moved here with `ChannelEstablishmentPlan`: the TLS plane is the only caller, and reaching for it
 /// through `cli` was the last thing keeping a configuration module named in a plane that
 /// no longer takes configuration.
 #[cfg(test)]
@@ -1395,7 +1373,7 @@ mod channel_peer_resolution_tests {
     fn direct_tls(policy: IdentityPolicy) -> ServerOptions {
         ServerOptions {
             identity_policy: policy,
-            identity_strategy: IdentityStrategy::DirectTls,
+            peer_identity_provenance: PeerIdentityProvenance::ChannelCredential,
             ..Default::default()
         }
     }
@@ -1537,7 +1515,7 @@ mod channel_peer_resolution_tests {
         let acceptance = accepted(IDENTITY_A, IDENTITY_B);
         let options = ServerOptions {
             identity_policy: IdentityPolicy::UriSan,
-            identity_strategy: IdentityStrategy::LbAssertion,
+            peer_identity_provenance: PeerIdentityProvenance::IngressAssertion,
             ..Default::default()
         };
         assert!(resolve_channel_peer(Some(&acceptance), &options, NOW)

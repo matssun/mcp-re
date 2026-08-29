@@ -69,6 +69,7 @@ pub mod credential_public_key_evidence;
 pub mod current_authenticated_peer;
 pub mod ed25519_public_key;
 pub mod mechanism_verified_credential;
+pub mod peer_identity_provenance;
 pub mod peer_identity_value;
 pub mod request_peer_binding;
 pub mod signing_key_evidence;

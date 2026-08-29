@@ -53,6 +53,7 @@ use std::time::Duration;
 
 use crate::client_revocation;
 use crate::config_snapshot;
+use crate::config_state::PrivateKeyExposure;
 use crate::managed_worker::WorkerSet;
 use crate::tls;
 use crate::tls_listener_state::TlsListenerSecurityState;
@@ -79,7 +80,7 @@ pub struct TlsPlane {
     snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
     revocation: Option<Arc<client_revocation::SharedClientRevocation>>,
     crls: ClientCrlEvidence,
-    is_delegated: bool,
+    key_exposure: PrivateKeyExposure,
     /// Owns the CRL reload worker. Halted in [`Drop`]; see the module note on why no
     /// security transition accompanies it.
     workers: WorkerSet,
@@ -106,14 +107,14 @@ impl TlsPlane {
         &self.crls
     }
 
-    /// Whether the handshake signature goes through a non-exporting device/KMS.
+    /// What may be believed about the handshake key this plane ESTABLISHED.
     ///
-    /// Read by the serving runtime shape: a delegated signer blocks inside rustls'
+    /// Read by the serving runtime shape: a `NonExporting` signer blocks inside rustls'
     /// synchronous `Signer::sign`, so each core needs a worker pool rather than the
     /// single-threaded share-nothing default. Exposed as a fact because the material it
     /// describes is moved into the reload worker.
-    pub fn is_delegated(&self) -> bool {
-        self.is_delegated
+    pub fn key_exposure(&self) -> PrivateKeyExposure {
+        self.key_exposure
     }
 
     /// Number of workers this plane owns. For the lifecycle tests.
@@ -160,7 +161,7 @@ impl TlsPlane {
             crls: ClientCrlEvidence {
                 postures: Vec::new(),
             },
-            is_delegated: false,
+            key_exposure: PrivateKeyExposure::ProcessReadable,
             workers,
         }
     }
@@ -180,7 +181,7 @@ impl TlsPlane {
     /// Establish transport custody: load and check the CRLs, build the serving TLS
     /// configuration, and start the reload worker when a cadence is configured.
     ///
-    /// Takes a [`TlsPlan`](crate::startup_plan::TlsPlan) and no configuration. Which
+    /// Takes a [`ChannelEstablishmentPlan`](crate::startup_plan::ChannelEstablishmentPlan) and no configuration. Which
     /// revocation posture and which custody this deployment is in were decided by layer A;
     /// what is left here is loading the bytes, building the verifier and starting the
     /// worker the posture calls for.
@@ -190,31 +191,27 @@ impl TlsPlane {
     /// the ESTABLISHED custody, and the plan states the REQUESTED one; the two are checked
     /// against each other below rather than assumed to agree.
     pub fn materialize(
-        plan: &crate::startup_plan::TlsPlan,
+        plan: &crate::startup_plan::ChannelEstablishmentPlan,
         material: TlsKeyMaterial,
         server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
         client_ca: Vec<rustls_pki_types::CertificateDer<'static>>,
         startup_now_unix: i64,
         deployment: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<TlsPlane, String> {
-        let is_delegated = material.is_delegated();
+        let established = material.exposure();
         // The one place the REQUESTED custody and the ESTABLISHED custody meet. Layer A
         // classified which the deployment asked for from its TLS key selectors; the key
         // source produced an actual signer. Nothing else compares them, so a divergence —
         // a selector that classifies as delegated while the key source yields an exported
         // key — would silently serve handshakes under weaker custody than the deployment
         // declared, and every startup line would report the declared one.
-        if is_delegated != plan.custody.is_delegated() {
+        if established != plan.custody.exposure() {
             return Err(format!(
                 "TLS custody mismatch: the deployment is configured for {} handshake custody, \
                  but the key source established {} custody. Refusing to serve under a custody \
                  the configuration does not name",
-                if plan.custody.is_delegated() {
-                    "delegated"
-                } else {
-                    "exported-key"
-                },
-                material.label(),
+                custody_word(plan.custody.exposure()),
+                custody_word(established),
             ));
         }
         // Offline client-cert CRLs (#3839). Loaded once at startup; a missing or
@@ -349,7 +346,7 @@ impl TlsPlane {
             snapshot,
             revocation,
             crls,
-            is_delegated,
+            key_exposure: established,
             workers,
         })
     }
@@ -376,22 +373,33 @@ pub enum TlsKeyMaterial {
     Delegated(Arc<dyn crate::delegated_tls::RawEd25519TlsSigner>),
 }
 
+/// The operator-facing word for a custody fact, unchanged from the flag vocabulary an
+/// operator reads in the startup transcript.
+fn custody_word(exposure: PrivateKeyExposure) -> &'static str {
+    match exposure {
+        PrivateKeyExposure::ProcessReadable => "exported-key",
+        PrivateKeyExposure::NonExporting => "delegated",
+    }
+}
+
 impl TlsKeyMaterial {
-    /// Whether the handshake signature goes through a non-exporting device/KMS.
+    /// What may be believed about the handshake key this material ESTABLISHED.
     ///
-    /// The serving runtime shape depends on this: a delegated signer blocks inside
-    /// rustls' synchronous `Signer::sign`, so each core needs a worker pool rather than
-    /// the single-threaded share-nothing default.
-    fn is_delegated(&self) -> bool {
-        matches!(self, TlsKeyMaterial::Delegated(_))
+    /// The same proposition the configuration boundary decided, so `materialize` compares
+    /// one fact against itself rather than two spellings of it. The serving runtime shape
+    /// depends on it too: a `NonExporting` signer blocks inside rustls' synchronous
+    /// `Signer::sign`, so each core needs a worker pool rather than the single-threaded
+    /// share-nothing default.
+    fn exposure(&self) -> PrivateKeyExposure {
+        match self {
+            TlsKeyMaterial::Exported(_) => PrivateKeyExposure::ProcessReadable,
+            TlsKeyMaterial::Delegated(_) => PrivateKeyExposure::NonExporting,
+        }
     }
 
     /// The custody word for the operator-facing startup line.
     fn label(&self) -> &'static str {
-        match self {
-            TlsKeyMaterial::Exported(_) => "exported-key",
-            TlsKeyMaterial::Delegated(_) => "delegated",
-        }
+        custody_word(self.exposure())
     }
 
     /// Rebuild the serving config around `crls`, under whichever custody applies.
@@ -549,7 +557,7 @@ fn crl_reload_loop(task: CrlReloadTask, halt: &crate::managed_worker::Halt) {
 /// about what was actually LOADED and is being enforced. Rendering the second from the
 /// plan would report a mechanism as enforced because it was asked for.
 pub(crate) fn revocation_posture_lines(
-    plan: &crate::startup_plan::TlsPlan,
+    plan: &crate::startup_plan::ChannelEstablishmentPlan,
     crls: &ClientCrlEvidence,
 ) -> Vec<String> {
     // Both durations come from ONE owned window, so the exposure window is never reported
@@ -623,7 +631,7 @@ pub(crate) fn revocation_posture_lines(
 /// stated its own bound — which is the property this claim most needs, since a posture
 /// falling through to another's sentence is exactly how an operator gets a number that
 /// nothing enforces.
-pub fn fleet_crl_bound(plan: &crate::startup_plan::TlsPlan) -> String {
+pub fn fleet_crl_bound(plan: &crate::startup_plan::ChannelEstablishmentPlan) -> String {
     if !plan.client_revocation.is_enforced() {
         let window = plan.credential_window.exposure_window().as_secs();
         return format!("short-lived-cert only (exposure_window {window}s); no client CRL");
@@ -660,7 +668,7 @@ mod handle_lifetime_tests {
             snapshot: Arc::new(config_snapshot::ServerConfigSnapshot::new(config)),
             revocation: None,
             crls: ClientCrlEvidence { postures: vec![] },
-            is_delegated: false,
+            key_exposure: PrivateKeyExposure::ProcessReadable,
             workers,
         }
     }
@@ -730,7 +738,7 @@ mod handle_lifetime_tests {
 mod revocation_posture_tests {
     use super::revocation_posture_lines;
     use super::ClientCrlEvidence;
-    use crate::startup_plan::TlsPlan;
+    use crate::startup_plan::ChannelEstablishmentPlan;
     use crate::tls::CrlPosture;
 
     /// A plan with no CRLs and the given client-cert lifetime.
@@ -738,9 +746,9 @@ mod revocation_posture_tests {
     /// The credential window comes through its classifier, so a lifetime the boundary
     /// refuses — disabled, over the ceiling, or shorter than the connection age — cannot be
     /// written here at all. The `Option<Duration>` this took could name every one of them.
-    fn plan(cert_lifetime_secs: u64) -> TlsPlan {
-        TlsPlan {
-            custody: crate::config_state::test_support::tls_custody_exported("/key"),
+    fn plan(cert_lifetime_secs: u64) -> ChannelEstablishmentPlan {
+        ChannelEstablishmentPlan {
+            custody: crate::config_state::test_support::channel_custody_exported("/key"),
             client_revocation: crate::config_state::test_support::crl_plan(&[], None),
             credential_window: crate::config_state::test_support::credential_window(
                 cert_lifetime_secs,
@@ -823,7 +831,7 @@ mod revocation_posture_tests {
 #[cfg(test)]
 mod custody_agreement_tests {
     use super::*;
-    use crate::startup_plan::TlsPlan;
+    use crate::startup_plan::ChannelEstablishmentPlan;
 
     fn exported_material() -> TlsKeyMaterial {
         use rustls::pki_types::PrivateKeyDer;
@@ -834,8 +842,10 @@ mod custody_agreement_tests {
         )))
     }
 
-    fn plan(custody: crate::config_state::TlsCustodyState) -> TlsPlan {
-        TlsPlan {
+    fn plan(
+        custody: crate::config_state::ChannelCredentialCustodyState,
+    ) -> ChannelEstablishmentPlan {
+        ChannelEstablishmentPlan {
             custody,
             client_revocation: crate::config_state::test_support::crl_plan(&[], None),
             credential_window: crate::config_state::test_support::credential_window(3600, 300),
@@ -853,7 +863,7 @@ mod custody_agreement_tests {
     #[test]
     fn a_key_source_that_disagrees_with_the_declared_custody_refuses() {
         let err = TlsPlane::materialize(
-            &plan(crate::config_state::test_support::tls_custody_delegated_pkcs11("tls")),
+            &plan(crate::config_state::test_support::channel_custody_delegated_pkcs11("tls")),
             exported_material(),
             Vec::new(),
             Vec::new(),
@@ -877,7 +887,7 @@ mod custody_agreement_tests {
     #[test]
     fn agreeing_custody_passes_the_check_and_fails_on_something_else() {
         let err = TlsPlane::materialize(
-            &plan(crate::config_state::test_support::tls_custody_exported(
+            &plan(crate::config_state::test_support::channel_custody_exported(
                 "/key",
             )),
             exported_material(),
@@ -998,7 +1008,7 @@ mod trust_epoch_binding_tests {
 #[cfg(test)]
 mod fleet_crl_bound_tests {
     use super::fleet_crl_bound;
-    use crate::startup_plan::TlsPlan;
+    use crate::startup_plan::ChannelEstablishmentPlan;
 
     /// A plan in the posture under test. The postures are enumerated as VARIANTS, so a
     /// combination layer A refuses — a cadence with no CRLs — cannot be written here at
@@ -1006,9 +1016,9 @@ mod fleet_crl_bound_tests {
     fn plan(
         client_revocation: crate::startup_plan::ClientRevocationPlan,
         cert_lifetime_secs: u64,
-    ) -> TlsPlan {
-        TlsPlan {
-            custody: crate::config_state::test_support::tls_custody_exported("/key"),
+    ) -> ChannelEstablishmentPlan {
+        ChannelEstablishmentPlan {
+            custody: crate::config_state::test_support::channel_custody_exported("/key"),
             client_revocation,
             // The connection age is the default 300s, or the lifetime where that is
             // shorter: a fixture cannot name an age that outlives the credential, because

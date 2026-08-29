@@ -12,10 +12,10 @@
 //!
 //! All four live here: X2a, X2b, X6, X9.
 
-use crate::config_state::tls_custody::TlsCustodyState;
 use crate::config_state::trust_revocation::TrustRevocationState;
-use crate::deployment_request::DeploymentRequest;
-use crate::deployment_request::{DelegatedChannelKeyRequest, SigningSourceRequest};
+use crate::deployment_request::{
+    ChannelKeyRequest, DelegatedChannelKeyRequest, DeploymentRequest, SigningSourceRequest,
+};
 
 /// The relations, kept separate so each can be reported where its clause has always been
 /// read rather than in one block at the end (CF-11 — precedence changes deliberately).
@@ -23,8 +23,6 @@ use crate::deployment_request::{DelegatedChannelKeyRequest, SigningSourceRequest
 pub(crate) struct CrossMachineViolations {
     /// X2a — the response-signing mechanism × the channel key object.
     pub(crate) x2a_delegated_selector: Vec<String>,
-    /// X2b — `TlsCustody` × `Tls`.
-    pub(crate) x2b_exclusive_tls_custody: Vec<String>,
     /// X6 — `Authz` × `Trust`.
     pub(crate) x6_unenforceable_deny_list: Vec<String>,
     /// X9 — `TrustRevocation` × `DelegatedSigning`.
@@ -68,28 +66,6 @@ fn x2a(source: &SigningSourceRequest, channel: Option<&DelegatedChannelKeyReques
     }
 }
 
-/// X2b: a delegated TLS custody forbids an exported copy of the same key.
-///
-/// ADR-MCPS-028 §G. Asserting both is contradictory rather than redundant: the operator
-/// could believe the key never leaves the device while a file copy also exists.
-/// Asked of the STATE, and safely: the fallible side of `TlsCustody` is `Exported`, and
-/// this clause fires only on `Delegated`, which the presence of a selector always
-/// constructs. So a configuration with no recognised TLS custody has no exported-copy
-/// contradiction to report either.
-///
-/// The exported material is still read from the request, deliberately. Under `Delegated`
-/// the state does NOT carry `--tls-key`: carrying it would make the very combination this
-/// clause forbids representable. `Tls` has no state type to consult instead, so this is a
-/// relation to an owner whose material still lives in the request.
-fn x2b(tls_custody: Option<&TlsCustodyState>, config: &DeploymentRequest) -> Vec<String> {
-    if tls_custody.is_some_and(TlsCustodyState::is_delegated) && !config.tls_key.is_empty() {
-        return vec![
-            validate_tls_signing_exclusivity(true, true).expect_err("both custodies asserted")
-        ];
-    }
-    Vec::new()
-}
-
 /// X6: a deny-list no authorization profile will consult enforces nothing.
 ///
 /// `Authz` is no longer degenerate — `--authz pdp-decision` is deployable — but no
@@ -121,45 +97,30 @@ fn x9(
     Vec::new()
 }
 
+/// The delegated key object this request names, where it names one.
+///
+/// X2a is a relation over the SELECTION, and the exported arm makes no selection to
+/// relate. Reading the arm here rather than in `x2a` keeps that function about the pair.
+fn delegated_channel_key(key: &ChannelKeyRequest) -> Option<&DelegatedChannelKeyRequest> {
+    match key {
+        ChannelKeyRequest::Delegated(delegated) => Some(delegated),
+        ChannelKeyRequest::ExportedFile(_) => None,
+    }
+}
+
 /// Check the cross-machine relations over states pass 1 recognised.
 pub(crate) fn validate(
-    tls_custody: Option<&TlsCustodyState>,
     trust_revocation: Option<&TrustRevocationState>,
     config: &DeploymentRequest,
 ) -> CrossMachineViolations {
     CrossMachineViolations {
         x2a_delegated_selector: x2a(
             &config.response_signing.source,
-            config.channel_credential.delegated.as_ref(),
+            delegated_channel_key(&config.channel_credential.key),
         ),
-        x2b_exclusive_tls_custody: x2b(tls_custody, config),
         x6_unenforceable_deny_list: x6(config),
         x9_trust_epoch_posture: x9(trust_revocation, config),
     }
-}
-
-/// Enforce the delegated-XOR-exported TLS-signing rule (ADR-MCPS-028 §G, issue
-/// #58): a source's TLS handshake key is EITHER delegated to a non-exporting
-/// device/KMS OR exported from a file, never both. A source that asserts both is
-/// contradictory — the operator could believe the key never leaves the device while a
-/// file copy also exists — so it FAILS CLOSED.
-///
-/// Pure and black-box-testable (no `DeploymentRequest`, no IO). Relation X2b is the caller,
-/// and it asks the question of two RECOGNISED states rather than of the fields, which is
-/// why there is no `DeploymentRequest` adapter here.
-pub fn validate_tls_signing_exclusivity(
-    has_delegated_tls: bool,
-    has_exported_tls_key: bool,
-) -> Result<(), String> {
-    if has_delegated_tls && has_exported_tls_key {
-        return Err(
-            "TLS signing is delegated XOR exported (ADR-MCPS-028 §G): a delegated-TLS \
-             key source must not also be given an exported --tls-key. Remove --tls-key \
-             when using a delegated (non-exporting device/KMS) TLS signer."
-                .to_string(),
-        );
-    }
-    Ok(())
 }
 
 /// The one decision about whether a policy-layer deny-list can be enforced.
@@ -237,11 +198,11 @@ mod tests {
     }
 
     fn pkcs11_channel(config: &mut DeploymentRequest) {
-        config.channel_credential.delegated = Some(DelegatedChannelKeyRequest::Pkcs11(
-            Pkcs11ChannelKeyRequest {
+        config.channel_credential.key = ChannelKeyRequest::Delegated(
+            DelegatedChannelKeyRequest::Pkcs11(Pkcs11ChannelKeyRequest {
                 key_label: "tls".to_string(),
-            },
-        ));
+            }),
+        );
     }
 
     /// A flag a case must name in its refusal, and the configuration that provokes it.
@@ -250,9 +211,8 @@ mod tests {
     fn relations(mutate: impl FnOnce(&mut DeploymentRequest)) -> CrossMachineViolations {
         let mut config = legal_config();
         mutate(&mut config);
-        let (tls_custody, _) = crate::config_state::tls_custody::classify_and_validate(&config);
         let (trust, _) = crate::config_state::trust_revocation::classify_and_validate(&config);
-        validate(tls_custody.as_ref(), trust.as_ref(), &config)
+        validate(trust.as_ref(), &config)
     }
 
     #[test]
@@ -260,10 +220,8 @@ mod tests {
         let found = relations(|c| {
             select_pkcs11(c);
             pkcs11_channel(c);
-            c.tls_key = String::new();
         });
         assert!(found.x2a_delegated_selector.is_empty());
-        assert!(found.x2b_exclusive_tls_custody.is_empty());
     }
 
     #[test]
@@ -275,24 +233,23 @@ mod tests {
             }),
             ("--aws-kms-tls-key-id", |c| {
                 select_gcp(c);
-                c.channel_credential.delegated = Some(DelegatedChannelKeyRequest::AwsKms(
-                    AwsKmsChannelKeyRequest {
+                c.channel_credential.key = ChannelKeyRequest::Delegated(
+                    DelegatedChannelKeyRequest::AwsKms(AwsKmsChannelKeyRequest {
                         key_id: "alias/tls".to_string(),
-                    },
-                ));
+                    }),
+                );
             }),
             ("--gcp-kms-tls-key-version", |c| {
                 select_file(c);
-                c.channel_credential.delegated = Some(DelegatedChannelKeyRequest::GcpKms(
-                    GcpKmsChannelKeyRequest {
+                c.channel_credential.key = ChannelKeyRequest::Delegated(
+                    DelegatedChannelKeyRequest::GcpKms(GcpKmsChannelKeyRequest {
                         key_version: "projects/p/..".to_string(),
-                    },
-                ));
+                    }),
+                );
             }),
         ];
         for (flag, mutate) in cases {
             let found = relations(|c| {
-                c.tls_key = String::new();
                 mutate(c);
             });
             assert!(
@@ -327,33 +284,27 @@ mod tests {
         assert!(found.x9_trust_epoch_posture.is_empty());
     }
 
+    /// X2b is GONE, and this is the control that says so honestly: the pair it refused —
+    /// a delegated channel key beside an exported file copy — has no representation left
+    /// to build, so there is no configuration for a relation to examine. The refusal did
+    /// not move to another boundary silently; the CLI adapter answers the argv form, and
+    /// the negative control for that lives with the parser (ADR-MCPRE-067 §7).
     #[test]
-    fn asserting_both_custodies_for_one_key_is_refused() {
+    fn the_exclusive_custody_relation_has_no_configuration_left_to_refuse() {
         let found = relations(|c| {
             select_pkcs11(c);
             pkcs11_channel(c);
-            c.tls_key = "/key".to_string();
         });
-        assert_eq!(found.x2b_exclusive_tls_custody.len(), 1);
-        assert!(found.x2b_exclusive_tls_custody[0].contains("delegated XOR exported"));
+        assert!(found.x2a_delegated_selector.is_empty());
+        // Naming the delegated key object is what unnames the file: one value, two arms.
+        assert!(matches!(
+            c_key(&legal_config()),
+            ChannelKeyRequest::ExportedFile(_)
+        ));
     }
 
-    #[test]
-    fn tls_signing_exclusivity_rejects_both_and_admits_either_or_neither() {
-        // ADR-MCPS-028 §G / issue #58: delegated XOR exported TLS signing.
-        // Exported only — the current default path — is fine.
-        assert!(super::validate_tls_signing_exclusivity(false, true).is_ok());
-        // Delegated only — what #59–#61 will configure — is fine.
-        assert!(super::validate_tls_signing_exclusivity(true, false).is_ok());
-        // Neither set — degenerate, not contradictory — is fine (the require()
-        // checks elsewhere catch a genuinely missing credential).
-        assert!(super::validate_tls_signing_exclusivity(false, false).is_ok());
-        // BOTH set — contradictory — fails closed.
-        let err = super::validate_tls_signing_exclusivity(true, true)
-            .expect_err("delegated AND exported TLS signing must be rejected");
-        assert!(
-            err.contains("delegated XOR exported"),
-            "the rejection must name the XOR rule, got: {err}"
-        );
+    /// The request's own channel key, for the assertion above.
+    fn c_key(config: &DeploymentRequest) -> &ChannelKeyRequest {
+        &config.channel_credential.key
     }
 }

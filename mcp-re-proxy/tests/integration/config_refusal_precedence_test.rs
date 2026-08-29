@@ -72,7 +72,6 @@ fn keys(violations: &[String]) -> Vec<&'static str> {
         "--client-ocsp",
         "--revocation-list",
         "--authz",
-        "TLS signing is delegated XOR exported",
         "--transport-binding lb-assertion places",
         // The `ServerIdentity` owner's two coordinates, then `--audience`, which is not
         // one of them. The reorder placing `--audience` after `--server-signer` is
@@ -149,8 +148,10 @@ fn the_boundary_refuses_in_this_order() {
     config.ocsp_responder_url = Some(String::new());
     config.authorization.revocation_list_paths = vec!["/deny.json".to_string()];
     config.authorization.kind = AuthzKind::Reference;
-    // With tls_key set: XOR violated.
-    config.channel_credential.delegated = Some(
+    // A PKCS#11 channel key beside a file response-signing source: relation X2a. It used
+    // to provoke X2b as well — a delegated key beside an exported one — and cannot any
+    // more, because naming this arm is how the exported arm stops being named.
+    config.channel_credential.key = mcp_re_proxy::deployment_request::ChannelKeyRequest::Delegated(
         mcp_re_proxy::deployment_request::DelegatedChannelKeyRequest::Pkcs11(
             mcp_re_proxy::deployment_request::Pkcs11ChannelKeyRequest {
                 key_label: "tls".to_string(),
@@ -163,8 +164,8 @@ fn the_boundary_refuses_in_this_order() {
     config.server_signer = String::new();
     config.server_key_id = String::new();
     config.bind = String::new();
-    config.tls_cert = String::new();
-    config.client_ca = String::new();
+    config.channel_credential.credential_chain = String::new();
+    config.peer_trust_anchors = String::new();
     config.trust_path = String::new();
     config.inner_http_urls.clear();
     config.max_clock_skew = -1;
@@ -195,7 +196,6 @@ fn the_boundary_refuses_in_this_order() {
             "--ocsp-responder-url is empty",
             "--revocation-list",
             "--authz",
-            "TLS signing is delegated XOR exported",
             // Moved UP with `FreshnessWindow`. The skew bound used to be a residue clause
             // among the quantity guards; it is now the constructor of the owner that holds
             // the one chosen skew, so it is refused where the machines are, not where the

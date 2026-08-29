@@ -238,12 +238,12 @@ pub(super) fn required_locator_violations(config: &DeploymentRequest) -> Vec<Str
              resolves to no address rather than to a default",
         ),
         (
-            config.tls_cert.as_str(),
+            config.channel_credential.credential_chain.as_str(),
             "--tls-cert is empty: it names the server certificate chain presented on every \
              handshake",
         ),
         (
-            config.client_ca.as_str(),
+            config.peer_trust_anchors.as_str(),
             "--client-ca is empty: it names the roots every client certificate is verified \
              against, which is the whole of who may connect",
         ),
