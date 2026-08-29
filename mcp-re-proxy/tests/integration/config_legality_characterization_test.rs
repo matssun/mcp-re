@@ -87,7 +87,7 @@ fn refused_at_the_boundary() {
     // configuration. Its two siblings (`--delegated-ttl-secs`, `--delegated-overlap-secs`)
     // were already boundary clauses, so one family was split across two layers.
     let mut config = base();
-    config.delegated_trust_epoch = None;
+    config.delegated_signing.trust_epoch = None;
     let refusal = ValidatedDeployment::try_from(config)
         .expect_err("delegated signing must not mint under a bare epoch label");
     assert!(refusal.contains("--delegated-trust-epoch"), "{refusal}");

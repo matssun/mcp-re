@@ -18,6 +18,7 @@
 
 mod admission;
 mod authorization;
+mod delegated_signing;
 mod inner_backend_display;
 mod kinds;
 mod peer_identity;
@@ -29,6 +30,7 @@ mod storage;
 
 pub use admission::{AdmissionAvailabilityRequest, AdmissionGateRequest, AdmissionRequest};
 pub use authorization::AuthorizationRequest;
+pub use delegated_signing::DelegatedSigningRequest;
 pub(crate) use inner_backend_display::RedactedBackendUrls;
 pub use kinds::{AuditSinkKind, AuthzKind, VerifiedContextKind};
 pub use peer_identity::{
@@ -229,24 +231,10 @@ pub struct DeploymentRequest {
     /// are REJECTED and a shared replay cache with an adequate durability tier is
     /// required.
     pub fleet: bool,
-    /// Delegated-key TTL `T` in seconds (ADR-MCPRE-052 §4). The rotor mints a
-    /// successor within the overlap window before each key's `exp`. Default 300s.
-    pub delegated_ttl_secs: i64,
-    /// Delegated-key rotation-overlap window `O` in seconds (0 < O < T). The successor
-    /// is minted at `exp − O` so signing never gaps. Default 60s.
-    pub delegated_overlap_secs: i64,
-    /// The trust epoch minted into every delegation credential (ADR-MCPRE-052 §7 hard
-    /// gate). REQUIRED (a verifier admits only credentials whose epoch is in its
-    /// accepted set), and load-bearing — it must be coordinated with verifiers, so
-    /// there is no silent default.
-    pub delegated_trust_epoch: Option<String>,
-    /// The root issuer key id the delegation credential chains to (its `issuer_kid`,
-    /// resolved by verifiers for the Response slot). Defaults to `--server-key-id`.
-    pub delegated_issuer_kid: Option<String>,
-    /// The service/audience-scope hash the delegated key is scoped to
-    /// (`mcp_re_audience_hash`). Defaults to `--audience`; must match the verifier's
-    /// expected audience hash.
-    pub delegated_audience_hash: Option<String>,
+    /// What the delegated response-signing credential is minted with: its rotation
+    /// window, the trust epoch that can withdraw it, and the coordinates it is issued
+    /// under. One proposition, so one field (ADR-MCPRE-067 §7).
+    pub delegated_signing: DelegatedSigningRequest,
     /// Accept a key file that is group-READABLE (never group-writable, never
     /// world-anything) when its group is one this process is in — the Kubernetes
     /// `fsGroup` mount model, which the strict `0600` floor makes unsatisfiable for a

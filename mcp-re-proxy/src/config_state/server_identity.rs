@@ -157,7 +157,7 @@ mod tests {
     #[test]
     fn the_identity_keyid_follows_the_resolved_issuer_not_the_server_key_id() {
         let mut config = legal_config();
-        config.delegated_issuer_kid = Some("root-issuer-9".to_string());
+        config.delegated_signing.issuer_kid = Some("root-issuer-9".to_string());
         let actor = facts(&config).0.expect("legal").actor;
         assert_eq!(actor.keyid, "root-issuer-9");
         assert_ne!(actor.keyid, config.server_key_id);

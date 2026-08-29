@@ -566,11 +566,13 @@ pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
         limits,
         max_client_cert_lifetime,
         fleet,
-        delegated_ttl_secs: delegated_ttl_secs_final,
-        delegated_overlap_secs: delegated_overlap_secs_final,
-        delegated_trust_epoch,
-        delegated_issuer_kid,
-        delegated_audience_hash,
+        delegated_signing: crate::deployment_request::DelegatedSigningRequest {
+            ttl_secs: delegated_ttl_secs_final,
+            overlap_secs: delegated_overlap_secs_final,
+            trust_epoch: delegated_trust_epoch,
+            issuer_kid: delegated_issuer_kid,
+            audience_hash: delegated_audience_hash,
+        },
     };
 
     // Whether the deployment this argument list describes is one that may run is not the
@@ -1811,12 +1813,15 @@ mod tests {
     fn delegated_signing_parses_with_defaults() {
         // `minimal()` already supplies the required --delegated-trust-epoch.
         let config = parse_args(&minimal_durable()).expect("parse delegated-signing");
-        assert_eq!(config.delegated_trust_epoch.as_deref(), Some("epoch-min"));
+        assert_eq!(
+            config.delegated_signing.trust_epoch.as_deref(),
+            Some("epoch-min")
+        );
         // Defaults: T=300, O=60; issuer kid / audience hash default at build time.
-        assert_eq!(config.delegated_ttl_secs, 300);
-        assert_eq!(config.delegated_overlap_secs, 60);
-        assert_eq!(config.delegated_issuer_kid, None);
-        assert_eq!(config.delegated_audience_hash, None);
+        assert_eq!(config.delegated_signing.ttl_secs, 300);
+        assert_eq!(config.delegated_signing.overlap_secs, 60);
+        assert_eq!(config.delegated_signing.issuer_kid, None);
+        assert_eq!(config.delegated_signing.audience_hash, None);
     }
 
     #[test]

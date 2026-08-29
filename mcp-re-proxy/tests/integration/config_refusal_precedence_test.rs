@@ -177,9 +177,9 @@ fn the_boundary_refuses_in_this_order() {
     config.limits.drain_grace = std::time::Duration::from_secs(0);
     config.peer_revocation.lists.paths = vec!["/crl.pem".to_string(), String::new()];
     config.peer_revocation.lists.reload_secs = Some(0);
-    config.delegated_trust_epoch = None;
-    config.delegated_ttl_secs = 0;
-    config.delegated_overlap_secs = 0;
+    config.delegated_signing.trust_epoch = None;
+    config.delegated_signing.ttl_secs = 0;
+    config.delegated_signing.overlap_secs = 0;
     config.max_client_cert_lifetime = None;
     config.limits.max_connection_age = None;
     config.limits.read_timeout = None;

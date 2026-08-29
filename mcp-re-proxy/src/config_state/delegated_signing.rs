@@ -30,7 +30,7 @@
 //! `mcp_re_http_profile::CustodyConfig` is what would make that hold, and that is a
 //! different type in a different crate.
 
-use crate::deployment_request::DeploymentRequest;
+use crate::deployment_request::{DelegatedSigningRequest, DeploymentRequest};
 
 /// The delegated-key TTL `T` an operator did not state, in seconds.
 ///
@@ -144,7 +144,8 @@ pub fn classify_and_validate(
     config: &DeploymentRequest,
 ) -> (Option<DelegatedSigningFacts>, Vec<String>) {
     let mut violations = Vec::new();
-    let epoch = config.delegated_trust_epoch.clone();
+    let requested = &config.delegated_signing;
+    let epoch = requested.trust_epoch.clone();
     if epoch.is_none() {
         violations.push(
             "delegated-required response signing requires a trust epoch \
@@ -162,7 +163,7 @@ pub fn classify_and_validate(
     // one defect should not have to run the proxy again to be told about the next. They now
     // also GATE construction, on the same pattern as the empty-fact guards below: reporting
     // everything and constructing nothing invalid are not in tension.
-    let range = ttl_violations(config);
+    let range = ttl_violations(requested);
     let window_is_valid = range.is_empty();
     violations.extend(range);
     let Some(trust_epoch) = epoch else {
@@ -174,15 +175,15 @@ pub fn classify_and_validate(
     let facts = DelegatedSigningFacts {
         trust_epoch,
         rotation: RotationWindow {
-            ttl_secs: config.delegated_ttl_secs,
-            overlap_secs: config.delegated_overlap_secs,
+            ttl_secs: requested.ttl_secs,
+            overlap_secs: requested.overlap_secs,
         },
-        issuer_kid: config
-            .delegated_issuer_kid
+        issuer_kid: requested
+            .issuer_kid
             .clone()
             .unwrap_or_else(|| config.server_key_id.clone()),
-        audience_hash: config
-            .delegated_audience_hash
+        audience_hash: requested
+            .audience_hash
             .clone()
             .unwrap_or_else(|| config.audience.clone()),
     };
@@ -241,32 +242,30 @@ fn empty_fact_violations(facts: &DelegatedSigningFacts) -> Vec<String> {
 /// — so the TTL IS the exposure window of an exfiltrated hot-path key and needs a ceiling,
 /// not merely a positive value. The rotor's successor-before-expiry rule is checked for the
 /// same reason the ceiling is: these are public fields on a config a caller can build.
-fn ttl_violations(config: &DeploymentRequest) -> Vec<String> {
+fn ttl_violations(requested: &DelegatedSigningRequest) -> Vec<String> {
     let mut out = Vec::new();
-    if config.delegated_ttl_secs <= 0 {
+    if requested.ttl_secs <= 0 {
         out.push(
             "--delegated-ttl-secs must be greater than 0 (it is the life of every delegated \
              response-signing credential)"
                 .to_string(),
         );
-    } else if config.delegated_ttl_secs > MAX_DELEGATED_TTL_SECS {
+    } else if requested.ttl_secs > MAX_DELEGATED_TTL_SECS {
         out.push(format!(
             "--delegated-ttl-secs {} exceeds the ceiling of {MAX_DELEGATED_TTL_SECS}s: the \
              credential's exp is the ONLY thing that expires it (a trust-epoch advance does \
              not reach credentials already issued), so the TTL is exactly how long an \
              exfiltrated delegated signing key stays verifiable; the delegated key is the \
              SHORT-lived hot-path credential — set a TTL <= {MAX_DELEGATED_TTL_SECS}s",
-            config.delegated_ttl_secs
+            requested.ttl_secs
         ));
     }
-    if config.delegated_overlap_secs <= 0
-        || config.delegated_overlap_secs >= config.delegated_ttl_secs
-    {
+    if requested.overlap_secs <= 0 || requested.overlap_secs >= requested.ttl_secs {
         out.push(format!(
             "--delegated-overlap-secs must satisfy 0 < overlap < ttl (got overlap={}, ttl={}); \
              the rotor mints a successor one overlap before expiry, so outside that range \
              response signing either never rotates or stops",
-            config.delegated_overlap_secs, config.delegated_ttl_secs
+            requested.overlap_secs, requested.ttl_secs
         ));
     }
     out
@@ -311,7 +310,7 @@ mod tests {
     /// The §7 hard gate. It has no default, so there is no posture to describe without it.
     #[test]
     fn an_absent_trust_epoch_names_no_posture() {
-        let (facts, violations) = run(|c| c.delegated_trust_epoch = None);
+        let (facts, violations) = run(|c| c.delegated_signing.trust_epoch = None);
         assert!(
             facts.is_none(),
             "there is nothing to resolve without an epoch"
@@ -334,7 +333,7 @@ mod tests {
     /// reaches for `<base>#<counter>` must therefore carry the condition that produces it.
     #[test]
     fn the_epoch_refusal_conditions_the_counter_on_the_source_that_produces_it() {
-        let (_, violations) = run(|c| c.delegated_trust_epoch = None);
+        let (_, violations) = run(|c| c.delegated_signing.trust_epoch = None);
         let refusal = violations
             .iter()
             .find(|v| v.contains("--delegated-trust-epoch"))
@@ -367,26 +366,26 @@ mod tests {
         for (name, mutate) in [
             (
                 "--delegated-trust-epoch",
-                (|c: &mut DeploymentRequest| c.delegated_trust_epoch = Some(String::new()))
+                (|c: &mut DeploymentRequest| c.delegated_signing.trust_epoch = Some(String::new()))
                     as fn(&mut DeploymentRequest),
             ),
             ("the delegated issuer kid", |c| {
-                c.delegated_issuer_kid = Some(String::new())
+                c.delegated_signing.issuer_kid = Some(String::new())
             }),
             (
                 // The defaulting source is empty rather than the flag: the same fact, the
                 // same refusal, which is what asking of the RESOLVED value buys.
                 "the delegated issuer kid",
                 |c| {
-                    c.delegated_issuer_kid = None;
+                    c.delegated_signing.issuer_kid = None;
                     c.server_key_id = String::new();
                 },
             ),
             ("the delegated audience scope", |c| {
-                c.delegated_audience_hash = Some(String::new())
+                c.delegated_signing.audience_hash = Some(String::new())
             }),
             ("the delegated audience scope", |c| {
-                c.delegated_audience_hash = None;
+                c.delegated_signing.audience_hash = None;
                 c.audience = String::new();
             }),
         ] {
@@ -406,9 +405,9 @@ mod tests {
     #[test]
     fn a_one_character_fact_is_not_refused_by_the_emptiness_guard() {
         let (facts, violations) = run(|c| {
-            c.delegated_trust_epoch = Some("e".to_string());
-            c.delegated_issuer_kid = Some("k".to_string());
-            c.delegated_audience_hash = Some("a".to_string());
+            c.delegated_signing.trust_epoch = Some("e".to_string());
+            c.delegated_signing.issuer_kid = Some("k".to_string());
+            c.delegated_signing.audience_hash = Some("a".to_string());
         });
         assert!(violations.is_empty(), "{violations:?}");
         let facts = facts.expect("a one-character fact is a fact");
@@ -421,8 +420,8 @@ mod tests {
     #[test]
     fn the_two_defaults_are_resolved_by_this_owner() {
         let (facts, _) = run(|c| {
-            c.delegated_issuer_kid = None;
-            c.delegated_audience_hash = None;
+            c.delegated_signing.issuer_kid = None;
+            c.delegated_signing.audience_hash = None;
             c.server_key_id = "server-key-7".to_string();
             c.audience = "did:example:aud-7".to_string();
         });
@@ -435,8 +434,8 @@ mod tests {
     #[test]
     fn an_explicit_value_overrides_the_fallback() {
         let (facts, _) = run(|c| {
-            c.delegated_issuer_kid = Some("explicit-kid".to_string());
-            c.delegated_audience_hash = Some("explicit-aud".to_string());
+            c.delegated_signing.issuer_kid = Some("explicit-kid".to_string());
+            c.delegated_signing.audience_hash = Some("explicit-aud".to_string());
             c.server_key_id = "not-this".to_string();
             c.audience = "not-this-either".to_string();
         });
@@ -458,7 +457,7 @@ mod tests {
     /// their defects in one run.
     #[test]
     fn a_range_defect_is_reported_and_resolves_no_facts() {
-        let (facts, violations) = run(|c| c.delegated_ttl_secs = 0);
+        let (facts, violations) = run(|c| c.delegated_signing.ttl_secs = 0);
         assert!(
             facts.is_none(),
             "a fact set cannot carry a window the guard refused"
@@ -480,8 +479,8 @@ mod tests {
     #[test]
     fn an_overlap_outside_the_ttl_resolves_no_window() {
         let (facts, violations) = run(|c| {
-            c.delegated_ttl_secs = 300;
-            c.delegated_overlap_secs = 300;
+            c.delegated_signing.ttl_secs = 300;
+            c.delegated_signing.overlap_secs = 300;
         });
         assert!(facts.is_none(), "overlap == ttl is outside the guard");
         assert!(
@@ -489,8 +488,8 @@ mod tests {
             "{violations:?}"
         );
         let (facts, violations) = run(|c| {
-            c.delegated_ttl_secs = 300;
-            c.delegated_overlap_secs = 60;
+            c.delegated_signing.ttl_secs = 300;
+            c.delegated_signing.overlap_secs = 60;
         });
         let window = facts.expect("a legal pair resolves").rotation_window();
         assert!(violations.is_empty(), "{violations:?}");
@@ -499,7 +498,7 @@ mod tests {
 
     #[test]
     fn a_ttl_above_the_ceiling_is_refused() {
-        let (_, violations) = run(|c| c.delegated_ttl_secs = MAX_DELEGATED_TTL_SECS + 1);
+        let (_, violations) = run(|c| c.delegated_signing.ttl_secs = MAX_DELEGATED_TTL_SECS + 1);
         assert!(
             violations.iter().any(|v| v.contains("exceeds the ceiling")),
             "{violations:?}"
@@ -511,8 +510,8 @@ mod tests {
     fn an_overlap_outside_the_rotor_range_is_refused() {
         for overlap in [0, -1, 300, 600] {
             let (_, violations) = run(|c| {
-                c.delegated_ttl_secs = 300;
-                c.delegated_overlap_secs = overlap;
+                c.delegated_signing.ttl_secs = 300;
+                c.delegated_signing.overlap_secs = overlap;
             });
             assert!(
                 violations.iter().any(|v| v.contains("0 < overlap < ttl")),
@@ -548,7 +547,7 @@ mod tests {
         ];
         for (label, explicit, key_id, admitted) in cases {
             let mut config = legal_config();
-            config.delegated_issuer_kid = explicit.then(|| "root-issuer-9".to_string());
+            config.delegated_signing.issuer_kid = explicit.then(|| "root-issuer-9".to_string());
             config.server_key_id = key_id.to_string();
             let (facts, violations) = classify_and_validate(&config);
             assert_eq!(
