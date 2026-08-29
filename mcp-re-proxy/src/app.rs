@@ -12,7 +12,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::async_serve::ServedHttpRequest;
-use crate::cli;
 use crate::clock::now_unix;
 use crate::config_snapshot;
 use crate::config_state::ChannelBindingState;
@@ -416,7 +415,7 @@ fn run_validated(
     // signs by delegation (`sign_response`), so a non-exporting HSM/KMS source would
     // never need to surrender its private key — there is deliberately no
     // `signing_key()` export call on the wiring path anymore.
-    let key_source = cli::build_key_source(
+    let key_source = crate::capability_materialization::build_key_source(
         config.state().custody(),
         config.state().channel_credential_custody(),
         &values.channel_credential.credential_chain,
@@ -1480,7 +1479,8 @@ mod tests {
             ),
         ] {
             let mut config = config_with("file", "/seed", "/key");
-            config.identity_source = source;
+            config.peer_identity =
+                crate::deployment_request::PeerIdentityEvidenceRequest::channel_credential(source);
             let (state, refusals) = classify_and_validate_binding(&config);
             assert!(refusals.is_empty(), "{source:?} refused: {refusals:?}");
             assert_eq!(state, Some(expected_state));
@@ -1504,7 +1504,10 @@ mod tests {
         }
 
         let mut config = config_with("file", "/seed", "/key");
-        config.identity_source = IdentityPolicy::CnLegacy;
+        config.peer_identity =
+            crate::deployment_request::PeerIdentityEvidenceRequest::channel_credential(
+                IdentityPolicy::CnLegacy,
+            );
         assert!(
             classify_and_validate_binding(&config).0.is_none(),
             "a state for cn_legacy would let the serving path install an exact-match \

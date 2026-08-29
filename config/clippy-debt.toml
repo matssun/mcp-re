@@ -151,17 +151,17 @@ count = 7
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "arithmetic_side_effects"
-count = 45
+count = 42
 
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "excessive_nesting"
-count = 107
+count = 92
 
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "expect_used"
-count = 34
+count = 32
 
 [[debt]]
 crate = "mcp-re-proxy"
@@ -171,7 +171,7 @@ count = 40
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "too_many_lines"
-count = 12
+count = 9
 
 [[debt]]
 crate = "mcp-re-test-paths"

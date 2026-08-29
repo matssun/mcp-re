@@ -56,8 +56,6 @@ use crate::handshake_quota::QuotaVerdict;
 use crate::key_source::KeyError;
 use crate::kms_keysource::ed25519_raw_point_from_spki;
 use crate::kms_keysource::KmsEd25519Backend;
-use crate::remote_signer_call::is_load_shedding_status;
-use crate::remote_signer_call::json_string_field;
 use crate::remote_signer_call::RemoteSignerFailure;
 
 /// The only Cloud KMS key algorithm this adapter accepts.
@@ -932,20 +930,15 @@ const PROJECT_QUOTA_STATUSES: &[&str] = &["RESOURCE_EXHAUSTED", "UNAVAILABLE"];
 /// whose text happened to carry one of these tokens armed it — the chained "after Cloud KMS
 /// refused the cached token with: ..." diagnosis being the readiest source of exactly that.
 fn quota_verdict(failure: &RemoteSignerFailure) -> QuotaVerdict {
-    if is_load_shedding_status(failure.status()) {
-        return QuotaVerdict::Exhausted;
-    }
-    let stated = failure
-        .body()
-        .and_then(|body| json_string_field(body, &["error", "status"]));
-    if stated
-        .as_deref()
-        .is_some_and(|status| PROJECT_QUOTA_STATUSES.contains(&status))
-    {
-        QuotaVerdict::Exhausted
-    } else {
-        QuotaVerdict::Unrelated
-    }
+    crate::remote_signer_call::quota_verdict(
+        failure,
+        crate::remote_signer_call::QuotaSignals {
+            path: &["error", "status"],
+            exhausted: PROJECT_QUOTA_STATUSES,
+            // Cloud KMS states a bare canonical status, with no namespace to strip.
+            namespaced: false,
+        },
+    )
 }
 
 /// A non-exporting [`KmsEd25519Backend`] backed by GCP Cloud KMS.

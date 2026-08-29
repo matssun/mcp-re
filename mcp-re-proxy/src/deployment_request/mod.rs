@@ -16,26 +16,36 @@
 //! Nothing here validates. A type in this module can hold a combination no deployment may
 //! run, and must be able to: refusing a state requires representing it first.
 
+mod admission;
 mod authorization;
+mod delegated_signing;
 mod inner_backend_display;
 mod kinds;
+mod peer_identity;
+mod request_signer_currency;
 mod revocation;
 mod secret_string;
 mod signing_source;
 mod storage;
 
+pub use admission::{AdmissionAvailabilityRequest, AdmissionGateRequest, AdmissionRequest};
 pub use authorization::AuthorizationRequest;
+pub use delegated_signing::DelegatedSigningRequest;
 pub(crate) use inner_backend_display::RedactedBackendUrls;
-pub use kinds::{AdmissionKind, AuditSinkKind, AuthzKind, BindingKind, VerifiedContextKind};
+pub use kinds::{AuditSinkKind, AuthzKind, VerifiedContextKind};
+pub use peer_identity::{
+    AttestedIngressRequest, ChannelCredentialIdentityRequest, IngressAssertionRequest,
+    PeerIdentityEvidenceRequest, PinnedChannelAcknowledgement,
+};
+pub use request_signer_currency::RequestSignerCurrencyRequest;
 pub use revocation::{
     OcspResponderRequest, OnlineRevocationEvidenceRequest, PeerRevocationRequest,
     RevocationListRequest,
 };
 pub use secret_string::SecretString;
 pub use storage::{
-    AdmissionStoreRequest, ContinuationStoreRequest, EtcdStoreRequest, RedisStoreRequest,
-    ReplayStorageRequest, ReplayStoreRequest, SharedStoreRequest, TrustEpochSource,
-    TrustEpochStoreRequest,
+    ContinuationStoreRequest, EtcdStoreRequest, RedisStoreRequest, ReplayStorageRequest,
+    ReplayStoreRequest, SharedStoreRequest, TrustEpochSource, TrustEpochStoreRequest,
 };
 
 pub use signing_source::{
@@ -49,7 +59,6 @@ pub use signing_source::{
 use std::time::Duration;
 
 use crate::tls::ServerLimits;
-use crate::transport::IdentityPolicy;
 
 /// A deployment as REQUESTED: every field an operator can state, and nothing decided.
 ///
@@ -160,35 +169,11 @@ pub struct DeploymentRequest {
     /// a different fact from admission's. The three may name one Redis; that is then an
     /// operator's deployment choice rather than an alias the configuration forces.
     pub continuation_control: ContinuationStoreRequest,
-    /// MCPRE-493: what a request carrying NO admission evidence means here —
-    /// `off` (admission not enforced at all), `optional`, or `required`. Anything
-    /// but `off` requires an authority to verify assertions against and a source to
-    /// check currency against; a gate with neither would verify nothing.
-    pub admission: AdmissionKind,
-    /// The admission authority's root key id, as named in an assertion's
-    /// `issuer_kid`. A kid never introduces trust: an assertion naming any other
-    /// issuer is refused.
-    pub admission_authority_kid: Option<String>,
-    /// The admission authority's Ed25519 public key, base64url, no padding.
-    pub admission_authority_pubkey_b64url: Option<String>,
-    /// Where the shared authoritative admission record lives — the store a revocation is
-    /// written to and every replica reads. Separate from `replay` on purpose: admission
-    /// state and replay state have different owners, lifetimes and blast radii, and
-    /// collapsing them would make one outage two.
-    pub admission_store: AdmissionStoreRequest,
-    /// P (seconds): how long a replica may keep serving on the LAST-KNOWN state when
-    /// the authority is unreachable. Meaningful only with
-    /// `admission_allow_degraded`.
-    pub admission_degraded_bound_secs: i64,
-    /// Whether degraded mode is permitted at all. Off by default: an unreachable
-    /// authority fails closed. Enabling it trades a bounded window of stale-admission
-    /// risk for availability, and that is a deployment's call to make explicitly.
-    pub admission_allow_degraded: bool,
-    /// ADR-MCPS-021 Axis 2: how often `--trust` is re-read, in seconds. `None` means
-    /// read once at startup — under which no revocation tier can revoke a
-    /// request-signer key on a running replica, because every tier resolves against
-    /// that one snapshot. Enabling it bounds the exposure window at the cadence.
-    pub trust_reload_secs: Option<u64>,
+    /// Whether a call must carry admission evidence, and what verifies it. One tagged
+    /// value: the gate's authority, record and availability are members of the two
+    /// enforcing forms, so there is no `off` to hang them from and the five dangling
+    /// clauses have no configuration left to examine (ADR-MCPRE-067 §7).
+    pub admission: AdmissionRequest,
     /// ADR-MCPS-035: where the per-request security record goes. `Stderr` by default,
     /// because the absent case has to be the safe one: an invocation that does not go
     /// through the Helm chart — the container run directly, a harness, a hand-rolled
@@ -210,52 +195,17 @@ pub struct DeploymentRequest {
     /// forwarded to the inner server. `Disabled` by default because `Trusted` asserts
     /// an unverifiable property of the inner channel.
     pub verified_context: VerifiedContextKind,
-    /// MCPS-84 (ADR-MCPS-049 W2): where the networked trust-epoch invalidation source
-    /// lives (ADR-021 Tier 3 / `--revocation-tier push`). When configured, the Push tier
-    /// watches its monotonic epoch key and flushes the trust cache on an advance; when
-    /// absent, Push runs at its inert bounded-`T` fallback.
-    ///
-    /// The key travels inside the source, so a coordinate in a store this configuration
-    /// does not have cannot be stated (ADR-MCPRE-067 §7).
-    pub trust_epoch: TrustEpochStoreRequest,
-    /// Declared revocation tier (ADR-MCPS-021 Axis 2). Selects how strong a
-    /// revocation-propagation window the deployment asserts: Tier 1
-    /// (`bounded-cache:<T>`, the default), Tier 2 (`live`), or Tier 3
-    /// (`push:<T>`). The proxy surfaces the tier's own honest guarantee and
-    /// CANNOT surface a window stronger than the configured tier proves. Defaults
-    /// to bounded-cache with the deployment-default window `T` so absent-flag
-    /// behavior is byte-for-byte the Tier-1 posture.
-    pub revocation_tier: crate::revocation_tier::RevocationTier,
-    /// Transport-binding selection.
-    pub binding: BindingKind,
-    /// The authoritative client-certificate identity field (no implicit fallback).
-    pub identity_source: IdentityPolicy,
-    /// ADR-MCPS-023 Tier 3 (issue #71): the trusted LB verification keys for
-    /// LB-signed request-bound ingress assertions, as `(key_id, base64url-ed25519-pub)`
-    /// pairs from repeatable `--ingress-lb-key <keyid>:<base64-pub>`. Required (and
-    /// only meaningful) when `binding == LbAssertion`; an unknown asserted key id
-    /// fails closed. Empty for every other binding mode.
-    pub ingress_lb_keys: Vec<(String, String)>,
-    /// ADR-MCPS-023 §C (Mode C): the trusted ingress-attestor verification keys for
-    /// `mcp-re/lb-ingress-assertion/v2` assertions, as `(key_id, base64url-ed25519-pub)`
-    /// pairs from repeatable `--ingress-attestor-key <keyid>:<base64-pub>`. Required
-    /// (and only meaningful) when `binding == AttestedIngress`; an unknown asserted
-    /// key id fails closed. Empty for every other binding mode.
-    pub ingress_attestor_keys: Vec<(String, String)>,
-    /// ADR-MCPS-023 §C (Mode C): the ingress identities the node trusts, from
-    /// repeatable `--ingress-identity <id>`. A v2 assertion whose `ingress_identity`
-    /// is not in this set fails closed. Required when `binding == AttestedIngress`.
-    pub ingress_identities: Vec<String>,
-    /// ADR-MCPS-023 §C (Mode C): the node's own audience; a v2 assertion's `audience`
-    /// must equal it (route/audience binding). Set from `--ingress-audience`;
-    /// required when `binding == AttestedIngress`.
-    pub ingress_audience: Option<String>,
-    /// ADR-MCPS-023 §C2 (Mode C): the explicit operator acknowledgement, via
-    /// `--ingress-pinned-mtls`, that the attestor→node hop is a pinned mTLS channel
-    /// (or equivalent pinned workload identity). Mode C REQUIRES it — absent, the
-    /// proxy refuses to start (fail closed), so an attested-ingress posture can
-    /// never run without the pinned backend channel it depends on.
-    pub ingress_pinned_mtls: bool,
+    /// How current this deployment's belief about a request signer is: which ADR-MCPS-021
+    /// posture it asserts, and the material that posture is inhabited by. One tagged value,
+    /// so the re-read cadence belongs to the tiers that need one and the epoch source to
+    /// the only tier that reads one — which is what relation X8 used to have to say
+    /// (ADR-MCPRE-067 §7).
+    pub request_signer_currency: RequestSignerCurrencyRequest,
+    /// Which evidence carries the peer's identity to this node, and the material that
+    /// form verifies with. One tagged value: an attested-ingress selection has nowhere to
+    /// put a load-balancer key, so the five clauses that refused a value belonging to an
+    /// unselected form have no configuration left to examine (ADR-MCPRE-067 §7).
+    pub peer_identity: PeerIdentityEvidenceRequest,
     /// Everything this deployment asks for on the authorization axis.
     pub authorization: AuthorizationRequest,
     /// Which key establishes this deployment's communication channel.
@@ -281,24 +231,10 @@ pub struct DeploymentRequest {
     /// are REJECTED and a shared replay cache with an adequate durability tier is
     /// required.
     pub fleet: bool,
-    /// Delegated-key TTL `T` in seconds (ADR-MCPRE-052 §4). The rotor mints a
-    /// successor within the overlap window before each key's `exp`. Default 300s.
-    pub delegated_ttl_secs: i64,
-    /// Delegated-key rotation-overlap window `O` in seconds (0 < O < T). The successor
-    /// is minted at `exp − O` so signing never gaps. Default 60s.
-    pub delegated_overlap_secs: i64,
-    /// The trust epoch minted into every delegation credential (ADR-MCPRE-052 §7 hard
-    /// gate). REQUIRED (a verifier admits only credentials whose epoch is in its
-    /// accepted set), and load-bearing — it must be coordinated with verifiers, so
-    /// there is no silent default.
-    pub delegated_trust_epoch: Option<String>,
-    /// The root issuer key id the delegation credential chains to (its `issuer_kid`,
-    /// resolved by verifiers for the Response slot). Defaults to `--server-key-id`.
-    pub delegated_issuer_kid: Option<String>,
-    /// The service/audience-scope hash the delegated key is scoped to
-    /// (`mcp_re_audience_hash`). Defaults to `--audience`; must match the verifier's
-    /// expected audience hash.
-    pub delegated_audience_hash: Option<String>,
+    /// What the delegated response-signing credential is minted with: its rotation
+    /// window, the trust epoch that can withdraw it, and the coordinates it is issued
+    /// under. One proposition, so one field (ADR-MCPRE-067 §7).
+    pub delegated_signing: DelegatedSigningRequest,
     /// Accept a key file that is group-READABLE (never group-writable, never
     /// world-anything) when its group is one this process is in — the Kubernetes
     /// `fsGroup` mount model, which the strict `0600` floor makes unsatisfiable for a

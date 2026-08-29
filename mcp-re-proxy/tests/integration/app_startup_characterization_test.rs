@@ -411,7 +411,12 @@ fn the_boundary_alone_refuses_an_lb_assertion_binding() {
     let m = serving_fixtures::write_material();
     let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
 
-    config.binding = mcp_re_proxy::deployment_request::BindingKind::LbAssertion;
+    config.peer_identity =
+        mcp_re_proxy::deployment_request::PeerIdentityEvidenceRequest::IngressAssertion(
+            mcp_re_proxy::deployment_request::IngressAssertionRequest {
+                verification_keys: vec![("lb-1".to_string(), "k".to_string())],
+            },
+        );
 
     let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
         .expect_err("lb-assertion binding must be refused however it was built");
@@ -449,7 +454,17 @@ fn mode_c_attested_ingress_is_refused_at_the_configuration_boundary() {
     let m = serving_fixtures::write_material();
     let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
 
-    config.binding = mcp_re_proxy::deployment_request::BindingKind::AttestedIngress;
+    config.peer_identity =
+        mcp_re_proxy::deployment_request::PeerIdentityEvidenceRequest::AttestedIngress(
+            mcp_re_proxy::deployment_request::AttestedIngressRequest {
+                asserted_identity_kind: mcp_re_proxy::IdentityPolicy::UriSan,
+                attestor_keys: vec![("attestor-1".to_string(), "k".to_string())],
+                identities: vec!["spiffe://example.org/ingress-1".to_string()],
+                audience: "did:example:server-1".to_string(),
+                pinned_channel:
+                    mcp_re_proxy::deployment_request::PinnedChannelAcknowledgement::acknowledged(),
+            },
+        );
 
     let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
         .expect_err("a non-deployable transport-binding mode must be refused");
@@ -650,7 +665,7 @@ fn a_programmatic_config_cannot_carry_delegated_custody_the_rotor_cannot_honour(
             "no trust epoch",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.delegated_trust_epoch = None
+                    c.delegated_signing.trust_epoch = None
                 },
             ),
             "trust epoch",
@@ -659,7 +674,7 @@ fn a_programmatic_config_cannot_carry_delegated_custody_the_rotor_cannot_honour(
             "zero ttl",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.delegated_ttl_secs = 0
+                    c.delegated_signing.ttl_secs = 0
                 },
             ),
             "ttl",
@@ -668,7 +683,7 @@ fn a_programmatic_config_cannot_carry_delegated_custody_the_rotor_cannot_honour(
             "negative overlap",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.delegated_overlap_secs = -1
+                    c.delegated_signing.overlap_secs = -1
                 },
             ),
             "overlap",
@@ -677,7 +692,7 @@ fn a_programmatic_config_cannot_carry_delegated_custody_the_rotor_cannot_honour(
             "overlap at the ttl",
             Box::new(
                 |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.delegated_overlap_secs = c.delegated_ttl_secs
+                    c.delegated_signing.overlap_secs = c.delegated_signing.ttl_secs
                 },
             ),
             "overlap",
@@ -701,9 +716,9 @@ fn a_programmatic_config_cannot_carry_delegated_custody_the_rotor_cannot_honour(
     // boundary that refused unconditionally — and one that refuses every delegated
     // configuration is not a stricter proxy, it is a broken one.
     let mut valid = parsed;
-    valid.delegated_overlap_secs = valid.delegated_ttl_secs / 2;
+    valid.delegated_signing.overlap_secs = valid.delegated_signing.ttl_secs / 2;
     assert!(
-        valid.delegated_overlap_secs > 0,
+        valid.delegated_signing.overlap_secs > 0,
         "the control needs a genuinely valid overlap to be worth anything"
     );
     mcp_re_proxy::config_state::validation::ValidatedDeployment::try_from(valid)
@@ -1073,22 +1088,11 @@ fn a_programmatic_config_cannot_carry_a_dangling_custody_or_ingress_selector() {
                 },
             ),
         ),
-        (
-            "--ingress-lb-key",
-            Box::new(
-                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.ingress_lb_keys = vec![("lb-1".to_string(), "not-a-key".to_string())]
-                },
-            ),
-        ),
-        (
-            "--ingress-identity",
-            Box::new(
-                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.ingress_identities = vec!["spiffe://x/ingress".to_string()]
-                },
-            ),
-        ),
+        // The two ingress cases that used to be here — a dangling `--ingress-lb-key` and a
+        // dangling `--ingress-identity` — are gone, and their absence is the result.
+        // ADR-MCPRE-067 Phase 6 made `peer_identity` a tagged form, so material belonging
+        // to a form the deployment did not select has nowhere to live: the mutation cannot
+        // be written. The argv shape survives and `cli::peer_identity_flags` answers it.
     ];
 
     for (flag, mutate) in cases {
@@ -1179,8 +1183,8 @@ fn a_programmatic_config_cannot_mint_an_unboundedly_long_lived_delegated_credent
     let ceiling = mcp_re_proxy::config_state::delegated_signing::MAX_DELEGATED_TTL_SECS;
 
     let mut config = parsed.clone();
-    config.delegated_ttl_secs = ceiling + 1;
-    config.delegated_overlap_secs = 60;
+    config.delegated_signing.ttl_secs = ceiling + 1;
+    config.delegated_signing.overlap_secs = 60;
     let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
         .expect_err("a TTL above the ceiling must be refused");
     assert!(
@@ -1190,7 +1194,7 @@ fn a_programmatic_config_cannot_mint_an_unboundedly_long_lived_delegated_credent
 
     // And the rotor's window rule holds at the boundary as well as in the wiring.
     let mut config = parsed.clone();
-    config.delegated_overlap_secs = config.delegated_ttl_secs;
+    config.delegated_signing.overlap_secs = config.delegated_signing.ttl_secs;
     let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
         .expect_err("an overlap at the TTL must be refused");
     assert!(
@@ -1201,8 +1205,8 @@ fn a_programmatic_config_cannot_mint_an_unboundedly_long_lived_delegated_credent
     // Negative control: a TTL exactly AT the ceiling is admissible. Without it, a boundary
     // that refused every delegated TTL would satisfy the assertions above.
     let mut config = parsed;
-    config.delegated_ttl_secs = ceiling;
-    config.delegated_overlap_secs = 60;
+    config.delegated_signing.ttl_secs = ceiling;
+    config.delegated_signing.overlap_secs = 60;
     let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
         .expect_err("this fixture stops at an environmental step");
     assert!(

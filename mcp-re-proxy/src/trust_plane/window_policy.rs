@@ -15,9 +15,12 @@
 //!   consults it, so no deployment is warned about a long window. What the operator IS told
 //!   is the actual window, on the tier's `startup_audit_line`; what is missing is the
 //!   annotation that it is longer than recommended.
-//! * [`strictest_applicable_t`] has **no input**. The deployment surface carries no
-//!   per-sensitivity-class window, so `class_windows` is always empty and the function
-//!   would be the identity.
+//! * [`strictest_applicable_t`] has **no input**, and after ADR-MCPRE-067 Phase 6 the type
+//!   system says so: [`ApplicableClassWindows`] has one production constructor and it is
+//!   empty, so the rule is the identity BY TYPE. Two things would have to arrive before it
+//!   is wired — a producer that classifies a request into sensitivity classes, and a
+//!   deployment input that states a window per class. Adding the second alone would be
+//!   fabricating configuration to activate dormant code.
 //!
 //! Both are retained rather than deleted, and deliberately so: they are ADR-MCPS-021
 //! behaviours that were never connected, not values that stopped being needed. Deleting
@@ -58,18 +61,68 @@ pub(super) fn t_exceeds_recommended_max(t_secs: i64) -> bool {
 /// exposure — of the applicable windows.
 ///
 /// **NOT WIRED, and for a different reason from the two above.** Those are an advisory with
-/// no caller; this is a capability with no INPUT — the deployment surface has no
-/// per-sensitivity-class window to pass, so `class_windows` is always empty and the
-/// function would be the identity. Retained because the ADR-MCPS-021 requirement it
-/// implements ("a request MUST use the strictest applicable `T`") is real and unchanged;
-/// what is absent is the configuration that would give it something to be strict about.
+/// no caller; this is a capability with no INPUT. What it is missing is named by
+/// [`ApplicableClassWindows`], which production can only construct empty — so this function
+/// is the identity in production BY TYPE rather than by a comment saying so.
 #[allow(dead_code)]
-pub(super) fn strictest_applicable_t(default_t_secs: i64, class_windows: &[i64]) -> i64 {
-    class_windows
+pub(super) fn strictest_applicable_t(
+    default_t_secs: i64,
+    applicable: &ApplicableClassWindows,
+) -> i64 {
+    applicable
+        .windows()
         .iter()
         .copied()
         .filter(|t| *t >= 0)
         .fold(default_t_secs.max(0), |acc, t| acc.min(t))
+}
+
+/// The per-sensitivity-class windows that apply to ONE request.
+///
+/// **This type has no production producer, and that absence is its content.**
+/// ADR-MCPS-021 requires a request to use the strictest applicable `T`, and the windows
+/// that would make one applicable do not exist anywhere in this tree: nothing classifies a
+/// request into a sensitivity class — not the authorization layer, which decides scopes and
+/// actions and never a propagation window — and no deployment input names a per-class one.
+///
+/// It is a type rather than a `&[i64]` parameter for exactly that reason. A slice is a
+/// shape any caller can invent, so the old signature read as though the input existed and
+/// merely happened to be empty; [`Self::none_apply`] is the only inhabitant production can
+/// build, so the compiler now records WHICH input is missing.
+///
+/// **What would have to arrive before this is wired**, and it is two things rather than one:
+/// a producer that classifies a request into sensitivity classes, and a deployment surface
+/// that states a window per class. Adding the second alone — a map from an invented class
+/// name to a number — would be fabricating configuration to activate dormant code, which
+/// is what this type exists to prevent.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct ApplicableClassWindows {
+    /// Empty under every production path.
+    windows: Vec<i64>,
+}
+
+impl ApplicableClassWindows {
+    /// No class window applies — the only value production can name today.
+    #[allow(dead_code)]
+    pub(super) fn none_apply() -> Self {
+        ApplicableClassWindows::default()
+    }
+
+    /// The windows, for the selector above.
+    fn windows(&self) -> &[i64] {
+        &self.windows
+    }
+
+    /// A set of applicable windows, for the tests that pin the selection rule.
+    ///
+    /// `#[cfg(test)]`, so it compiles to nothing in production: the rule stays testable
+    /// without giving production a way to state an input it has no producer for.
+    #[cfg(test)]
+    fn applying(windows: &[i64]) -> Self {
+        ApplicableClassWindows {
+            windows: windows.to_vec(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -78,16 +131,27 @@ mod tests {
 
     #[test]
     fn strictest_applicable_t_picks_the_tightest_window() {
-        // No class overrides → the global default.
-        assert_eq!(strictest_applicable_t(60, &[]), 60);
+        let applying = ApplicableClassWindows::applying;
         // A stricter class window wins (smaller = tighter exposure).
-        assert_eq!(strictest_applicable_t(60, &[10]), 10);
+        assert_eq!(strictest_applicable_t(60, &applying(&[10])), 10);
         // The strictest of several applicable classes wins.
-        assert_eq!(strictest_applicable_t(60, &[30, 5, 45]), 5);
+        assert_eq!(strictest_applicable_t(60, &applying(&[30, 5, 45])), 5);
         // A looser class window never widens past the default.
-        assert_eq!(strictest_applicable_t(60, &[120]), 60);
+        assert_eq!(strictest_applicable_t(60, &applying(&[120])), 60);
         // Negative (malformed) class windows are ignored, not treated as 0.
-        assert_eq!(strictest_applicable_t(60, &[-1, 20]), 20);
+        assert_eq!(strictest_applicable_t(60, &applying(&[-1, 20])), 20);
+    }
+
+    /// The production input, and the whole of it: no class window applies, so the rule is
+    /// the identity. This is the honest statement of the missing capability — not that the
+    /// rule is wrong, but that nothing can yet give it something to be strict about.
+    #[test]
+    fn the_only_input_production_can_build_makes_the_rule_the_identity() {
+        let production = ApplicableClassWindows::none_apply();
+        assert_eq!(production, ApplicableClassWindows::applying(&[]));
+        for default_t in [0, 30, 60, 3600] {
+            assert_eq!(strictest_applicable_t(default_t, &production), default_t);
+        }
     }
 
     #[test]

@@ -277,12 +277,17 @@ mod tests {
     #[test]
     fn the_trust_epoch_posture_is_not_re_derived_here() {
         let found = relations(|c| {
-            c.revocation_tier = crate::revocation_tier::RevocationTier::Push { t_secs: 30 };
-            c.trust_reload_secs = Some(30);
-            c.trust_epoch.source = Some(crate::deployment_request::TrustEpochSource::redis(
-                "redis://127.0.0.1:6379",
-                None,
-            ));
+            c.request_signer_currency =
+                crate::deployment_request::RequestSignerCurrencyRequest::Push {
+                    t_secs: 30,
+                    reload_secs: 30,
+                    epoch: crate::deployment_request::TrustEpochStoreRequest {
+                        source: Some(crate::deployment_request::TrustEpochSource::redis(
+                            "redis://127.0.0.1:6379",
+                            None,
+                        )),
+                    },
+                };
         });
         assert!(found.x9_trust_epoch_posture.is_empty());
     }

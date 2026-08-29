@@ -38,8 +38,6 @@ use crate::handshake_quota::QuotaGuarded;
 use crate::handshake_quota::QuotaVerdict;
 use crate::key_source::KeyError;
 use crate::kms_keysource::KmsEd25519Backend;
-use crate::remote_signer_call::is_load_shedding_status;
-use crate::remote_signer_call::json_string_field;
 use crate::remote_signer_call::RemoteSignerFailure;
 
 /// The KMS JSON content type and the two `X-Amz-Target` operations used.
@@ -449,21 +447,16 @@ const ACCOUNT_QUOTA_ERROR_TYPES: &[&str] = &[
 /// suffix is what is compared. A body that states no `__type` at all states nothing, which
 /// is not a positive.
 fn quota_verdict(failure: &RemoteSignerFailure) -> QuotaVerdict {
-    if is_load_shedding_status(failure.status()) {
-        return QuotaVerdict::Exhausted;
-    }
-    let stated = failure
-        .body()
-        .and_then(|body| json_string_field(body, &["__type"]));
-    let named_quota = stated.as_deref().is_some_and(|error_type| {
-        let name = error_type.rsplit('#').next().unwrap_or(error_type);
-        ACCOUNT_QUOTA_ERROR_TYPES.contains(&name)
-    });
-    if named_quota {
-        QuotaVerdict::Exhausted
-    } else {
-        QuotaVerdict::Unrelated
-    }
+    crate::remote_signer_call::quota_verdict(
+        failure,
+        crate::remote_signer_call::QuotaSignals {
+            path: &["__type"],
+            exhausted: ACCOUNT_QUOTA_ERROR_TYPES,
+            // `__type` is namespaced on the wire
+            // (`com.amazonaws.kms#ThrottlingException`), so the suffix is compared.
+            namespaced: true,
+        },
+    )
 }
 
 impl AwsKmsEd25519Backend {

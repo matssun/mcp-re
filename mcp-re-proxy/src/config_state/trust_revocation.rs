@@ -27,7 +27,9 @@
 //! done once, and `TrustPlan` and `SigningPlane` are consumers of the one answer
 //! (CF-09 — a fact may have two consumers, it must not have two authorities).
 
-use crate::deployment_request::{DeploymentRequest, TrustEpochSource};
+use crate::deployment_request::{
+    DeploymentRequest, RequestSignerCurrencyRequest, TrustEpochStoreRequest,
+};
 use crate::revocation_tier::RevocationTier;
 use std::num::NonZeroU64;
 
@@ -136,17 +138,7 @@ enum RequestedState {
     PushNetworked { t_secs: i64 },
 }
 
-impl RequestedState {
-    /// Whether the request names a networked epoch source.
-    fn has_networked_epoch(self) -> bool {
-        matches!(self, Self::PushNetworked { .. })
-    }
-
-    /// Whether inhabiting this state requires a reload cadence.
-    fn requires_cadence(self) -> bool {
-        !matches!(self, Self::BoundedCache { .. })
-    }
-}
+impl RequestedState {}
 
 impl TrustRevocationState {
     /// A cadence witness from a literal, for tests and for callers that already hold a
@@ -248,13 +240,21 @@ impl TrustRevocationState {
 /// accumulates across machines — so an illegal combination is reported as a violation of
 /// the state it most nearly requests, not as an unclassifiable config.
 fn classify(config: &DeploymentRequest) -> RequestedState {
-    match config.revocation_tier {
-        RevocationTier::BoundedCache { t_secs } => RequestedState::BoundedCache { t_secs },
-        RevocationTier::Live => RequestedState::Live,
-        RevocationTier::Push { t_secs } if config.trust_epoch.source.is_some() => {
-            RequestedState::PushNetworked { t_secs }
+    match &config.request_signer_currency {
+        RequestSignerCurrencyRequest::BoundedCache { t_secs, .. } => {
+            RequestedState::BoundedCache { t_secs: *t_secs }
         }
-        RevocationTier::Push { t_secs } => RequestedState::PushInert { t_secs },
+        RequestSignerCurrencyRequest::Live { .. } => RequestedState::Live,
+        RequestSignerCurrencyRequest::Push { t_secs, epoch, .. } => {
+            // The two push states differ by whether an epoch source is named, and only the
+            // pushing posture has a field for one — which is what relation X8 used to have
+            // to enforce across two independent fields.
+            if epoch.source.is_some() {
+                RequestedState::PushNetworked { t_secs: *t_secs }
+            } else {
+                RequestedState::PushInert { t_secs: *t_secs }
+            }
+        }
     }
 }
 
@@ -265,7 +265,7 @@ fn classify(config: &DeploymentRequest) -> RequestedState {
 fn build(requested: RequestedState, config: &DeploymentRequest) -> Option<TrustRevocationState> {
     // A cadence that is present and zero names no legal state at all, so `build` yields
     // nothing rather than an absence — `Some(0)` must never become "no reload requested".
-    let cadence = match config.trust_reload_secs {
+    let cadence = match config.request_signer_currency.reload_secs() {
         None => None,
         Some(secs) => Some(NonZeroU64::new(secs)?),
     };
@@ -285,12 +285,17 @@ fn build(requested: RequestedState, config: &DeploymentRequest) -> Option<TrustR
             RequestedState::PushNetworked { t_secs } => RevocationKind::PushNetworked {
                 t_secs,
                 reload_secs: cadence?,
-                epoch_url: config.trust_epoch.locator()?.to_string(),
+                epoch_url: config
+                    .request_signer_currency
+                    .epoch()?
+                    .locator()?
+                    .to_string(),
                 // The default belongs to this machine, so it is applied here and nothing
                 // downstream can tell an omitted key from a named one.
                 epoch_key: config
-                    .trust_epoch
-                    .key()
+                    .request_signer_currency
+                    .epoch()
+                    .and_then(TrustEpochStoreRequest::key)
                     .unwrap_or(crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY)
                     .to_string(),
             },
@@ -305,16 +310,10 @@ fn build(requested: RequestedState, config: &DeploymentRequest) -> Option<TrustR
 /// the file is re-read.
 fn cadence_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<String> {
     let mut out = Vec::new();
-    if state.requires_cadence() && config.trust_reload_secs.is_none() {
-        out.push(
-            "--revocation-tier live|push requires --trust-reload-secs: both tiers state a \
-             revocation window in terms of consulting the trust store, but with --trust read \
-             once at startup the store cannot change, so revoking a request-signer key would \
-             need a restart of every replica while the startup line claims otherwise"
-                .to_string(),
-        );
-    }
-    let Some(secs) = config.trust_reload_secs else {
+    // The "live|push requires a cadence" clause is GONE. Those two tiers are inhabited by
+    // one, so absence is not a state to refuse (ADR-MCPRE-067 §7); `cli::currency_flags`
+    // answers the command line that omits it.
+    let Some(secs) = config.request_signer_currency.reload_secs() else {
         return out;
     };
     // Unconditional, like its CRL sibling: the cadence is the sleep between re-reads, so a
@@ -364,31 +363,22 @@ fn cadence_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<
 }
 
 /// The epoch-source columns: which states may carry one, and what shape it must have.
-fn epoch_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<String> {
+fn epoch_violations(config: &DeploymentRequest) -> Vec<String> {
     let mut out = Vec::new();
-    // X8. `PushInert` is the state that has no URL, so only the two non-Push states can
-    // reach this: a configured source under a tier that never consumes it.
-    if config.trust_epoch.source.is_some() && !state.has_networked_epoch() {
-        out.push(
-            "--trust-epoch-redis-url has no effect under this --revocation-tier: the \
-             networked epoch source drives PUSH invalidation only, so any other tier \
-             connects nothing and the deployment would believe a networked trust \
-             invalidation is active while nothing consumes it. Declare --revocation-tier \
-             push:<t_secs>, or remove --trust-epoch-redis-url"
-                .to_string(),
-        );
-    }
-    // CF-04's clause is GONE, and its absence is the result. It refused a
-    // `--trust-epoch-key` naming a location in a store this configuration did not have;
-    // the coordinate now travels inside `TrustEpochSource`, so a key with no store cannot
-    // be built (ADR-MCPRE-067 §7). The argv form is answered by `cli::storage_flags`.
+    // TWO clauses are gone from here, and their absence is the result.
+    //
+    // X8 refused an epoch source under a tier that never consumes it. Only the pushing
+    // posture has a field for one now, so no configuration can state the pair
+    // (ADR-MCPRE-067 §7). CF-04 refused a `--trust-epoch-key` naming a location in a store
+    // this configuration did not have; the coordinate travels inside `TrustEpochSource`.
+    // Both argv forms survive — `cli::currency_flags` and `cli::storage_flags` answer them.
+    //
     // Build-independent shape only. Whether the URL RESOLVES is layer C, and whether this
     // binary has a Redis client at all is layer B; both are materialization's to refuse.
     if let Some(url) = config
-        .trust_epoch
-        .source
-        .as_ref()
-        .map(TrustEpochSource::locator)
+        .request_signer_currency
+        .epoch()
+        .and_then(TrustEpochStoreRequest::locator)
     {
         if !url.contains("://") {
             out.push(format!(
@@ -416,7 +406,7 @@ pub fn classify_and_validate(
 ) -> (Option<TrustRevocationState>, Vec<String>) {
     let requested = classify(config);
     let mut violations = cadence_violations(requested, config);
-    violations.extend(epoch_violations(requested, config));
+    violations.extend(epoch_violations(config));
     (build(requested, config), violations)
 }
 
@@ -433,17 +423,45 @@ pub const MAX_NEAR_ZERO_TRUST_RELOAD_SECS: u64 = 60;
 
 #[cfg(test)]
 mod tests {
-    /// Name the epoch coordinate on whatever source the fixture already configured. The
-    /// key lives INSIDE the source now, so there is no way to set one without a store.
-    fn set_epoch_key(config: &mut DeploymentRequest, key: &str) {
-        let url = config
-            .trust_epoch
-            .source
-            .as_ref()
-            .map(TrustEpochSource::locator)
-            .unwrap_or("redis://127.0.0.1:6379")
-            .to_string();
-        config.trust_epoch.source = Some(TrustEpochSource::redis(url, Some(key.to_string())));
+    /// The posture a published tier plus an optional cadence names. A helper because the
+    /// tier vocabulary is what the tests are written in, and the union is what the request
+    /// holds — the mapping is the CLI adapter's job in production and this is its fixture
+    /// twin.
+    fn posture(tier: RevocationTier, reload_secs: Option<u64>) -> RequestSignerCurrencyRequest {
+        match tier {
+            RevocationTier::BoundedCache { t_secs } => RequestSignerCurrencyRequest::BoundedCache {
+                t_secs,
+                reload_secs,
+            },
+            RevocationTier::Live => RequestSignerCurrencyRequest::Live {
+                reload_secs: reload_secs.unwrap_or_default(),
+            },
+            RevocationTier::Push { t_secs } => RequestSignerCurrencyRequest::Push {
+                t_secs,
+                reload_secs: reload_secs.unwrap_or_default(),
+                epoch: TrustEpochStoreRequest::default(),
+            },
+        }
+    }
+
+    /// A pushing posture over one epoch source. Written through the request's own types,
+    /// so a fixture cannot state an epoch source under a tier that reads none.
+    fn pushing(
+        t_secs: i64,
+        reload_secs: u64,
+        url: &str,
+        key: Option<&str>,
+    ) -> RequestSignerCurrencyRequest {
+        RequestSignerCurrencyRequest::Push {
+            t_secs,
+            reload_secs,
+            epoch: TrustEpochStoreRequest {
+                source: Some(crate::deployment_request::TrustEpochSource::redis(
+                    url,
+                    key.map(str::to_string),
+                )),
+            },
+        }
     }
 
     /// Build a state from the owner's own representation. In-module only: outside this
@@ -486,8 +504,7 @@ mod tests {
         ];
         for tier in tiers {
             let violations = violations_of(|c| {
-                c.revocation_tier = tier.clone();
-                c.trust_reload_secs = Some(0);
+                c.request_signer_currency = posture(tier.clone(), Some(0));
             });
             assert!(
                 violations.iter().any(|v| v.contains("spin")),
@@ -503,8 +520,7 @@ mod tests {
     fn the_smallest_positive_cadence_is_admitted() {
         for tier in [RevocationTier::Live, RevocationTier::Push { t_secs: 30 }] {
             let violations = violations_of(|c| {
-                c.revocation_tier = tier.clone();
-                c.trust_reload_secs = Some(1);
+                c.request_signer_currency = posture(tier.clone(), Some(1));
             });
             assert!(
                 violations.is_empty(),
@@ -513,8 +529,7 @@ mod tests {
         }
         assert_eq!(
             state_of(|c| {
-                c.revocation_tier = RevocationTier::Live;
-                c.trust_reload_secs = Some(1);
+                c.request_signer_currency = RequestSignerCurrencyRequest::Live { reload_secs: 1 };
             }),
             state(RevocationKind::Live {
                 reload_secs: TrustRevocationState::cadence(1)
@@ -529,8 +544,7 @@ mod tests {
     #[test]
     fn a_programmatic_config_cannot_spin_the_trust_reloader() {
         let mut config = legal_config();
-        config.revocation_tier = RevocationTier::Live;
-        config.trust_reload_secs = Some(0);
+        config.request_signer_currency = RequestSignerCurrencyRequest::Live { reload_secs: 0 };
         let refusal = crate::config_state::validation::ValidatedDeployment::try_from(config)
             .expect_err("a spinning reloader must not validate");
         assert!(refusal.contains("--trust-reload-secs 0"), "{refusal}");
@@ -550,8 +564,8 @@ mod tests {
                     reload_secs: None,
                 }),
                 Box::new(|c: &mut DeploymentRequest| {
-                    c.revocation_tier = RevocationTier::BoundedCache { t_secs: 60 };
-                    c.trust_reload_secs = None;
+                    c.request_signer_currency =
+                        posture(RevocationTier::BoundedCache { t_secs: 60 }, None);
                 }),
             ),
             (
@@ -560,8 +574,8 @@ mod tests {
                     reload_secs: Some(TrustRevocationState::cadence(60)),
                 }),
                 Box::new(|c: &mut DeploymentRequest| {
-                    c.revocation_tier = RevocationTier::BoundedCache { t_secs: 60 };
-                    c.trust_reload_secs = Some(60);
+                    c.request_signer_currency =
+                        posture(RevocationTier::BoundedCache { t_secs: 60 }, Some(60));
                 }),
             ),
             (
@@ -569,8 +583,8 @@ mod tests {
                     reload_secs: crate::config_state::TrustRevocationState::cadence(5),
                 }),
                 Box::new(|c: &mut DeploymentRequest| {
-                    c.revocation_tier = RevocationTier::Live;
-                    c.trust_reload_secs = Some(5);
+                    c.request_signer_currency =
+                        RequestSignerCurrencyRequest::Live { reload_secs: 5 };
                 }),
             ),
             (
@@ -579,8 +593,11 @@ mod tests {
                     reload_secs: crate::config_state::TrustRevocationState::cadence(30),
                 }),
                 Box::new(|c: &mut DeploymentRequest| {
-                    c.revocation_tier = RevocationTier::Push { t_secs: 30 };
-                    c.trust_reload_secs = Some(30);
+                    // The INERT posture: a pushing tier that names no epoch source. Absence
+                    // is what separates the two push states, and only this tier has a field
+                    // for one to be absent from.
+                    c.request_signer_currency =
+                        posture(RevocationTier::Push { t_secs: 30 }, Some(30));
                 }),
             ),
             (
@@ -591,11 +608,8 @@ mod tests {
                     epoch_key: "mcp-re:trust:epoch".to_string(),
                 }),
                 Box::new(|c: &mut DeploymentRequest| {
-                    c.revocation_tier = RevocationTier::Push { t_secs: 30 };
-                    c.trust_reload_secs = Some(30);
-                    c.trust_epoch.source =
-                        Some(TrustEpochSource::redis("redis://127.0.0.1:6379", None));
-                    set_epoch_key(c, "mcp-re:trust:epoch");
+                    c.request_signer_currency =
+                        pushing(30, 30, "redis://127.0.0.1:6379", Some("mcp-re:trust:epoch"));
                 }),
             ),
         ];
@@ -620,13 +634,23 @@ mod tests {
     #[test]
     fn the_epoch_source_is_what_splits_push_in_two() {
         let inert = state_of(|c| {
-            c.revocation_tier = RevocationTier::Push { t_secs: 30 };
-            c.trust_reload_secs = Some(30);
+            c.request_signer_currency = RequestSignerCurrencyRequest::Push {
+                t_secs: 30,
+                reload_secs: 30,
+                epoch: TrustEpochStoreRequest::default(),
+            };
         });
         let networked = state_of(|c| {
-            c.revocation_tier = RevocationTier::Push { t_secs: 30 };
-            c.trust_reload_secs = Some(30);
-            c.trust_epoch.source = Some(TrustEpochSource::redis("redis://127.0.0.1:6379", None));
+            c.request_signer_currency = RequestSignerCurrencyRequest::Push {
+                t_secs: 30,
+                reload_secs: 30,
+                epoch: TrustEpochStoreRequest {
+                    source: Some(crate::deployment_request::TrustEpochSource::redis(
+                        "redis://127.0.0.1:6379",
+                        None,
+                    )),
+                },
+            };
         });
         assert!(!inert.has_networked_epoch());
         assert!(networked.has_networked_epoch());
@@ -689,8 +713,7 @@ mod tests {
     fn live_declares_no_bounded_window() {
         assert_eq!(
             state_of(|c| {
-                c.revocation_tier = RevocationTier::Live;
-                c.trust_reload_secs = Some(5);
+                c.request_signer_currency = RequestSignerCurrencyRequest::Live { reload_secs: 5 };
             })
             .declared_window_secs(),
             None
@@ -699,27 +722,16 @@ mod tests {
 
     // ---- required parameters ----
 
-    #[test]
-    fn live_and_push_require_a_cadence() {
-        for tier in [RevocationTier::Live, RevocationTier::Push { t_secs: 30 }] {
-            let violations = violations_of(|c| {
-                c.revocation_tier = tier;
-                c.trust_reload_secs = None;
-            });
-            assert!(
-                violations
-                    .iter()
-                    .any(|v| v.contains("requires --trust-reload-secs")),
-                "{violations:?}"
-            );
-        }
-    }
+    // The X8 test left this module with the state it examined. An epoch source under a
+    // tier that reads none is not a configuration any more: only the pushing posture has a
+    // field for one (ADR-MCPRE-067 §7). The argv form survives and
+    // `cli::currency_flags::tests::an_epoch_source_under_a_tier_that_reads_none_is_refused`
+    // pins the same sentence.
 
     #[test]
     fn bounded_cache_does_not_require_a_cadence() {
         assert!(violations_of(|c| {
-            c.revocation_tier = RevocationTier::BoundedCache { t_secs: 60 };
-            c.trust_reload_secs = None;
+            c.request_signer_currency = posture(RevocationTier::BoundedCache { t_secs: 60 }, None);
         })
         .is_empty());
     }
@@ -727,9 +739,16 @@ mod tests {
     #[test]
     fn push_networked_requires_its_url_to_be_a_url() {
         let violations = violations_of(|c| {
-            c.revocation_tier = RevocationTier::Push { t_secs: 30 };
-            c.trust_reload_secs = Some(30);
-            c.trust_epoch.source = Some(TrustEpochSource::redis("127.0.0.1:6379", None));
+            c.request_signer_currency = RequestSignerCurrencyRequest::Push {
+                t_secs: 30,
+                reload_secs: 30,
+                epoch: TrustEpochStoreRequest {
+                    source: Some(crate::deployment_request::TrustEpochSource::redis(
+                        "127.0.0.1:6379",
+                        None,
+                    )),
+                },
+            };
         });
         assert!(
             violations.iter().any(|v| v.contains("is not a URL")),
@@ -738,27 +757,6 @@ mod tests {
     }
 
     // ---- forbidden parameters: presence carries intent (CF-04) ----
-
-    #[test]
-    fn an_epoch_source_under_a_tier_that_cannot_consume_it_is_refused() {
-        for tier in [
-            RevocationTier::Live,
-            RevocationTier::BoundedCache { t_secs: 60 },
-        ] {
-            let violations = violations_of(|c| {
-                c.revocation_tier = tier;
-                c.trust_reload_secs = Some(30);
-                c.trust_epoch.source =
-                    Some(TrustEpochSource::redis("redis://127.0.0.1:6379", None));
-            });
-            assert!(
-                violations
-                    .iter()
-                    .any(|v| v.contains("--trust-epoch-redis-url has no effect")),
-                "{violations:?}"
-            );
-        }
-    }
 
     // CF-04 — an epoch key naming a place in a store this configuration does not have —
     // has no test here any more, and its absence is the result. The coordinate travels
@@ -776,8 +774,7 @@ mod tests {
             (RevocationTier::BoundedCache { t_secs: 30 }, 31),
         ] {
             let violations = violations_of(|c| {
-                c.revocation_tier = tier;
-                c.trust_reload_secs = Some(cadence);
+                c.request_signer_currency = posture(tier, Some(cadence));
             });
             assert!(
                 violations
@@ -794,8 +791,11 @@ mod tests {
         // general near-zero ceiling. The tighter of the two claims is the one that binds.
         const { assert!(MAX_NEAR_ZERO_TRUST_RELOAD_SECS > 30) };
         let violations = violations_of(|c| {
-            c.revocation_tier = RevocationTier::Push { t_secs: 10 };
-            c.trust_reload_secs = Some(30);
+            c.request_signer_currency = RequestSignerCurrencyRequest::Push {
+                t_secs: 10,
+                reload_secs: 30,
+                epoch: TrustEpochStoreRequest::default(),
+            };
         });
         assert!(
             violations

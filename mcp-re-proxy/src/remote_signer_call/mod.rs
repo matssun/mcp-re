@@ -34,6 +34,10 @@
 //! --features <one feature> -- -D warnings` is what says so, and it is a CI lane of its
 //! own.
 
+mod quota_signals;
+
+pub(crate) use quota_signals::{quota_verdict, QuotaSignals};
+
 use crate::key_source::KeyError;
 
 /// Why a remote signer call did not produce a usable response body.
@@ -160,35 +164,6 @@ impl RemoteSignerFailure {
     }
 }
 
-/// A status that means the SERVICE is shedding load, whoever asked and whatever they asked
-/// for — as opposed to a status about this request.
-///
-/// The two are the same on both providers and are checked before either provider's own
-/// vocabulary, because a gateway sheds load before the service's error shape is reached at
-/// all: an AWS `__type` and a Cloud KMS `error.status` are both absent from a 429 minted by
-/// the front door.
-pub(crate) fn is_load_shedding_status(status: Option<u16>) -> bool {
-    matches!(status, Some(429) | Some(503))
-}
-
-/// Read a JSON string field out of an error body, without deserializing the whole document
-/// into a schema neither provider guarantees.
-///
-/// Returns `None` for a body that is not JSON, has no such field, or whose field is not a
-/// string — all of which mean *this body does not state the thing*, which is exactly what a
-/// classifier must not read as a positive.
-pub(crate) fn json_string_field(body: &str, path: &[&str]) -> Option<String> {
-    let mut node: serde_json::Value = serde_json::from_str(body).ok()?;
-    for (index, key) in path.iter().enumerate() {
-        let next = node.get_mut(key)?.take();
-        if index + 1 == path.len() {
-            return next.as_str().map(str::to_owned);
-        }
-        node = next;
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,15 +181,6 @@ mod tests {
         );
     }
 
-    /// A call that got no answer has no status, and must not be read as one.
-    #[test]
-    fn a_transport_failure_states_no_status() {
-        let failure = RemoteSignerFailure::transport("connection refused".to_string());
-        assert_eq!(failure.status(), None);
-        assert_eq!(failure.body(), None);
-        assert!(!is_load_shedding_status(failure.status()));
-    }
-
     #[test]
     fn a_rendered_failure_passes_its_own_diagnosis_through_unchanged() {
         let failure = RemoteSignerFailure::malformed("no bearer token".to_string());
@@ -222,11 +188,6 @@ mod tests {
         assert!(matches!(rendered, KeyError::Malformed(ref m) if m == "no bearer token"));
     }
 
-    /// The chained cause reaches the operator WITHOUT entering the body a classifier reads.
-    ///
-    /// This is the property the separate field exists for: appending the cause to the body
-    /// is the obvious implementation, and it would make a `__type` lookup fail on a body
-    /// that genuinely states one.
     #[cfg(feature = "gcp_kms_keysource")]
     #[test]
     fn a_chained_cause_renders_but_never_enters_the_body() {
@@ -242,7 +203,8 @@ mod tests {
             "the classifier must still see the service's own answer"
         );
         assert_eq!(
-            json_string_field(failure.body().unwrap(), &["error", "status"]).as_deref(),
+            quota_signals::json_string_field(failure.body().unwrap(), &["error", "status"])
+                .as_deref(),
             Some("UNAVAILABLE"),
             "and must still be able to read the field out of it"
         );
@@ -253,44 +215,6 @@ mod tests {
         assert!(
             rendered.contains("HTTP 401"),
             "the cause must survive: {rendered}"
-        );
-    }
-
-    #[test]
-    fn only_the_shared_load_shedding_statuses_are_load_shedding() {
-        assert!(is_load_shedding_status(Some(429)));
-        assert!(is_load_shedding_status(Some(503)));
-        for other in [400u16, 401, 403, 404, 500, 502] {
-            assert!(!is_load_shedding_status(Some(other)), "{other}");
-        }
-        assert!(!is_load_shedding_status(None));
-    }
-
-    #[test]
-    fn a_nested_json_field_is_read_at_its_path() {
-        let body = "{\"error\":{\"status\":\"RESOURCE_EXHAUSTED\",\"code\":429}}";
-        assert_eq!(
-            json_string_field(body, &["error", "status"]).as_deref(),
-            Some("RESOURCE_EXHAUSTED")
-        );
-        assert_eq!(json_string_field(body, &["error", "message"]), None);
-        assert_eq!(json_string_field(body, &["__type"]), None);
-    }
-
-    /// A body that does not STATE the field must not read as a positive, however it fails
-    /// to state it.
-    #[test]
-    fn a_body_that_states_nothing_yields_nothing() {
-        assert_eq!(json_string_field("not json at all", &["__type"]), None);
-        assert_eq!(json_string_field("", &["__type"]), None);
-        assert_eq!(json_string_field("{\"__type\":429}", &["__type"]), None);
-        assert_eq!(json_string_field("[1,2,3]", &["__type"]), None);
-        assert_eq!(
-            json_string_field(
-                "{\"error\":\"a string, not an object\"}",
-                &["error", "status"]
-            ),
-            None
         );
     }
 }

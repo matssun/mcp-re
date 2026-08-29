@@ -35,18 +35,18 @@ mod tests {
         let continuation = ContinuationStoreRequest {
             shared: Some(SharedStoreRequest::redis("redis://h:6379")),
         };
-        let admission = super::super::AdmissionStoreRequest {
-            authoritative: Some(SharedStoreRequest::redis("redis://h:6379")),
+        let admission = crate::deployment_request::AdmissionGateRequest {
+            authority_kid: "a".to_string(),
+            authority_pubkey_b64url: "k".to_string(),
+            store: SharedStoreRequest::redis("redis://h:6379"),
+            availability: crate::deployment_request::AdmissionAvailabilityRequest::FailClosed,
         };
         assert_eq!(
             continuation
                 .shared
                 .as_ref()
                 .map(SharedStoreRequest::locator),
-            admission
-                .authoritative
-                .as_ref()
-                .map(SharedStoreRequest::locator)
+            Some(admission.store.locator())
         );
     }
 }
