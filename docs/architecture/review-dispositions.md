@@ -1076,10 +1076,54 @@ is one a verification produced. Removing them is a public-API narrowing outside 
 slice's remit ("do not expand this into general transport cleanup"), so it is recorded here
 rather than done.
 
-**Status stays `reviewed-action-required`** on both halves. `ingress.rs` at 1012 lines is
-one authority with two protocol versions inside it, and whether that is a §14 exception is
-a question for whoever decides the Mode-C capability's future — not one this slice should
-pre-empt.
+~~**Status stays `reviewed-action-required`** on both halves.~~ — **both resolved by owner
+ruling, 2026-08-29.** See the two subsections below.
+
+### `transport/mod.rs` — §14 REVIEWED EXCEPTION, granted
+
+**Status: `reviewed-exception`** at 338 production lines. The owner granted it on the
+re-census's own finding: the live half is **ONE authority — channel binding on the served
+path** — and this record had already said that a §14 exception "would have been arguable" on
+question 2 alone. What defeated it then was question 9, and question 9 no longer applies to
+this file: the unreachable 913 lines left for `ingress/`, so the reachability ambiguity the
+census refused to except is gone.
+
+Identity policy, header view, routing-header hygiene and the binding capability remain four
+aspects of one request's relation to its channel. The exception does **not** extend to
+`ingress/`, which is a different capability with the opposite change rule.
+
+### `ingress/` — split by FROZEN FORMAT, and the two halves returned for disposition
+
+The 1012-line file was **not** granted an exception. Its own source already drew the
+boundary, and the split follows it exactly:
+
+```text
+ingress capability            mod.rs (74) — what these mechanisms ARE, the attestor keys
+    |                         a node trusts for either, and the disjointness proof
+    +-- v1  Mode B / Tier 3   v1.rs (334)  mcp-re/lb-ingress-assertion/v1
+    +-- v2  Mode C / Tier 4   v2.rs (673)  mcp-re/lb-ingress-assertion/v2
+```
+
+**v2 is a genuinely new frozen format, not an extension of v1** — a distinct
+domain-separation tag, a distinct field layout and a distinct verifier order — so each
+version owns its own wire vocabulary, preimage, parser, verifier and rejection vocabulary,
+and its own tests. **Nothing abstracts over the two.** An abstraction that made the formats
+interchangeable would erase the property the separation exists to guarantee; the facade
+holds the one test neither version can state alone — that for identical shared field values
+the two preimages are disjoint, so a v1 signature can never be re-framed as a v2 assertion.
+
+What the facade owns is the fact that these ARE ingress-attestation mechanisms, plus
+`LbKeyEntry` — the trusted-attestor key both bindings look up, which is not either format's
+wire vocabulary.
+
+Neither mode was made selectable and Mode B/C deployment reachability is unchanged: the
+retention rule still sits at the top of the facade, where a reader meets it first.
+
+**Both remain `reviewed-action-required`, returned for disposition.** `v2.rs` at 673 lines
+is the strongest §14 candidate of the two: it is one frozen format's complete definition,
+and decomposing it further would fragment a wire format whose parts are meaningless apart.
+`v1.rs` at 334 is the same shape at a third the size. Whether either is excepted is the
+owner's call on the Mode-C capability's future, which this split does not pre-empt.
 
 ## EX-009 — `mcp-re-client-core/src/response.rs` — **census re-run, disposition: decompose the classification half**
 
