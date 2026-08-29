@@ -32,6 +32,13 @@ use x509_parser::x509::SubjectPublicKeyInfo;
 /// Raw Ed25519 public key length, in bytes.
 pub const ED25519_PUBLIC_KEY_LEN: usize = 32;
 
+/// Raw Ed25519 signature length, in bytes (PureEdDSA, no pre-hash).
+///
+/// Its sibling above, and here for the same reason: it is a property of the algorithm's
+/// representation, not of KMS, not of a PKCS#11 token and not of any provider. It was
+/// written out in four files, each with a comment saying it matched the others.
+pub const ED25519_SIGNATURE_LEN: usize = 64;
+
 /// The canonical RFC 8410 `SubjectPublicKeyInfo` header for an Ed25519 key: SEQUENCE(42),
 /// SEQUENCE(5), OID 1.3.101.112, BIT STRING(33) with no unused bits.
 ///

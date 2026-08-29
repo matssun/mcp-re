@@ -38,6 +38,11 @@ mod quota_signals;
 
 pub(crate) use quota_signals::{quota_verdict, QuotaSignals};
 
+mod wire_limits;
+
+pub(crate) use wire_limits::read_error_body;
+pub(crate) use wire_limits::NETWORK_TIMEOUT;
+
 use crate::key_source::KeyError;
 
 /// Why a remote signer call did not produce a usable response body.

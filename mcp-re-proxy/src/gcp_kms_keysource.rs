@@ -35,6 +35,7 @@
 //! cannot obtain an HSM-protected Ed25519 key, the high-assurance claim is scoped
 //! OUT for that deployment rather than met by adding a second curve (P-256).
 
+use crate::remote_signer_call::NETWORK_TIMEOUT;
 use std::io::Read;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -54,13 +55,15 @@ use crate::handshake_quota::HandshakeQuotaWindow;
 use crate::handshake_quota::QuotaGuarded;
 use crate::handshake_quota::QuotaVerdict;
 use crate::key_source::KeyError;
-use crate::kms_keysource::ed25519_raw_point_from_spki;
+use crate::kms_keysource::Ed25519SpkiDer;
 use crate::kms_keysource::KmsEd25519Backend;
+use crate::kms_keysource::RawEd25519Message;
+use crate::kms_keysource::RawEd25519Signature;
+use crate::remote_signer_call::read_error_body;
 use crate::remote_signer_call::RemoteSignerFailure;
 
 /// The only Cloud KMS key algorithm this adapter accepts.
 const ALGORITHM_ED25519: &str = "EC_SIGN_ED25519";
-const ED25519_SIGNATURE_LEN: usize = 64;
 /// Default Cloud KMS + metadata-server endpoints (overridable for emulators/tests).
 const DEFAULT_KMS_ENDPOINT: &str = "https://cloudkms.googleapis.com";
 const DEFAULT_METADATA_ENDPOINT: &str = "http://metadata.google.internal";
@@ -139,12 +142,6 @@ const METADATA_FAILURE_COOLDOWN: Duration = NETWORK_TIMEOUT;
 /// retry that succeeds closes the window immediately, so a genuine rotation is never slowed
 /// by it.
 const TOKEN_REFUSAL_RETRY_COOLDOWN: Duration = NETWORK_TIMEOUT;
-/// MANDATORY per-request network timeout. The serve loop is blocking, so an
-/// unbounded fetch (stalled connect/TLS handshake) would wedge the serving thread
-/// indefinitely; every `ureq` call below carries this (mirrors the AWS/OCSP paths).
-const NETWORK_TIMEOUT: Duration = Duration::from_secs(5);
-/// Bound on an HTTP *error* body read for diagnostics — never an unbounded read.
-const MAX_ERROR_BODY_BYTES: u64 = 8 * 1024;
 
 /// GCP Cloud KMS connection configuration. `key_version_name` is the full resource
 /// path `projects/P/locations/L/keyRings/R/cryptoKeys/K/cryptoKeyVersions/V`;
@@ -808,15 +805,6 @@ fn read_body(resp: ureq::Response) -> Result<Vec<u8>, KeyError> {
 /// Read a bounded, lossy string from an HTTP *error* response body (diagnostics
 /// only). An emulator/overridden endpoint could otherwise return an arbitrarily
 /// large body; cap it rather than `into_string()`'s unbounded read.
-fn read_error_body(resp: ureq::Response) -> String {
-    let mut buf = Vec::new();
-    let _ = resp
-        .into_reader()
-        .take(MAX_ERROR_BODY_BYTES)
-        .read_to_end(&mut buf);
-    String::from_utf8_lossy(&buf).into_owned()
-}
-
 /// The `asymmetricSign` request body for an Ed25519 (`EC_SIGN_ED25519`) key — raw
 /// `data` (PureEdDSA), never `digest`.
 fn sign_request_body(preimage: &[u8]) -> Vec<u8> {
@@ -963,7 +951,7 @@ impl GcpKmsEd25519Backend {
             .get_public_key()
             .map_err(|failure| failure.into_key_error("gcp-kms", "getPublicKey"))?;
         let spki_der = parse_public_key_response(&resp)?;
-        let raw = ed25519_raw_point_from_spki(&spki_der)?;
+        let raw = Ed25519SpkiDer::interpret(&spki_der)?.raw_point();
         let verify_key = VerificationKey::from_bytes(&raw).map_err(|e| {
             KeyError::Malformed(format!("gcp-kms: invalid Ed25519 public key: {e}"))
         })?;
@@ -997,7 +985,10 @@ impl GcpKmsEd25519Backend {
                 QuotaGuarded::Refused(why) => KeyError::NotFound(why.to_string()),
                 QuotaGuarded::Call(failure) => failure.into_key_error("gcp-kms", "asymmetricSign"),
             })?;
-        self.accept_signature(message, response)
+        // rustls takes the raw bytes; the 64-byte rule was already applied by
+        // `RawEd25519Signature`, so this projects a checked value rather than
+        // handing an unchecked one on.
+        Ok(self.accept_signature(message, response)?.bytes().to_vec())
     }
 
     /// The `asymmetricSign` wire call, with its failure still typed.
@@ -1010,18 +1001,24 @@ impl GcpKmsEd25519Backend {
     /// ADR-MCPS-028 §D: the signature MUST verify against the advertised public key under
     /// the unmodified `mcp-re-core` verifier — fail closed on any mismatch, never emit a
     /// non-verifying signature.
-    fn accept_signature(&self, preimage: &[u8], response: Vec<u8>) -> Result<Vec<u8>, KeyError> {
-        let signature = parse_sign_response(&response)?;
-        if signature.len() != ED25519_SIGNATURE_LEN {
-            return Err(KeyError::Malformed(format!(
-                "gcp-kms: asymmetricSign returned a {}-byte signature; expected a raw \
-                 {ED25519_SIGNATURE_LEN}-byte Ed25519 signature",
-                signature.len()
-            )));
-        }
-        verify_ed25519(preimage, &b64url_encode(&signature), &self.verify_key).map_err(|e| {
+    fn accept_signature(
+        &self,
+        preimage: &[u8],
+        response: Vec<u8>,
+    ) -> Result<RawEd25519Signature, KeyError> {
+        // The length rule belongs to the operand, not to this adapter: interpreting the
+        // bytes IS the check, so there is no separate `if` to forget in a third provider.
+        let signature =
+            RawEd25519Signature::interpret(&parse_sign_response(&response)?, "gcp-kms")?;
+        verify_ed25519(
+            preimage,
+            &b64url_encode(signature.bytes()),
+            &self.verify_key,
+        )
+        .map_err(|e| {
             KeyError::Malformed(format!(
-                "gcp-kms: KMS signature did NOT verify against the advertised public key: {e}"
+                "gcp-kms: KMS signature did NOT verify against the advertised public \
+                     key: {e}"
             ))
         })?;
         Ok(signature)
@@ -1102,15 +1099,19 @@ impl GcpKmsTransport for LocalKeyGcpTransport {
 }
 
 impl KmsEd25519Backend for GcpKmsEd25519Backend {
-    fn sign_raw_ed25519(&self, preimage: &[u8]) -> Result<Vec<u8>, KeyError> {
+    fn sign_raw_ed25519(
+        &self,
+        message: RawEd25519Message<'_>,
+    ) -> Result<RawEd25519Signature, KeyError> {
+        let preimage = message.bytes();
         let response = self
             .sign_once(preimage)
             .map_err(|failure| failure.into_key_error("gcp-kms", "asymmetricSign"))?;
         self.accept_signature(preimage, response)
     }
 
-    fn public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
-        Ok(self.spki_der.clone())
+    fn public_key_spki_der(&self) -> Result<Ed25519SpkiDer, KeyError> {
+        Ed25519SpkiDer::interpret(&self.spki_der)
     }
 }
 
@@ -1858,11 +1859,13 @@ mod tests {
         let backend =
             GcpKmsEd25519Backend::with_transport(Box::new(FakeGcp::good(12))).expect("construct");
         let preimage = b"mcp-re canonical response preimage";
-        let sig = backend.sign_raw_ed25519(preimage).expect("sign");
-        assert_eq!(sig.len(), 64);
-        let raw = ed25519_raw_point_from_spki(&backend.public_key_spki_der().unwrap()).unwrap();
+        let sig = backend
+            .sign_raw_ed25519(RawEd25519Message::for_preimage(preimage))
+            .expect("sign");
+        assert_eq!(sig.bytes().len(), 64);
+        let raw = backend.public_key_spki_der().unwrap().raw_point();
         let key = VerificationKey::from_bytes(&raw).unwrap();
-        verify_ed25519(preimage, &b64url_encode(&sig), &key).expect("verifies");
+        verify_ed25519(preimage, &b64url_encode(sig.bytes()), &key).expect("verifies");
     }
 
     /// A DIGEST/prehash misconfiguration is caught by verify-before-return — the
@@ -1875,7 +1878,9 @@ mod tests {
         }))
         .expect("construct");
         let err = backend
-            .sign_raw_ed25519(b"mcp-re canonical response preimage")
+            .sign_raw_ed25519(RawEd25519Message::for_preimage(
+                b"mcp-re canonical response preimage",
+            ))
             .expect_err("must fail closed");
         assert!(matches!(err, KeyError::Malformed(_)));
     }
@@ -1897,7 +1902,9 @@ mod tests {
             "delegated TLS signature is a raw 64-byte Ed25519 sig"
         );
         // The reported SPKI is the advertised Cloud KMS public key and verifies it.
-        let raw = ed25519_raw_point_from_spki(&backend.tls_public_key_spki_der().unwrap()).unwrap();
+        let raw = Ed25519SpkiDer::interpret(&backend.tls_public_key_spki_der().unwrap())
+            .unwrap()
+            .raw_point();
         let key = VerificationKey::from_bytes(&raw).unwrap();
         verify_ed25519(transcript, &b64url_encode(&sig), &key).expect("tls sig verifies");
     }
@@ -2549,10 +2556,12 @@ mod tests {
     fn kms_sign(seed: u8, preimage: &[u8]) -> (VerificationKey, String) {
         let backend =
             GcpKmsEd25519Backend::with_transport(Box::new(FakeGcp::good(seed))).expect("construct");
-        let sig = backend.sign_raw_ed25519(preimage).expect("sign");
-        let raw = ed25519_raw_point_from_spki(&backend.public_key_spki_der().unwrap()).unwrap();
+        let sig = backend
+            .sign_raw_ed25519(RawEd25519Message::for_preimage(preimage))
+            .expect("sign");
+        let raw = backend.public_key_spki_der().unwrap().raw_point();
         let key = VerificationKey::from_bytes(&raw).unwrap();
-        (key, b64url_encode(&sig))
+        (key, b64url_encode(sig.bytes()))
     }
 
     // (1) KMS disable → new signing fails closed, with no local-key fallback.
@@ -2564,7 +2573,9 @@ mod tests {
         }))
         .expect("construction still succeeds — getPublicKey works");
         let err = backend
-            .sign_raw_ed25519(b"mcp-re canonical response preimage")
+            .sign_raw_ed25519(RawEd25519Message::for_preimage(
+                b"mcp-re canonical response preimage",
+            ))
             .expect_err("a disabled key version must fail closed on sign");
         assert!(matches!(err, KeyError::Malformed(_)));
     }

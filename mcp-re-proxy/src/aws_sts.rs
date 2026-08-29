@@ -39,6 +39,8 @@
 //!   such a credential for at most [`UNKNOWN_EXPIRY_REUSE`] and then re-exchanges, so an
 //!   unreadable expiry costs a bounded window, not an indefinite one.
 
+use crate::remote_signer_call::read_error_body;
+use crate::remote_signer_call::NETWORK_TIMEOUT;
 use std::io::Read;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -54,10 +56,6 @@ use crate::key_source::KeyError;
 /// sibling's `TOKEN_REFRESH_MARGIN`: enough that an in-flight KMS call cannot be
 /// signed with a credential that expires before it lands.
 const CREDENTIAL_REFRESH_MARGIN: Duration = Duration::from_secs(60);
-
-/// Timeout on the STS exchange. Matches the GCP sibling's `NETWORK_TIMEOUT`; this
-/// runs on a blocking thread, so an endpoint that never answers must not wedge it.
-const NETWORK_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How long a FAILED STS exchange suppresses the next one.
 ///
@@ -98,9 +96,6 @@ const MAX_SESSION_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);
 /// few KB; the cap stops a substituted endpoint streaming an unbounded body into the
 /// blocking thread.
 const MAX_STS_RESPONSE_BYTES: u64 = 256 * 1024;
-
-/// Cap on an STS *error* body read, which is interpolated into a [`KeyError`].
-const MAX_ERROR_BODY_BYTES: u64 = 8 * 1024;
 
 /// Upper bound on the projected service-account token read from disk. A JWT is well
 /// under this; the cap stops a hostile or misconfigured mount handing us a huge file
@@ -627,15 +622,10 @@ impl WebIdentityCredentialSource {
                 Zeroizing::new(String::from_utf8_lossy(&buf).into_owned())
             }
             Err(ureq::Error::Status(code, resp)) => {
-                let mut buf = Vec::new();
-                let _ = resp
-                    .into_reader()
-                    .take(MAX_ERROR_BODY_BYTES)
-                    .read_to_end(&mut buf);
                 return Err(KeyError::NotFound(format!(
                     "aws-kms: AssumeRoleWithWebIdentity for {} failed: HTTP {code}: {}",
                     self.config.role_arn,
-                    String::from_utf8_lossy(&buf)
+                    read_error_body(resp)
                 )));
             }
             Err(e) => {

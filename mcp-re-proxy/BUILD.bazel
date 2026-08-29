@@ -240,6 +240,7 @@ _PROXY_LIB_SRCS = [
     # cfg gate as `handshake_quota`, and compiled by `mcp_re_proxy_ext`.
     "src/remote_signer_call/mod.rs",
     "src/remote_signer_call/quota_signals.rs",
+    "src/remote_signer_call/wire_limits.rs",
     # Issue #3838 (ADR-MCPS-014): non-exporting reference ResponseSigner proving the
     # response-signing delegation seam. Always compiled; default-build, Bazel-tested.
     "src/delegated_response_signer.rs",
@@ -270,7 +271,8 @@ _PROXY_LIB_SRCS = [
     "src/kms_endpoint_policy.rs",
     # ADR-MCPS-028: provider-agnostic cloud-KMS response signer core (the shared
     # protocol mapping behind the #3838 delegation seam). Always compiled.
-    "src/kms_keysource.rs",
+    "src/kms_keysource/mod.rs",
+    "src/kms_keysource/protocol_operands.rs",
     "src/lib.rs",
     # ADR-MCPS-035: the serving path's audit emission seam (admitted actor, rejection
     # wire code, response signing key). Pure std, no feature gate — always compiled.

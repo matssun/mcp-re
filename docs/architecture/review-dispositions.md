@@ -1759,3 +1759,86 @@ the repository's own rule that every file carries a test module.
 Re-measure after 1–3. `gcp_kms_keysource.rs` will stay over the threshold, and its remaining
 bulk is one provider's genuine access-token mechanism — a candidate for its own §14
 discussion, which this census does not pre-empt.
+
+### Discharge, 2026-08-29 — all five disposition items
+
+Re-run against the post-ADR-MCPRE-067 tree first, because several of the representation
+questions had changed under it.
+
+**1. The common `quota_verdict` owner — DONE** in ADR-MCPRE-067 Phase 8. Not redone.
+
+**2. The four "pure duplications" — three were real, one never was.**
+
+| finding | outcome |
+|---|---|
+| `ED25519_SIGNATURE_LEN` (4 files) | **one owner**: `communication_assurance::ed25519_public_key`, beside the `ED25519_PUBLIC_KEY_LEN` that was already there. It is a property of the algorithm's representation — not of KMS, not of a PKCS#11 token, not of any provider — which is the authority that module already claims in its own doc |
+| network timeout | **one owner**: `remote_signer_call::wire_limits::NETWORK_TIMEOUT` |
+| bounded error-body size + reader | **one owner**: `remote_signer_call::wire_limits`, which had three byte-for-byte copies, each carrying a comment saying it matched its siblings. A comment is how a duplication is remembered, not how it is owned |
+| local-key test transport | **not a duplication — recorded, not merged.** `LocalKeyKmsTransport` and `LocalKeyGcpTransport` implement DIFFERENT traits over DIFFERENT wire formats (AWS JSON `KeySpec`/`PublicKey`; GCP PEM-wrapped `algorithm`/`pem`). They share a shape, not code. Merging them would require an abstraction over two provider protocols, which is what this census's own disposition forbids |
+
+`remote_signer_call` was the right home for the wire limits rather than a new module: it
+already owns *one call to a remote signer, as it failed*, and it already carries the same
+`any(aws_kms_keysource, gcp_kms_keysource)` gate.
+
+**3. Typed operands at the KMS seam — DONE.** `KmsEd25519Backend` no longer takes `&[u8]`
+and returns `Vec<u8>`:
+
+| operand | the wrong value it makes unconstructible |
+|---|---|
+| `RawEd25519Message` | a pre-hashed input reaching a RAW-only signing call |
+| `RawEd25519Signature` | a signature of any length but 64 leaving the seam |
+| `Ed25519SpkiDer` | a public key that has not been through RFC 8410 interpretation |
+
+They are load-bearing, not aliases: `KmsResponseSigner::sign_response`'s length check is
+**deleted**, because there is no longer an over-long signature for it to catch — the
+operational test the ownership rule asks for. RFC 8410 interpretation likewise happens once,
+at the seam, instead of in each adapter. Verify-before-return is unchanged and still at the
+seam; provider independence is unchanged; no AWS or GCP network mechanics moved into the
+common owner.
+
+**The RAW/digest distinction is one arm, not two.** There is no `PreHashedEd25519Message`,
+because nothing in this tree pre-hashes: the missing input is named in the type's own doc
+rather than fabricated. A prehash backend is still caught by verify-before-return — a type
+cannot prove what a remote actually hashed — and the test that proves it now says so.
+
+**4. The two representation questions — SUPERSEDED by ADR-MCPRE-067, not merely recorded.**
+
+| question | why it is discharged |
+|---|---|
+| *`KeySource` cannot itself express non-exporting custody* | it does not need to. `PrivateKeyExposure { ProcessReadable, NonExporting }` owns that proposition at the configuration layer, projected by BOTH `CustodyState` and `ChannelCredentialCustodyState`. `KeySource` carries the capability that follows from it — `tls_delegated_signer()` — and a boxed source is no longer where the distinction is asked for |
+| *root-signing vs channel-key separation depends on `build_key_source`* | the separation is structural now: two typed requests (`ResponseSigningRequest`, `ChannelCredentialRequest`), two states each projecting its own exposure, and per-role materializers under `capability_materialization::key_source` that consume `custody.material()` and `channel_credential_custody.material()` separately. `build_key_source` no longer exists |
+
+**No second custody vocabulary was added.** The operands describe the KMS PROTOCOL; custody
+remains `PrivateKeyExposure`'s.
+
+**5. `key_source.rs` has a test module** — five controls over what the SEAM owns, not
+duplicates of provider tests: that a boxed source signs by DELEGATION and never by export
+(driven through a source whose every export accessor refuses, so the claim is structural
+rather than incidental); that `tls_delegated_signer` defaults to `None`, so a source that
+has not thought about delegated TLS does not claim its key never leaves the device; that the
+refusal vocabulary separates absent from malformed; and that a `tls_only` source names no
+signing seed.
+
+### Re-measurement
+
+| file | census | now |
+|---:|---:|---:|
+| `gcp_kms_keysource.rs` | 1149 | **1143** |
+| `aws_kms_keysource.rs` | 694 | **668** |
+| `key_source.rs` | 362 | **359** |
+| `kms_keysource.rs` → `kms_keysource/mod.rs` | 230 | **202** |
+| new: `kms_keysource/protocol_operands.rs` | — | 128 |
+| new: `remote_signer_call/wire_limits.rs` | — | 47 |
+
+**§8 question 2 on the corrected tree.** `key_source.rs` is ONE authority (the custody seam
+every source implements) and is under its own registered baseline. `kms_keysource/mod.rs` is
+ONE authority (the provider-agnostic Ed25519 protocol mapping) at 202 lines — two over the
+threshold, and its operands now live below it.
+
+**The two provider transports are each ONE authority and are returned as §14 candidates.**
+`gcp_kms_keysource.rs` at 1143 is one provider's transport and authentication: the Cloud KMS
+REST mapping plus the access-token mechanism (metadata server, service-account JWT
+assertion, token cache) the census already named as its remaining bulk. `aws_kms_keysource.rs`
+at 668 is the same shape — SigV4 signing, the STS/IRSA credential path, and the KMS JSON
+protocol. **Neither is split provider-from-itself**, which this census forbade and which
+shaving either file would amount to.

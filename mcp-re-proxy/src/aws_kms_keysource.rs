@@ -17,6 +17,7 @@
 //!     BEFORE it is handed to the proxy — a non-verifying signature is an error,
 //!     never emitted.
 
+use crate::remote_signer_call::NETWORK_TIMEOUT;
 use std::io::Read;
 
 use base64::engine::general_purpose::STANDARD;
@@ -37,7 +38,11 @@ use crate::handshake_quota::HandshakeQuotaWindow;
 use crate::handshake_quota::QuotaGuarded;
 use crate::handshake_quota::QuotaVerdict;
 use crate::key_source::KeyError;
+use crate::kms_keysource::Ed25519SpkiDer;
 use crate::kms_keysource::KmsEd25519Backend;
+use crate::kms_keysource::RawEd25519Message;
+use crate::kms_keysource::RawEd25519Signature;
+use crate::remote_signer_call::read_error_body;
 use crate::remote_signer_call::RemoteSignerFailure;
 
 /// The KMS JSON content type and the two `X-Amz-Target` operations used.
@@ -54,24 +59,10 @@ const MAX_KMS_RESPONSE_BYTES: u64 = 256 * 1024;
 /// Cap on an HTTP *error* body read for diagnostics. Mirrors the GCP sibling: an
 /// emulator or substituted endpoint could otherwise return an arbitrarily large body
 /// on the error path, which is interpolated into a `KeyError` on every rotation attempt.
-const MAX_ERROR_BODY_BYTES: u64 = 8 * 1024;
-
-/// Read a bounded, lossy string from an HTTP error response body (diagnostics only).
-fn read_error_body(resp: ureq::Response) -> String {
-    let mut buf = Vec::new();
-    let _ = resp
-        .into_reader()
-        .take(MAX_ERROR_BODY_BYTES)
-        .read_to_end(&mut buf);
-    String::from_utf8_lossy(&buf).into_owned()
-}
-
 /// The single Ed25519 key spec and signing mode this adapter accepts.
 const KEY_SPEC_ED25519: &str = "ECC_NIST_EDWARDS25519";
 const SIGNING_ALGORITHM_ED25519: &str = "ED25519_SHA_512";
 const MESSAGE_TYPE_RAW: &str = "RAW";
-
-const ED25519_SIGNATURE_LEN: usize = 64;
 
 /// AWS KMS connection configuration. Region + key id are required; `endpoint`
 /// overrides the default `https://kms.<region>.amazonaws.com` for an emulator
@@ -372,29 +363,6 @@ fn parse_sign_response(body: &[u8]) -> Result<Vec<u8>, KeyError> {
         .map_err(|e| KeyError::Malformed(format!("aws-kms: Signature base64: {e}")))
 }
 
-/// How long the delegated-TLS path stops calling KMS after KMS has reported that the
-/// account is being throttled.
-///
-/// The handshake path and the root-issuance path share one account quota for
-/// cryptographic operations, and only the handshake path can be driven by an
-/// unauthenticated peer: TLS 1.3 emits the server `CertificateVerify` — one KMS `Sign` —
-/// before it has seen a client certificate, and with session resumption refused every
-/// connection is a full handshake. Left alone, a connection flood spends the account's
-/// quota, and the cold-path rotor's `Sign` for the next delegated credential fails with
-/// it; the replica then fails closed on `delegated_signing_unavailable` when the current
-/// credential's TTL runs out. A handshake flood becomes a signing outage.
-///
-/// MANDATORY per-request network timeout on the KMS calls below. The serve loop is
-/// blocking, so an unbounded call (stalled connect/TLS handshake) would wedge the serving
-/// thread indefinitely.
-///
-/// It is also what the handshake-path throttle window is derived from — see
-/// [`HandshakeQuotaWindow::for_network_timeout`]. A window opened in reaction to a call
-/// that may have taken this long must be at least this long, or it is installed already
-/// elapsed; deriving it from this value is what makes that a theorem rather than two
-/// constants a test has to keep in step.
-const NETWORK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-
 /// What a locally-refused handshake signature says, and it names the quota an operator
 /// has to go and look at.
 const QUOTA_REFUSAL: &str = "aws-kms: KMS is throttling this account; the delegated-TLS \
@@ -471,7 +439,7 @@ impl AwsKmsEd25519Backend {
             .post_kms(TARGET_GET_PUBLIC_KEY, &body)
             .map_err(|failure| failure.into_key_error("aws-kms", TARGET_GET_PUBLIC_KEY))?;
         let spki_der = parse_get_public_key_response(&resp)?;
-        let raw = crate::kms_keysource::ed25519_raw_point_from_spki(&spki_der)?;
+        let raw = crate::kms_keysource::Ed25519SpkiDer::interpret(&spki_der)?.raw_point();
         let verify_key = VerificationKey::from_bytes(&raw).map_err(|e| {
             KeyError::Malformed(format!("aws-kms: invalid Ed25519 public key: {e}"))
         })?;
@@ -548,7 +516,10 @@ impl AwsKmsEd25519Backend {
                 QuotaGuarded::Refused(why) => KeyError::NotFound(why.to_string()),
                 QuotaGuarded::Call(failure) => failure.into_key_error("aws-kms", TARGET_SIGN),
             })?;
-        self.accept_signature(message, response)
+        // rustls takes the raw bytes; the 64-byte rule was already applied by
+        // `RawEd25519Signature`, so this projects a checked value rather than
+        // handing an unchecked one on.
+        Ok(self.accept_signature(message, response)?.bytes().to_vec())
     }
 
     /// The `Sign` wire call, with its failure still typed.
@@ -563,15 +534,21 @@ impl AwsKmsEd25519Backend {
     /// key under the unmodified `mcp-re-core` verifier. This catches a misconfigured
     /// DIGEST/prehash KMS key, a key mismatch, or any corruption — fail closed, never emit
     /// it.
-    fn accept_signature(&self, preimage: &[u8], response: Vec<u8>) -> Result<Vec<u8>, KeyError> {
-        let signature = parse_sign_response(&response)?;
-        if signature.len() != ED25519_SIGNATURE_LEN {
-            return Err(KeyError::Malformed(format!(
-                "aws-kms: Sign returned a {}-byte signature; expected a raw {ED25519_SIGNATURE_LEN}-byte Ed25519 signature",
-                signature.len()
-            )));
-        }
-        verify_ed25519(preimage, &b64url_encode(&signature), &self.verify_key).map_err(|e| {
+    fn accept_signature(
+        &self,
+        preimage: &[u8],
+        response: Vec<u8>,
+    ) -> Result<RawEd25519Signature, KeyError> {
+        // The length rule belongs to the operand, not to this adapter: interpreting the
+        // bytes IS the check, so there is no separate `if` to forget in a third provider.
+        let signature =
+            RawEd25519Signature::interpret(&parse_sign_response(&response)?, "aws-kms")?;
+        verify_ed25519(
+            preimage,
+            &b64url_encode(signature.bytes()),
+            &self.verify_key,
+        )
+        .map_err(|e| {
             KeyError::Malformed(format!(
                 "aws-kms: KMS signature did NOT verify against the advertised public key \
                  (misconfigured DIGEST/prehash key or key mismatch?): {e}"
@@ -647,15 +624,19 @@ impl KmsHttpClient for LocalKeyKmsTransport {
 }
 
 impl KmsEd25519Backend for AwsKmsEd25519Backend {
-    fn sign_raw_ed25519(&self, preimage: &[u8]) -> Result<Vec<u8>, KeyError> {
+    fn sign_raw_ed25519(
+        &self,
+        message: RawEd25519Message<'_>,
+    ) -> Result<RawEd25519Signature, KeyError> {
+        let preimage = message.bytes();
         let response = self
             .sign_once(preimage)
             .map_err(|failure| failure.into_key_error("aws-kms", TARGET_SIGN))?;
         self.accept_signature(preimage, response)
     }
 
-    fn public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
-        Ok(self.spki_der.clone())
+    fn public_key_spki_der(&self) -> Result<Ed25519SpkiDer, KeyError> {
+        Ed25519SpkiDer::interpret(&self.spki_der)
     }
 }
 
@@ -996,15 +977,14 @@ mod tests {
         )
         .expect("construct");
         let preimage = b"mcp-re canonical response preimage";
-        let sig = backend.sign_raw_ed25519(preimage).expect("sign");
-        assert_eq!(sig.len(), 64);
+        let sig = backend
+            .sign_raw_ed25519(RawEd25519Message::for_preimage(preimage))
+            .expect("sign");
+        assert_eq!(sig.bytes().len(), 64);
         // The advertised SPKI parses to the same verify key.
-        let raw = crate::kms_keysource::ed25519_raw_point_from_spki(
-            &backend.public_key_spki_der().unwrap(),
-        )
-        .unwrap();
+        let raw = backend.public_key_spki_der().unwrap().raw_point();
         let key = VerificationKey::from_bytes(&raw).unwrap();
-        verify_ed25519(preimage, &b64url_encode(&sig), &key).expect("verifies");
+        verify_ed25519(preimage, &b64url_encode(sig.bytes()), &key).expect("verifies");
     }
 
     /// A DIGEST/prehash KMS misconfiguration is caught by verify-before-return —
@@ -1020,7 +1000,9 @@ mod tests {
         )
         .expect("construct");
         let err = backend
-            .sign_raw_ed25519(b"mcp-re canonical response preimage")
+            .sign_raw_ed25519(RawEd25519Message::for_preimage(
+                b"mcp-re canonical response preimage",
+            ))
             .expect_err("must fail closed");
         assert!(matches!(err, KeyError::Malformed(_)));
     }
@@ -1184,10 +1166,11 @@ mod tests {
             "delegated TLS signature is a raw 64-byte Ed25519 sig"
         );
         // The reported SPKI is the advertised KMS public key and verifies the sig.
-        let raw = crate::kms_keysource::ed25519_raw_point_from_spki(
+        let raw = crate::kms_keysource::Ed25519SpkiDer::interpret(
             &backend.tls_public_key_spki_der().unwrap(),
         )
-        .unwrap();
+        .unwrap()
+        .raw_point();
         let key = VerificationKey::from_bytes(&raw).unwrap();
         verify_ed25519(transcript, &b64url_encode(&sig), &key).expect("tls sig verifies");
     }

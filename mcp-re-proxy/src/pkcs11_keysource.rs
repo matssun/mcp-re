@@ -43,6 +43,8 @@
 //! cargo feature, so a default build is byte-for-byte unchanged and gains zero
 //! dependencies.
 
+use crate::communication_assurance::ED25519_PUBLIC_KEY_LEN;
+use crate::communication_assurance::ED25519_SIGNATURE_LEN;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -73,11 +75,6 @@ use crate::pkcs11_native::Pkcs11Context;
 use crate::pkcs11_native::Pkcs11Error;
 use crate::pkcs11_native::SessionCloser;
 use crate::pkcs11_native::SessionRef;
-
-/// Raw Ed25519 public-key length (the Edwards point), in bytes.
-const ED25519_PUBLIC_KEY_LEN: usize = 32;
-/// Raw Ed25519 signature length, in bytes.
-const ED25519_SIGNATURE_LEN: usize = 64;
 
 /// Outcome of running an operation on a (possibly stale) cached session.
 ///
@@ -609,7 +606,7 @@ fn raw_ed25519_point(ec_point: &[u8]) -> Result<[u8; ED25519_PUBLIC_KEY_LEN], Ke
 /// the bare 32-byte Edwards point (stripping a DER `OCTET STRING` wrapper if the
 /// module returned one), then prefixed with the shared 12-byte RFC 8410 Ed25519
 /// SPKI header used by the KMS public-key path — so the result feeds the same
-/// [`crate::kms_keysource::ed25519_raw_point_from_spki`] guard that the validated
+/// [`crate::kms_keysource::Ed25519SpkiDer`] guard that the validated
 /// delegated-TLS build path (#58) uses to fail closed on a cert/key mismatch. A
 /// wrong-length / non-Ed25519 point fails closed via [`raw_ed25519_point`].
 fn ed25519_spki_from_ec_point(ec_point: &[u8]) -> Result<Vec<u8>, KeyError> {
@@ -912,8 +909,9 @@ mod tests {
 
         // The exported SPKI feeds the SAME parser the #58 validated build path uses;
         // it must recover exactly the original raw point (cert↔signer match basis).
-        let recovered = crate::kms_keysource::ed25519_raw_point_from_spki(&spki_bare)
-            .expect("exported SPKI parses under the #58 delegated-build guard");
+        let recovered = crate::kms_keysource::Ed25519SpkiDer::interpret(&spki_bare)
+            .expect("exported SPKI parses under the #58 delegated-build guard")
+            .raw_point();
         assert_eq!(
             recovered, point,
             "round-trips to the original Edwards point"

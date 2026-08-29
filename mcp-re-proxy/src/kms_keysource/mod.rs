@@ -33,10 +33,11 @@ use crate::key_source::KeyError;
 use crate::key_source::KeySource;
 use crate::key_source::ResponseSigner;
 
-/// Raw Ed25519 signature length (PureEdDSA, no pre-hash).
-const ED25519_SIGNATURE_LEN: usize = 64;
-/// Raw Ed25519 public-key length.
-const ED25519_PUBLIC_KEY_LEN: usize = 32;
+mod protocol_operands;
+
+pub use protocol_operands::Ed25519SpkiDer;
+pub use protocol_operands::RawEd25519Message;
+pub use protocol_operands::RawEd25519Signature;
 
 /// The network-facing KMS operations an Ed25519 response signer needs. The
 /// production implementations wrap a cloud SDK (`aws-sdk-kms` under feature
@@ -51,43 +52,16 @@ pub trait KmsEd25519Backend {
     /// variant (`ED25519_PH_SHA_512` / `MessageType: DIGEST`) is Ed25519ph and is
     /// FORBIDDEN — a backend that uses it produces a signature that will not verify
     /// over the raw preimage (proven caught in tests).
-    fn sign_raw_ed25519(&self, preimage: &[u8]) -> Result<Vec<u8>, KeyError>;
+    fn sign_raw_ed25519(
+        &self,
+        message: RawEd25519Message<'_>,
+    ) -> Result<RawEd25519Signature, KeyError>;
 
     /// The DER `SubjectPublicKeyInfo` (RFC 8410) of the Ed25519 public key — what
     /// AWS KMS `GetPublicKey` returns directly and what a GCP public-key PEM decodes
     /// to. The verification (public) key IS exportable even from a non-exporting
     /// KMS; the private key is not, and this trait never asks for it.
-    fn public_key_spki_der(&self) -> Result<Vec<u8>, KeyError>;
-}
-
-/// Extract the 32 raw Ed25519 public-key bytes from an RFC 8410 `SubjectPublicKeyInfo`.
-///
-/// **Compatibility facade.** The rule is NOT implemented here. What makes a blob a legal
-/// Ed25519 public key is a property of the key representation, not of KMS — the same rule
-/// binds an AWS key, a GCP key, a PKCS#11 token key and the public key inside a served
-/// certificate — and ADR-MCPRE-063 Slice 2 gives it one owner,
-/// [`Ed25519PublicKeyValue`](crate::communication_assurance::Ed25519PublicKeyValue). This
-/// function maps that owner's refusal into the `KeyError` its callers already match on.
-///
-/// The owner distinguishes unreadable bytes from a well-formed key of another algorithm
-/// from a non-canonical Ed25519 encoding. This vocabulary has one variant for all three, so
-/// the distinction is rendered into the message rather than lost: a KMS operator who
-/// configured an RSA key is told the algorithm the key declares. Callers that need to
-/// branch on the difference should consume the owner directly.
-pub(crate) fn ed25519_raw_point_from_spki(
-    der: &[u8],
-) -> Result<[u8; ED25519_PUBLIC_KEY_LEN], KeyError> {
-    use crate::communication_assurance::Ed25519PublicKeyValue;
-
-    Ed25519PublicKeyValue::interpret_rfc8410_spki(der)
-        .map(|key| key.raw_point())
-        .map_err(|refusal| {
-            KeyError::Malformed(format!(
-                "kms: public key is not an RFC 8410 Ed25519 SubjectPublicKeyInfo — {refusal}; \
-                 the KMS key MUST be an Ed25519 key (AWS ECC_NIST_EDWARDS25519 / GCP \
-                 EC_SIGN_ED25519)"
-            ))
-        })
+    fn public_key_spki_der(&self) -> Result<Ed25519SpkiDer, KeyError>;
 }
 
 /// A non-exporting [`ResponseSigner`] that signs Ed25519 inside a cloud KMS.
@@ -108,16 +82,13 @@ impl KmsResponseSigner {
 
 impl ResponseSigner for KmsResponseSigner {
     fn sign_response(&self, preimage: &[u8]) -> Result<String, KeyError> {
-        let signature = self.backend.sign_raw_ed25519(preimage)?;
-        if signature.len() != ED25519_SIGNATURE_LEN {
-            // A wrong-length signature is intrinsic (not a transient fault) — fail closed, never emit it.
-            return Err(KeyError::Malformed(format!(
-                "kms: backend returned a {}-byte signature; expected {ED25519_SIGNATURE_LEN} (expected a raw Ed25519 signature)",
-                signature.len()
-            )));
-        }
+        // No length check here: `RawEd25519Signature` cannot hold anything but 64 bytes,
+        // so a backend returning 65 fails at the seam it crossed rather than at this one.
+        let signature = self
+            .backend
+            .sign_raw_ed25519(RawEd25519Message::for_preimage(preimage))?;
         // Match SigningKey::sign EXACTLY: Base64URL-no-pad of the raw 64 bytes.
-        let encoded = b64url_encode(&signature);
+        let encoded = b64url_encode(signature.bytes());
         // ADR-MCPS-028 §D, enforced AT THE SEAM (mirroring DelegatedResponseSigner):
         // re-verify the backend's signature against THIS signer's advertised public
         // key (`response_public_key`) before emitting. The concrete AWS/GCP backends
@@ -139,8 +110,9 @@ impl ResponseSigner for KmsResponseSigner {
     }
 
     fn response_public_key(&self) -> Result<VerificationKey, KeyError> {
-        let der = self.backend.public_key_spki_der()?;
-        let raw = ed25519_raw_point_from_spki(&der)?;
+        // The backend hands over an already-interpreted key: RFC 8410 parsing happened
+        // once, at the seam, rather than here and again in each provider adapter.
+        let raw = self.backend.public_key_spki_der()?.raw_point();
         VerificationKey::from_bytes(&raw)
             .map_err(|e| KeyError::Malformed(format!("kms: invalid Ed25519 public key: {e}")))
     }
@@ -230,13 +202,15 @@ impl KeySource for KmsKeySource {
 
 #[cfg(test)]
 mod tests {
+    use super::Ed25519SpkiDer;
+    use super::RawEd25519Message;
+    use super::RawEd25519Signature;
     use mcp_re_core::b64url_decode;
     use mcp_re_core::verify_ed25519;
     use mcp_re_core::SigningKey;
 
     use std::sync::Arc;
 
-    use super::ed25519_raw_point_from_spki;
     use super::FileKeySource;
     use super::KeyError;
     use super::KeySource;
@@ -259,11 +233,16 @@ mod tests {
         key: SigningKey,
     }
     impl KmsEd25519Backend for FakeKms {
-        fn sign_raw_ed25519(&self, preimage: &[u8]) -> Result<Vec<u8>, KeyError> {
-            Ok(b64url_decode(&self.key.sign(preimage)).expect("local sig is valid b64url"))
+        fn sign_raw_ed25519(
+            &self,
+            message: RawEd25519Message<'_>,
+        ) -> Result<RawEd25519Signature, KeyError> {
+            let raw =
+                b64url_decode(&self.key.sign(message.bytes())).expect("local sig is valid b64url");
+            RawEd25519Signature::interpret(&raw, "fake-kms")
         }
-        fn public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
-            Ok(ed25519_spki_from_raw(&self.key.public_key().to_bytes()))
+        fn public_key_spki_der(&self) -> Result<Ed25519SpkiDer, KeyError> {
+            Ed25519SpkiDer::interpret(&ed25519_spki_from_raw(&self.key.public_key().to_bytes()))
         }
     }
 
@@ -294,15 +273,26 @@ mod tests {
 
     /// A backend that returns a wrong-length signature (i.e. not a raw 64-byte Ed25519
     /// signature) fails closed — the signer never emits it.
+    ///
+    /// The check MOVED rather than disappeared. A backend can no longer hand a 63-byte
+    /// value across the seam at all: `RawEd25519Signature` has no constructor that admits
+    /// one, so the failure happens where the bytes are interpreted and the signer's own
+    /// length check is gone because there is nothing left for it to catch.
     #[test]
     fn wrong_length_signature_fails_closed() {
         struct ShortSig;
         impl KmsEd25519Backend for ShortSig {
-            fn sign_raw_ed25519(&self, _preimage: &[u8]) -> Result<Vec<u8>, KeyError> {
-                Ok(vec![0u8; 63])
+            fn sign_raw_ed25519(
+                &self,
+                _message: RawEd25519Message<'_>,
+            ) -> Result<RawEd25519Signature, KeyError> {
+                // What a misbehaving transport yields. It cannot become a signature.
+                RawEd25519Signature::interpret(&[0u8; 63], "fake-kms")
             }
-            fn public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
-                Ok(ed25519_spki_from_raw(&test_key().public_key().to_bytes()))
+            fn public_key_spki_der(&self) -> Result<Ed25519SpkiDer, KeyError> {
+                Ed25519SpkiDer::interpret(&ed25519_spki_from_raw(
+                    &test_key().public_key().to_bytes(),
+                ))
             }
         }
         let signer = KmsResponseSigner::new(Box::new(ShortSig));
@@ -318,12 +308,12 @@ mod tests {
         let mut bad = ed25519_spki_from_raw(&[9u8; 32]);
         bad[6] = 0xff;
         assert!(matches!(
-            ed25519_raw_point_from_spki(&bad),
+            Ed25519SpkiDer::interpret(&bad),
             Err(KeyError::Malformed(_))
         ));
         // Wrong length.
         assert!(matches!(
-            ed25519_raw_point_from_spki(&[0u8; 10]),
+            Ed25519SpkiDer::interpret(&[0u8; 10]),
             Err(KeyError::Malformed(_))
         ));
     }
@@ -340,15 +330,22 @@ mod tests {
             key: SigningKey,
         }
         impl KmsEd25519Backend for PrehashKms {
-            fn sign_raw_ed25519(&self, preimage: &[u8]) -> Result<Vec<u8>, KeyError> {
+            fn sign_raw_ed25519(
+                &self,
+                message: RawEd25519Message<'_>,
+            ) -> Result<RawEd25519Signature, KeyError> {
                 // Sign a DIFFERENT message (a stand-in for "the digest, not the raw
-                // bytes"); a real prehash KMS would do the analogous thing.
+                // bytes"); a real prehash KMS would do the analogous thing. The operand
+                // says RAW, and this backend disregards that — which is exactly the
+                // misconfiguration the seam's re-verification exists to catch, because a
+                // type cannot prove what a remote actually hashed.
                 let mut digestish = b"DIGEST:".to_vec();
-                digestish.extend_from_slice(preimage);
-                Ok(b64url_decode(&self.key.sign(&digestish)).expect("b64url"))
+                digestish.extend_from_slice(message.bytes());
+                let raw = b64url_decode(&self.key.sign(&digestish)).expect("b64url");
+                RawEd25519Signature::interpret(&raw, "fake-kms")
             }
-            fn public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
-                Ok(ed25519_spki_from_raw(&self.key.public_key().to_bytes()))
+            fn public_key_spki_der(&self) -> Result<Ed25519SpkiDer, KeyError> {
+                Ed25519SpkiDer::interpret(&ed25519_spki_from_raw(&self.key.public_key().to_bytes()))
             }
         }
         let signer = KmsResponseSigner::new(Box::new(PrehashKms { key: test_key() }));
@@ -376,11 +373,15 @@ mod tests {
             advertised: SigningKey,
         }
         impl KmsEd25519Backend for MismatchedKms {
-            fn sign_raw_ed25519(&self, preimage: &[u8]) -> Result<Vec<u8>, KeyError> {
-                Ok(b64url_decode(&self.signing_key.sign(preimage)).expect("b64url"))
+            fn sign_raw_ed25519(
+                &self,
+                message: RawEd25519Message<'_>,
+            ) -> Result<RawEd25519Signature, KeyError> {
+                let raw = b64url_decode(&self.signing_key.sign(message.bytes())).expect("b64url");
+                RawEd25519Signature::interpret(&raw, "fake-kms")
             }
-            fn public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
-                Ok(ed25519_spki_from_raw(
+            fn public_key_spki_der(&self) -> Result<Ed25519SpkiDer, KeyError> {
+                Ed25519SpkiDer::interpret(&ed25519_spki_from_raw(
                     &self.advertised.public_key().to_bytes(),
                 ))
             }

@@ -554,7 +554,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/key_source.rs"
-baseline_prod_loc = 362
+baseline_prod_loc = 359
 baseline_sha = "d1fc5fa"
 status = "reviewed-action-required"
 review_ref = "EX-008 in docs/architecture/review-dispositions.md"
@@ -715,8 +715,8 @@ status = "unreviewed"
 [[debt]]
 # The RFC 8410 Ed25519 invariant left for its owner; what remains is the facade rendering
 # that owner's refusal into the KMS key vocabulary.
-path = "mcp-re-proxy/src/kms_keysource.rs"
-baseline_prod_loc = 230
+path = "mcp-re-proxy/src/kms_keysource/mod.rs"
+baseline_prod_loc = 202
 baseline_sha = "1b31c60"
 status = "reviewed-action-required"
 review_ref = "EX-008 in docs/architecture/review-dispositions.md"
