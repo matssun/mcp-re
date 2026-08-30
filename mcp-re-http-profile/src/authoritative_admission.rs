@@ -22,20 +22,30 @@
 //! store must therefore name the id it looked the record up under, which is the honest
 //! answer and the one the store's own key already carried.
 //!
-//! # Why the fields are `pub(crate)` and not private
+//! # What seals it, given that the fields are `pub`
 //!
-//! The Verus contract on `crate::admission::check_admission` is this theorem's primary
-//! evidence, and it is stated over these members — `state.admission_id@ ==
-//! binding.admission_id@` is a conjunct of the postcondition, not a step in the body. That
-//! contract lives in `admission.rs` and its type specifications in `verus_std_specs.rs`,
-//! both siblings of this module, so spec-mode access to the representation is what lets the
-//! prover see the relation at all. Crate visibility is bounded by exactly those two
-//! consumers and by this authority's own decision procedure.
+//! `#[non_exhaustive]`, and here that is not the weak choice the workspace rules warn
+//! about. Those rules say `#[non_exhaustive]` seals nothing BECAUSE it binds only other
+//! crates, and an owner's consumers usually live in the owner's own crate. That premise is
+//! false for this owner: every consumer of authoritative admission state — the Redis
+//! source, the in-memory source, the enforcer, every integration test — is in
+//! `mcp-re-proxy`. Out there the struct literal is refused outright, so [`Self::new`] is
+//! the only construction and it cannot be called without naming the workload. Inside this
+//! crate the consumers are `check_admission`, which is this authority's own decision
+//! procedure, and its Verus contract.
 //!
-//! It is NOT widened for tests, and it is not a seal against them: outside the crate — the
-//! admission-source adapters in `mcp-re-proxy`, and every integration test — the
-//! representation is unreachable and `new` plus the projections below are the whole
-//! surface.
+//! The fields are `pub` because the PROVER requires it. Verus refuses
+//! `external_type_specification` on a datatype with non-public fields, and the contract on
+//! `check_admission` is this theorem's primary evidence: `state.admission_id@ ==
+//! binding.admission_id@` is a conjunct of the postcondition, not a step in the body. The
+//! alternative is an opaque datatype with the three members re-introduced as uninterpreted
+//! spec functions — three new trusted assumptions, and generation and status demoted from
+//! transparent field reads to axioms, to buy a seal `#[non_exhaustive]` already gives
+//! against every actual consumer. Private fields would cost the machine-checked conjunct
+//! and buy nothing.
+//!
+//! Reading a field cannot produce an illegal value; only construction can, and construction
+//! is what is closed.
 
 use crate::admission::AdmissionStatus;
 
@@ -45,14 +55,15 @@ use crate::admission::AdmissionStatus;
 /// is that the value says whose state it is, so a currency comparison cannot silently be
 /// made against another workload's.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct AuthoritativeAdmission {
     /// The workload this state is ABOUT. Compared against the call's binding before
     /// generation or status can establish anything.
-    pub(crate) admission_id: String,
+    pub admission_id: String,
     /// The current generation. A call bound to an OLDER generation is stale.
-    pub(crate) generation: u64,
+    pub generation: u64,
     /// The current status. Only `Admitted` permits a call.
-    pub(crate) status: AdmissionStatus,
+    pub status: AdmissionStatus,
 }
 
 impl AuthoritativeAdmission {
