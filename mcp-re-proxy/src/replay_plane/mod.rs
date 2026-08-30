@@ -37,11 +37,6 @@
 //!   and the runtime are dropped is immaterial. DRAIN-BEFORE-RECLAIM is the property to
 //!   preserve when a later owner holds both in one struct — not a field order.
 
-// Only the feature-gated backends construct a store; a default build refuses both arms
-// before it would need one.
-#[cfg(any(feature = "cpstore_etcd", feature = "redis_replay"))]
-use std::sync::Arc;
-
 use crate::async_replay::AsyncReplayTier;
 
 /// Establishing one concrete backend, and refusing the ones this build does not carry.

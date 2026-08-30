@@ -521,6 +521,19 @@ def load_trust_boundaries() -> dict:
         cls = entry.get("max_class_without_assumption")
         if cls is not None and cls not in CLASSES:
             raise ManifestError(f"{bwhere}: max_class_without_assumption {cls!r} invalid")
+        for pattern in entry.get("paths", []):
+            # A boundary path that matches nothing SILENTLY NARROWS the boundary. Unlike a
+            # unit path, `expand_paths` globs these, so a stale entry raises nothing and the
+            # code it used to name simply stops being inside the boundary — and
+            # `boundary_class_violations` stops seeing units that cross it. That is an
+            # over-read produced by a rename, which is exactly what happened when MCPRE-175
+            # turned `pkcs11_keysource.rs` and `async_replay.rs` into owner subtrees.
+            if not any(REPO_ROOT.glob(str(pattern))):
+                raise ManifestError(
+                    f"{bwhere}: path {pattern!r} matches nothing. A boundary that names no "
+                    f"file bounds no unit's class, so a stale entry reads as a registered "
+                    f"boundary while trusting the code it used to cover nowhere."
+                )
     return doc
 
 

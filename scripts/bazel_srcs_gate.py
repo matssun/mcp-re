@@ -46,12 +46,36 @@ REPO = Path(__file__).resolve().parent.parent
 
 MOD_DECL = re.compile(r"^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?mod[ \t]+([a-z0-9_]+)[ \t]*;", re.M)
 SRC_ENTRY = re.compile(r'"(src/[A-Za-z0-9_/]+\.rs)"')
-# A glob reaching into `src/`. Undriftable ONLY when it is the value of a `srcs`
-# attribute — see `library_globs_src`.
+# A glob reaching into `src/`. Undriftable ONLY when it is the value of the PRODUCTION
+# LIBRARY target's `srcs` — see `library_srcs`.
 SRC_GLOB = re.compile(r'glob\(\s*\[[^]]*"src/')
-SRCS_ATTR = re.compile(r"\bsrcs\s*=")
+
+#: A top-level Starlark list variable, e.g. `_PROXY_LIB_SRCS = [...]`. Resolved because
+#: `srcs = _PROXY_LIB_SRCS` is how the largest crate here declares its library.
+LIST_VAR = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\[", re.M)
+
+#: A top-level rule call: an identifier at column 0 followed by `(`.
+RULE_CALL = re.compile(r"^([A-Za-z_][A-Za-z0-9_.]*)\s*\(", re.M)
+
+#: Rule names that declare a Rust LIBRARY. The gate's subject is the crate's library
+#: module tree rooted at `src/lib.rs`, so only these targets can answer for it.
+LIBRARY_RULE = re.compile(r"(?:^|_)rust_library$")
 
 IDENT = re.compile(r"[A-Za-z0-9_]")
+
+
+def balanced(text: str, start: int, opener: str, closer: str) -> str:
+    """The text from `start` (at `opener`) through its matching `closer`, inclusive."""
+    depth = 0
+    for i in range(start, len(text)):
+        ch = text[i]
+        if ch == opener:
+            depth += 1
+        elif ch == closer:
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return text[start:]
 
 
 def attribute_value(text: str, start: int) -> str:
@@ -74,21 +98,68 @@ def attribute_value(text: str, start: int) -> str:
     return text[start:]
 
 
-def library_globs_src(build_text: str) -> bool:
-    """Whether any `srcs` attribute globs into `src/` — the one construct that makes a
-    library's source list undriftable.
+def list_variables(build_text: str) -> dict[str, str]:
+    """Top-level `NAME = [ ... ]` assignments, as raw text."""
+    return {
+        m.group(1): balanced(build_text, build_text.index("[", m.start()), "[", "]")
+        for m in LIST_VAR.finditer(build_text)
+    }
 
-    The ATTRIBUTE is part of the question, not just the word `glob`. A glob over `tests/`
-    says nothing about `src/`, and neither does one in `data`: a test target's runfiles are
-    not what the compiler is handed. Without this distinction, one
-    `data = glob(["src/.../**/*.rs"])` on an unrelated test target exempted the WHOLE crate
-    from this gate — a clean pass over a hand-listed library nobody was checking any more.
-    A gate's scope is part of its measurement.
+
+def rule_calls(build_text: str) -> list[tuple[str, str]]:
+    """Every top-level `rule_name( ... )`, as `(rule_name, body)`."""
+    calls = []
+    for m in RULE_CALL.finditer(build_text):
+        body = balanced(build_text, build_text.index("(", m.start()), "(", ")")
+        calls.append((m.group(1), body))
+    return calls
+
+
+def resolve(value: str, variables: dict[str, str]) -> str:
+    """`value` with any bare top-level list variable it names replaced by that list.
+
+    Substitution is textual and one level deep, which is all this repository's BUILD files
+    use (`srcs = _PROXY_LIB_SRCS`, `deps = A + B`). A variable the gate cannot resolve stays
+    as its own name and simply contributes no `src/` entries — the conservative direction,
+    because an unresolved list makes the gate demand MORE, never less.
     """
-    for match in SRCS_ATTR.finditer(build_text):
-        if SRC_GLOB.search(attribute_value(build_text, match.end())):
-            return True
-    return False
+    out = value
+    for name, text in variables.items():
+        out = re.sub(r"\b%s\b" % re.escape(name), text, out)
+    return out
+
+
+def library_srcs(build_text: str) -> str | None:
+    """The resolved `srcs` of the production library target(s) that own `src/lib.rs`.
+
+    THE POINT. The proposition this gate checks is not "some target in this BUILD has a
+    srcs glob" — it is "the production LIBRARY target whose Rust module tree is being
+    checked has an undriftable srcs definition". Those differ, and the difference is a
+    false green: a `rust_test` carrying `srcs = glob(["src/**/*.rs"])` next to a
+    hand-listed `rust_library` would otherwise exempt the whole crate, which is the same
+    defect as the earlier `data = glob(...)` one at a different attribute.
+
+    So `srcs` is read from the LIBRARY targets and from nowhere else, and the hand-listed
+    set the module walk is checked against comes from the same place. A file named only by
+    a test target's `srcs` or `data` is not something the compiler is handed for the
+    library, and must not satisfy a `mod` declaration in it.
+
+    Returns the concatenated `srcs` text of every library target that owns `src/lib.rs`, or
+    `None` when the BUILD declares no such target.
+    """
+    variables = list_variables(build_text)
+    owning: list[str] = []
+    for rule_name, body in rule_calls(build_text):
+        if not LIBRARY_RULE.search(rule_name):
+            continue
+        match = re.search(r"\bsrcs\s*=", body)
+        if not match:
+            continue
+        srcs = resolve(attribute_value(body, match.end()), variables)
+        # A library owns the crate root either by naming it or by globbing over it.
+        if '"src/lib.rs"' in srcs or SRC_GLOB.search(srcs):
+            owning.append(srcs)
+    return "\n".join(owning) if owning else None
 
 
 def strip_noncode(text: str) -> str:
@@ -248,10 +319,13 @@ def check_crate(crate: Path) -> list[str]:
     if not build.is_file() or not lib.is_file():
         return []
     build_text = build.read_text(errors="replace")
-    if library_globs_src(build_text):
+    srcs = library_srcs(build_text)
+    if srcs is None:
+        return []  # no library target here to answer for the module tree
+    if SRC_GLOB.search(srcs):
         return []  # cannot drift
 
-    listed = set(SRC_ENTRY.findall(build_text))
+    listed = set(SRC_ENTRY.findall(srcs))
     if not listed:
         return []  # nothing hand-listed to check
 
@@ -286,8 +360,8 @@ def checked_crates(root: Path) -> list[str]:
         build, lib = crate / "BUILD.bazel", crate / "src" / "lib.rs"
         if not crate.is_dir() or not build.is_file() or not lib.is_file():
             continue
-        text = build.read_text(errors="replace")
-        if library_globs_src(text) or not SRC_ENTRY.search(text):
+        srcs = library_srcs(build.read_text(errors="replace"))
+        if srcs is None or SRC_GLOB.search(srcs) or not SRC_ENTRY.search(srcs):
             continue
         names.append(crate.name)
     return names
@@ -299,7 +373,15 @@ def selftest() -> int:  # noqa: C901 — a control per property, each one named
 
         `expect` is a substring the single finding must contain, or None for
         "this tree is correct and must produce nothing".
+
+        `build` is wrapped in an `nt_rust_library(...)` call unless it already declares one:
+        the gate reads `srcs` from the LIBRARY TARGET, so a fixture that were only a bare
+        attribute would exercise a shape no BUILD file has and would pass by finding no
+        library at all.
         """
+        if "rust_library(" not in build:
+            body = build.strip()
+            build = 'nt_rust_library(\n    name = "thing",\n    ' + body + '\n)\n'
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             crate = root / "mcp-re-thing"
@@ -424,20 +506,73 @@ def selftest() -> int:  # noqa: C901 — a control per property, each one named
     )
     ok &= case(
         "a glob over tests/ does NOT exempt a hand-listed library",
-        'srcs = ["src/lib.rs", "src/alpha.rs"]\n'
-        'test_srcs = glob(["tests/integration/*.rs"]) + ["src/lib.rs"]\n',
+        'nt_rust_library(\n'
+        '    name = "thing",\n'
+        '    srcs = ["src/lib.rs", "src/alpha.rs"],\n'
+        ")\n"
+        "nt_rust_test(\n"
+        '    srcs = glob(["tests/integration/*.rs"]) + ["src/lib.rs"],\n'
+        ")\n",
         {"lib.rs": LIB, "alpha.rs": "", "beta.rs": ""},
         "mod beta",
     )
     ok &= case(
         "a `data` glob over src/ does NOT exempt a hand-listed library",
-        # The measured regression: a test target listing serving sources in `data` so its
-        # runfiles contain them made the whole crate read as undriftable, and the gate
+        # The first measured regression: a test target listing serving sources in `data` so
+        # its runfiles contain them made the whole crate read as undriftable, and the gate
         # reported a clean pass over a library nobody was checking any more.
-        'srcs = ["src/lib.rs", "src/alpha.rs"],\n'
+        'nt_rust_library(\n'
+        '    name = "thing",\n'
+        '    srcs = ["src/lib.rs", "src/alpha.rs"],\n'
+        ")\n"
         "nt_rust_test(\n"
         '    srcs = glob(["tests/integration/*.rs"]),\n'
         '    data = glob(["src/**/*.rs"]),\n'
+        ")\n",
+        {"lib.rs": LIB, "alpha.rs": "", "beta.rs": ""},
+        "mod beta",
+    )
+    ok &= case(
+        "an unrelated TEST target's own srcs glob over src/ does NOT exempt the library",
+        # THE POISON PILL. The first repair asked "does any `srcs` attribute glob into
+        # `src/`", which is a different proposition from "does the production LIBRARY have
+        # an undriftable srcs". A `rust_test` compiling the library's sources into its own
+        # crate is a real shape, and under the looser question it exempted everything.
+        'nt_rust_library(\n'
+        '    name = "thing",\n'
+        '    srcs = ["src/lib.rs", "src/alpha.rs"],\n'
+        ")\n"
+        "nt_rust_test(\n"
+        '    name = "thing_test",\n'
+        '    srcs = glob(["src/**/*.rs"]),\n'
+        ")\n",
+        {"lib.rs": LIB, "alpha.rs": "", "beta.rs": ""},
+        "mod beta",
+    )
+    ok &= case(
+        "a library declaring its srcs through a top-level list variable is read",
+        "_LIB_SRCS = [\n"
+        '    "src/lib.rs",\n'
+        '    "src/alpha.rs",\n'
+        "]\n"
+        'nt_rust_library(\n'
+        '    name = "thing",\n'
+        "    srcs = _LIB_SRCS,\n"
+        ")\n",
+        {"lib.rs": LIB, "alpha.rs": "", "beta.rs": ""},
+        "mod beta",
+    )
+    ok &= case(
+        "a file named only by a TEST target does not satisfy the library's mod",
+        # The same binding, in the other direction: the hand-listed set comes from the
+        # library's srcs, so a `beta.rs` the compiler is handed only for a test crate must
+        # not answer for a `mod beta;` in the library.
+        'nt_rust_library(\n'
+        '    name = "thing",\n'
+        '    srcs = ["src/lib.rs", "src/alpha.rs"],\n'
+        ")\n"
+        "nt_rust_test(\n"
+        '    srcs = ["src/beta.rs"],\n'
         ")\n",
         {"lib.rs": LIB, "alpha.rs": "", "beta.rs": ""},
         "mod beta",

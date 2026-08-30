@@ -223,7 +223,7 @@ Re-measured by the ADR-061 §5.1 rule after MCPRE-138 (`scripts/module_size_gate
 | `mcp-re-proxy/src/tls.rs` | 1068 | the six authorities EX-004's re-census names | TLS authority facade over a private subtree |
 | `mcp-re-proxy/src/blocking_mtls_harness/` | 554 | the blocking mTLS + HTTP/1 harness, four modules, all under the threshold | as-is — a consumer of the authority, not part of it |
 | `mcp-re-proxy/src/tls_listener_state/auth_epoch.rs` | 270 | `TlsAuthEpoch`, `SharedTlsAuthEpoch`, `EpochBoundSessionStore` | private subordinate of the listener-lifetime state — pre-existing debt, still unreviewed |
-| `mcp-re-proxy/src/tls_plane.rs` | 623 | seeds and rebuilds through `TlsListenerSecurityState` | as-is |
+| ~~`mcp-re-proxy/src/tls_plane.rs`~~ | ~~623~~ | **gone** — became the `tls_plane/` subtree in MCPRE-175 (`mod.rs`, `client_revocation_posture.rs`, `crl_reload_worker.rs`) | as-is |
 | `mcp-re-proxy/src/delegated_tls.rs` | 313 | delegated server-credential resolver | private subordinate |
 | `mcp-re-proxy/src/transport.rs` | 1305 | transport binding and identity | separate authority; band-3 hotspot in its own right |
 | `mcp-re-proxy/src/handshake_quota.rs` | 178 | handshake admission quota | private subordinate |

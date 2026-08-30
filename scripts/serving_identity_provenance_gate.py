@@ -56,7 +56,14 @@ REPO = Path(__file__).resolve().parent.parent
 #: The two direct-TLS serving paths. Both reach an establishment boundary, both resolve a
 #: transport identity for the request they are about to serve, and ADR-MCPRE-051 §1 makes
 #: them the same security core over two I/O framings.
-ASYNC_PATH = "mcp-re-proxy/src/async_serve.rs"
+#:
+#: An entry may name a FILE or a DIRECTORY, and the async path is the latter since
+#: MCPRE-175 split the listener into owner modules: the establishment boundary is in
+#: `connection.rs` and the resolver call in `request.rs`. The proposition is about the
+#: PATH, so a directory is read whole — a gate that kept reading `async_serve.rs` alone
+#: would have reported on a file that no longer holds the derivation, and one pointed at
+#: `mod.rs` would count zero resolver calls and pass for the wrong reason.
+ASYNC_PATH = "mcp-re-proxy/src/async_serve"
 BLOCKING_PATH = "mcp-re-proxy/src/blocking_mtls_harness/connection.rs"
 SERVING_PATHS = [ASYNC_PATH, BLOCKING_PATH]
 
@@ -213,6 +220,21 @@ def check_serving_path(path: str, text: str) -> list[str]:
     return problems
 
 
+def serving_path_text(path: Path) -> str:
+    """One serving path's production source, whether it is a file or an owner subtree.
+
+    Each member's production half is taken SEPARATELY and then joined: concatenating first
+    would let one file's unterminated test region swallow the next file's production code,
+    and the resolver-called-exactly-once count is precisely what that would corrupt.
+    """
+    if path.is_file():
+        return production_text(path.read_text(encoding="utf-8"))
+    members = sorted(p for p in path.rglob("*.rs") if p.is_file())
+    if not members:
+        raise SystemExit(f"{path}: a serving path with no Rust source is not measurable")
+    return "\n".join(production_text(m.read_text(encoding="utf-8")) for m in members)
+
+
 def check_dispatch(text: str) -> list[str]:
     problems = []
     # Signatures are checked ONCE per function. A function that must reach two authorities
@@ -280,7 +302,7 @@ def check(root: Path) -> tuple[list[str], int]:
             problems.append(f"{rel}: missing — the gate cannot examine what is not there.")
             continue
         examined += 1
-        problems += check_serving_path(rel, production_text(path.read_text(encoding="utf-8")))
+        problems += check_serving_path(rel, serving_path_text(path))
 
     dispatch = root / DISPATCH_MODULE
     if not dispatch.exists():

@@ -358,8 +358,8 @@ Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_g
 | `mcp-re-http-profile/src/block.rs` | 647 | evidence blocks, `ResolvedActor` | shared: `ResolvedActor` is a seam value (§14), blocks are a full-profile subordinate |
 | `mcp-re-http-profile/src/envelope.rs` | 280 | envelope vocabulary | unchanged |
 | `mcp-re-http-profile/src/artifact.rs` | 173 | artifact binding + typing | full-profile subordinate (owns THM-0007/0008) |
-| `mcp-re-http-profile/src/chain.rs` | 660 | chain reconstruction | full-profile subordinate |
-| `mcp-re-http-profile/src/delegation.rs` | 384 | delegated credential semantics | full-profile subordinate |
+| ~~`mcp-re-http-profile/src/chain.rs`~~ | ~~660~~ | **gone** — became the `chain/` subtree in MCPRE-175 (`mod.rs` 447, `hop.rs`, `record.rs`) | full-profile subordinate |
+| ~~`mcp-re-http-profile/src/delegation.rs`~~ | ~~384~~ | **gone** — became the `delegation/` subtree in MCPRE-175 (`mod.rs` 218, `verify.rs`, `issue.rs`) | full-profile subordinate |
 | `mcp-re-http-profile/src/keyid.rs` | 45 | keyid parsing | private subordinate of the floor |
 | `mcp-re-http-profile/src/policy.rs` | 240 | `VerifierPolicy` (algorithm allowlist, skew) | floor input; unchanged |
 

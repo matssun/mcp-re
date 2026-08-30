@@ -32,13 +32,13 @@ pub(super) fn establish_etcd(
         let store = std::sync::Arc::new(
             crate::async_etcd_store::EtcdAsyncAtomicReplayStore::connect(endpoint),
         );
-        return Ok((
+        Ok((
             AsyncReplayTier::new(store, freshness),
             ProxyDispatchConfig {
                 fleet_strict: true,
                 tier: Some(tier.clone()),
             },
-        ));
+        ))
     }
     #[cfg(not(feature = "cpstore_etcd"))]
     Err(
@@ -85,13 +85,13 @@ pub(super) fn establish_redis(
         if let Some((quorum, timeout_ms)) = tier.wait_quorum_params() {
             store = store.with_wait_quorum(quorum, timeout_ms);
         }
-        return Ok((
+        Ok((
             AsyncReplayTier::new(std::sync::Arc::new(store), freshness),
             ProxyDispatchConfig {
                 fleet_strict: true,
                 tier: Some(tier.clone()),
             },
-        ));
+        ))
     }
     #[cfg(not(feature = "redis_replay"))]
     Err(

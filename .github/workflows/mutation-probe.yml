@@ -45,7 +45,12 @@ on:
       - "mcp-re-core/src/**"
       - "mcp-re-proxy/src/tls_listener_state/**"
       - "mcp-re-proxy/src/tls.rs"
-      - "mcp-re-proxy/src/tls_plane.rs"
+      # MCPRE-175 split this into an owner subtree (`client_revocation_posture.rs`,
+      # `crl_reload_worker.rs`). A SUBTREE pattern rather than today's children: the
+      # authority is the plane, and a filter enumerating its current members would go
+      # stale the next time one is added — silently, because a filter that matches
+      # nothing fails nothing.
+      - "mcp-re-proxy/src/tls_plane/**"
       - "mcp-re-proxy/src/delegated_tls.rs"
   push:
     branches: [main]
@@ -62,7 +67,12 @@ on:
       - "mcp-re-core/src/**"
       - "mcp-re-proxy/src/tls_listener_state/**"
       - "mcp-re-proxy/src/tls.rs"
-      - "mcp-re-proxy/src/tls_plane.rs"
+      # MCPRE-175 split this into an owner subtree (`client_revocation_posture.rs`,
+      # `crl_reload_worker.rs`). A SUBTREE pattern rather than today's children: the
+      # authority is the plane, and a filter enumerating its current members would go
+      # stale the next time one is added — silently, because a filter that matches
+      # nothing fails nothing.
+      - "mcp-re-proxy/src/tls_plane/**"
       - "mcp-re-proxy/src/delegated_tls.rs"
 
 concurrency:

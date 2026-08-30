@@ -29,7 +29,7 @@ Map an MCP call's evidence onto IETF SCITT (RFC 9943) Signed Statements and COSE
 - the request/response evidence handles themselves (`RequestEvidence`, §7.1 role labels — `evidence-verification`);
 - chain reconstruction, its labels, or its submitted-hop digest (`chain.rs`);
 - the retained bytes (`mcp-re-proxy/src/retained_evidence.rs` implements the store);
-- when a statement is issued for a served call (`mcp-re-proxy/src/transparency.rs`);
+- when a statement is issued for a served call (`mcp-re-proxy/src/transparency/`);
 - key custody, networking, or discovery — the crate is pure, and the fetch lives in `tools/scitt_fetch_service_key.py`.
 
 ## 3. Position in the system
@@ -44,7 +44,8 @@ retained evidence store ─────────────┘              
                                         ScittServiceTrustPin (pinned key + profiles)
 ```
 
-Consumers: `mcp-re-proxy/src/transparency.rs` (issuance, retained verification) and `mcp-re-proxy/src/retained_evidence.rs` (a store implementation). Nothing on the request-serving hot path depends on this unit.
+Consumers: `mcp-re-proxy/src/transparency/` (issuance in `attestation.rs`, the retained
+record in `retained_record.rs` and `covered_set.rs`, durability in `durability.rs`) and `mcp-re-proxy/src/retained_evidence.rs` (a store implementation). Nothing on the request-serving hot path depends on this unit.
 
 ## 4. The twelve questions (ADR-061 §8)
 

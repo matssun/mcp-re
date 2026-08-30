@@ -63,6 +63,16 @@ OWNER_MODULE = "src/managed_worker.rs"
 # a NAMED thread, so a file-granular exemption would let the serving and evidence paths
 # acquire further detached threads for free. The count is what makes a second spawn in an
 # exempt file a gate failure that has to be argued rather than a silent pass.
+#
+# An allowance follows its SITE, not the path it was written at. When MCPRE-175 split three
+# of these files into owner subtrees the reviewed spawns moved with their owners — the
+# client's shutdown bridge to `startup.rs`, its per-connection handler to `serve/mod.rs`,
+# the retention writer to `transparency/durability.rs` — and each entry was re-pointed at
+# the exact new file with its count and reason unchanged. Nothing was widened to a
+# directory: a subtree-granular allowance would let a sibling acquire a detached thread for
+# free, which is the same defect as a file-granular one one level up. The gate reports a
+# stale entry as loudly as a new spawn ("allowlisted for N ... but has 0"), which is what
+# made the three moves visible rather than silently permissive.
 ALLOWED = {
     "mcp-re-proxy/src/main.rs": (1, (
         "the SIGTERM/SIGINT bridge thread belongs to the PROCESS, not to any runtime: it "
@@ -78,7 +88,7 @@ ALLOWED = {
         "`max_concurrent_connections` rather than by a runtime's lifetime, and the harness "
         "is not the shipped serving path (MCPRE-138)"
     )),
-    "mcp-re-client/src/main.rs": (1, (
+    "mcp-re-client/src/startup.rs": (1, (
         "the client binary's SIGTERM bridge, the same process-lifetime signal thread as "
         "the proxy's — it belongs to the process, not to a runtime"
     )),
@@ -86,7 +96,7 @@ ALLOWED = {
         "the stderr audit writer drains a `static` OnceLock channel and is scoped to the "
         "PROCESS by construction; there is no runtime whose lifetime it could take"
     )),
-    "mcp-re-proxy/src/transparency.rs": (1, (
+    "mcp-re-proxy/src/transparency/durability.rs": (1, (
         "the retention writer already satisfies §9 by hand: `EvidenceRetention` owns the "
         "handle, closing the job channel is its halt, and `Drop` joins it"
     )),
@@ -98,7 +108,7 @@ ALLOWED = {
         "the anchor-refresh thread's handle is owned by the refresher it belongs to, which "
         "sets its stop flag and joins on drop"
     )),
-    "mcp-re-client/src/serve.rs": (1, (
+    "mcp-re-client/src/serve/mod.rs": (1, (
         "the client's per-connection handler lives as long as one connection; its capacity "
         "slot is released by the same destructor on success, unwind, and spawn failure"
     )),
