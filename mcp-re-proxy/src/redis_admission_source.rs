@@ -27,8 +27,8 @@
 
 use redis::aio::ConnectionManager;
 
-use mcp_re_http_profile::AdmissionStatus;
 use mcp_re_http_profile::authoritative_admission::AuthoritativeAdmission;
+use mcp_re_http_profile::AdmissionStatus;
 
 use crate::admission_source::admission_key;
 use crate::admission_source::AdmissionFuture;
@@ -109,7 +109,10 @@ impl RedisAdmissionSource {
     /// The key comes from the record's OWN subject. Taking an id alongside the state
     /// would let a caller file workload A's record under workload B's key, and every
     /// later reader would be correct about the value and wrong about whose it is.
-    pub async fn publish(&self, state: &AuthoritativeAdmission) -> Result<(), AdmissionSourceError> {
+    pub async fn publish(
+        &self,
+        state: &AuthoritativeAdmission,
+    ) -> Result<(), AdmissionSourceError> {
         let mut conn = self.conn.clone();
         let result: Result<(), redis::RedisError> = redis::cmd("SET")
             .arg(admission_key(state.admission_id()))

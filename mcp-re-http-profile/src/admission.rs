@@ -598,7 +598,8 @@ mod tests {
     #[test]
     fn a_current_admitted_workload_passes() {
         let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
-        let auth = AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
+        let auth =
+            AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
         let v = check(&c, Some(&auth), &AdmissionPolicy::default()).expect("current");
         assert_eq!(v.generation, 5);
         assert!(!v.degraded);
@@ -617,7 +618,8 @@ mod tests {
     #[test]
     fn an_assertion_issued_to_another_actor_does_not_admit_this_caller() {
         let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
-        let auth = AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
+        let auth =
+            AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
         let err = check_admission(
             &AdmissionBinding::opaque_from(&c),
             &issue(&c),
@@ -662,7 +664,8 @@ mod tests {
         // The control, so the refusal above is attributable to the subject and not to
         // anything else about the value: the SAME generation and status, under this
         // call's own workload, passes.
-        let own = AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
+        let own =
+            AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
         assert!(check(&c, Some(&own), &AdmissionPolicy::default()).is_ok());
     }
 
@@ -694,7 +697,8 @@ mod tests {
         )
         .expect("the assertion itself is valid");
         // ...but the authority has advanced to generation 6.
-        let auth = AuthoritativeAdmission::new("workload-7".to_owned(), 6, AdmissionStatus::Admitted);
+        let auth =
+            AuthoritativeAdmission::new("workload-7".to_owned(), 6, AdmissionStatus::Admitted);
         assert_eq!(
             check(&c, Some(&auth), &AdmissionPolicy::default()).unwrap_err(),
             HttpProfileError::AdmissionNotCurrent,
@@ -704,7 +708,8 @@ mod tests {
     #[test]
     fn a_workload_revoked_after_issuance_is_refused() {
         let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
-        let auth = AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Revoked);
+        let auth =
+            AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Revoked);
         assert_eq!(
             check(&c, Some(&auth), &AdmissionPolicy::default()).unwrap_err(),
             HttpProfileError::AdmissionNotCurrent,
@@ -714,7 +719,8 @@ mod tests {
     #[test]
     fn a_suspended_assertion_never_permits_a_call() {
         let c = claims(5, AdmissionStatus::Suspended, NOW - 10);
-        let auth = AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
+        let auth =
+            AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
         assert_eq!(
             check(&c, Some(&auth), &AdmissionPolicy::default()).unwrap_err(),
             HttpProfileError::AdmissionNotCurrent,
@@ -754,7 +760,8 @@ mod tests {
         // A binding whose digest does not match the assertion's admitted state.
         let mut binding = AdmissionBinding::opaque_from(&c);
         binding.digest_value = b64url_encode(&Sha256::digest(b"different-state"));
-        let auth = AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
+        let auth =
+            AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
         assert_eq!(
             check_admission(
                 &binding,
@@ -977,7 +984,8 @@ mod tests {
     #[test]
     fn the_verdict_names_the_workload_the_binding_committed_to() {
         let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
-        let auth = AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
+        let auth =
+            AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
         let binding = AdmissionBinding::opaque_from(&c);
         let live = check(&c, Some(&auth), &AdmissionPolicy::default()).expect("current");
         assert_eq!(live.admission_id, binding.admission_id);

@@ -34,8 +34,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Mutex;
 
-use mcp_re_http_profile::AdmissionStatus;
 use mcp_re_http_profile::authoritative_admission::AuthoritativeAdmission;
+use mcp_re_http_profile::AdmissionStatus;
 
 /// A fail-closed admission-source failure: the authority could not be reached or
 /// did not answer. NOT a verdict about the workload, and never a fallback to allow.

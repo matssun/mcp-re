@@ -14,6 +14,7 @@ use mcp_re_core::SigningKey;
 use sha2::Digest;
 use sha2::Sha256;
 
+use mcp_re_http_profile::authoritative_admission::AuthoritativeAdmission;
 use mcp_re_http_profile::check_admission;
 use mcp_re_http_profile::issue_admission_assertion;
 use mcp_re_http_profile::sign_request_full;
@@ -25,7 +26,6 @@ use mcp_re_http_profile::AdmissionStatus;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::AudienceTuple;
-use mcp_re_http_profile::authoritative_admission::AuthoritativeAdmission;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
