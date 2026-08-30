@@ -1041,8 +1041,6 @@ export class McpReHttpTransport implements Transport {
           signed.targetUri,
           signed.headers,
           signed.body,
-          signed.evidenceDigestAlg,
-          signed.evidenceDigestValue,
           config.issuerKeyId,
           config.issuerPubkeyB64Url,
           config.issuerRole ?? "server",

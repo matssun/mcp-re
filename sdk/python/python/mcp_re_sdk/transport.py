@@ -735,8 +735,6 @@ async def _exchange(
                 signed.target_uri,
                 list(signed.headers),
                 signed.body(),
-                signed.evidence_digest_alg,
-                signed.evidence_digest_value,
                 config.issuer_key_id,
                 config.issuer_pubkey_b64url,
                 config.issuer_role,
