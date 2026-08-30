@@ -174,6 +174,18 @@ paths = [
   "mcp-re-http-profile/src/evidence.rs",
   "mcp-re-http-profile/src/error.rs",
   "mcp-re-http-profile/src/artifact.rs",
+  # ADR-MCPRE-065 Slice 2 put a SECOND typed artifact verifier on the successful
+  # `verify_request` path: `enforce_full_profile_bindings` calls
+  # `pdp_decision::verify_pdp_decision_binding` before the OAuth dispatcher and continues
+  # past it. A closure claiming to be the complete security-relevant implementation of the
+  # seven verifier operations has to contain it — the OTHER half of that provenance, the
+  # dispatch RELATION itself, is `http_profile.artifact_verification_boundary`.
+  #
+  # `claims.rs`, `issue.rs` and `verify.rs` are deliberately absent: they are the
+  # authorization semantics of a decision document, which no verifier operation here
+  # reaches. Neighbouring code is not closure.
+  "mcp-re-http-profile/src/pdp_decision/mod.rs",
+  "mcp-re-http-profile/src/pdp_decision/binding.rs",
   "mcp-re-http-profile/src/mcp_transport/mod.rs",
   "mcp-re-http-profile/src/mcp_transport/agreement.rs",
   "mcp-re-http-profile/src/sign.rs",
@@ -255,6 +267,14 @@ tested_symbols = [
   "tests/full_profile_test#a_target_uri_disagreeing_with_the_audience_tuple_fails",
   "tests/full_profile_test#artifact_binding_mismatch_fails",
   "tests/full_profile_test#unverifiable_binding_without_material_fails_closed",
+  # The pdp-decision conjunct of THM-0015: what a SUCCESSFUL `verify_request` establishes
+  # about a carried authorization decision, and the two ways that branch refuses. A source
+  # file inside the closure whose conjunct nothing tested would be provenance without
+  # evidence.
+  "tests/full_profile_test#a_carried_pdp_decision_verifies_through_its_own_typed_branch",
+  "tests/full_profile_test#a_carried_decision_that_is_not_the_bound_document_is_refused",
+  "tests/full_profile_test#a_pdp_decision_binding_with_no_carried_decision_is_refused",
+  "lib#pdp_decision::binding::tests::a_different_document_does_not",
   # --- bound response floor (THM-0016) ---
   "tests/proof_path_test#response_roundtrip_bound_to_request_verifies",
   "tests/proof_path_test#response_splice_fails_closed",
@@ -626,16 +646,22 @@ pilot = "verus-wp2"
 # WP2 — typed artifact-binding verification
 # ---------------------------------------------------------------------------
 #
-# The rule the module's final match arm exists to enforce: the four registry types that
-# have no typed verifier can never leave `verify_artifact_binding` as Ok. Stated over all
-# inputs rather than over the seven the test battery enumerates — and the per-type
-# theorems make it structural, so a type added to the registry tomorrow cannot fall
-# through to an OAuth verifier without failing this unit.
+# The rule each typed OAuth verifier exists to enforce: it returns Ok only for a binding
+# of its OWN artifact type in the opaque-digest form. Stated over all inputs rather than
+# over the seven the test battery enumerates — so a type added to the registry tomorrow
+# cannot fall through to an OAuth verifier without failing this unit.
+#
+# This unit owns THM-0007 and ONLY THM-0007. The proposition about which artifact types
+# can leave FULL REQUEST VERIFICATION as verified is a different quantifier over a
+# different closure — `verify_artifact_binding` is no longer the only typed verifier the
+# dispatch selects — and it lives in `http_profile.artifact_verification_boundary` below.
+# Widening this unit to cover it would weaken the postcondition ADR-MCPRE-065 Slice 2 went
+# out of its way to protect.
 
 [[unit]]
 id = "http_profile.artifact_typing"
 class = "V1"
-description = "MCPRE-95 typed artifact bindings: a verified binding is the opaque-digest form of one of the three OAuth types, and each typed verifier admits only its own type."
+description = "MCPRE-95 typed artifact bindings: each typed OAuth verifier admits only its own artifact type, in the opaque-digest form."
 paths = [
   "mcp-re-http-profile/src/artifact.rs",
   "mcp-re-http-profile/src/block.rs",
@@ -678,6 +704,91 @@ proved_symbols = [
 ]
 features = ["verify"]
 pilot = "verus-wp2"
+
+# ---------------------------------------------------------------------------
+# The artifact verification boundary
+# ---------------------------------------------------------------------------
+#
+# One proposition: the relation between an `ArtifactType` and what full-request
+# verification can conclude about a binding of that type.
+#
+#     ArtifactType
+#            |
+#     closed full-request verification selection
+#            |-- supported typed verification path -> may establish verified
+#            +-- no supported typed verification path -> refuses
+#
+# Its own unit, and not a widening of `http_profile.artifact_typing`, because the two are
+# different quantifiers. THM-0007 quantifies over ONE function's returns and is proved
+# there; this quantifies over the DISPATCH — over every branch the enforcement loop can
+# take — and its closure is therefore the vocabulary, the selection, and every typed
+# verifier the selection can reach. ADR-MCPRE-065 Slice 2 added the second such verifier
+# and deliberately did not route it through the first; the boundary proposition is what
+# has to be re-measured when that happens, and having no unit that owned it is why
+# THM-0008 became false without any lane going red.
+#
+# Class V0: the relation is established by a battery plus mutation probes, not by a proof.
+# It CONSUMES THM-0007's proved postcondition for the OAuth branch rather than restating
+# it — see `depends_on` on THM-0008.
+#
+# Both directions are evidence obligations, and the probes below are what make each one
+# load-bearing rather than merely green:
+#
+#   1. every supported type reaches its intended typed verifier and cannot be accepted
+#      through another one;
+#   2. every unsupported registry type is refused rather than skipped or reported
+#      verified.
+
+[[unit]]
+id = "http_profile.artifact_verification_boundary"
+class = "V0"
+description = "The closed artifact-type dispatch of full-request verification: a binding reported verified matched one explicitly supported typed verification branch and satisfied that branch's required binding form; every other artifact type is refused."
+paths = [
+  # The vocabulary the relation is over, and the structural validity every branch demands.
+  "mcp-re-http-profile/src/block/artifact_binding.rs",
+  # The block rules that decide whether the carried-decision evidence form is even
+  # presentable: both halves or neither, exactly one applicable binding, never the
+  # reference form.
+  "mcp-re-http-profile/src/block.rs",
+  # The selection itself — `enforce_full_profile_bindings`, and the credential resolution
+  # that decides whether an OAuth branch is reachable at all.
+  "mcp-re-http-profile/src/verify/full/request.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  # The two typed verifiers the selection can reach.
+  "mcp-re-http-profile/src/artifact.rs",
+  "mcp-re-http-profile/src/pdp_decision/mod.rs",
+  "mcp-re-http-profile/src/pdp_decision/binding.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://http_profile/artifact/verification_boundary",
+  "mutation://http_profile/artifact/verification_boundary",
+]
+# Direction one — a supported type reaches its own branch and no other:
+#   the OAuth branches, at the dispatcher and end to end;
+#   the pdp-decision branch, and its refusal of every other type and binding form.
+# Direction two — the residue is refused:
+#   exhaustively over the four registry types with no supported branch, WITH matching
+#   material supplied, so that nothing but the absent branch can be doing the refusing.
+tested_symbols = [
+  "lib#artifact::tests::dispatch_matches_the_typed_verifiers",
+  "lib#artifact::tests::wrong_artifact_type_fails_closed",
+  "lib#artifact::tests::end_to_end_dpop_from_authorization_header",
+  "lib#block::tests::opaque_binding_with_reference_fields_fails_closed",
+  "lib#block::tests::reference_binding_missing_fields_fails_closed",
+  "lib#pdp_decision::binding::tests::the_exact_transmitted_bytes_correspond",
+  "lib#pdp_decision::binding::tests::a_different_document_does_not",
+  "lib#pdp_decision::binding::tests::a_reference_binding_can_never_satisfy_the_evidence_form",
+  "lib#pdp_decision::binding::tests::another_artifact_type_with_a_matching_digest_is_refused",
+  "tests/full_profile_test#a_carried_pdp_decision_verifies_through_its_own_typed_branch",
+  "tests/full_profile_test#a_pdp_decision_binding_with_no_carried_decision_is_refused",
+  "tests/full_profile_test#a_carried_decision_that_is_not_the_bound_document_is_refused",
+  "tests/full_profile_test#a_pdp_decision_reference_binding_never_reaches_the_evidence_branch",
+  "tests/full_profile_test#every_artifact_type_with_no_supported_branch_is_refused_with_matching_material",
+  "tests/full_profile_test#a_carried_decision_cannot_satisfy_a_binding_of_another_type",
+  "tests/full_profile_test#caller_supplied_material_verifies_non_header_binding",
+  "tests/full_profile_test#unverifiable_binding_without_material_fails_closed",
+]
 
 # ---------------------------------------------------------------------------
 # WP2 — continuation unbypassability
@@ -795,8 +906,16 @@ rationale = "Unbypassability establishes that the binding check runs on every su
 [[unit]]
 id = "proxy.online_ocsp_reachability"
 class = "V0"
-description = "The legality model admits no online-OCSP deployment: --client-ocsp require is refused on the only route to a ValidatedDeployment."
-paths = ["mcp-re-proxy/src/config_state/validation/residue.rs"]
+description = "The legality model admits no online-OCSP deployment: OnlineRevocationEvidenceRequest::Required is refused on the only route to a ValidatedDeployment."
+paths = [
+  "mcp-re-proxy/src/config_state/validation/residue.rs",
+  # The refusal is `online.is_required()`, and that predicate — with the variant set it
+  # ranges over — lives here after ADR-MCPRE-067 Phase 5 replaced the flat `client_ocsp`
+  # field. A closure that named only the caller would fingerprint the clause while the
+  # selection it decides moved outside its provenance.
+  "mcp-re-proxy/src/deployment_request/revocation/mod.rs",
+  "mcp-re-proxy/src/deployment_request/revocation/online_evidence.rs",
+]
 exported_contracts = []
 evidence = ["test://proxy/online_ocsp_reachability/legality"]
 # Two halves, because a correct predicate that nothing calls establishes nothing: the
@@ -805,6 +924,11 @@ evidence = ["test://proxy/online_ocsp_reachability/legality"]
 tested_symbols = [
   "lib#config_state::validation::residue::tests::no_build_admits_the_online_ocsp_mode",
   "lib#config_state::validation::residue::tests::the_boundary_clause_carries_the_online_ocsp_refusal",
+  # The third half, added with the selection's own file: `is_required()` is what the rule
+  # reads, and both variants must answer it as the theorem assumes. A file in the closure
+  # whose conjunct nothing tested is provenance without evidence.
+  "lib#deployment_request::revocation::online_evidence::tests::a_responder_cannot_be_named_where_nothing_would_ask_it",
+  "lib#deployment_request::revocation::online_evidence::tests::requiring_evidence_without_an_override_is_a_complete_selection",
 ]
 
 # ---------------------------------------------------------------------------

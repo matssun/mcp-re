@@ -104,9 +104,9 @@ const OCSP_OFF: &str = "ONLINE OCSP client-cert revocation = OFF: no responder i
 ///
 /// `--client-ocsp require` is refused by [`crate::config_state::validation::online_ocsp_refusal`] from inside
 /// `legality_violations`, which is on the only route to a `ValidatedDeployment` — so every
-/// validated deployment has `client_ocsp == Off`, `build_ocsp_checker` returns `None`, and
-/// this posture is OFF. Taking a `&DeploymentRequest` implied a choice the legality model does not
-/// offer.
+/// validated deployment carries `peer_revocation.online == NotRequired`,
+/// `build_ocsp_checker` returns `None`, and this posture is OFF. Taking a
+/// `&DeploymentRequest` implied a choice the legality model does not offer.
 ///
 /// The seam still DECLARES, because `Seam::ALL` does not vary by `cfg` and an undeclared
 /// seam refuses startup. What went away is the input, not the declaration.

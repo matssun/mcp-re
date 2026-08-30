@@ -14,6 +14,7 @@ use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::AudienceTuple;
+use mcp_re_http_profile::BindingType;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
@@ -31,6 +32,8 @@ const CREATED: i64 = 1_700_000_000;
 const EXPIRES: i64 = 1_700_000_300;
 const TARGET: &str = "https://mcp.example.com/mcp?route=a";
 const ACCESS_TOKEN: &str = "access-token-xyz";
+/// A compact-JWS-shaped authorization decision document (ADR-MCPRE-065 Slice 2).
+const DECISION: &str = "aGVhZGVy.Y2xhaW1z.c2ln";
 
 fn client_key() -> SigningKey {
     SigningKey::from_seed_bytes(&CLIENT_SEED)
@@ -272,6 +275,141 @@ fn caller_supplied_material_verifies_non_header_binding() {
     Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req, &audience(), &material, NOW)
         .expect("caller-supplied mTLS material verifies");
+}
+
+// ---------- the artifact verification boundary (THM-0008) ------------------
+//
+// The closed dispatch relation, in both directions: every supported artifact type
+// reaches its OWN typed verifier and no other, and every type with no supported typed
+// verification branch is refused rather than passed over.
+
+/// A `pdp-decision` / `opaque-digest` binding over the decision document, plus the block
+/// that carries the document beside it — the ADR-MCPRE-065 Slice 2 evidence form.
+fn decision_block(decision: &str) -> HttpRequestEvidenceBlock {
+    let mut block = request_block(vec![ArtifactBinding::opaque_digest(
+        ArtifactType::PdpDecision,
+        decision.as_bytes(),
+    )]);
+    block.authorization_decision = Some(decision.into());
+    block
+}
+
+/// The `reference-digest` LINKAGE form over the same digest bytes as the evidence form.
+fn reference_binding_over(decision: &str) -> ArtifactBinding {
+    let opaque = ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, decision.as_bytes());
+    ArtifactBinding {
+        binding_type: BindingType::ReferenceDigest,
+        authorization_system_id: Some("urn:example:pdp".into()),
+        reference_scheme_id: Some("urn:example:scheme".into()),
+        reference_value: Some("decision-1".into()),
+        ..opaque
+    }
+}
+
+#[test]
+fn a_carried_pdp_decision_verifies_through_its_own_typed_branch() {
+    // Direction one, positive: `pdp-decision` is a SUPPORTED branch, and it reaches
+    // verified through the pdp typed verifier — not through the OAuth dispatcher, which
+    // still has no verifier for it. `no_material` proves the OAuth path was not the route.
+    let block = decision_block(DECISION);
+    let (req, _ev) = signed_full_request(&block);
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &no_material(), NOW)
+        .expect("a carried decision verifies through the pdp typed verifier");
+}
+
+#[test]
+fn a_pdp_decision_binding_with_no_carried_decision_is_refused() {
+    // The evidence form is (binding, carried document). Withhold the document and the
+    // entry has no supported typed branch left: the OAuth dispatcher refuses it, and
+    // supplying the exact decision bytes as caller material does not change that.
+    let block = request_block(vec![ArtifactBinding::opaque_digest(
+        ArtifactType::PdpDecision,
+        DECISION.as_bytes(),
+    )]);
+    let (req, _ev) = signed_full_request(&block);
+    let material = |_b: &ArtifactBinding| Some(DECISION.as_bytes().to_vec());
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &material, NOW)
+        .unwrap_err();
+    assert_eq!(
+        err,
+        HttpProfileError::MalformedEvidence("no typed verifier for this artifact_type yet")
+    );
+}
+
+#[test]
+fn a_carried_decision_that_is_not_the_bound_document_is_refused() {
+    let mut block = decision_block(DECISION);
+    block.authorization_decision = Some("b3RoZXI.Y2xhaW1z.c2ln".into());
+    let (req, _ev) = signed_full_request(&block);
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &no_material(), NOW)
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::ArtifactBindingFailed);
+}
+
+#[test]
+fn a_pdp_decision_reference_binding_never_reaches_the_evidence_branch() {
+    // Same artifact type, same digest bytes, different BINDING form. Linkage names an
+    // external decision MCP-RE authenticates nothing about, so it has no supported typed
+    // branch — the pdp verifier is not selected and the OAuth dispatcher refuses it.
+    let block = request_block(vec![reference_binding_over(DECISION)]);
+    let (req, _ev) = signed_full_request(&block);
+    let material = |_b: &ArtifactBinding| Some(DECISION.as_bytes().to_vec());
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &material, NOW)
+        .unwrap_err();
+    assert_eq!(
+        err,
+        HttpProfileError::MalformedEvidence("no typed verifier for this artifact_type yet")
+    );
+}
+
+#[test]
+fn every_artifact_type_with_no_supported_branch_is_refused_with_matching_material() {
+    // Direction two, exhaustive over the registry residue. The digest MATCHES the material
+    // supplied, so nothing but the absence of a typed branch can be doing the refusing —
+    // a type nothing supports cannot be laundered into a verified result.
+    for artifact_type in [
+        ArtifactType::PdpDecision,
+        ArtifactType::DtrApproval,
+        ArtifactType::ClassifierResult,
+        ArtifactType::HumanApproval,
+    ] {
+        let credential = b"whatever-this-type-would-bind";
+        let block = request_block(vec![ArtifactBinding::opaque_digest(
+            artifact_type,
+            credential,
+        )]);
+        let (req, _ev) = signed_full_request(&block);
+        let material = |_b: &ArtifactBinding| Some(credential.to_vec());
+        let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request(&req, &audience(), &material, NOW)
+            .unwrap_err();
+        assert_eq!(
+            err,
+            HttpProfileError::MalformedEvidence("no typed verifier for this artifact_type yet"),
+            "{artifact_type:?} has no supported typed branch and must be refused"
+        );
+    }
+}
+
+#[test]
+fn a_carried_decision_cannot_satisfy_a_binding_of_another_type() {
+    // Direction one, exclusion: the decision document is in hand and its digest is what
+    // the DPoP entry commits to, but DPoP is checked against the access token in the
+    // covered Authorization header. A supported branch admits only its own binding form.
+    let mut block = request_block(vec![
+        ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, DECISION.as_bytes()),
+        ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, DECISION.as_bytes()),
+    ]);
+    block.authorization_decision = Some(DECISION.into());
+    let (req, _ev) = signed_full_request(&block);
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_request(&req, &audience(), &no_material(), NOW)
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::ArtifactBindingFailed);
 }
 
 // ---------- response-side negatives ----------------------------------------

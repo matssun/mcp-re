@@ -132,7 +132,7 @@ fn online_ocsp_refusal(online: &OnlineRevocationEvidenceRequest) -> Option<Strin
 /// than naming a state, so it has no machine of its own; these are its two columns in the
 /// order semantic dependency puts them. A responder that names nothing is a defect in the
 /// value; a responder no mode will read is a defect in the combination, and only the second
-/// depends on `client_ocsp`.
+/// depends on the online-evidence selection.
 ///
 /// The second clause is GONE and its absence is the result. It refused a responder beside
 /// `--client-ocsp off` — an authority nothing would ever ask, left where an operator could

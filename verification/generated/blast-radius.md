@@ -22,7 +22,8 @@ attestations this view cannot see.
 |---|---|---|---|
 | unit://core.time_rfc3339 | source, contracts or evidence | THM-0002 | _no consumer_ |
 | unit://http_profile.admission_currency | source, contracts or evidence | THM-0003, THM-0004, THM-0005, THM-0006 | _no consumer_ |
-| unit://http_profile.artifact_typing | source, contracts or evidence | THM-0007, THM-0008, THM-0015 | _no consumer_ |
+| unit://http_profile.artifact_typing | source, contracts or evidence | THM-0007 | _no consumer_ |
+| unit://http_profile.artifact_verification_boundary | source, contracts or evidence | THM-0008, THM-0015 | _no consumer_ |
 | unit://http_profile.continuation_binding | source, contracts or evidence | THM-0010 | http_profile.continuation_unbypassability (PROOF_DEPENDENCY) |
 | unit://http_profile.continuation_unbypassability | source, contracts or evidence | THM-0009 | _no consumer_ |
 | unit://http_profile.freshness_window | source, contracts or evidence | THM-0001, THM-0014, THM-0016, THM-0017, THM-0021, THM-0022 | _no consumer_ |

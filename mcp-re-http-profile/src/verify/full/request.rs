@@ -71,6 +71,10 @@ pub(crate) fn full_request<R: Into<ResolverOutcome>>(
 /// the same verdict — two copies of this rule would let a record be labelled `Complete`
 /// under checks the enforcement boundary had tightened.
 ///
+/// The artifact loop is the closed dispatch THM-0008 is stated over, and
+/// `http_profile.artifact_verification_boundary` is its review unit: an artifact type with
+/// no supported typed verification branch is refused here, never skipped.
+///
 /// The audience test is equality against the VERIFIER's own tuple plus consistency
 /// between that tuple's `target_uri` and the request's `@target-uri`, which guards routed
 /// and reverse-proxied deployments where a label could alias two dispatch boundaries.

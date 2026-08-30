@@ -283,21 +283,46 @@ depends_on = []
 id = "THM-0008"
 title = "No untyped artifact binding leaves the verifier as verified"
 statement = """
-A binding reported verified is in the opaque-digest form and is one of the three OAuth
-artifact types. The four registry types with no typed verifier can never be reported
-verified.
+If `enforce_full_profile_bindings` returns Ok for an `HttpRequestEvidenceBlock`, then every
+`ArtifactBinding` that block declared matched one of MCP-RE's explicitly supported typed
+verification branches and satisfied that branch's required binding form.
+
+The supported branches are exactly two:
+
+  * the OAuth typed-verifier family, reached through
+    `artifact::verify_artifact_binding` for `OauthDpop`, `OauthMtls` and `OauthRar`, each
+    in the `OpaqueDigest` form and against resolved credential material;
+  * `PdpDecision` in the `OpaqueDigest` form, reached through
+    `pdp_decision::verify_pdp_decision_binding` and only when the block carries the
+    decision document the binding commits to.
+
+Every other `ArtifactType`, and every binding form outside the branch that admits it — a
+`ReferenceDigest` entry included — is refused. A `PdpDecision` binding whose block carries
+no decision has no supported branch and is refused with the rest.
 """
 security_consequence = """
-A caller cannot silently treat an artifact type nothing can verify as though it had been
-verified.
+An artifact type that nothing supports cannot be laundered into a verified result: it is
+refused, not skipped, and not reported verified by a branch built for a different type. A
+caller therefore cannot silently treat an unsupported artifact type as though it had been
+verified, and adding a registry type does not quietly widen what verification concludes.
 """
 scope = """
-Structural over the type dispatch, and inherits THM-0007's exclusion: it does not
-establish that any digest matched its credential (ASM-0018).
+Structural over the dispatch relation, and inherits THM-0007's exclusion: it does not
+establish that any digest matched its credential (ASM-0018), nor that the supplied material
+is the credential the peer actually holds.
+
+It says which branch a verified binding took; it says nothing about what a decision
+document AUTHORIZES. Digest correspondence is one link — authority trust, actor and action
+relation, validity and an explicit Allow are separate propositions with their own owner
+(ADR-MCPRE-065), and none of them is claimed here.
+
+The cardinality of the supported set is a fact of the current implementation, not the
+spine of the claim: the proposition is the closed selection, so adding a typed verifier
+obliges a re-measurement rather than making the sentence false by arithmetic.
 """
-owner = "http_profile.artifact_typing"
+owner = "http_profile.artifact_verification_boundary"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://http_profile.artifact_typing"]
+supported_by = ["unit://http_profile.artifact_verification_boundary"]
 depends_on = ["THM-0007"]
 
 [[theorem]]
@@ -384,9 +409,15 @@ depends_on = []
 id = "THM-0013"
 title = "No validated deployment enables online OCSP client-certificate revocation"
 statement = """
-Every DeploymentRequest whose client_ocsp is Require is refused by the legality boundary,
-in every build and independently of the online_ocsp feature. Every ValidatedDeployment
-therefore carries client_ocsp = Off, and the serving path is handed no OCSP checker.
+Every DeploymentRequest whose `peer_revocation.online` is
+`OnlineRevocationEvidenceRequest::Required` is refused by the legality boundary, in every
+build and independently of the online_ocsp feature. Every ValidatedDeployment therefore
+carries `peer_revocation.online == OnlineRevocationEvidenceRequest::NotRequired`, and the
+serving path is handed no OCSP checker.
+
+The refusal is over the SELECTION, not over any responder parameter it carries: an
+`OcspResponderRequest` travels inside `Required`, so every deployment that names a
+responder is already refused by the selection that holds it.
 """
 security_consequence = """
 A successfully validated MCP-RE deployment cannot advertise or rely upon online OCSP
@@ -513,14 +544,16 @@ statement = """
 If `Verifier::verify_request` returns Ok, then the request-floor proposition holds for the
 same request, and in addition: the request evidence block parsed and validated under the
 profile tag, its audience tuple equalled the verifier's own and agreed with the request's
-`@target-uri`, and every artifact binding the block declared was resolved to credential
-material and verified.
+`@target-uri`, and every artifact binding the block declared was verified through the
+supported typed verification branch for its artifact type (THM-0008) — against the
+credential material resolved for that binding, or, for the carried authorization-decision
+form, against the decision document the block itself carried.
 """
 security_consequence = """
 A request signed for a different audience, route or target cannot be successfully returned
 as a full-profile verified request, and a declared artifact binding cannot be skipped by
-withholding the material it commits to — an unobtainable credential fails closed rather
-than being ignored.
+withholding the evidence it commits to — an unobtainable credential, and an artifact type
+with no supported typed verification branch, both fail closed rather than being ignored.
 """
 scope = """
 This theorem characterizes values successfully returned by `verify_request`. It does not
@@ -533,12 +566,19 @@ why the consequence above is phrased over what this operation returns rather tha
 a deployment admits. It does not establish that the artifact material the caller supplied is
 the credential the peer actually holds — only that the binding verified against what was
 supplied.
+
+A verified `pdp-decision` binding establishes that the block carried the exact decision
+document its digest committed to. It establishes nothing about what that document
+AUTHORIZES: authority trust, the actor and action relations, validity and an explicit
+Allow are the authorization owner's propositions (ADR-MCPRE-065), not this one's.
 """
 owner = "http_profile.verifier_results"
 review_requirement = "Owner security-specification review"
 supported_by = [
   "unit://http_profile.verifier_results",
-  "unit://http_profile.artifact_typing",
+  # The artifact conjunct's evidence closure is the DISPATCH, not one typed verifier:
+  # THM-0007's proved postcondition reaches this claim through THM-0008's `depends_on`.
+  "unit://http_profile.artifact_verification_boundary",
 ]
 depends_on = ["THM-0014", "THM-0007", "THM-0008"]
 
