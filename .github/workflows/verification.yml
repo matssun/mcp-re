@@ -46,7 +46,12 @@ on:
       # production wiring that gives a listener a lifetime at all.
       - "mcp-re-proxy/src/tls_listener_state/**"
       - "mcp-re-proxy/src/tls.rs"
-      - "mcp-re-proxy/src/tls_plane.rs"
+      # MCPRE-175 split this into an owner subtree (`client_revocation_posture.rs`,
+      # `crl_reload_worker.rs`). A SUBTREE pattern rather than today's children: the
+      # authority is the plane, and a filter enumerating its current members would go
+      # stale the next time one is added — silently, because a filter that matches
+      # nothing fails nothing.
+      - "mcp-re-proxy/src/tls_plane/**"
       - "mcp-re-proxy/src/delegated_tls.rs"
       # ADR-MCPRE-063 Slice 3: the correspondence gate on delegated resolver construction.
       - "mcp-re-proxy/src/delegated_tls/**"
@@ -60,7 +65,12 @@ on:
       # the units.
       - "mcp-re-proxy/src/communication_assurance/**"
       # The merged plain-library integration binary carries this unit's DER-level
-      # controls, and encoding v4 digests those sources, not only their names.
+      # controls, and encoding v4 digests those sources, not only their names. The
+      # `test_source_patterns` emits BOTH layouts a cargo test target can have, so
+      # `tests/integration.rs` is a fingerprint input even though this suite is a
+      # directory today: collapsing it back to one file must still re-run the lane. It is
+      # therefore a live filter, not a stale one, and the liveness half of
+      # `scripts/verification_trigger_gate.py` exempts exactly that case.
       - "mcp-re-proxy/tests/integration/**"
       - "mcp-re-proxy/tests/integration.rs"
       # MCPRE-146/148: the three trust units declared with the four theorems — the
@@ -100,7 +110,12 @@ on:
       # production wiring that gives a listener a lifetime at all.
       - "mcp-re-proxy/src/tls_listener_state/**"
       - "mcp-re-proxy/src/tls.rs"
-      - "mcp-re-proxy/src/tls_plane.rs"
+      # MCPRE-175 split this into an owner subtree (`client_revocation_posture.rs`,
+      # `crl_reload_worker.rs`). A SUBTREE pattern rather than today's children: the
+      # authority is the plane, and a filter enumerating its current members would go
+      # stale the next time one is added — silently, because a filter that matches
+      # nothing fails nothing.
+      - "mcp-re-proxy/src/tls_plane/**"
       - "mcp-re-proxy/src/delegated_tls.rs"
       # ADR-MCPRE-063 Slice 3: the correspondence gate on delegated resolver construction.
       - "mcp-re-proxy/src/delegated_tls/**"
@@ -114,7 +129,12 @@ on:
       # the units.
       - "mcp-re-proxy/src/communication_assurance/**"
       # The merged plain-library integration binary carries this unit's DER-level
-      # controls, and encoding v4 digests those sources, not only their names.
+      # controls, and encoding v4 digests those sources, not only their names. The
+      # `test_source_patterns` emits BOTH layouts a cargo test target can have, so
+      # `tests/integration.rs` is a fingerprint input even though this suite is a
+      # directory today: collapsing it back to one file must still re-run the lane. It is
+      # therefore a live filter, not a stale one, and the liveness half of
+      # `scripts/verification_trigger_gate.py` exempts exactly that case.
       - "mcp-re-proxy/tests/integration/**"
       - "mcp-re-proxy/tests/integration.rs"
       # MCPRE-146/148: the three trust units declared with the four theorems — the

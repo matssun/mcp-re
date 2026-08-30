@@ -31,7 +31,12 @@ nt_rust_library(
 # The CLI shell: parse, build, perform the fail-closed startup anchor load, serve.
 nt_rust_binary(
     name = "mcp_re_client_cli",
-    srcs = ["src/main.rs"],
+    # `startup.rs` is a module of the BINARY crate, not the library: what the invocation
+    # asked for and what running until shutdown means are the CLI shell's own facts.
+    srcs = [
+        "src/main.rs",
+        "src/startup.rs",
+    ],
     edition = "2021",
     deps = [
         ":mcp_re_client",

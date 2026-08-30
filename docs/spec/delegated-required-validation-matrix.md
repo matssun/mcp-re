@@ -81,7 +81,7 @@ additionally guarded at the integration altitude by a `MANIFEST` row (noted inli
 
 All client verification cells are the frozen `d01`–`d22` corpus (each a black-box KAT
 through the single production entry point `verify_delegated_response_full`), backed by
-the per-gate unit tests in `mcp-re-http-profile/src/delegation.rs`.
+the per-gate unit tests in `mcp-re-http-profile/src/delegation/verify.rs`.
 
 | # | Required behavior | Proof (vector → verdict) | Enforced |
 |---|---|---|---|
@@ -154,7 +154,7 @@ multi-replica harness.
 |---|---|---|---|
 | D1 | Revoked **delegated_kid** rejected | `revoked_delegated_kid_rejects_success`; corpus `d11_revoked_delegated_key` | CI + CORPUS |
 | D2 | Revoked **issuer_kid** rejected | `revoked_issuer_kid_rejects_success` | CI |
-| D3 | Revoked **jti** rejected (client entry point forwards jti to the seam) | `revoked_by_jti_rejects_success` (client-core), `revoked_by_jti_is_revoked` (`delegation.rs`) | CI |
+| D3 | Revoked **jti** rejected (client entry point forwards jti to the seam) | `revoked_by_jti_rejects_success` (client-core), `revoked_by_jti_is_revoked` (`delegation/verify.rs`) | CI |
 | D4 | A revoked key cannot deliver a trustworthy **rejection** either | `revoked_delegated_key_rejection_receipt_is_rejected` | CI |
 | D5 | Non-revoked credential with a **non-empty** denylist still verifies (seam is not blanket-deny) | `non_revoked_credential_verifies_with_nonempty_list` | CI |
 | D6 | Rotation to a fresh key succeeds while the old kid is revoked | `rotation_to_new_delegated_key_succeeds_when_old_revoked` | CI |

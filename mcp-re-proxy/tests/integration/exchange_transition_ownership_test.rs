@@ -34,15 +34,16 @@
 
 use std::collections::BTreeSet;
 
-/// The transitions `handle` states itself, and why each is the assembly's fact.
+/// The transitions the assembly states itself, and why each is the assembly's fact.
 ///
 /// A stage establishes what its own work justifies. These six are not any stage's: they
 /// are established by the shape of the pipeline around the stages, so there is no function
-/// whose success could carry them.
+/// whose success could carry them. "The assembly" is `handle` together with its region
+/// functions — the code that COMPOSES stages rather than performing one.
 const ASSEMBLY_OWNED: &[(&str, &str)] = &[
     (
         "ContinuationRetired",
-        "decided by `handle` from a `Retirement`, not by the store call: three of the four \
+        "decided by the answering-commitment region from a `Retirement`, not by the \
          outcomes do not proceed, and which of them spends a human's approval is a fact \
          about the exchange rather than about the call",
     ),
@@ -70,7 +71,7 @@ const ASSEMBLY_OWNED: &[(&str, &str)] = &[
     ),
     (
         "OpenLegResponseServed",
-        "the other terminal, chosen from the same reply class. Both are `handle` deciding \
+        "the other terminal, chosen from the same reply class. Both are the assembly \
          which claim this reply makes, not a step either of them performs",
     ),
 ];
@@ -120,16 +121,59 @@ fn production_half(source: &str) -> String {
     mcp_re_test_paths::rust_source::production_half(source)
 }
 
+/// Every production line of the serving path — the assembly and every region under it.
+///
+/// The property is about THE SERVING PATH, not about one file of it. When the pipeline
+/// became one module per region, a scan of `mod.rs` alone would have reported a clean pass
+/// over an assembly that no longer contains most of the pipeline, and a region that kept an
+/// `advance` beside a stage would simply have been out of scope. A gate's scope is part of
+/// its measurement.
+///
+/// The scope is the DIRECTORY the anchor file sits in, walked, rather than a list of region
+/// files: a list would have to learn about the next region, and the failure mode of a stale
+/// list is a clean pass over unmeasured code. Under Bazel the directory is the runfiles
+/// copy, which the target's `glob` populates; under cargo it is the source tree.
 fn serving_source() -> String {
-    let path = mcp_re_test_paths::resolve_runfile("MCP_RE_HTTP_PROFILE_SERVE_SRC");
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"))
+    let anchor = mcp_re_test_paths::resolve_runfile("MCP_RE_HTTP_PROFILE_SERVE_SRC");
+    let root = anchor
+        .parent()
+        .unwrap_or_else(|| panic!("{anchor:?} has no parent directory"))
+        .to_path_buf();
+    let mut files = Vec::new();
+    collect_rust_files(&root, &mut files);
+    files.sort();
+    assert!(
+        files.len() > 1,
+        "the serving path is one file at {root:?} — the walk found no regions, and every \
+         assertion below would then be about the assembly alone"
+    );
+    let mut whole = String::new();
+    for path in files {
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+        // Each file's production half separately: concatenating first would let one file's
+        // unterminated test region swallow the next file's production code.
+        whole.push_str(&production_half(&text));
+        whole.push('\n');
+    }
+    whole
+}
+
+fn collect_rust_files(dir: &std::path::Path, into: &mut Vec<std::path::PathBuf>) {
+    let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read dir {dir:?}: {e}"));
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rust_files(&path, into);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            into.push(path);
+        }
+    }
 }
 
 /// A stage's event is never also stated by the assembly.
 #[test]
 fn no_transition_a_stage_establishes_is_also_advanced_by_the_serving_path() {
-    let source = serving_source();
-    let production = production_half(&source);
+    let production = serving_source();
     let production = production.as_str();
     let by_stages = events_named_in(production, "Established::new(");
     let by_assembly = events_named_in(production, ".advance(");
@@ -152,9 +196,8 @@ fn no_transition_a_stage_establishes_is_also_advanced_by_the_serving_path() {
 /// The assembly states exactly the six transitions that are its own.
 #[test]
 fn the_serving_path_states_only_the_assembly_s_own_transitions() {
-    let source = serving_source();
     let declared: BTreeSet<String> = ASSEMBLY_OWNED.iter().map(|(e, _)| e.to_string()).collect();
-    let actual = events_named_in(&production_half(&source), ".advance(");
+    let actual = events_named_in(&serving_source(), ".advance(");
 
     let undeclared: Vec<&String> = actual.difference(&declared).collect();
     assert!(

@@ -2,9 +2,28 @@
 # SPDX-License-Identifier: Apache-2.0
 """Verification-trigger gate — the lane runs on everything its fingerprint reads.
 
-WHAT THIS PROVES, exactly: every file that participates in an ADR-MCPRE-059
-`ReviewFingerprint` is matched by `.github/workflows/verification.yml`'s
-`paths:` filters, on both the `pull_request` and `push` triggers.
+WHAT THIS PROVES, exactly: two things about the trigger set.
+
+  1. COVERAGE — every file that participates in an ADR-MCPRE-059 `ReviewFingerprint`
+     is matched by `.github/workflows/verification.yml`'s `paths:` filters, on both
+     the `pull_request` and `push` triggers.
+  2. LIVENESS — no wildcard-free filter names a file that is neither in the tree nor a
+     required fingerprint input.
+
+The second clause of (2) is not slack. `test_source_patterns` deliberately emits BOTH
+layouts a cargo test target can have — `tests/<name>.rs` and `tests/<name>/**/*.rs` — so a
+filter may name a file that does not exist TODAY because collapsing the suite back to one
+file must still re-run the lane. That is a live trigger for a shape the tree may take. A
+filter naming a path nothing depends on and nothing occupies is the different thing: dead.
+
+The second is not implied by the first, and MCPRE-175 is why it is here. When a file
+becomes an owner subtree, the filter that named it keeps parsing, keeps matching
+nothing, and fails nothing: `mcp-re-proxy/src/tls_plane.rs` sat in two workflows after
+the file became `tls_plane/`. Coverage alone caught that only because the manifest also
+named the moved paths — a split under a directory filter such as
+`mcp-re-http-profile/src/**` would have left the dead entry invisible. A filter that
+matches nothing is not a trigger; it is a claim about what re-runs the lane that stopped
+being true.
 
 WHAT IT DOES NOT PROVE: that the lane passes, that the trigger fires for a given
 change, or that the fingerprint's component set is the right one. It proves only
@@ -140,6 +159,32 @@ def fingerprint_inputs(manifest: Path) -> list[str]:
     return sorted(set(required))
 
 
+# A filter entry with no wildcard names exactly one path, so whether that path exists is
+# decidable. Anything with `*` is a pattern over files that may legitimately not exist yet.
+LITERAL_FILTER = re.compile(r'^\s*-\s*"([^"*?\[]+)"\s*$', re.M)
+
+
+def stale_filters(workflow_text: str, repo: Path, required: list[str]) -> list[str]:
+    """Wildcard-free `paths:` entries that name neither a file in the tree nor a required
+    fingerprint input.
+
+    Scoped to entries inside a `paths:` list, so an unrelated quoted scalar elsewhere in
+    the workflow is not read as a filter. A path that IS a fingerprint input is live
+    whether or not the tree holds it today — see the module docstring.
+    """
+    wanted = set(required)
+    stale: list[str] = []
+    for patterns in trigger_paths(workflow_text).values():
+        for pattern in patterns:
+            if any(ch in pattern for ch in "*?["):
+                continue
+            if pattern in wanted:
+                continue
+            if not (repo / pattern).exists():
+                stale.append(pattern)
+    return sorted(set(stale))
+
+
 def check(workflow_text: str, required: list[str]) -> list[str]:
     triggers = trigger_paths(workflow_text)
     failures: list[str] = []
@@ -181,6 +226,43 @@ def selftest() -> int:
             failed = True
             print(f"        got {failures}")
 
+    # LIVENESS. A filter that matches nothing fails nothing, which is why it needs its
+    # own control: coverage cannot see it.
+    live = REPO
+    liveness_cases = [
+        (
+            "a wildcard-free filter naming a file that exists is live",
+            'on:\n  pull_request:\n    paths:\n      - "Cargo.lock"\n',
+            [],
+            [],
+        ),
+        (
+            "a wildcard-free filter naming a moved file is STALE",
+            'on:\n  pull_request:\n    paths:\n      - "mcp-re-proxy/src/tls_plane.rs"\n',
+            [],
+            ["mcp-re-proxy/src/tls_plane.rs"],
+        ),
+        (
+            "the subtree pattern that replaced it is not read as a literal",
+            'on:\n  pull_request:\n    paths:\n      - "mcp-re-proxy/src/tls_plane/**"\n',
+            [],
+            [],
+        ),
+        (
+            "an absent path that IS a fingerprint input is live, not stale",
+            'on:\n  pull_request:\n    paths:\n      - "mcp-re-proxy/tests/integration.rs"\n',
+            ["mcp-re-proxy/tests/integration.rs"],
+            [],
+        ),
+    ]
+    for label, text, wanted, expected in liveness_cases:
+        got = stale_filters(text, live, wanted)
+        ok = got == expected
+        print(f"  {'ok  ' if ok else 'FAIL'}  {label}")
+        if not ok:
+            failed = True
+            print(f"        got {got}, expected {expected}")
+
     if failed:
         print("verification-trigger gate: SELFTEST FAILED")
         return 1
@@ -193,7 +275,13 @@ def main(argv: list[str]) -> int:
         return selftest()
 
     required = fingerprint_inputs(MANIFEST)
-    failures = check(WORKFLOW.read_text(encoding="utf-8"), required)
+    text = WORKFLOW.read_text(encoding="utf-8")
+    failures = check(text, required)
+    failures += [
+        f"path filter {p!r} names nothing in the tree — a filter that matches nothing is "
+        "not a trigger, and a file that became an owner subtree leaves exactly this behind"
+        for p in stale_filters(text, REPO, required)
+    ]
     if failures:
         print("verification-trigger gate: FAILED")
         for failure in sorted(set(failures)):
@@ -203,7 +291,8 @@ def main(argv: list[str]) -> int:
     # empty required-set would otherwise report OK for having checked nothing.
     print(
         f"verification-trigger gate: OK — {len(required)} fingerprint input(s) all "
-        "matched by the pull_request and push filters"
+        "matched by the pull_request and push filters, and every wildcard-free filter "
+        "names something the tree holds or the fingerprint reads"
     )
     return 0
 

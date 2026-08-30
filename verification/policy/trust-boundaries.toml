@@ -24,7 +24,12 @@ description = "PKCS#11 hardware token, reached through the raw cryptoki-sys FFI.
 kind = "ffi"
 paths = [
   "mcp-re-proxy/src/pkcs11_native.rs",
-  "mcp-re-proxy/src/pkcs11_keysource.rs",
+  # MCPRE-175 split the keysource into owner modules. A GLOB rather than today's members:
+  # this boundary bounds the class of any unit whose closure reaches the token, and a
+  # member added later that starts calling `cryptoki_sys` would otherwise sit outside the
+  # boundary silently — narrowing what `boundary_class_violations` can see, which is the
+  # direction that produces an over-read.
+  "mcp-re-proxy/src/pkcs11_keysource/**/*.rs",
 ]
 beyond = "The token's own implementation of key custody, signing, and object attributes."
 max_class_without_assumption = "V0"
@@ -37,7 +42,7 @@ paths = [
   "mcp-re-proxy/src/async_fleet.rs",
   "mcp-re-proxy/src/app.rs",
   "mcp-re-proxy/src/main.rs",
-  "mcp-re-client/src/main.rs",
+  "mcp-re-client/src/startup.rs",
 ]
 beyond = "Kernel behaviour, including SO_REUSEPORT connection distribution and signal delivery."
 max_class_without_assumption = "V0"
@@ -84,10 +89,13 @@ kind = "environment"
 # lets this boundary stay narrow: the declared surface is the code that exercises the
 # authority, not whatever larger module happens to contain it.
 paths = [
-  "mcp-re-client/src/main.rs",
+  "mcp-re-client/src/startup.rs",
   "mcp-re-demo/src/demo_fixtures.rs",
   "mcp-re-host/src/clock.rs",
-  "mcp-re-proxy/src/async_replay.rs",
+  # MCPRE-175: the store's own eviction clock is the only `SystemTime` read left in the
+  # replay tier, and it moved to the module that owns what is retained. Named precisely,
+  # per the note above: the authority, not the module tree that contains it.
+  "mcp-re-proxy/src/async_replay/retained_set.rs",
   "mcp-re-proxy/src/aws_kms_keysource.rs",
   "mcp-re-proxy/src/aws_sts.rs",
   "mcp-re-proxy/src/clock.rs",
@@ -129,10 +137,12 @@ max_class_without_assumption = "V0"
 #    share a boundary merely because both involve time.
 #
 # 2. MONOTONIC TIME IS A DIFFERENT AUTHORITY.
-#    Nine production files use `std::time::Instant` for local deadlines and elapsed-time
-#    measurement: mcp-re-client/src/serve.rs, mcp-re-transport/src/lib.rs, and
-#    mcp-re-proxy's async_serve.rs, cli.rs, delegated_tls.rs, http_inner.rs,
-#    managed_worker.rs, stage_timers.rs, trust_epoch.rs. `Instant` is monotonic and not
+#    Production files use `std::time::Instant` for local deadlines and elapsed-time
+#    measurement: `mcp-re-client/src/serve/` and `mcp-re-transport/src/limits.rs`, and
+#    mcp-re-proxy's `async_serve/`, cli.rs, delegated_tls.rs, http_inner.rs,
+#    managed_worker.rs, stage_timers.rs, trust_epoch.rs. (MCPRE-175 made three of those
+#    owner subtrees; the count is deliberately not restated, because an inventory with a
+#    number in it goes stale in a way the reader cannot see.) `Instant` is monotonic and not
 #    comparable to any peer's clock, so it cannot participate in the skew question this
 #    boundary's `beyond` names. Whether the monotonic clock deserves a boundary of its
 #    own is an OPEN QUESTION for the owner; it is recorded here rather than silently

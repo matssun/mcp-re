@@ -1,0 +1,884 @@
+// SPDX-License-Identifier: Apache-2.0
+//! The TLS plane (ADR-MCPRE-056 §8; ADR-MCPRE-051 §6): transport custody.
+//!
+//! Owns the server TLS configuration the accept loop hands each handshake, the
+//! per-request client-revocation index, and the worker that re-reads `--client-crl`
+//! without a restart.
+//!
+//! # A surviving snapshot may keep serving — and that is not the odd one out
+//!
+//! Each plane so far has answered "what does a handle do once its owner is gone?"
+//! differently, and the reason is a property of the ARTIFACT, not of the plane:
+//!
+//! - `trust_plane`'s resolver FAILS CLOSED. A trust map carries no expiry, so a snapshot
+//!   nothing re-reads would resolve a revoked key forever.
+//! - `signing_plane`'s signer is RETIRED. It produces authority, and nothing is left to
+//!   rotate its key or observe a trust-epoch advance.
+//! - `reloading_trust::SignerDirectory` KEEPS ANSWERING. It yields an identity coordinate
+//!   and admits nothing on its own.
+//! - This plane's snapshot KEEPS SERVING, for a reason none of the others can claim:
+//!   **every CRL this plane loads states its own `nextUpdate`** — one that omits it is
+//!   refused where it is read ([`crate::client_crl_publication::crl_next_update_required`]), at startup and on
+//!   every reload, because it would never fall out of force. Past `nextUpdate` the
+//!   verdict for that issuer is `Unknown`,
+//!   and unknown status is refused unconditionally — no builder on either the handshake
+//!   or the per-request side takes a policy input at all. So a CRL nobody is refreshing
+//!   converges on refusing that issuer's certificates rather than on admitting revoked
+//!   ones. The artifact bounds itself; the plane does not have to.
+//!
+//! That is why [`Drop`] here performs no security transition. It is a deliberate
+//! conclusion from the CRL's own semantics, not the absence of the question.
+//!
+//! Stated as the conditional it actually is:
+//!
+//! > A TLS snapshot may outlive its `TlsPlane`
+//! >   ONLY BECAUSE its authorization-relevant validity is self-bounded,
+//! >   AND unknown revocation state cannot become admissible.
+//!
+//! Both clauses are load-bearing and both are enforced rather than assumed. The first is
+//! enforced by refusing a CRL with no `nextUpdate`, pinned by `tls`'s
+//! `crl_next_update_tests`; the second is pinned by `client_revocation`'s
+//! `an_expired_crl_refuses_its_issuer_rather_than_admitting_it` and its property control
+//! `unknown_status_is_refused_with_no_policy_input_that_could_admit_it`. The second clause
+//! is now structural rather than configured — no constructible index or verifier admits an
+//! unknown status. **Introducing an operator knob for unknown status means re-deriving
+//! this contract before the change lands** — with unknown admissible, a surviving snapshot
+//! becomes exactly the frozen authorization state `trust_plane` fails closed to avoid.
+//!
+//! A failed reload keeps the last-good configuration, for the same reason
+//! `reloading_trust` does: a truncated file mid-write must not empty what is enforced.
+
+use std::sync::Arc;
+
+use crate::client_revocation;
+use crate::config_snapshot;
+use crate::config_state::CredentialCurrencyBound;
+use crate::config_state::PrivateKeyExposure;
+use crate::managed_worker::WorkerSet;
+use crate::tls_listener_state::TlsListenerSecurityState;
+
+/// The client-CRL facts observed at startup, in configuration order.
+///
+/// Parsed once, by the plane that had to parse them anyway, so the startup posture
+/// renders facts rather than re-deriving them from DER it would have to re-open.
+pub struct ClientCrlEvidence {
+    /// One entry per loaded CRL. Empty when offline client-cert revocation is not
+    /// configured, which is a different posture — not an empty one.
+    pub postures: Vec<crate::client_crl_publication::CrlPosture>,
+}
+
+impl ClientCrlEvidence {
+    /// Whether offline client-cert revocation is configured at all.
+    pub fn is_empty(&self) -> bool {
+        self.postures.is_empty()
+    }
+}
+
+/// Transport custody: the serving TLS configuration and what keeps it current.
+pub struct TlsPlane {
+    snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
+    revocation: Option<Arc<client_revocation::SharedClientRevocation>>,
+    crls: ClientCrlEvidence,
+    key_exposure: PrivateKeyExposure,
+    /// Owns the CRL reload worker. Halted in [`Drop`]; see the module note on why no
+    /// security transition accompanies it.
+    workers: WorkerSet,
+}
+
+impl TlsPlane {
+    /// The snapshot the accept loop re-reads per connection, so a reload is observed by
+    /// the next handshake rather than written where nothing looks again.
+    pub fn snapshot(&self) -> Arc<config_snapshot::ServerConfigSnapshot> {
+        Arc::clone(&self.snapshot)
+    }
+
+    /// The per-request revocation index, or `None` when no CRLs are configured.
+    ///
+    /// `None` is not "admit everything": with no CRLs rustls performs no revocation
+    /// checking either, and installing an index would put a check on the request path
+    /// that the handshake does not perform.
+    pub fn revocation(&self) -> Option<Arc<client_revocation::SharedClientRevocation>> {
+        self.revocation.clone()
+    }
+
+    /// The client-CRL facts, for the startup posture.
+    pub fn crls(&self) -> &ClientCrlEvidence {
+        &self.crls
+    }
+
+    /// What may be believed about the handshake key this plane ESTABLISHED.
+    ///
+    /// Read by the serving runtime shape: a `NonExporting` signer blocks inside rustls'
+    /// synchronous `Signer::sign`, so each core needs a worker pool rather than the
+    /// single-threaded share-nothing default. Exposed as a fact because the material it
+    /// describes is moved into the reload worker.
+    pub fn key_exposure(&self) -> PrivateKeyExposure {
+        self.key_exposure
+    }
+
+    /// Number of workers this plane owns. For the lifecycle tests.
+    #[cfg(test)]
+    pub fn worker_count(&self) -> usize {
+        self.workers.len()
+    }
+
+    /// A plane over a self-signed, server-only TLS configuration whose single worker runs
+    /// `body`, for the ownership and teardown tests.
+    ///
+    /// No CRLs and no revocation index: this plane's teardown obligation is halting its
+    /// worker, and neither of those bears on it. `body` receives the worker's
+    /// [`Halt`](crate::managed_worker::Halt), so a test picks a worker that stops when
+    /// asked, one that ignores the halt, or one that panics.
+    #[cfg(test)]
+    pub(crate) fn for_teardown_test(
+        body: impl FnOnce(crate::managed_worker::Halt) + Send + 'static,
+    ) -> Self {
+        use rustls::pki_types::PrivateKeyDer;
+        use rustls::pki_types::PrivatePkcs8KeyDer;
+
+        let key = rcgen::KeyPair::generate().expect("key");
+        let params = rcgen::CertificateParams::new(vec!["localhost".to_string()]).expect("params");
+        let cert = params.self_signed(&key).expect("self-signed");
+        let server = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("versions")
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![cert.der().clone()],
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der())),
+        )
+        .expect("server config");
+
+        let mut workers = WorkerSet::new(Arc::new(std::sync::atomic::AtomicBool::new(false)));
+        let halt = workers.halt();
+        workers.spawn("test crl reload", move || body(halt));
+        TlsPlane {
+            snapshot: Arc::new(config_snapshot::ServerConfigSnapshot::new(Arc::new(server))),
+            revocation: None,
+            crls: ClientCrlEvidence {
+                postures: Vec::new(),
+            },
+            key_exposure: PrivateKeyExposure::ProcessReadable,
+            workers,
+        }
+    }
+}
+
+impl Drop for TlsPlane {
+    fn drop(&mut self) {
+        // No security transition, unlike `trust_plane` and `signing_plane`. See the
+        // module note: a CRL past its own `nextUpdate` yields `Unknown`, and unknown is
+        // refused unconditionally, so a snapshot nobody refreshes converges on refusing
+        // rather than on admitting. Halting the worker is the whole obligation.
+        self.workers.halt_and_reclaim();
+    }
+}
+
+/// The client-revocation posture: what the CRLs say, and whether this deployment may start
+/// under them.
+mod client_revocation_posture;
+
+/// Keeping that posture fresh without a restart.
+mod crl_reload_worker;
+
+use client_revocation_posture::build_revocation_index;
+use client_revocation_posture::load_and_check_crls;
+use crl_reload_worker::start_reload_worker;
+
+impl TlsPlane {
+    /// Establish transport custody: load and check the CRLs, build the serving TLS
+    /// configuration, and start the reload worker when a cadence is configured.
+    ///
+    /// Takes a [`ChannelEstablishmentPlan`](crate::startup_plan::ChannelEstablishmentPlan) and no configuration. Which
+    /// revocation posture and which custody this deployment is in were decided by layer A;
+    /// what is left here is loading the bytes, building the verifier and starting the
+    /// worker the posture calls for.
+    ///
+    /// `material` is MOVED in — the reload worker rebuilds the verifier from the same
+    /// immutable key material, so nothing outside this plane may keep a second copy. It is
+    /// the ESTABLISHED custody, and the plan states the REQUESTED one; the two are checked
+    /// against each other below rather than assumed to agree.
+    pub fn materialize(
+        plan: &crate::startup_plan::ChannelEstablishmentPlan,
+        material: TlsKeyMaterial,
+        server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
+        client_ca: Vec<rustls_pki_types::CertificateDer<'static>>,
+        startup_now_unix: i64,
+        deployment: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<TlsPlane, String> {
+        let established = material.exposure();
+        // The one place the REQUESTED custody and the ESTABLISHED custody meet. Layer A
+        // classified which the deployment asked for from its TLS key selectors; the key
+        // source produced an actual signer. Nothing else compares them, so a divergence —
+        // a selector that classifies as delegated while the key source yields an exported
+        // key — would silently serve handshakes under weaker custody than the deployment
+        // declared, and every startup line would report the declared one.
+        if established != plan.custody.exposure() {
+            return Err(format!(
+                "TLS custody mismatch: the deployment is configured for {} handshake custody, \
+                 but the key source established {} custody. Refusing to serve under a custody \
+                 the configuration does not name",
+                custody_word(plan.custody.exposure()),
+                custody_word(established),
+            ));
+        }
+        let crl_paths = plan.client_revocation.paths();
+        let (client_crls, crls) = load_and_check_crls(crl_paths, startup_now_unix)?;
+        // Cloned because the initial build below consumes the original; the reload
+        // re-reads only the CRLs, never this.
+        let reload_chain = server_chain.clone();
+        let reload_crl_paths = crl_paths.to_vec();
+        let revocation = build_revocation_index(&client_crls)?;
+
+        // Created once, before the first build, and handed to every later one: the trust
+        // anchors, the session cache and the trust epoch survive a reload, and so does the
+        // delegated handshake-signature bucket.
+        let rebuild_state = Arc::new(TlsListenerSecurityState::new(client_ca));
+
+        // The same construction a CRL reload performs, so the serving config a reload
+        // installs cannot diverge from the one startup installed.
+        let server_config = material.rebuild(server_chain, client_crls, &rebuild_state)?;
+        // ADR-MCPRE-051 §6 (MCPRE-116): the serve loop reads the current config from a
+        // versioned, atomically-swappable snapshot instead of a fixed `Arc`. With no
+        // `--client-crl-reload-secs` the snapshot is never swapped, so behavior is
+        // byte-identical to the static posture.
+        let snapshot = Arc::new(config_snapshot::ServerConfigSnapshot::new(Arc::new(
+            server_config,
+        )));
+
+        let workers = start_reload_worker(
+            deployment,
+            plan,
+            material,
+            &snapshot,
+            reload_chain,
+            reload_crl_paths,
+            revocation.clone(),
+            &rebuild_state,
+        );
+        Ok(TlsPlane {
+            snapshot,
+            revocation,
+            crls,
+            key_exposure: established,
+            workers,
+        })
+    }
+}
+
+/// ADR-MCPRE-051 §6 (MCPRE-116): the in-process CRL hot-reload task. Every
+/// `interval_secs` it re-reads the `--client-crl` files and rebuilds the direct-TLS
+/// verifier from the SAME immutable server key material, atomically swapping the
+/// result into `snapshot`. A read/parse/build failure keeps the last-good config
+/// (which still fails closed once its CRL passes `nextUpdate`), so a bad reload
+/// never widens what is accepted. The task observes `SHUTDOWN` between naps so it
+/// exits promptly on a rolling deploy. Spawned only when `--client-crl-reload-secs`
+/// is set with a non-empty `--client-crl` on the direct-TLS path.
+/// The TLS server key the verifier is rebuilt around, under either custody.
+///
+/// A CRL reload re-reads only the CRLs; this is carried verbatim across the rebuild.
+/// Both variants exist so the reload does not depend on which custody the deployment
+/// chose — a revocation control that works only on the weaker custody is the wrong way
+/// round.
+pub enum TlsKeyMaterial {
+    /// The exported private key read from disk.
+    Exported(rustls_pki_types::PrivateKeyDer<'static>),
+    /// A non-exporting device/KMS signer (PKCS#11, AWS KMS, Cloud KMS).
+    Delegated(Arc<dyn crate::delegated_tls::RawEd25519TlsSigner>),
+}
+
+/// The operator-facing word for a custody fact, unchanged from the flag vocabulary an
+/// operator reads in the startup transcript.
+fn custody_word(exposure: PrivateKeyExposure) -> &'static str {
+    match exposure {
+        PrivateKeyExposure::ProcessReadable => "exported-key",
+        PrivateKeyExposure::NonExporting => "delegated",
+    }
+}
+
+impl TlsKeyMaterial {
+    /// What may be believed about the handshake key this material ESTABLISHED.
+    ///
+    /// The same proposition the configuration boundary decided, so `materialize` compares
+    /// one fact against itself rather than two spellings of it. The serving runtime shape
+    /// depends on it too: a `NonExporting` signer blocks inside rustls' synchronous
+    /// `Signer::sign`, so each core needs a worker pool rather than the single-threaded
+    /// share-nothing default.
+    fn exposure(&self) -> PrivateKeyExposure {
+        match self {
+            TlsKeyMaterial::Exported(_) => PrivateKeyExposure::ProcessReadable,
+            TlsKeyMaterial::Delegated(_) => PrivateKeyExposure::NonExporting,
+        }
+    }
+
+    /// The custody word for the operator-facing startup line.
+    fn label(&self) -> &'static str {
+        custody_word(self.exposure())
+    }
+
+    /// Rebuild the serving config around `crls`, under whichever custody applies.
+    ///
+    /// The client-authentication inputs are not parameters at all: they belong to `state`,
+    /// which is also where the session cache and the signing budget live. A build cannot be
+    /// handed anchors the epoch owner does not hold, because it is never handed anchors.
+    fn rebuild(
+        &self,
+        server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
+        crls: Vec<rustls_pki_types::CertificateRevocationListDer<'static>>,
+        state: &TlsListenerSecurityState,
+    ) -> Result<rustls::ServerConfig, String> {
+        match self {
+            TlsKeyMaterial::Exported(key) => state
+                .build_exported_key_config(server_chain, key.clone_key(), crls)
+                .map_err(|e| e.to_string()),
+            TlsKeyMaterial::Delegated(signer) => state
+                .build_delegated_config(server_chain, Arc::clone(signer), crls)
+                .map_err(|e| e.to_string()),
+        }
+    }
+}
+
+/// ADR-MCPS-023 §A1 (MCPS-58) — the operator-visible revocation posture, as lines.
+///
+/// A posture DIAGNOSTIC, not a structured per-request audit guarantee: the structured
+/// evidence vocabulary (including `delegated_attestor_crl`, which does not exist yet)
+/// lands with Mode C attested ingress (MCPS-62). The canonical ADR field names are used
+/// deliberately so that future audit surface can reuse them verbatim. OCSP posture is
+/// per-request — no-AIA is a per-cert fact, not a config-load one — and likewise belongs
+/// to the MCPS-62 surface rather than to a startup line.
+///
+/// Returns lines instead of printing them, which is the whole reason it is here: these
+/// were ~50 lines of `eprintln!` inside the composition root, where the only way to check
+/// what an operator is told was to read a transcript. Rendering the facts the plane
+/// already parsed makes the posture assertable (`posture_tests` below) and takes
+/// domain-specific posture construction off the root (ADR-MCPRE-058 §7.1).
+///
+/// Takes the plan AND the evidence, and the split is not incidental: the exposure window
+/// is a statement about what was CONFIGURED, while `per_request_crl_check` is a statement
+/// about what was actually LOADED and is being enforced. Rendering the second from the
+/// plan would report a mechanism as enforced because it was asked for.
+pub(crate) fn revocation_posture_lines(
+    plan: &crate::startup_plan::ChannelEstablishmentPlan,
+    crls: &ClientCrlEvidence,
+) -> Vec<String> {
+    // Both durations come from ONE owned window, so the exposure window is never reported
+    // beside a connection age that outlives it. There is no `unbounded` arm because there
+    // is no such deployment: disabling either bound is refused at layer A, and a window
+    // exists only where both are set and the age respects the lifetime.
+    let exposure_window = format!("{}s", plan.credential_window.exposure_window().as_secs());
+    // The exposure window above is only true because these two bounds hold: the
+    // certificate is re-checked against the clock on EVERY request (not just at the
+    // handshake), and a connection is closed at a bounded age so the peer must
+    // re-handshake through the current CRL. Stated alongside the window it makes honest.
+    let mut lines = vec![format!(
+        "mcp-re.revocation.posture connection_max_age={}s per_request_cert_validity=enforced \
+         per_request_crl_check={} tls_session_resumption=epoch-bound",
+        plan.credential_window.connection_age().as_secs(),
+        // The claim the CRL lines below rest on. rustls consults the CRLs during client
+        // authentication, which runs on a full handshake only, so without this a revoked
+        // peer serves every later request on the connection it already holds and the
+        // reload cadence below describes new connections alone.
+        if crls.is_empty() {
+            "not_configured"
+        } else {
+            "enforced"
+        }
+    )];
+    if crls.is_empty() {
+        let max_lifetime = plan.credential_window.cert_lifetime().as_secs();
+        lines.push(format!(
+            "mcp-re.revocation.posture revocation_mode=short_lived_cert dynamic_revocation=false \
+             exposure_window={exposure_window} max_client_cert_lifetime={max_lifetime}s"
+        ));
+    } else {
+        // Facts parsed once by the plane that loaded the CRLs, rendered here.
+        for (i, posture) in crls.postures.iter().enumerate() {
+            let next_update = posture
+                .next_update_unix
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "none".to_string());
+            lines.push(format!(
+                "mcp-re.revocation.posture revocation_mode=static_crl_snapshot \
+                 dynamic_revocation=false stale_crl_policy=fail_closed crl_index={i} \
+                 crl_digest={} crl_this_update={} crl_next_update={} \
+                 exposure_window={exposure_window}",
+                posture.crl_digest, posture.this_update_unix, next_update
+            ));
+        }
+    }
+    lines
+}
+
+/// The client-certificate half of the fleet's cross-replica revocation-lag bound
+/// (ADR-MCPS-049 clause 3): how long a revoked client certificate can still be accepted
+/// somewhere in the fleet.
+///
+/// The sibling of `trust_plane::fleet_trust_bound`, and pure for the same reason — this is
+/// a derived SECURITY CLAIM, not a rendering detail. It was computed inline in the
+/// composition root while its sibling was already a named, tested function, so one half of
+/// one operator-facing statement had a home and the other did not.
+///
+/// Zero-window revocation is never claimed on either half. Each arm names what actually
+/// bounds the exposure:
+///
+/// - no CRL at all: only the client-cert lifetime bounds it;
+/// - a CRL with a reload cadence: the cadence IS the bound, and it applies per request on
+///   established connections as well as at the handshake, so a peer holding a connection
+///   open does not escape a republished index;
+/// - a CRL without a cadence: the CRL's own `nextUpdate`, or a restart.
+///
+/// One `match` over [`CredentialCurrencyBound`], the semantic posture. The arms ARE the
+/// postures, so a new mechanism would not compile until it stated its own bound — a posture
+/// falling through to another's sentence is exactly how an operator gets a number nothing
+/// enforces. The posture is generic and this rendering is not, deliberately: the sentence
+/// names CRLs because CRLs are what it tells an operator to configure.
+pub fn fleet_crl_bound(plan: &crate::startup_plan::ChannelEstablishmentPlan) -> String {
+    match crate::config_state::credential_currency_bound(
+        &plan.client_revocation,
+        &plan.credential_window,
+    ) {
+        CredentialCurrencyBound::CredentialLifetime { window_secs } => {
+            format!("short-lived-cert only (exposure_window {window_secs}s); no client CRL")
+        }
+        CredentialCurrencyBound::PublicationRefresh { cadence_secs } => format!(
+            "bounded {cadence_secs}s (the --client-crl-reload-secs cadence), enforced per \
+             request on established connections as well as at the handshake"
+        ),
+        CredentialCurrencyBound::PublicationValidity => {
+            "the CRL nextUpdate / a restart (no --client-crl-reload-secs) — a fleet's \
+             CRL-rollout window"
+                .to_string()
+        }
+    }
+}
+
+#[cfg(test)]
+mod handle_lifetime_tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    /// A plane over a snapshot and one worker that only waits to be halted — enough to
+    /// assert the ownership relationship without standing up TLS material.
+    fn plane(config: Arc<rustls::ServerConfig>, observed: Arc<AtomicBool>) -> TlsPlane {
+        let mut workers = WorkerSet::new(Arc::new(AtomicBool::new(false)));
+        let halt = workers.halt();
+        workers.spawn("test client CRL reload", move || {
+            while !halt.requested() {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            observed.store(true, Ordering::SeqCst);
+        });
+        TlsPlane {
+            snapshot: Arc::new(config_snapshot::ServerConfigSnapshot::new(config)),
+            revocation: None,
+            crls: ClientCrlEvidence { postures: vec![] },
+            key_exposure: PrivateKeyExposure::ProcessReadable,
+            workers,
+        }
+    }
+
+    /// The DELIBERATE non-transition, asserted so it reads as a decision.
+    ///
+    /// A snapshot that outlives its reload worker keeps serving, unlike `trust_plane`'s
+    /// resolver and `signing_plane`'s signer. The justification is the CRL's own
+    /// `nextUpdate` plus unconditional refusal of unknown status — not an oversight, and
+    /// not a property this test can prove on its own. What it does pin is that the plane
+    /// makes no attempt to invalidate the snapshot, so a future change that starts
+    /// relying on one has to come here first.
+    #[test]
+    fn a_snapshot_that_outlives_the_plane_still_serves() {
+        let observed = Arc::new(AtomicBool::new(false));
+        let snapshot;
+        {
+            let plane = plane(test_server_config(), Arc::clone(&observed));
+            assert_eq!(plane.worker_count(), 1);
+            snapshot = plane.snapshot();
+            assert!(
+                Arc::strong_count(&snapshot.load()) > 0,
+                "a live plane must publish a serving config"
+            );
+        }
+        assert!(
+            observed.load(Ordering::SeqCst),
+            "the CRL reload worker did not observe the structural halt"
+        );
+        // Still serving: the artifact bounds itself through its CRLs' own nextUpdate,
+        // so the plane performs no fail-closed transition here.
+        let _still_serving = snapshot.load();
+    }
+
+    /// A minimal self-signed server-only config, built in-process — the plane's
+    /// lifecycle does not depend on what is in it, only on who owns it. Same idiom as
+    /// `config_snapshot`'s own tests.
+    fn test_server_config() -> Arc<rustls::ServerConfig> {
+        use rustls::crypto::ring;
+        use rustls::pki_types::PrivateKeyDer;
+        use rustls::pki_types::PrivatePkcs8KeyDer;
+        let key = rcgen::KeyPair::generate().expect("key");
+        let params = rcgen::CertificateParams::new(vec!["localhost".to_string()]).expect("params");
+        let cert = params.self_signed(&key).expect("self-signed");
+        let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
+        Arc::new(
+            rustls::ServerConfig::builder_with_provider(Arc::new(ring::default_provider()))
+                .with_safe_default_protocol_versions()
+                .expect("versions")
+                .with_no_client_auth()
+                .with_single_cert(vec![cert.der().clone()], key_der)
+                .expect("server config"),
+        )
+    }
+}
+
+/// The fleet's client-cert revocation-lag claim, tested as a derived security fact rather
+/// than as rendering. Separate from `handle_lifetime_tests`, which is about what a handle
+/// means after its plane is gone — a different question entirely.
+/// What the revocation posture actually tells an operator.
+///
+/// These lines were `eprintln!`s in the composition root, which meant the only way to
+/// check them was to start a proxy and read stderr — so nothing checked them. The
+/// extraction is what makes the assertions below possible, and each one pins a claim that
+/// would be materially misleading if it drifted.
+#[cfg(test)]
+mod revocation_posture_tests {
+    use super::revocation_posture_lines;
+    use super::ClientCrlEvidence;
+    use crate::client_crl_publication::CrlPosture;
+    use crate::startup_plan::ChannelEstablishmentPlan;
+
+    /// A plan with no CRLs and the given client-cert lifetime.
+    ///
+    /// The credential window comes through its classifier, so a lifetime the boundary
+    /// refuses — disabled, over the ceiling, or shorter than the connection age — cannot be
+    /// written here at all. The `Option<Duration>` this took could name every one of them.
+    fn plan(cert_lifetime_secs: u64) -> ChannelEstablishmentPlan {
+        ChannelEstablishmentPlan {
+            custody: crate::config_state::test_support::channel_custody_exported("/key"),
+            client_revocation: crate::config_state::test_support::crl_plan(&[], None),
+            credential_window: crate::config_state::test_support::credential_window(
+                cert_lifetime_secs,
+                300,
+            ),
+        }
+    }
+
+    fn no_crls() -> ClientCrlEvidence {
+        ClientCrlEvidence { postures: vec![] }
+    }
+
+    /// Without a CRL the posture must say `per_request_crl_check=not_configured`.
+    ///
+    /// The broken implementation this catches: reporting `enforced` whenever the field is
+    /// emitted at all. `enforced` is the claim the exposure-window line rests on — that a
+    /// peer holding an open connection is still re-checked — and asserting it with no CRL
+    /// loaded would describe a mechanism that is not running.
+    #[test]
+    fn with_no_crl_the_per_request_check_is_reported_as_not_configured() {
+        let lines = revocation_posture_lines(&plan(3600), &no_crls());
+        assert!(
+            lines[0].contains("per_request_crl_check=not_configured"),
+            "got: {}",
+            lines[0]
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("revocation_mode=short_lived_cert")),
+            "with no CRL the only mechanism is the certificate lifetime: {lines:?}"
+        );
+    }
+
+    /// One line per loaded CRL, each carrying that CRL's own digest and validity window.
+    ///
+    /// The broken implementation this catches: rendering only the first CRL, or reusing
+    /// one digest across all of them. An operator reading the transcript is checking that
+    /// the index they published is the index this replica loaded, and a collapsed list
+    /// answers that question wrongly rather than not at all.
+    #[test]
+    fn every_loaded_crl_reports_its_own_digest_and_window() {
+        let crls = ClientCrlEvidence {
+            postures: vec![
+                CrlPosture {
+                    crl_digest: "sha256:AAAA".to_string(),
+                    this_update_unix: 1_700_000_000,
+                    next_update_unix: Some(1_700_086_400),
+                },
+                CrlPosture {
+                    crl_digest: "sha256:BBBB".to_string(),
+                    this_update_unix: 1_700_000_001,
+                    // RFC 5280 permits omission, and the line must not invent one.
+                    next_update_unix: None,
+                },
+            ],
+        };
+        let lines = revocation_posture_lines(&plan(3600), &crls);
+        assert!(
+            lines[0].contains("per_request_crl_check=enforced"),
+            "got: {}",
+            lines[0]
+        );
+        let crl_lines: Vec<&String> = lines
+            .iter()
+            .filter(|l| l.contains("revocation_mode=static_crl_snapshot"))
+            .collect();
+        assert_eq!(crl_lines.len(), 2, "one line per CRL: {lines:?}");
+        assert!(crl_lines[0].contains("crl_index=0") && crl_lines[0].contains("sha256:AAAA"));
+        assert!(crl_lines[1].contains("crl_index=1") && crl_lines[1].contains("sha256:BBBB"));
+        assert!(
+            crl_lines[1].contains("crl_next_update=none"),
+            "an absent nextUpdate must say so, not be invented: {}",
+            crl_lines[1]
+        );
+    }
+}
+
+/// The one place the REQUESTED custody and the ESTABLISHED custody meet.
+#[cfg(test)]
+mod custody_agreement_tests {
+    use super::*;
+    use crate::startup_plan::ChannelEstablishmentPlan;
+
+    fn exported_material() -> TlsKeyMaterial {
+        use rustls::pki_types::PrivateKeyDer;
+        use rustls::pki_types::PrivatePkcs8KeyDer;
+        let key = rcgen::KeyPair::generate().expect("key");
+        TlsKeyMaterial::Exported(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
+            key.serialize_der(),
+        )))
+    }
+
+    fn plan(
+        custody: crate::config_state::ChannelCredentialCustodyState,
+    ) -> ChannelEstablishmentPlan {
+        ChannelEstablishmentPlan {
+            custody,
+            client_revocation: crate::config_state::test_support::crl_plan(&[], None),
+            credential_window: crate::config_state::test_support::credential_window(3600, 300),
+        }
+    }
+
+    /// A deployment configured for delegated handshake custody must not be served by an
+    /// exported key.
+    ///
+    /// Nothing else compares these. Layer A classifies the custody from the TLS key
+    /// selectors; the key source produces an actual signer; and every startup line reports
+    /// the DECLARED custody. A divergence would therefore serve handshakes under weaker
+    /// custody than the transcript claims — the failure would be invisible in exactly the
+    /// place an operator looks.
+    #[test]
+    fn a_key_source_that_disagrees_with_the_declared_custody_refuses() {
+        let err = TlsPlane::materialize(
+            &plan(crate::config_state::test_support::channel_custody_delegated_pkcs11("tls")),
+            exported_material(),
+            Vec::new(),
+            Vec::new(),
+            0,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .err()
+        .expect("mismatched custody must refuse");
+        assert!(err.contains("custody"), "{err}");
+        assert!(
+            err.contains("delegated") && err.contains("exported-key"),
+            "the refusal must name both sides: {err}"
+        );
+    }
+
+    /// Negative control: agreement is not refused. Without this the assertion above would
+    /// pass just as well if `materialize` refused everything.
+    ///
+    /// It fails later — on the empty certificate chain — which is the point: the custody
+    /// check is not what stops it, and the diagnostic proves which check ran.
+    #[test]
+    fn agreeing_custody_passes_the_check_and_fails_on_something_else() {
+        let err = TlsPlane::materialize(
+            &plan(crate::config_state::test_support::channel_custody_exported(
+                "/key",
+            )),
+            exported_material(),
+            Vec::new(),
+            Vec::new(),
+            0,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .err()
+        .expect("an empty chain cannot build a server config");
+        assert!(
+            !err.contains("custody mismatch"),
+            "agreeing custody must pass the check: {err}"
+        );
+    }
+}
+
+/// ADR-MCPRE-055: the trust epoch and the verifier a build installs are derived from ONE
+/// anchor set.
+///
+/// The defect these catch is a build that can be handed client-authentication inputs the
+/// epoch owner does not hold: the store would then publish a digest of anchors other than
+/// the ones the verifier trusts, and the epoch-mismatch eviction would be gated on a value
+/// that describes a different verifier.
+#[cfg(test)]
+mod trust_epoch_binding_tests {
+    use super::*;
+    use crate::tls_listener_state::TlsAuthEpoch;
+    use rustls_pki_types::CertificateDer;
+
+    fn ca_der() -> CertificateDer<'static> {
+        let key = rcgen::KeyPair::generate().expect("ca key");
+        let mut params = rcgen::CertificateParams::new(Vec::new()).expect("ca params");
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign];
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "tls-plane-epoch-test-ca");
+        params.self_signed(&key).expect("ca").der().clone()
+    }
+
+    /// A server credential whose chain and key belong together, under exported custody.
+    fn exported_credential() -> (Vec<CertificateDer<'static>>, TlsKeyMaterial) {
+        use rustls::pki_types::PrivateKeyDer;
+        use rustls::pki_types::PrivatePkcs8KeyDer;
+        let key = rcgen::KeyPair::generate().expect("server key");
+        let params = rcgen::CertificateParams::new(vec!["localhost".to_string()]).expect("params");
+        let cert = params.self_signed(&key).expect("server cert");
+        (
+            vec![cert.der().clone()],
+            TlsKeyMaterial::Exported(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
+                key.serialize_der(),
+            ))),
+        )
+    }
+
+    /// The session store starts under the digest of the anchor set the plane was given,
+    /// not under a digest of anything else.
+    ///
+    /// The owner's own tests assert this over `TlsListenerSecurityState` directly; what is
+    /// plane-specific here is that the PLANE seeds its state from the anchors it was
+    /// configured with, and reads the epoch back through the projection rather than
+    /// through a field.
+    #[test]
+    fn the_store_starts_under_the_epoch_of_the_planes_own_client_auth_inputs() {
+        let anchors = vec![ca_der(), ca_der()];
+        let state = TlsListenerSecurityState::new(anchors.clone());
+        assert_eq!(
+            *state.epoch(),
+            TlsAuthEpoch::compute(&anchors),
+            "the epoch in force must digest the anchor set the plane holds"
+        );
+        assert_ne!(
+            *state.epoch(),
+            TlsAuthEpoch::compute(&[]),
+            "an epoch over no anchors would describe a verifier this plane never built"
+        );
+    }
+
+    /// A rebuild — the CRL cadence is the one that happens in a running process —
+    /// republishes the epoch of the plane's OWN anchor set, so the digest keeps describing
+    /// the verifier that was installed with it.
+    #[test]
+    fn a_rebuild_republishes_the_epoch_of_the_anchor_set_the_plane_owns() {
+        let anchors = vec![ca_der()];
+        let (chain, material) = exported_credential();
+        let state = TlsListenerSecurityState::new(anchors.clone());
+
+        let first = material
+            .rebuild(chain.clone(), Vec::new(), &state)
+            .expect("initial build");
+        assert!(first
+            .session_storage
+            .put(b"ticket".to_vec(), b"session".to_vec()));
+        let after_first = *state.epoch();
+
+        material
+            .rebuild(chain, Vec::new(), &state)
+            .expect("rebuild");
+        assert_eq!(
+            *state.epoch(),
+            TlsAuthEpoch::compute(&anchors),
+            "a rebuild must digest the anchors the plane holds"
+        );
+        assert_eq!(
+            after_first,
+            *state.epoch(),
+            "re-reading CRLs is not a change of trusted client CAs"
+        );
+        assert_eq!(
+            first.session_storage.take(b"ticket"),
+            Some(b"session".to_vec()),
+            "an unchanged epoch leaves established sessions resumable"
+        );
+    }
+}
+
+#[cfg(test)]
+mod fleet_crl_bound_tests {
+    use super::fleet_crl_bound;
+    use crate::startup_plan::ChannelEstablishmentPlan;
+
+    /// A plan in the posture under test. The postures are enumerated as VARIANTS, so a
+    /// combination layer A refuses — a cadence with no CRLs — cannot be written here at
+    /// all. The old `(has_crls, lifetime, cadence)` triple could name it, and did.
+    fn plan(
+        client_revocation: crate::startup_plan::ClientRevocationPlan,
+        cert_lifetime_secs: u64,
+    ) -> ChannelEstablishmentPlan {
+        ChannelEstablishmentPlan {
+            custody: crate::config_state::test_support::channel_custody_exported("/key"),
+            client_revocation,
+            // The connection age is the default 300s, or the lifetime where that is
+            // shorter: a fixture cannot name an age that outlives the credential, because
+            // no deployment can.
+            credential_window: crate::config_state::test_support::credential_window(
+                cert_lifetime_secs,
+                cert_lifetime_secs.min(300),
+            ),
+        }
+    }
+
+    /// With no CRL the ONLY bound is the certificate lifetime, and the line has to say so
+    /// rather than imply a revocation mechanism exists.
+    #[test]
+    fn without_a_crl_the_bound_is_the_certificate_lifetime() {
+        let bound = fleet_crl_bound(&plan(
+            crate::config_state::test_support::crl_plan(&[], None),
+            3600,
+        ));
+        assert!(bound.contains("exposure_window 3600s"), "got: {bound}");
+        assert!(bound.contains("no client CRL"), "got: {bound}");
+    }
+
+    /// The reload cadence IS the bound, and the claim must say it reaches ESTABLISHED
+    /// connections. A CRL consulted only at the handshake would leave a peer holding one
+    /// connection open unaffected by a republished index — a materially weaker guarantee
+    /// than the number alone suggests.
+    #[test]
+    fn a_reload_cadence_bounds_established_connections_not_only_handshakes() {
+        let bound = fleet_crl_bound(&plan(
+            crate::config_state::test_support::crl_plan(&["/crl.pem"], Some(300)),
+            3600,
+        ));
+        assert!(bound.contains("bounded 300s"), "got: {bound}");
+        assert!(
+            bound.contains("established connections"),
+            "the cadence claim must state that it reaches open connections, got: {bound}"
+        );
+    }
+
+    /// Without a cadence the bound is the CRL's own expiry or a restart — never zero, and
+    /// never the cert lifetime, which does not apply once a CRL is present.
+    #[test]
+    fn without_a_cadence_the_bound_is_the_crls_own_expiry() {
+        let bound = fleet_crl_bound(&plan(
+            crate::config_state::test_support::crl_plan(&["/crl.pem"], None),
+            60,
+        ));
+        assert!(bound.contains("nextUpdate"), "got: {bound}");
+        assert!(
+            !bound.contains("exposure_window"),
+            "the cert-lifetime window is not the bound once a CRL is present, got: {bound}"
+        );
+    }
+}

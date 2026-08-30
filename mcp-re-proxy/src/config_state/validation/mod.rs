@@ -20,6 +20,17 @@
 //! built without a parser — that was the bypass this boundary exists to close.
 
 mod machine_violations;
+
+/// PASS 1: what each machine recognises about a request, and what it refuses.
+mod recognition;
+
+/// The machines that can REFUSE, and what they refused.
+mod refusable_machines;
+
+/// The machines that CANNOT refuse.
+mod total_machines;
+
+use recognition::Recognised;
 mod residue;
 
 use crate::config_state::DeploymentConfigState;
@@ -148,152 +159,17 @@ pub fn validate_configuration(
     config: &DeploymentRequest,
 ) -> Result<DeploymentConfigState, Vec<String>> {
     // PASS 1 — each machine recognises its own state and checks that state's columns.
-    let (continuation_control, continuation_violations) =
-        crate::config_state::continuation_control::classify_and_validate(config);
-    let (custody, custody_violations) = crate::config_state::custody::classify_and_validate(config);
-    let (delegated_signing, delegated_signing_violations) =
-        crate::config_state::delegated_signing::classify_and_validate(config);
-    let (replay, replay_violations) = crate::config_state::replay::classify_and_validate(config);
-    let (channel_credential_custody, channel_custody_violations) =
-        crate::config_state::channel_credential_custody::classify_and_validate(config);
-    let (trust_revocation, trust_violations) =
-        crate::config_state::trust_revocation::classify_and_validate(config);
-    let (admission, admission_violations) =
-        crate::config_state::admission::classify_and_validate(config);
-    let (authorization, authorization_violations) =
-        crate::config_state::authorization::classify_and_validate(config);
-    let (channel_binding, binding_violations) =
-        crate::config_state::transport::classify_and_validate_binding(config);
-    let (crl_revocation, crl_violations) =
-        crate::config_state::transport::classify_and_validate_crl(config);
-    let (freshness, freshness_violations) =
-        crate::config_state::freshness::classify_and_validate(config);
-    let (trust_document, trust_document_violations) =
-        crate::config_state::trust_document::classify_and_validate(config);
-    let (client_credential_window, credential_window_violations) =
-        crate::config_state::client_credential_window::classify_and_validate(config);
-    // This deployment's own actor identity. It takes the RESOLVED issuer kid rather than
-    // re-reading the primitives it defaults from, so the keyid on the identity and the kid
-    // the credential chains to are one value (CF-10).
-    let (server_identity, server_identity_violations) =
-        crate::config_state::server_identity::classify_and_validate(
-            config,
-            delegated_signing.as_ref(),
-        );
-    let (audit, retention, verified_context) = crate::config_state::evidence::classify(config);
-    let mcp_transport_contract = crate::config_state::mcp_transport_contract::classify(config);
-    // Infallible: the request states one of three things and the default makes the third
-    // a basis too. Nothing to refuse — the illegal combination is not representable.
-    let in_flight_limit = crate::config_state::in_flight_limit::classify(config);
-    // Infallible for the same reason: both key-file postures are legal deployments. What
-    // the owner holds is the RULE, and the rule is applied to a file rather than to the
-    // request.
-    let key_file_access = crate::config_state::key_file_access::classify(config);
-    // Two facts at two altitudes, deliberately not one owner: the topology is knowable from
-    // the request, the shard COUNT is not — `0` means ask the host.
-    let (topology, shard_topology) = crate::config_state::topology::classify(config);
+    let recognised = Recognised::classify(config);
     // PASS 2 — the relations between machines, asked of the RECOGNISED states rather than
     // of the fields again.
-    let cross = crate::config_state::cross_machine::validate(trust_revocation.as_ref(), config);
-    let decided = MachineViolations {
-        admission: admission_violations,
-        authorization: authorization_violations,
-        channel_binding: binding_violations,
-        continuation_control: continuation_violations,
-        crl_revocation: crl_violations,
-        custody: custody_violations,
-        delegated_signing: delegated_signing_violations,
-        freshness: freshness_violations,
-        replay: replay_violations,
-        trust_document: trust_document_violations,
-        client_credential_window: credential_window_violations,
-        server_identity: server_identity_violations,
-        channel_credential_custody: channel_custody_violations,
-        trust_revocation: trust_violations,
-        cross,
-    };
-    let violations = legality_violations(config, decided);
-    // Seven owners can name NOTHING: `Replay` (`memory` and `file` are input forms, not
-    // deployments), `ChannelBinding` (three undeployable binding kinds, one deprecated
-    // identity source), `DelegatedSigning` (the §7 epoch has no default, so without it there
-    // is no posture to resolve), `TrustRevocation` (three of its four states require a
-    // reload cadence), `Admission` (its two enforcing states require an authority and a
-    // record locator), `Custody` (every state requires the material it signs with) and
-    // `TlsCustody` (its exported state requires the key it exports) — a state cannot be
-    // built without the witnesses that make it inhabitable. Each has already
-    // pushed its refusal when that happens, so the arms below are unreachable — stated
-    // one machine at a time, so an owner that forgets to refuse fails loudly and NAMES
-    // itself instead of hiding inside a wildcard over a widening tuple.
+    let cross =
+        crate::config_state::cross_machine::validate(recognised.states.trust_revocation(), config);
+    let violations = legality_violations(config, recognised.refusals.with_cross(cross));
     if !violations.is_empty() {
         return Err(violations);
     }
-    let unrecognised = |machine: &str| {
-        vec![format!(
-            "internal error: the {machine} configuration machine recognised no state and \
-             raised no refusal"
-        )]
-    };
-    let Some(replay) = replay else {
-        return Err(unrecognised("replay"));
-    };
-    let Some(channel_binding) = channel_binding else {
-        return Err(unrecognised("channel-binding"));
-    };
-    let Some(delegated_signing) = delegated_signing else {
-        return Err(unrecognised("delegated-signing"));
-    };
-    let Some(trust_revocation) = trust_revocation else {
-        return Err(unrecognised("trust-revocation"));
-    };
-    let Some(admission) = admission else {
-        return Err(unrecognised("admission"));
-    };
-    let Some(authorization) = authorization else {
-        return Err(unrecognised("authorization"));
-    };
-    let Some(custody) = custody else {
-        return Err(unrecognised("custody"));
-    };
-    let Some(channel_credential_custody) = channel_credential_custody else {
-        return Err(unrecognised("tls-custody"));
-    };
-    let Some(server_identity) = server_identity else {
-        return Err(unrecognised("server-identity"));
-    };
-    let Some(freshness) = freshness else {
-        return Err(unrecognised("freshness"));
-    };
-    let Some(trust_document) = trust_document else {
-        return Err(unrecognised("trust-document"));
-    };
-    let Some(client_credential_window) = client_credential_window else {
-        return Err(unrecognised("client-credential-window"));
-    };
     Ok(DeploymentConfigState::new(
-        crate::config_state::RecognisedStates {
-            admission,
-            audit,
-            authorization,
-            channel_binding,
-            client_credential_window,
-            freshness,
-            continuation_control,
-            crl_revocation,
-            custody,
-            delegated_signing,
-            in_flight_limit,
-            key_file_access,
-            mcp_transport_contract,
-            replay,
-            retention,
-            server_identity,
-            shard_topology,
-            channel_credential_custody,
-            topology,
-            trust_document,
-            trust_revocation,
-            verified_context,
-        },
+        recognised.states.into_recognised()?,
     ))
 }
 

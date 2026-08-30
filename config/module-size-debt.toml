@@ -61,8 +61,8 @@
 # response-signing authority that already owned the refusal half: 1146 -> 1108.
 [[debt]]
 path = "mcp-re-proxy/src/http_profile_serve/mod.rs"
-baseline_prod_loc = 1108
-baseline_sha = "b142a7a"
+baseline_prod_loc = 529
+baseline_sha = "255465e"
 status = "reviewed-exception"
 review_ref = "EX-010 in docs/architecture/review-dispositions.md"
 
@@ -236,32 +236,55 @@ review_ref = "EX-002 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-transport/src/lib.rs"
-baseline_prod_loc = 938
-baseline_sha = "d1fc5fa"
+baseline_prod_loc = 234
+baseline_sha = "255465e"
 status = "unreviewed"
 
+# MCPRE-175 gave the async replay tier an owner subtree. The file held the seam, the
+# reference L2, the per-replica retention account and the dormant L1 at once, so it became
+# `async_replay/mod.rs` plus `bounds.rs`, `retained_set.rs`, `local_refusals.rs`,
+# `in_memory.rs`, `retention_ledger.rs`, `charge.rs` and `l1_fast_reject.rs`. The debt moves
+# WITH the file — dropping the entry because the path changed would launder 924 registered
+# lines as progress.
 [[debt]]
-path = "mcp-re-proxy/src/async_replay.rs"
-baseline_prod_loc = 924
-baseline_sha = "d1fc5fa"
+path = "mcp-re-proxy/src/async_replay/mod.rs"
+baseline_prod_loc = 248
+baseline_sha = "255465e"
 status = "unreviewed"
 
+# MCPRE-175 gave the async listener an owner subtree. `async_serve.rs` mixed four
+# authorities — what a core admits work against, the byte half of that admission, one
+# connection, and one request over it — so it became `async_serve/mod.rs` plus
+# `core_admission.rs`, `body_budget.rs`, `connection.rs`, `http_limits.rs`, `inbound.rs`
+# and `request.rs`. The debt moves WITH the file; dropping the entry because the path
+# changed would launder 898 registered lines as progress.
 [[debt]]
-path = "mcp-re-proxy/src/async_serve.rs"
-baseline_prod_loc = 898
-baseline_sha = "d1fc5fa"
+path = "mcp-re-proxy/src/async_serve/mod.rs"
+baseline_prod_loc = 365
+baseline_sha = "255465e"
 status = "unreviewed"
 
+# MCPRE-175 split `transparency.rs` into its authorities: WHAT is retained
+# (`retained_record.rs`), WHICH headers a hop keeps (`covered_set.rs`), WHEN responsibility
+# for retaining it is durably established (`durability.rs`), and the auditor's half
+# (`attestation.rs`). The debt follows the bulk rather than the path: `transparency/mod.rs`
+# is 143 lines and below the threshold, so the registered file is the durability runtime,
+# which inherits 882 registered lines as 498.
 [[debt]]
-path = "mcp-re-proxy/src/transparency.rs"
-baseline_prod_loc = 882
-baseline_sha = "d1fc5fa"
+path = "mcp-re-proxy/src/transparency/durability.rs"
+baseline_prod_loc = 498
+baseline_sha = "255465e"
 status = "unreviewed"
 
+# MCPRE-175 re-censused the PKCS#11 provider and found four subordinates inside it: the
+# session vocabulary (`session.rs`), ONE session reused (`amortized_session.rs`), a bounded
+# set of interchangeable ones (`session_pool.rs`), finding things on the token
+# (`token.rs`), and the second key it custodies (`tls_signer.rs`). All PKCS#11 vocabulary
+# stays at the mechanism leaf. The debt moves WITH the file.
 [[debt]]
-path = "mcp-re-proxy/src/pkcs11_keysource.rs"
-baseline_prod_loc = 856
-baseline_sha = "1b31c60"
+path = "mcp-re-proxy/src/pkcs11_keysource/mod.rs"
+baseline_prod_loc = 447
+baseline_sha = "255465e"
 status = "unreviewed"
 
 [[debt]]
@@ -295,10 +318,16 @@ baseline_prod_loc = 731
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
+# MCPRE-175 gave the local listener an owner subtree. `serve.rs` mixed the accept loop with
+# the HTTP grammar, the browser guards, the deadline construction, the close semantics and
+# the dispatch, so it became `serve/mod.rs` plus `deadlines.rs`, `close.rs`, `guards.rs`,
+# `request.rs`, `head_fields.rs`, `response.rs`, `exchange.rs` and `render.rs`. The debt
+# moves WITH the file — dropping the entry because the path changed would launder 756
+# registered lines as progress.
 [[debt]]
-path = "mcp-re-client/src/serve.rs"
-baseline_prod_loc = 756
-baseline_sha = "d1fc5fa"
+path = "mcp-re-client/src/serve/mod.rs"
+baseline_prod_loc = 262
+baseline_sha = "255465e"
 status = "unreviewed"
 
 [[debt]]
@@ -314,8 +343,8 @@ status = "unreviewed"
 # progress — and the number falls to 707 because the actor projection left with it.
 [[debt]]
 path = "mcp-re-http-profile/src/bodyless/mod.rs"
-baseline_prod_loc = 707
-baseline_sha = "c744e2a"
+baseline_prod_loc = 529
+baseline_sha = "255465e"
 status = "unreviewed"
 
 [[debt]]
@@ -338,16 +367,19 @@ baseline_prod_loc = 425
 baseline_sha = "a9b2bc1"
 status = "unreviewed"
 
+# MCPRE-175: the client-revocation posture — loading the CRLs, indexing them per request,
+# and keeping them fresh — left for `tls_plane/client_revocation_posture.rs`, so
+# `tls_plane.rs` became `tls_plane/mod.rs`. The debt moves WITH the file.
 [[debt]]
-path = "mcp-re-proxy/src/tls_plane.rs"
-baseline_prod_loc = 678
-baseline_sha = "d1fc5fa"
+path = "mcp-re-proxy/src/tls_plane/mod.rs"
+baseline_prod_loc = 438
+baseline_sha = "255465e"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-http-profile/src/chain.rs"
-baseline_prod_loc = 660
-baseline_sha = "d1fc5fa"
+path = "mcp-re-http-profile/src/chain/mod.rs"
+baseline_prod_loc = 447
+baseline_sha = "255465e"
 status = "unreviewed"
 
 [[debt]]
@@ -362,10 +394,13 @@ baseline_prod_loc = 608
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
+# MCPRE-175: keeping a delegated key in force — the schedule, the trust-epoch override and
+# what a root outage costs — left for `signing_plane/rotation.rs`, so `signing_plane.rs`
+# became `signing_plane/mod.rs`. The debt moves WITH the file.
 [[debt]]
-path = "mcp-re-proxy/src/signing_plane.rs"
-baseline_prod_loc = 601
-baseline_sha = "d1fc5fa"
+path = "mcp-re-proxy/src/signing_plane/mod.rs"
+baseline_prod_loc = 321
+baseline_sha = "255465e"
 status = "unreviewed"
 
 [[debt]]
@@ -380,10 +415,13 @@ baseline_prod_loc = 578
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
+# MCPRE-175: the checks that cannot be expressed in the type left for
+# `config/validation.rs`, so `config.rs` became `config/mod.rs`. The debt moves WITH the
+# file.
 [[debt]]
-path = "mcp-re-client/src/config.rs"
-baseline_prod_loc = 562
-baseline_sha = "d1fc5fa"
+path = "mcp-re-client/src/config/mod.rs"
+baseline_prod_loc = 438
+baseline_sha = "255465e"
 status = "unreviewed"
 
 [[debt]]
@@ -531,9 +569,9 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-http-profile/src/delegation.rs"
-baseline_prod_loc = 384
-baseline_sha = "d1fc5fa"
+path = "mcp-re-http-profile/src/delegation/mod.rs"
+baseline_prod_loc = 218
+baseline_sha = "255465e"
 status = "unreviewed"
 
 [[debt]]
@@ -649,12 +687,6 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-http-profile/src/mcp_transport.rs"
-baseline_prod_loc = 250
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
 path = "mcp-re-proxy/src/managed_worker.rs"
 baseline_prod_loc = 268
 baseline_sha = "d1fc5fa"
@@ -681,12 +713,6 @@ status = "unreviewed"
 [[debt]]
 path = "mcp-re-http-profile/src/dispatch.rs"
 baseline_prod_loc = 243
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-http-profile/src/body.rs"
-baseline_prod_loc = 247
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -730,12 +756,6 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-client/src/main.rs"
-baseline_prod_loc = 215
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
 path = "mcp-re-proxy/src/replay_tier.rs"
 baseline_prod_loc = 215
 baseline_sha = "d1fc5fa"
@@ -756,11 +776,5 @@ status = "unreviewed"
 [[debt]]
 path = "mcp-re-proxy/src/materializing_runtime.rs"
 baseline_prod_loc = 204
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/replay_plane.rs"
-baseline_prod_loc = 202
 baseline_sha = "d1fc5fa"
 status = "unreviewed"

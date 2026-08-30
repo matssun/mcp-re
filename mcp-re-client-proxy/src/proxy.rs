@@ -16,23 +16,21 @@
 
 use mcp_re_client_core::build_signed_notification;
 use mcp_re_client_core::build_signed_request;
-use mcp_re_client_core::classify_result;
-use mcp_re_client_core::continuation_state;
 use mcp_re_client_core::response::verify_delegated_accepted_202_pinned;
 use mcp_re_client_core::verify_delegated_response;
 use mcp_re_client_core::CompositeResponseTrust;
-use mcp_re_client_core::DelegatedOutcome;
 use mcp_re_client_core::ExecutionContract;
 use mcp_re_client_core::HttpProfileError;
 use mcp_re_client_core::HttpResponse;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResponseExpectation;
-use mcp_re_client_core::ResultClass;
 use mcp_re_client_core::SignerSlot;
 use mcp_re_core::SigningKey;
 use serde_json::json;
 use serde_json::Map;
 use serde_json::Value;
+
+use crate::verified_outcome::read_outcome;
 
 use crate::route::ClientVerification;
 use crate::route::RouteRegistry;
@@ -163,14 +161,48 @@ impl ClientProxy {
             .get(route_id)
             .ok_or_else(|| ProxyError::UnknownRoute(route_id.to_string()))?;
 
-        // Parse the ordinary MCP request (transparency: it carries no MCP-RE fields).
-        //
-        // ABSENT `id` is what makes a JSON-RPC message a NOTIFICATION (§4.1), and both
-        // the signer and the serving path classify on exactly that key's absence.
-        // `null` is not the same thing: it is a PRESENT id, so defaulting to it turned
-        // every one-way notification into a request that the server dispatched to the
-        // backend and answered with a bodied reply nothing was awaiting.
+        // ABSENT `id` is what makes a JSON-RPC message a NOTIFICATION (§4.1), and both the
+        // signer and the serving path classify on exactly that key's absence. `null` is not
+        // the same thing: it is a PRESENT id, so defaulting to it turned every one-way
+        // notification into a request the server dispatched to the backend and answered with
+        // a bodied reply nothing was awaiting.
         let id = plain_request.get("id").cloned();
+        let signed = self.sign_request(route, plain_request, params, id.as_ref())?;
+
+        // Forward to the remote MCP-RE endpoint.
+        let response = self
+            .transport
+            .round_trip(signed.request())
+            .map_err(ProxyError::Transport)?;
+
+        // A NOTIFICATION is answered with a signed bodyless 202, not a bodied reply, so it
+        // takes its own verification path. Nothing below applies: there is no result to
+        // classify and no body to rebuild. It carries no `ResponseExpectation` either —
+        // a bodyless 202 has no response block to bind one to — so the route's pin is
+        // passed to it directly.
+        if id.is_none() {
+            return self.verify_notification_ack(route, &signed, &response, params);
+        }
+        let verified = self.verify_reply(route, &signed, &response, params)?;
+
+        // The request id the PROXY signed, not the one the server echoed. The plain
+        // reply is addressed to the local client's outstanding call, and taking the id
+        // from the response body would let the server redirect the answer.
+        let request_id = id.unwrap_or(Value::Null);
+        read_outcome(verified, &response, request_id)
+    }
+
+    /// Build the RFC 9421 signed request (or notification) this route sends.
+    ///
+    /// The shape follows the ID: a message with none is a NOTIFICATION and is signed as one,
+    /// because both the signer and the serving path classify on exactly that key's absence.
+    fn sign_request(
+        &self,
+        route: &crate::route::Route,
+        plain_request: &Value,
+        params: &CallParams,
+        id: Option<&Value>,
+    ) -> Result<mcp_re_client_core::SignedRequest, ProxyError> {
         let method = plain_request
             .get("method")
             .and_then(Value::as_str)
@@ -192,7 +224,7 @@ impl ClientProxy {
             params.expires,
         )
         .with_headers(route.extra_headers.clone());
-        let signed = match &id {
+        let signed = match id {
             Some(id) => build_signed_request(
                 id,
                 &method,
@@ -209,13 +241,25 @@ impl ClientProxy {
                 &self.signing_key,
             )?,
         };
+        Ok(signed)
+    }
 
-        // Forward to the remote MCP-RE endpoint.
-        let response = self
-            .transport
-            .round_trip(signed.request())
-            .map_err(ProxyError::Transport)?;
-
+    /// Verify the bound signed response under the route's REQUIRED profile.
+    ///
+    /// Configured profile = required profile: there is no cross-profile fallback, and both
+    /// arms fail closed. ADR-MCPRE-052 delegated-signing is the only mode, so a
+    /// delegated-signed success OR rejection receipt carrying the inline credential is what
+    /// verifies; no direct-root, unsigned or object downgrade is accepted.
+    ///
+    /// The two variants differ ONLY in where the trust anchors come from, and the outcome
+    /// handling is shared, so neither can drift into a laxer mapping.
+    fn verify_reply(
+        &self,
+        route: &crate::route::Route,
+        signed: &mcp_re_client_core::SignedRequest,
+        response: &HttpResponse,
+        params: &CallParams,
+    ) -> Result<mcp_re_client_core::VerifiedDelegatedResponse, ProxyError> {
         // Verify the signed response bound to THIS request under the route's required
         // profile (configured profile = required profile). Fail closed on any failure;
         // no cross-profile fallback.
@@ -225,7 +269,7 @@ impl ClientProxy {
         // object downgrade is accepted (both verify functions fail closed). The two
         // variants differ ONLY in where the trust anchors come from; the outcome
         // handling below is shared, so neither can drift into a laxer mapping.
-        let mut expectation = ResponseExpectation::for_signed(&signed);
+        let mut expectation = ResponseExpectation::for_signed(signed);
         // The route's PINNED credential ISSUER, if it configured one: without it any
         // server whose delegated credential chains to a trusted root and is scoped to
         // this audience may answer for this route. The pin is the ISSUER and not the
@@ -233,14 +277,6 @@ impl ClientProxy {
         // keeps its published name.
         if let Some(keyid) = &route.expected_server_keyid {
             expectation = expectation.with_expected_issuer_kid(keyid.clone());
-        }
-        // A NOTIFICATION is answered with a signed bodyless 202, not a bodied reply,
-        // so it takes its own verification path. Nothing below it applies: there is no
-        // result to classify and no body to rebuild. It carries no `ResponseExpectation`
-        // because a bodyless 202 has no response block to bind one to; the pin it does
-        // share is passed to it directly.
-        if id.is_none() {
-            return self.verify_notification_ack(route, &signed, &response, params);
         }
         let verified = match &route.verification {
             // The route's REQUIRED revocation source (§3 step 7). Consulted with the
@@ -253,7 +289,7 @@ impl ClientProxy {
                 // an overlap window needs `DelegatedAnchored`.
                 let resolve = |kid: &str, slot: SignerSlot, _now: i64| resolve_actor(kid, slot);
                 let trust = CompositeResponseTrust::new(&resolve, revocation.as_ref());
-                verify_delegated_response(&response, &trust, &expectation, policy, params.now_unix)?
+                verify_delegated_response(response, &trust, &expectation, policy, params.now_unix)?
             }
             // Trust-anchor lifecycle: the set is BOTH the root resolver and the
             // revocation source, evaluated at THIS request's `now` so a retiring root's
@@ -262,7 +298,7 @@ impl ClientProxy {
                 // Read the CURRENT set, so a refreshed manifest that revoked a root
                 // takes effect on the next request rather than the next restart.
                 verify_delegated_response(
-                    &response,
+                    response,
                     &*anchors.load(),
                     &expectation,
                     policy,
@@ -270,79 +306,7 @@ impl ClientProxy {
                 )?
             }
         };
-
-        // The request id the PROXY signed, not the one the server echoed. The plain
-        // reply is addressed to the local client's outstanding call, and taking the id
-        // from the response body would let the server redirect the answer.
-        let request_id = id.clone().unwrap_or(Value::Null);
-
-        match verified.outcome {
-            DelegatedOutcome::Success => {
-                let plain = plain_response_from_verified(&response.body, &request_id)?;
-                // Classify BEFORE handing the reply over. A verified signature says
-                // the server said this; it does not say the exchange is finished.
-                let result = plain.get("result");
-                // `plain_response_from_verified` has already refused a reply carrying
-                // neither member or both, so an `error` here means there is no
-                // `result` to classify — and classifying an absent `result` yields
-                // Terminal, which is the success label.
-                if let Some(code) = plain
-                    .get("error")
-                    .map(|e| e.get("code").and_then(Value::as_i64))
-                {
-                    return Ok(ProxyResponse {
-                        plain_response: plain,
-                        kind: ResponseKind::CallFailed { code },
-                    });
-                }
-                let kind = match classify_result(result) {
-                    ResultClass::Terminal => ResponseKind::Success,
-                    ResultClass::InputRequired => {
-                        // Three-way contract: a reply that announces itself
-                        // non-terminal and then carries no usable `requestState` is
-                        // MALFORMED, not terminal — an answer leg could never be
-                        // honoured, so failing closed is the only honest outcome.
-                        let state = continuation_state(&response.body)?.ok_or(
-                            ProxyError::FailedClosed(HttpProfileError::MalformedEvidence(
-                                "input-required reply carries no requestState",
-                            )),
-                        )?;
-                        ResponseKind::InputRequired {
-                            request_state: state,
-                        }
-                    }
-                    // MCP 2026-07-28 closes the `resultType` set: unrecognized MUST be
-                    // considered invalid. Never resolved to Terminal.
-                    ResultClass::Unrecognized => {
-                        return Err(ProxyError::FailedClosed(
-                            HttpProfileError::UnrecognizedResultType,
-                        ))
-                    }
-                };
-                Ok(ProxyResponse {
-                    plain_response: plain,
-                    kind,
-                })
-            }
-            // A VERIFIED rejection receipt: the request was provably denied. Convert the
-            // signed receipt to a plain JSON-RPC error for the local client and report
-            // the classification (fail closed — never returned as a success result).
-            DelegatedOutcome::Rejection {
-                wire_code,
-                execution,
-            } => Ok(ProxyResponse {
-                plain_response: plain_error_from_rejection(
-                    &request_id,
-                    wire_code.as_deref(),
-                    &execution,
-                ),
-                kind: ResponseKind::VerifiedRejection {
-                    wire_code,
-                    bound: verified.verified.is_bound(),
-                    execution,
-                },
-            }),
-        }
+        Ok(verified)
     }
 
     /// Verify the signed bodyless 202 that acknowledges a one-way NOTIFICATION.
@@ -415,7 +379,7 @@ impl ClientProxy {
 /// Only members the receipt actually carried are emitted. An absent `execution_status`
 /// is a receipt that said nothing, and inventing `not_executed` for it would collapse
 /// "unknown whether it ran" into "it did not run" at the one place that matters.
-fn plain_error_from_rejection(
+pub(crate) fn plain_error_from_rejection(
     id: &Value,
     wire_code: Option<&str>,
     execution: &ExecutionContract,
@@ -474,7 +438,7 @@ fn plain_error_from_rejection(
 /// executed. Reporting that as a malformed REQUEST hands the caller a 4xx implying its
 /// own message was bad and nothing ran, and a caller that "fixes" its request and
 /// retries re-runs a side effect the server already performed.
-fn plain_response_from_verified(
+pub(crate) fn plain_response_from_verified(
     response_body: &[u8],
     request_id: &Value,
 ) -> Result<Value, ProxyError> {
@@ -532,6 +496,9 @@ fn plain_response_from_verified(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mcp_re_client_core::classify_result;
+    use mcp_re_client_core::continuation_state;
+    use mcp_re_client_core::ResultClass;
 
     /// A JSON-RPC error rides in the same HTTP 200 body an ordinary result does, so
     /// rebuilding the plain reply from `result` alone reported a failed call as a

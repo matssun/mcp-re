@@ -62,7 +62,19 @@ REPO = Path(__file__).resolve().parent.parent
 AUTHORITY_DIR = "mcp-re-proxy/src/authorization"
 
 #: The serving path that consults it, and the machine that orders the decision.
-SERVING = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+#:
+#: A DIRECTORY, read whole. MCPRE-175 split the assembly into one module per region of the
+#: exchange, so `authorization_stage` and the function that orders it moved out of
+#: `mod.rs`; a gate still reading that one file counted zero calls, which is the shape this
+#: gate exists to refuse. The claim is about the serving PATH, and its closure follows the
+#: owner subtree.
+SERVING = "mcp-re-proxy/src/http_profile_serve"
+
+#: The function that orders the pre-admission region, and therefore the one place the
+#: authorization decision is sequenced. `handle` orders the REGIONS; this orders the
+#: decisions inside the free one. The chain the gate checks is
+#: `handle` -> `REGION_ASSEMBLY` -> `authorization_stage` -> `decide`, each exactly once.
+REGION_ASSEMBLY = "admit_request"
 VALIDATION = "mcp-re-proxy/src/config_state/validation/residue.rs"
 
 #: Certificate / TLS / transport-identity vocabulary. Peer identity reaches authorization as
@@ -283,21 +295,54 @@ def check_authority(sources: dict[str, str]) -> list[str]:
 
 
 def check_serving(text: str) -> list[str]:
-    """(4) — the serving path decides exactly once."""
+    """(4) — the serving path decides exactly once.
+
+    Three links, each exactly once, so no one of them can be satisfied by a second route:
+    the assembly orders the pre-admission region once, that region asks for the decision
+    once, and the stage reaches the authority that owns what a decision means.
+
+    The call count is taken over the WHOLE serving path, not only inside the ordering
+    function. Before the split it was scoped to `handle`'s body, so a second call elsewhere
+    in the file was invisible; reading the path whole is what the region modules require and
+    is strictly the stronger question.
+    """
     problems: list[str] = []
     handle = body_of(text, "handle")
     if handle is None:
         problems.append(
-            f"{SERVING}: `handle` not found. The assembly is where the decision is ordered."
+            f"{SERVING}: `handle` not found. The assembly is where the regions are ordered."
         )
     else:
-        calls = len(re.findall(r"\bauthorization_stage\s*\(", handle))
-        if calls != 1:
+        ordered = len(re.findall(r"\b" + REGION_ASSEMBLY + r"\s*\(", handle))
+        if ordered != 1:
             problems.append(
-                f"{SERVING}: `handle` calls `authorization_stage` {calls} time(s); expected "
-                f"exactly 1. None is a serving path that dispatches without deciding; two "
-                f"is two decisions that happen to agree."
+                f"{SERVING}: `handle` calls `{REGION_ASSEMBLY}` {ordered} time(s); expected "
+                f"exactly 1. The pre-admission region is where the decision is sequenced, "
+                f"and an assembly that entered it twice would decide twice."
             )
+    region = body_of(text, REGION_ASSEMBLY)
+    if region is None:
+        problems.append(
+            f"{SERVING}: `{REGION_ASSEMBLY}` not found. The region assembly is where the "
+            f"decision is ordered against its predecessors."
+        )
+    else:
+        asked = len(re.findall(r"\bauthorization_stage\s*\(", region))
+        if asked != 1:
+            problems.append(
+                f"{SERVING}: `{REGION_ASSEMBLY}` calls `authorization_stage` {asked} "
+                f"time(s); expected exactly 1. The decision is ordered against its "
+                f"predecessors HERE — a call from anywhere else is a second one that has "
+                f"not been sequenced behind admission."
+            )
+    calls = len(re.findall(r"\bauthorization_stage\s*\(", text))
+    # One definition plus one call site.
+    if calls != 2:
+        problems.append(
+            f"{SERVING}: names `authorization_stage` {calls} time(s); expected exactly 2 "
+            f"(its definition and one call). None is a serving path that dispatches "
+            f"without deciding; more is two decisions that happen to agree."
+        )
     stage = body_of(text, "authorization_stage")
     if stage is None:
         problems.append(f"{SERVING}: `authorization_stage` not found.")
@@ -361,7 +406,21 @@ def authority_sources(directory: Path) -> dict[str, str]:
 
 
 def read(repo: Path, rel: str) -> str:
-    return code_only(production_text((repo / rel).read_text(encoding="utf-8")))
+    """One unit's production source: a file, or an owner subtree read whole.
+
+    Each member's production half is taken SEPARATELY before joining — concatenating first
+    would let one file's unterminated test region swallow the next file's production code,
+    and the exactly-once counts are precisely what that would corrupt.
+    """
+    target = repo / rel
+    if target.is_file():
+        return code_only(production_text(target.read_text(encoding="utf-8")))
+    members = sorted(m for m in target.rglob("*.rs") if m.is_file())
+    if not members:
+        raise SystemExit(f"{rel}: a serving path with no Rust source is not measurable")
+    return "\n".join(
+        code_only(production_text(m.read_text(encoding="utf-8"))) for m in members
+    )
 
 
 def check(repo: Path) -> tuple[list[str], int]:
@@ -480,8 +539,18 @@ def selftest() -> int:
 
     # The serving, machine and validation claims, undone against their own text.
     text_cases = [
+        # Deleting the call breaks TWO links at once and is reported as two: the region
+        # assembly no longer asks, and the path no longer names the stage twice (its
+        # definition and its one call site). Collapsing that to one report would hide which
+        # of the two the next reader has to restore.
         ("the serving stage removed", check_serving,
-         read(REPO, SERVING).replace("self.authorization_stage(&ex, decided_over.as_ref())", "Ok(())"), 1),
+         read(REPO, SERVING).replace(
+             ".authorization_stage(ex, decided_over.as_ref())", ".no_decision()"), 2),
+        # The region assembly is a link of its own: an assembly that stopped entering the
+        # pre-admission region would dispatch without ever reaching the decision.
+        ("the pre-admission region no longer ordered", check_serving,
+         read(REPO, SERVING).replace(
+             ".admit_request(&ex, req.peer.as_ref(), &mut progress)", ".no_region()"), 1),
         ("a second producer of the dispatchable body",
          lambda t: check_dispatch(read(REPO, STAGES), t, read(REPO, SERVING)),
          code_only("\n".join(sources.values())) + "\n    fn release(self, b: Vec<u8>) -> AuthorizedRequestBody { todo!() }\n", 1),

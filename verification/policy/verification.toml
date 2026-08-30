@@ -159,15 +159,23 @@ paths = [
   "mcp-re-http-profile/src/sigbase.rs",
   "mcp-re-http-profile/src/digest.rs",
   "mcp-re-http-profile/src/policy.rs",
-  "mcp-re-http-profile/src/delegation.rs",
+  # MCPRE-175 gave the credential its own subtree: the claim types, the §3 steps that
+  # decide whether one may be believed, and the root custody seam that mints one. The
+  # closure follows all three — a unit that named only `mod.rs` would fingerprint the
+  # types while the verification steps it depends on moved outside its provenance.
+  "mcp-re-http-profile/src/delegation/mod.rs",
+  "mcp-re-http-profile/src/delegation/verify.rs",
+  "mcp-re-http-profile/src/delegation/issue.rs",
   "mcp-re-http-profile/src/block.rs",
-  "mcp-re-http-profile/src/body.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  "mcp-re-http-profile/src/body/representable.rs",
   "mcp-re-http-profile/src/message.rs",
   "mcp-re-http-profile/src/ids.rs",
   "mcp-re-http-profile/src/evidence.rs",
   "mcp-re-http-profile/src/error.rs",
   "mcp-re-http-profile/src/artifact.rs",
-  "mcp-re-http-profile/src/mcp_transport.rs",
+  "mcp-re-http-profile/src/mcp_transport/mod.rs",
+  "mcp-re-http-profile/src/mcp_transport/agreement.rs",
   "mcp-re-http-profile/src/sign.rs",
   "mcp-re-http-profile/src/rejection.rs",
   "mcp-re-core/src/crypto.rs",
@@ -406,7 +414,12 @@ paths = [
   "mcp-re-proxy/src/tls_listener_state/resumption_acceptance.rs",
   "mcp-re-proxy/src/tls.rs",
   "mcp-re-proxy/src/delegated_tls.rs",
-  "mcp-re-proxy/src/tls_plane.rs",
+  # MCPRE-175: the client-revocation posture and its reload worker left `tls_plane.rs`
+  # for their own owners. Both are inside this unit's closure — the fourth conjunct is
+  # about what the production listener is built with, and a CRL reload rebuilds it.
+  "mcp-re-proxy/src/tls_plane/mod.rs",
+  "mcp-re-proxy/src/tls_plane/client_revocation_posture.rs",
+  "mcp-re-proxy/src/tls_plane/crl_reload_worker.rs",
 ]
 exported_contracts = []
 evidence = [

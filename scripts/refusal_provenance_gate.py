@@ -81,7 +81,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 REFUSAL = ["mcp-re-proxy/src/refusal/mod.rs", "mcp-re-proxy/src/refusal/cause.rs"]
-SERVING = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+#: The serving path. A DIRECTORY since MCPRE-175 split the assembly into one module per
+#: region of the exchange: `authorization_stage` and most of the `Refusal::` construction
+#: sites moved out of `mod.rs`, so a gate still reading that one file would find no stage
+#: to poison-pill and no call sites to check — a clean pass over the subject.
+SERVING = "mcp-re-proxy/src/http_profile_serve"
 RECORD = "mcp-re-proxy/src/audit_record.rs"
 CORE_AUDIT = "mcp-re-core/src/audit.rs"
 
@@ -158,10 +162,27 @@ def body_of_variant(src: str, variant: str) -> str:
     return src[start:]
 
 
+def read_unit(rel: str, overrides: dict[str, str] | None) -> str:
+    """One unit's production source: a file, or an owner subtree read whole.
+
+    Production halves are taken per member before joining, so one file's unterminated test
+    region cannot swallow the next file's production code.
+    """
+    if overrides and rel in overrides:
+        return production(overrides[rel])
+    target = REPO / rel
+    if target.is_file():
+        return read(rel, overrides)
+    members = sorted(m for m in target.rglob("*.rs") if m.is_file())
+    if not members:
+        raise SystemExit(f"{rel}: a serving path with no Rust source is not measurable")
+    return "\n".join(production(m.read_text(encoding="utf-8")) for m in members)
+
+
 def check(overrides: dict[str, str] | None = None) -> list[str]:
     problems: list[str] = []
     refusal = "\n".join(read(r, overrides) for r in REFUSAL)
-    serving = read(SERVING, overrides)
+    serving = read_unit(SERVING, overrides)
 
     # 1. a cause, not a token
     if not re.search(r"cause:\s*RefusalCause", refusal):
@@ -338,7 +359,10 @@ SELFTEST = [
 def selftest() -> int:
     failures = 0
     for name, override, expected in SELFTEST:
-        base = {r: (REPO / r).read_text() for r in REFUSAL + [SERVING, RECORD, CORE_AUDIT]}
+        base = {r: (REPO / r).read_text() for r in REFUSAL + [RECORD, CORE_AUDIT]}
+        # The serving path is a subtree; a fixture that replaces it supplies its text as
+        # one override, which `read_unit` honours ahead of the walk.
+        base[SERVING] = read_unit(SERVING, None)
         base.update(override)
         got = len(check(base))
         ok = got >= expected

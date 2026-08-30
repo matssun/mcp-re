@@ -160,7 +160,7 @@ Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_g
 | `mcp-re-proxy/src/request_stages.rs` | 159 | stage vocabulary + a prose ordering table | vocabulary only; the prose table is deleted, not corrected (§11) |
 | `mcp-re-proxy/src/http_profile_serve/mod.rs` | 2023 | serving assembly **plus** six other authorities (§11) | the assembly only, consuming stage-returned transitions |
 | `mcp-re-proxy/src/http_profile_serve/signing_window.rs` | 75 | the validity a signed response may advertise | the sole owner of the credential bound, for both signing paths |
-| `mcp-re-proxy/src/async_serve.rs` | 898 | async serving runtime | subordinate to the same machine |
+| ~~`mcp-re-proxy/src/async_serve.rs`~~ | ~~898~~ | **gone** — became the `async_serve/` subtree in MCPRE-175 (`mod.rs` 365, plus `core_admission`, `body_budget`, `connection`, `http_limits`, `inbound`, `request`) | subordinate to the same machine |
 | `mcp-re-proxy/src/stage_timers.rs` | 275 | per-stage timing | subordinate |
 | `mcp-re-proxy/src/http_profile_dispatch.rs` | 188 | dispatch | subordinate |
 

@@ -162,6 +162,9 @@ _PROXY_LIB_SRCS = [
     "src/config_state/trust_revocation.rs",
     # Layer A's boundary: assembly, report-all, and the refusal-precedence contract.
     "src/config_state/validation/mod.rs",
+    "src/config_state/validation/recognition.rs",
+    "src/config_state/validation/refusable_machines.rs",
+    "src/config_state/validation/total_machines.rs",
     # The ownerless layer-A rules, enumerated so the remaining work is countable.
     "src/config_state/validation/machine_violations.rs",
     "src/config_state/validation/residue.rs",
@@ -261,7 +264,11 @@ _PROXY_LIB_SRCS = [
     # decided it. Split from the serving path so the cause outlives the stage.
     "src/refusal/mod.rs",
     "src/refusal/cause.rs",
-    "src/transparency.rs",
+    "src/transparency/mod.rs",
+    "src/transparency/retained_record.rs",
+    "src/transparency/covered_set.rs",
+    "src/transparency/durability.rs",
+    "src/transparency/attestation.rs",
     # Trust-document interpretation: the authoritative rules over the bytes, owned apart
     # from the parser that was merely their first caller.
     "src/trust_document.rs",
@@ -286,7 +293,12 @@ _PROXY_LIB_SRCS = [
     "src/log_sink.rs",
     # Issue #4034: PKCS#11/HSM-backed KeySource (behind #[cfg(feature =
     # "pkcs11_keysource")]; cfg'd out of the default build).
-    "src/pkcs11_keysource.rs",
+    "src/pkcs11_keysource/mod.rs",
+    "src/pkcs11_keysource/session.rs",
+    "src/pkcs11_keysource/amortized_session.rs",
+    "src/pkcs11_keysource/session_pool.rs",
+    "src/pkcs11_keysource/token.rs",
+    "src/pkcs11_keysource/tls_signer.rs",
     # Issue #4034 supply-chain follow-up: the OWNED safe wrapper over the raw
     # cryptoki-sys FFI bindings (replaces the high-level cryptoki crate +
     # transitive unmaintained `paste`). Same `pkcs11_keysource` feature gate.
@@ -333,6 +345,16 @@ _PROXY_LIB_SRCS = [
     "src/http_profile_serve/request_admission.rs",
     "src/http_profile_serve/retention.rs",
     "src/http_profile_serve/signing_window.rs",
+    # ADR-MCPRE-061: the request pipeline, region by region — what the exchange has spent
+    # by the time each one finishes.
+    "src/http_profile_serve/pre_admission/mod.rs",
+    "src/http_profile_serve/pre_admission/standing.rs",
+    "src/http_profile_serve/pre_admission/action.rs",
+    "src/http_profile_serve/answering_commitment.rs",
+    "src/http_profile_serve/dispatch_commitment.rs",
+    "src/http_profile_serve/reply_assembly/mod.rs",
+    "src/http_profile_serve/reply_assembly/notification.rs",
+    "src/http_profile_serve/reply_assembly/accepted.rs",
     # ADR-MCPRE-052 §4 / ADR-MCPS-035 §9: what the proxy asserts under its own credential
     # when it refuses — the posture, the record it is, and how the artifact is built.
     "src/http_profile_serve/receipt/mod.rs",
@@ -382,16 +404,22 @@ _PROXY_LIB_SRCS = [
     "src/trust_plane/delivered_window.rs",
     # ADR-MCPRE-056 §8 (ADR-MCPRE-052): the signing plane — root issuer, delegated
     # snapshot and rotation worker; retires the snapshot before it stops rotating.
-    "src/signing_plane.rs",
+    "src/signing_plane/mod.rs",
+    "src/signing_plane/rotation.rs",
+    "src/signing_plane/trust_epoch_advance.rs",
+    "src/signing_plane/mint_successor.rs",
     # ADR-MCPRE-056 §8 (ADR-MCPRE-051 §6): the TLS plane — serving TLS config, the
     # per-request revocation index and the CRL reload worker.
-    "src/tls_plane.rs",
+    "src/tls_plane/mod.rs",
+    "src/tls_plane/client_revocation_posture.rs",
+    "src/tls_plane/crl_reload_worker.rs",
     # ADR-MCPRE-056 §8: the shared control runtime — one owner for control-plane
     # execution; consumers get a tokio Handle (access, not ownership).
     "src/control_runtime.rs",
     # ADR-MCPRE-056 §6: the replay plane — establishes the planned tier and hands it
     # over by value; owns nothing afterwards.
-    "src/replay_plane.rs",
+    "src/replay_plane/mod.rs",
+    "src/replay_plane/backends.rs",
     # ADR-MCPS-021 Axis 2: declared revocation tier (Tier 1 bounded-cache / Tier 2
     # live / Tier 3 push) — semantic names + honest per-tier guarantee. Pure type.
     # The tier says which revocation policy applies; this materialises it as runtime
@@ -429,14 +457,31 @@ _PROXY_LIB_SRCS = [
     # (the `async_serve` feature is a vestigial no-op; no code gates on it). This
     # supersedes the ADR-MCPS-018 §1 lean-sync firewall for the proxy serving path;
     # `mcp-re-core` stays pure.
-    "src/async_serve.rs",
+    "src/async_serve/mod.rs",
+    # ADR-MCPRE-061: the listener's own authorities — what a core admits work against, the
+    # byte half of that admission, one connection, and one request over it.
+    "src/async_serve/core_admission.rs",
+    "src/async_serve/body_budget.rs",
+    "src/async_serve/connection.rs",
+    "src/async_serve/http_limits.rs",
+    "src/async_serve/inbound.rs",
+    "src/async_serve/request.rs",
     # MCPRE-113 (ADR-MCPRE-051 §1): the per-core serving fleet (per-core tokio
     # runtimes + SO_REUSEPORT listeners + Linux CPU pinning) — the production data
     # plane.
     "src/async_fleet.rs",
     # MCPRE-117 (ADR-MCPRE-051 §4): the async authoritative replay tier (async store
     # contract + L1-never-Fresh wrapper) — the only replay path.
-    "src/async_replay.rs",
+    "src/async_replay/mod.rs",
+    # ADR-MCPRE-061: the tier's own authorities — the retention arithmetic, the reference
+    # L2, the per-replica account above the backend seam, and the dormant L1.
+    "src/async_replay/bounds.rs",
+    "src/async_replay/retained_set.rs",
+    "src/async_replay/local_refusals.rs",
+    "src/async_replay/in_memory.rs",
+    "src/async_replay/retention_ledger.rs",
+    "src/async_replay/charge.rs",
+    "src/async_replay/l1_fast_reject.rs",
     # ADR-MCPRE-051 §3: the async inner-server seam — the only inner path; the
     # serving path awaits it (a stdio server is fronted by mcp-re-stdio-bridge over HTTP).
     "src/async_inner.rs",
@@ -802,14 +847,12 @@ nt_rust_test(
     data = [
         "//docs:sidecar-deployment-guide.md",
         ":mcp_re_proxy_cli",
-        "src/app.rs",
-        "src/delegated_wiring.rs",
-        "src/http_profile_serve/mod.rs",
-        "src/replay_plane.rs",
-        "src/signing_plane.rs",
-        "src/tls_plane.rs",
-        "src/trust_plane/mod.rs",
-    ],
+        # Every library source. The source-scanning guards in this suite scope to a
+        # DIRECTORY — the serving path, a plane — because a list of files has to learn
+        # about the next file, and the failure mode of a stale list is a clean pass over
+        # unmeasured code. A glob here says nothing about `srcs`, which
+        # `scripts/bazel_srcs_gate.py` still checks file by file.
+    ] + glob(["src/**/*.rs"]),
     edition = "2021",
     env = {
         "MCP_RE_SIDECAR_GUIDE": "$(rlocationpath //docs:sidecar-deployment-guide.md)",
@@ -817,9 +860,9 @@ nt_rust_test(
         "MCP_RE_APP_SRC": "$(rlocationpath src/app.rs)",
         "MCP_RE_HTTP_PROFILE_SERVE_SRC": "$(rlocationpath src/http_profile_serve/mod.rs)",
         "MCP_RE_DELEGATED_WIRING_SRC": "$(rlocationpath src/delegated_wiring.rs)",
-        "MCP_RE_REPLAY_PLANE_SRC": "$(rlocationpath src/replay_plane.rs)",
-        "MCP_RE_SIGNING_PLANE_SRC": "$(rlocationpath src/signing_plane.rs)",
-        "MCP_RE_TLS_PLANE_SRC": "$(rlocationpath src/tls_plane.rs)",
+        "MCP_RE_REPLAY_PLANE_SRC": "$(rlocationpath src/replay_plane/mod.rs)",
+        "MCP_RE_SIGNING_PLANE_SRC": "$(rlocationpath src/signing_plane/mod.rs)",
+        "MCP_RE_TLS_PLANE_SRC": "$(rlocationpath src/tls_plane/mod.rs)",
         "MCP_RE_TRUST_PLANE_SRC": "$(rlocationpath src/trust_plane/mod.rs)",
     },
     deps = [
