@@ -267,7 +267,7 @@ fn fresh_response() -> HttpResponse {
 /// attestation chain to the KMS root, rotation overlap (no verification gap), and a
 /// fail-closed body tamper.
 fn run_delegated_custody_lane(signer: KmsResponseSigner) {
-    let (req, ev, verified_req) = signed_request();
+    let (req, ev, _verified_req) = signed_request();
     let root_pub = signer.response_public_key().expect("KMS root public key");
 
     // Count REAL KMS invocations: the issuer closure is the ONLY place the KMS is
