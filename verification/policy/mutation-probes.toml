@@ -585,10 +585,9 @@ expect_red = [
 id = "M17-delegated-bound-request-evidence"
 unit = "http_profile.verifier_results"
 theorem = "THM-0019"
-conjunct = "the block's request_evidence handle equals the handle the caller supplied"
+conjunct = "the block's request_evidence handle equals the handle of the request under verification"
 path = "mcp-re-http-profile/src/verify/full/delegated/bound.rs"
 anchor = """
-    let bound = bound_request_evidence;
     if block.request_evidence.digest_alg != bound.digest_alg
         || block.request_evidence.digest_value != bound.digest_value
     {
@@ -596,7 +595,6 @@ anchor = """
     }
 """
 weakening = """
-    let bound = bound_request_evidence;
     if false {
         return Err(HttpProfileError::ResponseBindingMismatch);
     }

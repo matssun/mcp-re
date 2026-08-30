@@ -658,7 +658,7 @@ fn a_target_uri_disagreeing_with_the_audience_tuple_fails() {
 fn a_block_declaring_a_signer_it_did_not_sign_as_fails() {
     let block = request_block(vec![dpop_over(ACCESS_TOKEN.as_bytes())]);
     let (req, _ev) = signed_full_request(&block);
-    let _verified = Verifier::new(&VerifierPolicy::default(), &resolver())
+    let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req, &audience(), &no_material(), NOW)
         .expect("request verifies");
 
