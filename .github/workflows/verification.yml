@@ -58,6 +58,9 @@ on:
       # THM-0013 reads the boundary's OCSP clauses, so the lane must re-measure when
       # they move: the theorem is that no validated deployment enables online OCSP.
       - "mcp-re-proxy/src/config_state/validation/residue.rs"
+      # THM-0013 is a claim about the legality BOUNDARY, so the clause list that carries
+      # the refusal is inside `proxy.online_ocsp_reachability`'s closure too.
+      - "mcp-re-proxy/src/config_state/validation/mod.rs"
       # ADR-MCPRE-063 Slice 1: the certificate identity authority and the peer-identity
       # value invariant it constructs. The whole module tree, not the interpreter alone —
       # the selector's claim rests on the representation seam preserving presented order
@@ -78,6 +81,10 @@ on:
       # the composition root that consumes those projections without re-reading trust.
       - "mcp-re-proxy/src/config_state/trust_revocation.rs"
       - "mcp-re-proxy/src/config_state/trust_document.rs"
+      # ADR-MCPRE-067 Phase 5 moved the online-revocation SELECTION out of a flat
+      # `DeploymentRequest` field, so `proxy.online_ocsp_reachability`'s closure now names
+      # the file holding `is_required()` — the predicate THM-0013's refusal reads.
+      - "mcp-re-proxy/src/deployment_request/revocation/**"
       - "mcp-re-proxy/src/trust_plan.rs"
       - "mcp-re-proxy/src/app.rs"
       # The build inputs every ReviewFingerprint reads. A dependency bump moves
@@ -122,6 +129,9 @@ on:
       # THM-0013 reads the boundary's OCSP clauses, so the lane must re-measure when
       # they move: the theorem is that no validated deployment enables online OCSP.
       - "mcp-re-proxy/src/config_state/validation/residue.rs"
+      # THM-0013 is a claim about the legality BOUNDARY, so the clause list that carries
+      # the refusal is inside `proxy.online_ocsp_reachability`'s closure too.
+      - "mcp-re-proxy/src/config_state/validation/mod.rs"
       # ADR-MCPRE-063 Slice 1: the certificate identity authority and the peer-identity
       # value invariant it constructs. The whole module tree, not the interpreter alone —
       # the selector's claim rests on the representation seam preserving presented order
@@ -142,6 +152,10 @@ on:
       # the composition root that consumes those projections without re-reading trust.
       - "mcp-re-proxy/src/config_state/trust_revocation.rs"
       - "mcp-re-proxy/src/config_state/trust_document.rs"
+      # ADR-MCPRE-067 Phase 5 moved the online-revocation SELECTION out of a flat
+      # `DeploymentRequest` field, so `proxy.online_ocsp_reachability`'s closure now names
+      # the file holding `is_required()` — the predicate THM-0013's refusal reads.
+      - "mcp-re-proxy/src/deployment_request/revocation/**"
       - "mcp-re-proxy/src/trust_plan.rs"
       - "mcp-re-proxy/src/app.rs"
       # The build inputs every ReviewFingerprint reads. A dependency bump moves
