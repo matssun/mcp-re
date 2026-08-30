@@ -215,7 +215,7 @@ fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
 
 #[tokio::test]
 async fn rfc9421_round_trip_zero_object_evidence() {
-    let (req, _ev, verified_req) = signed_request("nonce-round-trip-1");
+    let (req, _ev, _verified_req) = signed_request("nonce-round-trip-1");
     let proxy = build_proxy();
 
     let served = ServedHttpRequest {

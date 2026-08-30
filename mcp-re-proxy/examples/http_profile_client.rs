@@ -105,7 +105,7 @@ fn main() {
     };
     // The delegated verifier binds the response to THIS request's evidence handle, so
     // keep what signing produced rather than recomputing it.
-    let request_evidence = sign_request_full(
+    let _request_evidence = sign_request_full(
         &mut request,
         &block,
         &hpp_common::client_key(),

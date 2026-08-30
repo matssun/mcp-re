@@ -320,7 +320,7 @@ async fn delegated_success_response_verifies_and_root_touched_once() {
 
     // Serve several requests under one delegated key.
     for i in 0..5 {
-        let (req, _ev, verified_req) = signed_request(&format!("nonce-ok-{i}"));
+        let (req, _ev, _verified_req) = signed_request(&format!("nonce-ok-{i}"));
         let served = proxy.handle(served_of(&req), NOW).await;
         assert_eq!(served.status, 200, "delegated request served");
         let resp = http_response(served);
@@ -362,7 +362,7 @@ async fn delegated_bound_rejection_verifies() {
     rotor.rotate(NOW).expect("issue");
     let proxy = delegated_proxy(Arc::clone(&signer));
 
-    let (req, _ev, verified_req) = signed_request("nonce-bound-1");
+    let (req, _ev, _verified_req) = signed_request("nonce-bound-1");
     // First is served; the replayed second is rejected — bound to the request.
     assert_eq!(proxy.handle(served_of(&req), NOW).await.status, 200);
     let served = proxy.handle(served_of(&req), NOW).await;
@@ -417,7 +417,7 @@ async fn delegated_preflight_rejection_verifies_unbound() {
         .verify_delegated_unbound_response(&resp, &expectations(&[EPOCH]), &|_| false, NOW)
         .expect("preflight delegated rejection verifies unbound");
     // And it must NOT verify through the bound path (there is no trusted request).
-    let (fresh, _e, verified_fresh) = signed_request("nonce-preflight-probe");
+    let (fresh, _e, _verified_fresh) = signed_request("nonce-preflight-probe");
     let r2 = resolver();
     assert!(
         Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r2(k, s))
@@ -514,7 +514,7 @@ async fn a_request_that_cannot_be_answered_never_reaches_the_backend() {
 fn direct_root_response_rejected_in_delegated_required_mode() {
     // A pre-052 server directly root-signs the response (no delegation credential) —
     // built from the test-only fixture, since no direct-root serving mode exists.
-    let (req, ev, verified_req) = signed_request("nonce-directroot-1");
+    let (req, ev, _verified_req) = signed_request("nonce-directroot-1");
     let resp = sign_legacy_direct_root_response_for_negative_test(&req, &ev);
 
     // A delegated-signing verifier rejects it: no inline credential.

@@ -371,7 +371,7 @@ async fn open_on(
     // The client keeps its own request for response binding.
     let no_material = |_b: &ArtifactBinding| None;
     let r = resolver();
-    let verified_req = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+    let _verified_req = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
         .verify_request(&req, &audience(), &no_material, NOW)
         .expect("client's own open request verifies");
 
@@ -427,7 +427,7 @@ async fn continuation_opened_on_a_is_honoured_on_b() {
     let (answer_req, answer_ev) =
         signed_request("nonce-answer", &answer_body(&state), Some(continuation));
     let _answer_ev = answer_ev;
-    let verified_answer = {
+    let _verified_answer = {
         let no_material = |_b: &ArtifactBinding| None;
         let r = resolver();
         Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
@@ -1264,7 +1264,7 @@ fn write_sdk_fixture(nonce: &str, reply_body: &[u8], comment: &str, file_name: &
     // reason and the test would prove nothing.
     let r = resolver();
     let no_material = |_b: &ArtifactBinding| None;
-    let verified_req = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+    let _verified_req = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
         .verify_request(&request, &audience(), &no_material, NOW)
         .expect("the fixture request verifies");
     let r = resolver();
@@ -1567,7 +1567,7 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
     assert_eq!(served1.status, 200, "leg 1 opened");
     let resp1 = http_response(served1);
     let r = resolver();
-    let verified_req1 = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+    let _verified_req1 = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
         .verify_request(&req1, &audience(), &|_b: &ArtifactBinding| None, NOW)
         .expect("the client's own round-1 request verifies");
     let r = resolver();
@@ -1598,7 +1598,7 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
         "the answer's own reply carries a NEW requestState"
     );
     let r = resolver();
-    let verified_req2 = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+    let _verified_req2 = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
         .verify_request(&req2, &audience(), &|_b: &ArtifactBinding| None, NOW)
         .expect("the client's own round-2 request verifies");
     let r = resolver();
