@@ -276,6 +276,19 @@ jobs:
           python3 scripts/module_size_gate.py --selftest
           python3 scripts/module_size_gate.py
 
+      # ADR-MCPRE-059. The verification workflow is `paths:`-filtered, and its filter list
+      # and the units' fingerprint closures are ONE dependency set written down twice. When
+      # the closure grows past the filter, the workflow does not go red — it stops running,
+      # and every check on the PR stays green while nothing measures the changed unit.
+      # `verification_trigger_gate.py` is what refuses that, so it must not live only inside
+      # the workflow whose trigger it polices: a PR narrowing the filter would also stop the
+      # policeman. It runs here, in the unconditional job, for the same reason the two
+      # ratchets above do — the merge path is what has to enforce it.
+      - name: Verification trigger gate (fingerprint closure ⊆ workflow trigger set)
+        run: |
+          python3 scripts/verification_trigger_gate.py --selftest
+          python3 scripts/verification_trigger_gate.py
+
       # The clippy ratchet needs the toolchain, so it runs with the clippy lanes below.
 
       # ADR-MCPRE-061 Amendment 1 §3. The Group A zero-debt protections live in ONE
