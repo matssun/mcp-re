@@ -33,7 +33,6 @@ use mcp_re_client_core::HttpProfileError;
 use mcp_re_client_core::HttpRequest;
 use mcp_re_client_core::HttpResponse;
 use mcp_re_client_core::ProvidedAuthorization;
-use mcp_re_client_core::RequestEvidence;
 use mcp_re_client_core::RequestEvidenceDigest;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResponseExpectation;
