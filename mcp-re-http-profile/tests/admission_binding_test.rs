@@ -25,7 +25,7 @@ use mcp_re_http_profile::AdmissionStatus;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::AudienceTuple;
-use mcp_re_http_profile::AuthoritativeAdmission;
+use mcp_re_http_profile::authoritative_admission::AuthoritativeAdmission;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
@@ -192,10 +192,7 @@ fn verify_and_check(
 fn a_bound_current_admitted_call_passes() {
     let claims = admission_claims(5, AdmissionStatus::Admitted);
     let req = signed_request_with_admission(Some(&claims));
-    let auth = AuthoritativeAdmission {
-        generation: 5,
-        status: AdmissionStatus::Admitted,
-    };
+    let auth = AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
     verify_and_check(
         &req,
         &issue(&claims),
@@ -212,10 +209,7 @@ fn a_bound_current_admitted_call_passes() {
 fn a_bound_but_stale_generation_is_refused() {
     let claims = admission_claims(5, AdmissionStatus::Admitted);
     let req = signed_request_with_admission(Some(&claims));
-    let auth = AuthoritativeAdmission {
-        generation: 6,
-        status: AdmissionStatus::Admitted,
-    };
+    let auth = AuthoritativeAdmission::new("workload-7".to_owned(), 6, AdmissionStatus::Admitted);
     assert_eq!(
         verify_and_check(
             &req,

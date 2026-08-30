@@ -2273,15 +2273,24 @@ fn frozen_http_profile_corpus_verifies() {
                         .expect("issuer key parses");
                 let authoritative =
                     match (&check.authoritative_generation, &check.authoritative_status) {
-                        (Some(g), Some(s)) => Some(mcp_re_http_profile::AuthoritativeAdmission {
-                            generation: *g,
-                            status: match s.as_str() {
-                                "admitted" => mcp_re_http_profile::AdmissionStatus::Admitted,
-                                "suspended" => mcp_re_http_profile::AdmissionStatus::Suspended,
-                                "revoked" => mcp_re_http_profile::AdmissionStatus::Revoked,
-                                other => panic!("{name}: unknown status {other}"),
-                            },
-                        }),
+                        // The fixture states the authority's generation and status and
+                        // no subject, because a vector describes ONE workload: the
+                        // lookup it models is the lookup for the workload this binding
+                        // names, so the binding's id is the honest subject to build the
+                        // state with. A vector wanting to exercise a mismatched subject
+                        // would have to say so, and none does.
+                        (Some(g), Some(s)) => Some(
+                            mcp_re_http_profile::authoritative_admission::AuthoritativeAdmission::new(
+                                binding.admission_id.clone(),
+                                *g,
+                                match s.as_str() {
+                                    "admitted" => mcp_re_http_profile::AdmissionStatus::Admitted,
+                                    "suspended" => mcp_re_http_profile::AdmissionStatus::Suspended,
+                                    "revoked" => mcp_re_http_profile::AdmissionStatus::Revoked,
+                                    other => panic!("{name}: unknown status {other}"),
+                                },
+                            ),
+                        ),
                         _ => None,
                     };
                 let policy = mcp_re_http_profile::AdmissionPolicy {

@@ -35,7 +35,7 @@ use std::pin::Pin;
 use std::sync::Mutex;
 
 use mcp_re_http_profile::AdmissionStatus;
-use mcp_re_http_profile::AuthoritativeAdmission;
+use mcp_re_http_profile::authoritative_admission::AuthoritativeAdmission;
 
 /// A fail-closed admission-source failure: the authority could not be reached or
 /// did not answer. NOT a verdict about the workload, and never a fallback to allow.
@@ -110,13 +110,11 @@ impl InMemoryAdmissionSource {
 
     /// Record (or supersede) the authoritative state for a workload.
     pub fn admit(&self, admission_id: &str, generation: u64) {
-        self.set(
-            admission_id,
-            AuthoritativeAdmission {
-                generation,
-                status: AdmissionStatus::Admitted,
-            },
-        );
+        self.set(AuthoritativeAdmission::new(
+            admission_id.to_owned(),
+            generation,
+            AdmissionStatus::Admitted,
+        ));
     }
 
     /// Revoke a workload — the invalidation a propagation measurement times.
@@ -126,23 +124,27 @@ impl InMemoryAdmissionSource {
             .lock()
             .unwrap_or_else(recover)
             .get(admission_id)
-            .map(|r| r.generation)
+            .map(|r| r.generation())
             .unwrap_or(0);
-        self.set(
-            admission_id,
-            AuthoritativeAdmission {
-                generation,
-                status: AdmissionStatus::Revoked,
-            },
-        );
+        self.set(AuthoritativeAdmission::new(
+            admission_id.to_owned(),
+            generation,
+            AdmissionStatus::Revoked,
+        ));
     }
 
-    /// Write an arbitrary authoritative record.
-    pub fn set(&self, admission_id: &str, state: AuthoritativeAdmission) {
+    /// Write an arbitrary authoritative record, KEYED BY ITS OWN SUBJECT.
+    ///
+    /// There is no separate key parameter, so a record cannot be filed under a workload
+    /// it is not about. That was reachable before — `set(id, state)` took two operands
+    /// nothing related — and it is the same defect the map exists to avoid: a later
+    /// lookup would return a value that is correct about the generation and wrong about
+    /// whose it is.
+    pub fn set(&self, state: AuthoritativeAdmission) {
         self.records
             .lock()
             .unwrap_or_else(recover)
-            .insert(admission_id.to_owned(), state);
+            .insert(state.admission_id().to_owned(), state);
     }
 
     /// Make every subsequent lookup fail as unavailable (or stop doing so).
@@ -233,8 +235,8 @@ mod tests {
         let state = block_on(source.current("workload-7"))
             .expect("reachable")
             .expect("record");
-        assert_eq!(state.generation, 5);
-        assert_eq!(state.status, AdmissionStatus::Revoked);
+        assert_eq!(state.generation(), 5);
+        assert_eq!(state.status(), AdmissionStatus::Revoked);
     }
 
     #[test]

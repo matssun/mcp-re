@@ -28,7 +28,7 @@
 use redis::aio::ConnectionManager;
 
 use mcp_re_http_profile::AdmissionStatus;
-use mcp_re_http_profile::AuthoritativeAdmission;
+use mcp_re_http_profile::authoritative_admission::AuthoritativeAdmission;
 
 use crate::admission_source::admission_key;
 use crate::admission_source::AdmissionFuture;
@@ -39,12 +39,12 @@ use crate::admission_source::AsyncAdmissionSource;
 /// no serde — and it stays legible in `redis-cli`, which matters when an operator is
 /// asking why a revocation has not taken effect.
 fn encode(state: &AuthoritativeAdmission) -> String {
-    let status = match state.status {
+    let status = match state.status() {
         AdmissionStatus::Admitted => "admitted",
         AdmissionStatus::Suspended => "suspended",
         AdmissionStatus::Revoked => "revoked",
     };
-    format!("{}:{}", state.generation, status)
+    format!("{}:{}", state.generation(), status)
 }
 
 /// Inverse of [`encode`]. `None` on a malformed record — the same answer as a record
@@ -57,17 +57,24 @@ fn encode(state: &AuthoritativeAdmission) -> String {
 /// `--admission-allow-degraded true`, making corruption a cheaper un-revoke than
 /// issuing a new admission. See [`RedisAdmissionSource::current_state`] for the call
 /// site that holds that line.
-fn decode(value: &str) -> Option<AuthoritativeAdmission> {
+///
+/// `admission_id` is the id the record was LOOKED UP UNDER, and it is the only honest
+/// answer available: the stored record is `<generation>:<status>` and carries no subject
+/// of its own, so the key is what says whose state this is. Passing it here rather than
+/// letting the call site attach it afterwards is what keeps the store's key and the
+/// value's subject from being two facts that merely happen to agree.
+fn decode(admission_id: &str, value: &str) -> Option<AuthoritativeAdmission> {
     let (generation, status) = value.split_once(':')?;
-    Some(AuthoritativeAdmission {
-        generation: generation.parse().ok()?,
-        status: match status {
+    Some(AuthoritativeAdmission::new(
+        admission_id.to_owned(),
+        generation.parse().ok()?,
+        match status {
             "admitted" => AdmissionStatus::Admitted,
             "suspended" => AdmissionStatus::Suspended,
             "revoked" => AdmissionStatus::Revoked,
             _ => return None,
         },
-    })
+    ))
 }
 
 /// A cross-process authoritative admission source backed by Redis.
@@ -98,14 +105,14 @@ impl RedisAdmissionSource {
     /// would turn a healthy authority's silence into "no record", which the serving
     /// path treats as a definitive negative — every workload would fall out of
     /// admission on a timer.
-    pub async fn publish(
-        &self,
-        admission_id: &str,
-        state: &AuthoritativeAdmission,
-    ) -> Result<(), AdmissionSourceError> {
+    ///
+    /// The key comes from the record's OWN subject. Taking an id alongside the state
+    /// would let a caller file workload A's record under workload B's key, and every
+    /// later reader would be correct about the value and wrong about whose it is.
+    pub async fn publish(&self, state: &AuthoritativeAdmission) -> Result<(), AdmissionSourceError> {
         let mut conn = self.conn.clone();
         let result: Result<(), redis::RedisError> = redis::cmd("SET")
-            .arg(admission_key(admission_id))
+            .arg(admission_key(state.admission_id()))
             .arg(encode(state))
             .query_async(&mut conn)
             .await;
@@ -123,15 +130,13 @@ impl RedisAdmissionSource {
         let generation = self
             .current_state(admission_id)
             .await?
-            .map(|s| s.generation)
+            .map(|s| s.generation())
             .unwrap_or(0);
-        self.publish(
-            admission_id,
-            &AuthoritativeAdmission {
-                generation,
-                status: AdmissionStatus::Revoked,
-            },
-        )
+        self.publish(&AuthoritativeAdmission::new(
+            admission_id.to_owned(),
+            generation,
+            AdmissionStatus::Revoked,
+        ))
         .await
     }
 
@@ -160,14 +165,14 @@ impl RedisAdmissionSource {
             // authority saying it has no valid record for this workload, which the
             // gate refuses outright.
             Some(value) => {
-                if decode(&value).is_none() {
+                if decode(admission_id, &value).is_none() {
                     eprintln!(
                         "mcp-re-proxy: malformed admission record for a workload in the shared \
                          store; treating it as NOT ADMITTED (a corrupt record is not an outage). \
                          Raw value withheld."
                     );
                 }
-                Ok(decode(&value))
+                Ok(decode(admission_id, &value))
             }
         }
     }
@@ -189,21 +194,26 @@ mod tests {
     #[test]
     fn a_record_round_trips_through_its_wire_form() {
         for state in [
-            AuthoritativeAdmission {
-                generation: 7,
-                status: AdmissionStatus::Admitted,
-            },
-            AuthoritativeAdmission {
-                generation: 0,
-                status: AdmissionStatus::Revoked,
-            },
-            AuthoritativeAdmission {
-                generation: u64::MAX,
-                status: AdmissionStatus::Suspended,
-            },
+            AuthoritativeAdmission::new("wl".to_owned(), 7, AdmissionStatus::Admitted),
+            AuthoritativeAdmission::new("wl".to_owned(), 0, AdmissionStatus::Revoked),
+            AuthoritativeAdmission::new("wl".to_owned(), u64::MAX, AdmissionStatus::Suspended),
         ] {
-            assert_eq!(decode(&encode(&state)), Some(state));
+            assert_eq!(decode("wl", &encode(&state)), Some(state));
         }
+    }
+
+    /// The wire record carries no subject, so the decoded value's subject can only come
+    /// from the key. This pins that it does: the same bytes read under two different keys
+    /// are two different states, which is what stops a lookup for one workload from
+    /// yielding a state that claims to be another's.
+    #[test]
+    fn the_decoded_subject_is_the_key_the_record_was_read_under() {
+        let raw = "5:admitted";
+        let a = decode("wl-a", raw).expect("decodes");
+        let b = decode("wl-b", raw).expect("decodes");
+        assert_eq!(a.admission_id(), "wl-a");
+        assert_eq!(b.admission_id(), "wl-b");
+        assert_ne!(a, b);
     }
 
     #[test]
@@ -212,17 +222,18 @@ mod tests {
         // outright. Reporting an outage instead would route the call to the §5.2
         // degraded fork, where corrupting a `revoked` record un-revokes the workload.
         for bad in ["", "7", "seven:admitted", "7:unknown", "7:", ":admitted"] {
-            assert_eq!(decode(bad), None, "{bad:?} must not decode");
+            assert_eq!(decode("wl", bad), None, "{bad:?} must not decode");
         }
     }
 
     #[test]
     fn the_record_is_legible_to_an_operator() {
         assert_eq!(
-            encode(&AuthoritativeAdmission {
-                generation: 5,
-                status: AdmissionStatus::Revoked,
-            }),
+            encode(&AuthoritativeAdmission::new(
+                "wl".to_owned(),
+                5,
+                AdmissionStatus::Revoked
+            )),
             "5:revoked"
         );
     }

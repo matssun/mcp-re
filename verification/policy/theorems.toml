@@ -185,27 +185,47 @@ depends_on = []
 id = "THM-0004"
 title = "Admission anti-rollback"
 statement = """
-A non-degraded Ok verdict implies the authoritative admission state was reachable, its
-generation equals the binding's generation, and its status is Admitted.
+A non-degraded Ok verdict implies the authoritative admission state was reachable, that
+state is ABOUT the workload the call is bound to — its `admission_id` equals the binding's,
+which the earlier binding/assertion comparison has already equated with the verified
+assertion's — and at that workload its generation equals the binding's generation and its
+status is Admitted.
+
+The three conjuncts are ordered, and the order is the claim. Generation equality and
+`Admitted` are properties OF a subject; asserted about an unnamed record they are satisfied
+by any workload that happens to sit at the same number, and a generation is a per-workload
+counter, so that is the ordinary case rather than a contrived one.
 """
 security_consequence = """
 A workload whose admission has been superseded or revoked cannot buy a call with an
-assertion that has not yet expired.
+assertion that has not yet expired, and cannot buy one with ANOTHER WORKLOAD'S
+authoritative state either — not even a state at the same generation, still admitted, and
+in every other respect a well-formed answer.
 """
 scope = """
 Says nothing about the degraded path, and nothing about the assertion's authenticity or
 freshness (ASM-0012). Currency is generation equality against the state the enforcement
-point holds; the theorem does not establish that that state is itself current.
+point holds; the theorem does not establish that that state is itself current, nor that the
+authority behind it is the right authority to trust.
 
-It also does not establish that the state handed in is the state FOR THIS WORKLOAD.
-`AuthoritativeAdmission` carries a generation and a status and no workload identity, so
-the proof quantifies over whatever record the caller supplied. Generations are small
-integers and collide across workloads by construction. The security consequence above
-therefore rests on a caller obligation this claim does not discharge: the enforcement
-point must look the record up under the very `binding.admission_id` that was checked. The
-serving path satisfies it today at `admission_enforcer.rs:121`, which passes
-`&binding.admission_id` to `AsyncAdmissionSource::current`; nothing in the type forbids a
-future caller from deriving that id from a header, a session field, or a cache instead.
+The subject conjunct is a claim about the VERDICT, not a caller obligation. It was one: the
+state carried a generation and a status and no workload identity, so the proof quantified
+over whatever record the caller supplied, and the security consequence rested on every
+enforcement point remembering to look the record up under the `binding.admission_id` it had
+just checked. Every one of them did. That is what a remembered convention looks like, and
+the R-SEAL test asks whether the check could be deleted and still leave an invalid value
+unconstructible: it could not, because there was no check — there was nothing to compare.
+
+`AuthoritativeAdmission` now carries its subject, its representation is not publicly
+constructible, and `AuthoritativeAdmission::new` cannot be called without naming the
+workload the state is about. So the id in the value is the id the adapter looked up: the
+Redis source builds it from the key it read the record under and files a published record
+under the record's own subject, and the in-memory source keys its map by the same. There is
+no longer a pair of operands that could disagree.
+
+The claim remains about ONE enforcement decision. It does not establish that the store's
+key is the workload's true name, nor that a compromised authority publishes true records —
+those are the authority's propositions, not this one's.
 """
 owner = "http_profile.admission_currency"
 review_requirement = "Owner security-specification review"

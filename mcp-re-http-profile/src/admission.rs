@@ -37,6 +37,8 @@ use serde::Serialize;
 use sha2::Digest;
 use sha2::Sha256;
 
+use crate::admission_policy::AdmissionPolicy;
+use crate::authoritative_admission::AuthoritativeAdmission;
 use crate::block::BindingType;
 use crate::delegation::Audience;
 use crate::error::HttpProfileError;
@@ -72,7 +74,7 @@ pub enum AdmissionStatus {
 /// The JWS protected header of an admission assertion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AdmissionHeader {
+pub(crate) struct AdmissionHeader {
     pub typ: String,
     pub alg: String,
     /// The issuer (admission authority) root key id — resolved through the trust
@@ -183,48 +185,6 @@ impl AdmissionBinding {
         self.binding_type == BindingType::OpaqueDigest
             && self.digest_alg == crate::ids::EVIDENCE_DIGEST_ALG
             && self.digest_value == b64url_encode(&Sha256::digest(admitted_state_digest.as_bytes()))
-    }
-}
-
-/// The authoritative admission state a PEP holds for a workload (§4.3). Fed by
-/// Layer 1 push-invalidation; how it is fed is out of scope here (the assertion
-/// consumes whatever Layer 1 decides).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthoritativeAdmission {
-    /// The current generation. A call bound to an OLDER generation is stale.
-    pub generation: u64,
-    /// The current status. Only `Admitted` permits a call.
-    pub status: AdmissionStatus,
-}
-
-/// The verifier-local admission freshness + fallback budget (§5.2).
-#[derive(Debug, Clone, Copy)]
-pub struct AdmissionPolicy {
-    /// N — the maximum age (seconds) of an assertion the PEP will accept, beyond
-    /// its own `exp`-based freshness. Bounds how stale an admitted-state snapshot
-    /// may be even within its TTL.
-    pub max_assertion_age: i64,
-    /// Clock-skew tolerance on the assertion's `[nbf, exp]` window.
-    pub max_clock_skew: i64,
-    /// P — the bound (seconds) within which the PEP may serve on the LAST-KNOWN
-    /// authoritative state when the live state is unreachable, IF degraded mode is
-    /// enabled. Past P, an unreachable authority is fail-closed.
-    pub degraded_propagation_bound: i64,
-    /// Whether degraded mode is enabled at all. Default false: an unreachable
-    /// authority fails closed immediately. Enabling it is an explicit deployment
-    /// act, because it trades a bounded window of stale-admission risk for
-    /// availability.
-    pub allow_degraded_mode: bool,
-}
-
-impl Default for AdmissionPolicy {
-    fn default() -> Self {
-        AdmissionPolicy {
-            max_assertion_age: 300,
-            max_clock_skew: 30,
-            degraded_propagation_bound: 0,
-            allow_degraded_mode: false,
-        }
     }
 }
 
@@ -383,13 +343,13 @@ fn s_seg_to_b64url(s_seg: &str) -> Result<String, HttpProfileError> {
 /// degraded-mode fork.
 ///
 /// Fail-closed rules:
-///   - the binding's `admission_id` must match the assertion;
-///   - the binding must commit to the assertion's admitted-state digest;
+///   - the binding's `admission_id` must match the assertion, and the binding must
+///     commit to the assertion's admitted-state digest;
+///   - **subject**: the authoritative state must be about that same `admission_id`;
 ///   - **currency**: the bound generation must equal the authoritative generation.
 ///     An OLDER bound generation is a call from a workload whose admission has been
 ///     superseded — stale, rejected, even though its assertion has not expired;
-///   - status must be `Admitted` in BOTH the assertion and the authoritative
-///     state; a workload revoked after issuance is refused;
+///   - status must be `Admitted` in BOTH the assertion and the authoritative state;
 ///   - authoritative state unreachable → reject, UNLESS degraded mode is enabled
 ///     AND the assertion is within the P bound, in which case serve on the
 ///     assertion's own status and mark the verdict degraded.
@@ -397,9 +357,12 @@ fn s_seg_to_b64url(s_seg: &str) -> Result<String, HttpProfileError> {
 // ADR-MCPRE-059 §7 currency theorem. Each clause is a rule the prose above states and
 // that no test can establish for all inputs:
 //
-//   * a LIVE verdict implies the call's bound generation equals the authoritative one and
-//     that state says admitted — the anti-rollback rule, stated as an implication so a
-//     future path that returns Ok without comparing generations cannot exist;
+//   * a LIVE verdict implies the authoritative state is ABOUT the workload the call is
+//     bound to, and at that workload the bound generation is current and the status is
+//     admitted — the anti-rollback rule, stated as an implication so a future path that
+//     returns Ok without comparing generations cannot exist. Subject first: a generation
+//     is a per-workload counter, so the other two are satisfied by any workload at the
+//     same number;
 //   * a DEGRADED verdict implies the authoritative state was unreachable AND the
 //     deployment opted in — so no default deployment can reach a degraded admission;
 //   * every verdict carries the binding's own workload id and generation and `Admitted`,
@@ -423,6 +386,7 @@ fn s_seg_to_b64url(s_seg: &str) -> Result<String, HttpProfileError> {
             &&& v.admission_id@ == binding.admission_id@
             &&& v.admitted_actor@ == presenter_actor_id@
             &&& !v.degraded ==> (authoritative matches Some(state)
+                    && state.admission_id@ == binding.admission_id@
                     && binding.generation == state.generation
                     && state.status == AdmissionStatus::Admitted)
             &&& v.degraded ==> (authoritative is None && policy.allow_degraded_mode)
@@ -478,6 +442,14 @@ pub fn check_admission(
 
     match authoritative {
         Some(state) => {
+            // FIRST: this state must be ABOUT this workload — see
+            // `crate::authoritative_admission` for why the subject is a member. The
+            // binding's id is already equated with the assertion's above. It is
+            // `StateUnavailable` and not a binding mismatch because the mismatch is not
+            // the caller's: this PEP has no authoritative state for the call.
+            if state.admission_id != binding.admission_id {
+                return Err(HttpProfileError::AdmissionStateUnavailable);
+            }
             // Currency: the bound generation must be the current one. Older = the
             // workload's admission was superseded; the call is stale.
             if binding.generation != state.generation {
@@ -626,10 +598,7 @@ mod tests {
     #[test]
     fn a_current_admitted_workload_passes() {
         let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
-        let auth = AuthoritativeAdmission {
-            generation: 5,
-            status: AdmissionStatus::Admitted,
-        };
+        let auth = AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
         let v = check(&c, Some(&auth), &AdmissionPolicy::default()).expect("current");
         assert_eq!(v.generation, 5);
         assert!(!v.degraded);
@@ -648,10 +617,7 @@ mod tests {
     #[test]
     fn an_assertion_issued_to_another_actor_does_not_admit_this_caller() {
         let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
-        let auth = AuthoritativeAdmission {
-            generation: 5,
-            status: AdmissionStatus::Admitted,
-        };
+        let auth = AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
         let err = check_admission(
             &AdmissionBinding::opaque_from(&c),
             &issue(&c),
@@ -675,6 +641,45 @@ mod tests {
     /// The load-bearing case: an assertion that is signed, fresh, and says
     /// "admitted" is STILL rejected when the authoritative generation has moved on.
     /// A snapshot is not currency.
+    /// THE COLLISION. Another workload's authoritative state, at the SAME generation and
+    /// `Admitted` — which is not a contrived value: a generation is a per-workload
+    /// counter, so two workloads sitting at generation 5 is the ordinary case, and before
+    /// the state carried a subject these two values were literally equal.
+    ///
+    /// So `workload-7` may be superseded or revoked and still be served, on `workload-9`'s
+    /// record, and no comparison in the function would notice — there was nothing to
+    /// compare. The identity conjunct is what refuses it, and it has to be checked before
+    /// generation and status, because those two agree here.
+    #[test]
+    fn another_workloads_state_at_the_same_generation_does_not_admit_this_call() {
+        let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
+        let stranger =
+            AuthoritativeAdmission::new("workload-9".to_owned(), 5, AdmissionStatus::Admitted);
+        let err = check(&c, Some(&stranger), &AdmissionPolicy::default())
+            .expect_err("state for another workload must not admit this call");
+        assert!(matches!(err, HttpProfileError::AdmissionStateUnavailable));
+
+        // The control, so the refusal above is attributable to the subject and not to
+        // anything else about the value: the SAME generation and status, under this
+        // call's own workload, passes.
+        let own = AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
+        assert!(check(&c, Some(&own), &AdmissionPolicy::default()).is_ok());
+    }
+
+    /// A revoked workload cannot buy the call with a stranger's admitted record. The
+    /// registered security consequence of THM-0004, asked directly.
+    #[test]
+    fn a_revoked_workload_cannot_be_served_on_another_workloads_admitted_record() {
+        let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
+        // The authority has revoked workload-7. workload-9 is admitted at the same
+        // generation, and its record is what the lookup returns.
+        let stranger =
+            AuthoritativeAdmission::new("workload-9".to_owned(), 5, AdmissionStatus::Admitted);
+        let err = check(&c, Some(&stranger), &AdmissionPolicy::default())
+            .expect_err("a revoked workload must not be served on a stranger's record");
+        assert!(matches!(err, HttpProfileError::AdmissionStateUnavailable));
+    }
+
     #[test]
     fn a_stale_generation_is_rejected_even_though_the_assertion_is_valid() {
         let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
@@ -689,10 +694,7 @@ mod tests {
         )
         .expect("the assertion itself is valid");
         // ...but the authority has advanced to generation 6.
-        let auth = AuthoritativeAdmission {
-            generation: 6,
-            status: AdmissionStatus::Admitted,
-        };
+        let auth = AuthoritativeAdmission::new("workload-7".to_owned(), 6, AdmissionStatus::Admitted);
         assert_eq!(
             check(&c, Some(&auth), &AdmissionPolicy::default()).unwrap_err(),
             HttpProfileError::AdmissionNotCurrent,
@@ -702,10 +704,7 @@ mod tests {
     #[test]
     fn a_workload_revoked_after_issuance_is_refused() {
         let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
-        let auth = AuthoritativeAdmission {
-            generation: 5,
-            status: AdmissionStatus::Revoked,
-        };
+        let auth = AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Revoked);
         assert_eq!(
             check(&c, Some(&auth), &AdmissionPolicy::default()).unwrap_err(),
             HttpProfileError::AdmissionNotCurrent,
@@ -715,10 +714,7 @@ mod tests {
     #[test]
     fn a_suspended_assertion_never_permits_a_call() {
         let c = claims(5, AdmissionStatus::Suspended, NOW - 10);
-        let auth = AuthoritativeAdmission {
-            generation: 5,
-            status: AdmissionStatus::Admitted,
-        };
+        let auth = AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
         assert_eq!(
             check(&c, Some(&auth), &AdmissionPolicy::default()).unwrap_err(),
             HttpProfileError::AdmissionNotCurrent,
@@ -758,10 +754,7 @@ mod tests {
         // A binding whose digest does not match the assertion's admitted state.
         let mut binding = AdmissionBinding::opaque_from(&c);
         binding.digest_value = b64url_encode(&Sha256::digest(b"different-state"));
-        let auth = AuthoritativeAdmission {
-            generation: 5,
-            status: AdmissionStatus::Admitted,
-        };
+        let auth = AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
         assert_eq!(
             check_admission(
                 &binding,
@@ -984,10 +977,7 @@ mod tests {
     #[test]
     fn the_verdict_names_the_workload_the_binding_committed_to() {
         let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
-        let auth = AuthoritativeAdmission {
-            generation: 5,
-            status: AdmissionStatus::Admitted,
-        };
+        let auth = AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
         let binding = AdmissionBinding::opaque_from(&c);
         let live = check(&c, Some(&auth), &AdmissionPolicy::default()).expect("current");
         assert_eq!(live.admission_id, binding.admission_id);

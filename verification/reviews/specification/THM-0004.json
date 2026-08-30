@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:820cff260c59620e6d494d0d18c5f0b35b5451076a7b40ed0b472bb8a37f2d1f",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0004",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. C2, RETURNED FOR CORRECTION and approved under that ruling once corrected. The ruling held that the caller obligation was not an acceptable final theorem boundary and that the security consequence \u2014 a workload whose admission was superseded or revoked cannot buy a call with another workload's authoritative state \u2014 was to be PRESERVED rather than narrowed to what the representation could then establish. `AuthoritativeAdmission` accordingly gained the subject coordinate it lacked, sealed behind `new` and named projections rather than added as a fourth freely mutable public field; `check_admission` now refuses unless the authoritative state's `admission_id` equals the binding's, which the earlier comparison has already equated with the verified assertion's, before generation or status can establish currency; and the source adapters propagate the lookup identity honestly \u2014 the Redis decoder builds the subject from the key it read the record under, the publisher keys the write by the record's own subject, and the in-memory source keys its map the same way, so there is no longer a pair of operands that could disagree. The collision control the ruling asked for is `another_workloads_state_at_the_same_generation_does_not_admit_this_call`, with the registered consequence asked directly by `a_revoked_workload_cannot_be_served_on_another_workloads_admitted_record`, and probe M67 establishes that the new conjunct is load-bearing by deleting it and observing both go red. No new top-level authority was introduced: this is the missing subject coordinate of the existing product, and the identity relation had exactly one plausible owner.",
+  "reviewed_fingerprint": "sha256:879a43f7422644ae409e8027ae88af1a47476aaf8f6f62ca7a767e37ba12b969",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0004"
+}
