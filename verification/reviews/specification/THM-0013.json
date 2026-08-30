@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:deea7f9f26706639b65fdae02ac4cd5c2a4593102c0d50820dba4f3ef5cecd7b",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0013",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. Thirty-two current fingerprints were approved as prepared; five theorem IDs were returned for correction first. C5. APPROVED as prepared. The ruling accepts the ADR-MCPRE-067 restatement over `peer_revocation.online` and `OnlineRevocationEvidenceRequest::Required`; the flat `client_ocsp` field the previous statement described no longer exists. No policy changed and the retained RFC 6960 implementation is untouched.",
+  "reviewed_fingerprint": "sha256:222ff157f0f34c256f60fa3a0c8d440cb509a4fc7a28098d89ea87358ef7880e",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0013"
+}

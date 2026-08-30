@@ -1,13 +1,14 @@
 {
   "axis": "specification",
-  "subject": "THM-0002",
-  "reviewed_fingerprint": "sha256:8f620c3a3aaf30db92277c9211a2c2b4de19de5dfda9c064542d531d6f4a2da6",
   "components": {
-    "theorem_id": "THM-0002",
-    "theorem_claim": "sha256:a7deb03381e65ac310ba6afe35d9bbe081aeb8a4e9f4e80415585fed83a23803",
+    "encoding_version": 1,
+    "theorem_claim": "sha256:59d0491c51ba99aa215e26c92dac9416af93e63696e11ed9b96730cb397afd89",
     "theorem_dependencies": {},
+    "theorem_id": "THM-0002",
     "theorem_review_requirement": "Owner security-specification review"
   },
+  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. Thirty-two current fingerprints were approved as prepared; five theorem IDs were returned for correction first. C1. APPROVED after one mechanical scope correction ruled in the same message: the scope named `format_rfc3339_utc`, which does not exist; the function is `unix_to_rfc3339_utc`. Nothing else in the theorem changed, so this is the same reviewed proposition under a corrected name, and the ruling states no further review round is required to record the corrected fingerprint. This record REPLACES the one written under issue #540, whose fingerprint the naming correction moved. It does not wait for #541: the round-trip direction this scope sentence disclaims remains disclaimed, and the extraction measurement of 2026-08-30 found it is not provable at all while `alloc::fmt::format` extracts as an uninterpreted axiom.",
+  "reviewed_fingerprint": "sha256:9b1491f664917493304659e36f6cf0bd19bf38baaff51ef36d837aac859393c7",
   "reviewer": "mats@sundvall.name",
-  "notes": "Owner ruling on the second review packet, issue #540. The first packet was returned NEEDS CHANGE because the stated upper bound 253402387199 was one day looser than the parser admits; the repair tightened parse_rfc3339_utc to 253402300799 and the days_from_civil helper postcondition to 2932896, and both bounds are now attained by an accepted timestamp and pinned by boundary controls. The title is deliberately unchanged: it summarises at identifier level and the statement carries the tighter result."
+  "subject": "THM-0002"
 }

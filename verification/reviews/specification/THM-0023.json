@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:5e77ea1098ae664608ed2e068746aeb794bc5175b771fe85489ba0b5f34d79be",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0023",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. Thirty-two current fingerprints were approved as prepared; five theorem IDs were returned for correction first. C4. APPROVED as prepared, under the family's ratified shared discipline: naming a product does not imply a stronger assurance fact than its producer established.",
+  "reviewed_fingerprint": "sha256:72c136266ce6d02251d466cbc5b8e51ef32a92dffba63e5bd189138304378111",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0023"
+}

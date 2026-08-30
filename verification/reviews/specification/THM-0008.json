@@ -1,0 +1,16 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:c96f8b510168654a9a3d9d2f4032ce357f9022b1981ba45a1d9f5e0d3cb88dcb",
+    "theorem_dependencies": {
+      "THM-0007": "sha256:474119e67bd5170a9e3647750fbb9d1e8a7308425d93ccfd4245998d38a24889"
+    },
+    "theorem_id": "THM-0008",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. Thirty-two current fingerprints were approved as prepared; five theorem IDs were returned for correction first. C2. APPROVED as prepared. The ruling confirms the new closed-dispatch owner `http_profile.artifact_verification_boundary` is the correct repair: the theorem became false because no unit owned the DISPATCH RELATION, only one owning a single function's returns, so a second typed verifier could be added without turning any lane red. The restatement keeps the ID and states the closed relation rather than a cardinality.",
+  "reviewed_fingerprint": "sha256:893f38b3cb4290dc644eb9dc8773f556aaf3eec642897b4a6eba45c602fd76e4",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0008"
+}

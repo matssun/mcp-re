@@ -1,0 +1,17 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:7f630ee9ad02ca2137b43296c775cebab478498de18e2580b147c7ce6335a380",
+    "theorem_dependencies": {
+      "THM-0001": "sha256:b067364dff3ea3ee94ba4bc44f3eaa6b7d73dfd0a7f83fce66f6b974683c2868",
+      "THM-0022": "sha256:5a6ae3fc8d7e8da6cc64a01fd68effcf12734ed195160466e6eaede46794467e"
+    },
+    "theorem_id": "THM-0020",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. Thirty-two current fingerprints were approved as prepared; five theorem IDs were returned for correction first. C3. APPROVED as prepared. The ruling records that THM-0020 is UNBOUND and is unaffected by the request/handle pairing repair, and ratifies the family discipline that the unbound propositions are not weaker bound propositions \u2014 the distinct types are the load-bearing separation.",
+  "reviewed_fingerprint": "sha256:a176280bae758572695206bbce4e0f08e95b87034a45dbe7d4139c4001a7ef1f",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0020"
+}
