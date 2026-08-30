@@ -1766,3 +1766,195 @@ expect_red = [
   "lib#pdp_decision::binding::tests::a_different_document_does_not",
   "tests/full_profile_test#a_carried_decision_that_is_not_the_bound_document_is_refused",
 ]
+
+[[probe]]
+id = "M58-an-illegal-event-does-not-advance-the-lifecycle"
+unit = "proxy.runtime_lifecycle"
+theorem = "THM-0012"
+conjunct = "apply is the only mutator, leaving the state unchanged on an illegal event"
+# The weakening is the shape the battery's own comment names as the broken implementation:
+# an unlisted pair silently accepted as a no-op. It READS harmless — the state did not
+# move — and it is exactly how an out-of-order or duplicated event stops being visible.
+path = "mcp-re-proxy/src/runtime_state.rs"
+anchor = """
+        let next = transition(self.state, event)?;
+        self.state = next;
+        Ok(next)
+"""
+weakening = """
+        let Ok(next) = transition(self.state, event) else {
+            return Ok(self.state);
+        };
+        self.state = next;
+        Ok(next)
+"""
+expect_red = [
+  "lib#runtime_state::tests::a_rejected_event_does_not_advance_the_lifecycle",
+]
+
+[[probe]]
+id = "M59-stopped-has-one-predecessor"
+unit = "proxy.runtime_lifecycle"
+theorem = "THM-0012"
+conjunct = "every state has a unique predecessor under the transition relation"
+# A Draining -> Stopped shortcut: the shape someone adds to make shutdown "go faster". It
+# skips the security transition and the reclaim, and a record reading Stopped would then no
+# longer imply that either happened — which is the whole of what THM-0012 says a terminal
+# state proves.
+path = "mcp-re-proxy/src/runtime_state.rs"
+anchor = """
+        (S::Reclaiming, E::ResourceReclaimCompleted) => S::Stopped,
+"""
+weakening = """
+        (S::Reclaiming, E::ResourceReclaimCompleted) => S::Stopped,
+        (S::Draining, E::ResourceReclaimCompleted) => S::Stopped,
+"""
+expect_red = [
+  "lib#runtime_state::tests::every_state_event_pair_is_either_explicitly_legal_or_rejected",
+  "lib#runtime_state::tests::the_relation_has_exactly_ten_legal_transitions",
+]
+
+[[probe]]
+id = "M60-a-failed-start-is-not-a-drained-shutdown"
+unit = "proxy.runtime_lifecycle"
+theorem = "THM-0012"
+conjunct = "a recorded terminal Stopped implies every event of the ordinary path was applied"
+# THE registered security consequence, probed directly: collapse the failure terminal into
+# the success terminal and a runtime that never bound a listener is recorded as a clean
+# drained shutdown. Nothing else in the battery would notice a merged terminal.
+path = "mcp-re-proxy/src/runtime_state.rs"
+anchor = """
+        (S::Materializing, E::MaterializationFailed) => S::FailedToStart,
+"""
+weakening = """
+        (S::Materializing, E::MaterializationFailed) => S::Stopped,
+"""
+expect_red = [
+  "lib#runtime_state::tests::a_failed_materialization_ends_distinctly_from_a_served_shutdown",
+  "lib#runtime_state::tests::every_state_event_pair_is_either_explicitly_legal_or_rejected",
+]
+
+[[probe]]
+id = "M61-online-ocsp-is-refused-in-every-build"
+unit = "proxy.online_ocsp_reachability"
+theorem = "THM-0013"
+conjunct = "every DeploymentRequest whose peer_revocation.online is Required is refused"
+# The refusal itself. Weakened, a deployment announces ONLINE OCSP client-cert revocation
+# enabled while the async data plane performs no responder round trip at all — the
+# forbidden-claim shape, on the posture THM-0013 exists to say is unreachable.
+path = "mcp-re-proxy/src/config_state/validation/residue.rs"
+anchor = """
+    online.is_required().then(|| {
+"""
+weakening = """
+    false.then(|| {
+"""
+expect_red = [
+  "lib#config_state::validation::residue::tests::no_build_admits_the_online_ocsp_mode",
+  "lib#config_state::validation::residue::tests::the_boundary_clause_carries_the_online_ocsp_refusal",
+]
+
+[[probe]]
+id = "M62-the-legality-boundary-carries-the-ocsp-refusal"
+unit = "proxy.online_ocsp_reachability"
+theorem = "THM-0013"
+conjunct = "refused BY THE LEGALITY BOUNDARY, on the only route to a ValidatedDeployment"
+# The second half, and the one the unit could not previously ask: a correct predicate that
+# nothing calls establishes nothing. Deleting the boundary's clause leaves
+# `online_ocsp_refusal` intact and every in-crate control green, because they call the
+# predicate directly. Only a control that drives `app::run` notices — which is why one was
+# added to this unit's battery.
+path = "mcp-re-proxy/src/config_state/validation/mod.rs"
+anchor = """
+    violations.extend(residue::ocsp_mode_violations(config));
+"""
+weakening = """
+"""
+expect_red = [
+  "tests/integration#app_startup_characterization_test::a_programmatic_config_cannot_claim_an_ocsp_check_the_serving_path_never_makes",
+]
+
+[[probe]]
+id = "M63-a-zero-cadence-is-a-spinning-reloader"
+unit = "proxy.trust_configuration_state"
+theorem = "THM-0035"
+conjunct = "a successfully classified state carries the witnesses its own state form requires"
+# A zero cadence names no legal state: `Halt::sleep(0)` sets a deadline already in the past,
+# so `--trust` is re-read and the signer directory rebuilt continuously on a spinning
+# thread. The CRL machine refused it; this one had to be taught to.
+path = "mcp-re-proxy/src/config_state/trust_revocation.rs"
+anchor = """
+    if secs == 0 {
+"""
+weakening = """
+    if false {
+"""
+expect_red = [
+  "lib#config_state::trust_revocation::tests::a_zero_cadence_is_a_spinning_reloader_in_every_state",
+  "lib#config_state::trust_revocation::tests::a_programmatic_config_cannot_spin_the_trust_reloader",
+]
+
+[[probe]]
+id = "M64-the-cadence-is-held-to-the-window-the-state-claims"
+unit = "proxy.trust_configuration_state"
+theorem = "THM-0035"
+conjunct = "each state holds its cadence to the revocation window it claims"
+# The witness that makes a tier's claim true rather than advertised: a key removed from
+# `--trust` keeps resolving until the file is re-read, so a cadence longer than the declared
+# window is a deployment stating a revocation latency it cannot keep.
+path = "mcp-re-proxy/src/config_state/trust_revocation.rs"
+anchor = """
+    if secs > ceiling {
+"""
+weakening = """
+    if false {
+"""
+expect_red = [
+  "lib#config_state::trust_revocation::tests::each_state_holds_the_cadence_to_the_window_it_claims",
+]
+
+[[probe]]
+id = "M65-an-epoch-source-is-what-makes-a-push-state-networked"
+unit = "proxy.trust_configuration_state"
+theorem = "THM-0036"
+conjunct = "a networked trust-epoch source is handed over as a paired locator and key, or not at all"
+# Classifying every push deployment as networked is the "or not at all" half deleted: a
+# deployment with no epoch source would be handed a locator it never named. The pairing is
+# what stops one deployment's store being read under another's key.
+path = "mcp-re-proxy/src/config_state/trust_revocation.rs"
+anchor = """
+            if epoch.source.is_some() {
+                RequestedState::PushNetworked { t_secs: *t_secs }
+            } else {
+                RequestedState::PushInert { t_secs: *t_secs }
+            }
+"""
+weakening = """
+            RequestedState::PushNetworked { t_secs: *t_secs }
+"""
+expect_red = [
+  "lib#config_state::trust_revocation::tests::the_epoch_source_is_what_splits_push_in_two",
+]
+
+[[probe]]
+id = "M66-a-reload-bearing-state-is-not-projected-to-read-once"
+unit = "proxy.trust_plan"
+theorem = "THM-0037"
+conjunct = "the reload cadence is a projection of the revocation posture, never a second value"
+# `ReadOnceAtStartup` under a tier whose whole claim is that the store IS re-read. The
+# projection reads the cadence from the state rather than matching its variants, so the one
+# way to break it is to stop consulting the state — and then every posture reads once.
+path = "mcp-re-proxy/src/trust_plan.rs"
+anchor = """
+    match state.reload_cadence() {
+        Some(secs) => TrustReloadPlan::Every { secs },
+        None => TrustReloadPlan::ReadOnceAtStartup,
+    }
+"""
+weakening = """
+    let _ = state;
+    TrustReloadPlan::ReadOnceAtStartup
+"""
+expect_red = [
+  "lib#trust_plan::tests::a_reload_bearing_state_cannot_be_projected_to_read_once",
+]

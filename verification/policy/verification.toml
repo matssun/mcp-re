@@ -52,7 +52,14 @@ class = "V0"
 description = "The runtime lifecycle relation: 11 states, 10 events, one closed transition relation."
 paths = ["mcp-re-proxy/src/runtime_state.rs"]
 exported_contracts = []
-evidence = ["test://proxy/runtime_lifecycle/transition_relation"]
+# TWO evidence classes. THM-0012's scope says plainly that the uniqueness-of-path argument
+# is "a match a reviewer reads, not a proof a prover checked" — exactly the situation where
+# a passing battery says nothing about whether the relation is load-bearing. The probes
+# weaken the relation and the mutator; the controls that notice are the claim's evidence.
+evidence = [
+  "test://proxy/runtime_lifecycle/transition_relation",
+  "mutation://proxy/runtime_lifecycle/transition_relation",
+]
 # The battery the URI above names, by the path libtest reports each test under. The lane
 # selects exactly these with `--exact`; a renamed or deleted member fails the lane rather
 # than quietly shrinking the evidence behind a green unit.
@@ -909,6 +916,10 @@ class = "V0"
 description = "The legality model admits no online-OCSP deployment: OnlineRevocationEvidenceRequest::Required is refused on the only route to a ValidatedDeployment."
 paths = [
   "mcp-re-proxy/src/config_state/validation/residue.rs",
+  # THM-0013 says the refusal happens ON THE BOUNDARY, so the clause list that carries it
+  # is part of what decides the claim. A closure holding only the predicate would
+  # fingerprint a correct rule and miss its removal from the only route that runs it.
+  "mcp-re-proxy/src/config_state/validation/mod.rs",
   # The refusal is `online.is_required()`, and that predicate — with the variant set it
   # ranges over — lives here after ADR-MCPRE-067 Phase 5 replaced the flat `client_ocsp`
   # field. A closure that named only the caller would fingerprint the clause while the
@@ -917,13 +928,24 @@ paths = [
   "mcp-re-proxy/src/deployment_request/revocation/online_evidence.rs",
 ]
 exported_contracts = []
-evidence = ["test://proxy/online_ocsp_reachability/legality"]
+# The second class exists for the second half of the claim. "Refused by the legality
+# boundary" is not established by a battery that calls the refusal predicate directly: that
+# battery stays green with the boundary's clause deleted. M62 is what asks.
+evidence = [
+  "test://proxy/online_ocsp_reachability/legality",
+  "mutation://proxy/online_ocsp_reachability/legality",
+]
 # Two halves, because a correct predicate that nothing calls establishes nothing: the
 # first states the rule over BOTH modes, the second states that the boundary's clause list
 # is what carries it.
 tested_symbols = [
   "lib#config_state::validation::residue::tests::no_build_admits_the_online_ocsp_mode",
   "lib#config_state::validation::residue::tests::the_boundary_clause_carries_the_online_ocsp_refusal",
+  # The END-TO-END control, and the only member that drives the actual boundary: it builds
+  # a `DeploymentRequest` in code — the shape `parse_args` cannot produce — and requires
+  # `app::run` to refuse it. Without this member the "on the only route to a
+  # ValidatedDeployment" half of THM-0013 has no witness.
+  "tests/integration#app_startup_characterization_test::a_programmatic_config_cannot_claim_an_ocsp_check_the_serving_path_never_makes",
   # The third half, added with the selection's own file: `is_required()` is what the rule
   # reads, and both variants must answer it as the theorem assumes. A file in the closure
   # whose conjunct nothing tested is provenance without evidence.
@@ -1611,6 +1633,9 @@ exported_contracts = []
 evidence = [
   "test://proxy/trust/revocation_state_witnesses",
   "test://proxy/trust/epoch_source_pairing",
+  # A cadence ceiling, a zero-cadence refusal and a two-way push split are all conjuncts a
+  # green battery can hold while none of them is load-bearing. M63-M65 ask.
+  "mutation://proxy/trust/revocation_state_witnesses",
 ]
 # No new premise. The states and the locator are classified from an already-validated
 # request; nothing here is trusted that the boundary did not establish.
@@ -1653,7 +1678,10 @@ class = "V0"
 description = "The trust subtree's projection of its own validated state: the classified revocation posture, the document locator, the excluded response issuer, and the shared epoch mechanism it is HANDED. Its reload cadence is derived from the posture rather than stored, so no second reload value exists to disagree with the first."
 paths = ["mcp-re-proxy/src/trust_plan.rs"]
 exported_contracts = []
-evidence = ["test://proxy/trust/reload_is_a_projection"]
+evidence = [
+  "test://proxy/trust/reload_is_a_projection",
+  "mutation://proxy/trust/reload_is_a_projection",
+]
 assumptions = []
 # The reload rule in both directions, plus the CF-09 property that the shared values are
 # INPUTS: a plan built with a value the configuration does not name carries that value,
