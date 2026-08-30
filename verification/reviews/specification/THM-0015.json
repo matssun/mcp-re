@@ -1,0 +1,19 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:c54f383311f5c8347262ac5c712e9246e5e249727587255dcfa2364448c2a961",
+    "theorem_dependencies": {
+      "THM-0001": "sha256:b067364dff3ea3ee94ba4bc44f3eaa6b7d73dfd0a7f83fce66f6b974683c2868",
+      "THM-0007": "sha256:474119e67bd5170a9e3647750fbb9d1e8a7308425d93ccfd4245998d38a24889",
+      "THM-0008": "sha256:c96f8b510168654a9a3d9d2f4032ce357f9022b1981ba45a1d9f5e0d3cb88dcb",
+      "THM-0014": "sha256:12bf99bc5ab9ceaa91e4c6b791e6dfe846b7b7c55af98f5c902206f5dc89776f"
+    },
+    "theorem_id": "THM-0015",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. Thirty-two current fingerprints were approved as prepared; five theorem IDs were returned for correction first. C3. APPROVED as prepared, including the artifact-binding conjunct corrected in Step A: it said the artifact 'was resolved to credential material and verified', which was semantically false for the PDP-decision branch, and now names the supported branch and both evidence sources.",
+  "reviewed_fingerprint": "sha256:668e149354cebe833265ca4dfc6eff4301344a98fa22ba5d11b6eae774d79cc6",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0015"
+}

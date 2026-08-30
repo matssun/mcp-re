@@ -1,0 +1,22 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:296f6be9409c496071b7067d2fa5da72e6a6601e8e61effa0f900c55559046f6",
+    "theorem_dependencies": {
+      "THM-0023": "sha256:5e77ea1098ae664608ed2e068746aeb794bc5175b771fe85489ba0b5f34d79be",
+      "THM-0024": "sha256:d3909c06931bc2b5803e94d5c4c1ab44db8b2411a5c690cc203b48e916707232",
+      "THM-0028": "sha256:676113645c3ffed81fa5c51bfcfbbd363b03f938a576ef77a3d6e1c32221371e",
+      "THM-0029": "sha256:2a6ffb0a8dbe20456e4e8a42796814911ff4d23fc023f5dd4bb810ccecd92b67",
+      "THM-0030": "sha256:35786227edf14e7e7823ee7cd789095ca0596492bb632c9f1e4c216625a35a6f",
+      "THM-0031": "sha256:0125f85856d66b22ab18aaa25229e9c87479cf16ed07ba1f78d9c6bd6663e5d7",
+      "THM-0032": "sha256:2e4f71f134dbdfae3a3bb3e78dea68d5271b5fa471f6d3cc654cf255d0d3276b"
+    },
+    "theorem_id": "THM-0033",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. Thirty-two current fingerprints were approved as prepared; five theorem IDs were returned for correction first. C4. APPROVED after the stale scope correction ruled in the same message. The review packet's conclusion that the theorem has no production caller was FALSE on current main: `tls::resolve_channel_peer` calls `current_authenticated_peer` on the live channel-credential serving path, so the operation is a CONTROL \u2014 a currency refusal propagates out as the transport-boundary refusal \u2014 and a successful `CurrentAuthenticatedRelationshipPeerFacts` is the WITNESS, becoming `AuthenticatedChannelPeer::Current` and proceeding to request/channel binding. Per the ruling the theorem was NOT turned into a serving theorem: its proposition stays about the composition product, and whether a higher consumer admits or authorizes remains outside the claim. The stale `communication_assurance/mod.rs` prose saying per-request credential currency and channel binding do not exist here was corrected in the same change.",
+  "reviewed_fingerprint": "sha256:77e25e294daaf83cc9ea4a422aba1f3fcd99d3dab4fe12dff71235ec1fb13b8a",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0033"
+}

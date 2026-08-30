@@ -1,0 +1,17 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:4c257ba6c8a5806b191849e424f57854dfb240e817196568849326145c101079",
+    "theorem_dependencies": {
+      "THM-0001": "sha256:b067364dff3ea3ee94ba4bc44f3eaa6b7d73dfd0a7f83fce66f6b974683c2868",
+      "THM-0021": "sha256:95a829f9b0e1e96d05d7718fce20ef57392757cc14cfa193e3d16a619bd882b9"
+    },
+    "theorem_id": "THM-0016",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. Thirty-two current fingerprints were approved as prepared; five theorem IDs were returned for correction first. C3. APPROVED as prepared. The ruling holds that THM-0016 establishes the CRYPTOGRAPHIC relation to the concrete request and need not absorb the semantic request/handle proposition being repaired in THM-0018.",
+  "reviewed_fingerprint": "sha256:72e76db6da1548a50619845474d28185c3866840ef3aa17c0f4ff85edd3badb9",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0016"
+}

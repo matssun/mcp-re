@@ -58,4 +58,8 @@ Read the state with `tools/verification/review`. Get the digest to put in a reco
 writes a record: a tool that could mint an approval on request is the single-command
 self-approval §14.7 exists to prevent.
 
-The directory is intentionally empty of records — no theorem is declared yet.
+The `specification/` records now carry the owner ruling of 2026-08-30, given over the five
+consolidated family packets in `packets/owner-specification-review-2026-08-30.md`. Each
+record's `notes` states which family the claim sat in and what the ruling actually said about
+it, because "APPROVED" alone does not distinguish a claim that was read and found right from
+one that was waved through with its family.

@@ -21,6 +21,10 @@
 //!                          --[+ CertificateIdentityPolicy, one closure]-->
 //!                              AuthenticatedRelationshipPeerFacts
 //!
+//! AuthenticatedRelationshipPeerFacts
+//!                          --[+ CredentialCurrencyPolicy, one instant]-->
+//!                              CurrentAuthenticatedRelationshipPeerFacts
+//!
 //! CredentialPublicKeyEvidence + CryptographicSigningKeyEvidence
 //!                          --[correspondence]-----------> CredentialKeyCorrespondenceFacts
 //! ```
@@ -30,11 +34,19 @@
 //!
 //! # What deliberately does not exist here
 //!
-//! Per-request credential currency, channel binding, admission, and authorization. Their
-//! absence is the point: each authority establishes exactly one proposition, and the
-//! missing ones are missing rather than being implied by a type whose name claims them.
-//! `AuthenticatedRelationshipPeerFacts` is the first product entitled to the word
-//! *authenticated*, and it is entitled to no more than that word — see its own module.
+//! Admission and authorization. Their absence is the point: each authority establishes
+//! exactly one proposition, and the missing ones are missing rather than being implied by a
+//! type whose name claims them. `AuthenticatedRelationshipPeerFacts` is the first product
+//! entitled to the word *authenticated*, and it is entitled to no more than that word — see
+//! its own module.
+//!
+//! Per-request credential currency and channel binding DO exist here now, as their own
+//! authorities: `credential_currency` evaluates what a deployment's controls concluded
+//! about an accepted credential, `current_authenticated_peer` composes that verdict with
+//! the peer who authenticated with that same credential, and `request_peer_binding` binds
+//! the result to one request. Each is a separate product for the same reason the others
+//! are — a peer being authenticated does not make its credential current, and a current
+//! credential does not make it this request's.
 //!
 //! # The public entrances
 //!

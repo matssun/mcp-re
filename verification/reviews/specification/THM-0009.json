@@ -1,0 +1,16 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:a1982a40a577db5346239ea1215ec8d8b8fe496357a2cbe83d6e6b4902ffafc3",
+    "theorem_dependencies": {
+      "THM-0010": "sha256:0611277e4ebc486a26b1a805237c7f8396d48e54cd27e84503c408314ef86c7c"
+    },
+    "theorem_id": "THM-0009",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. Thirty-two current fingerprints were approved as prepared; five theorem IDs were returned for correction first. C2. APPROVED as prepared. The ruling classifies the boolean as a WITNESS: enforcement occurred in producing the successful state, and the absence of a consumer for the boolean is not evidence of unwiring.",
+  "reviewed_fingerprint": "sha256:38c93d2579e9982d361d313bb109d292de3441fb47530be28e065e0811b0718a",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0009"
+}

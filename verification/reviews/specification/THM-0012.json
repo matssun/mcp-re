@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:464316cea10fb13c0d15be7ff281d5771f78182fef7b9d49d6ef5105fc935817",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0012",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. Thirty-two current fingerprints were approved as prepared; five theorem IDs were returned for correction first. C2. APPROVED as prepared. Step B added the negative controls this unit had entirely lacked, including the probe that collapses `FailedToStart` into `Stopped` \u2014 the theorem's own registered consequence, asked directly.",
+  "reviewed_fingerprint": "sha256:403ab4d7601a33ebded4a631f479b1433652d22daeda5dcaba0b9c33646dd9b4",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0012"
+}

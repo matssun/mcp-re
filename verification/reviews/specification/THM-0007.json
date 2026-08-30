@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:474119e67bd5170a9e3647750fbb9d1e8a7308425d93ccfd4245998d38a24889",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0007",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. Thirty-two current fingerprints were approved as prepared; five theorem IDs were returned for correction first. C2. APPROVED as prepared, and the ruling ratifies that it REMAINS DELIBERATELY NARROW over the OAuth typed-verifier family. It was not widened to absorb the PDP-decision branch; THM-0008's new dispatch owner carries that instead.",
+  "reviewed_fingerprint": "sha256:9066c057fefec975c6c01d9d84f42964be6489fc79e0f4b7b130683d9cccd2c8",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0007"
+}

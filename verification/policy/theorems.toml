@@ -151,7 +151,7 @@ timestamp — only that nothing outside it is. The two endpoints specifically ar
 and are pinned by boundary controls at their exact Unix seconds, but the claim is
 containment.
 
-It says nothing about the inverse direction: that format_rfc3339_utc round-trips a value in
+It says nothing about the inverse direction: that unix_to_rfc3339_utc round-trips a value in
 this range is a different proposition with its own evidence.
 """
 owner = "core.time_rfc3339"
@@ -1542,10 +1542,19 @@ It does not establish admission, authorization, channel binding, or that this pe
 actor that signed any request. It does not say the relationship still exists, and it is a
 claim about the instant it carries rather than about the next request.
 
-It has NO production caller in this slice, exactly as Slice 5 of ADR-MCPRE-063 and Slice 2 of
-this ADR had none when they were built. The serving path consumes the currency authority
-directly, because currency must keep being evaluated where no transport identity is derived
-at all.
+It is a claim about the COMPOSITION PRODUCT, not about serving. `tls::resolve_channel_peer`
+is the production caller: it applies this authority on the channel-credential serving path,
+propagates a currency refusal out as the transport-boundary refusal, and carries a successful
+product on as `AuthenticatedChannelPeer::Current`. So the derivation is a CONTROL — refusing
+here refuses the request — and the successful facts are the WITNESS, the earned product a
+consumer may read.
+
+What the consumer then does with that product is outside this claim. Whether a request is
+admitted, authorized, or bound to this peer is decided by other authorities with their own
+propositions; this theorem establishes only that the product, where one exists, is about one
+credential and one peer. The serving path also consumes the currency authority DIRECTLY on
+the arm where no transport identity is derived at all — currency must still be evaluated
+there — and that arm produces no inhabitant of this type and is outside the claim.
 """
 owner = "proxy.current_authenticated_peer"
 review_requirement = "Owner security-specification review"

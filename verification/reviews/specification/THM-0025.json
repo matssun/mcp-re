@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:842f2d7c83658f810f1beaa1e5feac028eedab8234b8f418c5fe9e64129ca54e",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0025",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. Thirty-two current fingerprints were approved as prepared; five theorem IDs were returned for correction first. C4. APPROVED as prepared. The ruling holds that the structural rewrite is NOT a theorem strengthening: it makes the same proposition load-bearing by type and conversion rather than by a remembered call.",
+  "reviewed_fingerprint": "sha256:7397132486eb3a22e01243a1dba7a32cda9463033ea317b0ba6df0792e591e91",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0025"
+}

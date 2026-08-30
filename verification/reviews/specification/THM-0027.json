@@ -1,0 +1,17 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:694cd5270497ed5c4880f3cd04306bcec0f7adcb506ec88ea4e6a8057cc44df3",
+    "theorem_dependencies": {
+      "THM-0025": "sha256:842f2d7c83658f810f1beaa1e5feac028eedab8234b8f418c5fe9e64129ca54e",
+      "THM-0026": "sha256:120750929aa1f77dd3432379326cf55c92a72da3986378a9df5663d5a2e0d585"
+    },
+    "theorem_id": "THM-0027",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. Thirty-two current fingerprints were approved as prepared; five theorem IDs were returned for correction first. C4. APPROVED as prepared, under the ratified family discipline.",
+  "reviewed_fingerprint": "sha256:6d9b496dcfd57d35d786be1955aa53472f2e3ed723a4d3a7f239ab942770866c",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0027"
+}
