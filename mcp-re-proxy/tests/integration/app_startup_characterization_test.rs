@@ -286,10 +286,11 @@ fn a_config_that_skipped_the_parser_still_cannot_bypass_the_safety_guards() {
 ///
 /// `--client-ocsp require` is refused because the check is implemented only on the
 /// blocking serve loop, while the production data plane is the per-core async fleet, which
-/// performs no OCSP round trip at all. That refusal used to live only in `parse_args`, so
-/// a caller building a `DeploymentRequest` in code could set `client_ocsp = Require`, reach the
-/// serving path, and have startup announce `ONLINE OCSP client-cert revocation enabled` on
-/// a deployment that admits every revoked client certificate.
+/// performs no OCSP round trip at all. The refusal lives on the validation boundary rather
+/// than in `parse_args`: a caller building a `DeploymentRequest` in code can set
+/// `peer_revocation.online` to `Required` without meeting a parser, and would otherwise
+/// reach the serving path and have startup announce `ONLINE OCSP client-cert revocation
+/// enabled` on a deployment that admits every revoked client certificate.
 ///
 /// The gap was found by writing the OFF branch of the startup posture: stating what an
 /// operator should do INSTEAD required knowing whether the ON state was reachable, and it

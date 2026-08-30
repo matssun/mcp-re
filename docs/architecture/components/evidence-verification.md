@@ -225,7 +225,7 @@ Lane identity is part of each property (ADR-061 §12). `mcp-re-http-profile` tes
 than "a test battery passed". A passing battery is not, on its own, evidence that a
 production check is load-bearing — so every conjunct THM-0014 … THM-0022 names was probed
 by deleting or defanging exactly that check, re-running the declared battery, and observing
-which declared member goes red. **26 mutations, each turning at least one declared member
+which declared member goes red. **27 mutations, each turning at least one declared member
 red.**
 
 The probes are **registered and executable**, not remembered:
@@ -294,6 +294,7 @@ from the manifest, so the workflow filters cannot narrow below them.
 | THM-0015 | `full_request` — block validation under the profile tag | `wrong_profile_in_block_fails` |
 | THM-0015 | `enforce_full_profile_bindings` — audience-tuple equality | `audience_mismatch_fails` |
 | THM-0015 | `enforce_full_profile_bindings` — tuple/`@target-uri` consistency | `a_target_uri_disagreeing_with_the_audience_tuple_fails` |
+| THM-0015 | `verify_pdp_decision_binding` — the carried decision is the bound document | `a_carried_decision_that_is_not_the_bound_document_is_refused` **+1 more** |
 | THM-0021 | `floor_bound_response` — content-digest agreement | `rejection::tests::tampered_message_does_not_change_the_trusted_wire_code` |
 | THM-0021 | `floor_bound_response` — signature over the `;req` base | `rejection::tests::spliced_rejection_onto_a_different_request_fails` |
 | THM-0016 | `floor_bound_response` — Response-slot trust resolution | `response_signed_by_request_only_actor_fails_actor_binding` |

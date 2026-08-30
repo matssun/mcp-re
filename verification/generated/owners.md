@@ -18,7 +18,8 @@ not an omission to hide.
 |---|---|---|---|
 | core.time_rfc3339 | V1 | THM-0002 | 4 |
 | http_profile.admission_currency | V1 | THM-0003, THM-0004, THM-0005, THM-0006 | 4 |
-| http_profile.artifact_typing | V1 | THM-0007, THM-0008 | 3 |
+| http_profile.artifact_typing | V1 | THM-0007 | 3 |
+| http_profile.artifact_verification_boundary | V0 | THM-0008 | 0 |
 | http_profile.continuation_binding | V1 | THM-0010 | 1 |
 | http_profile.continuation_unbypassability | V1 | THM-0009 | 1 |
 | http_profile.freshness_window | V1 | THM-0001 | 6 |

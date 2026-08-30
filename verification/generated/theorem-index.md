@@ -24,13 +24,13 @@ derives, and it is not shown here because this view cannot see the attestations.
 | THM-0005 | Degraded admission requires deployment opt-in | http_profile.admission_currency | unit://http_profile.admission_currency | live |
 | THM-0006 | Presenter binding | http_profile.admission_currency | unit://http_profile.admission_currency | live |
 | THM-0007 | A typed artifact verifier admits only its own type | http_profile.artifact_typing | unit://http_profile.artifact_typing | live |
-| THM-0008 | No untyped artifact binding leaves the verifier as verified | http_profile.artifact_typing | unit://http_profile.artifact_typing | live |
+| THM-0008 | No untyped artifact binding leaves the verifier as verified | http_profile.artifact_verification_boundary | unit://http_profile.artifact_verification_boundary | live |
 | THM-0009 | A presented continuation cannot bypass verification | http_profile.continuation_unbypassability | unit://http_profile.continuation_unbypassability | live |
 | THM-0010 | Continuation handles match their presented inputs in role | http_profile.continuation_binding | unit://http_profile.continuation_binding | live |
 | THM-0012 | The lifecycle record cannot claim a shutdown that did not happen | proxy.runtime_lifecycle | unit://proxy.runtime_lifecycle | live |
 | THM-0013 | No validated deployment enables online OCSP client-certificate revocation | proxy.online_ocsp_reachability | unit://proxy.online_ocsp_reachability | live |
 | THM-0014 | A successful request-floor verification establishes the cryptographic floor | http_profile.verifier_results | unit://http_profile.freshness_window, unit://http_profile.verifier_results | live |
-| THM-0015 | A successful full-profile request verification establishes audience and artifact binding | http_profile.verifier_results | unit://http_profile.artifact_typing, unit://http_profile.verifier_results | live |
+| THM-0015 | A successful full-profile request verification establishes audience and artifact binding | http_profile.verifier_results | unit://http_profile.artifact_verification_boundary, unit://http_profile.verifier_results | live |
 | THM-0016 | A successful bound response-floor verification establishes trust-seam authorization of the signer | http_profile.verifier_results | unit://http_profile.freshness_window, unit://http_profile.verifier_results | live |
 | THM-0017 | A successful unbound response-floor verification establishes trust-seam authorization and no request binding | http_profile.verifier_results | unit://http_profile.freshness_window, unit://http_profile.verifier_results | live |
 | THM-0018 | A successful full bound response verification establishes block agreement with the expected handle | http_profile.verifier_results | unit://http_profile.verifier_results | live |
@@ -129,11 +129,11 @@ derives, and it is not shown here because this view cannot see the attestations.
 
 ### THM-0008 — No untyped artifact binding leaves the verifier as verified
 
-**Statement.** A binding reported verified is in the opaque-digest form and is one of the three OAuth artifact types. The four registry types with no typed verifier can never be reported verified.
+**Statement.** If `enforce_full_profile_bindings` returns Ok for an `HttpRequestEvidenceBlock`, then every `ArtifactBinding` that block declared matched one of MCP-RE's explicitly supported typed verification branches and satisfied that branch's required binding form. The supported branches are exactly two: * the OAuth typed-verifier family, reached through `artifact::verify_artifact_binding` for `OauthDpop`, `OauthMtls` and `OauthRar`, each in the `OpaqueDigest` form and against resolved credential material; * `PdpDecision` in the `OpaqueDigest` form, reached through `pdp_decision::verify_pdp_decision_binding` and only when the block carries the decision document the binding commits to. Every other `ArtifactType`, and every binding form outside the branch that admits it — a `ReferenceDigest` entry included — is refused. A `PdpDecision` binding whose block carries no decision has no supported branch and is refused with the rest.
 
-**Security consequence.** A caller cannot silently treat an artifact type nothing can verify as though it had been verified.
+**Security consequence.** An artifact type that nothing supports cannot be laundered into a verified result: it is refused, not skipped, and not reported verified by a branch built for a different type. A caller therefore cannot silently treat an unsupported artifact type as though it had been verified, and adding a registry type does not quietly widen what verification concludes.
 
-**Scope — what this does NOT establish.** Structural over the type dispatch, and inherits THM-0007's exclusion: it does not establish that any digest matched its credential (ASM-0018).
+**Scope — what this does NOT establish.** Structural over the dispatch relation, and inherits THM-0007's exclusion: it does not establish that any digest matched its credential (ASM-0018), nor that the supplied material is the credential the peer actually holds. It says which branch a verified binding took; it says nothing about what a decision document AUTHORIZES. Digest correspondence is one link — authority trust, actor and action relation, validity and an explicit Allow are separate propositions with their own owner (ADR-MCPRE-065), and none of them is claimed here. The cardinality of the supported set is a fact of the current implementation, not the spine of the claim: the proposition is the closed selection, so adding a typed verifier obliges a re-measurement rather than making the sentence false by arithmetic.
 
 **Review requirement.** Owner security-specification review
 
@@ -173,7 +173,7 @@ derives, and it is not shown here because this view cannot see the attestations.
 
 ### THM-0013 — No validated deployment enables online OCSP client-certificate revocation
 
-**Statement.** Every DeploymentRequest whose client_ocsp is Require is refused by the legality boundary, in every build and independently of the online_ocsp feature. Every ValidatedDeployment therefore carries client_ocsp = Off, and the serving path is handed no OCSP checker.
+**Statement.** Every DeploymentRequest whose `peer_revocation.online` is `OnlineRevocationEvidenceRequest::Required` is refused by the legality boundary, in every build and independently of the online_ocsp feature. Every ValidatedDeployment therefore carries `peer_revocation.online == OnlineRevocationEvidenceRequest::NotRequired`, and the serving path is handed no OCSP checker. The refusal is over the SELECTION, not over any responder parameter it carries: an `OcspResponderRequest` travels inside `Required`, so every deployment that names a responder is already refused by the selection that holds it.
 
 **Security consequence.** A successfully validated MCP-RE deployment cannot advertise or rely upon online OCSP enforcement on the production async serving path. An operator who asks for it is refused at startup rather than served by a plane that performs no responder round trip.
 
@@ -195,11 +195,11 @@ derives, and it is not shown here because this view cannot see the attestations.
 
 ### THM-0015 — A successful full-profile request verification establishes audience and artifact binding
 
-**Statement.** If `Verifier::verify_request` returns Ok, then the request-floor proposition holds for the same request, and in addition: the request evidence block parsed and validated under the profile tag, its audience tuple equalled the verifier's own and agreed with the request's `@target-uri`, and every artifact binding the block declared was resolved to credential material and verified.
+**Statement.** If `Verifier::verify_request` returns Ok, then the request-floor proposition holds for the same request, and in addition: the request evidence block parsed and validated under the profile tag, its audience tuple equalled the verifier's own and agreed with the request's `@target-uri`, and every artifact binding the block declared was verified through the supported typed verification branch for its artifact type (THM-0008) — against the credential material resolved for that binding, or, for the carried authorization-decision form, against the decision document the block itself carried.
 
-**Security consequence.** A request signed for a different audience, route or target cannot be successfully returned as a full-profile verified request, and a declared artifact binding cannot be skipped by withholding the material it commits to — an unobtainable credential fails closed rather than being ignored.
+**Security consequence.** A request signed for a different audience, route or target cannot be successfully returned as a full-profile verified request, and a declared artifact binding cannot be skipped by withholding the evidence it commits to — an unobtainable credential, and an artifact type with no supported typed verification branch, both fail closed rather than being ignored.
 
-**Scope — what this does NOT establish.** This theorem characterizes values successfully returned by `verify_request`. It does not establish that an arbitrary externally constructed `VerifiedMcpRequest` was produced by that operation. It establishes nothing about replay admission, admission-assertion currency, continuation binding or dispatch authorization; a full-profile request is not an admitted one — which is why the consequence above is phrased over what this operation returns rather than over what a deployment admits. It does not establish that the artifact material the caller supplied is the credential the peer actually holds — only that the binding verified against what was supplied.
+**Scope — what this does NOT establish.** This theorem characterizes values successfully returned by `verify_request`. It does not establish that an arbitrary externally constructed `VerifiedMcpRequest` was produced by that operation. It establishes nothing about replay admission, admission-assertion currency, continuation binding or dispatch authorization; a full-profile request is not an admitted one — which is why the consequence above is phrased over what this operation returns rather than over what a deployment admits. It does not establish that the artifact material the caller supplied is the credential the peer actually holds — only that the binding verified against what was supplied. A verified `pdp-decision` binding establishes that the block carried the exact decision document its digest committed to. It establishes nothing about what that document AUTHORIZES: authority trust, the actor and action relations, validity and an explicit Allow are the authorization owner's propositions (ADR-MCPRE-065), not this one's.
 
 **Review requirement.** Owner security-specification review
 

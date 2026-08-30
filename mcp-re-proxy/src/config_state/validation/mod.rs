@@ -182,9 +182,9 @@ pub fn validate_configuration(
 fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -> Vec<String> {
     let mut violations = Vec::new();
     // Online OCSP cannot be honored on the production data plane. Checked HERE, because
-    // this is the boundary the runtime actually goes through: `client_ocsp` is one of
-    // `DeploymentRequest`'s public fields, so a caller that builds the struct in code
-    // reaches the serving path without ever meeting a parser.
+    // this is the boundary the runtime actually goes through: `peer_revocation` is one of
+    // `DeploymentRequest`'s public fields, so a caller that builds the struct in code and
+    // sets `online` to `Required` reaches the serving path without ever meeting a parser.
     violations.extend(residue::ocsp_mode_violations(config));
     // The mode's one parameter, immediately after it.
     violations.extend(residue::ocsp_responder_url_violations(config));

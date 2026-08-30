@@ -1668,3 +1668,101 @@ expect_red = [
   "lib#communication_assurance::request_peer_binding::tests::a_certificate_naming_the_composite_actor_id_no_longer_binds",
   "lib#communication_assurance::request_peer_binding::http_profile_adapter::tests::a_different_subject_is_a_different_coordinate_under_the_same_role_and_domain",
 ]
+
+[[probe]]
+id = "M54-no-supported-branch-is-refused"
+unit = "http_profile.artifact_verification_boundary"
+theorem = "THM-0008"
+conjunct = "every other ArtifactType is refused"
+# Direction two of the dispatch relation, at the one arm that states it. Weakened to Ok,
+# an artifact type nothing supports is laundered into a verified result — which is the
+# security consequence THM-0008 registers, so the controls that enumerate the registry
+# residue must be the ones that notice.
+path = "mcp-re-http-profile/src/artifact.rs"
+anchor = """
+        ArtifactType::PdpDecision
+        | ArtifactType::DtrApproval
+        | ArtifactType::ClassifierResult
+        | ArtifactType::HumanApproval => Err(HttpProfileError::MalformedEvidence(
+            "no typed verifier for this artifact_type yet",
+        )),
+"""
+weakening = """
+        ArtifactType::PdpDecision
+        | ArtifactType::DtrApproval
+        | ArtifactType::ClassifierResult
+        | ArtifactType::HumanApproval => Ok(()),
+"""
+expect_red = [
+  "lib#artifact::tests::dispatch_matches_the_typed_verifiers",
+  "tests/full_profile_test#every_artifact_type_with_no_supported_branch_is_refused_with_matching_material",
+  "tests/full_profile_test#a_pdp_decision_binding_with_no_carried_decision_is_refused",
+  "tests/full_profile_test#a_pdp_decision_reference_binding_never_reaches_the_evidence_branch",
+]
+
+[[probe]]
+id = "M55-the-pdp-branch-admits-only-its-own-form"
+unit = "http_profile.artifact_verification_boundary"
+theorem = "THM-0008"
+conjunct = "matched one of the supported typed verification branches and satisfied that branch's required binding form"
+# Direction one, at the second supported branch. THM-0007 makes this structural for the
+# OAuth family; the pdp branch has no proof, so the gate has to be shown load-bearing. Its
+# reference-digest control is the one that matters: identical digest bytes in the LINKAGE
+# form are a different claim, and a branch that accepted them would let a request stand on
+# an external decision it never carried.
+path = "mcp-re-http-profile/src/pdp_decision/binding.rs"
+anchor = """
+    if binding.artifact_type != ArtifactType::PdpDecision
+        || binding.binding_type != BindingType::OpaqueDigest
+    {
+        return Err(PdpBindingRefusal::NotTheEvidenceForm);
+    }
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#pdp_decision::binding::tests::a_reference_binding_can_never_satisfy_the_evidence_form",
+  "lib#pdp_decision::binding::tests::another_artifact_type_with_a_matching_digest_is_refused",
+]
+
+[[probe]]
+id = "M56-a-selected-branch-is-executed-not-skipped"
+unit = "http_profile.artifact_verification_boundary"
+theorem = "THM-0008"
+conjunct = "every ArtifactBinding that block declared matched one of the supported typed verification branches"
+# The `continue` is the whole risk in a dispatch loop: selecting a branch and then not
+# running it reads exactly like enforcement and refuses nothing. Deleting the call leaves a
+# pdp entry SKIPPED — declared, selected, and never checked.
+path = "mcp-re-http-profile/src/verify/full/request.rs"
+anchor = """
+            verify_pdp_decision_binding(binding, decision)
+                .map_err(|_| HttpProfileError::ArtifactBindingFailed)?;
+            continue;
+"""
+weakening = """
+            continue;
+"""
+expect_red = [
+  "tests/full_profile_test#a_carried_decision_that_is_not_the_bound_document_is_refused",
+]
+
+[[probe]]
+id = "M57-the-carried-decision-is-the-bound-document"
+unit = "http_profile.verifier_results"
+theorem = "THM-0015"
+conjunct = "verified ... against the decision document the block itself carried"
+# The conjunct the ADR-MCPRE-065 Slice 2 files contribute to a successful `verify_request`.
+# Adding them to the closure without a probe would be provenance without evidence: the unit
+# would fingerprint a second typed verifier whose only check nothing was shown to notice.
+path = "mcp-re-http-profile/src/pdp_decision/binding.rs"
+anchor = """
+    if b64url_encode(&Sha256::digest(decision.as_bytes())) != binding.digest_value {
+        return Err(PdpBindingRefusal::DigestMismatch);
+    }
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#pdp_decision::binding::tests::a_different_document_does_not",
+  "tests/full_profile_test#a_carried_decision_that_is_not_the_bound_document_is_refused",
+]
