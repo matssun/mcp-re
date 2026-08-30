@@ -54,6 +54,8 @@ derives, and it is not shown here because this view cannot see the attestations.
 | THM-0036 | A networked trust-epoch source is handed over as a paired locator and key, or not at all | proxy.trust_configuration_state | unit://proxy.trust_configuration_state | live |
 | THM-0037 | A trust plan's reload cadence is a projection of the revocation posture, never a second value | proxy.trust_plan | unit://proxy.trust_plan | live |
 | THM-0038 | The composition root consumes trust as owner projections and re-reads no trust field from the request | proxy.trust_composition_root | unit://proxy.trust_composition_root | live |
+| THM-0039 | An accepted PDP decision was authenticated under a key the trust seam resolved | http_profile.pdp_decision_authentication | unit://http_profile.pdp_decision_authentication | live |
+| THM-0040 | An authorized request was permitted by a decision about that very request | proxy.pdp_decision_relation | unit://proxy.pdp_decision_relation | live |
 
 ## Claims in full
 
@@ -472,3 +474,25 @@ derives, and it is not shown here because this view cannot see the attestations.
 **Review requirement.** Owner security-specification review
 
 **Depends on.** THM-0035, THM-0037
+
+### THM-0039 — An accepted PDP decision was authenticated under a key the trust seam resolved
+
+**Statement.** If `verify_authorization_decision` returns Ok, then the presented document is a well-formed compact JWS; its protected header carries the profile's `typ` and `alg` and no others; the header's kid and the claims' issuer kid are the same kid; the signature verified under the key the AUTHORIZATION trust seam resolved for that kid; the claims name this evidence profile; the claims' audience contains one of this enforcement point's own audiences; `now` lies inside `[nbf - skew, exp + skew)` with `exp` strictly after `nbf`; the decision was not issued in the future beyond the skew; and its age does not exceed this deployment's own decision-age cap. A `Deny` decision satisfies all of this and returns Ok. It is a statement the authority made, and refusing it here would make *the authority denied* indistinguishable from *the evidence was unusable*.
+
+**Security consequence.** A kid never introduces trust: a decision signed by an issuer this deployment did not configure for AUTHORIZATION is refused rather than resolved, so a workload credential cannot become a policy authority by naming itself one. A decision issued for another evidence profile or another enforcement point cannot be replayed here. And the staleness bound is the VERIFIER'S: how long a decision lives is the issuer's choice, how long this PEP will act on one is not.
+
+**Scope — what this does NOT establish.** It establishes nothing whatsoever about the request in hand. A decision may be perfectly authentic and be about a different actor, a different operation or a different target; relevance is THM-0040 and is a separate proposition over a separate authority, exactly as `verify_admission_assertion` is separate from `check_admission`. It does not establish that the authority SHOULD be trusted — only that the seam answered for that kid, which is the deployment's configuration speaking rather than this claim. It says nothing about the decision's correspondence to the signed request evidence: that the carried document is the one the binding committed to is THM-0008's dispatch relation and THM-0015's artifact conjunct, established before this function is reached. Ed25519 verification is taken as an opaque decision procedure, and this claim says nothing about what a valid signature means cryptographically.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0040 — An authorized request was permitted by a decision about that very request
+
+**Statement.** If `PdpDecisionEvaluator::evaluate` returns Ok for an `AuthorizationRequest`, then THM-0039 holds for the decision it consumed, and in addition: the decision's declared actor scope equals the scope this deployment accepts; the decided actor's trust domain and subject equal the request's VERIFIED actor's, and under credential scope its keyid does too; the decided operation equals the operation the SIGNED BODY named; the decided target and the signed target agree as typed values, where a decision naming no target matches only a not-applicable one and an absent signed target matches neither; and the decision's own outcome is `Permit`. The Permit conjunct is LAST and is not implied by the others. Everything before it establishes that this decision is ABOUT this request; only the decision itself says whether the request may proceed.
+
+**Security consequence.** **A decision is not a bearer token.** Without the actor relation, anyone whose key the enforcement point resolves — a lower-privilege tenant, a compromised sibling workload, anything that read one authorized request body or one request log — could copy an authorized peer's decision into their own signed evidence block and be authorized by it. The gate would then establish *some principal was permitted this action*, never *this caller was*. The action relation is the same argument one axis over: a decision for `tools/list` cannot authorize `tools/call`, and a decision naming no tool cannot authorize a call that names one. Both operands are VERIFIED facts — the actor the request verification resolved and the operation the signed body named — rather than strings reconstructed from a header, a session field or a log.
+
+**Scope — what this does NOT establish.** It is authorization, and not admission, authentication, channel binding or transport identity. It does not establish that the actor coordinates on the request were correctly resolved: that is the verified-request family's claim, and this one consumes it. It says nothing about what happens after the grant, nor about whether the policy the authority applied was the right policy — an authority that permits everything satisfies this theorem completely. Nor does it establish that a refusal is reported faithfully to an operator; the refusal algebra is tested and deliberately carries no theorem, because its vocabulary has no production reader today. The reference binding form produces no authorization at all and is outside this claim: it is never a candidate, so it cannot be selected and then rejected.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0039

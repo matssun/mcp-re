@@ -152,3 +152,12 @@ graph BT
     THM_0035 --> THM_0038
     THM_0037 --> THM_0038
 ```
+
+## Component 13
+
+```mermaid
+graph BT
+    THM_0039["THM-0039<br/>An accepted PDP decision was authenticated under a key the trust seam resolved"]
+    THM_0040["THM-0040<br/>An authorized request was permitted by a decision about that very request"]
+    THM_0039 --> THM_0040
+```

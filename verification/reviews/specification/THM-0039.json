@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:37c800ce3d350ee3ab08049b866f1e5c4bb6c5a8e3627ab7837085fb16b48eed",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0039",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner coverage ruling of 2026-08-30, given over the Step D drafts in verification/reviews/packets/coverage-drafts-2026-08-30.md. D1-A, APPROVED, with the scope held explicit by the ruling: authentication and trust OF THE DECISION, not relevance to this request and not whether the authority should be trusted at all. Registered over the actual verification/claims closure. Every important conjunct carries a negative control, and probes M71 and M72 establish that two of them are load-bearing: deleting the issuer resolution makes an unresolvable kid fall through, which is the shape of a kid introducing its own trust, and deleting the verifier's own staleness cap lets the issuer's chosen lifetime silently set every enforcement point's tolerance.",
+  "reviewed_fingerprint": "sha256:dc212dca7360c5838518a28ea7851a778d14cc64e2382e534f17f0df7deaf3a5",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0039"
+}

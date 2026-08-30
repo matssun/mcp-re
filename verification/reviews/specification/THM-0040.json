@@ -1,0 +1,16 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:18d589f65510888649c2a3bb384d884766159dd85e245f4da0cc4edf75df8143",
+    "theorem_dependencies": {
+      "THM-0039": "sha256:37c800ce3d350ee3ab08049b866f1e5c4bb6c5a8e3627ab7837085fb16b48eed"
+    },
+    "theorem_id": "THM-0040",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner coverage ruling of 2026-08-30, given over the Step D drafts in verification/reviews/packets/coverage-drafts-2026-08-30.md. D1-B, APPROVED and marked HIGH PRIORITY. The security spine the ruling names is stated as the theorem's registered consequence: A DECISION IS NOT A BEARER TOKEN. The actor and action operands are verified facts and not reconstructed caller strings \u2014 the actor is what the request verifier resolved, the action is what the SIGNED BODY named \u2014 which is why the unit is measured through the serving path rather than against the evaluator: calling `evaluate` with a hand-built request would test the comparison and say nothing about what is being compared. The ruling required evidence that deleting actor, action, target and Permit enforcement turns declared controls red; probes M73 through M77 do exactly that, and one of them found a real gap. M75 initially FAILED: the `Absent` signed-target arm could be collapsed into the not-applicable one with every existing control still green, because both tool controls name tools and exercise a different arm. The refusal was taken as the lane intends \u2014 a control was written rather than the statement softened \u2014 and `a_call_naming_no_tool_is_not_authorized_by_a_targetless_decision` now makes the third state load-bearing. Per the ruling D1-C is NOT registered: a refusal-faithfulness claim has two materially different readings, and the operator-observation one is false today (issue #637 records a fourth producer of `AuditEvent.reason` the drift guard never scans). The refusal algebra stays tested and carries no theorem.",
+  "reviewed_fingerprint": "sha256:5cb67a5bab88cba41fb50a335423f1422a090cfd1c954e952696975045e62aab",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0040"
+}

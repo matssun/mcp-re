@@ -24,6 +24,7 @@ not an omission to hide.
 | http_profile.continuation_unbypassability | V1 | THM-0009 | 1 |
 | http_profile.freshness_window | V1 | THM-0001 | 6 |
 | http_profile.keyid | V0 | _none_ | 0 |
+| http_profile.pdp_decision_authentication | V0 | THM-0039 | 0 |
 | http_profile.verifier_result_separation | V0 | _none_ | 0 |
 | http_profile.verifier_results | V0 | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022 | 3 |
 | proxy.authenticated_relationship_peer | V0 | THM-0031 | 1 |
@@ -37,6 +38,7 @@ not an omission to hide.
 | proxy.ed25519_public_key | V0 | THM-0025 | 1 |
 | proxy.mechanism_verified_credential | V0 | THM-0030 | 1 |
 | proxy.online_ocsp_reachability | V0 | THM-0013 | 0 |
+| proxy.pdp_decision_relation | V0 | THM-0040 | 0 |
 | proxy.peer_identity_value | V0 | THM-0023 | 0 |
 | proxy.request_peer_binding | V0 | THM-0034 | 0 |
 | proxy.runtime_lifecycle | V0 | THM-0012 | 0 |
