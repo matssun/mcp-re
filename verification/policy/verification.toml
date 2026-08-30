@@ -1800,3 +1800,89 @@ tested_symbols = [
   "tests/integration_async#pdp_authorization_serving_test::a_decision_issued_for_another_enforcement_point_is_refused",
   "tests/integration_async#pdp_authorization_serving_test::a_deployment_running_no_decision_profile_is_unaffected",
 ]
+
+[[unit]]
+id = "http_profile.scitt_receipt_offline"
+class = "V0"
+description = "RFC 9943 / RFC 9942 offline receipt verification: the statement's own signature and its CWT attribution, the receipt's shape, the RFC 9162 inclusion fold, the transparency service's signature over the root that fold DERIVED, the position commitment where the pinned profile binds one, and algorithm agreement on both signatures. No network."
+paths = [
+  "mcp-re-http-profile/src/scitt/offline.rs",
+  "mcp-re-http-profile/src/scitt/merkle.rs",
+  "mcp-re-http-profile/src/scitt/receipt/mod.rs",
+  "mcp-re-http-profile/src/scitt/receipt/parse.rs",
+  "mcp-re-http-profile/src/scitt/statement/mod.rs",
+  "mcp-re-http-profile/src/scitt/statement/issuance.rs",
+  "mcp-re-http-profile/src/scitt/cose_key/mod.rs",
+  "mcp-re-http-profile/src/scitt/cose_key/verify.rs",
+  "mcp-re-http-profile/src/scitt/service.rs",
+  "mcp-re-http-profile/src/scitt/wire.rs",
+  "mcp-re-http-profile/src/scitt/mod.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://http_profile/scitt/offline_receipt_battery",
+  "mutation://http_profile/scitt/offline_receipt",
+]
+assumptions = []
+# The fold's own arithmetic is separately controlled, because "the inclusion algorithm was
+# run" and "the inclusion algorithm is RFC 9162's" are two claims and only the second makes
+# a restated position fail. `prototype` is NOT in the closure: it builds a tree where these
+# verify a path, and keeping them apart is what makes it an independent cross-check rather
+# than the same code agreeing with itself.
+tested_symbols = [
+  "lib#scitt::offline::tests::one_calls_evidence_registers_and_the_receipt_verifies_offline",
+  "lib#scitt::offline::tests::inclusion_holds_across_many_registered_statements",
+  "lib#scitt::offline::tests::an_incomplete_chain_record_is_distinguishable_in_the_receipt",
+  "lib#scitt::offline::tests::a_tampered_statement_fails_the_receipt",
+  "lib#scitt::offline::tests::a_forged_inclusion_path_fails",
+  "lib#scitt::offline::tests::an_unbound_receipt_still_refuses_a_forged_path_on_the_derived_root_alone",
+  "lib#scitt::offline::tests::an_untrusted_issuer_or_ts_is_rejected",
+  "lib#scitt::offline::tests::a_receipt_restated_at_another_position_is_refused_only_when_the_position_is_bound",
+  "lib#scitt::offline::tests::a_bound_service_refuses_a_receipt_that_carries_no_position_commitment",
+  "lib#scitt::merkle::tests::the_tree_hash_is_the_rfc_9162_split_not_a_duplicated_last_node",
+  "lib#scitt::merkle::tests::every_leaf_of_a_three_leaf_log_verifies",
+  "lib#scitt::merkle::tests::restating_the_log_position_at_a_different_path_length_does_not_verify",
+  "lib#scitt::merkle::tests::a_right_edge_restatement_is_indistinguishable_and_still_verifies",
+  "lib#scitt::merkle::tests::an_empty_inclusion_path_is_only_valid_for_a_single_leaf_tree",
+  "lib#scitt::receipt::parse::tests::a_leaf_index_outside_the_tree_is_refused_before_any_fold",
+  "lib#scitt::cose_key::tests::an_unsupported_algorithm_is_refused",
+  "lib#scitt::cose_key::tests::an_algorithm_that_disagrees_with_the_resolved_key_is_refused",
+  "lib#scitt::cose_key::tests::a_der_encoded_es256_signature_is_refused",
+  "lib#scitt::cose_key::tests::an_es256_receipt_from_a_foreign_service_verifies",
+  "lib#scitt::statement::tests::a_critical_header_on_a_signed_statement_is_refused",
+  "lib#scitt::receipt::tests::a_receipt_carries_the_rfc9942_header_labels_and_nesting",
+  "lib#scitt::receipt::tests::the_rfc9942_figure_6_shape_parses_in_both_attached_and_detached_form",
+  "lib#scitt::receipt::parse::tests::a_payload_that_is_not_a_tree_hash_is_neither_receipt_form",
+  "lib#scitt::receipt::tests::an_unknown_critical_header_is_refused",
+]
+
+[[unit]]
+id = "http_profile.scitt_retained_correspondence"
+class = "V0"
+description = "The commitment a Signed Statement carries equals the one recomputed from the presented reconstruction and its optional binding and verified-context commitments — so the retained bytes are the ones committed to, and the ChainLabel embedded is the label of THAT reconstruction. Correspondence only: nothing about registration, and no confidentiality claim."
+paths = [
+  "mcp-re-http-profile/src/scitt/retained.rs",
+  "mcp-re-http-profile/src/scitt/commitment/mod.rs",
+  "mcp-re-http-profile/src/scitt/commitment/correspondence.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://http_profile/scitt/retained_correspondence_battery",
+  "mutation://http_profile/scitt/retained_correspondence",
+]
+assumptions = []
+# The truncation control is the one the theorem's consequence is stated over: a record whose
+# hop zero matches and whose tail is missing must not correspond, because the label is inside
+# what the commitment covers. The last entry is the SEPARATION: a verified receipt does not
+# imply the evidence is retained, which is the claim this unit does NOT make.
+tested_symbols = [
+  "lib#scitt::retained::tests::retained_evidence_reproduces_the_commitment",
+  "lib#scitt::retained::tests::a_truncated_chain_is_refused_even_though_hop_zero_matches",
+  "lib#scitt::retained::tests::a_substituted_unverified_tail_is_refused_even_though_the_verified_prefix_matches",
+  "lib#scitt::retained::tests::a_statement_with_no_submission_identity_cannot_bind_retained_bytes",
+  "lib#scitt::retained::tests::retained_evidence_cannot_be_bound_to_a_record_with_no_verified_hop",
+  "lib#scitt::retained::tests::absent_bindings_do_not_satisfy_a_commitment_that_names_them",
+  "lib#scitt::retained::tests::a_verified_receipt_does_not_imply_the_evidence_is_retained",
+  "lib#scitt::commitment::tests::the_two_evidence_roles_are_not_interchangeable",
+  "lib#scitt::commitment::tests::a_record_with_no_verified_hop_has_no_identity",
+]

@@ -17,9 +17,14 @@
 //! **Retained vs committed (§4.6).** The Signed Statement does NOT carry the call's
 //! evidence — it carries HASH COMMITMENTS to it. The full request/response messages,
 //! bindings, and continuation chain stay in the evidence store (retained); the
-//! statement commits to their digests (committed). A receipt is small and portable,
-//! and revealing it discloses nothing; an auditor with the retained evidence
-//! recomputes the digests and checks they match what the receipt committed to.
+//! statement commits to their digests (committed). A receipt is small and portable, and an
+//! auditor with the retained evidence recomputes the digests and checks they match what the
+//! receipt committed to.
+//!
+//! A receipt therefore does not CARRY the call bytes. That is the whole of the claim, and
+//! it is not confidentiality: nothing here establishes unlinkability, or resistance to
+//! inference from the digests, or resistance to guessing a low-entropy reconstruction and
+//! confirming it against the commitment.
 //!
 //! **Incomplete chains are first-class (§9 seam, #431).** The statement embeds the
 //! [`ChainLabel`] from [`crate::chain::reconstruct_chain`], so a receipt commits to a

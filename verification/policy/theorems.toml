@@ -1954,3 +1954,96 @@ owner = "proxy.pdp_decision_relation"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.pdp_decision_relation"]
 depends_on = ["THM-0039"]
+
+[[theorem]]
+id = "THM-0041"
+title = "An offline-verified receipt proves registration, and its root was never supplied"
+statement = """
+If `verify_receipt_offline` returns Ok, then: the Signed Statement's own COSE
+`Sig_structure` verified under a key resolved for its issuer kid, so the statement is
+attributed to the party that actually signed it and to no other; the statement carries the
+RFC 9943 §6.1 CWT claims in its PROTECTED header, with `iss` equal to the signing kid, `sub`
+equal to the MCP-RE statement subject and the MCP-RE statement content type, so no other
+`COSE_Sign1` the same key produces can be read as MCP-RE call evidence; the receipt parsed
+as an RFC 9942 §5.2.1 receipt; running the RFC 9162 §2.1.3.2 inclusion algorithm over the
+statement's leaf hash at the receipt's leaf index and tree size produced a root that, for an
+ATTACHED receipt, equals the root the receipt commits to and, for a DETACHED one, IS the
+payload the transparency-service signature was checked against; the transparency service's
+signature verified under a key resolved for its kid; where the pinned profile binds the
+position, the commitment the service SIGNED equals the one recomputed over that derived
+root; and both signatures were attempted only under an algorithm the protected header names
+and the resolved key agrees with, out of EdDSA and ES256 and nothing else. No network was
+contacted.
+"""
+security_consequence = """
+The root is DERIVED from the statement under verification and never supplied by the caller,
+on either payload form. A receipt cannot be made to verify by handing in a convenient root,
+and on the detached form a wrong fold produces a different `Sig_structure`, so the signature
+simply fails rather than being compared against something the caller chose.
+
+An auditor can therefore check that a record existed without trusting the log to replay
+honestly and without contacting it. Attribution is part of that: possession of a parsed
+`SignedStatement` proves nothing — `SignedStatement::from_cose` deliberately parses without
+verifying — and it is THIS operation, over the exact signed bytes, that makes the issuer
+claim true. Algorithm confusion is refused rather than attempted.
+"""
+scope = """
+It establishes registration on A SERVICE whose key was resolved. It does NOT establish that
+the service is honest, that its log is append-only, that the entry is unique, or anything
+about the log's current state — this is offline verification, and none of those properties
+is checkable without the log.
+
+It says nothing about the CALL the statement describes: that the retained evidence is the
+evidence the statement was made about is THM-0042, a separate proposition over a separate
+authority.
+
+The two RFC 9162 implementations in this tree stay two on purpose. `prototype` builds a
+tree and `merkle` verifies a path, and they are an independent cross-check; this claim is
+over the verification side alone and must not be read as a claim about the builder.
+`PrototypeTransparencyService` is a public compatibility surface, test/conformance support
+and a build-side oracle, and is NOT a production security product — no consequence here
+depends on it.
+
+`ReceiptPositionProfile::Bound` is exercised as conformance evidence and is NOT a selectable
+production configuration. A theorem about code this claim covers does not make a deployment
+posture supported.
+"""
+owner = "http_profile.scitt_receipt_offline"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://http_profile.scitt_receipt_offline"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0042"
+title = "Retained evidence is the evidence the statement was made about"
+statement = """
+If `verify_retained_evidence` returns Ok, then the commitment carried by the statement
+equals the commitment recomputed from the presented reconstruction together with its
+optional binding and verified-context commitments. So the presented reconstruction is the
+one that statement committed to, and the `ChainLabel` the commitment embeds is the label of
+THAT reconstruction — including, when it is incomplete, which hop was missing and why.
+"""
+security_consequence = """
+Retained evidence cannot be swapped under a receipt, and a truncated call cannot become
+COMPLETE: the label is inside what the commitment covers, so a record that says complete and
+a record that says incomplete-because-hop-3-was-unverifiable are different commitments, and
+presenting the first for the second fails here.
+
+This theorem establishes NO CONFIDENTIALITY. The receipt does not itself carry the retained
+call bytes, and that is all: it is not unlinkability, not resistance to inference from the
+digests, and not resistance to guessing a low-entropy reconstruction and confirming it
+against the commitment.
+"""
+scope = """
+Correspondence only. It does not establish that the retained bytes are THEMSELVES valid
+evidence, that the call described ever happened, or that the reconstruction is complete —
+only that whatever was reconstructed is what was committed to.
+
+It does not establish registration: whether any transparency service ever saw the statement
+is THM-0041. Nor does it establish that the commitment function is collision-resistant; the
+digest is an opaque primitive here.
+"""
+owner = "http_profile.scitt_retained_correspondence"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://http_profile.scitt_retained_correspondence"]
+depends_on = []

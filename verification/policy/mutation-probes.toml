@@ -2194,3 +2194,66 @@ weakening = """
 expect_red = [
   "tests/integration_async#pdp_authorization_serving_test::a_decision_scoped_differently_from_the_deployments_profile_is_refused",
 ]
+
+[[probe]]
+id = "M78-the-root-is-derived-never-supplied"
+unit = "http_profile.scitt_receipt_offline"
+theorem = "THM-0041"
+conjunct = "the inclusion fold's output is compared against the root the receipt commits to"
+# The whole offline argument. Take the root from the receipt instead of from the fold and a
+# receipt verifies against any inclusion path at all: the auditor is then trusting the log
+# to have told the truth about where the leaf sits, which is exactly what an offline
+# inclusion proof exists to avoid.
+path = "mcp-re-http-profile/src/scitt/offline.rs"
+anchor = """
+    if let Some(root) = receipt.committed_root() {
+        if computed.as_slice() != root {
+            return Err(HttpProfileError::ReceiptInclusionInvalid);
+        }
+    }
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#scitt::offline::tests::an_unbound_receipt_still_refuses_a_forged_path_on_the_derived_root_alone",
+]
+
+[[probe]]
+id = "M79-a-statement-is-attributed-by-its-signature-not-its-claim"
+unit = "http_profile.scitt_receipt_offline"
+theorem = "THM-0041"
+conjunct = "the statement's own Sig_structure verified under a key resolved for its issuer kid"
+# `SignedStatement::from_cose` parses WITHOUT verifying, so possession proves nothing about
+# who signed. Deleting this makes the `iss` claim a self-assertion: any party could publish a
+# statement attributing call evidence to another.
+path = "mcp-re-http-profile/src/scitt/offline.rs"
+anchor = """
+    verify_cose_sign1(statement.to_cose(), &issuer)?;
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#scitt::offline::tests::a_tampered_statement_fails_the_receipt",
+]
+
+[[probe]]
+id = "M80-a-truncated-call-cannot-become-complete"
+unit = "http_profile.scitt_retained_correspondence"
+theorem = "THM-0042"
+conjunct = "the presented reconstruction is the one the statement committed to, label included"
+# The registered consequence, asked directly. The ChainLabel is inside what the commitment
+# covers, so a record that says COMPLETE and one that says incomplete-because-hop-N-was-
+# unverifiable are different commitments — and deleting the comparison makes them the same
+# to a verifier.
+path = "mcp-re-http-profile/src/scitt/retained.rs"
+anchor = """
+    commitment.corresponds_to(&recomputed)
+"""
+weakening = """
+    let _ = recomputed;
+    Ok(())
+"""
+expect_red = [
+  "lib#scitt::retained::tests::a_truncated_chain_is_refused_even_though_hop_zero_matches",
+  "lib#scitt::retained::tests::a_substituted_unverified_tail_is_refused_even_though_the_verified_prefix_matches",
+]

@@ -319,6 +319,51 @@ mod tests {
         ));
     }
 
+    /// The root comparison, ISOLATED.
+    ///
+    /// `a_forged_inclusion_path_fails` moves more than one thing: the prototype's receipts
+    /// carry a position commitment, so a forged path is refused by the position check
+    /// whether or not the root is compared at all. Here the receipt is the pre-v2 shape —
+    /// no position parameter, verified under a pin that tolerates its absence — so the
+    /// signature verifies over the receipt's own payload and the position check does not
+    /// run. Nothing is left but the comparison between the DERIVED root and the one the
+    /// service signed, and that is what must refuse it.
+    ///
+    /// Which is the whole offline argument: the root is derived from the statement under
+    /// verification and never taken from the caller. Without this comparison an auditor
+    /// would be trusting the log to have told the truth about where the leaf sits.
+    #[test]
+    fn an_unbound_receipt_still_refuses_a_forged_path_on_the_derived_root_alone() {
+        let st = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 2),
+            None,
+            None,
+        ));
+        // TWO leaves, so the inclusion path has length one: a forged path of the same
+        // length is WELL FORMED and the fold accepts it, producing a different root. A
+        // single-leaf tree would refuse the forged path on its arity instead, which is the
+        // fold's own check and not this one.
+        let other = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 1),
+            None,
+            None,
+        ));
+        let mut svc = PrototypeTransparencyService::new(TS_KID);
+        let _ = register(&mut svc, &other);
+        let receipt = register(&mut svc, &st);
+        assert_eq!((receipt.tree_size(), receipt.leaf_index()), (2, 1));
+        let legacy = Receipt::from_cose(&pre_v2_receipt(&receipt)).expect("parses");
+        assert!(!legacy.is_position_bound());
+        // The honest legacy receipt verifies, so the refusal below is about the path.
+        verify_receipt_offline(&st, &legacy, ir(), tr_unbound()).expect("the honest legacy claim");
+
+        let forged = legacy.with_forged_inclusion_path(vec![vec![9u8; 32]]);
+        assert_eq!(
+            verify_receipt_offline(&st, &forged, ir(), tr_unbound()).unwrap_err(),
+            HttpProfileError::ReceiptInclusionInvalid,
+        );
+    }
+
     #[test]
     fn an_untrusted_issuer_or_ts_is_rejected() {
         let st = statement(EvidenceCommitment::from_reconstruction(
