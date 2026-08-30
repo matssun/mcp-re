@@ -283,7 +283,7 @@ fn body_tamper_fails_in_integrated_path() {
 fn response_splice_fails_in_integrated_path() {
     let block = full_block();
     let (req_a, _ev_a) = signed_request(&block, "nonce-a");
-    let verified_a = Verifier::new(&VerifierPolicy::default(), &resolver())
+    let _verified_a = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req_a, &audience(), &rar_material(), NOW)
         .expect("req_a verifies");
 
