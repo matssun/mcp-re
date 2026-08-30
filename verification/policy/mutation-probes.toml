@@ -2016,7 +2016,10 @@ anchor = """
     let bound_request_evidence = request_evidence_of(request)?;
 """
 weakening = """
-    let bound_request_evidence = block.request_evidence.clone();
+    let bound_request_evidence = crate::evidence::RequestEvidence {
+        digest_alg: block.request_evidence.digest_alg.clone(),
+        digest_value: block.request_evidence.digest_value.clone(),
+    };
 """
 expect_red = [
   "tests/full_profile_test#a_valid_exchange_cannot_be_verified_as_the_answer_to_a_different_request",
@@ -2035,7 +2038,10 @@ anchor = """
     let bound = request_evidence_of(request)?;
 """
 weakening = """
-    let bound = block.request_evidence.clone();
+    let bound = crate::evidence::RequestEvidence {
+        digest_alg: block.request_evidence.digest_alg.clone(),
+        digest_value: block.request_evidence.digest_value.clone(),
+    };
 """
 expect_red = [
   "tests/delegation_e2e_test#a_delegated_response_advertising_another_requests_evidence_is_refused",

@@ -40,10 +40,6 @@ pub(crate) fn full_bound_response<R: Into<ResolverOutcome>>(
     // 1. Cryptographic floor incl. the ;req binding to `request`.
     let floor = floor_bound_response(response, request, resolve_actor, policy, now)?;
 
-    // The handle OF this request. Derived, never accepted: there is no second operand to
-    // disagree with the first.
-    let bound_request_evidence = request_evidence_of(request)?;
-
     // 2. Parse the response evidence block (protected by content-digest).
     let block: HttpResponseEvidenceBlock = extract_meta_block(
         &response.body,
@@ -51,6 +47,11 @@ pub(crate) fn full_bound_response<R: Into<ResolverOutcome>>(
         "response evidence block",
     )?;
     block.validate(PROFILE_TAG)?;
+
+    // The handle OF this request. Derived, never accepted: there is no second operand to
+    // disagree with the first. Derived AFTER the block parses, so the two values the
+    // comparison below reads are produced next to each other.
+    let bound_request_evidence = request_evidence_of(request)?;
 
     // 3. server_signer must be the identity that actually signed.
     if block.server_signer.keyid != floor.resolved_server_actor.identity.keyid {
