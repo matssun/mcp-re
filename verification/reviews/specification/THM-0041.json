@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:82b88990baab1f1198436ec725e2d6c631722ff33e86708f1059aac9e75907cc",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0041",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner coverage ruling of 2026-08-30, given over the Step D drafts in verification/reviews/packets/coverage-drafts-2026-08-30.md. D2-A, APPROVED, with D2-C and D2-D FOLDED IN by the ruling rather than registered separately. The reason the ruling gave for folding D2-C is the substantive one: `SignedStatement::from_cose` explicitly parses WITHOUT verifying, so possession of a `SignedStatement` proves nothing about who signed, and issuer attribution becomes true only where `verify_receipt_offline` verifies the exact signed bytes \u2014 which is here. D2-D folded because algorithm agreement has no independent public product. The scope the ruling fixed is stated verbatim in the theorem: registration under a resolved service key, and NOT log honesty, append-only behaviour, uniqueness, current log state, or evidence/call correspondence. `PrototypeTransparencyService` is recorded as a public compatibility surface, test/conformance support and a build-side oracle and NOT a production security product; no consequence here depends on it, and it is deliberately outside the unit's closure so the builder and the verifier stay an independent cross-check rather than the same code agreeing with itself. `ReceiptPositionProfile::Bound` is exercised as conformance evidence and is recorded as NOT a selectable production configuration. M78 initially FAILED, and the failure was informative: the prototype's receipts always carry a position commitment, so a forged inclusion path is refused by the position check whether the root is compared or not, and the root comparison was not load-bearing in the declared battery. A control was written rather than the statement softened \u2014 `an_unbound_receipt_still_refuses_a_forged_path_on_the_derived_root_alone` presents the pre-v2 shape under a pin that tolerates a missing position parameter, so the derived-root comparison is the only thing left to refuse it.",
+  "reviewed_fingerprint": "sha256:c519e9028f1745cc456b65e53d8a73b0f64335ccfafa140a646ef6bfdfea8dda",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0041"
+}

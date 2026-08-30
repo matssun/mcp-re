@@ -29,6 +29,8 @@ attestations this view cannot see.
 | unit://http_profile.freshness_window | source, contracts or evidence | THM-0001, THM-0014, THM-0016, THM-0017, THM-0021, THM-0022 | _no consumer_ |
 | unit://http_profile.keyid | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.pdp_decision_authentication | source, contracts or evidence | THM-0039 | _no consumer_ |
+| unit://http_profile.scitt_receipt_offline | source, contracts or evidence | THM-0041 | _no consumer_ |
+| unit://http_profile.scitt_retained_correspondence | source, contracts or evidence | THM-0042 | _no consumer_ |
 | unit://http_profile.verifier_result_separation | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.verifier_results | source, contracts or evidence | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022 | proxy.request_peer_binding (COMPILE_DEPENDENCY) |
 | unit://proxy.authenticated_relationship_peer | source, contracts or evidence | THM-0031 | proxy.current_authenticated_peer (CONTRACT_CONSUMES) |
@@ -94,6 +96,8 @@ attestations this view cannot see.
 | THM-0038 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0039 | statement, consequence, scope or review requirement | specification review | THM-0040 |
 | THM-0040 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0041 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0042 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 
 ## Assumptions
 

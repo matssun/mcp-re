@@ -161,3 +161,17 @@ graph BT
     THM_0040["THM-0040<br/>An authorized request was permitted by a decision about that very request"]
     THM_0039 --> THM_0040
 ```
+
+## Component 14
+
+```mermaid
+graph BT
+    THM_0041["THM-0041<br/>An offline-verified receipt proves registration, and its root was never supplied"]
+```
+
+## Component 15
+
+```mermaid
+graph BT
+    THM_0042["THM-0042<br/>Retained evidence is the evidence the statement was made about"]
+```
