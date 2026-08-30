@@ -1,0 +1,17 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:68ed2898006f38a1b2a9e5ba26090c507a19dd375c6bccd69fa677e85fc025ea",
+    "theorem_dependencies": {
+      "THM-0001": "sha256:b067364dff3ea3ee94ba4bc44f3eaa6b7d73dfd0a7f83fce66f6b974683c2868",
+      "THM-0021": "sha256:95a829f9b0e1e96d05d7718fce20ef57392757cc14cfa193e3d16a619bd882b9"
+    },
+    "theorem_id": "THM-0019",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. C3, RETURNED FOR CORRECTION as ONE defect across both full bound-response paths, and approved under that ruling once corrected. Corrected identically and in the same change, because the two bound-response paths are separate functions and a repair applied to one is not evidence about the other \u2014 probe M70 asks the delegated path directly. The ruling confirms THM-0019 remains logically independent of THM-0016: delegated signing-key authority comes from the credential chain, not from a direct trust-seam resolution, and the shared `BoundResponseSignatureFacts` product is what keeps that true. THM-0020 is unbound and was unaffected; THM-0021, like THM-0016, keeps the cryptographic relation and does not absorb the handle proposition.",
+  "reviewed_fingerprint": "sha256:d8533de749f9b50c40ffc6d4ffbd3b2353e49e4b6619171ff2ad6f834d7fc70b",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0019"
+}

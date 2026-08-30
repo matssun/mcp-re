@@ -1,0 +1,18 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:5bbd822c3dea66b8bffcaa1a019fb57ac8773dae67375ad3374f70f176e6f6a2",
+    "theorem_dependencies": {
+      "THM-0001": "sha256:b067364dff3ea3ee94ba4bc44f3eaa6b7d73dfd0a7f83fce66f6b974683c2868",
+      "THM-0016": "sha256:4c257ba6c8a5806b191849e424f57854dfb240e817196568849326145c101079",
+      "THM-0021": "sha256:95a829f9b0e1e96d05d7718fce20ef57392757cc14cfa193e3d16a619bd882b9"
+    },
+    "theorem_id": "THM-0018",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. C3, RETURNED FOR CORRECTION as ONE defect across both full bound-response paths, and approved under that ruling once corrected. The ruling held that the honest scope text had FOUND the defect and that the defect was now to be removed rather than kept as a caller obligation, with the acceptance test stated explicitly: request A paired with handle B from another exchange must not reach a successful verification. The preferred design applied \u2014 the boundary derives the handle from the request the `;req` components are resolved against, and the independently supplied operand is gone, so the wrong pairing is unconstructible rather than refused. No unchecked public `new(request, evidence)` was introduced anywhere; the client-core `ResponseExpectation` instead LOST its handle member, because with the relation established below it the member selected nothing and its two-operand constructor would have been exactly the shape the ruling forbids. The statement now says the block's handle is the handle OF THAT SAME REQUEST. Per the ruling THM-0016 was not touched: it establishes the cryptographic relation to the concrete request and does not absorb the semantic handle proposition. Controls: a complete genuine exchange over one request, refused against another and accepted against its own, plus probes M68 and M69.",
+  "reviewed_fingerprint": "sha256:00a2ad36b2e97cdd6c0d69ee2bac1f1481fc7431c0c5643f85011500a3f9c576",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0018"
+}

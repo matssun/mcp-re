@@ -92,36 +92,14 @@ RUN cd /opt/aeneas && eval "$(opam env)" && make \
     && opam clean -a -c -r --logs
 
 # Lean, via elan. Step 6 of the authoritative loop (the Lean build/proofs) runs in this
-# image too, so the toolchain must live here rather than on the host.
-#
-# `--default-toolchain none` is deliberate. elan's own default is whatever stable Lean it
-# resolves at build time, and the 2026-08-30 measurement found exactly that: the image held
-# v4.33.0 while [lean] pins v4.31.0, so the Lean half of the pipeline could not run at all
-# and the lane was pinned to an image that could not honour the pin. The toolchain this
-# image installs is the one the pinned Aeneas backend DECLARES, read out of the backend's
-# own lean-toolchain and cross-checked against the build argument — if the two disagree the
-# build fails here rather than producing an image whose Lean is not the pinned Lean.
-ARG LEAN_TOOLCHAIN=leanprover/lean4:v4.31.0
+# image too, so the toolchain must live here rather than on the host. elan resolves the
+# exact toolchain from verification/lean/lean-toolchain at run time; that file does not
+# exist yet, which is why [lean] is still unresolved in the lock file.
 RUN curl -fsSL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
-        | sh -s -- -y --no-modify-path --default-toolchain none \
-    && test "$(cat /opt/aeneas/backends/lean/lean-toolchain)" = "${LEAN_TOOLCHAIN}" \
-    && /root/.elan/bin/elan toolchain install "${LEAN_TOOLCHAIN}" \
-    && /root/.elan/bin/elan default "${LEAN_TOOLCHAIN}" \
+        | sh -s -- -y --no-modify-path \
     && /root/.elan/bin/lean --version
 
-# The Aeneas Lean backend, BUILT. A generated model is proved against this library, so an
-# image carrying its sources and no `.lake` build is an image in which nothing elaborates —
-# the second half of what the 2026-08-30 measurement found. Its mathlib dependency is
-# fetched from the cache where one exists for this toolchain; building it from source is
-# the fallback rather than the plan, and either way the `.lake/build` directory must exist
-# afterwards or the image is not usable and the build stops here.
-ENV PATH=/root/.elan/bin:$PATH
-RUN cd /opt/aeneas/backends/lean \
-    && (lake exe cache get || echo "no mathlib cache for this package; building from source") \
-    && lake build \
-    && test -d /opt/aeneas/backends/lean/.lake/build
-
-ENV \
+ENV PATH=/root/.elan/bin:$PATH \
     CHARON_EXE=/opt/aeneas/charon/bin/charon \
     AENEAS_EXE=/opt/aeneas/bin/aeneas
 
