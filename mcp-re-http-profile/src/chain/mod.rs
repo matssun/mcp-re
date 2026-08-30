@@ -361,11 +361,14 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
         is_revoked,
         now,
     };
+    // The last hop's index, or `None` for an empty chain — which the loop below never
+    // enters, so no position is ever compared against an absent one.
+    let last_index = hops.len().checked_sub(1);
     for (i, hop) in hops.iter().enumerate() {
         let position = HopPosition {
             index: i,
             previous: hop_evidence.last(),
-            is_last: i + 1 == hops.len(),
+            is_last: last_index == Some(i),
         };
         match verification.verify_hop(hop, &position) {
             Ok(evidence) => hop_evidence.push(evidence),

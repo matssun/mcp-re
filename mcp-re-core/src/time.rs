@@ -77,15 +77,19 @@ fn is_leap_year(year: i64) -> bool {
         out matches Some(v) ==> 0 <= v && v <= 9999,
 ))]
 fn parse_fixed_digits(bytes: &[u8], start: usize, n: usize) -> Option<i64> {
-    if start + n > bytes.len() {
-        return None;
-    }
+    // Every operation here is TOTAL in Rust, which matters more in this function than
+    // anywhere else in the module: `external_body` means Verus checks the caller against
+    // the contract and never looks inside, so the prover's totality result stops at this
+    // boundary. Two consecutive `get`s rather than `get(start..start + n)`, because the
+    // addition in that range is itself a partial operation on `usize`; and checked
+    // accumulation rather than `value * 10 + d`, so a width the precondition does not
+    // permit fails closed instead of overflowing. What remains assumed is ASM-0001's
+    // arithmetic claim — that n digits denote at most n digits — and nothing else.
+    let field = bytes.get(start..)?.get(..n)?;
     let mut value: i64 = 0;
-    for b in &bytes[start..start + n] {
-        if !b.is_ascii_digit() {
-            return None;
-        }
-        value = value * 10 + i64::from(*b - b'0');
+    for b in field {
+        let digit = char::from(*b).to_digit(10)?;
+        value = value.checked_mul(10)?.checked_add(i64::from(digit))?;
     }
     Some(value)
 }
@@ -104,6 +108,13 @@ fn parse_fixed_digits(bytes: &[u8], start: usize, n: usize) -> Option<i64> {
     ensures
         -719528 <= days, days <= 2932896,
 ))]
+// The era arithmetic is bounded by this function's OWN verified precondition — year in
+// [0, 9999], month in [1, 12], day in [1, 31] — and Verus checks the whole body against
+// it, overflow included, in the `verify` lane that gates every change to this crate. The
+// allowance is therefore not a promise to remember something: it names a stronger checker
+// that measures the same region, so arithmetic added here later is proved or the lane
+// goes red. Evidence: verus://core/time/parse_rfc3339_utc_total_and_bounded.
+#[allow(clippy::arithmetic_side_effects)]
 fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     // Shift the year so that March is the first month: this places the leap day
     // at the end of the (shifted) year, simplifying the era arithmetic.
@@ -139,6 +150,14 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     ensures
         out matches Ok(v) ==> -62167219200 <= v && v <= 253402300799,
 ))]
+// TOTALITY IS PROVED HERE, not assumed. Verus checks this body for arbitrary input: the
+// fixed-position reads are bounded by the `len() < 20` refusal above them, the two tail
+// slices by the same length, the month table by the `1..=12` range check, and the final
+// seconds arithmetic by the validated calendar fields. That is the property THM-0002
+// states, and it is re-established by the `verify` lane on every change — which is what
+// makes a function-scoped allowance safe on a function this long: an unproved partial
+// operation added inside it fails the prover, not merely a reviewer's attention.
+#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
 pub fn parse_rfc3339_utc(s: &str) -> Result<i64, McpReError> {
     let bytes = s.as_bytes();
 
@@ -221,6 +240,14 @@ pub fn parse_rfc3339_utc(s: &str) -> Result<i64, McpReError> {
 
 /// Convert days-since-Unix-epoch to a Gregorian `(year, month, day)`, using
 /// Howard Hinnant's `civil_from_days` — the exact inverse of [`days_from_civil`].
+// NOT part of the Verus cone — this is the formatting inverse, and it carries its bound in
+// Rust rather than in a proof. The bound is the argument's provenance: the sole caller
+// passes `unix.div_euclid(86_400)`, so `z` lies in +/-1.07e14 for EVERY `i64` and each
+// subsequent quantity is bounded by the one before it — `era` by z/146_097 to +/-7.3e8,
+// `doe` to [0, 146096] by construction, `yoe` to [0, 399], `doy` to [0, 365], `mp` to
+// [0, 11]. Nothing here approaches `i64`'s range from any input whatsoever, which
+// `civil_from_days_is_total_at_the_i64_extremes` pins at both ends.
+#[allow(clippy::arithmetic_side_effects)]
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
@@ -238,6 +265,11 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 /// (`YYYY-MM-DDTHH:MM:SSZ`) — the inverse of [`parse_rfc3339_utc`] for whole
 /// seconds. Used by verifiers/servers to stamp `verified_at` / `issued_at` from
 /// a caller-supplied `now_unix` (core never reads the system clock itself).
+// `div_euclid`/`rem_euclid` by the non-zero constant 86_400 are total on `i64` (the one
+// panicking division, `i64::MIN / -1`, needs a negative divisor), and they are what bounds
+// [`civil_from_days`] — see its note. `secs` is in [0, 86399] by `rem_euclid`, so the three
+// clock divisions below cannot overflow either.
+#[allow(clippy::arithmetic_side_effects)]
 pub fn unix_to_rfc3339_utc(unix: i64) -> String {
     let days = unix.div_euclid(86_400);
     let secs = unix.rem_euclid(86_400);
@@ -420,5 +452,55 @@ mod tests {
             parse_rfc3339_utc("2026-0X-28T20:00:00Z"),
             Err(McpReError::ExpiredRequest)
         );
+    }
+
+    /// The formatting inverse is TOTAL on `i64`, including both extremes.
+    ///
+    /// `unix_to_rfc3339_utc` and `civil_from_days` are the two functions in this module
+    /// that the Verus cone does not reach, and their arithmetic is justified by an
+    /// argument about bounds rather than by a proof. This control is what makes that
+    /// argument measured: the extremes are exactly where a bound argument fails, and a
+    /// panic here would mean the reasoning in those two comments is wrong.
+    ///
+    /// It deliberately asserts nothing about the TEXT produced outside the era the
+    /// grammar admits. Outside it, the year field exceeds four digits and
+    /// `parse_rfc3339_utc` will not read the result back — the round trip is a property
+    /// of the admitted range, which the boundary controls above pin.
+    #[test]
+    fn civil_from_days_is_total_at_the_i64_extremes() {
+        for unix in [i64::MIN, i64::MIN + 1, -1, 0, 1, i64::MAX - 1, i64::MAX] {
+            let _ = super::unix_to_rfc3339_utc(unix);
+        }
+    }
+
+    /// The round trip holds across the whole admitted era, at both of its ends.
+    #[test]
+    fn admitted_era_round_trips_through_the_formatter() {
+        for (unix, text) in [
+            (-62167219200, "0000-01-01T00:00:00Z"),
+            (0, "1970-01-01T00:00:00Z"),
+            (253402300799, "9999-12-31T23:59:59Z"),
+        ] {
+            assert_eq!(super::unix_to_rfc3339_utc(unix), text);
+            assert_eq!(parse_rfc3339_utc(text), Ok(unix));
+        }
+    }
+
+    /// `parse_fixed_digits` refuses every width the parser does not use, rather than
+    /// overflowing into one.
+    ///
+    /// The body is `external_body` to Verus, so the prover checks the CALLER against
+    /// ASM-0001 and never looks inside. These are the checks that stand in its place: a
+    /// start past the end, a width past the end, and a width wide enough that an
+    /// unchecked accumulator would leave `i64`.
+    #[test]
+    fn fixed_digit_fields_are_total_outside_the_parser_widths() {
+        let digits = b"12345678901234567890123456789012345";
+        assert_eq!(super::parse_fixed_digits(digits, 100, 2), None);
+        assert_eq!(super::parse_fixed_digits(digits, 30, 10), None);
+        assert_eq!(super::parse_fixed_digits(digits, 0, 35), None);
+        assert_eq!(super::parse_fixed_digits(digits, 0, 4), Some(1234));
+        assert_eq!(super::parse_fixed_digits(b"00", 0, 2), Some(0));
+        assert_eq!(super::parse_fixed_digits(b"1x", 0, 2), None);
     }
 }

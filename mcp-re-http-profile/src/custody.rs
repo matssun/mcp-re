@@ -263,8 +263,20 @@ where
     pub fn ensure_active(&mut self, now: i64) -> Result<(), CustodyError> {
         let needs = match &self.active {
             None => true,
-            // Rotate once we enter the overlap window before expiry, or if expired.
-            Some(a) => now >= a.exp - self.cfg.overlap,
+            // Rotate once we enter the overlap window before expiry, or if expired. The
+            // threshold is computed with `checked_sub` because `CustodyConfig` carries
+            // `ttl`/`overlap` as bare `i64` fields: the `0 < overlap < ttl` guard that
+            // bounds them belongs to the proxy's configuration owner and does not reach
+            // this type, so an embedder — or any construction site that is not that owner
+            // — can present an overlap this subtraction cannot take. Wrapping would put
+            // the threshold far in the future and answer `false`, which is the PERMISSIVE
+            // direction: the key would be kept in service past the window it was supposed
+            // to be replaced in. A threshold that cannot be computed is therefore read as
+            // one that has been reached.
+            Some(a) => a
+                .exp
+                .checked_sub(self.cfg.overlap)
+                .is_none_or(|at| now >= at),
         };
         self.issue_if(needs, now)
     }
@@ -298,14 +310,41 @@ where
         self.next_attempt_at.is_none_or(|at| now >= at)
     }
 
+    /// The two values an issuance cannot proceed without: the credential's expiry, and the
+    /// ordinal that will name it.
+    ///
+    /// Decided BEFORE a key is generated, an ordinal is spent or the root is approached,
+    /// because either being unrepresentable is a reason this issuance cannot produce a
+    /// valid credential at all.
+    ///
+    /// The expiry, for the reason [`Self::ensure_active`] states: `ttl` is an unbounded
+    /// `i64` on `CustodyConfig`, whose `0 < overlap < ttl` guard belongs to the proxy's
+    /// configuration owner and does not reach this type. A wrapped `exp` would be minted
+    /// into the credential and into the audit event describing it, and every `now < exp`
+    /// test downstream would read the wrapped value.
+    ///
+    /// The ordinal, because `jti` is a REVOCATION identifier and this counter is the part
+    /// of it that distinguishes two credentials minted over the same key material. A
+    /// wrapped counter re-issues a `jti` that has already named a different credential, so
+    /// revoking one would revoke the other.
+    fn mintable_at(&self, now: i64) -> Result<(i64, u64), CustodyError> {
+        now.checked_add(self.cfg.ttl)
+            .zip(self.counter.checked_add(1))
+            .ok_or(CustodyError::FailClosedIssuance)
+    }
+
     fn issue_if(&mut self, needs: bool, now: i64) -> Result<(), CustodyError> {
         if needs && self.attempt_allowed(now) {
             let is_rotation = self.active.as_ref().map(|a| now < a.exp).unwrap_or(false);
 
+            let (exp, next_counter) = self.mintable_at(now)?;
             let key = (self.factory)();
-            self.counter += 1;
-            let (kid, signer, header, claims) = self.build(now, &key);
-            self.root_invocations += 1;
+            self.counter = next_counter;
+            let (kid, signer, header, claims) = self.build(now, exp, &key);
+            // The root invocation count is a metric an operator reads, not a value any
+            // decision is taken on, so saturation at the ceiling is the honest algebra:
+            // the count stops being exact rather than the process stopping.
+            self.root_invocations = self.root_invocations.saturating_add(1);
             match (self.issue)(&header, &claims) {
                 Some(credential) => {
                     self.next_attempt_at = None;
@@ -334,7 +373,11 @@ where
                 None => {
                     // Issuance failed. Hold off the next attempt so a root outage
                     // cannot be amplified into one root call per inbound request.
-                    self.next_attempt_at = Some(now + self.retry_interval());
+                    // Saturating IS the rule here: this value only ever delays the next
+                    // approach to a root that is already failing, so the far future is the
+                    // restrictive end. Wrapping would land in the past and re-open exactly
+                    // the per-request root traffic this line exists to prevent.
+                    self.next_attempt_at = Some(now.saturating_add(self.retry_interval()));
                     // If the current key is still valid we keep signing with it and
                     // retry the successor later (no gap yet).
                     let current_valid = self.active.as_ref().map(|a| now < a.exp).unwrap_or(false);
@@ -379,10 +422,14 @@ where
         request_evidence: &RequestEvidence,
     ) -> Result<(), CustodyError> {
         self.ensure_active(now)?;
-        let a = self
-            .active
-            .as_ref()
-            .expect("ensure_active guarantees a key");
+        // `ensure_active` returns `Ok` only through the arm that matched `Some(a)` with
+        // `now < a.exp`, so this holds. It is written as a refusal rather than asserted,
+        // because the consequence of that guarantee lapsing should be one unsigned
+        // response and not a downed process — and because `FailClosedIssuance` is already
+        // the verdict this module gives for "no key to sign with".
+        let Some(a) = self.active.as_ref() else {
+            return Err(CustodyError::FailClosedIssuance);
+        };
         sign_delegated_response_full(
             response,
             request,
@@ -392,7 +439,11 @@ where
             a.key.as_ref(),
             &a.delegated_kid,
             now,
-            (now + self.cfg.ttl).min(a.exp),
+            // The signature's stated validity, clamped to the credential's own `exp` —
+            // and to it alone when `now + ttl` leaves `i64`, which is the same clamp
+            // taken at its restrictive end rather than a wrapped window.
+            now.checked_add(self.cfg.ttl)
+                .map_or(a.exp, |until| until.min(a.exp)),
         )
         .map(|_base| ())
         .map_err(CustodyError::Sign)
@@ -413,9 +464,12 @@ where
     }
 
     /// Build the (delegated_kid, server_signer, header, claims) for a fresh key.
+    /// `exp` is decided by the caller, not recomputed here: it is the value whose
+    /// representability made the issuance legal in the first place.
     fn build(
         &self,
         now: i64,
+        exp: i64,
         key: &SigningKey,
     ) -> (String, ActorIdentity, DelegationHeader, DelegationClaims) {
         // The delegated key is profile-issued, so its kid is the RFC 7638 JWK
@@ -440,7 +494,7 @@ where
             iss: self.cfg.iss.clone(),
             iat: now,
             nbf: now,
-            exp: now + self.cfg.ttl,
+            exp,
             // The credential id is a REVOCATION identifier: a verifier's
             // `RevocationSource` is consulted with it, so two distinct credentials
             // sharing one `jti` cannot be revoked independently. It must therefore be
@@ -934,5 +988,73 @@ mod tests {
         )
         .expect("the successor verifies under the advanced epoch");
         assert_eq!(advanced.trust_epoch, "epoch-1#2");
+    }
+
+    /// A `ttl` that cannot be added to `now` refuses the issuance instead of minting a
+    /// credential whose `exp` has wrapped.
+    ///
+    /// `CustodyConfig` carries `ttl` and `overlap` as bare `i64` fields. The
+    /// `0 < overlap < ttl <= MAX_DELEGATED_TTL_SECS` guard that bounds them belongs to the
+    /// proxy's configuration owner and does not reach this type — the module owning that
+    /// guard says so itself — so this crate's own consumers, and any embedder, can present
+    /// a value the lifecycle arithmetic cannot take. A wrapped `exp` would be signed into
+    /// the credential and read by every `now < exp` test that follows it.
+    #[test]
+    fn an_unrepresentable_expiry_refuses_rather_than_wrapping() {
+        let mut cfg = cfg();
+        cfg.ttl = i64::MAX;
+        let mut c = DelegatedSigningCustody::new(cfg, ok_issuer(), factory());
+        assert_eq!(
+            c.ensure_active(1_000).unwrap_err(),
+            CustodyError::FailClosedIssuance
+        );
+        assert!(c.active_snapshot().is_none(), "nothing was minted");
+        assert_eq!(c.root_invocations(), 0, "the root was not approached");
+        assert!(
+            c.audit().is_empty(),
+            "no lifecycle event describes a non-key"
+        );
+    }
+
+    /// An `overlap` that cannot be subtracted from `exp` rotates, rather than reading the
+    /// wrapped threshold as "not yet due".
+    ///
+    /// This is the direction that matters. Wrapping puts `exp - overlap` far in the
+    /// future, `now >= threshold` answers false, and the key stays in service past the
+    /// window it should have been replaced in — a restrictive value turned permissive by
+    /// an arithmetic accident.
+    #[test]
+    fn an_uncomputable_rotation_threshold_rotates_rather_than_holding_the_key() {
+        let mut cfg = cfg();
+        cfg.overlap = i64::MIN;
+        let mut c = DelegatedSigningCustody::new(cfg, ok_issuer(), factory());
+        c.ensure_active(1_000).expect("first issuance");
+        let first = c.active_kid().expect("a key").to_string();
+        assert_eq!(c.root_invocations(), 1);
+
+        // Well inside the credential's life: with a computable overlap this would NOT
+        // rotate. With one that is not computable, the threshold reads as reached.
+        c.ensure_active(1_001).expect("still serving");
+        assert_ne!(
+            c.active_kid().expect("a key"),
+            first,
+            "an uncomputable threshold must not read as `not yet due`"
+        );
+    }
+
+    /// The signature's stated validity never outlives the credential authorizing it, and
+    /// an unrepresentable `now + ttl` clamps to `exp` rather than to a wrapped instant.
+    #[test]
+    fn a_signature_window_that_cannot_be_computed_clamps_to_the_credential() {
+        let mut c = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory());
+        c.ensure_active(1_000).expect("issue");
+        let exp = c.active_snapshot().expect("a key").exp;
+        assert_eq!(exp, 1_000 + T);
+        // `min(now + ttl, exp)` is `exp` for every `now` in the second half of the life,
+        // and the checked form must agree with the plain one everywhere it is defined.
+        for now in [1_000, 1_100, 1_250, exp - 1] {
+            let until = now.checked_add(T).map_or(exp, |u: i64| u.min(exp));
+            assert!(until <= exp, "the window may never outlive the credential");
+        }
     }
 }

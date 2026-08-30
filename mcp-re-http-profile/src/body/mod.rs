@@ -289,4 +289,38 @@ mod tests {
             HttpProfileError::MalformedEvidence("body not a json object")
         );
     }
+
+    /// The representability scan is TOTAL: it never reads past the body it was handed.
+    ///
+    /// Every cursor in that scanner is derived from bytes the caller supplied, and one of
+    /// them — the escape skip — deliberately steps TWO positions, so it can leave the body
+    /// entirely when a string's last byte is a backslash. The walk is bounded by `get`
+    /// rather than by that arithmetic staying in range, and this is what measures it:
+    /// truncations of a body at every byte offset, which is exactly the family that puts a
+    /// cursor one past the end, plus the degenerate and non-JSON inputs.
+    ///
+    /// It asserts a verdict for none of them. Whether a given truncation is refused is the
+    /// job of the tests above; the property here is that answering at all does not panic.
+    #[test]
+    fn the_representability_scan_never_reads_past_the_body() {
+        let seeds: &[&[u8]] = &[
+            br#"{"a":"b\"c","n":1.5e10,"m":[1,2,{"k":"v"}]}"#,
+            br#"{"escape":"trailing\\"}"#,
+            br#"{"a":"\"#,
+            b"\\",
+            b"\"",
+            b"",
+            b"{",
+            b"[[[[",
+            b"}]}]",
+            b"-",
+            b"1e",
+            b"\xff\xfe\x00\x80",
+        ];
+        for seed in seeds {
+            for cut in 0..=seed.len() {
+                let _ = reject_unrepresentable_json(&seed[..cut]);
+            }
+        }
+    }
 }

@@ -140,7 +140,13 @@ pub(super) fn rfc9162_root_from_inclusion_proof(
         return Err(HttpProfileError::ReceiptInclusionInvalid);
     }
     let mut fnode = leaf_index;
-    let mut snode = tree_size - 1;
+    // `tree_size` arrives inside a receipt, so its predecessor is taken checked rather
+    // than argued from the `leaf_index >= tree_size` refusal above. The refusal does
+    // establish `tree_size >= 1`; stating the bound where it is used costs one `ok_or`
+    // and does not depend on that line staying where it is.
+    let Some(mut snode) = tree_size.checked_sub(1) else {
+        return Err(HttpProfileError::ReceiptInclusionInvalid);
+    };
     let mut r = *leaf;
     for sibling in path {
         if snode == 0 {

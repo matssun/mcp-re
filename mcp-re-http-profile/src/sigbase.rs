@@ -292,7 +292,11 @@ pub fn signature_base(
     params: &SignatureParams,
     source: &SourceMessage<'_>,
 ) -> Result<Vec<u8>, HttpProfileError> {
-    let mut lines = Vec::with_capacity(components.len() + 1);
+    // A slice's length is at most `isize::MAX`, so the signature-params line that
+    // follows the covered components fits alongside them. Capacity only.
+    #[allow(clippy::arithmetic_side_effects)]
+    let capacity = components.len() + 1;
+    let mut lines = Vec::with_capacity(capacity);
     for c in components {
         let value = component_value(c, source)?;
         lines.push(format!("{}: {}", c.identifier(), value));

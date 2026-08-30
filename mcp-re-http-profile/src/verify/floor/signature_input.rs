@@ -43,8 +43,12 @@ pub(crate) fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput,
     let list = value
         .get(1..close)
         .ok_or(HttpProfileError::MalformedEvidence("inner list"))?;
+    // `close` is a byte position inside `value`, so `close + 1` is at most its length
+    // plus one and cannot leave `usize`; `get` decides whether it is in range.
+    #[allow(clippy::arithmetic_side_effects)]
+    let after_close = close + 1;
     let param_tail = value
-        .get(close + 1..)
+        .get(after_close..)
         .ok_or(HttpProfileError::MalformedEvidence("inner list"))?;
     Ok(ParsedSignatureInput {
         components: parse_covered_components(list)?,
