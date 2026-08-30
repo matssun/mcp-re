@@ -149,7 +149,6 @@ impl<R: Into<ResolverOutcome>> ChainVerification<'_, R> {
             .verify_delegated_bound_response(
                 &hop.response,
                 &hop.request,
-                &request_evidence,
                 self.expect,
                 self.is_revoked,
                 response_at,

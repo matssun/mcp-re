@@ -155,7 +155,7 @@ fn full_request_roundtrip_exposes_audience_and_block() {
 fn full_response_roundtrip_binds_request_evidence() {
     let block = request_block(vec![dpop_over(ACCESS_TOKEN.as_bytes())]);
     let (req, ev) = signed_full_request(&block);
-    let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
+    let _verified = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req, &audience(), &no_material(), NOW)
         .expect("request verifies");
 
@@ -177,7 +177,7 @@ fn full_response_roundtrip_binds_request_evidence() {
     .expect("full response sign");
 
     let rv = Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_bound_response(&rsp, &req, verified.evidence(), NOW)
+        .verify_bound_response(&rsp, &req, NOW)
         .expect("full response verifies");
     assert_eq!(
         rv.request_evidence_agreement.bound_request_evidence,
@@ -460,10 +460,103 @@ fn response_request_evidence_mismatch_emits_request_binding_mismatch() {
     .expect("sign");
 
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_bound_response(&rsp, &req_a, verified_a.evidence(), NOW)
+        .verify_bound_response(&rsp, &req_a, NOW)
         .unwrap_err();
     assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
     assert_eq!(err.wire_code(), "mcp-re.request_binding_mismatch");
+}
+
+/// THE PAIRING CASE the boundary used to admit: a genuine, fully valid exchange over
+/// request B, verified as the answer to request A.
+///
+/// Before the handle was derived, this reached a SUCCESSFUL verification whenever a caller
+/// held A and passed B's handle — the `;req` floor bound the response to B (which is what
+/// it was signed over), the block comparison matched B's handle (which is what was passed),
+/// and nothing anywhere related A to either. The two operands were the whole gap.
+///
+/// There is no longer a second operand to be wrong: the handle is derived from the request
+/// this verification was given, so an exchange over B presented against A is refused, and
+/// the same exchange presented against B is accepted. Both halves are asserted here,
+/// because a refusal is only evidence about the pairing if the identical bytes pass under
+/// the correct pairing.
+#[test]
+fn a_valid_exchange_cannot_be_verified_as_the_answer_to_a_different_request() {
+    let block = request_block(vec![dpop_over(ACCESS_TOKEN.as_bytes())]);
+    let (req_a, _ev_a) = signed_full_request(&block);
+
+    // A second, entirely legitimate exchange.
+    let mut req_b = base_request();
+    req_b.body =
+        br#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read"}}"#.to_vec();
+    let ev_b = sign_request_full(
+        &mut req_b,
+        &block,
+        &client_key(),
+        "client-key-1",
+        CREATED,
+        EXPIRES,
+        "nonce-2",
+    )
+    .expect("sign b");
+
+    let mut rsp_b = HttpResponse {
+        status: 200,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","id":2,"result":{"ok":true}}"#.to_vec(),
+    };
+    sign_response_full(
+        &mut rsp_b,
+        &req_b,
+        &ev_b,
+        &server_identity(),
+        &server_key(),
+        "server-key-1",
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign resp b");
+
+    let policy = VerifierPolicy::default();
+    let resolve = resolver();
+    let verifier = Verifier::new(&policy, &resolve);
+    // Exchange B, presented as the answer to A. Refused.
+    assert!(verifier.verify_bound_response(&rsp_b, &req_a, NOW).is_err());
+    // The control: the same response against its own request is accepted, so the refusal
+    // above is about the pairing and not about anything else in these bytes.
+    verifier
+        .verify_bound_response(&rsp_b, &req_b, NOW)
+        .expect("exchange B verifies against request B");
+}
+
+/// The handle is a function of the request, and the function is the one both producers
+/// use. Two requests that differ only in a signed parameter have different handles, so a
+/// derivation cannot silently collapse two exchanges into one.
+#[test]
+fn two_requests_differing_only_in_a_signed_parameter_have_different_handles() {
+    let block = request_block(vec![dpop_over(ACCESS_TOKEN.as_bytes())]);
+    let mut req_a = base_request();
+    let ev_a = sign_request_full(
+        &mut req_a,
+        &block,
+        &client_key(),
+        "client-key-1",
+        CREATED,
+        EXPIRES,
+        "nonce-1",
+    )
+    .expect("sign a");
+    let mut req_b = base_request();
+    let ev_b = sign_request_full(
+        &mut req_b,
+        &block,
+        &client_key(),
+        "client-key-1",
+        CREATED,
+        EXPIRES,
+        "nonce-2",
+    )
+    .expect("sign b");
+    assert_ne!(ev_a.digest_value, ev_b.digest_value);
 }
 
 #[test]
@@ -472,7 +565,7 @@ fn cryptographic_req_splice_still_fails_at_the_floor() {
     // ;req signature floor rejects BEFORE any body comparison is reached.
     let block = request_block(vec![dpop_over(ACCESS_TOKEN.as_bytes())]);
     let (req_a, _ev_a) = signed_full_request(&block);
-    let verified_a = Verifier::new(&VerifierPolicy::default(), &resolver())
+    let _verified_a = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req_a, &audience(), &no_material(), NOW)
         .expect("req_a verifies");
 
@@ -509,7 +602,7 @@ fn cryptographic_req_splice_still_fails_at_the_floor() {
 
     // Present rsp_b as the answer to req_a: ;req base uses req_a, signature fails.
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_bound_response(&rsp_b, &req_a, verified_a.evidence(), NOW)
+        .verify_bound_response(&rsp_b, &req_a, NOW)
         .unwrap_err();
     assert_eq!(err, HttpProfileError::ResponseSignatureInvalid);
 }
@@ -565,7 +658,7 @@ fn a_target_uri_disagreeing_with_the_audience_tuple_fails() {
 fn a_block_declaring_a_signer_it_did_not_sign_as_fails() {
     let block = request_block(vec![dpop_over(ACCESS_TOKEN.as_bytes())]);
     let (req, _ev) = signed_full_request(&block);
-    let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
+    let _verified = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req, &audience(), &no_material(), NOW)
         .expect("request verifies");
 
@@ -590,7 +683,7 @@ fn a_block_declaring_a_signer_it_did_not_sign_as_fails() {
     .expect("full response sign");
 
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_bound_response(&rsp, &req, verified.evidence(), NOW)
+        .verify_bound_response(&rsp, &req, NOW)
         .unwrap_err();
     assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
 }

@@ -380,7 +380,7 @@ fn response_bound_to_the_wrong_request_is_rejected() {
     // The client that sent request A must NOT accept a response bound to B.
     assert!(
         Verifier::new(&VerifierPolicy::default(), &resolver())
-            .verify_bound_response(&resp, &req_a, &ev_a, NOW)
+            .verify_bound_response(&resp, &req_a, NOW)
             .is_err(),
         "a response bound to the WRONG request must be rejected"
     );

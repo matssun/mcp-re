@@ -299,14 +299,7 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
         );
         let r = resolver();
         let verified = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
-            .verify_delegated_bound_response(
-                &resp,
-                &req,
-                verified_req.evidence(),
-                &expectations(&[EPOCH]),
-                &|_| false,
-                NOW,
-            )
+            .verify_delegated_bound_response(&resp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
             .expect("delegated response verifies via the credential→root chain");
         // Profile-issued kids are RFC 7638 JWK thumbprints (#415 rev 2 §1.5), so
         // the property asserted here is the one that matters — the signer is a
@@ -346,14 +339,7 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
     );
     let r = resolver();
     Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
-        .verify_delegated_bound_response(
-            &resp,
-            &req,
-            verified_req.evidence(),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            NOW,
-        )
+        .verify_delegated_bound_response(&resp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
         .expect("bound delegated rejection verifies");
 
     // --- rotation: a successor minted in the overlap window keeps serving (no gap) --
@@ -374,14 +360,7 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
     let resp = http_response(served);
     let r = resolver();
     let verified = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
-        .verify_delegated_bound_response(
-            &resp,
-            &req,
-            verified_req.evidence(),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            rot,
-        )
+        .verify_delegated_bound_response(&resp, &req, &expectations(&[EPOCH]), &|_| false, rot)
         .expect("successor delegated response verifies");
     // The successor is a DIFFERENT delegated key: distinct key material yields a
     // distinct RFC 7638 thumbprint, so the kid changing is itself the proof that

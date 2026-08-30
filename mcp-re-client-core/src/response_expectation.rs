@@ -1,36 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 //! What the client expects of the bound response for one outstanding request.
 //!
-//! Its own module because the pairing is the invariant: the request and the evidence
-//! handle are produced together by [`SignedRequest`], and the verifier next door reads
-//! them back through named projections rather than through fields any holder could
-//! re-pair.
+//! Its own module because the expectation is a value with an invariant of its own: what
+//! the client is waiting for on one outstanding request, read back through named
+//! projections rather than through fields a holder could rewrite.
 
 use mcp_re_http_profile::HttpRequest;
-use mcp_re_http_profile::RequestEvidence;
 
 use crate::request::SignedRequest;
 
 /// What the client expects of the bound response for one outstanding request: the
-/// exact request it sent (for the `;req` binding), the [`RequestEvidence`] handle
-/// the response must bind, and an optional pinned server signer.
+/// exact request it sent, and an optional pinned server signer.
 ///
-/// The request and its evidence handle are one pair, and [`SignedRequest`] is the owner
-/// that produced them together. Prefer [`Self::for_signed`], which takes that owner:
-/// splitting a signed request into halves and handing them back separately is how one
-/// exchange's request comes to be paired with another's handle, and the verifier then
-/// binds a verified response to the wrong request.
+/// It used to carry the request's evidence handle as a second member, and the two were a
+/// pair that could be built from unrelated halves. That is no longer a fact about this
+/// type at all: the handle is a FUNCTION of the request, and the verification boundary
+/// derives it from the request it is given rather than accepting one beside it, so there
+/// is nothing left here that could describe a different exchange from the request.
 ///
-/// The fields are private so no caller can re-pair them after construction. That closes
-/// the in-process half of the exposure and not the FFI half: [`Self::new`] exists because
-/// the SDK bindings rebuild both halves from scalars crossing a language boundary, where
-/// no owner survives to be taken instead.
+/// [`Self::for_signed`] remains the constructor to prefer — it takes the owner rather than
+/// a loose request — and [`Self::new`] takes the one operand the FFI bindings rebuild from
+/// scalars.
 #[derive(Debug, Clone)]
 pub struct ResponseExpectation {
     /// The exact [`HttpRequest`] the client signed and sent.
     request: HttpRequest,
-    /// The [`RequestEvidence`] handle the response's `request_evidence` must equal.
-    request_evidence: RequestEvidence,
     /// The credential ISSUER policy expects for this route/audience, if pinned.
     ///
     /// The anchor a delegated credential must prove a chain to — not the delegated
@@ -42,25 +36,21 @@ pub struct ResponseExpectation {
 }
 
 impl ResponseExpectation {
-    /// Build an expectation from the signed request that produced the pair, with no
-    /// pinned signer (resolver scope governs).
-    ///
-    /// The one constructor that cannot pair a request with another exchange's evidence
-    /// handle, because it never sees two values to pair.
+    /// Build an expectation from the signed request it is about, with no pinned signer
+    /// (resolver scope governs).
     pub fn for_signed(signed: &SignedRequest) -> Self {
-        ResponseExpectation::new(signed.request().clone(), signed.evidence().clone())
+        ResponseExpectation::new(signed.request().clone())
     }
 
-    /// Build an expectation from a request and an evidence handle reconstructed
-    /// separately, with no pinned signer (resolver scope governs).
+    /// Build an expectation from a request reconstructed separately, with no pinned
+    /// signer (resolver scope governs).
     ///
-    /// For the FFI bindings, which receive both halves as scalars and have no
+    /// For the FFI bindings, which rebuild the request from scalars and have no
     /// [`SignedRequest`] to take. In-process callers hold that owner and should take it:
     /// see [`Self::for_signed`].
-    pub fn new(request: HttpRequest, request_evidence: RequestEvidence) -> Self {
+    pub fn new(request: HttpRequest) -> Self {
         ResponseExpectation {
             request,
-            request_evidence,
             expected_issuer_kid: None,
         }
     }
@@ -77,11 +67,6 @@ impl ResponseExpectation {
         &self.request
     }
 
-    /// The evidence handle the response's `request_evidence` must equal.
-    pub(crate) fn request_evidence(&self) -> &RequestEvidence {
-        &self.request_evidence
-    }
-
     /// The credential issuer this route pins, or `None` when resolver scope governs.
     pub(crate) fn expected_issuer_kid(&self) -> Option<&str> {
         self.expected_issuer_kid.as_deref()
@@ -92,40 +77,30 @@ impl ResponseExpectation {
 mod tests {
     use super::*;
 
-    fn parts() -> (HttpRequest, RequestEvidence) {
-        (
-            HttpRequest {
-                method: "POST".to_string(),
-                target_uri: "https://mcp.example.com/mcp".to_string(),
-                headers: Vec::new(),
-                body: b"{}".to_vec(),
-            },
-            RequestEvidence {
-                digest_alg: "sha-256".to_string(),
-                digest_value: "abc".to_string(),
-            },
-        )
+    fn parts() -> HttpRequest {
+        HttpRequest {
+            method: "POST".to_string(),
+            target_uri: "https://mcp.example.com/mcp".to_string(),
+            headers: Vec::new(),
+            body: b"{}".to_vec(),
+        }
     }
 
-    /// The pair goes in and comes back out unchanged: the projections report what was
-    /// constructed, which is what makes them usable in place of the fields.
+    /// The request goes in and comes back out unchanged: the projection reports what was
+    /// constructed, which is what makes it usable in place of the field.
     #[test]
-    fn the_projections_report_the_pair_the_expectation_was_built_from() {
-        let (request, evidence) = parts();
-        let expectation = ResponseExpectation::new(request.clone(), evidence.clone());
+    fn the_projection_reports_the_request_the_expectation_was_built_from() {
+        let request = parts();
+        let expectation = ResponseExpectation::new(request.clone());
         assert_eq!(expectation.request().target_uri, request.target_uri);
-        assert_eq!(
-            expectation.request_evidence().digest_value,
-            evidence.digest_value
-        );
     }
 
     /// An unpinned route reports no pin, and pinning one reports it. The pin is the only
     /// part of an expectation that is set after construction.
     #[test]
     fn a_pin_is_absent_until_it_is_set() {
-        let (request, evidence) = parts();
-        let expectation = ResponseExpectation::new(request, evidence);
+        let request = parts();
+        let expectation = ResponseExpectation::new(request);
         assert_eq!(expectation.expected_issuer_kid(), None);
         assert_eq!(
             expectation

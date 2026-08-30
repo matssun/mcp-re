@@ -211,7 +211,7 @@ fn response_body() -> Vec<u8> {
 
 #[test]
 fn valid_delegated_response_verifies_under_cnf_key() {
-    let (req, ev, verified_req) = signed_request();
+    let (req, ev, _verified_req) = signed_request();
     let mut rsp = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
@@ -231,14 +231,7 @@ fn valid_delegated_response_verifies_under_cnf_key() {
     .expect("sign delegated response");
 
     let rv = Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_delegated_bound_response(
-            &rsp,
-            &req,
-            verified_req.evidence(),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            NOW,
-        )
+        .verify_delegated_bound_response(&rsp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
         .expect("delegated response verifies");
     // The accepted signer is the delegated identity, authorized via the credential
     // chain (its verification key is the delegated key).
@@ -261,7 +254,7 @@ fn valid_delegated_response_verifies_under_cnf_key() {
 fn direct_root_signed_response_is_rejected_credential_missing() {
     // A response signed directly by the root (server) key with NO delegation
     // credential must be rejected in required mode.
-    let (req, ev, verified_req) = signed_request();
+    let (req, ev, _verified_req) = signed_request();
     let mut rsp = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
@@ -287,14 +280,7 @@ fn direct_root_signed_response_is_rejected_credential_missing() {
     .expect("sign direct-root response");
 
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_delegated_bound_response(
-            &rsp,
-            &req,
-            verified_req.evidence(),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            NOW,
-        )
+        .verify_delegated_bound_response(&rsp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
         .unwrap_err();
     assert_eq!(err, HttpProfileError::DelegationCredentialMissing);
 }
@@ -305,7 +291,7 @@ fn direct_root_signed_response_is_rejected_credential_missing() {
 fn response_keyid_not_delegated_kid_is_key_mismatch() {
     // The credential authorizes DELEGATED_KID, but the response signature is made
     // under a different RFC 9421 keyid.
-    let (req, ev, verified_req) = signed_request();
+    let (req, ev, _verified_req) = signed_request();
     let mut rsp = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
@@ -324,14 +310,7 @@ fn response_keyid_not_delegated_kid_is_key_mismatch() {
     )
     .expect("sign");
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_delegated_bound_response(
-            &rsp,
-            &req,
-            verified_req.evidence(),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            NOW,
-        )
+        .verify_delegated_bound_response(&rsp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
         .unwrap_err();
     assert_eq!(err, HttpProfileError::DelegationKeyMismatch);
 }
@@ -340,7 +319,7 @@ fn response_keyid_not_delegated_kid_is_key_mismatch() {
 fn response_signed_by_key_other_than_cnf_is_key_mismatch() {
     // The response is signed by an ATTACKER key while claiming DELEGATED_KID; the
     // signature does not verify under cnf.jwk.
-    let (req, ev, verified_req) = signed_request();
+    let (req, ev, _verified_req) = signed_request();
     let attacker = SigningKey::from_seed_bytes(&[99u8; 32]);
     let mut rsp = HttpResponse {
         status: 200,
@@ -360,14 +339,7 @@ fn response_signed_by_key_other_than_cnf_is_key_mismatch() {
     )
     .expect("sign");
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_delegated_bound_response(
-            &rsp,
-            &req,
-            verified_req.evidence(),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            NOW,
-        )
+        .verify_delegated_bound_response(&rsp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
         .unwrap_err();
     assert_eq!(err, HttpProfileError::DelegationKeyMismatch);
 }
@@ -376,7 +348,7 @@ fn response_signed_by_key_other_than_cnf_is_key_mismatch() {
 
 #[test]
 fn body_tamper_is_caught_by_content_digest() {
-    let (req, ev, verified_req) = signed_request();
+    let (req, ev, _verified_req) = signed_request();
     let mut rsp = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
@@ -398,14 +370,7 @@ fn body_tamper_is_caught_by_content_digest() {
     let last = rsp.body.len() - 2;
     rsp.body[last] ^= 0x01;
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_delegated_bound_response(
-            &rsp,
-            &req,
-            verified_req.evidence(),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            NOW,
-        )
+        .verify_delegated_bound_response(&rsp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
         .unwrap_err();
     assert_eq!(err, HttpProfileError::ContentDigestMismatch);
 }
@@ -414,7 +379,7 @@ fn body_tamper_is_caught_by_content_digest() {
 
 #[test]
 fn stale_epoch_rejected_end_to_end() {
-    let (req, ev, verified_req) = signed_request();
+    let (req, ev, _verified_req) = signed_request();
     let mut rsp = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
@@ -434,14 +399,7 @@ fn stale_epoch_rejected_end_to_end() {
     .expect("sign");
     // Verifier's accepted set has advanced past the credential's epoch.
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_delegated_bound_response(
-            &rsp,
-            &req,
-            verified_req.evidence(),
-            &expectations(&["epoch-2"]),
-            &|_| false,
-            NOW,
-        )
+        .verify_delegated_bound_response(&rsp, &req, &expectations(&["epoch-2"]), &|_| false, NOW)
         .unwrap_err();
     assert_eq!(err, HttpProfileError::DelegationTrustEpochStale);
 }
@@ -469,7 +427,7 @@ fn custody_cfg() -> CustodyConfig {
 /// root, and the root was touched exactly once (issuance), never per request.
 #[test]
 fn custody_signed_response_verifies_via_attestation_chain() {
-    let (req, ev, verified_req) = signed_request();
+    let (req, ev, _verified_req) = signed_request();
     let root = root_key();
     let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
         Some(issue_delegation_credential(&root, h, c))
@@ -491,14 +449,7 @@ fn custody_signed_response_verifies_via_attestation_chain() {
         .expect("custody signs");
 
     let rv = Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_delegated_bound_response(
-            &rsp,
-            &req,
-            verified_req.evidence(),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            NOW,
-        )
+        .verify_delegated_bound_response(&rsp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
         .expect("custody-signed response verifies");
     // A custody-issued key is profile-issued, so its kid is the RFC 7638 JWK
     // thumbprint of the key itself (#415 rev 2 §1.5). The key factory above hands
@@ -520,7 +471,7 @@ fn custody_signed_response_verifies_via_attestation_chain() {
 
 #[test]
 fn revoked_delegated_key_rejected_end_to_end() {
-    let (req, ev, verified_req) = signed_request();
+    let (req, ev, _verified_req) = signed_request();
     let mut rsp = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
@@ -542,7 +493,6 @@ fn revoked_delegated_key_rejected_end_to_end() {
         .verify_delegated_bound_response(
             &rsp,
             &req,
-            verified_req.evidence(),
             &expectations(&[EPOCH]),
             &|kid| kid == DELEGATED_KID,
             NOW,
@@ -693,14 +643,7 @@ fn a_delegated_response_advertising_another_requests_evidence_is_refused() {
     .expect("sign");
 
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_delegated_bound_response(
-            &rsp,
-            &req_a,
-            verified_a.evidence(),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            NOW,
-        )
+        .verify_delegated_bound_response(&rsp, &req_a, &expectations(&[EPOCH]), &|_| false, NOW)
         .unwrap_err();
     assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
 }
@@ -898,7 +841,7 @@ fn credential_scoped_to_another_keyid() -> (String, ActorIdentity) {
 
 #[test]
 fn a_block_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch() {
-    let (req, ev, verified_req) = signed_request();
+    let (req, ev, _verified_req) = signed_request();
     let (credential, disowned) = credential_scoped_to_another_keyid();
     let mut rsp = HttpResponse {
         status: 200,
@@ -919,14 +862,7 @@ fn a_block_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch() {
     .expect("sign");
 
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_delegated_bound_response(
-            &rsp,
-            &req,
-            verified_req.evidence(),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            NOW,
-        )
+        .verify_delegated_bound_response(&rsp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
         .unwrap_err();
     assert_eq!(err, HttpProfileError::DelegationKeyMismatch);
 }

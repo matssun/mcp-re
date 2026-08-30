@@ -35,6 +35,7 @@
 //! `Verifier`; the one `pub` item is [`DelegationExpectations`], which is an INPUT a
 //! deployment supplies, not a verification entry point.
 
+pub(crate) mod bound_request;
 pub(crate) mod floor;
 pub(crate) mod full;
 

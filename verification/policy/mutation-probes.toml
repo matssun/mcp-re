@@ -1981,3 +1981,64 @@ expect_red = [
   "lib#admission::tests::another_workloads_state_at_the_same_generation_does_not_admit_this_call",
   "lib#admission::tests::a_revoked_workload_cannot_be_served_on_another_workloads_admitted_record",
 ]
+
+[[probe]]
+id = "M68-the-block-handle-is-compared-against-this-requests-own"
+unit = "http_profile.verifier_results"
+theorem = "THM-0018"
+conjunct = "the block's request_evidence handle is the handle of the request the ;req components were resolved against"
+# The comparison itself. Deleting it leaves the `;req` floor, which binds the response to
+# the request cryptographically and says nothing about what the block ADVERTISES — so a
+# block naming another exchange's handle passes.
+path = "mcp-re-http-profile/src/verify/full/response.rs"
+anchor = """
+    if block.request_evidence.digest_alg != bound_request_evidence.digest_alg
+        || block.request_evidence.digest_value != bound_request_evidence.digest_value
+    {
+        return Err(HttpProfileError::ResponseBindingMismatch);
+    }
+"""
+weakening = """
+"""
+expect_red = [
+  "tests/full_profile_test#response_request_evidence_mismatch_emits_request_binding_mismatch",
+]
+
+[[probe]]
+id = "M69-the-derived-handle-is-of-the-request-under-verification"
+unit = "http_profile.verifier_results"
+theorem = "THM-0018"
+conjunct = "the handle is derived from the request supplied, not from the response's own claim"
+# The derivation is what makes the relation structural rather than a caller convention.
+# Reading the handle back out of the BLOCK is the shape the old two-operand API allowed a
+# caller to produce accidentally: every comparison then passes, whatever request is
+# supplied, and the response is verified as the answer to a request it never answered.
+path = "mcp-re-http-profile/src/verify/full/response.rs"
+anchor = """
+    let bound_request_evidence = request_evidence_of(request)?;
+"""
+weakening = """
+    let bound_request_evidence = block.request_evidence.clone();
+"""
+expect_red = [
+  "tests/full_profile_test#a_valid_exchange_cannot_be_verified_as_the_answer_to_a_different_request",
+  "tests/full_profile_test#response_request_evidence_mismatch_emits_request_binding_mismatch",
+]
+
+[[probe]]
+id = "M70-the-delegated-path-derives-its-handle-too"
+unit = "http_profile.verifier_results"
+theorem = "THM-0019"
+conjunct = "the delegated path compares against the handle of the request it was given"
+# The same defect, on the other bound-response path. The two are separate functions and a
+# repair applied to one of them is not evidence about the other.
+path = "mcp-re-http-profile/src/verify/full/delegated/bound.rs"
+anchor = """
+    let bound = request_evidence_of(request)?;
+"""
+weakening = """
+    let bound = block.request_evidence.clone();
+"""
+expect_red = [
+  "tests/delegation_e2e_test#a_delegated_response_advertising_another_requests_evidence_is_refused",
+]

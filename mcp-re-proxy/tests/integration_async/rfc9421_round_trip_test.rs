@@ -276,7 +276,6 @@ async fn rfc9421_round_trip_zero_object_evidence() {
     .verify_delegated_bound_response(
         &http_response,
         &req,
-        verified_req.evidence(),
         &expectations(&["epoch-1"]),
         &|_| false,
         NOW,

@@ -950,7 +950,7 @@ fn write_delegation_fixtures() {
 fn run_fixture(fixture: &Fixture, verify_at: i64) -> String {
     let request = from_wire_request(&fixture.request);
     let response = from_wire_response(&fixture.response);
-    let verified_req = recompute_verified_request(&request);
+    let _verified_req = recompute_verified_request(&request);
 
     let auds: Vec<&str> = fixture
         .check
@@ -975,7 +975,6 @@ fn run_fixture(fixture: &Fixture, verify_at: i64) -> String {
     match Verifier::new(&VerifierPolicy::default(), &resolver()).verify_delegated_bound_response(
         &response,
         &request,
-        verified_req.evidence(),
         &expect,
         &is_revoked,
         verify_at,

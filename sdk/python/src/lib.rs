@@ -668,8 +668,6 @@ fn verify_response(
     req_target_uri: &str,
     req_headers: Vec<(String, String)>,
     req_body: &[u8],
-    req_evidence_digest_alg: &str,
-    req_evidence_digest_value: &str,
     issuer_key_id: &str,
     issuer_pubkey_b64url: &str,
     issuer_role: &str,
@@ -702,11 +700,7 @@ fn verify_response(
         headers: req_headers,
         body: req_body.to_vec(),
     };
-    let evidence = RequestEvidence {
-        digest_alg: req_evidence_digest_alg.to_owned(),
-        digest_value: req_evidence_digest_value.to_owned(),
-    };
-    let expectation = ResponseExpectation::new(request, evidence);
+    let expectation = ResponseExpectation::new(request);
     let policy = DelegationPolicy::new(
         verifier_audiences,
         expected_audience_hash,

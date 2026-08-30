@@ -4,8 +4,11 @@
 //! One authority: **this response is a delegated-signed answer to THIS request.** Binding
 //! is what separates it from its unbound sibling, and it is established three ways that do
 //! not substitute for one another: the signature covers the request's components through
-//! `;req`, the block's `request_evidence` equals the handle the caller holds, and the
-//! credential's scope names the block's declared server signer.
+//! `;req`, the block's `request_evidence` equals the handle DERIVED FROM THAT SAME
+//! REQUEST, and the credential's scope names the block's declared server signer.
+//!
+//! The handle used to be a second operand supplied beside the request, with nothing
+//! relating the two — see [`crate::verify::bound_request`] for what that admitted.
 //!
 //! The product carries the shared [`BoundResponseSignatureFacts`], never a
 //! `CryptographicFloorVerifiedBoundResponse` — see [`super`] for why that containment would
@@ -32,6 +35,7 @@ use crate::policy::VerifierPolicy;
 use crate::sigbase::signature_base;
 use crate::sigbase::SourceMessage;
 use crate::verified_response::AcceptedResponseSigner;
+use crate::verify::bound_request::request_evidence_of;
 use crate::verify::floor::components::require_components;
 use crate::verify::floor::params::check_params;
 use crate::verify::floor::sf_dictionary::member_value;
@@ -47,21 +51,19 @@ use crate::verified_response::block_agreement;
 use crate::verified_response::BoundResponseSignatureFacts;
 use crate::verified_response::VerifiedDelegatedMcpResponse;
 
-/// Delegated-response verification bound to a request evidence HANDLE
-/// ([`RequestEvidence`]) rather than the whole [`VerifiedMcpRequest`] — the
-/// CLIENT-side entry point (the delegated analogue of [`verify_response_bound_full`]).
+/// Delegated-response verification bound to a concrete request — the CLIENT-side entry
+/// point (the delegated analogue of [`verify_response_bound_full`]).
 ///
 /// Semantics are identical to [`verify_delegated_response_full`]: delegation is
 /// REQUIRED (a response with no inline credential — including a directly root-signed
 /// one — is rejected `delegation_credential_missing`), the credential chain to the
 /// root is verified, and the `;req`-bound response signature is verified under
-/// `cnf.jwk`. The only difference is that the request-evidence binding is compared
-/// against the passed `bound_request_evidence` handle the client kept from signing.
+/// `cnf.jwk`. The request-evidence binding is compared against the handle of the request
+/// supplied here, derived from it rather than accepted beside it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn delegated_bound_response<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
-    bound_request_evidence: &RequestEvidence,
     resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &VerifierPolicy,
     expect: &DelegationExpectations<'_>,
@@ -129,7 +131,9 @@ pub(crate) fn delegated_bound_response<R: Into<ResolverOutcome>>(
     .map_err(|_| HttpProfileError::DelegationKeyMismatch)?;
 
     // Request-evidence binding (explicit MCP defense-in-depth, as verify_response_full).
-    let bound = bound_request_evidence;
+    // The handle is OF the request this verification was given — see
+    // `crate::verify::bound_request`.
+    let bound = request_evidence_of(request)?;
     if block.request_evidence.digest_alg != bound.digest_alg
         || block.request_evidence.digest_value != bound.digest_value
     {
@@ -149,7 +153,7 @@ pub(crate) fn delegated_bound_response<R: Into<ResolverOutcome>>(
             },
             response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
         },
-        request_evidence_agreement: block_agreement(bound.clone(), &block),
+        request_evidence_agreement: block_agreement(bound, &block),
         // C004b: the ROOT anchor the credential chained to — the stable coordinate,
         // unlike the ephemeral delegated kid. Not an `Option`: this product is only
         // reachable through a verified chain.

@@ -160,7 +160,6 @@ fn verify_delegated_response_under(
         let verified = verifier.verify_delegated_bound_response(
             response,
             expectation.request(),
-            expectation.request_evidence(),
             expect,
             is_revoked,
             now,
@@ -178,7 +177,6 @@ fn verify_delegated_response_under(
     match verifier.verify_delegated_bound_response(
         response,
         expectation.request(),
-        expectation.request_evidence(),
         expect,
         is_revoked,
         now,

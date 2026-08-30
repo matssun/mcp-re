@@ -47,8 +47,6 @@ function verify(body: Buffer) {
     x.request_target_uri,
     headers(x.request_headers),
     b64url(x.request_body_b64url),
-    x.request_evidence_digest_alg,
-    x.request_evidence_digest_value,
     f.issuer.key_id,
     f.issuer.pubkey_b64url,
     f.issuer.role,

@@ -335,14 +335,7 @@ async fn delegated_success_response_verifies_and_root_touched_once() {
         // The client verifies via the credential→root attestation chain.
         let r = resolver();
         let verified = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
-            .verify_delegated_bound_response(
-                &resp,
-                &req,
-                verified_req.evidence(),
-                &expectations(&[EPOCH]),
-                &|_| false,
-                NOW,
-            )
+            .verify_delegated_bound_response(&resp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
             .expect("delegated success response verifies via the attestation chain");
         // Profile-issued kids are RFC 7638 JWK thumbprints (#415 rev 2 §1.5); the
         // property under test is that a DELEGATED key signed, never the root.
@@ -385,14 +378,7 @@ async fn delegated_bound_rejection_verifies() {
     // A bound delegated rejection verifies via the request-bound delegated path.
     let r = resolver();
     Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
-        .verify_delegated_bound_response(
-            &resp,
-            &req,
-            verified_req.evidence(),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            NOW,
-        )
+        .verify_delegated_bound_response(&resp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
         .expect("bound delegated rejection verifies");
     assert_eq!(wire_code_of(&resp.body), "mcp-re.replay_detected");
 }
@@ -438,7 +424,6 @@ async fn delegated_preflight_rejection_verifies_unbound() {
             .verify_delegated_bound_response(
                 &resp,
                 &fresh,
-                verified_fresh.evidence(),
                 &expectations(&[EPOCH]),
                 &|_| false,
                 NOW
@@ -535,14 +520,7 @@ fn direct_root_response_rejected_in_delegated_required_mode() {
     // A delegated-signing verifier rejects it: no inline credential.
     let r = resolver();
     let err = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
-        .verify_delegated_bound_response(
-            &resp,
-            &req,
-            verified_req.evidence(),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            NOW,
-        )
+        .verify_delegated_bound_response(&resp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
         .unwrap_err();
     assert_eq!(err, HttpProfileError::DelegationCredentialMissing);
 }

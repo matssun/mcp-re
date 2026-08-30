@@ -312,14 +312,7 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
             .sign_response(NOW, &mut rsp, &req, &ev)
             .expect("custody signs (hot path)");
         Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
-            .verify_delegated_bound_response(
-                &rsp,
-                &req,
-                verified_req.evidence(),
-                &expectations(&[EPOCH]),
-                &|_| false,
-                NOW,
-            )
+            .verify_delegated_bound_response(&rsp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
             .expect("delegated response verifies via the KMS-rooted attestation chain");
     }
 
@@ -345,7 +338,6 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
         .verify_delegated_bound_response(
             &predecessor_rsp,
             &req,
-            verified_req.evidence(),
             &expectations(&[EPOCH]),
             &|_| false,
             NOW,
@@ -381,7 +373,6 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
         .verify_delegated_bound_response(
             &successor_rsp,
             &req,
-            verified_req.evidence(),
             &expectations(&[EPOCH]),
             &|_| false,
             after,
@@ -391,7 +382,6 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
         .verify_delegated_bound_response(
             &predecessor_rsp,
             &req,
-            verified_req.evidence(),
             &expectations(&[EPOCH]),
             &|_| false,
             after,
@@ -419,7 +409,6 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
             .verify_delegated_bound_response(
                 &tampered,
                 &req,
-                verified_req.evidence(),
                 &expectations(&[EPOCH]),
                 &|_| false,
                 after

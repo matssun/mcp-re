@@ -126,7 +126,6 @@ fn main() {
     match Verifier::new(&VerifierPolicy::default(), &resolver).verify_delegated_bound_response(
         &resp,
         &request,
-        &request_evidence,
         &expect,
         &is_revoked,
         hpp_common::now_unix(),
@@ -174,7 +173,6 @@ fn main() {
     match Verifier::new(&VerifierPolicy::default(), &resolver).verify_delegated_bound_response(
         &resp2,
         &request,
-        &request_evidence,
         &expect,
         &is_revoked,
         hpp_common::now_unix(),

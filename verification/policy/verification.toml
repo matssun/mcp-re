@@ -148,6 +148,7 @@ paths = [
   "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
   "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
   "mcp-re-http-profile/src/verify/floor/trust_slot.rs",
+  "mcp-re-http-profile/src/verify/bound_request.rs",
   "mcp-re-http-profile/src/verify/full/delegated/bound.rs",
   "mcp-re-http-profile/src/verify/full/delegated/credential_chain.rs",
   "mcp-re-http-profile/src/verify/full/delegated/expectations.rs",
@@ -299,6 +300,8 @@ tested_symbols = [
   "tests/full_profile_test#a_block_declaring_a_signer_it_did_not_sign_as_fails",
   "tests/full_profile_test#response_request_evidence_mismatch_emits_request_binding_mismatch",
   "tests/full_profile_test#cryptographic_req_splice_still_fails_at_the_floor",
+  "tests/full_profile_test#a_valid_exchange_cannot_be_verified_as_the_answer_to_a_different_request",
+  "tests/full_profile_test#two_requests_differing_only_in_a_signed_parameter_have_different_handles",
   # --- delegated bound response (THM-0019) ---
   "tests/delegation_e2e_test#valid_delegated_response_verifies_under_cnf_key",
   "tests/delegation_e2e_test#direct_root_signed_response_is_rejected_credential_missing",

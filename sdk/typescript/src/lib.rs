@@ -607,8 +607,6 @@ pub fn verify_response(
     req_target_uri: String,
     req_headers: Vec<HttpHeader>,
     req_body: Buffer,
-    req_evidence_digest_alg: String,
-    req_evidence_digest_value: String,
     issuer_key_id: String,
     issuer_pubkey_b64url: String,
     issuer_role: String,
@@ -643,11 +641,7 @@ pub fn verify_response(
         headers: to_pairs(req_headers),
         body: req_body.to_vec(),
     };
-    let evidence = RequestEvidence {
-        digest_alg: req_evidence_digest_alg,
-        digest_value: req_evidence_digest_value,
-    };
-    let expectation = ResponseExpectation::new(request, evidence);
+    let expectation = ResponseExpectation::new(request);
     let policy = DelegationPolicy::new(
         verifier_audiences,
         &expected_audience_hash,

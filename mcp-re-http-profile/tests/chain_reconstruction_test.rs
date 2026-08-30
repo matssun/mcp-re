@@ -301,7 +301,6 @@ fn hop_at(
         .verify_delegated_bound_response(
             &response,
             &request,
-            &req_evidence,
             &expectations(),
             &nothing_revoked,
             created,
@@ -427,14 +426,13 @@ fn missing_middle_hop_is_incomplete_not_a_complete_terminal() {
     // Precondition: this is not a test about broken messages. Each surviving hop
     // verifies on its own — the record is a set of individually valid evidence.
     for h in &truncated {
-        let v = mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
+        let _v = mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
             .verify_request_floor(&h.request, NOW)
             .expect("the retained request verifies on its own");
         mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
             .verify_delegated_bound_response(
                 &h.response,
                 &h.request,
-                v.evidence(),
                 &expectations(),
                 &nothing_revoked,
                 NOW,
@@ -511,14 +509,13 @@ fn front_truncated_chain_is_incomplete_not_a_complete_record() {
     // Precondition: this is not a test about broken messages. Both submitted hops
     // verify on their own, exactly as they did inside the whole call.
     for h in &front_truncated {
-        let v = mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
+        let _v = mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
             .verify_request_floor(&h.request, NOW)
             .expect("the retained request verifies on its own");
         mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
             .verify_delegated_bound_response(
                 &h.response,
                 &h.request,
-                v.evidence(),
                 &expectations(),
                 &nothing_revoked,
                 NOW,
