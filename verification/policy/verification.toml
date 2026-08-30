@@ -1723,3 +1723,80 @@ tested_symbols = [
   "tests/integration#composition_raw_read_test::the_rule_would_catch_a_new_raw_read",
   "tests/integration#composition_raw_read_test::every_ordinary_field_states_why_it_is_ordinary",
 ]
+
+[[unit]]
+id = "http_profile.pdp_decision_authentication"
+class = "V0"
+description = "ADR-MCPRE-065: what the AUTHORITY said, and that it was said to this enforcement point. A decision's JWS shape, its issuer's resolution through the authorization trust seam, its signature, the profile and audience it names, and the two freshness bounds — the verifier's own cap as well as the issuer's window. It decides nothing about the request in hand."
+paths = [
+  "mcp-re-http-profile/src/pdp_decision/verify.rs",
+  "mcp-re-http-profile/src/pdp_decision/claims.rs",
+  "mcp-re-http-profile/src/pdp_decision/issue.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://http_profile/pdp_decision/authentication_battery",
+  "mutation://http_profile/pdp_decision/authentication",
+]
+assumptions = []
+# Each refusal asked as its own fact, because the point of the split from the relation
+# authority is that these are ten different things for an operator to do about. The two
+# saturation cases are here rather than in a policy note: an extreme `iat` out of a JWS
+# payload is caller-controlled, and the age computation is what the staleness cap is.
+tested_symbols = [
+  "lib#pdp_decision::verify::tests::a_genuine_decision_round_trips",
+  "lib#pdp_decision::verify::tests::an_untrusted_issuer_is_named_as_one_not_as_a_bad_signature",
+  "lib#pdp_decision::verify::tests::a_decision_signed_by_the_wrong_key_under_a_trusted_kid_fails_the_signature",
+  "lib#pdp_decision::verify::tests::a_decision_for_another_enforcement_point_is_refused",
+  "lib#pdp_decision::verify::tests::a_decision_for_another_profile_is_refused",
+  "lib#pdp_decision::verify::tests::expiry_and_staleness_are_different_facts",
+  "lib#pdp_decision::verify::tests::a_decision_issued_in_the_future_is_refused_not_floored_to_age_zero",
+  "lib#pdp_decision::verify::tests::an_extreme_iat_does_not_wrap_the_age_computation",
+  "lib#pdp_decision::verify::tests::a_header_naming_a_different_kid_than_the_claims_is_refused",
+  "lib#pdp_decision::verify::tests::a_deny_decision_verifies_and_is_returned_as_one",
+  "lib#pdp_decision::verify::tests::a_malformed_document_says_which_part_failed",
+]
+
+[[unit]]
+id = "proxy.pdp_decision_relation"
+class = "V0"
+description = "ADR-MCPRE-065 Slice 2: whether an authenticated decision is ABOUT this request, and whether it permits it. Actor correspondence at the scope the decision declares, action correspondence over the SIGNED body's coordinate, and the explicit Permit — which is last, because everything before it establishes only that the decision is about this request."
+paths = [
+  "mcp-re-proxy/src/authorization/pdp/relation.rs",
+  "mcp-re-proxy/src/authorization/pdp/policy.rs",
+  "mcp-re-proxy/src/authorization/pdp/evidence.rs",
+  "mcp-re-proxy/src/authorization/pdp/refusal.rs",
+  "mcp-re-proxy/src/authorization/pdp/mod.rs",
+  "mcp-re-proxy/src/authorization/request.rs",
+  "mcp-re-proxy/src/authorization/verified_actor.rs",
+  "mcp-re-proxy/src/authorization/verified_action.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/authorization/pdp_relation_serving_battery",
+  "mutation://proxy/authorization/pdp_relation",
+]
+assumptions = []
+# Measured through the SERVING path, not against the evaluator directly. The claim is that
+# a decision cannot authorize a caller it is not about, and the operands it is compared
+# against have to be the verified actor and the signed action — which only the serving path
+# produces. Calling `evaluate` with a hand-built request would test the comparison and say
+# nothing about what is being compared.
+tested_symbols = [
+  "tests/integration_async#pdp_authorization_serving_test::a_permit_decision_reaches_the_backend",
+  "tests/integration_async#pdp_authorization_serving_test::an_explicit_deny_never_reaches_the_backend",
+  "tests/integration_async#pdp_authorization_serving_test::a_decision_issued_to_another_actor_does_not_authorize_this_one",
+  "tests/integration_async#pdp_authorization_serving_test::a_decision_for_another_trust_domain_does_not_authorize_this_subject",
+  "tests/integration_async#pdp_authorization_serving_test::a_decision_for_another_tool_does_not_authorize_this_call",
+  "tests/integration_async#pdp_authorization_serving_test::a_call_naming_no_tool_is_not_authorized_by_a_targetless_decision",
+  "tests/integration_async#pdp_authorization_serving_test::a_decision_for_another_operation_does_not_authorize_this_one",
+  "tests/integration_async#pdp_authorization_serving_test::a_decision_from_an_authority_this_deployment_does_not_trust_is_refused",
+  "tests/integration_async#pdp_authorization_serving_test::a_decision_signed_by_the_wrong_key_under_a_trusted_kid_is_refused",
+  "tests/integration_async#pdp_authorization_serving_test::a_configured_profile_refuses_a_request_that_presents_no_decision",
+  "tests/integration_async#pdp_authorization_serving_test::a_reference_binding_can_never_satisfy_the_enforcement_profile",
+  "tests/integration_async#pdp_authorization_serving_test::a_decision_scoped_differently_from_the_deployments_profile_is_refused",
+  "tests/integration_async#pdp_authorization_serving_test::a_credential_scoped_deployment_binds_the_signing_key",
+  "tests/integration_async#pdp_authorization_serving_test::a_stale_decision_is_refused_even_inside_its_own_validity_window",
+  "tests/integration_async#pdp_authorization_serving_test::a_decision_issued_for_another_enforcement_point_is_refused",
+  "tests/integration_async#pdp_authorization_serving_test::a_deployment_running_no_decision_profile_is_unaffected",
+]

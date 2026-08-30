@@ -2046,3 +2046,151 @@ weakening = """
 expect_red = [
   "tests/delegation_e2e_test#a_delegated_response_advertising_another_requests_evidence_is_refused",
 ]
+
+[[probe]]
+id = "M71-a-kid-never-introduces-trust"
+unit = "http_profile.pdp_decision_authentication"
+theorem = "THM-0039"
+conjunct = "the signature verified under the key the trust seam resolved for the issuer kid"
+# The resolver is the deployment's statement of which authorities may DECIDE. Deleting the
+# refusal makes an unresolvable kid fall through to whatever the next step does with it,
+# which is the shape of a kid introducing its own trust.
+path = "mcp-re-http-profile/src/pdp_decision/verify.rs"
+anchor = """
+    let root = resolve_issuer(&claims.issuer_kid).ok_or(PdpDecisionRefusal::IssuerUntrusted)?;
+"""
+weakening = """
+    let root = match resolve_issuer(&claims.issuer_kid) {
+        Some(k) => k,
+        None => return Ok(claims),
+    };
+"""
+expect_red = [
+  "lib#pdp_decision::verify::tests::an_untrusted_issuer_is_named_as_one_not_as_a_bad_signature",
+]
+
+[[probe]]
+id = "M72-the-verifiers-own-staleness-cap-is-not-the-issuers-window"
+unit = "http_profile.pdp_decision_authentication"
+theorem = "THM-0039"
+conjunct = "the decision is no older than this deployment's own decision-age cap"
+# How long a decision LIVES is the issuer's choice; how long this enforcement point will act
+# on one is not. Deleting the cap leaves only `[nbf, exp]`, so an authority that issues
+# day-long decisions silently sets every PEP's staleness tolerance.
+path = "mcp-re-http-profile/src/pdp_decision/verify.rs"
+anchor = """
+    if now.saturating_sub(claims.iat) > freshness.max_decision_age.saturating_add(skew) {
+        return Err(PdpDecisionRefusal::Stale);
+    }
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#pdp_decision::verify::tests::expiry_and_staleness_are_different_facts",
+]
+
+[[probe]]
+id = "M73-a-decision-is-not-a-bearer-token"
+unit = "proxy.pdp_decision_relation"
+theorem = "THM-0040"
+conjunct = "the decided actor equals the request's verified actor on every dimension the scope names"
+# THE conjunct. Without it the gate establishes *some principal was permitted this action*
+# and never *this caller was* — so anyone whose key the enforcement point resolves could
+# copy an authorized peer's decision out of a request body or a log into their own signed
+# evidence block and be authorized by it.
+path = "mcp-re-proxy/src/authorization/pdp/relation.rs"
+anchor = """
+        if !self.actor_matches(&claims, request) {
+            return Err(PdpRelationRefusal::DifferentActor);
+        }
+"""
+weakening = """
+"""
+expect_red = [
+  "tests/integration_async#pdp_authorization_serving_test::a_decision_issued_to_another_actor_does_not_authorize_this_one",
+  "tests/integration_async#pdp_authorization_serving_test::a_decision_for_another_trust_domain_does_not_authorize_this_subject",
+]
+
+[[probe]]
+id = "M74-a-decision-for-another-action-authorizes-nothing-here"
+unit = "proxy.pdp_decision_relation"
+theorem = "THM-0040"
+conjunct = "the decided operation and target equal the signed body's"
+# The same argument one axis over: a decision for `tools/list` cannot authorize
+# `tools/call`, and a decision naming no tool cannot authorize a call that names one.
+path = "mcp-re-proxy/src/authorization/pdp/relation.rs"
+anchor = """
+        if !self.action_matches(&claims, request) {
+            return Err(PdpRelationRefusal::DifferentAction);
+        }
+"""
+weakening = """
+"""
+expect_red = [
+  "tests/integration_async#pdp_authorization_serving_test::a_decision_for_another_tool_does_not_authorize_this_call",
+  "tests/integration_async#pdp_authorization_serving_test::a_decision_for_another_operation_does_not_authorize_this_one",
+]
+
+[[probe]]
+id = "M75-the-target-comparison-is-typed-not-two-options"
+unit = "proxy.pdp_decision_relation"
+theorem = "THM-0040"
+conjunct = "an absent signed target matches neither a named decision target nor a not-applicable one"
+# `Absent` is a THIRD state and it matches nothing: a request that named no tool was not
+# decided. Collapsing it into the not-applicable arm authorizes a call whose target the
+# body never stated, under a decision that says the operation takes no target.
+path = "mcp-re-proxy/src/authorization/pdp/relation.rs"
+anchor = """
+            (None, AuthorizationTarget::NotApplicable) => true,
+"""
+weakening = """
+            (None, _) => true,
+"""
+expect_red = [
+  "tests/integration_async#pdp_authorization_serving_test::a_call_naming_no_tool_is_not_authorized_by_a_targetless_decision",
+]
+
+[[probe]]
+id = "M76-only-a-permit-permits"
+unit = "proxy.pdp_decision_relation"
+theorem = "THM-0040"
+conjunct = "the decision's own outcome is Permit"
+# Everything above establishes that the decision is ABOUT this request. Only the decision
+# says whether the request may proceed, and a Deny is a perfectly well-formed decision that
+# is about this request in every other respect.
+path = "mcp-re-proxy/src/authorization/pdp/relation.rs"
+anchor = """
+            PdpDecisionOutcome::Deny => Err(PdpRelationRefusal::ExplicitDeny),
+"""
+weakening = """
+            PdpDecisionOutcome::Deny => Ok(AuthorizedDecision::new(
+                GrantAttribution::new(claims.iss, claims.mcp_re_policy_version, claims.jti),
+                evidence.identity().clone(),
+            )),
+"""
+expect_red = [
+  "tests/integration_async#pdp_authorization_serving_test::an_explicit_deny_never_reaches_the_backend",
+]
+
+[[probe]]
+id = "M77-the-deployment-decides-which-scope-it-accepts"
+unit = "proxy.pdp_decision_relation"
+theorem = "THM-0040"
+conjunct = "the decision's declared actor scope equals the scope this deployment accepts"
+# A credential-scoped deployment binds the signing key; a principal-scoped decision does
+# not. Accepting whichever scope arrives lets the ISSUER choose how tightly this
+# enforcement point binds, which is the deployment's decision and not the authority's.
+path = "mcp-re-proxy/src/authorization/pdp/relation.rs"
+anchor = """
+        if decided_scope != self.policy.accepted_scope {
+            return Err(PdpRelationRefusal::ScopeNotAccepted {
+                decided: decided_scope,
+                accepted: self.policy.accepted_scope,
+            });
+        }
+"""
+weakening = """
+"""
+expect_red = [
+  "tests/integration_async#pdp_authorization_serving_test::a_decision_scoped_differently_from_the_deployments_profile_is_refused",
+]

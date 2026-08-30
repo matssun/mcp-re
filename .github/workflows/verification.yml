@@ -87,6 +87,18 @@ on:
       - "mcp-re-proxy/src/deployment_request/revocation/**"
       - "mcp-re-proxy/src/trust_plan.rs"
       - "mcp-re-proxy/src/app.rs"
+      # ADR-MCPRE-065 Slice 2 (THM-0040): the PDP-decision relation authority, and the
+      # three semantic products it compares against — the authorization request and the
+      # verified actor and action it is composed from. All four participate in the
+      # fingerprint, so all four must re-run the lane.
+      - "mcp-re-proxy/src/authorization/pdp/**"
+      - "mcp-re-proxy/src/authorization/request.rs"
+      - "mcp-re-proxy/src/authorization/verified_actor.rs"
+      - "mcp-re-proxy/src/authorization/verified_action.rs"
+      # THM-0040 is measured through the serving path, so its battery lives in the async
+      # integration target. Same shape as the `integration` pair above.
+      - "mcp-re-proxy/tests/integration_async/**"
+      - "mcp-re-proxy/tests/integration_async.rs"
       # The build inputs every ReviewFingerprint reads. A dependency bump moves
       # Cargo.lock, which dirties every declared unit — so a lane that did not
       # re-run on it would leave `main` carrying attestations over a dependency
@@ -158,6 +170,18 @@ on:
       - "mcp-re-proxy/src/deployment_request/revocation/**"
       - "mcp-re-proxy/src/trust_plan.rs"
       - "mcp-re-proxy/src/app.rs"
+      # ADR-MCPRE-065 Slice 2 (THM-0040): the PDP-decision relation authority, and the
+      # three semantic products it compares against — the authorization request and the
+      # verified actor and action it is composed from. All four participate in the
+      # fingerprint, so all four must re-run the lane.
+      - "mcp-re-proxy/src/authorization/pdp/**"
+      - "mcp-re-proxy/src/authorization/request.rs"
+      - "mcp-re-proxy/src/authorization/verified_actor.rs"
+      - "mcp-re-proxy/src/authorization/verified_action.rs"
+      # THM-0040 is measured through the serving path, so its battery lives in the async
+      # integration target. Same shape as the `integration` pair above.
+      - "mcp-re-proxy/tests/integration_async/**"
+      - "mcp-re-proxy/tests/integration_async.rs"
       # The build inputs every ReviewFingerprint reads. A dependency bump moves
       # Cargo.lock, which dirties every declared unit — so a lane that did not
       # re-run on it would leave `main` carrying attestations over a dependency

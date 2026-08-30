@@ -160,6 +160,18 @@ fn signed_call(tool: &str, nonce: &str, decision: Option<&str>) -> HttpRequest {
     })
 }
 
+/// A signed `tools/call` whose params name NO tool.
+///
+/// The body is well formed and the operation takes a target, so the action coordinate is
+/// `Absent` rather than `NotApplicable` — a third state, and the only way to reach it.
+fn signed_call_naming_no_tool(nonce: &str, decision: &str) -> HttpRequest {
+    signed_body(
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{}}"#,
+        nonce,
+        decision,
+    )
+}
+
 /// The same, with the caller choosing how the decision is bound — which is what lets a
 /// control present the LINKAGE form where the evidence form is required.
 fn signed_call_bound_by(
@@ -195,6 +207,42 @@ fn signed_call_bound_by(
         admission: None,
         admission_assertion: None,
         authorization_decision: decision.map(str::to_owned),
+    };
+    sign_request_full(
+        &mut req,
+        &block,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        nonce,
+    )
+    .expect("signs");
+    req
+}
+
+/// Sign an arbitrary JSON-RPC body carrying `decision` in evidence form.
+fn signed_body(body: &str, nonce: &str, decision: &str) -> HttpRequest {
+    let mut req = HttpRequest {
+        method: "POST".into(),
+        target_uri: TARGET.into(),
+        headers: vec![
+            ("Content-Type".into(), "application/json".into()),
+            ("Authorization".into(), "Bearer tok".into()),
+        ],
+        body: body.as_bytes().to_vec(),
+    };
+    let block = HttpRequestEvidenceBlock {
+        profile: PROFILE_TAG.into(),
+        audience: audience(),
+        artifact_bindings: vec![
+            ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"tok"),
+            ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, decision.as_bytes()),
+        ],
+        continuation: None,
+        admission: None,
+        admission_assertion: None,
+        authorization_decision: Some(decision.to_owned()),
     };
     sign_request_full(
         &mut req,
@@ -422,6 +470,39 @@ async fn a_decision_for_another_operation_does_not_authorize_this_one() {
     .await;
     assert_eq!(status, 403);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+/// A call whose signed body names no tool, against a decision that names no target.
+///
+/// `Absent` is a THIRD state and it matches nothing: a request that named no tool was not
+/// decided. Comparing two `Option`s instead of the typed value collapses it into the
+/// not-applicable arm, and this call — which asks `tools/call` without saying what to call
+/// — would be authorized by a decision about an operation that takes no target at all.
+///
+/// The existing tool controls cannot see that: they both name tools, so they exercise the
+/// `(Some, Named)` arm and stay green with the `Absent` arm deleted.
+#[tokio::test]
+async fn a_call_naming_no_tool_is_not_authorized_by_a_targetless_decision() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let d = issue(&decision_for(None, "tools/call"), &pdp_key());
+    let (status, _) = serve(
+        &proxy(Arc::clone(&calls)),
+        signed_call_naming_no_tool("n-absent-target", &d),
+    )
+    .await;
+    assert_eq!(status, 403);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+    // The control: the same decision, against a call that DOES name the tool the decision
+    // is about, is refused for the target and not for the operation — so the refusal above
+    // is about `Absent` rather than about `tools/call` being unauthorized in general.
+    let named = issue(&decision_for(Some("read"), "tools/call"), &pdp_key());
+    let (ok_status, _) = serve(
+        &proxy(Arc::new(AtomicUsize::new(0))),
+        signed_call("read", "n-absent-control", Some(&named)),
+    )
+    .await;
+    assert_eq!(ok_status, 200);
 }
 
 #[tokio::test]
