@@ -91,7 +91,7 @@ def test_a_formal_units_proof_dependencies_reach_the_verified_dependency_closure
     """The `verify` feature travels down the path-dependency closure, so the prover checks
     mcp-re-core as part of the run an http-profile unit claims."""
     deps = components("http_profile.freshness_window")["proof_dependencies"]
-    assert "mcp-re-core/src/time.rs" in deps
+    assert "mcp-re-core/src/time/mod.rs" in deps
     assert not any(path.startswith("mcp-re-http-profile/") for path in deps)
 
 
@@ -216,7 +216,7 @@ def test_a_unit_without_test_evidence_measures_no_test_components():
     unit = {
         "id": "x",
         "class": "V0",
-        "paths": ["mcp-re-core/src/time.rs"],
+        "paths": ["mcp-re-core/src/time/mod.rs"],
         "evidence": ["verus://core/time/x"],
     }
     c = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)["components"]
@@ -267,7 +267,7 @@ BOUNDARIES = {
             "id": "boundary.clock",
             "description": "d",
             "kind": "environment",
-            "paths": ["mcp-re-core/src/time.rs"],
+            "paths": ["mcp-re-core/src/time/mod.rs"],
             "beyond": "b",
             "max_class_without_assumption": "V0",
         }
@@ -276,7 +276,7 @@ BOUNDARIES = {
 
 CROSSING_UNIT = {
     "unit": [
-        {"id": "u", "class": "V1", "paths": ["mcp-re-core/src/time.rs"]},
+        {"id": "u", "class": "V1", "paths": ["mcp-re-core/src/time/mod.rs"]},
     ]
 }
 
@@ -308,7 +308,7 @@ def test_an_assumption_naming_both_the_unit_and_the_boundary_covers_it():
 
 
 def test_a_unit_at_or_below_the_cap_is_not_a_violation():
-    below = {"unit": [{"id": "u", "class": "V0", "paths": ["mcp-re-core/src/time.rs"]}]}
+    below = {"unit": [{"id": "u", "class": "V0", "paths": ["mcp-re-core/src/time/mod.rs"]}]}
     assert boundary_class_violations(below, BOUNDARIES, scoped()) == []
 
 
@@ -323,7 +323,7 @@ def test_a_unit_whose_paths_do_not_cross_the_boundary_is_untouched():
 #
 # The synthetic cases above prove the CAP is enforced. These prove the DECLARATION is
 # true of the source tree — the half that was wrong for as long as the cap was inert:
-# boundary.clock named mcp-re-core/src/time.rs, which holds no clock authority, and named
+# boundary.clock named mcp-re-core/src/time.rs, which held no clock authority, and named
 # none of the sixteen production sites that do. Fixing the manifest alone would leave the
 # relationship untested and free to drift back on the next file that reads a clock.
 
@@ -412,13 +412,21 @@ def test_the_clock_boundary_names_every_acquisition_site():
 
 
 def test_timestamp_transformation_is_outside_the_clock_boundary():
-    """The original defect, pinned. mcp-re-core/src/time.rs converts RFC 3339 text to
+    """The original defect, pinned. `mcp-re-core/src/time/` converts RFC 3339 text to
     Unix seconds and holds no clock authority — ADR-MCPS-006 pushes timestamps to
-    callers, and ADR-MCPS-011/012 purity means the crate cannot read a clock at all."""
-    assert "mcp-re-core/src/time.rs" not in _clock_boundary()["paths"]
-    core = (REPO / "mcp-re-core" / "src" / "time.rs").read_text()
-    assert ACQUIRES not in core
-    assert "UNIX_EPOCH" not in core
+    callers, and ADR-MCPS-011/012 purity means the crate cannot read a clock at all.
+
+    Read over the whole subtree rather than one file: MCPRE-176 split the formatting
+    inverse into `format.rs`, and a control that kept naming `time.rs` would have gone on
+    passing while measuring a file that no longer exists."""
+    members = sorted((REPO / "mcp-re-core" / "src" / "time").rglob("*.rs"))
+    assert members, "the time module has no source to measure"
+    for path in members:
+        rel = str(path.relative_to(REPO))
+        assert rel not in _clock_boundary()["paths"]
+        text = path.read_text(encoding="utf-8")
+        assert ACQUIRES not in text
+        assert "UNIX_EPOCH" not in text
 
 
 def test_a_known_acquisition_site_is_classified_as_crossing():

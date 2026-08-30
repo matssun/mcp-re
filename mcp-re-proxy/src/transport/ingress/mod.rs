@@ -41,7 +41,9 @@
 //! disjointness test below is what pins it.
 
 mod v1;
+mod v1_wire;
 mod v2;
+mod v2_wire;
 
 pub use v1::LbAssertion;
 pub use v1::LbAssertionBinding;

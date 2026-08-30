@@ -89,7 +89,14 @@ pub fn crl_freshness(
         CrlFreshness::Stale {
             next_update_unix: next_update,
         }
-    } else if now_unix >= next_update - warn_window_secs {
+    // Class R: `next_update` is read out of the CRL's DER, so this threshold comes from a
+    // value this process did not choose. Uncomputable reads as REACHED — a wrapped instant
+    // reads as "plenty of time left", silently, when the point of this state is to tell an
+    // operator to act.
+    } else if next_update
+        .checked_sub(warn_window_secs)
+        .is_none_or(|warn_from| now_unix >= warn_from)
+    {
         CrlFreshness::NearExpiry {
             next_update_unix: next_update,
         }

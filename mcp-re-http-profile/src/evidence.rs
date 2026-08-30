@@ -21,7 +21,9 @@ use crate::ids::EVIDENCE_LABEL_RESPONSE;
 /// the encoding injective — the labels are ASCII and cannot contain a NUL, so no
 /// two (label, input) pairs can produce the same preimage.
 pub(crate) fn labeled_digest_value(label: &str, bytes: &[u8]) -> String {
-    let mut preimage = Vec::with_capacity(label.len() + 1 + bytes.len());
+    // Saturating on a capacity HINT: an unrepresentable one is simply not reserved.
+    let capacity = label.len().saturating_add(1).saturating_add(bytes.len());
+    let mut preimage = Vec::with_capacity(capacity);
     preimage.extend_from_slice(label.as_bytes());
     preimage.push(0x00);
     preimage.extend_from_slice(bytes);

@@ -36,7 +36,13 @@ impl Clock for SystemClock {
             // Clock set before the epoch: report the (negative) offset faithfully
             // rather than fabricate a value. The verifier's freshness window then
             // rejects it — fail closed at the boundary, not by inventing time.
-            Err(err) => -(err.duration().as_secs() as i64),
+            // `checked_neg` because the cast can land on `i64::MIN`, whose negation is
+            // the one arithmetic panic on this boundary — and `i64::MIN` is the right
+            // answer there: the most-before-the-epoch instant `i64` has, which every
+            // freshness window rejects.
+            Err(err) => (err.duration().as_secs() as i64)
+                .checked_neg()
+                .unwrap_or(i64::MIN),
         }
     }
 }

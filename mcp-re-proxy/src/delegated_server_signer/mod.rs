@@ -25,7 +25,6 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::RwLock;
-use std::time::Duration;
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::ActiveDelegatedKey;
@@ -34,6 +33,9 @@ use mcp_re_http_profile::DelegatedSigningCustody;
 use mcp_re_http_profile::DelegationClaims;
 use mcp_re_http_profile::DelegationHeader;
 use mcp_re_http_profile::KeyLifecycleEvent;
+
+mod retry_schedule;
+pub use retry_schedule::rotation_backoff;
 
 /// Cold-path rotation observability (ADR-MCPRE-052 §6, MCPRE-122). Plain atomic
 /// counters the single rotor owner writes and any observer (a logging line today, a
@@ -70,7 +72,10 @@ impl DelegatedRotationMetrics {
     pub fn record_failure(&self) -> u32 {
         self.rotation_failures.fetch_add(1, Ordering::Relaxed);
         let prev = self.consecutive_failures.fetch_add(1, Ordering::Relaxed);
-        (prev + 1).min(u32::MAX as u64) as u32
+        // Saturating, then clamped to the width the backoff schedule reads. A streak
+        // counter's ceiling is the most-backed-off end; wrapping would restore the
+        // shortest retry interval for a rotation that has never succeeded.
+        prev.saturating_add(1).min(u32::MAX as u64) as u32
     }
 
     /// Total successful rotations.
@@ -92,50 +97,6 @@ impl DelegatedRotationMetrics {
     pub fn last_success_unix(&self) -> i64 {
         self.last_success_unix.load(Ordering::Relaxed)
     }
-}
-
-/// The exponential-backoff base and ceiling for delegated-key issuance retries.
-const ROTATION_BACKOFF_BASE_MS: u64 = 250;
-const ROTATION_BACKOFF_MAX_MS: u64 = 30_000;
-const ROTATION_BACKOFF_MIN_MS: u64 = 50;
-
-/// The bounded, jittered exponential backoff for a failed delegated-key rotation
-/// (ADR-MCPRE-052 §6 follow-up, MCPRE-122). PURE and deterministic given its inputs, so
-/// the schedule is unit-tested without threads or a clock.
-///
-/// - Exponential in `consecutive_failures` (1-indexed): `250ms · 2^(n-1)`, ceilinged at
-///   30s so a long root outage retries at a steady cadence rather than hot-spinning.
-/// - Capped by the CURRENT key's remaining validity while it is still valid
-///   (`seconds_to_expiry > 0`): the rotor keeps retrying INSIDE the overlap window and
-///   never sleeps past `exp` on the first failures, so a transient root blip is caught
-///   before the key expires. Once expired (`None`/`<= 0`), only the 30s ceiling applies
-///   — serving is already failing closed and resumes as soon as issuance recovers.
-/// - "Equal jitter": the final sleep is uniformly in `[cap/2, cap]`, decorrelating a
-///   fleet of rotors so they do not stampede the root issuer in lockstep. `jitter` is a
-///   caller-supplied random u64 (OS CSPRNG in production).
-pub fn rotation_backoff(
-    consecutive_failures: u32,
-    seconds_to_expiry: Option<i64>,
-    jitter: u64,
-) -> Duration {
-    // Exponential term, shift-capped at 2^20 to avoid overflow on a pathological streak.
-    let shift = consecutive_failures.saturating_sub(1).min(20);
-    let raw_ms = ROTATION_BACKOFF_BASE_MS.saturating_mul(1u64 << shift);
-    let mut cap_ms = raw_ms.min(ROTATION_BACKOFF_MAX_MS);
-
-    // While the current key is still valid, do not sleep past its expiry.
-    if let Some(ttl) = seconds_to_expiry {
-        if ttl > 0 {
-            let ttl_ms = (ttl as u64).saturating_mul(1000);
-            cap_ms = cap_ms.min(ttl_ms);
-        }
-    }
-    cap_ms = cap_ms.max(ROTATION_BACKOFF_MIN_MS);
-
-    // Equal jitter: half the cap, plus a uniform sample of the other half → [cap/2, cap].
-    let half = cap_ms / 2;
-    let jittered = half + jitter % (half + 1);
-    Duration::from_millis(jittered)
 }
 
 /// The shared hot-path signer: an atomically-swappable delegated-key snapshot.
@@ -190,7 +151,10 @@ impl DelegatedServerSigner {
             .active
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard.as_ref().map(|a| a.exp - now)
+        // `None` means NO KEY IS PUBLISHED and must not come to mean anything else, so an
+        // unrepresentable difference saturates instead. `i64::MIN` reads as "long
+        // expired", the fail-closed end the caller's `<= 0` test already handles.
+        guard.as_ref().map(|a| a.exp.saturating_sub(now))
     }
 
     /// Publish a freshly-issued/rotated delegated key snapshot for the hot path.
@@ -294,14 +258,19 @@ where
     /// successor is ready before the predecessor expires (no signing gap).
     pub fn rotate(&mut self, now: i64) -> Result<(), CustodyError> {
         match self.custody.ensure_active(now) {
-            Ok(()) => {
-                let snapshot = self
-                    .custody
-                    .active_snapshot()
-                    .expect("ensure_active guarantees an active key");
-                self.signer.publish(snapshot);
-                Ok(())
-            }
+            // `ensure_active` returns `Ok` only with a key published. Written as the
+            // fail-closed path rather than asserted: an absent snapshot means nothing to
+            // sign with, which is what `retire` + `FailClosedIssuance` already say.
+            Ok(()) => match self.custody.active_snapshot() {
+                Some(snapshot) => {
+                    self.signer.publish(snapshot);
+                    Ok(())
+                }
+                None => {
+                    self.signer.retire();
+                    Err(CustodyError::FailClosedIssuance)
+                }
+            },
             Err(e) => {
                 self.signer.retire();
                 Err(e)
@@ -351,11 +320,12 @@ where
             .map(|active| active.delegated_kid);
         self.custody.set_trust_epoch(epoch);
         match self.custody.reissue(now) {
+            // Same shape as `rotate`: an absent snapshot is the fail-closed outcome.
             Ok(()) => {
-                let snapshot = self
-                    .custody
-                    .active_snapshot()
-                    .expect("reissue guarantees an active key");
+                let Some(snapshot) = self.custody.active_snapshot() else {
+                    self.signer.retire();
+                    return Err(CustodyError::FailClosedIssuance);
+                };
                 if Some(&snapshot.delegated_kid) == before_kid.as_ref() {
                     // The predecessor is untouched and still serving until its own `exp`
                     // (ADR-MCPRE-052 §6) — not retired, because a root blip must not

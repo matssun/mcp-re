@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Owned-worker gate — no unreviewed direct thread spawn in production code.
 
-WHAT THIS PROVES, exactly: no library source outside `managed_worker.rs`, in any crate in
+WHAT THIS PROVES, exactly: no library source outside `managed_worker/mod.rs`, in any crate in
 the repository (including the `sdk/python` and `sdk/typescript` native bindings), starts
 an OS thread through `thread::spawn` or `thread::Builder` except in test code or at one of
 the exact reviewed sites counted below. That is a syntactic check on two spellings, and
@@ -45,7 +45,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 # The one module allowed to start a thread: it is the thing that owns them.
-OWNER_MODULE = "src/managed_worker.rs"
+OWNER_MODULE = "src/managed_worker/mod.rs"
 
 # Every thread in the system that is not started through `WorkerSet`, and why it is
 # sound. Two kinds appear here and they are not equivalent:
@@ -100,11 +100,11 @@ ALLOWED = {
         "the retention writer already satisfies §9 by hand: `EvidenceRetention` owns the "
         "handle, closing the job channel is its halt, and `Drop` joins it"
     )),
-    "mcp-re-proxy/src/async_fleet.rs": (1, (
+    "mcp-re-proxy/src/async_fleet/mod.rs": (1, (
         "the per-core serving threads satisfy §9 by hand: their handles are `Fleet.workers` "
         "and `Fleet::shutdown_and_join` stops and joins every one of them"
     )),
-    "mcp-re-client/src/anchors.rs": (1, (
+    "mcp-re-client/src/anchors/refresher.rs": (1, (
         "the anchor-refresh thread's handle is owned by the refresher it belongs to, which "
         "sets its stop flag and joins on drop"
     )),
@@ -298,7 +298,11 @@ def selftest() -> int:
         crate = root / "mcp-re-proxy"
         (crate / "src").mkdir(parents=True)
         (crate / "Cargo.toml").write_text('[package]\nname = "mcp-re-proxy"\n')
-        owner = crate / "src" / "managed_worker.rs"
+        # The owner is a subtree, so the fixture lays it out the way the tree does: the
+        # exemption is `src/managed_worker/mod.rs`, not a bare file name that would keep
+        # passing after the module became a directory.
+        owner = crate / "src" / "managed_worker" / "mod.rs"
+        owner.parent.mkdir(parents=True)
         owner.write_text("pub fn spawn() { std::thread::spawn(|| {}); }\n")
         plane = crate / "src" / "plane.rs"
 

@@ -46,6 +46,8 @@ use crate::tls_plane::TlsPlane;
 use crate::trust_plane::TrustPlane;
 use crate::HttpProfileProxy;
 
+mod completeness;
+
 /// A runtime under construction: the lifecycle, plus every teardown-bearing resource
 /// acquired so far.
 ///
@@ -65,10 +67,6 @@ pub(crate) struct MaterializingRuntime {
     /// none. Absence here is a legal outcome, unlike the four above.
     control: Option<ControlRuntime>,
 }
-
-/// What a required resource is called, for the refusal `finish` produces. A `&'static str`
-/// rather than an enum because its only use is the message.
-const REQUIRED: [&str; 4] = ["trust plane", "signing plane", "TLS plane", "proxy"];
 
 impl MaterializingRuntime {
     /// Begin materializing. `lifecycle` must be in [`RuntimeState::Planned`]; the
@@ -124,20 +122,6 @@ impl MaterializingRuntime {
         self.control = control;
     }
 
-    pub(crate) fn trust(&self) -> &TrustPlane {
-        self.trust.as_ref().expect("the trust plane is installed")
-    }
-
-    pub(crate) fn tls(&self) -> &TlsPlane {
-        self.tls.as_ref().expect("the TLS plane is installed")
-    }
-
-    pub(crate) fn signing(&self) -> &SigningPlane {
-        self.signing
-            .as_ref()
-            .expect("the signing plane is installed")
-    }
-
     /// Every required resource is owned: assemble the runtime and advance the lifecycle.
     ///
     /// The order here is load-bearing. The resources are taken FIRST, and only once all
@@ -152,21 +136,27 @@ impl MaterializingRuntime {
             self.tls.is_some(),
             self.proxy.is_some(),
         ];
-        if let Some(missing) = REQUIRED.iter().zip(present).find(|(_, ok)| !ok) {
+        if let Some(missing) = completeness::first_missing(present) {
             // Left un-taken, so `Drop` still reclaims whatever WAS installed.
-            return Err(format!(
-                "internal error: materialization finished without the {}; the runtime would \
-                 report Materialized over an incomplete resource graph",
-                missing.0
-            ));
+            return Err(completeness::incomplete(missing));
         }
-        let trust = self.trust.take().expect("checked present");
-        let signing = self.signing.take().expect("checked present");
-        let tls = self.tls.take().expect("checked present");
-        let proxy = self.proxy.take().expect("checked present");
+        // Class B: the check above returned for every absence, and taking all four as ONE
+        // destructuring carries that guarantee in a pattern the compiler checks rather
+        // than in these lines staying adjacent to the loop that established it.
+        let (Some(trust), Some(signing), Some(tls), Some(proxy)) = (
+            self.trust.take(),
+            self.signing.take(),
+            self.tls.take(),
+            self.proxy.take(),
+        ) else {
+            return Err(completeness::vanished());
+        };
         let control = self.control.take();
 
-        let mut lifecycle = self.lifecycle.take().expect("finish runs once");
+        // `finish` consumes `self`, so the lifecycle is here; reported all the same.
+        let Some(mut lifecycle) = self.lifecycle.take() else {
+            return Err("internal error: materialization finished without a lifecycle".to_owned());
+        };
         lifecycle.apply(RuntimeEvent::MaterializationSucceeded)?;
 
         Ok((
@@ -305,22 +295,28 @@ mod tests {
         // materialization `RuntimeLifecycle`, and it returns one only in the Ok arm.
     }
 
-    /// B2 — `finish` refuses over an incomplete graph, for each required resource.
+    /// B2 — `finish` refuses over an incomplete graph, and its refusal is the completeness
+    /// owner's verdict rather than a message assembled here.
+    ///
+    /// WHICH resource is named for a given absence is that owner's own control
+    /// (`completeness::the_first_missing_resource_is_the_one_named`), where the required
+    /// set lives. What this pins is the half `finish` is responsible for: the verdict
+    /// reaches the caller, and it says the graph was incomplete rather than merely failing.
     #[test]
-    fn finish_names_every_required_resource_it_is_missing() {
-        for expected in REQUIRED {
-            let building = MaterializingRuntime::begin(planned()).unwrap();
-            let err = match building.finish() {
-                Err(e) => e,
-                Ok(_) => panic!("an empty builder cannot finish"),
-            };
-            // The first missing one is reported; walking the list proves the refusal is
-            // driven by the required set rather than one hard-coded name.
-            assert!(
-                REQUIRED.iter().any(|r| err.contains(r)),
-                "{expected}: refusal named nothing from the required set: {err}"
-            );
-        }
+    fn finish_reports_the_incomplete_graph_and_names_a_resource() {
+        let building = MaterializingRuntime::begin(planned()).unwrap();
+        let err = match building.finish() {
+            Err(e) => e,
+            Ok(_) => panic!("an empty builder cannot finish"),
+        };
+        assert!(
+            err.contains("incomplete resource graph"),
+            "the refusal must say what was wrong: {err}"
+        );
+        assert!(
+            err.contains("trust plane"),
+            "the refusal must name the first absent resource: {err}"
+        );
     }
 
     /// B3 — `MaterializationFailed` is reached only with the reclaim actually performed.

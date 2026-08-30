@@ -51,10 +51,6 @@ const CANONICAL_ED25519_SPKI_PREFIX: [u8; 12] = [
     0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
 ];
 
-/// Total length of a canonical RFC 8410 Ed25519 SPKI.
-const CANONICAL_ED25519_SPKI_LEN: usize =
-    CANONICAL_ED25519_SPKI_PREFIX.len() + ED25519_PUBLIC_KEY_LEN;
-
 /// The dotted form of `id-Ed25519`.
 const ED25519_OID: &str = "1.3.101.112";
 
@@ -116,14 +112,16 @@ pub struct Ed25519PublicKeyValue {
 impl Ed25519PublicKeyValue {
     /// Interpret DER `SubjectPublicKeyInfo` bytes as a canonical Ed25519 public key.
     pub fn interpret_rfc8410_spki(der: &[u8]) -> Result<Self, Rfc8410SpkiRefusal> {
-        if der.len() == CANONICAL_ED25519_SPKI_LEN
-            && der[..CANONICAL_ED25519_SPKI_PREFIX.len()] == CANONICAL_ED25519_SPKI_PREFIX
-        {
-            let mut raw_point = [0u8; ED25519_PUBLIC_KEY_LEN];
-            raw_point.copy_from_slice(&der[CANONICAL_ED25519_SPKI_PREFIX.len()..]);
-            return Ok(Ed25519PublicKeyValue { raw_point });
+        // Class B: the prefix and the point are one strip-and-convert. The total length
+        // is not an independent fact — a canonical encoding is exactly this prefix
+        // followed by exactly `ED25519_PUBLIC_KEY_LEN` bytes, which `try_from` says.
+        let canonical = der
+            .strip_prefix(CANONICAL_ED25519_SPKI_PREFIX.as_slice())
+            .and_then(|point| <[u8; ED25519_PUBLIC_KEY_LEN]>::try_from(point).ok());
+        match canonical {
+            Some(raw_point) => Ok(Ed25519PublicKeyValue { raw_point }),
+            None => Err(classify(der)),
         }
-        Err(classify(der))
     }
 
     /// The canonical RFC 8410 `SubjectPublicKeyInfo` encoding of a raw thirty-two-byte

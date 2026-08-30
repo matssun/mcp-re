@@ -56,10 +56,16 @@ pub(super) fn parse_response(raw: &[u8]) -> Result<HttpResponseParts, TransportE
         .ok_or_else(|| {
             TransportError::MalformedResponse("no CRLFCRLF header terminator".to_string())
         })?;
-    let head = std::str::from_utf8(&raw[..head_end]).map_err(|_| {
+    // Class B: head and body are ONE split at the terminator just located, rather than
+    // two ranges each re-deriving the same offset from wire bytes.
+    let (head_bytes, body) = raw
+        .split_at_checked(head_end)
+        .and_then(|(head, rest)| rest.get(terminator.len()..).map(|body| (head, body)))
+        .ok_or_else(|| TransportError::MalformedResponse("truncated header block".to_string()))?;
+    let head = std::str::from_utf8(head_bytes).map_err(|_| {
         TransportError::MalformedResponse("header block is not valid UTF-8".to_string())
     })?;
-    let body = raw[head_end + terminator.len()..].to_vec();
+    let body = body.to_vec();
 
     let mut lines = head.split("\r\n");
     let status_line = lines

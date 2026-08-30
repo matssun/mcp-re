@@ -85,12 +85,13 @@ fn to_remote_error(error: TransportError) -> RemoteTransportError {
 /// configuration, so this conversion never feeds the signature base — it only has
 /// to route the request at the peer.
 fn origin_form(target_uri: &str) -> Result<String, TransportError> {
-    let authority_start = target_uri.find("://").map(|i| i + 3).ok_or_else(|| {
+    // Class B: `split_once` yields the authority directly, so the scheme delimiter's
+    // width is named once rather than repeated as an offset.
+    let (_scheme, authority) = target_uri.split_once("://").ok_or_else(|| {
         TransportError::InvalidRequest(format!("target-uri is not absolute: {target_uri:?}"))
     })?;
-    let authority = &target_uri[authority_start..];
     match authority.find('/') {
-        Some(offset) => Ok(authority[offset..].to_string()),
+        Some(offset) => Ok(authority.get(offset..).unwrap_or("/").to_string()),
         // An absolute URI with no path component addresses the root.
         None => Ok("/".to_string()),
     }

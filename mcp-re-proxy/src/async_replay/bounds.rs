@@ -68,7 +68,11 @@ pub(super) const ASYNC_RESERVE_DIVISOR: usize = 5;
 pub(super) fn per_actor_budget(max_entries: usize, actors: usize) -> usize {
     let reserve = max_entries / ASYNC_RESERVE_DIVISOR;
     let spendable = max_entries.saturating_sub(reserve);
-    (spendable / actors.max(1)).max(1)
+    // Class C: `.max(1)` on the divisor is why this division is total, and is the reason
+    // that call is written at all.
+    #[allow(clippy::arithmetic_side_effects)]
+    let share = spendable / actors.max(1);
+    share.max(1)
 }
 
 /// Occupancy at which per-actor budgeting starts applying. Below it the store has room

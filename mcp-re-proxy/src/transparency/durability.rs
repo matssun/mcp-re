@@ -18,6 +18,9 @@
 //! Nothing here decides what a record CONTAINS, and nothing in the record owner decides
 //! when a write has landed. Two copies of either fact is how they would come to disagree.
 
+use super::durability_bounds::write_queue_capacity;
+use super::durability_bounds::MAX_RESERVATIONS;
+use super::durability_bounds::MAX_WRITE_BATCH;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::sync::mpsc::SyncSender;
@@ -35,35 +38,6 @@ use mcp_re_http_profile::chain::RetainedHop;
 use super::retained_record::retained_request;
 use super::retained_record::RetainedHopRecord;
 use super::RetentionError;
-
-/// Process-global ceiling on calls that hold a retention reservation at once.
-///
-/// A backstop, not the primary admission control — the per-core in-flight ceiling is
-/// that. Its job is to bound the write queue: a reservation contributes at most one
-/// queued job at any instant, so `K` reservations bound the queue at `K` jobs. Exceeding
-/// it is refused BEFORE dispatch, which is the one place refusing is still free and
-/// genuinely retry-safe.
-const MAX_RESERVATIONS: usize = 1024;
-
-/// The write queue's capacity for a given reservation ceiling.
-///
-/// Twice the ceiling, and the factor of two is load-bearing rather than slack. A
-/// reservation holds its permit until it is dropped, which can happen while its
-/// completion job is still queued; the permit it releases can then admit a successor
-/// whose reserve job is queued alongside it. One transient extra slot per reservation is
-/// the most that window can produce, so at `2K` the send can never find the channel
-/// full — and `complete` is therefore never refused for capacity, which is the whole
-/// point of taking the admission decision before dispatch.
-const fn write_queue_capacity(max_reservations: usize) -> usize {
-    2 * max_reservations
-}
-
-/// How many queued jobs one directory barrier may cover.
-///
-/// A directory `fsync` has no per-entry granularity, so one call after B renames is
-/// exactly as durable as B calls after one rename each. Bounding the batch bounds the
-/// latency the last job in it waits, not its durability.
-const MAX_WRITE_BATCH: usize = 64;
 
 /// One durable write, and the acknowledgement the awaiting request is owed.
 struct WriteJob {

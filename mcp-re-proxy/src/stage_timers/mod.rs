@@ -21,6 +21,10 @@ use std::sync::atomic::Ordering;
 use std::sync::OnceLock;
 use std::time::Instant;
 
+mod accumulator;
+use accumulator::Acc;
+use accumulator::NAMES;
+
 /// The stages a request passes through, in order.
 #[derive(Clone, Copy, Debug)]
 pub enum Stage {
@@ -54,38 +58,6 @@ pub enum Stage {
     ReplayWait = 11,
 }
 
-const STAGES: usize = 12;
-const NAMES: [&str; STAGES] = [
-    "admission",
-    "body_read",
-    "handler",
-    "replay_insert",
-    "inner_dispatch",
-    "total",
-    "scheduler_latency",
-    "verify",
-    "sign",
-    "replay_prep",
-    "replay_set",
-    "replay_wait",
-];
-
-/// How often the snapshot is rewritten, in completed requests.
-const REPORT_EVERY_N_REQUESTS: u64 = 5000;
-
-struct Acc {
-    nanos: [AtomicU64; STAGES],
-    count: [AtomicU64; STAGES],
-    reported: AtomicU64,
-    /// Replay calls currently between entry and exit.
-    inflight: AtomicU64,
-    /// Sum of the occupancy observed on entry, and how many entries — their ratio is
-    /// the mean concurrency actually reaching the store.
-    inflight_sum: AtomicU64,
-    inflight_samples: AtomicU64,
-    inflight_max: AtomicU64,
-}
-
 /// Counts replay calls in flight, so the store's OFFERED concurrency is measured rather
 /// than inferred.
 ///
@@ -102,7 +74,9 @@ impl InFlight {
             return InFlight(false);
         }
         let a = acc();
-        let now = a.inflight.fetch_add(1, Ordering::Relaxed) + 1;
+        // Saturating: an occupancy gauge, so the ceiling is a reading that has stopped
+        // being exact rather than one reporting an empty pipeline under maximum load.
+        let now = a.inflight.fetch_add(1, Ordering::Relaxed).saturating_add(1);
         a.inflight_sum.fetch_add(now, Ordering::Relaxed);
         a.inflight_samples.fetch_add(1, Ordering::Relaxed);
         a.inflight_max.fetch_max(now, Ordering::Relaxed);
@@ -175,7 +149,8 @@ pub fn probe_scheduler(every: u64) {
         return;
     }
     let a = acc();
-    if !a.count[Stage::Total as usize]
+    let (_, total_count) = a.cell(Stage::Total);
+    if !total_count
         .load(Ordering::Relaxed)
         .is_multiple_of(every.max(1))
     {
@@ -184,12 +159,14 @@ pub fn probe_scheduler(every: u64) {
     let spawned_at = Instant::now();
     tokio::spawn(async move {
         let waited = spawned_at.elapsed();
-        let a = acc();
-        let i = Stage::SchedulerLatency as usize;
-        a.nanos[i].fetch_add(waited.as_nanos() as u64, Ordering::Relaxed);
-        a.count[i].fetch_add(1, Ordering::Relaxed);
+        let (nanos, count) = acc().cell(Stage::SchedulerLatency);
+        nanos.fetch_add(waited.as_nanos() as u64, Ordering::Relaxed);
+        count.fetch_add(1, Ordering::Relaxed);
     });
 }
+
+/// How often the snapshot is rewritten, in completed requests.
+const REPORT_EVERY_N_REQUESTS: u64 = 5000;
 
 /// A running stage timer. Dropping it records the elapsed time.
 pub struct Timed {
@@ -209,15 +186,15 @@ impl Timed {
 impl Drop for Timed {
     fn drop(&mut self) {
         if let Some(t0) = self.started {
-            let i = self.stage as usize;
             let a = acc();
-            a.nanos[i].fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
-            a.count[i].fetch_add(1, Ordering::Relaxed);
+            let (nanos, count) = a.cell(self.stage);
+            nanos.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            count.fetch_add(1, Ordering::Relaxed);
             // Rewrite the report periodically. The proxy is killed by
             // the harness rather than shut down, so a report written only at exit would
             // never survive; rewriting the same path keeps the last snapshot readable.
             if matches!(self.stage, Stage::Total)
-                && a.count[Stage::Total as usize]
+                && count
                     .load(Ordering::Relaxed)
                     .is_multiple_of(REPORT_EVERY_N_REQUESTS)
             {
@@ -241,9 +218,11 @@ fn write_report() {
     let a = acc();
     a.reported.fetch_add(1, Ordering::Relaxed);
     let mut out = String::from("stage,count,total_ms,mean_us\n");
-    for (i, name) in NAMES.iter().enumerate() {
-        let n = a.count[i].load(Ordering::Relaxed);
-        let ns = a.nanos[i].load(Ordering::Relaxed);
+    // Class B: the three tables are walked TOGETHER, so a row of this report is one
+    // stage's name, count and total rather than three lookups that agree by construction.
+    for ((name, count), nanos) in NAMES.iter().zip(&a.count).zip(&a.nanos) {
+        let n = count.load(Ordering::Relaxed);
+        let ns = nanos.load(Ordering::Relaxed);
         let mean_us = if n > 0 {
             ns as f64 / n as f64 / 1000.0
         } else {
@@ -275,6 +254,7 @@ fn write_report() {
 }
 #[cfg(test)]
 mod tests {
+    use super::accumulator::STAGES;
     // This module is the file's test region: `scripts/module_size_gate.py` opens it at the
     // `#[cfg(test)]` above and stops counting production lines here. The note lives INSIDE
     // the region rather than above it, because a comment above the marker is a production

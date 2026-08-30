@@ -108,6 +108,16 @@ impl InFlightLimitBasis {
 /// `async_serve` without a `DeploymentRequest` — gets the same bound the validated path resolves to.
 pub const DEFAULT_PER_CORE_IN_FLIGHT: usize = 256;
 
+/// The per-core ceiling an unspecified limit means, as a value whose non-zeroness is a
+/// BUILD-TIME fact.
+///
+/// Class C: a `const` initializer is evaluated by the compiler, so a
+/// `DEFAULT_PER_CORE_IN_FLIGHT` of zero stops the build rather than panicking at runtime.
+const DEFAULT_PER_CORE_CEILING: NonZeroUsize = match NonZeroUsize::new(DEFAULT_PER_CORE_IN_FLIGHT) {
+    Some(ceiling) => ceiling,
+    None => panic!("DEFAULT_PER_CORE_IN_FLIGHT must be non-zero"),
+};
+
 /// Recognise the basis. Total and infallible: every `DeploymentRequest` states one of three things,
 /// and the default makes the third a basis too.
 ///
@@ -120,8 +130,7 @@ pub fn classify(config: &DeploymentRequest) -> InFlightLimitBasis {
         InFlightLimitRequest::PerCore(requests) => InFlightLimitBasis::PerCore { requests },
         InFlightLimitRequest::FleetTotal(requests) => InFlightLimitBasis::FleetTotal { requests },
         InFlightLimitRequest::Unspecified => InFlightLimitBasis::PerCore {
-            requests: NonZeroUsize::new(DEFAULT_PER_CORE_IN_FLIGHT)
-                .expect("the default per-core ceiling is a non-zero constant"),
+            requests: DEFAULT_PER_CORE_CEILING,
         },
     }
 }

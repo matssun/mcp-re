@@ -47,8 +47,11 @@ pub fn issue_delegation_credential_with_signer(
     claims: &DelegationClaims,
     sign_root: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
 ) -> Result<String, HttpProfileError> {
-    let h = b64url_encode(&serde_json::to_vec(header).expect("delegation header serializes"));
-    let p = b64url_encode(&serde_json::to_vec(claims).expect("delegation claims serialize"));
+    // Propagated: this function already returns the verdict for a credential it cannot
+    // form, and a header or claim set that will not serialize is one more instance of it.
+    let unformable = |_| HttpProfileError::DelegationCredentialInvalid;
+    let h = b64url_encode(&serde_json::to_vec(header).map_err(unformable)?);
+    let p = b64url_encode(&serde_json::to_vec(claims).map_err(unformable)?);
     let signing_input = format!("{h}.{p}");
     let sig = sign_root(signing_input.as_bytes())?;
     if sig.len() != ED25519_SIGNATURE_LEN {
@@ -62,6 +65,9 @@ pub fn issue_delegation_credential_with_signer(
 /// [`issue_delegation_credential_with_signer`], so it is wire-identical to the
 /// KMS/HSM seam for the same key and claims. Production with the root in KMS/HSM
 /// uses the signer seam instead, keeping the root off the hot path.
+// The one assertion on this path is about THIS crate's own primitives, never about an
+// input — see the note at the `expect` below.
+#[allow(clippy::expect_used)]
 pub fn issue_delegation_credential(
     root_key: &SigningKey,
     header: &DelegationHeader,
@@ -70,7 +76,12 @@ pub fn issue_delegation_credential(
     issue_delegation_credential_with_signer(header, claims, |input| {
         // `SigningKey::sign` returns Base64URL; decode to the raw 64 bytes the
         // seam contract speaks. An in-process Ed25519 signer is always 64 bytes.
-        Ok(b64url_decode(&root_key.sign(input)).expect("own signature is valid base64url"))
+        b64url_decode(&root_key.sign(input))
+            .map_err(|_| HttpProfileError::DelegationCredentialInvalid)
     })
-    .expect("in-process Ed25519 signer yields a 64-byte signature")
+    // Class A, about THIS crate rather than any input: `header`/`claims` are plain
+    // `Serialize` structs, `b64url_decode` inverts the `b64url_encode` `SigningKey::sign`
+    // just applied, and an in-process Ed25519 signature is 64 bytes by construction. No
+    // configuration, peer, clock or provider participates.
+    .expect("the in-process signer's own serialization, encoding and signature length")
 }

@@ -369,11 +369,11 @@ impl BoundedTrustCache {
             return 0;
         };
         cache.retain(|_, e| e.expires_at > now);
-        let mut invalidated = 0;
+        let mut invalidated = 0usize;
         for entry in cache.values_mut() {
             if !entry.invalidated {
                 entry.invalidated = true;
-                invalidated += 1;
+                invalidated = invalidated.saturating_add(1); // bounded by the cache size
             }
         }
         invalidated

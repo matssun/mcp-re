@@ -39,7 +39,7 @@ id = "boundary.libc"
 description = "Kernel sockets, signals, and process credentials via libc."
 kind = "ffi"
 paths = [
-  "mcp-re-proxy/src/async_fleet.rs",
+  "mcp-re-proxy/src/async_fleet/**/*.rs",
   "mcp-re-proxy/src/app.rs",
   "mcp-re-proxy/src/main.rs",
   "mcp-re-client/src/startup.rs",
@@ -99,7 +99,9 @@ paths = [
   "mcp-re-proxy/src/aws_kms_keysource.rs",
   "mcp-re-proxy/src/aws_sts.rs",
   "mcp-re-proxy/src/clock.rs",
-  "mcp-re-proxy/src/continuation_store.rs",
+  # MCPRE-176: the clock read belongs to the in-memory tier's own expiry, and moved with
+  # it. Named precisely, per the note above: the authority, not the module tree.
+  "mcp-re-proxy/src/continuation_store/in_memory.rs",
   "mcp-re-proxy/src/etcd_store.rs",
   "mcp-re-proxy/src/gcp_kms_keysource.rs",
   "mcp-re-proxy/src/ocsp.rs",
@@ -139,8 +141,8 @@ max_class_without_assumption = "V0"
 # 2. MONOTONIC TIME IS A DIFFERENT AUTHORITY.
 #    Production files use `std::time::Instant` for local deadlines and elapsed-time
 #    measurement: `mcp-re-client/src/serve/` and `mcp-re-transport/src/limits.rs`, and
-#    mcp-re-proxy's `async_serve/`, cli.rs, delegated_tls.rs, http_inner.rs,
-#    managed_worker.rs, stage_timers.rs, trust_epoch.rs. (MCPRE-175 made three of those
+#    mcp-re-proxy's `async_serve/`, cli.rs, delegated_tls.rs, `http_inner/`,
+#    managed_worker.rs, `stage_timers/`, trust_epoch.rs. (MCPRE-175 made three of those
 #    owner subtrees; the count is deliberately not restated, because an inventory with a
 #    number in it goes stale in a way the reader cannot see.) `Instant` is monotonic and not
 #    comparable to any peer's clock, so it cannot participate in the skew question this

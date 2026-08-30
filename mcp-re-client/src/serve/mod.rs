@@ -52,6 +52,7 @@ use mcp_re_client_proxy::ClientProxy;
 use crate::config::LocalConfig;
 
 /// One wall-clock bound per phase, not a set of per-syscall timers.
+mod admission;
 mod deadlines;
 
 /// Closing so the caller sees what it was told.
@@ -75,9 +76,7 @@ mod exchange;
 /// What a verified outcome looks like to an ordinary MCP client.
 mod render;
 
-use deadlines::DeadlineWriter;
 use exchange::handle_connection;
-use response::write_response;
 
 /// The largest request head this listener will read before giving up.
 const MAX_HEAD_BYTES: usize = 8 * 1024;
@@ -105,8 +104,6 @@ const HEAD_CHUNK_BYTES: usize = 1024;
 /// worker thread and an in-flight slot for as long as it cares to, and `max_in_flight`
 /// of them take the sidecar out of service.
 const WRITE_DEADLINE: Duration = Duration::from_secs(30);
-/// Wall-clock bound on writing the at-capacity refusal from the accept thread.
-const REFUSAL_TIMEOUT: Duration = Duration::from_secs(2);
 /// Wall-clock bound on the post-exchange drain.
 const DRAIN_DEADLINE: Duration = Duration::from_millis(200);
 /// How long [`serve`] waits for accepted exchanges to finish once `stop` is set.
@@ -143,21 +140,6 @@ struct LocalRequest {
     body: Vec<u8>,
 }
 
-/// One claimed in-flight slot, released on every exit path including an unwind.
-///
-/// The release has to be a destructor rather than a statement after the call: a worker
-/// that panics skips a trailing `fetch_sub`, and that slot is then gone for the
-/// process lifetime. After `max_in_flight` such panics the listener answers 503 to
-/// every call while the accounting reads full with nothing running — a sticky failure
-/// that outlives the transient condition that caused it, recoverable only by restart.
-struct Slot(Arc<AtomicUsize>);
-
-impl Drop for Slot {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
-    }
-}
-
 /// Serve until `stop` is set.
 ///
 /// The listener polls with a short accept timeout rather than blocking forever, so a
@@ -165,42 +147,23 @@ impl Drop for Slot {
 /// accepted exchanges are given a bounded grace period to finish: each one has already
 /// been signed, sent and executed by the remote server, so dropping it reports a reset
 /// for work that DID happen and a retry then duplicates the side effect.
-pub fn serve(listener: TcpListener, context: Arc<ServeContext>, stop: Arc<AtomicBool>) {
-    listener
-        .set_nonblocking(true)
-        .expect("the local listener accepts non-blocking mode");
+/// Class R: returns the operating system's refusal when the listener cannot be put into
+/// the mode this loop needs. A blocking listener parks the accept loop between local
+/// calls, so `stop` is never observed and a SIGTERM is never honoured.
+pub fn serve(
+    listener: TcpListener,
+    context: Arc<ServeContext>,
+    stop: Arc<AtomicBool>,
+) -> std::io::Result<()> {
+    listener.set_nonblocking(true)?;
     let in_flight = Arc::new(AtomicUsize::new(0));
     while !stop.load(Ordering::Relaxed) {
         match listener.accept() {
             Ok((stream, _peer)) => {
-                // Claim a slot BEFORE spawning. Spawning first and checking after is how
-                // a burst of local calls becomes an unbounded thread count. The guard
-                // owns the release from here on, so every path below returns it.
-                let claimed = in_flight.fetch_add(1, Ordering::AcqRel) + 1;
-                let slot = Slot(Arc::clone(&in_flight));
-                if claimed > context.max_in_flight {
-                    drop(slot);
-                    // An accepted socket inherits the listener's O_NONBLOCK on the BSDs
-                    // (including macOS) and does not on Linux. Without this the refusal
-                    // would write on a non-blocking socket there, fail `WouldBlock`, and
-                    // the caller would see the connection close with no answer — a
-                    // capacity limit that reads as a crash on one platform and not the
-                    // other.
-                    let _ = stream.set_nonblocking(false);
-                    // This write happens on the ACCEPT thread, so it must not be able to
-                    // block it. A peer that advertises a zero receive window and never
-                    // drains would otherwise stop the listener accepting anything and
-                    // stop it observing `stop` — one connection denying the sidecar and
-                    // blocking graceful shutdown, rather than being refused.
-                    let _ = stream.set_read_timeout(Some(REFUSAL_TIMEOUT));
-                    let _ = write_response(
-                        &mut DeadlineWriter::new(&stream, Instant::now() + REFUSAL_TIMEOUT),
-                        503,
-                        None,
-                        b"{\"error\":\"mcp-re client sidecar at capacity\"}",
-                    );
+                let Some(slot) = admission::claim(&in_flight, context.max_in_flight) else {
+                    admission::refuse(&stream);
                     continue;
-                }
+                };
                 let worker_context = Arc::clone(&context);
                 // A spawn failure drops the closure, and with it `slot`, so the claim is
                 // released by the same destructor that releases it on unwind.
@@ -217,7 +180,10 @@ pub fn serve(listener: TcpListener, context: Arc<ServeContext>, stop: Arc<Atomic
             Err(_) => std::thread::sleep(Duration::from_millis(20)),
         }
     }
-    let deadline = Instant::now() + SHUTDOWN_GRACE;
+    // Class R: a CEILING on how long shutdown may wait for work already signed, sent and
+    // executed, so one that cannot be computed is treated as already reached.
+    let now = Instant::now();
+    let deadline = now.checked_add(SHUTDOWN_GRACE).unwrap_or(now);
     while in_flight.load(Ordering::Acquire) > 0 && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -228,6 +194,7 @@ pub fn serve(listener: TcpListener, context: Arc<ServeContext>, stop: Arc<Atomic
              flight; their callers see a reset for work the server may have performed"
         );
     }
+    Ok(())
 }
 
 /// Bind the local listener, refusing a non-loopback address unless declared.
@@ -295,29 +262,5 @@ mod tests {
             "with the opt-in declared the guard must not be what refuses: {admitted}"
         );
         bind(&local("127.0.0.1:0", false)).expect("loopback binds without any opt-in");
-    }
-
-    /// The slot is released by a destructor, so an unwinding worker returns it.
-    ///
-    /// A trailing `fetch_sub` is skipped on panic, and the capacity is then gone for the
-    /// process lifetime — the listener answers 503 forever with nothing running.
-    #[test]
-    fn a_panicking_worker_returns_its_in_flight_slot() {
-        let in_flight = Arc::new(AtomicUsize::new(0));
-        in_flight.fetch_add(1, Ordering::AcqRel);
-        let slot = Slot(Arc::clone(&in_flight));
-        let previous = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let handle = std::thread::spawn(move || {
-            let _slot = slot;
-            panic!("a worker panicked mid-exchange");
-        });
-        assert!(handle.join().is_err(), "the worker must have panicked");
-        std::panic::set_hook(previous);
-        assert_eq!(
-            in_flight.load(Ordering::Acquire),
-            0,
-            "a leaked slot lowers max_in_flight for the process lifetime"
-        );
     }
 }

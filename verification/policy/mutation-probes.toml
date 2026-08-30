@@ -1087,19 +1087,23 @@ conjunct = "acceptance is the exact canonical RFC 8410 encoding, and nothing els
 # The weakening is the shape the defect really takes: keep the length-ish check, drop the
 # algorithm header, take the trailing thirty-two bytes. That is how an algorithm-confusion
 # bug is written by someone being helpful, not how one is invented for a probe.
+#
+# Re-adjudicated by MCPRE-176 when the interpreter stopped indexing around a separately
+# stated total length and became a `strip_prefix` plus a fixed-width conversion. The
+# PROPOSITION is unchanged and so is the defect: the weakening still keeps a length test,
+# still drops the algorithm header, and still takes the trailing thirty-two bytes.
 path = "mcp-re-proxy/src/communication_assurance/ed25519_public_key.rs"
 anchor = """
-        if der.len() == CANONICAL_ED25519_SPKI_LEN
-            && der[..CANONICAL_ED25519_SPKI_PREFIX.len()] == CANONICAL_ED25519_SPKI_PREFIX
-        {
+        let canonical = der
+            .strip_prefix(CANONICAL_ED25519_SPKI_PREFIX.as_slice())
+            .and_then(|point| <[u8; ED25519_PUBLIC_KEY_LEN]>::try_from(point).ok());
 """
 weakening = """
-        if der.len() >= ED25519_PUBLIC_KEY_LEN {
-            let mut raw_point = [0u8; ED25519_PUBLIC_KEY_LEN];
-            raw_point.copy_from_slice(&der[der.len() - ED25519_PUBLIC_KEY_LEN..]);
-            return Ok(Ed25519PublicKeyValue { raw_point });
-        }
-        if false {
+        let canonical = der
+            .len()
+            .checked_sub(ED25519_PUBLIC_KEY_LEN)
+            .and_then(|at| der.get(at..))
+            .and_then(|point| <[u8; ED25519_PUBLIC_KEY_LEN]>::try_from(point).ok());
 """
 expect_red = [
   "lib#communication_assurance::ed25519_public_key::tests::a_well_formed_key_of_another_algorithm_names_the_algorithm_it_declares",
@@ -1168,17 +1172,16 @@ conjunct = "the relation is never handed a key that failed the profile rule"
 # equality check, not by the profile rule. Refusal by coincidence is not enforcement.
 path = "mcp-re-proxy/src/communication_assurance/ed25519_public_key.rs"
 anchor = """
-        if der.len() == CANONICAL_ED25519_SPKI_LEN
-            && der[..CANONICAL_ED25519_SPKI_PREFIX.len()] == CANONICAL_ED25519_SPKI_PREFIX
-        {
+        let canonical = der
+            .strip_prefix(CANONICAL_ED25519_SPKI_PREFIX.as_slice())
+            .and_then(|point| <[u8; ED25519_PUBLIC_KEY_LEN]>::try_from(point).ok());
 """
 weakening = """
-        if der.len() >= ED25519_PUBLIC_KEY_LEN {
-            let mut raw_point = [0u8; ED25519_PUBLIC_KEY_LEN];
-            raw_point.copy_from_slice(&der[der.len() - ED25519_PUBLIC_KEY_LEN..]);
-            return Ok(Ed25519PublicKeyValue { raw_point });
-        }
-        if false {
+        let canonical = der
+            .len()
+            .checked_sub(ED25519_PUBLIC_KEY_LEN)
+            .and_then(|at| der.get(at..))
+            .and_then(|point| <[u8; ED25519_PUBLIC_KEY_LEN]>::try_from(point).ok());
 """
 expect_red = [
   "lib#tls::delegated_credential_key_correspondence_tests::a_signing_key_of_another_algorithm_carrying_the_credential_point_is_refused",

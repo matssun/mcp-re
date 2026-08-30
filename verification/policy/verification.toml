@@ -476,7 +476,12 @@ id = "core.time_rfc3339"
 class = "V1"
 description = "Strict RFC 3339 UTC timestamp parsing: total on arbitrary bytes, and admitting only representable civil instants."
 paths = [
-  "mcp-re-core/src/time.rs",
+  # MCPRE-176 gave the formatting inverse its own module: the parser and its proof stay in
+  # `mod.rs`, and `format.rs` holds the Unix-seconds-to-text direction, which the Verus cone
+  # does not reach. Both are in the closure — this unit's own controls exercise the round
+  # trip, so a change to either is a change to what the unit measures.
+  "mcp-re-core/src/time/mod.rs",
+  "mcp-re-core/src/time/format.rs",
   # The specification support the proof stands on: the trusted `std` specifications and
   # the checked lemmas. Declared as part of the unit because weakening either one weakens
   # the theorem about time.rs exactly as much as editing time.rs would.

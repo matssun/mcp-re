@@ -365,7 +365,7 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
         let position = HopPosition {
             index: i,
             previous: hop_evidence.last(),
-            is_last: i + 1 == hops.len(),
+            is_last: hops.len().checked_sub(1) == Some(i),
         };
         match verification.verify_hop(hop, &position) {
             Ok(evidence) => hop_evidence.push(evidence),

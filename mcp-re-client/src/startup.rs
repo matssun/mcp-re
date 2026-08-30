@@ -73,9 +73,12 @@ pub(crate) struct Invocation {
 pub(crate) fn parse_invocation(args: &[String]) -> Result<Invocation, ExitCode> {
     let mut config_path: Option<String> = None;
     let mut check_only = false;
-    let mut index = 0;
-    while index < args.len() {
-        match args[index].as_str() {
+    let mut index = 0usize;
+    // Class C: every read of `args` is a `get`, so the walk stops where the argument list
+    // stops; `index += 1` is slice-index arithmetic.
+    #[allow(clippy::arithmetic_side_effects)]
+    while let Some(argument) = args.get(index) {
+        match argument.as_str() {
             "--config" => {
                 index += 1;
                 match args.get(index) {
@@ -148,6 +151,9 @@ pub(crate) fn serve_until_shutdown(
     });
 
     eprintln!("mcp-re-client: serving plain MCP on {}", config.local.bind);
-    mcp_re_client::serve::serve(listener, built.context, stop);
+    if let Err(e) = mcp_re_client::serve::serve(listener, built.context, stop) {
+        eprintln!("mcp-re-client: the local listener could not be served: {e}");
+        return ExitCode::FAILURE;
+    }
     ExitCode::SUCCESS
 }

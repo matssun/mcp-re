@@ -134,7 +134,10 @@ impl RetentionLedger {
             Some((name, _)) => Arc::clone(name),
             None => Arc::from(actor),
         };
-        *state.per_actor.entry(Arc::clone(&actor)).or_insert(0) += 1;
+        // Bounded by the `max_entries` ceiling refused above; saturating like
+        // `outstanding` on the next line.
+        let charged = state.per_actor.entry(Arc::clone(&actor)).or_insert(0);
+        *charged = charged.saturating_add(1);
         state.outstanding = state.outstanding.saturating_add(1);
         Ok(actor)
     }
@@ -189,7 +192,9 @@ impl LedgerState {
     /// Drop one charge against `actor`, and the actor's name with its last charge.
     fn discharge(&mut self, actor: &Arc<str>) {
         if let Some(charged) = self.per_actor.get_mut(actor) {
-            *charged -= 1;
+            // Saturating, like `committed` in `expire`: zero drops the actor's name, and
+            // wrapping would refuse a legitimate signer permanently.
+            *charged = charged.saturating_sub(1);
             if *charged == 0 {
                 self.per_actor.remove(actor);
             }

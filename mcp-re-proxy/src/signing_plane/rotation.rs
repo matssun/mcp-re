@@ -135,7 +135,13 @@ fn wait_for_window(
     halt: &crate::managed_worker::Halt,
 ) -> bool {
     let wake_at = match signer.current(now_unix()) {
-        Some(a) => (a.exp - overlap).max(now_unix()),
+        // Class R: a window start that cannot be computed wakes the worker NOW. Wrapping
+        // parks this worker for the life of the process, so the key is never rotated.
+        Some(a) => a
+            .exp
+            .checked_sub(overlap)
+            .unwrap_or(i64::MIN)
+            .max(now_unix()),
         None => now_unix(),
     };
     let mut ticks = 0u32;
@@ -151,7 +157,9 @@ fn wait_for_window(
                 }
             }
         }
-        ticks += 1;
+        // Wrapping IS the algebra: a phase counter read only through `is_multiple_of(10)`
+        // names a position in a cycle and has no largest value to overflow past.
+        ticks = ticks.wrapping_add(1);
         std::thread::sleep(Duration::from_millis(50));
     }
     false

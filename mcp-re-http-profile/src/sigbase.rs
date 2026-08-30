@@ -292,7 +292,7 @@ pub fn signature_base(
     params: &SignatureParams,
     source: &SourceMessage<'_>,
 ) -> Result<Vec<u8>, HttpProfileError> {
-    let mut lines = Vec::with_capacity(components.len() + 1);
+    let mut lines = Vec::with_capacity(components.len().saturating_add(1));
     for c in components {
         let value = component_value(c, source)?;
         lines.push(format!("{}: {}", c.identifier(), value));

@@ -59,16 +59,19 @@ fn component_list_for<'a>(value: &'a str, label: &str) -> Option<&'a str> {
         if name.trim() != label {
             continue;
         }
-        let open = rest.find('(')?;
-        let tail = &rest[open + 1..];
-        let close = tail.find(')')?;
-        return Some(&tail[..close]);
+        // Class B: the brackets are split ON, so their widths are not restated as offsets.
+        let (_, tail) = rest.split_once('(')?;
+        let (list, _) = tail.split_once(')')?;
+        return Some(list);
     }
     None
 }
 
 /// The top-level members of a structured-fields dictionary: commas inside a quoted string
 /// do not separate members.
+// Class C: `index` is a byte offset from `char_indices` at an ASCII comma, so `index + 1`
+// is a char boundary at most `value.len()`.
+#[allow(clippy::arithmetic_side_effects)]
 fn dictionary_members(value: &str) -> Vec<&str> {
     let mut members = Vec::new();
     let mut start = 0;

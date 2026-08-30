@@ -98,7 +98,11 @@ impl RetainedSet {
                     // and the actor's last release drops its name from the map
                     // entirely.
                     if let Some(held) = per_actor.get_mut(&entry.actor) {
-                        *held -= 1;
+                        // Saturating is the algebra of a charge count: zero is the state
+                        // that drops the actor's name. Wrapping would leave it holding
+                        // `usize::MAX` and refuse a legitimate signer for the life of
+                        // the process.
+                        *held = held.saturating_sub(1);
                         if *held == 0 {
                             per_actor.remove(&entry.actor);
                         }
@@ -117,7 +121,10 @@ impl RetainedSet {
             Some((name, _)) => Arc::clone(name),
             None => Arc::from(actor),
         };
-        *state.per_actor.entry(Arc::clone(&actor)).or_insert(0) += 1;
+        // Bounded by the retained-entry ceiling this set is admitted under; saturating
+        // names the direction that stays restrictive.
+        let charged = state.per_actor.entry(Arc::clone(&actor)).or_insert(0);
+        *charged = charged.saturating_add(1);
         state
             .by_expiry
             .entry(retain_until)

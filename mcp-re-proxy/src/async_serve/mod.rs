@@ -43,6 +43,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::Response;
+use hyper::StatusCode;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
@@ -286,10 +287,11 @@ fn target_uri_mismatch(configured: &str, received: &hyper::Uri) -> Option<String
 /// because a `None` here reads as "no mismatch", which would disable this check silently
 /// for a config that never met a parser.
 fn origin_form_of(absolute: &str) -> Option<String> {
-    let authority_start = absolute.find("://")? + 3;
-    let authority = &absolute[authority_start..];
+    // Class B: `split_once` yields the authority directly, so the scheme delimiter's
+    // width is named once rather than repeated as an offset.
+    let (_scheme, authority) = absolute.split_once("://")?;
     Some(match authority.find('/') {
-        Some(offset) => authority[offset..].to_owned(),
+        Some(offset) => authority.get(offset..).unwrap_or("/").to_owned(),
         None => "/".to_owned(),
     })
 }
@@ -311,12 +313,18 @@ fn served_to_hyper(resp: ServedHttpResponse) -> Response<Full<Bytes>> {
     }
     builder
         .body(Full::new(Bytes::from(resp.body)))
-        .unwrap_or_else(|_| {
-            Response::builder()
-                .status(500)
-                .body(Full::new(Bytes::new()))
-                .expect("static response builds")
-        })
+        .unwrap_or_else(|_| empty_response(StatusCode::INTERNAL_SERVER_ERROR))
+}
+
+/// A response with the given status and no body — the shape every fail-closed reply on
+/// this path takes.
+///
+/// Class B: `Response::new` is total and `status_mut` takes an already-validated
+/// `StatusCode`, so nothing on the way to a constant reply is fallible.
+fn empty_response(status: StatusCode) -> Response<Full<Bytes>> {
+    let mut response = Response::new(Full::new(Bytes::new()));
+    *response.status_mut() = status;
+    response
 }
 
 /// Fail-closed reply when a header value is not valid UTF-8: an empty `400`, the
@@ -335,20 +343,14 @@ fn served_to_hyper(resp: ServedHttpResponse) -> Response<Full<Bytes>> {
 /// Nothing conformant is lost: a covered component's value must be an RFC 8941
 /// string, and this profile's signature base is UTF-8 by construction.
 fn malformed_header_response() -> Response<Full<Bytes>> {
-    Response::builder()
-        .status(400)
-        .body(Full::new(Bytes::new()))
-        .expect("static response builds")
+    empty_response(StatusCode::BAD_REQUEST)
 }
 
 /// Fail-closed reply when the body exceeds `max_body_bytes` or the read deadline
 /// elapses: an empty `413`, the inner server never reached. (No request id is
 /// available when the body itself could not be read.)
 fn fail_closed_response() -> Response<Full<Bytes>> {
-    Response::builder()
-        .status(413)
-        .body(Full::new(Bytes::new()))
-        .expect("static response builds")
+    empty_response(StatusCode::PAYLOAD_TOO_LARGE)
 }
 
 /// MCPRE-114 fail-closed backpressure: an empty `503 Service Unavailable` returned
@@ -356,10 +358,7 @@ fn fail_closed_response() -> Response<Full<Bytes>> {
 /// body is never read and the handler never runs, so an overloaded core sheds load
 /// with a bounded, cheap rejection instead of queuing work without bound.
 fn overloaded_response() -> Response<Full<Bytes>> {
-    Response::builder()
-        .status(503)
-        .body(Full::new(Bytes::new()))
-        .expect("static response builds")
+    empty_response(StatusCode::SERVICE_UNAVAILABLE)
 }
 
 #[cfg(test)]

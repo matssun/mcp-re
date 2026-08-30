@@ -56,6 +56,9 @@ impl SystemNonceSource {
 }
 
 impl NonceSource for SystemNonceSource {
+    // Class A: the deliberate fail-closed panic documented in the body below. There is no
+    // safe value to return — a predictable nonce silently defeats replay freshness.
+    #[allow(clippy::expect_used)]
     fn fill(&mut self, out: &mut [u8]) {
         // DELIBERATE FAIL-CLOSED-BY-PANIC (see the `NonceSource` trait's
         // "Fail-closed contract"). `getrandom` reads OS entropy and only errors

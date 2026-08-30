@@ -116,11 +116,11 @@ pub struct ClientRevocationIndex {
 /// queries a `HashSet<Vec<u8>>` through `Borrow<[u8]>`, so the normalized form never
 /// needs to own its bytes to be compared.
 fn normalize_serial(serial: &[u8]) -> &[u8] {
-    let first_significant = serial
-        .iter()
-        .position(|byte| *byte != 0)
-        .unwrap_or(serial.len());
-    &serial[first_significant..]
+    let mut significant = serial;
+    while let Some((&0, rest)) = significant.split_first() {
+        significant = rest;
+    }
+    significant
 }
 
 impl ClientRevocationIndex {

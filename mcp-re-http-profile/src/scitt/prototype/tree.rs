@@ -33,25 +33,30 @@ pub(crate) fn mth_and_path(
     target: Option<usize>,
     path: &mut Vec<[u8; 32]>,
 ) -> [u8; 32] {
-    match leaves.len() {
+    // Class B: matched on the SLICE, so the one-leaf case binds the leaf it is about.
+    match leaves {
         // `MTH({}) = SHA-256()`. Unreachable from the log (a receipt is only issued
         // for a registered leaf), but defined so the recursion is total.
-        0 => Sha256::new().finalize().into(),
-        1 => leaves[0],
-        n => {
-            // k = the largest power of two STRICTLY less than n.
-            let k = 1usize << (usize::BITS - 1 - (n - 1).leading_zeros());
+        [] => Sha256::new().finalize().into(),
+        [single] => *single,
+        _ => {
+            // k = the largest power of two STRICTLY less than n, for n >= 2, written as
+            // the definition. `n` is a slice length, so `next_power_of_two` cannot
+            // overflow, and the halving is by a nonzero constant.
+            let k = leaves.len().next_power_of_two() / 2;
             let (left_leaves, right_leaves) = leaves.split_at(k);
-            match target {
-                Some(t) if t < k => {
+            // Class B: `checked_sub` IS the branch condition. `None` says the target is
+            // in the left half; `Some(rel)` gives its index within the right one.
+            match target.map(|t| (t, t.checked_sub(k))) {
+                Some((t, None)) => {
                     let left = mth_and_path(left_leaves, Some(t), path);
                     let right = mth_and_path(right_leaves, None, path);
                     path.push(right);
                     node_hash(&left, &right)
                 }
-                Some(t) => {
+                Some((_, Some(rel))) => {
                     let left = mth_and_path(left_leaves, None, path);
-                    let right = mth_and_path(right_leaves, Some(t - k), path);
+                    let right = mth_and_path(right_leaves, Some(rel), path);
                     path.push(left);
                     node_hash(&left, &right)
                 }

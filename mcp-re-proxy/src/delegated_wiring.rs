@@ -105,9 +105,15 @@ pub fn build_delegated_signing(
     // plain `[u8; 32]` here would leave one unscrubbed copy of a live response-signing
     // seed on the rotation thread's stack per rotation, for the process lifetime —
     // recoverable from a core dump, a swapped page, or a later stack disclosure.
+    // Class A, in its no-safe-value form. Continuing when the OS declines randomness
+    // means minting a response-signing key from the zeroed seed this buffer was
+    // initialised with — identical on every replica, reproducible by any reader of this
+    // source. Aborting leaves the current credential serving until its own `exp` and then
+    // failing closed, which is the outcome this module exists to guarantee.
+    #[allow(clippy::expect_used)]
     let factory: BoxedKeyFactory = Box::new(|| {
         let mut seed: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-        getrandom::fill(&mut *seed).expect("OS CSPRNG for delegated key seed");
+        getrandom::fill(&mut *seed).expect("the OS CSPRNG yields a delegated key seed");
         SigningKey::from_seed_bytes(&seed)
     });
 

@@ -30,6 +30,9 @@
 
 use std::str::FromStr;
 
+mod authority;
+use authority::split_authority;
+
 /// The `host[:port]` a request to `value` will actually reach — or why `value` may not be
 /// used as a KMS/STS endpoint at all.
 ///
@@ -146,35 +149,6 @@ fn split_host_port<'a>(
         check_port(port, value)?;
     }
     Ok((host, port))
-}
-
-/// Where the host ends and the port begins.
-///
-/// An IPv6 literal keeps its brackets, because that is the form both the request line and
-/// a `Host` header carry. Splitting on the bracket rather than on the first `:` is what
-/// makes `[::1]:4566` divide where a parser divides it.
-fn split_authority<'a>(
-    authority: &'a str,
-    value: &str,
-) -> Result<(&'a str, Option<&'a str>), String> {
-    if !authority.starts_with('[') {
-        return Ok(match authority.split_once(':') {
-            Some((host, port)) => (host, Some(port)),
-            None => (authority, None),
-        });
-    }
-    let end = authority
-        .find(']')
-        .ok_or_else(|| format!("has an unterminated IPv6 literal: {value:?}"))?;
-    match &authority[end + 1..] {
-        "" => Ok((&authority[..=end], None)),
-        after => Ok((
-            &authority[..=end],
-            Some(after.strip_prefix(':').ok_or_else(|| {
-                format!("has junk after its IPv6 literal ({after:?}): {value:?}")
-            })?),
-        )),
-    }
 }
 
 /// Whether the host names the machine a reader thinks it names.

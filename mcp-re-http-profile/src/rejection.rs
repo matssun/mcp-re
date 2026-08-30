@@ -144,7 +144,8 @@ fn rejection_body(id: Value, reason: &RejectionReason) -> Vec<u8> {
             "data": { "mcp_re_error": mcp_re_error }
         }
     });
-    serde_json::to_vec(&body).expect("rejection body serializes")
+    // `Display` renders the same compact JSON as `to_vec`, and cannot fail.
+    body.to_string().into_bytes()
 }
 
 /// Explicit machine-readable execution/retry state, for the cases where the safe action is
