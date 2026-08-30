@@ -29,6 +29,7 @@ use std::sync::Arc;
 use mcp_re_core::b64url_decode;
 use mcp_re_core::b64url_encode;
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::authoritative_admission::AuthoritativeAdmission;
 use mcp_re_http_profile::issue_admission_assertion;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::sign_request_full;
@@ -41,7 +42,6 @@ use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::Audience;
 use mcp_re_http_profile::AudienceTuple;
-use mcp_re_http_profile::AuthoritativeAdmission;
 use mcp_re_http_profile::CustodyConfig;
 use mcp_re_http_profile::DelegatedSigningCustody;
 use mcp_re_http_profile::DelegationClaims;
@@ -797,13 +797,11 @@ fn a_generation_ahead_of_the_authority_is_refused() {
 fn a_binding_naming_another_workload_does_not_borrow_its_admission() {
     let source = Arc::new(InMemoryAdmissionSource::new());
     source.admit(WORKLOAD, 5);
-    source.set(
-        "workload-other",
-        AuthoritativeAdmission {
-            generation: 5,
-            status: AdmissionStatus::Admitted,
-        },
-    );
+    source.set(AuthoritativeAdmission::new(
+        "workload-other".to_owned(),
+        5,
+        AdmissionStatus::Admitted,
+    ));
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
         source,

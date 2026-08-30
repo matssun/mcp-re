@@ -2271,19 +2271,30 @@ fn frozen_http_profile_corpus_verifies() {
                 let issuer_key =
                     mcp_re_core::VerificationKey::from_b64url(&check.issuer_public_key_b64url)
                         .expect("issuer key parses");
-                let authoritative =
-                    match (&check.authoritative_generation, &check.authoritative_status) {
-                        (Some(g), Some(s)) => Some(mcp_re_http_profile::AuthoritativeAdmission {
-                            generation: *g,
-                            status: match s.as_str() {
+                let authoritative = match (
+                    &check.authoritative_generation,
+                    &check.authoritative_status,
+                ) {
+                    // The fixture states the authority's generation and status and
+                    // no subject, because a vector describes ONE workload: the
+                    // lookup it models is the lookup for the workload this binding
+                    // names, so the binding's id is the honest subject to build the
+                    // state with. A vector wanting to exercise a mismatched subject
+                    // would have to say so, and none does.
+                    (Some(g), Some(s)) => Some(
+                        mcp_re_http_profile::authoritative_admission::AuthoritativeAdmission::new(
+                            binding.admission_id.clone(),
+                            *g,
+                            match s.as_str() {
                                 "admitted" => mcp_re_http_profile::AdmissionStatus::Admitted,
                                 "suspended" => mcp_re_http_profile::AdmissionStatus::Suspended,
                                 "revoked" => mcp_re_http_profile::AdmissionStatus::Revoked,
                                 other => panic!("{name}: unknown status {other}"),
                             },
-                        }),
-                        _ => None,
-                    };
+                        ),
+                    ),
+                    _ => None,
+                };
                 let policy = mcp_re_http_profile::AdmissionPolicy {
                     allow_degraded_mode: check.allow_degraded_mode,
                     degraded_propagation_bound: check.degraded_propagation_bound,

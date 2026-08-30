@@ -8,10 +8,9 @@
 //! not yet specify for signed integers, and the policy accessors, which are field reads
 //! the verifier is told to treat as an unknown-but-fixed value per policy object.
 
-use crate::admission::{
-    AdmissionBinding, AdmissionClaims, AdmissionPolicy, AdmissionStatus, AuthoritativeAdmission,
-    VerifiedAdmission,
-};
+use crate::admission::{AdmissionBinding, AdmissionClaims, AdmissionStatus, VerifiedAdmission};
+use crate::admission_policy::AdmissionPolicy;
+use crate::authoritative_admission::AuthoritativeAdmission;
 use crate::block::BindingType;
 use crate::delegation::Audience;
 use crate::error::HttpProfileError;

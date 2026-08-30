@@ -1958,3 +1958,26 @@ weakening = """
 expect_red = [
   "lib#trust_plan::tests::a_reload_bearing_state_cannot_be_projected_to_read_once",
 ]
+
+[[probe]]
+id = "M67-authoritative-state-must-be-about-this-workload"
+unit = "http_profile.admission_currency"
+theorem = "THM-0004"
+conjunct = "a live verdict implies the authoritative state is about the workload the call is bound to"
+# The conjunct THM-0004 did not have. Deleting it restores the earlier situation exactly:
+# generation and status are still compared, still compared correctly, and still say nothing,
+# because a generation is a per-workload counter and any workload at the same number
+# satisfies them. What makes this probe possible at all is that the state now HAS a subject
+# — before, there was no check here to delete.
+path = "mcp-re-http-profile/src/admission.rs"
+anchor = """
+            if state.admission_id != binding.admission_id {
+                return Err(HttpProfileError::AdmissionStateUnavailable);
+            }
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#admission::tests::another_workloads_state_at_the_same_generation_does_not_admit_this_call",
+  "lib#admission::tests::a_revoked_workload_cannot_be_served_on_another_workloads_admitted_record",
+]

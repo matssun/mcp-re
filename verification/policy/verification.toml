@@ -612,14 +612,21 @@ pilot = "verus-pilot"
 [[unit]]
 id = "http_profile.admission_currency"
 class = "V1"
-description = "#415 §7 admission currency: an Ok verdict is Admitted at the bound generation; the admitted actor is the presenter of the call; a live verdict implies generation equality with the authoritative state; a degraded verdict implies explicit deployment opt-in."
+description = "#415 §7 admission currency: an Ok verdict is Admitted at the bound generation, against authoritative state ABOUT that same workload; the admitted actor is the presenter of the call; a live verdict implies subject agreement and generation equality with the authoritative state; a degraded verdict implies explicit deployment opt-in."
+# `authoritative_admission.rs` owns the state's SUBJECT — the coordinate THM-0004's
+# identity conjunct is stated over. It is in the closure because deleting the subject, or
+# publishing a second construction that does not require it, is exactly the change that
+# would make the conjunct unprovable while every other file here stayed byte-identical.
 paths = [
   "mcp-re-http-profile/src/admission.rs",
+  "mcp-re-http-profile/src/admission_policy.rs",
+  "mcp-re-http-profile/src/authoritative_admission.rs",
   "mcp-re-http-profile/src/verus_std_specs.rs",
 ]
 exported_contracts = ["contract://http_profile/admission/check_admission"]
 evidence = [
   "test://http_profile/admission/currency_and_degraded_battery",
+  "mutation://http_profile/admission/subject_currency",
   "verus://http_profile/admission/check_admission_currency",
 ]
 assumptions = ["ASM-0011", "ASM-0012", "ASM-0013", "ASM-0014"]
@@ -644,6 +651,10 @@ tested_symbols = [
   "lib#admission::tests::an_assertion_older_than_the_verifiers_own_budget_is_rejected",
   "lib#admission::tests::an_assertion_dated_ahead_of_the_verifier_is_rejected",
   "lib#admission::tests::the_verdict_names_the_workload_the_binding_committed_to",
+  "lib#admission::tests::another_workloads_state_at_the_same_generation_does_not_admit_this_call",
+  "lib#admission::tests::a_revoked_workload_cannot_be_served_on_another_workloads_admitted_record",
+  "lib#authoritative_admission::tests::the_subject_is_projected_back_exactly_as_supplied",
+  "lib#authoritative_admission::tests::two_workloads_at_the_same_generation_are_different_states",
 ]
 proved_symbols = ["mcp_re_http_profile::admission::check_admission"]
 features = ["verify"]

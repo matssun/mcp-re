@@ -47,7 +47,9 @@ compile_error!(
 use vstd::prelude::*;
 
 pub mod admission;
+mod admission_policy;
 pub mod artifact;
+pub mod authoritative_admission;
 pub mod block;
 pub mod body;
 pub mod bodyless;
@@ -88,11 +90,9 @@ mod verus_std_specs;
 pub use admission::issue_admission_assertion;
 pub use admission::AdmissionBinding;
 pub use admission::AdmissionClaims;
-pub use admission::AdmissionHeader;
-pub use admission::AdmissionPolicy;
 pub use admission::AdmissionStatus;
-pub use admission::AuthoritativeAdmission;
 pub use admission::VerifiedAdmission;
+pub use admission_policy::AdmissionPolicy;
 pub use artifact::bearer_token;
 pub use artifact::verify_artifact_binding;
 pub use artifact::verify_mtls_x5t_s256;
