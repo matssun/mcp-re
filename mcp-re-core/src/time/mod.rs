@@ -40,6 +40,9 @@
 
 use crate::error::McpReError;
 
+mod format;
+pub use format::unix_to_rfc3339_utc;
+
 // ADR-MCPRE-059 Phase 2. Absent from every production build: the import is
 // feature-gated and each specification rides a `cfg_attr` that expands to nothing
 // unless `--features verify` is on.
@@ -77,14 +80,11 @@ fn is_leap_year(year: i64) -> bool {
         out matches Some(v) ==> 0 <= v && v <= 9999,
 ))]
 fn parse_fixed_digits(bytes: &[u8], start: usize, n: usize) -> Option<i64> {
-    // Every operation here is TOTAL in Rust, which matters more in this function than
-    // anywhere else in the module: `external_body` means Verus checks the caller against
-    // the contract and never looks inside, so the prover's totality result stops at this
-    // boundary. Two consecutive `get`s rather than `get(start..start + n)`, because the
-    // addition in that range is itself a partial operation on `usize`; and checked
-    // accumulation rather than `value * 10 + d`, so a width the precondition does not
-    // permit fails closed instead of overflowing. What remains assumed is ASM-0001's
-    // arithmetic claim — that n digits denote at most n digits — and nothing else.
+    // Class B, and it matters most here: `external_body` means Verus checks this
+    // function's CALLER and never looks inside, so the prover's totality result stops at
+    // this boundary. Two `get`s rather than `get(start..start + n)`, whose addition is
+    // itself partial; checked accumulation rather than `value * 10 + d`. What remains
+    // assumed is ASM-0001's claim — n digits denote at most n digits — and nothing else.
     let field = bytes.get(start..)?.get(..n)?;
     let mut value: i64 = 0;
     for b in field {
@@ -108,12 +108,9 @@ fn parse_fixed_digits(bytes: &[u8], start: usize, n: usize) -> Option<i64> {
     ensures
         -719528 <= days, days <= 2932896,
 ))]
-// The era arithmetic is bounded by this function's OWN verified precondition — year in
-// [0, 9999], month in [1, 12], day in [1, 31] — and Verus checks the whole body against
-// it, overflow included, in the `verify` lane that gates every change to this crate. The
-// allowance is therefore not a promise to remember something: it names a stronger checker
-// that measures the same region, so arithmetic added here later is proved or the lane
-// goes red. Evidence: verus://core/time/parse_rfc3339_utc_total_and_bounded.
+// Class C: bounded by this function's own verified precondition, and Verus checks the
+// whole body against it — overflow included — in the lane that gates every change to this
+// crate. Evidence: verus://core/time/parse_rfc3339_utc_total_and_bounded.
 #[allow(clippy::arithmetic_side_effects)]
 fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     // Shift the year so that March is the first month: this places the leap day
@@ -150,13 +147,12 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     ensures
         out matches Ok(v) ==> -62167219200 <= v && v <= 253402300799,
 ))]
-// TOTALITY IS PROVED HERE, not assumed. Verus checks this body for arbitrary input: the
-// fixed-position reads are bounded by the `len() < 20` refusal above them, the two tail
-// slices by the same length, the month table by the `1..=12` range check, and the final
-// seconds arithmetic by the validated calendar fields. That is the property THM-0002
-// states, and it is re-established by the `verify` lane on every change — which is what
-// makes a function-scoped allowance safe on a function this long: an unproved partial
-// operation added inside it fails the prover, not merely a reviewer's attention.
+// Class C, in its strongest form: totality here is PROVED, not assumed. Verus checks this
+// body for arbitrary input — the fixed-position reads against the `len() < 20` refusal,
+// the tail slices against the same length, the month table against the `1..=12` check, the
+// seconds arithmetic against the validated fields. That is THM-0002, re-established on
+// every change, which is what makes a function-scoped allowance safe on a function this
+// long: an unproved operation added inside it fails the prover, not a reviewer.
 #[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
 pub fn parse_rfc3339_utc(s: &str) -> Result<i64, McpReError> {
     let bytes = s.as_bytes();
@@ -236,48 +232,6 @@ pub fn parse_rfc3339_utc(s: &str) -> Result<i64, McpReError> {
 
     let days = days_from_civil(year, month, day);
     Ok(days * 86_400 + hour * 3_600 + minute * 60 + second)
-}
-
-/// Convert days-since-Unix-epoch to a Gregorian `(year, month, day)`, using
-/// Howard Hinnant's `civil_from_days` — the exact inverse of [`days_from_civil`].
-// NOT part of the Verus cone — this is the formatting inverse, and it carries its bound in
-// Rust rather than in a proof. The bound is the argument's provenance: the sole caller
-// passes `unix.div_euclid(86_400)`, so `z` lies in +/-1.07e14 for EVERY `i64` and each
-// subsequent quantity is bounded by the one before it — `era` by z/146_097 to +/-7.3e8,
-// `doe` to [0, 146096] by construction, `yoe` to [0, 399], `doy` to [0, 365], `mp` to
-// [0, 11]. Nothing here approaches `i64`'s range from any input whatsoever, which
-// `civil_from_days_is_total_at_the_i64_extremes` pins at both ends.
-#[allow(clippy::arithmetic_side_effects)]
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097; // [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
-    let mp = (5 * doy + 2) / 153; // [0, 11]
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
-    (if m <= 2 { y + 1 } else { y }, m, d)
-}
-
-/// Format Unix seconds (UTC) as the strict RFC 3339 form MCP-RE uses
-/// (`YYYY-MM-DDTHH:MM:SSZ`) — the inverse of [`parse_rfc3339_utc`] for whole
-/// seconds. Used by verifiers/servers to stamp `verified_at` / `issued_at` from
-/// a caller-supplied `now_unix` (core never reads the system clock itself).
-// `div_euclid`/`rem_euclid` by the non-zero constant 86_400 are total on `i64` (the one
-// panicking division, `i64::MIN / -1`, needs a negative divisor), and they are what bounds
-// [`civil_from_days`] — see its note. `secs` is in [0, 86399] by `rem_euclid`, so the three
-// clock divisions below cannot overflow either.
-#[allow(clippy::arithmetic_side_effects)]
-pub fn unix_to_rfc3339_utc(unix: i64) -> String {
-    let days = unix.div_euclid(86_400);
-    let secs = unix.rem_euclid(86_400);
-    let (year, month, day) = civil_from_days(days);
-    let hh = secs / 3600;
-    let mm = (secs % 3600) / 60;
-    let ss = secs % 60;
-    format!("{year:04}-{month:02}-{day:02}T{hh:02}:{mm:02}:{ss:02}Z")
 }
 
 #[cfg(test)]

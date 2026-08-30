@@ -99,6 +99,7 @@ mod covered_set;
 
 /// WHEN responsibility for retaining an exchange has been durably established.
 mod durability;
+mod durability_bounds;
 
 /// Turning retained evidence into a portable SCITT record — the auditor's half.
 mod attestation;

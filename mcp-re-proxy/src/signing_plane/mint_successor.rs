@@ -139,6 +139,11 @@ pub(super) fn rotation_made_progress(
     if active.delegated_kid != *before_kid.as_deref().unwrap_or("") {
         return true;
     }
-    // Same kid. Only a rotation that was DUE and did not happen is a failure.
-    now < active.exp - overlap
+    // Same kid. Only a rotation that was DUE and did not happen is a failure, and a
+    // window whose start cannot be computed is not evidence that nothing was due: a
+    // wrapped `exp - overlap` reports progress precisely when rotation is most overdue.
+    active
+        .exp
+        .checked_sub(overlap)
+        .is_some_and(|due_from| now < due_from)
 }

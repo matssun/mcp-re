@@ -126,6 +126,30 @@ impl<S: Write> Write for DeadlineStream<S> {
     }
 }
 
+/// The bytes of one read that may join the response, or the refusal that stops it.
+///
+/// Class B and class R together. `Read::read` PROMISES `n <= chunk.len()`; `reader` is a
+/// type parameter, so a reader that over-reports would widen a body past `max_bytes`
+/// through the very accounting meant to bound it — the promise is checked, not trusted.
+/// And a total that cannot be represented is past every ceiling, so it takes the same
+/// refusal as one that merely exceeds this response's.
+fn admit_chunk(
+    chunk: &[u8],
+    n: usize,
+    so_far: usize,
+    max_bytes: usize,
+) -> Result<&[u8], TransportError> {
+    let filled = chunk.get(..n).ok_or_else(|| {
+        TransportError::MalformedResponse(
+            "reader reported more bytes than it was given room for".to_string(),
+        )
+    })?;
+    if so_far.checked_add(n).is_none_or(|total| total > max_bytes) {
+        return Err(TransportError::ResponseTooLarge { limit: max_bytes });
+    }
+    Ok(filled)
+}
+
 /// Read the response in bounded chunks, failing closed at `max_bytes`.
 ///
 /// Replaces an unbounded `read_to_end`: a verified-but-hostile or buggy proxy
@@ -162,12 +186,7 @@ pub(super) fn read_response_bounded<R: Read>(
         }
         match reader.read(&mut chunk) {
             Ok(0) => break,
-            Ok(n) => {
-                if response.len() + n > max_bytes {
-                    return Err(TransportError::ResponseTooLarge { limit: max_bytes });
-                }
-                response.extend_from_slice(&chunk[..n]);
-            }
+            Ok(n) => response.extend_from_slice(admit_chunk(&chunk, n, response.len(), max_bytes)?),
             Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
             Err(e)
                 if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut =>

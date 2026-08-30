@@ -68,12 +68,12 @@ impl BodyByteBudget {
     pub(super) fn charge(self: &Arc<Self>, bytes: usize) -> Option<BodyBytes> {
         let mut current = self.charged.load(Ordering::Acquire);
         loop {
-            if current.saturating_add(bytes) > self.ceiling {
-                return None;
-            }
+            // Class B: ONE value, tested and then installed. A total that cannot be
+            // represented is past any ceiling, so `checked_add` decides it in one step.
+            let next = current.checked_add(bytes).filter(|n| *n <= self.ceiling)?;
             match self.charged.compare_exchange_weak(
                 current,
-                current + bytes,
+                next,
                 Ordering::AcqRel,
                 Ordering::Acquire,
             ) {
@@ -99,7 +99,10 @@ impl BodyBytes {
     /// Fold `other` into this reservation, so a streamed body holds one guard rather
     /// than one per frame.
     fn absorb(&mut self, mut other: BodyBytes) {
-        self.bytes += other.bytes;
+        // Both amounts were admitted against the same ceiling, so their sum is at most
+        // that ceiling. Saturating names the restrictive end: under-stating starves this
+        // core's own budget, where wrapping would release bytes nobody charged.
+        self.bytes = self.bytes.saturating_add(other.bytes);
         // `other`'s bytes are now this guard's; it must not release them twice.
         other.bytes = 0;
     }

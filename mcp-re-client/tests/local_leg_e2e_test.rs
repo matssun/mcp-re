@@ -378,7 +378,7 @@ fn start_sidecar_with_backend(
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = Arc::clone(&stop);
     let handle = std::thread::spawn(move || {
-        mcp_re_client::serve::serve(listener, context, stop_thread);
+        let _ = mcp_re_client::serve::serve(listener, context, stop_thread);
     });
 
     Sidecar {

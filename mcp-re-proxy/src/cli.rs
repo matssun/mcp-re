@@ -207,9 +207,9 @@ fn require(value: Option<String>, flag: &str) -> Result<String, String> {
 /// with the family that owns its meaning (ADR-MCPRE-067 §16, Phase 7).
 pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
     let mut flags = Flags::default();
-    let mut i = 0;
-    while i < args.len() {
-        let flag = args[i].as_str();
+    let mut i = 0usize;
+    #[allow(clippy::arithmetic_side_effects)] // class C: every read of `args` is a `get`
+    while let Some(flag) = args.get(i).map(String::as_str) {
         if flags.take_switch(flag) {
             i += 1;
             continue;

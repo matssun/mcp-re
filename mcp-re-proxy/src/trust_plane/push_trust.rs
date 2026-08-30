@@ -78,12 +78,14 @@ impl PushInvalidationTrustCache {
     /// gap.
     fn apply_pending_invalidations(&self) -> usize {
         let events = self.channel.drain_pending();
-        let mut evicted = 0;
+        let mut evicted = 0usize;
         for event in events {
             match event {
                 InvalidationEvent::Evict { signer, key_id } => {
                     if self.cache.evict(&signer, &key_id) {
-                        evicted += 1;
+                        // An observability tally over a bounded cache; saturating so the
+                        // report stops being exact rather than reading as zero.
+                        evicted = evicted.saturating_add(1);
                     }
                 }
                 // Coarse fleet-wide invalidation: strip every cached binding of its
@@ -91,7 +93,7 @@ impl PushInvalidationTrustCache {
                 // the store as it stands, under the deadline the binding already
                 // carried (tighten-only).
                 InvalidationEvent::FlushAll => {
-                    evicted += self.cache.clear();
+                    evicted = evicted.saturating_add(self.cache.clear());
                 }
             }
         }

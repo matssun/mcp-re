@@ -59,6 +59,9 @@ use crate::async_serve::serve;
 use crate::async_serve::AsyncRequestHandler;
 use crate::tls::ServerOptions;
 
+mod core_runtime;
+use core_runtime::build_core_runtime;
+
 /// The `listen(2)` backlog for each per-core `SO_REUSEPORT` listener. A generous
 /// default: the kernel bounds it to `net.core.somaxconn` anyway, and admission
 /// control (MCPRE-114) is the real saturation guard, not the accept queue depth.
@@ -204,6 +207,12 @@ where
 
     let mut workers = Vec::with_capacity(cores);
     for (core_index, listener) in listeners.into_iter().enumerate() {
+        // Class R, and settled HERE because this is the thread that can still report a
+        // failure. Neither is an invariant of this program — `build` allocates threads and
+        // an event loop, `set_nonblocking` is an `fcntl` — and a core the OS declines must
+        // not leave the fleet reporting a successful bind with one fewer server behind it.
+        let runtime = build_core_runtime(core_index, workers_per_shard, &options)?;
+        listener.set_nonblocking(true)?;
         let config = Arc::clone(&config);
         let options = Arc::clone(&options);
         let handler = make_handler(core_index);
@@ -232,36 +241,16 @@ where
                 // stalled signature costs one worker rather than a whole core. The
                 // share-nothing default is unchanged for the exported-key path, where
                 // signing is in-memory and never blocks.
-                // A configured pool depth gives this shard a work-stealing runtime; see
-                // `FleetConfig::workers_per_shard` for why depth beats shard count.
-                let runtime = if workers_per_shard > 1 {
-                    tokio::runtime::Builder::new_multi_thread()
-                        .worker_threads(workers_per_shard)
-                        .thread_name(format!("mcp-re-serve-{core_index}-w"))
-                        .enable_all()
-                        .build()
-                        .expect("per-core tokio runtime builds")
-                } else if options.tls_signing_may_block {
-                    tokio::runtime::Builder::new_multi_thread()
-                        .worker_threads(DELEGATED_TLS_WORKERS_PER_CORE)
-                        .thread_name(format!("mcp-re-serve-{core_index}-w"))
-                        .enable_all()
-                        .build()
-                        .expect("per-core tokio runtime builds")
-                } else {
-                    tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .expect("per-core tokio runtime builds")
-                };
+                // See `build_core_runtime` for which runtime this core got and why.
                 runtime.block_on(async move {
-                    // `from_std` requires a non-blocking socket and a runtime
-                    // context (both satisfied here).
-                    listener
-                        .set_nonblocking(true)
-                        .expect("listener set_nonblocking");
+                    // Class A. `from_std` needs a non-blocking socket — established
+                    // before this thread was spawned — and a runtime context, which is
+                    // this `block_on`. What remains is registration with the reactor this
+                    // runtime owns, so a failure is a defect in the lines above rather
+                    // than anything an environment, peer or configuration can produce.
+                    #[allow(clippy::expect_used)]
                     let listener = tokio::net::TcpListener::from_std(listener)
-                        .expect("tokio listener from std");
+                        .expect("the listener registers with the runtime running it");
                     serve(listener, config, options, handler, shutdown).await;
                 });
             })?;

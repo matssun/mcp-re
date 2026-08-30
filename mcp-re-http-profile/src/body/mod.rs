@@ -18,6 +18,7 @@ use crate::error::HttpProfileError;
 const META_KEY: &str = "_meta";
 
 /// Which JSON this profile can carry through its own re-serialization unchanged.
+mod carried_number;
 mod representable;
 pub use representable::reject_unrepresentable_json;
 

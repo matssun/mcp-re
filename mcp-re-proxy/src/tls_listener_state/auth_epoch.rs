@@ -222,22 +222,22 @@ impl EpochBoundSessionStore {
     /// A value too short to carry a tag is treated as a mismatch rather than unwrapped:
     /// the only way to produce one is a store this type did not write.
     fn unwrap_if_current(&self, stored: Vec<u8>) -> Option<Vec<u8>> {
-        if stored.len() < 32 {
-            return None;
-        }
         let current = self.epoch.load();
-        if &stored[..32] != current.as_bytes().as_slice() {
-            return None;
-        }
-        Some(stored[32..].to_vec())
+        let tag = current.as_bytes();
+        // Class B: ONE split at the tag's own width, so the prefix compared and the
+        // suffix returned cannot be taken at different offsets. A value too short to
+        // carry a tag is a mismatch — the only way to produce one is a store this type
+        // did not write.
+        let (stored_tag, session) = stored.split_at_checked(tag.len())?;
+        (stored_tag == tag.as_slice()).then(|| session.to_vec())
     }
 }
 
 impl StoresServerSessions for EpochBoundSessionStore {
     fn put(&self, key: Vec<u8>, value: Vec<u8>) -> bool {
         let current = self.epoch.load();
-        let mut tagged = Vec::with_capacity(32 + value.len());
-        tagged.extend_from_slice(current.as_bytes());
+        // Built FROM the tag, so its width is not a literal that has to keep agreeing.
+        let mut tagged = current.as_bytes().to_vec();
         tagged.extend_from_slice(&value);
         self.inner.put(key, tagged)
     }

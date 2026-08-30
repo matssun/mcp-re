@@ -31,7 +31,11 @@ use super::MAX_HEAD_BYTES;
 /// gets the connection dropped rather than a worker held open on it. The byte bound
 /// alone is not enough — one byte per read against a per-read timeout is still a stall.
 pub(super) fn drain(stream: &mut TcpStream) {
-    let deadline = Instant::now() + DRAIN_DEADLINE;
+    // Class R: the deadline is what bounds this drain, so one that cannot be computed is
+    // no bound at all and nothing is drained.
+    let Some(deadline) = Instant::now().checked_add(DRAIN_DEADLINE) else {
+        return;
+    };
     let mut scratch = [0u8; 1024];
     let mut drained = 0usize;
     while drained < MAX_HEAD_BYTES {
@@ -40,7 +44,9 @@ pub(super) fn drain(stream: &mut TcpStream) {
         }
         match stream.read(&mut scratch) {
             Ok(0) | Err(_) => break,
-            Ok(n) => drained += n,
+            // Saturating: compared against `MAX_HEAD_BYTES` and nothing else, so the
+            // ceiling ends the loop where wrapping would restart the budget from zero.
+            Ok(n) => drained = drained.saturating_add(n),
         }
     }
 }
@@ -60,7 +66,7 @@ pub(super) fn drain_pending(stream: &mut TcpStream) {
     while drained < MAX_HEAD_BYTES {
         match stream.read(&mut scratch) {
             Ok(0) | Err(_) => break,
-            Ok(n) => drained += n,
+            Ok(n) => drained = drained.saturating_add(n),
         }
     }
     let _ = stream.set_nonblocking(false);

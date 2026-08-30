@@ -186,7 +186,7 @@ impl MaterializedRuntime {
         let proxy = Arc::clone(
             self.proxy
                 .as_ref()
-                .expect("the runtime serves before it is torn down"),
+                .ok_or("the runtime has no proxy to drain")?,
         );
         let served =
             crate::app::serve_fleet(proxy, config_snapshot, serve_options, fleet_cfg, shutdown);

@@ -404,13 +404,13 @@ baseline_sha = "255465e"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-proxy/src/http_inner.rs"
+path = "mcp-re-proxy/src/http_inner/mod.rs"
 baseline_prod_loc = 589
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-proxy/src/async_fleet.rs"
+path = "mcp-re-proxy/src/async_fleet/mod.rs"
 baseline_prod_loc = 578
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
@@ -449,7 +449,7 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-http-profile/src/custody.rs"
+path = "mcp-re-http-profile/src/custody/mod.rs"
 baseline_prod_loc = 480
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
@@ -533,7 +533,7 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-client-core/src/trust_manifest.rs"
+path = "mcp-re-client-core/src/trust_manifest/mod.rs"
 baseline_prod_loc = 411
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
@@ -563,7 +563,7 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-proxy/src/delegated_server_signer.rs"
+path = "mcp-re-proxy/src/delegated_server_signer/mod.rs"
 baseline_prod_loc = 387
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
@@ -645,12 +645,6 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-client/src/anchors.rs"
-baseline_prod_loc = 287
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
 path = "mcp-re-proxy/src/config_state/delegated_signing.rs"
 baseline_prod_loc = 287
 baseline_sha = "d1fc5fa"
@@ -663,13 +657,7 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-proxy/src/continuation_store.rs"
-baseline_prod_loc = 279
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/stage_timers.rs"
+path = "mcp-re-proxy/src/stage_timers/mod.rs"
 baseline_prod_loc = 275
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
@@ -681,13 +669,13 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-proxy/src/kms_endpoint_policy.rs"
+path = "mcp-re-proxy/src/kms_endpoint_policy/mod.rs"
 baseline_prod_loc = 270
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-proxy/src/managed_worker.rs"
+path = "mcp-re-proxy/src/managed_worker/mod.rs"
 baseline_prod_loc = 268
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
@@ -705,7 +693,7 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-core/src/time.rs"
+path = "mcp-re-core/src/time/mod.rs"
 baseline_prod_loc = 250
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
@@ -773,8 +761,3 @@ baseline_prod_loc = 212
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
-[[debt]]
-path = "mcp-re-proxy/src/materializing_runtime.rs"
-baseline_prod_loc = 204
-baseline_sha = "d1fc5fa"
-status = "unreviewed"

@@ -51,10 +51,8 @@ pub fn verify_content_digest_sha256(
     for member in header_value.split(',') {
         let member = member.trim();
         if member.starts_with("sha-256=") {
-            // Compared whole rather than with the algorithm prefix stripped off both
-            // sides. Byte equality of the members IS byte equality of what follows the
-            // prefix once both carry it, so stripping was doing no work — and it was
-            // doing it partially, on a string this function had just built itself.
+            // Class B: compared whole. Byte equality of the members IS byte equality of
+            // what follows the prefix once both carry it, so nothing needs stripping.
             if member == expected {
                 return Ok(());
             }

@@ -20,20 +20,16 @@
 //!
 //! ## Bounds and cursor arithmetic
 //!
-//! Every read of `body` goes through `get`, so no bound in this module is remembered: the
-//! walk stops where the slice stops, including where an escape at the very end of the body
-//! carries the cursor one position past it.
-//!
-//! What remains is cursor ARITHMETIC, and it is bounded by Rust itself. A cursor here is
-//! either an index into `body` or one or two positions past it, and no slice may be longer
-//! than `isize::MAX` bytes — so a `+ 1` or `+ 2` on one of them cannot reach `usize`'s
-//! range. That is the invariant each `#[allow(clippy::arithmetic_side_effects)]` below
-//! names; it is a property of the allocator, not of anything a body can say. Bytes from
-//! the wire choose which branch runs, never how large a cursor becomes.
+//! Every read of `body` goes through `get`, so the walk stops where the slice stops —
+//! including where an escape at the very end carries the cursor one position past it. What
+//! remains is cursor arithmetic over slice indices, bounded by `isize::MAX`
+//! (`docs/dev/partial-operations.md`, class C).
 
 use std::collections::HashSet;
 
 use crate::error::HttpProfileError;
+
+use super::carried_number::scan_number;
 
 /// One frame per open composite: the member names seen so far in an object, or `None` for
 /// an array, whose elements have no names.
@@ -47,8 +43,8 @@ type Frames = Vec<Option<HashSet<String>>>;
 /// `serde_json::Map` is keyed on the decoded string: `"x"` and `"\u0078"` are one member
 /// name however differently they are spelled on the wire — and the last one would win,
 /// making the others vanish from the signed bytes.
-// Cursor arithmetic only — `start`, `j`, `k` and `after` are positions in `body` or just
-// past it, bounded by `isize::MAX`; see the module note. Every READ is a `get`.
+// Class C: `start`, `j`, `k`, `after` are positions in `body` or just past it. Every
+// READ is a `get`.
 #[allow(clippy::arithmetic_side_effects)]
 fn scan_string(body: &[u8], at: usize, frames: &mut Frames) -> Result<usize, HttpProfileError> {
     let start = at + 1;
@@ -57,17 +53,15 @@ fn scan_string(body: &[u8], at: usize, frames: &mut Frames) -> Result<usize, Htt
         if *byte == b'"' {
             break;
         }
-        // An escape skips its escaped byte, so a body ending in a backslash leaves `j` one
-        // PAST the end. That is not a read: `get` above decides every access, so the walk
-        // stops rather than the bound being re-argued at each use.
+        // An escape skips its escaped byte, so a body ending in a backslash leaves `j`
+        // one PAST the end. `get` above decides every access, so the walk simply stops.
         j += if *byte == b'\\' { 2 } else { 1 };
     }
     let end = j.min(body.len());
     let Some(raw) = body.get(start..end) else {
-        // `start <= end` holds for every index the walk above produces. It can fail only
-        // if `at` did not point at a byte of `body`, which no caller does — and this
-        // module's posture for anything it cannot account for is refusal, not a default
-        // value that would be scanned as an empty member name.
+        // `start <= end` for every index the walk produces; this fails only if `at` did
+        // not point at a byte of `body`. The posture for anything unaccounted for is
+        // refusal, not a default that would scan as an empty member name.
         return Err(HttpProfileError::MalformedEvidence("body json"));
     };
     let after = j + 1;
@@ -88,58 +82,13 @@ fn scan_string(body: &[u8], at: usize, frames: &mut Frames) -> Result<usize, Htt
     Ok(after)
 }
 
-/// Scan one number token and refuse it if the `f64` carrier would rewrite it.
-///
-/// Returns the index just past the token. Two refusals, because they are two different
-/// losses:
-///
-///   * **An integer outside the i64/u64 range.** Without `arbitrary_precision`,
-///     `serde_json` carries it as `f64`: `123456789012345678901234567890` comes back as
-///     `1.2345678901234568e29`, having lost thirteen significant digits. A 128-bit
-///     identifier, a nanosecond timestamp or a fixed-point monetary value would be silently
-///     rewritten.
-///   * **A decimal the `f64` carrier cannot hold.** Every non-integer is carried as `f64`,
-///     so `1234567890123456789.5` comes back as `1.2345678901234568e18` — a fixed-point
-///     amount or a high-precision measurement rewritten inside the signed bytes.
-// Cursor arithmetic only: `i` advances one position at a time over `body` and stops at its
-// end, so it is bounded by `isize::MAX`; see the module note.
-#[allow(clippy::arithmetic_side_effects)]
-fn scan_number(body: &[u8], at: usize) -> Result<usize, HttpProfileError> {
-    let start = at;
-    let mut i = at;
-    while body
-        .get(i)
-        .is_some_and(|b| matches!(b, b'-' | b'+' | b'.' | b'0'..=b'9' | b'e' | b'E'))
-    {
-        i += 1;
-    }
-    let Some(token) = body.get(start..i) else {
-        return Err(HttpProfileError::MalformedEvidence("body json"));
-    };
-    let text =
-        std::str::from_utf8(token).map_err(|_| HttpProfileError::MalformedEvidence("body json"))?;
-    if token.iter().any(|b| matches!(b, b'.' | b'e' | b'E')) {
-        if !decimal_survives_the_f64_carrier(text) {
-            return Err(HttpProfileError::MalformedEvidence(
-                "body carries a number this profile cannot sign without altering it",
-            ));
-        }
-    } else if text.parse::<i64>().is_err() && text.parse::<u64>().is_err() {
-        return Err(HttpProfileError::MalformedEvidence(
-            "body carries an integer this profile cannot sign without altering it",
-        ));
-    }
-    Ok(i)
-}
-
 /// Refuse a JSON body whose application payload this composer cannot carry unchanged.
 ///
 /// The module documentation states what is refused and why. This is the walk: strings and
 /// numbers are the only tokens that can carry a loss, and the brackets are tracked only so
 /// that a member name is attributed to the object it belongs to.
-// Cursor arithmetic only: each arm advances `i` past the byte `get` just returned, so `i`
-// stays within one position of `body`'s length and is bounded by `isize::MAX`; see the
-// module note. The two scanners return their own cursors, bounded the same way.
+// Class C: each arm advances `i` past the byte `get` just returned, so it stays within one
+// position of `body`'s length. The scanners return their own cursors, bounded the same way.
 #[allow(clippy::arithmetic_side_effects)]
 pub fn reject_unrepresentable_json(body: &[u8]) -> Result<(), HttpProfileError> {
     let mut frames: Frames = Vec::new();
@@ -180,8 +129,7 @@ fn decoded_member_name(raw: &[u8]) -> Result<String, HttpProfileError> {
             .map(str::to_owned)
             .map_err(|_| malformed());
     }
-    // `raw` is a subslice of the body, so its length is at most `isize::MAX` and the two
-    // quote bytes fit; see the module note.
+    // Class C: `raw` is a subslice of the body, so the two quote bytes fit.
     #[allow(clippy::arithmetic_side_effects)]
     let capacity = raw.len() + 2;
     let mut quoted = Vec::with_capacity(capacity);
@@ -189,56 +137,4 @@ fn decoded_member_name(raw: &[u8]) -> Result<String, HttpProfileError> {
     quoted.extend_from_slice(raw);
     quoted.push(b'"');
     serde_json::from_slice::<String>(&quoted).map_err(|_| malformed())
-}
-
-/// Significant decimal digits an `f64` carries with no loss of value: within this many,
-/// distinct decimals map to distinct `f64`s and are recovered from them exactly.
-const EXACTLY_CARRIED_DECIMAL_DIGITS: usize = 15;
-
-/// Whether a JSON number token carrying a fraction or an exponent keeps its value
-/// through the `f64` the composer re-serializes it from.
-///
-/// `f64` → text → `f64` is exact, but the direction taken here is text → `f64` → text,
-/// and that one is not: `1234567890123456789.5` is emitted as `1.2345678901234568e18`.
-/// Two conditions make the emitted decimal equal the received one:
-///
-///   * the significand carries at most [`EXACTLY_CARRIED_DECIMAL_DIGITS`] significant
-///     digits, so the shortest round-trip form `serde_json` emits has the same value; and
-///   * the carrier neither overflowed to an infinity nor flushed a nonzero value to
-///     zero.
-///
-/// Spelling is not value: `1e2` is emitted as `100.0` and is admitted, the same way
-/// member ORDER is rewritten and admitted. What is refused is a change to the number a
-/// reader sees.
-fn decimal_survives_the_f64_carrier(text: &str) -> bool {
-    let Ok(value) = text.parse::<f64>() else {
-        return false;
-    };
-    if !value.is_finite() {
-        return false;
-    }
-    let significand = text.split(['e', 'E']).next().unwrap_or(text);
-    let digits: Vec<u8> = significand.bytes().filter(|b| b.is_ascii_digit()).collect();
-    let Some(first) = digits.iter().position(|d| *d != b'0') else {
-        // A zero significand — `0`, `0.000`, `0e10`. Exactly carried.
-        return true;
-    };
-    if value == 0.0 {
-        // A nonzero decimal the carrier flushed to zero.
-        return false;
-    }
-    // The significant digits are those from the first nonzero through the last, inclusive.
-    // Taken as a SLICE rather than computed as `last - first + 1`, because the range
-    // constructor checks the very relation that subtraction would assume — that
-    // `rposition` does not precede `position` for one predicate over one slice — instead
-    // of leaving it to be re-argued. A zero significand cannot reach here (`first` above
-    // returns for it), and the `else` agrees with that branch rather than inventing a
-    // third answer.
-    let Some(last) = digits.iter().rposition(|d| *d != b'0') else {
-        return true;
-    };
-    let Some(significant) = digits.get(first..=last) else {
-        return true;
-    };
-    significant.len() <= EXACTLY_CARRIED_DECIMAL_DIGITS
 }

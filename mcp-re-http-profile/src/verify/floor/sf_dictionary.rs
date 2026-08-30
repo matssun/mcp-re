@@ -32,10 +32,9 @@ use crate::error::HttpProfileError;
 /// caused it. Every construction traced from there still failed closed downstream,
 /// but "the parser recovers by erroring" is not the same as splitting the
 /// dictionary the way every other RFC 8941 implementation does.
-// The cursor is a byte offset produced by `char_indices`, advanced past a separator that
-// is ASCII and therefore exactly one byte wide — so `i + 1` is a char boundary, is at most
-// `value.len()`, and is bounded by `isize::MAX` like any index into a `str`. The wire
-// chooses where the separators fall, never how large the offset becomes.
+// Class C: the cursor is a byte offset from `char_indices` at a separator that is ASCII and
+// one byte wide, so `i + 1` is a char boundary at most `value.len()`. The wire chooses
+// where the separators fall, never how large the offset becomes.
 #[allow(clippy::arithmetic_side_effects)]
 pub(super) fn split_dictionary(value: &str) -> Vec<&str> {
     let mut members = Vec::new();
@@ -69,10 +68,9 @@ pub(super) fn split_dictionary(value: &str) -> Vec<&str> {
 /// value in half and produce a parameter list that was never on the wire. The halves
 /// then failed to unquote, so this was fail-closed too, but the parse disagreed with
 /// a conforming one before it got there.
-// The cursor is a byte offset produced by `char_indices`, advanced past a separator that
-// is ASCII and therefore exactly one byte wide — so `i + 1` is a char boundary, is at most
-// `value.len()`, and is bounded by `isize::MAX` like any index into a `str`. The wire
-// chooses where the separators fall, never how large the offset becomes.
+// Class C: the cursor is a byte offset from `char_indices` at a separator that is ASCII and
+// one byte wide, so `i + 1` is a char boundary at most `value.len()`. The wire chooses
+// where the separators fall, never how large the offset becomes.
 #[allow(clippy::arithmetic_side_effects)]
 pub(super) fn split_parameters(value: &str) -> Vec<&str> {
     let mut parts = Vec::new();

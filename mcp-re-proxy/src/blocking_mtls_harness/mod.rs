@@ -41,6 +41,7 @@
 mod connection;
 mod deadline_stream;
 mod http1;
+mod http1_framing;
 
 use std::io;
 use std::net::TcpListener;

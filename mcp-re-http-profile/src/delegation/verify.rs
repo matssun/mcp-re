@@ -75,12 +75,10 @@ fn check_freshness(
     params: &DelegationVerifyParams<'_>,
 ) -> Result<(), HttpProfileError> {
     let skew = bounded_skew(params.max_clock_skew);
-    // Both edges are widened with checked arithmetic. `nbf` and `exp` arrive inside the
-    // credential — they are peer bytes — and `now` is the local clock, so this comparison
-    // is where an implausible clock and a hostile claim meet. An edge that cannot be
-    // computed is not a window this function can decide inside of, and the verdict for a
-    // credential whose freshness cannot be established is the same as for one that has
-    // expired.
+    // Class R. `nbf`/`exp` are peer bytes and `now` is the local clock, so this is where
+    // an implausible clock and a hostile claim meet. An edge that cannot be computed is
+    // not a window to decide inside of, and freshness that cannot be established takes the
+    // same verdict as freshness that has lapsed.
     let (Some(earliest), Some(latest)) =
         (params.now.checked_add(skew), params.now.checked_sub(skew))
     else {

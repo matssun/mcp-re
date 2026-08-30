@@ -122,9 +122,6 @@ pub struct SignedRejection {
 
 /// Build the JSON-RPC error body bytes for a rejection. `id` echoes the
 /// rejected request's id when known (else JSON `null`).
-// The one assertion in this function, and it is about `serde_json` rather than about any
-// input — see the note at the `to_vec` call below.
-#[allow(clippy::expect_used)]
 fn rejection_body(id: Value, reason: &RejectionReason) -> Vec<u8> {
     let mut mcp_re_error = json!({ "wire_code": reason.wire_code });
     // The retry contract is DERIVED — from the frozen token and the request machine's own
@@ -147,14 +144,8 @@ fn rejection_body(id: Value, reason: &RejectionReason) -> Vec<u8> {
             "data": { "mcp_re_error": mcp_re_error }
         }
     });
-    // `body` is a `serde_json::Value` this function has just built from a literal, and
-    // `to_vec` writes into a `Vec`, whose `io::Write` never errors. `to_vec`'s two failure
-    // modes — a `Serialize` implementation that returns an error, and a map key that is
-    // not a string — belong to neither: `Value`'s own `Serialize` is infallible and the
-    // `json!` object above has string keys only. No peer, configuration, clock or provider
-    // participates in this call, so a failure would mean `serde_json` had stopped being
-    // able to serialize its own type.
-    serde_json::to_vec(&body).expect("a serde_json::Value serializes into a Vec")
+    // `Display` renders the same compact JSON as `to_vec`, and cannot fail.
+    body.to_string().into_bytes()
 }
 
 /// Explicit machine-readable execution/retry state, for the cases where the safe action is

@@ -398,13 +398,25 @@ pub(crate) fn plain_error_from_rejection(
             mcp_re_error.insert(name.into(), json!(value));
         }
     }
-    let mut error = json!({
-        "code": mcp_re_core::MCP_RE_JSON_RPC_ERROR_CODE,
-        "message": "request rejected by the MCP-RE server",
-    });
+    // Class B: assembled as a map. Writing back through `error["data"]` panics unless
+    // `error` is an object, which is a fact about a literal rather than anything the
+    // assignment establishes.
+    let mut error = serde_json::Map::new();
+    error.insert(
+        "code".to_owned(),
+        json!(mcp_re_core::MCP_RE_JSON_RPC_ERROR_CODE),
+    );
+    error.insert(
+        "message".to_owned(),
+        json!("request rejected by the MCP-RE server"),
+    );
     if !mcp_re_error.is_empty() {
-        error["data"] = json!({ "mcp_re_error": Value::Object(mcp_re_error) });
+        error.insert(
+            "data".to_owned(),
+            json!({ "mcp_re_error": Value::Object(mcp_re_error) }),
+        );
     }
+    let error = Value::Object(error);
     json!({
         "jsonrpc": "2.0",
         "id": id,

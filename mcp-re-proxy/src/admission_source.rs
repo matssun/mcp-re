@@ -124,7 +124,7 @@ impl InMemoryAdmissionSource {
         let generation = self
             .records
             .lock()
-            .expect("admission records lock")
+            .unwrap_or_else(recover)
             .get(admission_id)
             .map(|r| r.generation)
             .unwrap_or(0);
@@ -141,14 +141,34 @@ impl InMemoryAdmissionSource {
     pub fn set(&self, admission_id: &str, state: AuthoritativeAdmission) {
         self.records
             .lock()
-            .expect("admission records lock")
+            .unwrap_or_else(recover)
             .insert(admission_id.to_owned(), state);
     }
 
     /// Make every subsequent lookup fail as unavailable (or stop doing so).
     pub fn set_unavailable(&self, unavailable: bool) {
-        *self.unavailable.lock().expect("admission outage lock") = unavailable;
+        *self.unavailable.lock().unwrap_or_else(recover) = unavailable;
     }
+}
+
+/// A poisoned in-memory record set, as the outage this source already reports.
+///
+/// A lock is poisoned because a thread panicked while holding it: runtime state, not a
+/// fact about this call. `Unavailable` is what a record set nobody can trust means to an
+/// admission decision, and the caller fails closed on it already.
+fn poisoned<T>(_: std::sync::PoisonError<T>) -> AdmissionSourceError {
+    AdmissionSourceError::Unavailable {
+        details: "in-memory admission records are poisoned".to_owned(),
+    }
+}
+
+/// The guard behind a poisoned lock, for the writers that have no verdict to report.
+///
+/// `admit`, `revoke` and `set_unavailable` return `()`, so there is nowhere to carry an
+/// outage to, and the map is a plain `HashMap`. Every READER above reports the outage
+/// instead, which is where a decision is actually taken on this state.
+fn recover<T>(poisoned: std::sync::PoisonError<T>) -> T {
+    poisoned.into_inner()
 }
 
 impl AsyncAdmissionSource for InMemoryAdmissionSource {
@@ -157,7 +177,9 @@ impl AsyncAdmissionSource for InMemoryAdmissionSource {
         admission_id: &'a str,
     ) -> AdmissionFuture<'a, Option<AuthoritativeAdmission>> {
         Box::pin(async move {
-            if *self.unavailable.lock().expect("admission outage lock") {
+            // Class R: a poisoned lock is runtime state, reported through the outage the
+            // caller already handles.
+            if *self.unavailable.lock().map_err(poisoned)? {
                 return Err(AdmissionSourceError::Unavailable {
                     details: "in-memory source marked unavailable".to_owned(),
                 });
@@ -165,7 +187,7 @@ impl AsyncAdmissionSource for InMemoryAdmissionSource {
             Ok(self
                 .records
                 .lock()
-                .expect("admission records lock")
+                .map_err(poisoned)?
                 .get(admission_id)
                 .cloned())
         })

@@ -76,7 +76,12 @@ fn read_head(stream: &mut TcpStream, deadline: Instant) -> Result<(Vec<u8>, usiz
         arm(stream, deadline)?;
         match stream.read(&mut chunk) {
             Ok(0) => return Err(400),
-            Ok(n) => buffer.extend_from_slice(&chunk[..n]),
+            // Class B: the head accounting above is what bounds the buffer against
+            // `MAX_HEAD_BYTES`, so `Read::read`'s `n <= chunk.len()` is checked here.
+            Ok(n) => match chunk.get(..n) {
+                Some(filled) => buffer.extend_from_slice(filled),
+                None => return Err(400),
+            },
             Err(_) => return Err(408),
         }
     };
@@ -108,9 +113,18 @@ fn fill_body(
     let mut filled = already;
     while filled < length {
         arm(stream, deadline)?;
-        match stream.read(&mut body[filled..]) {
+        // Class B: the unfilled tail through `get_mut`, so the loop condition is the
+        // reason the read has somewhere to go rather than a fact stated beside it.
+        let Some(tail) = body.get_mut(filled..) else {
+            return Err(400);
+        };
+        match stream.read(tail) {
             Ok(0) => return Err(400),
-            Ok(n) => filled += n,
+            // A read claiming more than the tail it was given cannot be accounted for.
+            Ok(n) => match filled.checked_add(n).filter(|f| *f <= length) {
+                Some(next) => filled = next,
+                None => return Err(400),
+            },
             Err(_) => return Err(408),
         }
     }
@@ -118,11 +132,15 @@ fn fill_body(
 }
 
 /// Index just past the CRLFCRLF that ends the head, if the buffer holds one.
+// Class C: `at` is the position of a four-byte window INSIDE `buffer`, so the sum is at
+// most its length; the terminator's width is named once, as the `windows` argument.
+#[allow(clippy::arithmetic_side_effects)]
 pub(super) fn find_head_end(buffer: &[u8]) -> Option<usize> {
+    const TERMINATOR: &[u8] = b"\r\n\r\n";
     buffer
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .map(|at| at + 4)
+        .windows(TERMINATOR.len())
+        .position(|window| window == TERMINATOR)
+        .map(|at| at + TERMINATOR.len())
 }
 
 #[cfg(test)]

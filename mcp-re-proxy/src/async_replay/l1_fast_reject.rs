@@ -125,15 +125,18 @@ impl<L2: AsyncAtomicReplayStore> L1FastRejectStore<L2> {
     /// deliberately CANNOT express `Fresh`: this is the type-level half of the
     /// L1-never-Fresh guarantee.
     fn l1_lookup(&self, key: &str) -> Option<ReplayDecision> {
-        if self.l1.lock().expect("l1 lock").contains(key) {
-            Some(ReplayDecision::Replay)
-        } else {
-            None
-        }
+        // A poisoned L1 is a MISS — the eviction case this module's invariant already
+        // covers: a key absent from L1 costs an authoritative L2 round trip and can never
+        // produce a false `Fresh`.
+        let l1 = self.l1.lock().ok()?;
+        l1.contains(key).then_some(ReplayDecision::Replay)
     }
 
     fn l1_record(&self, key: &str) {
-        self.l1.lock().expect("l1 lock").insert(key);
+        // Not recording is the same as evicting, and evicting is always safe here.
+        if let Ok(mut l1) = self.l1.lock() {
+            l1.insert(key);
+        }
     }
 }
 

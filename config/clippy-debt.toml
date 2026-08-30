@@ -33,10 +33,51 @@
 #
 # Re-emit with: python3 scripts/clippy_ratchet_gate.py --emit-registry
 
+# MCPRE-176 (partial operations in security/proof-bearing code) closed `expect_used`,
+# `indexing_slicing` and `arithmetic_side_effects` to zero across the seven runtime crates
+# it audited: mcp-re-core, mcp-re-http-profile, mcp-re-proxy, mcp-re-client-core,
+# mcp-re-client-proxy, mcp-re-client and mcp-re-transport. Their entries are KEPT AT ZERO
+# for the same reason `too_many_lines` was: an entry at zero is a measured fact that the
+# audit closed that lint for that crate, and removing it would make the next occurrence
+# look like a lint nobody had ever counted there. The sites that survive the audit carry
+# narrow, justified `#[allow]`s — the allow-discipline half of this gate is what keeps
+# those honest, and a crate-wide one would fail it.
+#
+# mcp-re-demo, mcp-re-host and mcp-re-test-paths were out of that audit's scope. The one
+# exception taken is the operations mcp-re-client actually depends on — `mcp-re-host`'s
+# OS-CSPRNG nonce source and its `SystemClock` — which were audited and are now a
+# justified allow and a `checked_neg` respectively.
+
+
+[[debt]]
+crate = "mcp-re-client"
+lint = "arithmetic_side_effects"
+count = 0
+
+[[debt]]
+crate = "mcp-re-client"
+lint = "excessive_nesting"
+count = 13
+
+[[debt]]
+crate = "mcp-re-client"
+lint = "expect_used"
+count = 0
+
+[[debt]]
+crate = "mcp-re-client"
+lint = "indexing_slicing"
+count = 0
+
+[[debt]]
+crate = "mcp-re-client"
+lint = "too_many_lines"
+count = 0
+
 [[debt]]
 crate = "mcp-re-client-core"
 lint = "arithmetic_side_effects"
-count = 1
+count = 0
 
 [[debt]]
 crate = "mcp-re-client-core"
@@ -46,7 +87,7 @@ count = 0
 [[debt]]
 crate = "mcp-re-client-core"
 lint = "expect_used"
-count = 1
+count = 0
 
 [[debt]]
 crate = "mcp-re-client-core"
@@ -61,7 +102,7 @@ count = 2
 [[debt]]
 crate = "mcp-re-client-proxy"
 lint = "indexing_slicing"
-count = 1
+count = 0
 
 [[debt]]
 crate = "mcp-re-client-proxy"
@@ -69,39 +110,14 @@ lint = "too_many_lines"
 count = 0
 
 [[debt]]
-crate = "mcp-re-client"
+crate = "mcp-re-core"
 lint = "arithmetic_side_effects"
-count = 15
-
-[[debt]]
-crate = "mcp-re-client"
-lint = "excessive_nesting"
-count = 13
-
-[[debt]]
-crate = "mcp-re-client"
-lint = "expect_used"
-count = 3
-
-[[debt]]
-crate = "mcp-re-client"
-lint = "indexing_slicing"
-count = 5
-
-[[debt]]
-crate = "mcp-re-client"
-lint = "too_many_lines"
 count = 0
 
 [[debt]]
 crate = "mcp-re-core"
-lint = "arithmetic_side_effects"
-count = 22
-
-[[debt]]
-crate = "mcp-re-core"
 lint = "indexing_slicing"
-count = 9
+count = 0
 
 [[debt]]
 crate = "mcp-re-demo"
@@ -116,12 +132,12 @@ count = 11
 [[debt]]
 crate = "mcp-re-host"
 lint = "arithmetic_side_effects"
-count = 3
+count = 2
 
 [[debt]]
 crate = "mcp-re-host"
 lint = "expect_used"
-count = 1
+count = 0
 
 [[debt]]
 crate = "mcp-re-host"
@@ -131,7 +147,7 @@ count = 1
 [[debt]]
 crate = "mcp-re-http-profile"
 lint = "arithmetic_side_effects"
-count = 28
+count = 0
 
 [[debt]]
 crate = "mcp-re-http-profile"
@@ -141,12 +157,12 @@ count = 18
 [[debt]]
 crate = "mcp-re-http-profile"
 lint = "expect_used"
-count = 8
+count = 0
 
 [[debt]]
 crate = "mcp-re-http-profile"
 lint = "indexing_slicing"
-count = 9
+count = 0
 
 [[debt]]
 crate = "mcp-re-http-profile"
@@ -156,22 +172,22 @@ count = 0
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "arithmetic_side_effects"
-count = 42
+count = 0
 
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "excessive_nesting"
-count = 87
+count = 83
 
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "expect_used"
-count = 32
+count = 0
 
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "indexing_slicing"
-count = 40
+count = 0
 
 [[debt]]
 crate = "mcp-re-proxy"
@@ -191,17 +207,17 @@ count = 1
 [[debt]]
 crate = "mcp-re-transport"
 lint = "arithmetic_side_effects"
-count = 3
+count = 0
 
 [[debt]]
 crate = "mcp-re-transport"
 lint = "excessive_nesting"
-count = 3
+count = 2
 
 [[debt]]
 crate = "mcp-re-transport"
 lint = "indexing_slicing"
-count = 3
+count = 0
 
 [[debt]]
 crate = "mcp-re-transport"

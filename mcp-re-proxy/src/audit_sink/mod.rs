@@ -228,7 +228,7 @@ fn reserve_slot(queued: &std::sync::atomic::AtomicUsize, ceiling: usize) -> bool
         .fetch_update(
             std::sync::atomic::Ordering::Relaxed,
             std::sync::atomic::Ordering::Relaxed,
-            |current| (current < ceiling).then_some(current + 1),
+            |current| (current < ceiling).then(|| current.saturating_add(1)),
         )
         .is_ok()
 }

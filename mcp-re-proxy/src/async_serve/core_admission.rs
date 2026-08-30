@@ -84,7 +84,12 @@ impl CoreAdmission {
     /// `drain_grace >= request_deadline` guarantees a clean, zero-abandoned drain; the grace
     /// is the hard ceiling, so a wedged request cannot delay process exit past it.
     pub(super) async fn drain(&self, grace: std::time::Duration) {
-        let deadline = tokio::time::Instant::now() + grace;
+        // Class R: the grace is a HARD CEILING on how long teardown may wait, so one that
+        // cannot be turned into an instant is no bound at all — the drain declines to
+        // start rather than parking process exit behind a deadline it cannot enforce.
+        let Some(deadline) = tokio::time::Instant::now().checked_add(grace) else {
+            return;
+        };
         while self.in_flight_requests.load(Ordering::Acquire) > 0 {
             if tokio::time::Instant::now() >= deadline {
                 break;

@@ -249,7 +249,8 @@ _PROXY_LIB_SRCS = [
     "src/delegated_response_signer.rs",
     # ADR-MCPRE-052 §4/§6 + ADR-MCPRE-051 §5: hot-path delegated response signing — the
     # atomically-swappable delegated-key snapshot + cold-path rotor. Always compiled.
-    "src/delegated_server_signer.rs",
+    "src/delegated_server_signer/mod.rs",
+    "src/delegated_server_signer/retry_schedule.rs",
     # ADR-MCPRE-052 phase 2 (MCPRE-122): production wiring — builds the delegated signer
     # + cold-path rotor from a parsed Config + a ROOT issuer. Always compiled.
     "src/delegated_wiring.rs",
@@ -269,13 +270,15 @@ _PROXY_LIB_SRCS = [
     "src/transparency/covered_set.rs",
     "src/transparency/durability.rs",
     "src/transparency/attestation.rs",
+    "src/transparency/durability_bounds.rs",
     # Trust-document interpretation: the authoritative rules over the bytes, owned apart
     # from the parser that was merely their first caller.
     "src/trust_document.rs",
     "src/key_source.rs",
     # The KMS/STS endpoint admission rule, owned apart from the parser that was its
     # first caller: key sources reach it without meeting a command line.
-    "src/kms_endpoint_policy.rs",
+    "src/kms_endpoint_policy/mod.rs",
+    "src/kms_endpoint_policy/authority.rs",
     # ADR-MCPS-028: provider-agnostic cloud-KMS response signer core (the shared
     # protocol mapping behind the #3838 delegation seam). Always compiled.
     "src/kms_keysource/mod.rs",
@@ -363,7 +366,8 @@ _PROXY_LIB_SRCS = [
     "src/app.rs",
     # ADR-MCPRE-057 §9 / ADR-MCPRE-058 §14: the owner of a partly-built runtime —
     # lifecycle state cannot advance beyond the ownership it describes. Crate-internal.
-    "src/materializing_runtime.rs",
+    "src/materializing_runtime/mod.rs",
+    "src/materializing_runtime/completeness.rs",
     # ADR-MCPRE-057 §3: the global runtime lifecycle as a value, with one closed
     # transition relation. Represents which transitions are LEGAL; it is not
     # synchronization (§5.4). Crate-internal.
@@ -392,7 +396,8 @@ _PROXY_LIB_SRCS = [
     "src/materialized_runtime.rs",
     # ADR-MCPRE-056 §9: owned background workers — structural halt, bounded
     # reclamation, named stragglers. Crate-internal.
-    "src/managed_worker.rs",
+    "src/managed_worker/mod.rs",
+    "src/managed_worker/halt.rs",
     # ADR-MCPRE-056 §8: the trust plane — owns the swappable store and its refresh
     # workers; hands out a verification resolver and a read-only signer directory.
     "src/trust_plane/mod.rs",
@@ -434,11 +439,13 @@ _PROXY_LIB_SRCS = [
     # consults on every request, since rustls consults the CRLs at the handshake alone.
     "src/client_crl_publication.rs",
     "src/client_revocation.rs",
-    "src/stage_timers.rs",
+    "src/stage_timers/mod.rs",
+    "src/stage_timers/accumulator.rs",
     "src/blocking_mtls_harness/connection.rs",
     "src/blocking_mtls_harness/deadline_stream.rs",
     "src/blocking_mtls_harness/http1.rs",
     "src/blocking_mtls_harness/mod.rs",
+    "src/blocking_mtls_harness/http1_framing.rs",
     "src/tls_listener_state/assembly.rs",
     "src/tls_listener_state/auth_epoch.rs",
     "src/tls_listener_state/client_verifier.rs",
@@ -469,7 +476,8 @@ _PROXY_LIB_SRCS = [
     # MCPRE-113 (ADR-MCPRE-051 §1): the per-core serving fleet (per-core tokio
     # runtimes + SO_REUSEPORT listeners + Linux CPU pinning) — the production data
     # plane.
-    "src/async_fleet.rs",
+    "src/async_fleet/mod.rs",
+    "src/async_fleet/core_runtime.rs",
     # MCPRE-117 (ADR-MCPRE-051 §4): the async authoritative replay tier (async store
     # contract + L1-never-Fresh wrapper) — the only replay path.
     "src/async_replay/mod.rs",
@@ -487,7 +495,8 @@ _PROXY_LIB_SRCS = [
     "src/async_inner.rs",
     # ADR-MCPRE-051 §3: the production async inner plane — pooled hyper client to
     # stateless Streamable-HTTP inner backends.
-    "src/http_inner.rs",
+    "src/http_inner/mod.rs",
+    "src/http_inner/selection.rs",
     "src/inner_plane_bound.rs",
     # MCPRE-117 (ADR-MCPRE-051 §4): the async Redis authoritative replay backend
     # (SET NX PX over the tokio async client). #[cfg(feature = "redis_replay")] —
@@ -496,7 +505,8 @@ _PROXY_LIB_SRCS = [
     "src/async_redis_store.rs",
     # ADR-MCPS-047: the MRTR continuation correlation store — trait + in-memory impl
     # always compiled; the Redis backend is redis_replay-gated inside the module.
-    "src/continuation_store.rs",
+    "src/continuation_store/mod.rs",
+    "src/continuation_store/in_memory.rs",
     # ADR-MCPS-047: the Redis-backed continuation store (SET PX + GETDEL). #[cfg(feature
     # = "redis_replay")] — cfg'd out of the default build, like async_redis_store.
     "src/redis_continuation_store.rs",
@@ -510,6 +520,8 @@ _PROXY_LIB_SRCS = [
     "src/transport/ingress/mod.rs",
     "src/transport/ingress/v1.rs",
     "src/transport/ingress/v2.rs",
+    "src/transport/ingress/v1_wire.rs",
+    "src/transport/ingress/v2_wire.rs",
     "src/transport/identity.rs",
     # ADR-MCPS-021: bounded trust-propagation cache (revocation window T).
     "src/trust_plane/trust_cache.rs",

@@ -22,6 +22,7 @@
 //!   read as a channel failure and invite the retry the receipt''s own `retry_safety` may be
 //!   refusing.
 
+use mcp_re_client_proxy::ProxyError;
 use mcp_re_client_proxy::ResponseKind;
 use serde_json::json;
 use serde_json::Value;
@@ -81,6 +82,68 @@ pub(super) fn render_verified(
             (200, Some(kind), body)
         }
     }
+}
+
+/// Render a proxy failure as a JSON-RPC error the local caller can act on.
+///
+/// The sibling of [`render_verified`], and the reason `dispatch` reads as four steps: this
+/// is not a server verdict but a statement that the exchange could not be completed or
+/// could not be believed, and the two must never be rendered by one piece of code.
+pub(super) fn render_gateway_failure(
+    error: &ProxyError,
+    id: &Value,
+) -> (u16, Option<&'static str>, Vec<u8>) {
+    let detail = match &error {
+        ProxyError::UnknownRoute(_) => "unknown route",
+        ProxyError::MalformedRequest => "malformed request",
+        ProxyError::Transport(_) => "remote leg unavailable",
+        ProxyError::FailedClosed(_) => "response failed verification",
+    };
+    // The frozen `mcp-re.*` reason, when there is one. The local client is
+    // inside the trust boundary, so naming why verification failed helps an
+    // operator and tells an attacker on the far side nothing it did not choose.
+    //
+    // Assembled BEFORE the body rather than written back into it through
+    // `body["error"]["data"]`: that index panics unless `error` is an object,
+    // which is a fact about the literal three lines above it rather than
+    // anything this expression establishes.
+    let mut inner = serde_json::Map::new();
+    inner.insert(
+        "code".to_owned(),
+        json!(mcp_re_core::MCP_RE_JSON_RPC_ERROR_CODE),
+    );
+    inner.insert("message".to_owned(), json!(detail));
+    if let Some(wire_code) = error.wire_code() {
+        inner.insert(
+            "data".to_owned(),
+            json!({ "mcp_re_error": { "wire_code": wire_code } }),
+        );
+    }
+    let body = json!({
+    "jsonrpc": "2.0",
+    "id": id,
+    "error": Value::Object(inner),
+    });
+    let status = match &error {
+        ProxyError::UnknownRoute(_) => 404,
+        // Raised entirely locally, before anything is signed or sent, so it is
+        // a caller error and not a verdict on the remote leg. Reporting it as
+        // 502 points an operator at TLS material and trust anchors for a
+        // malformed local request, and makes "502 means the reply could not be
+        // verified" untrue of the one status that carries that meaning.
+        ProxyError::MalformedRequest => 400,
+        ProxyError::Transport(_) | ProxyError::FailedClosed(_) => 502,
+    };
+    (
+        status,
+        None,
+        // `body` is a `serde_json::Value` assembled just above, and `to_vec`
+        // writes into a `Vec` whose `io::Write` never errors. `to_vec` fails on
+        // a `Serialize` that returns an error or a non-string map key; `Value`'s
+        // own `Serialize` is infallible and every key here is a string literal.
+        #[allow(clippy::expect_used)]
+        serde_json::to_vec(&body).expect("a serde_json::Value serializes into a Vec"),
+    )
 }
 
 pub(super) fn local_error(id: &Value, message: &str) -> String {

@@ -9,6 +9,9 @@
 
 use std::io;
 use std::io::Read;
+
+use super::http1_framing::read_bytes;
+use super::http1_framing::reject_malformed_header_framing;
 use std::io::Write;
 
 use crate::tls::ServerLimits;
@@ -31,45 +34,6 @@ pub(super) struct HttpRequest {
 /// SSE. Bounded by `limits`: the header block may not exceed `max_header_bytes`
 /// and the body may not exceed `max_body_bytes` (either overflow fails closed
 /// with an error rather than allocating without bound).
-/// Reject malformed HTTP/1.1 header framing (issue #38) before the header block is
-/// handed to the line-based parser. Enforces strict CRLF and bans obs-fold:
-///   * a bare CR (not immediately followed by LF) — `str::lines()` would embed it
-///     verbatim in a header value;
-///   * a bare LF (not immediately preceded by CR) — `str::lines()` splits on it, so
-///     it would smuggle an extra header line;
-///   * an obs-fold continuation line (a line beginning with SP/HTAB after a CRLF) —
-///     RFC 7230 §3.2.4 requires rejection, and the downstream parser would silently
-///     drop it (a colon-less line) rather than fold it.
-///
-/// Fails closed with `InvalidData` so the connection is dropped, consistent with the
-/// other framing guards here (oversized header / body).
-fn reject_malformed_header_framing(header_bytes: &[u8]) -> io::Result<()> {
-    for (i, &byte) in header_bytes.iter().enumerate() {
-        match byte {
-            b'\r' if header_bytes.get(i + 1) != Some(&b'\n') => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "malformed HTTP header framing: bare CR (not part of a CRLF)",
-                ));
-            }
-            b'\n' if i == 0 || header_bytes[i - 1] != b'\r' => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "malformed HTTP header framing: bare LF (not part of a CRLF)",
-                ));
-            }
-            b'\n' if matches!(header_bytes.get(i + 1), Some(b' ') | Some(b'\t')) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "malformed HTTP header framing: obs-fold continuation line",
-                ));
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
 pub(super) fn read_http_request<S: Read>(
     stream: &mut S,
     limits: &ServerLimits,
@@ -78,9 +42,14 @@ pub(super) fn read_http_request<S: Read>(
     let mut chunk = [0u8; 1024];
 
     // Read until end-of-headers, capping total header bytes.
+    let terminator = b"\r\n\r\n";
     let header_end = loop {
-        if let Some(pos) = find_subsequence(&buf, b"\r\n\r\n") {
-            break pos + 4;
+        if let Some(pos) = find_subsequence(&buf, terminator) {
+            // Class C: `pos` is where the terminator starts, so the sum is at most
+            // `buf.len()`.
+            #[allow(clippy::arithmetic_side_effects)]
+            let end = pos + terminator.len();
+            break end;
         }
         if buf.len() > limits.max_header_bytes {
             return Err(io::Error::new(
@@ -95,10 +64,13 @@ pub(super) fn read_http_request<S: Read>(
                 "connection closed before end of HTTP headers",
             ));
         }
-        buf.extend_from_slice(&chunk[..n]);
+        buf.extend_from_slice(read_bytes(&chunk, n)?);
     };
 
-    let header_bytes = &buf[..header_end];
+    // Class B: one split at the terminator just located.
+    let (header_bytes, rest) = buf
+        .split_at_checked(header_end)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "truncated HTTP header block"))?;
     reject_malformed_header_framing(header_bytes)?;
     let header_block = String::from_utf8_lossy(header_bytes).into_owned();
     let content_length = parse_content_length(&header_block)?.unwrap_or(0);
@@ -109,7 +81,7 @@ pub(super) fn read_http_request<S: Read>(
         ));
     }
 
-    let mut body = buf[header_end..].to_vec();
+    let mut body = rest.to_vec();
     while body.len() < content_length {
         // Defend against a Content-Length that under-states a flood of body bytes.
         if body.len() > limits.max_body_bytes {
@@ -122,7 +94,7 @@ pub(super) fn read_http_request<S: Read>(
         if n == 0 {
             break;
         }
-        body.extend_from_slice(&chunk[..n]);
+        body.extend_from_slice(read_bytes(&chunk, n)?);
     }
     body.truncate(content_length);
     Ok(HttpRequest { header_block, body })

@@ -18,11 +18,10 @@ use std::net::TcpStream;
 use std::time::Instant;
 
 use mcp_re_client_proxy::CallParams;
-use mcp_re_client_proxy::ProxyError;
-use serde_json::json;
 use serde_json::Value;
 
 use super::render::local_error;
+use super::render::render_gateway_failure;
 use super::render::render_verified;
 
 use super::close::drain;
@@ -35,13 +34,27 @@ use super::ServeContext;
 use super::EXCHANGE_DEADLINE;
 use super::WRITE_DEADLINE;
 
+/// The write phase's own budget, armed from now.
+///
+/// Saturating rather than refusing: this is armed AFTER an exchange the remote server may
+/// already have executed, and the reply still has to be delivered.
+fn write_budget() -> Instant {
+    Instant::now()
+        .checked_add(WRITE_DEADLINE)
+        .unwrap_or_else(Instant::now)
+}
+
 pub(super) fn handle_connection(mut stream: TcpStream, context: &ServeContext) {
-    let deadline = Instant::now() + EXCHANGE_DEADLINE;
+    // Class R: a whole-phase budget, so an unrepresentable one is no budget at all and
+    // the connection is closed rather than served without one.
+    let Some(deadline) = Instant::now().checked_add(EXCHANGE_DEADLINE) else {
+        return;
+    };
     let _ = stream.set_nonblocking(false);
     let request = match read_request(&mut stream, deadline, context.allow_any_host) {
         Ok(request) => request,
         Err(status) => {
-            let write_deadline = Instant::now() + WRITE_DEADLINE;
+            let write_deadline = write_budget();
             let _ = write_response(
                 &mut DeadlineWriter::new(&stream, write_deadline),
                 status,
@@ -60,7 +73,7 @@ pub(super) fn handle_connection(mut stream: TcpStream, context: &ServeContext) {
     // A budget of its own, armed from here: the read phase may legitimately have used
     // its whole deadline, and a reply to an exchange the remote server has already
     // executed still has to be delivered.
-    let write_deadline = Instant::now() + WRITE_DEADLINE;
+    let write_deadline = write_budget();
     let _ = write_response(
         &mut DeadlineWriter::new(&stream, write_deadline),
         status,
@@ -105,10 +118,20 @@ fn dispatch(
     let id = plain.get("id").cloned().unwrap_or(Value::Null);
 
     let now = (context.clock)();
+    // Class R, and the signed one: `expires` is an RFC 9421 parameter a verifier reads as
+    // fact. A wrapped value lands in the past (rejected everywhere, silently) or far in
+    // the future (valid long past the lifetime an operator configured). Neither is signed.
+    let Some(expires) = now.checked_add(context.request_lifetime_secs) else {
+        return (
+            400,
+            None,
+            local_error(&id, "request lifetime does not fit the clock").into(),
+        );
+    };
     let params = CallParams {
         nonce: (context.nonce)(),
         created: now,
-        expires: now + context.request_lifetime_secs,
+        expires,
         now_unix: now,
     };
 
@@ -116,43 +139,7 @@ fn dispatch(
         Ok(response) => render_verified(&response, &id),
         // An UNVERIFIABLE response is not a server verdict — the channel is compromised
         // or misconfigured — so it is reported as a gateway failure, never as a result.
-        Err(error) => {
-            let detail = match &error {
-                ProxyError::UnknownRoute(_) => "unknown route",
-                ProxyError::MalformedRequest => "malformed request",
-                ProxyError::Transport(_) => "remote leg unavailable",
-                ProxyError::FailedClosed(_) => "response failed verification",
-            };
-            let mut body = json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": {
-                    "code": mcp_re_core::MCP_RE_JSON_RPC_ERROR_CODE,
-                    "message": detail,
-                },
-            });
-            // The frozen `mcp-re.*` reason, when there is one. The local client is
-            // inside the trust boundary, so naming why verification failed helps an
-            // operator and tells an attacker on the far side nothing it did not choose.
-            if let Some(wire_code) = error.wire_code() {
-                body["error"]["data"] = json!({ "mcp_re_error": { "wire_code": wire_code } });
-            }
-            let status = match &error {
-                ProxyError::UnknownRoute(_) => 404,
-                // Raised entirely locally, before anything is signed or sent, so it is
-                // a caller error and not a verdict on the remote leg. Reporting it as
-                // 502 points an operator at TLS material and trust anchors for a
-                // malformed local request, and makes "502 means the reply could not be
-                // verified" untrue of the one status that carries that meaning.
-                ProxyError::MalformedRequest => 400,
-                ProxyError::Transport(_) | ProxyError::FailedClosed(_) => 502,
-            };
-            (
-                status,
-                None,
-                serde_json::to_vec(&body).expect("error body serializes"),
-            )
-        }
+        Err(error) => render_gateway_failure(&error, &id),
     }
 }
 

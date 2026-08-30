@@ -47,9 +47,8 @@ pub fn issue_delegation_credential_with_signer(
     claims: &DelegationClaims,
     sign_root: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
 ) -> Result<String, HttpProfileError> {
-    // Propagated rather than asserted. This function already returns the verdict for a
-    // credential it cannot form, so a header or claim set that will not serialize is one
-    // more instance of that verdict — there is no semantics to preserve by panicking.
+    // Propagated: this function already returns the verdict for a credential it cannot
+    // form, and a header or claim set that will not serialize is one more instance of it.
     let unformable = |_| HttpProfileError::DelegationCredentialInvalid;
     let h = b64url_encode(&serde_json::to_vec(header).map_err(unformable)?);
     let p = b64url_encode(&serde_json::to_vec(claims).map_err(unformable)?);
@@ -80,12 +79,9 @@ pub fn issue_delegation_credential(
         b64url_decode(&root_key.sign(input))
             .map_err(|_| HttpProfileError::DelegationCredentialInvalid)
     })
-    // The one assertion left on this path, and it is about THIS crate rather than about
-    // any input: `header`/`claims` are plain `Serialize` structs of owned strings and
-    // integers, `b64url_decode` is the inverse of the `b64url_encode` that
-    // `SigningKey::sign` just applied, and an in-process Ed25519 signature is 64 bytes by
-    // construction. No configuration, peer, clock or provider participates. A failure here
-    // is a defect in this crate's own primitives, which is what the signer-seam sibling
-    // above returns a `Result` for and this in-process convenience does not.
+    // Class A, about THIS crate rather than any input: `header`/`claims` are plain
+    // `Serialize` structs, `b64url_decode` inverts the `b64url_encode` `SigningKey::sign`
+    // just applied, and an in-process Ed25519 signature is 64 bytes by construction. No
+    // configuration, peer, clock or provider participates.
     .expect("the in-process signer's own serialization, encoding and signature length")
 }

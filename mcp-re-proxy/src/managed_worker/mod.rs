@@ -63,6 +63,9 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use std::time::Instant;
 
+mod halt;
+pub use halt::Halt;
+
 /// How long [`WorkerSet::halt_and_reclaim`] waits for a worker to notice the halt.
 ///
 /// Every loop in the crate polls its halt in 50ms increments, so a healthy worker exits
@@ -72,82 +75,6 @@ pub(crate) const JOIN_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Poll interval while waiting for a worker to finish.
 const JOIN_POLL: Duration = Duration::from_millis(10);
-
-/// A stop signal with two independent sources.
-///
-/// A worker asks only whether it should stop, never why. That is the point of the type:
-/// a reload loop has no business distinguishing "SIGTERM arrived" from "the plane I
-/// belong to failed to finish materializing" — both mean stop, and coupling worker bodies
-/// to deployment-global state is what made the original threads impossible to own.
-///
-/// The signal is MONOTONIC. Once [`Halt::requested`] has observed either source raised,
-/// it stays raised for the life of that `Halt` and every clone of it, even if the
-/// underlying flag is later cleared. A worker that has begun winding down must not be
-/// able to see the world become healthy again half way through.
-#[derive(Clone)]
-pub struct Halt {
-    deployment: Arc<AtomicBool>,
-    owner: Arc<AtomicBool>,
-    latched: Arc<AtomicBool>,
-}
-
-impl Halt {
-    /// Whether this worker should stop now.
-    ///
-    /// Stays true once raised, including after the owning set is gone — the worker's own
-    /// clone keeps the flags alive — so a straggler that wakes late exits rather than
-    /// resuming its loop.
-    pub fn requested(&self) -> bool {
-        if self.latched.load(Ordering::SeqCst) {
-            return true;
-        }
-        if self.deployment.load(Ordering::SeqCst) || self.owner.load(Ordering::SeqCst) {
-            // Latch, so the answer cannot revert. `deployment` is owned by the CALLER of
-            // `run`, which makes "raised" something this type observes rather than
-            // controls; without the latch a caller that reset its flag could restart a
-            // worker that had already decided to stop.
-            self.latched.store(true, Ordering::SeqCst);
-            return true;
-        }
-        false
-    }
-
-    /// Sleep up to `total`, waking early if a halt is requested. Returns `true` if it
-    /// was cut short, so a caller can `return` without re-reading the flag.
-    ///
-    /// Naps in small increments rather than sleeping the whole interval, so a stop is
-    /// observed within one increment instead of after a full reload or rotation cadence.
-    pub fn sleep(&self, total: Duration) -> bool {
-        const TICK: Duration = Duration::from_millis(50);
-        let deadline = Instant::now() + total;
-        loop {
-            if self.requested() {
-                return true;
-            }
-            let now = Instant::now();
-            if now >= deadline {
-                return false;
-            }
-            std::thread::sleep(TICK.min(deadline - now));
-        }
-    }
-
-    /// A halt over caller-supplied sources, so each can be raised independently.
-    #[cfg(test)]
-    fn from_parts(deployment: Arc<AtomicBool>, owner: Arc<AtomicBool>) -> Halt {
-        Halt {
-            deployment,
-            owner,
-            latched: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    /// A halt with no owning set, raised only by the deployment flag.
-    #[cfg(test)]
-    fn detached(deployment: Arc<AtomicBool>) -> Halt {
-        Halt::from_parts(deployment, Arc::new(AtomicBool::new(false)))
-    }
-}
 
 /// One owned background thread.
 struct ManagedWorker {
@@ -184,11 +111,11 @@ impl WorkerSet {
     /// All halts from one set share a latch, so a raise observed by any worker is
     /// permanent for all of them.
     pub fn halt(&self) -> Halt {
-        Halt {
-            deployment: Arc::clone(&self.deployment),
-            owner: Arc::clone(&self.owner),
-            latched: Arc::clone(&self.latched),
-        }
+        Halt::over(
+            Arc::clone(&self.deployment),
+            Arc::clone(&self.owner),
+            Arc::clone(&self.latched),
+        )
     }
 
     /// Start `body` on a named thread this set owns.
@@ -245,7 +172,10 @@ impl WorkerSet {
             return Vec::new();
         }
         self.owner.store(true, Ordering::SeqCst);
-        let deadline = Instant::now() + JOIN_DEADLINE;
+        // Class R: this budget bounds how long shutdown may wait, so a deadline that
+        // cannot be represented is treated as already reached.
+        let now = Instant::now();
+        let deadline = now.checked_add(JOIN_DEADLINE).unwrap_or(now);
         let mut stragglers = Vec::new();
         for worker in self.workers.drain(..) {
             while !worker.handle.is_finished() && Instant::now() < deadline {
@@ -432,68 +362,6 @@ mod tests {
             observed.load(Ordering::SeqCst),
             "a worker waking after its set was dropped must still see the halt raised"
         );
-    }
-
-    /// Each source raises the halt on its own. Asserted directly, with the other source
-    /// held down, so neither case can pass by accident of the other being set.
-    #[test]
-    fn either_source_alone_raises_the_halt() {
-        // Deployment stopping, owner intact.
-        let deployment = flag();
-        let owner = flag();
-        let halt = Halt::from_parts(Arc::clone(&deployment), Arc::clone(&owner));
-        assert!(!halt.requested());
-        deployment.store(true, Ordering::SeqCst);
-        assert!(halt.requested(), "the deployment halt must raise it");
-        assert!(
-            !owner.load(Ordering::SeqCst),
-            "the owner source is untouched"
-        );
-
-        // Owner disappearing, deployment intact — the case a single shared flag could
-        // not express without telling the process that SIGTERM had arrived.
-        let deployment = flag();
-        let owner = flag();
-        let halt = Halt::from_parts(Arc::clone(&deployment), Arc::clone(&owner));
-        assert!(!halt.requested());
-        owner.store(true, Ordering::SeqCst);
-        assert!(halt.requested(), "the structural halt must raise it");
-        assert!(
-            !deployment.load(Ordering::SeqCst),
-            "the deployment source is untouched"
-        );
-    }
-
-    /// The halt is a monotonic lifecycle signal, not a boolean convenience: a worker
-    /// that has begun winding down must never see the world become healthy again.
-    ///
-    /// `deployment` belongs to the caller of `run`, so "raised" is something this type
-    /// observes rather than controls; the latch is what makes the observation stick.
-    #[test]
-    fn a_raised_halt_never_becomes_unraised() {
-        for clear_source in [true, false] {
-            let deployment = flag();
-            let owner = flag();
-            let halt = Halt::from_parts(Arc::clone(&deployment), Arc::clone(&owner));
-            let source = if clear_source { &deployment } else { &owner };
-
-            source.store(true, Ordering::SeqCst);
-            assert!(halt.requested());
-            source.store(false, Ordering::SeqCst);
-
-            assert!(
-                halt.requested(),
-                "a halt observed as raised must stay raised"
-            );
-            assert!(
-                halt.clone().requested(),
-                "and must stay raised for every clone, including ones taken afterwards"
-            );
-            assert!(
-                halt.sleep(Duration::from_secs(30)),
-                "and must keep cutting sleeps short"
-            );
-        }
     }
 
     #[test]

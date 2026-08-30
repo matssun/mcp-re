@@ -10,7 +10,6 @@
 
 use std::collections::BTreeSet;
 
-use mcp_re_core::b64url_decode;
 use mcp_re_core::b64url_encode;
 use mcp_re_core::parse_hash_id;
 use mcp_re_core::verify_ed25519_with;
@@ -19,7 +18,6 @@ use mcp_re_core::VerificationKey;
 
 use super::v1::DEFAULT_LB_ASSERTION_MAX_AGE_SECS;
 use super::LbKeyEntry;
-use crate::transport::validate_asserted_identity_value;
 use crate::transport::IdentitySource;
 use crate::transport::TransportIdentity;
 
@@ -51,10 +49,6 @@ use crate::transport::TransportIdentity;
 /// one format can never be re-framed as the other (cross-version confusion).
 const LB_ASSERTION_V2_DOMAIN_TAG: &[u8] = b"mcp-re/lb-ingress-assertion/v2";
 
-/// An anti-DoS ceiling on the total v2 wire-assertion length (bytes). Generous
-/// relative to the field set; a legitimate assertion is a few hundred bytes.
-const MAX_V2_ASSERTION_WIRE_LEN: usize = 64 * 1024;
-
 /// The attestor's asserted client-certificate verification verdict, carried in a
 /// v2 assertion. Mode C is **bind-not-interpret** (ADR-023 §C3): the node RECORDS
 /// this fact and admits ONLY [`Verified`](Self::Verified) — it performs no
@@ -80,7 +74,7 @@ impl AttestedCertVerification {
         }
     }
 
-    fn from_discriminant(b: u8) -> Option<Self> {
+    pub(super) fn from_discriminant(b: u8) -> Option<Self> {
         match b {
             1 => Some(AttestedCertVerification::Verified),
             2 => Some(AttestedCertVerification::Failed),
@@ -122,7 +116,7 @@ impl AttestedRevocation {
         }
     }
 
-    fn from_discriminant(b: u8) -> Option<Self> {
+    pub(super) fn from_discriminant(b: u8) -> Option<Self> {
         match b {
             1 => Some(AttestedRevocation::Good),
             2 => Some(AttestedRevocation::Revoked),
@@ -462,64 +456,6 @@ impl LbAssertionV2Binding {
             .map(|entry| &entry.key)
     }
 
-    /// Parse a presented v2 assertion header value into its fields + signature.
-    ///
-    /// Wire form: eleven `.`-separated base64url-no-pad fields (see
-    /// [`LbAssertionV2::to_wire`]). Any framing / decoding / shape violation fails
-    /// closed as [`LbAssertionV2Rejection::Malformed`].
-    fn parse(value: &str) -> Result<(LbAssertionV2, String), LbAssertionV2Rejection> {
-        let trimmed = value.trim();
-        if trimmed.is_empty() || trimmed.len() > MAX_V2_ASSERTION_WIRE_LEN {
-            return Err(LbAssertionV2Rejection::Malformed);
-        }
-        let parts: Vec<&str> = trimmed.split('.').collect();
-        if parts.len() != 11 {
-            return Err(LbAssertionV2Rejection::Malformed);
-        }
-        let key_id = decode_v2_str(parts[0])?;
-        let ingress_identity = decode_v2_str(parts[1])?;
-        let asserted_client_identity = decode_v2_str(parts[2])?;
-        let request_hash = decode_v2_str(parts[3])?;
-        let audience = decode_v2_str(parts[4])?;
-        let cert_verification_result =
-            decode_v2_enum(parts[5], AttestedCertVerification::from_discriminant)?;
-        let revocation_result = decode_v2_enum(parts[6], AttestedRevocation::from_discriminant)?;
-        let validation_time = decode_v2_i64(parts[7])?;
-        let crl_next_update = decode_v2_i64(parts[8])?;
-        let expires_at = decode_v2_expires_at(parts[9])?;
-        let signature_b64url = parts[10].to_string();
-        if signature_b64url.is_empty() {
-            return Err(LbAssertionV2Rejection::Malformed);
-        }
-        // Strict shape on the delegated identity (length-bound, no control chars,
-        // non-empty), mirroring the Tier-2/Tier-3 header paths.
-        if validate_asserted_identity_value(&asserted_client_identity).is_err() {
-            return Err(LbAssertionV2Rejection::Malformed);
-        }
-        // key_id / ingress_identity / request_hash / audience must be non-empty and
-        // control-char-free too.
-        for field in [&key_id, &ingress_identity, &request_hash, &audience] {
-            if field.is_empty() || field.chars().any(|c| c.is_control()) {
-                return Err(LbAssertionV2Rejection::Malformed);
-            }
-        }
-        Ok((
-            LbAssertionV2 {
-                key_id,
-                ingress_identity,
-                asserted_client_identity,
-                request_hash,
-                audience,
-                cert_verification_result,
-                revocation_result,
-                validation_time,
-                crl_next_update,
-                expires_at,
-            },
-            signature_b64url,
-        ))
-    }
-
     /// Verify a presented Mode-C assertion against the in-hand request hash and the
     /// current time, yielding the VERIFIED [`AttestedIngressVerified`] on success.
     ///
@@ -554,7 +490,7 @@ impl LbAssertionV2Binding {
         now_unix: i64,
     ) -> Result<AttestedIngressVerified, LbAssertionV2Rejection> {
         // 1. Parse (framing + strict field shape).
-        let (assertion, signature_b64url) = Self::parse(assertion_value)?;
+        let (assertion, signature_b64url) = super::v2_wire::parse(assertion_value)?;
         // 2. Key lookup — unknown key id fails closed.
         let key = self
             .key_for(&assertion.key_id)
@@ -571,7 +507,11 @@ impl LbAssertionV2Binding {
         // 4. Freshness (symmetric window; reject implausibly-future timestamps too),
         //    plus the optional hard expiry.
         let age = now_unix.saturating_sub(assertion.validation_time);
-        if age > self.max_age_secs || age < -self.max_age_secs {
+        // Class R: the window is symmetric, so it is stated as one comparison against the
+        // magnitude. Negating `max_age_secs` to build the lower edge was the one partial
+        // operation between a signature that had just verified and the freshness verdict
+        // that admits the assertion — `i64::MIN` has no negation.
+        if age.saturating_abs() > self.max_age_secs {
             return Err(LbAssertionV2Rejection::Stale);
         }
         if let Some(deadline) = assertion.expires_at {
@@ -620,54 +560,6 @@ impl LbAssertionV2Binding {
             revocation_result: assertion.revocation_result,
             crl_next_update: assertion.crl_next_update,
         })
-    }
-}
-
-/// Decode one base64url-no-pad v2 field to a UTF-8 string; any decode or UTF-8
-/// error fails closed as [`LbAssertionV2Rejection::Malformed`].
-fn decode_v2_str(field: &str) -> Result<String, LbAssertionV2Rejection> {
-    let bytes = b64url_decode(field).map_err(|_| LbAssertionV2Rejection::Malformed)?;
-    String::from_utf8(bytes).map_err(|_| LbAssertionV2Rejection::Malformed)
-}
-
-/// Decode a single-byte enum discriminant field via `from_disc`; a wrong length or
-/// an unassigned discriminant fails closed as [`LbAssertionV2Rejection::Malformed`].
-fn decode_v2_enum<T>(
-    field: &str,
-    from_disc: fn(u8) -> Option<T>,
-) -> Result<T, LbAssertionV2Rejection> {
-    let bytes = b64url_decode(field).map_err(|_| LbAssertionV2Rejection::Malformed)?;
-    match bytes.as_slice() {
-        [b] => from_disc(*b).ok_or(LbAssertionV2Rejection::Malformed),
-        _ => Err(LbAssertionV2Rejection::Malformed),
-    }
-}
-
-/// Decode a fixed 8-byte big-endian `i64` field; a wrong length fails closed as
-/// [`LbAssertionV2Rejection::Malformed`].
-fn decode_v2_i64(field: &str) -> Result<i64, LbAssertionV2Rejection> {
-    let bytes = b64url_decode(field).map_err(|_| LbAssertionV2Rejection::Malformed)?;
-    let array: [u8; 8] = bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| LbAssertionV2Rejection::Malformed)?;
-    Ok(i64::from_be_bytes(array))
-}
-
-/// Decode the optional-`expires_at` field: a single presence byte `0` (absent) or
-/// `1` followed by a fixed 8-byte big-endian `i64` (present). Any other framing —
-/// including a stray sentinel — fails closed as [`LbAssertionV2Rejection::Malformed`].
-fn decode_v2_expires_at(field: &str) -> Result<Option<i64>, LbAssertionV2Rejection> {
-    let bytes = b64url_decode(field).map_err(|_| LbAssertionV2Rejection::Malformed)?;
-    match bytes.as_slice() {
-        [0] => Ok(None),
-        [1, rest @ ..] => {
-            let array: [u8; 8] = rest
-                .try_into()
-                .map_err(|_| LbAssertionV2Rejection::Malformed)?;
-            Ok(Some(i64::from_be_bytes(array)))
-        }
-        _ => Err(LbAssertionV2Rejection::Malformed),
     }
 }
 
@@ -759,7 +651,7 @@ mod tests {
         let mut a = v2_assertion(&rh, now);
         a.expires_at = Some(now + 10);
         let wire = mint_v2(&attestor, &a);
-        let (parsed, _sig) = LbAssertionV2Binding::parse(&wire).expect("round-trips");
+        let (parsed, _sig) = crate::transport::ingress::v2_wire::parse(&wire).expect("round-trips");
         assert_eq!(parsed, a);
     }
 

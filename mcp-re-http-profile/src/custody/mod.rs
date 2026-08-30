@@ -48,6 +48,8 @@ use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 use crate::sign::sign_delegated_response_full;
 
+mod issuance_terms;
+
 /// A failure of the custody layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CustodyError {
@@ -131,16 +133,6 @@ pub struct ActiveDelegatedKey {
     pub nbf: i64,
     pub exp: i64,
 }
-
-/// How many issuance attempts one rotation-overlap window may spend on a root that
-/// is declining. The overlap window is the budget the rotation contract already
-/// allocates to getting a successor minted, so the retry interval is derived from it
-/// rather than configured separately.
-const ISSUANCE_ATTEMPTS_PER_OVERLAP: i64 = 10;
-
-/// Floor on the retry interval, for a configuration whose overlap window is smaller
-/// than the attempt budget (and for a non-positive overlap).
-const MIN_ISSUANCE_RETRY_SECS: i64 = 1;
 
 /// The delegated-signing custody state machine.
 ///
@@ -263,20 +255,7 @@ where
     pub fn ensure_active(&mut self, now: i64) -> Result<(), CustodyError> {
         let needs = match &self.active {
             None => true,
-            // Rotate once we enter the overlap window before expiry, or if expired. The
-            // threshold is computed with `checked_sub` because `CustodyConfig` carries
-            // `ttl`/`overlap` as bare `i64` fields: the `0 < overlap < ttl` guard that
-            // bounds them belongs to the proxy's configuration owner and does not reach
-            // this type, so an embedder — or any construction site that is not that owner
-            // — can present an overlap this subtraction cannot take. Wrapping would put
-            // the threshold far in the future and answer `false`, which is the PERMISSIVE
-            // direction: the key would be kept in service past the window it was supposed
-            // to be replaced in. A threshold that cannot be computed is therefore read as
-            // one that has been reached.
-            Some(a) => a
-                .exp
-                .checked_sub(self.cfg.overlap)
-                .is_none_or(|at| now >= at),
+            Some(a) => issuance_terms::rotation_due(a.exp, self.cfg.overlap, now),
         };
         self.issue_if(needs, now)
     }
@@ -293,11 +272,6 @@ where
         self.issue_if(true, now)
     }
 
-    /// Minimum seconds between two issuance attempts after one has failed.
-    fn retry_interval(&self) -> i64 {
-        (self.cfg.overlap / ISSUANCE_ATTEMPTS_PER_OVERLAP).max(MIN_ISSUANCE_RETRY_SECS)
-    }
-
     /// Whether a failed root may be approached again at `now`.
     ///
     /// Inside the rotation-overlap window `ensure_active` wants a successor on EVERY
@@ -310,40 +284,16 @@ where
         self.next_attempt_at.is_none_or(|at| now >= at)
     }
 
-    /// The two values an issuance cannot proceed without: the credential's expiry, and the
-    /// ordinal that will name it.
-    ///
-    /// Decided BEFORE a key is generated, an ordinal is spent or the root is approached,
-    /// because either being unrepresentable is a reason this issuance cannot produce a
-    /// valid credential at all.
-    ///
-    /// The expiry, for the reason [`Self::ensure_active`] states: `ttl` is an unbounded
-    /// `i64` on `CustodyConfig`, whose `0 < overlap < ttl` guard belongs to the proxy's
-    /// configuration owner and does not reach this type. A wrapped `exp` would be minted
-    /// into the credential and into the audit event describing it, and every `now < exp`
-    /// test downstream would read the wrapped value.
-    ///
-    /// The ordinal, because `jti` is a REVOCATION identifier and this counter is the part
-    /// of it that distinguishes two credentials minted over the same key material. A
-    /// wrapped counter re-issues a `jti` that has already named a different credential, so
-    /// revoking one would revoke the other.
-    fn mintable_at(&self, now: i64) -> Result<(i64, u64), CustodyError> {
-        now.checked_add(self.cfg.ttl)
-            .zip(self.counter.checked_add(1))
-            .ok_or(CustodyError::FailClosedIssuance)
-    }
-
     fn issue_if(&mut self, needs: bool, now: i64) -> Result<(), CustodyError> {
         if needs && self.attempt_allowed(now) {
             let is_rotation = self.active.as_ref().map(|a| now < a.exp).unwrap_or(false);
 
-            let (exp, next_counter) = self.mintable_at(now)?;
+            let (exp, next_counter) = issuance_terms::mintable(now, self.cfg.ttl, self.counter)?;
             let key = (self.factory)();
             self.counter = next_counter;
             let (kid, signer, header, claims) = self.build(now, exp, &key);
-            // The root invocation count is a metric an operator reads, not a value any
-            // decision is taken on, so saturation at the ceiling is the honest algebra:
-            // the count stops being exact rather than the process stopping.
+            // A metric an operator reads, not a value any decision is taken on: the count
+            // stops being exact at the ceiling rather than wrapping through zero.
             self.root_invocations = self.root_invocations.saturating_add(1);
             match (self.issue)(&header, &claims) {
                 Some(credential) => {
@@ -373,11 +323,8 @@ where
                 None => {
                     // Issuance failed. Hold off the next attempt so a root outage
                     // cannot be amplified into one root call per inbound request.
-                    // Saturating IS the rule here: this value only ever delays the next
-                    // approach to a root that is already failing, so the far future is the
-                    // restrictive end. Wrapping would land in the past and re-open exactly
-                    // the per-request root traffic this line exists to prevent.
-                    self.next_attempt_at = Some(now.saturating_add(self.retry_interval()));
+                    self.next_attempt_at =
+                        Some(issuance_terms::next_attempt_after(now, self.cfg.overlap));
                     // If the current key is still valid we keep signing with it and
                     // retry the successor later (no gap yet).
                     let current_valid = self.active.as_ref().map(|a| now < a.exp).unwrap_or(false);
@@ -422,11 +369,9 @@ where
         request_evidence: &RequestEvidence,
     ) -> Result<(), CustodyError> {
         self.ensure_active(now)?;
-        // `ensure_active` returns `Ok` only through the arm that matched `Some(a)` with
-        // `now < a.exp`, so this holds. It is written as a refusal rather than asserted,
-        // because the consequence of that guarantee lapsing should be one unsigned
-        // response and not a downed process — and because `FailClosedIssuance` is already
-        // the verdict this module gives for "no key to sign with".
+        // `ensure_active` returns `Ok` only through the arm matching `Some(a)` with
+        // `now < a.exp`. Written as a refusal rather than asserted: `FailClosedIssuance`
+        // is already this module's verdict for "no key to sign with".
         let Some(a) = self.active.as_ref() else {
             return Err(CustodyError::FailClosedIssuance);
         };
@@ -439,11 +384,7 @@ where
             a.key.as_ref(),
             &a.delegated_kid,
             now,
-            // The signature's stated validity, clamped to the credential's own `exp` —
-            // and to it alone when `now + ttl` leaves `i64`, which is the same clamp
-            // taken at its restrictive end rather than a wrapped window.
-            now.checked_add(self.cfg.ttl)
-                .map_or(a.exp, |until| until.min(a.exp)),
+            issuance_terms::signature_valid_until(now, self.cfg.ttl, a.exp),
         )
         .map(|_base| ())
         .map_err(CustodyError::Sign)

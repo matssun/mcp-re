@@ -501,7 +501,7 @@ fn run_validated(
         &trust_plan,
         Arc::clone(&shutdown),
     )?);
-    let resolver = building.trust().resolver();
+    let resolver = building.trust()?.resolver();
     // Response-slot signing custody (ADR-MCPRE-052, MCPRE-122): delegated-signing is
     // the ONLY response mode. The ROOT key is the credential ISSUER only; the resolver
     // resolves the ROOT public key (by its issuer kid) for the Response slot, and NO
@@ -516,7 +516,7 @@ fn run_validated(
     // is what this consumer used to do, and what `SigningPlan` did independently.
     let server_identity = config.state().server_identity().actor().clone();
     let resolve_actor = build_actor_resolver(
-        building.trust().signers(),
+        building.trust()?.signers(),
         Arc::clone(&resolver),
         values.trust_domain.clone(),
         response_kid.clone(),
@@ -605,14 +605,15 @@ fn run_validated(
         startup_now_unix,
         Arc::clone(&shutdown),
     )?);
-    let handshake_key_may_block = building.tls().key_exposure() == PrivateKeyExposure::NonExporting;
-    let client_revocation = building.tls().revocation();
-    let config_snapshot = building.tls().snapshot();
+    let handshake_key_may_block =
+        building.tls()?.key_exposure() == PrivateKeyExposure::NonExporting;
+    let client_revocation = building.tls()?.revocation();
+    let config_snapshot = building.tls()?.snapshot();
 
     // ADR-MCPS-023 §A1 (MCPS-58): the operator-visible revocation posture. Rendered by
     // the plane that parsed the CRLs, so what an operator is told is assertable in a test
     // rather than only readable in a transcript.
-    for line in crate::tls_plane::revocation_posture_lines(&tls_plan, building.tls().crls()) {
+    for line in crate::tls_plane::revocation_posture_lines(&tls_plan, building.tls()?.crls()) {
         eprintln!("{line}");
     }
 
@@ -723,7 +724,7 @@ fn run_validated(
         dispatch_cfg,
         Box::new(pool),
         300,
-        building.signing().signer(),
+        building.signing()?.signer(),
     );
     // §5.1/§13.1: attach the verifier-local acceptance policy so the operator's
     // `--max-clock-skew` governs the FRESHNESS GATE, not only replay retention.
