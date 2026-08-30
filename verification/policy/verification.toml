@@ -1844,16 +1844,16 @@ tested_symbols = [
   "lib#scitt::merkle::tests::restating_the_log_position_at_a_different_path_length_does_not_verify",
   "lib#scitt::merkle::tests::a_right_edge_restatement_is_indistinguishable_and_still_verifies",
   "lib#scitt::merkle::tests::an_empty_inclusion_path_is_only_valid_for_a_single_leaf_tree",
-  "lib#scitt::merkle::tests::a_leaf_index_outside_the_tree_is_refused_before_any_fold",
+  "lib#scitt::receipt::parse::tests::a_leaf_index_outside_the_tree_is_refused_before_any_fold",
   "lib#scitt::cose_key::tests::an_unsupported_algorithm_is_refused",
   "lib#scitt::cose_key::tests::an_algorithm_that_disagrees_with_the_resolved_key_is_refused",
   "lib#scitt::cose_key::tests::a_der_encoded_es256_signature_is_refused",
   "lib#scitt::cose_key::tests::an_es256_receipt_from_a_foreign_service_verifies",
   "lib#scitt::statement::tests::a_critical_header_on_a_signed_statement_is_refused",
   "lib#scitt::receipt::tests::a_receipt_carries_the_rfc9942_header_labels_and_nesting",
-  "lib#scitt::receipt::parse::tests::the_rfc9942_figure_6_shape_parses_in_both_attached_and_detached_form",
+  "lib#scitt::receipt::tests::the_rfc9942_figure_6_shape_parses_in_both_attached_and_detached_form",
   "lib#scitt::receipt::parse::tests::a_payload_that_is_not_a_tree_hash_is_neither_receipt_form",
-  "lib#scitt::receipt::parse::tests::an_unknown_critical_header_is_refused",
+  "lib#scitt::receipt::tests::an_unknown_critical_header_is_refused",
 ]
 
 [[unit]]
