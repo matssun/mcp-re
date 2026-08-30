@@ -38,6 +38,7 @@ use std::time::Instant;
 use mcp_re_core::b64url_decode;
 use mcp_re_core::b64url_encode;
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::authoritative_admission::AuthoritativeAdmission;
 use mcp_re_http_profile::issue_admission_assertion;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::sign_request_full;
@@ -50,7 +51,6 @@ use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::Audience;
 use mcp_re_http_profile::AudienceTuple;
-use mcp_re_http_profile::AuthoritativeAdmission;
 use mcp_re_http_profile::CustodyConfig;
 use mcp_re_http_profile::DelegatedSigningCustody;
 use mcp_re_http_profile::DelegationClaims;
@@ -365,13 +365,11 @@ fn a_revocation_reaches_a_sibling_replica_within_the_declared_p_bound() {
         );
 
         authority
-            .publish(
-                &workload,
-                &AuthoritativeAdmission {
-                    generation: 5,
-                    status: AdmissionStatus::Admitted,
-                },
-            )
+            .publish(&AuthoritativeAdmission::new(
+                workload.clone(),
+                5,
+                AdmissionStatus::Admitted,
+            ))
             .await
             .expect("publish admitted");
 
