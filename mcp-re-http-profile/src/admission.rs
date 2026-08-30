@@ -423,14 +423,14 @@ pub fn check_admission(
     }
 
     // The call's binding must describe THIS assertion: same workload, same
-    // generation, and committing to the same admitted state.
-    if binding.admission_id != claims.mcp_re_admission_id {
-        return Err(HttpProfileError::AdmissionBindingMismatch);
-    }
-    if binding.generation != claims.mcp_re_admission_generation {
-        return Err(HttpProfileError::AdmissionBindingMismatch);
-    }
-    if !binding.matches_state(&claims.mcp_re_admitted_state_digest) {
+    // generation, and committing to the same admitted state. One condition because
+    // there is one refusal — a binding that names another workload and one that
+    // commits to another state are the same fact to a caller, and splitting them
+    // would promise a distinction the error type does not make.
+    if binding.admission_id != claims.mcp_re_admission_id
+        || binding.generation != claims.mcp_re_admission_generation
+        || !binding.matches_state(&claims.mcp_re_admitted_state_digest)
+    {
         return Err(HttpProfileError::AdmissionBindingMismatch);
     }
 
