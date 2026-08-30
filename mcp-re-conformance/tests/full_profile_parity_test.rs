@@ -252,7 +252,7 @@ fn full_exchange_activates_all_blocks() {
     )
     .expect("full response sign");
     let rv = Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_bound_response(&rsp, &req, verified.evidence(), NOW)
+        .verify_bound_response(&rsp, &req, NOW)
         .expect("full response verifies");
     assert_eq!(
         rv.request_evidence_agreement.bound_request_evidence,
@@ -283,7 +283,7 @@ fn body_tamper_fails_in_integrated_path() {
 fn response_splice_fails_in_integrated_path() {
     let block = full_block();
     let (req_a, _ev_a) = signed_request(&block, "nonce-a");
-    let verified_a = Verifier::new(&VerifierPolicy::default(), &resolver())
+    let _verified_a = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req_a, &audience(), &rar_material(), NOW)
         .expect("req_a verifies");
 
@@ -322,7 +322,7 @@ fn response_splice_fails_in_integrated_path() {
 
     // Splice rsp_b onto req_a: the ;req cryptographic floor rejects.
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_bound_response(&rsp_b, &req_a, verified_a.evidence(), NOW)
+        .verify_bound_response(&rsp_b, &req_a, NOW)
         .unwrap_err();
     assert_eq!(err.wire_code(), "mcp-re.response_sig_invalid");
 }
@@ -359,7 +359,7 @@ fn response_evidence_mismatch_emits_request_binding_mismatch() {
     )
     .expect("sign");
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_bound_response(&rsp, &req_a, verified_a.evidence(), NOW)
+        .verify_bound_response(&rsp, &req_a, NOW)
         .unwrap_err();
     assert_eq!(err.wire_code(), "mcp-re.request_binding_mismatch");
 }

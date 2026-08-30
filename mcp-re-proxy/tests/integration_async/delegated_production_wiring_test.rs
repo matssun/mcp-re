@@ -287,7 +287,7 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
     // --- success: a delegated-signed response verifies via the attestation chain ---
     let mut first_delegated_kid: Option<String> = None;
     for i in 0..5 {
-        let (req, _ev, verified_req) = signed_request(&format!("nonce-ok-{i}"), NOW);
+        let (req, _ev, _verified_req) = signed_request(&format!("nonce-ok-{i}"), NOW);
         let served = proxy.handle(served_of(&req), NOW).await;
         assert_eq!(served.status, 200, "delegated-required request served");
         let resp = http_response(served);
@@ -299,14 +299,7 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
         );
         let r = resolver();
         let verified = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
-            .verify_delegated_bound_response(
-                &resp,
-                &req,
-                verified_req.evidence(),
-                &expectations(&[EPOCH]),
-                &|_| false,
-                NOW,
-            )
+            .verify_delegated_bound_response(&resp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
             .expect("delegated response verifies via the credential→root chain");
         // Profile-issued kids are RFC 7638 JWK thumbprints (#415 rev 2 §1.5), so
         // the property asserted here is the one that matters — the signer is a
@@ -333,7 +326,7 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
     );
 
     // --- bound rejection: a replay is rejected with a request-bound receipt --------
-    let (req, _ev, verified_req) = signed_request("nonce-replay", NOW);
+    let (req, _ev, _verified_req) = signed_request("nonce-replay", NOW);
     assert_eq!(proxy.handle(served_of(&req), NOW).await.status, 200);
     let served = proxy.handle(served_of(&req), NOW).await;
     assert_eq!(served.status, 409, "replay rejected");
@@ -346,14 +339,7 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
     );
     let r = resolver();
     Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
-        .verify_delegated_bound_response(
-            &resp,
-            &req,
-            verified_req.evidence(),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            NOW,
-        )
+        .verify_delegated_bound_response(&resp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
         .expect("bound delegated rejection verifies");
 
     // --- rotation: a successor minted in the overlap window keeps serving (no gap) --
@@ -365,7 +351,7 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
         2,
         "one more root op for the successor"
     );
-    let (req, _ev, verified_req) = signed_request("nonce-after-rotate", rot);
+    let (req, _ev, _verified_req) = signed_request("nonce-after-rotate", rot);
     let served = proxy.handle(served_of(&req), rot).await;
     assert_eq!(
         served.status, 200,
@@ -374,14 +360,7 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
     let resp = http_response(served);
     let r = resolver();
     let verified = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
-        .verify_delegated_bound_response(
-            &resp,
-            &req,
-            verified_req.evidence(),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            rot,
-        )
+        .verify_delegated_bound_response(&resp, &req, &expectations(&[EPOCH]), &|_| false, rot)
         .expect("successor delegated response verifies");
     // The successor is a DIFFERENT delegated key: distinct key material yields a
     // distinct RFC 7638 thumbprint, so the kid changing is itself the proof that

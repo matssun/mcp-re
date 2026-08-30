@@ -225,7 +225,7 @@ Lane identity is part of each property (ADR-061 §12). `mcp-re-http-profile` tes
 than "a test battery passed". A passing battery is not, on its own, evidence that a
 production check is load-bearing — so every conjunct THM-0014 … THM-0022 names was probed
 by deleting or defanging exactly that check, re-running the declared battery, and observing
-which declared member goes red. **27 mutations, each turning at least one declared member
+which declared member goes red. **30 mutations, each turning at least one declared member
 red.**
 
 The probes are **registered and executable**, not remembered:

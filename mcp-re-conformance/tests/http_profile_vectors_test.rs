@@ -1503,7 +1503,6 @@ fn chain_hop(
         .verify_delegated_bound_response(
             &response,
             &request,
-            &req_evidence,
             &chain_expectations(),
             &chain_nothing_revoked,
             NOW,

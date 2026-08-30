@@ -33,7 +33,6 @@ use crate::verify;
 use crate::verify::DelegationExpectations;
 use crate::ArtifactBinding;
 use crate::AudienceTuple;
-use crate::RequestEvidence;
 
 /// Verifier-local configuration plus the trust seam, applied to every operation below.
 pub struct Verifier<'a, R> {
@@ -106,27 +105,22 @@ impl<'a, R: Into<ResolverOutcome>> Verifier<'a, R> {
         verify::floor_bound_response(response, request, self.resolve_actor, self.policy, now)
     }
 
-    /// Establish the full MCP-RE profile for a response bound to `bound_request_evidence`.
+    /// Establish the full MCP-RE profile for a response bound to `request`.
     ///
-    /// The expected handle is an input: a server passes `verified_request.evidence()`, a
-    /// client passes the handle it retained from signing. There is deliberately no second
-    /// operation taking a whole verified request — that was an adapter around this one, and
-    /// caller provenance is not a response assurance state.
+    /// The expected request-evidence handle is DERIVED from `request`, not supplied beside
+    /// it. It used to be a second operand, and a caller could hand in one exchange's
+    /// request with another's handle: verification then established cryptographic binding
+    /// to the first and semantic equality with the second, and nothing relating them. Both
+    /// callers did relate them — a server passing the handle of the request it had just
+    /// verified, a client the handle it retained from signing — but that is a convention
+    /// held at call sites, and a third one would not have turned anything red.
     pub fn verify_bound_response(
         &self,
         response: &HttpResponse,
         request: &HttpRequest,
-        bound_request_evidence: &RequestEvidence,
         now: i64,
     ) -> Result<VerifiedMcpResponse, HttpProfileError> {
-        verify::full_bound_response(
-            response,
-            request,
-            bound_request_evidence,
-            self.resolve_actor,
-            self.policy,
-            now,
-        )
+        verify::full_bound_response(response, request, self.resolve_actor, self.policy, now)
     }
 
     /// Establish a response's cryptographic floor with NO request context. A `;req`
@@ -139,14 +133,16 @@ impl<'a, R: Into<ResolverOutcome>> Verifier<'a, R> {
         verify::floor_unbound_response(response, self.resolve_actor, self.policy, now)
     }
 
-    /// Verify a delegated-key-signed response bound to `bound_request_evidence`
-    /// (ADR-MCPRE-052 §3). Delegation is REQUIRED: a response carrying no inline
-    /// credential — including a directly root-signed one — is refused.
+    /// Verify a delegated-key-signed response bound to `request` (ADR-MCPRE-052 §3).
+    /// Delegation is REQUIRED: a response carrying no inline credential — including a
+    /// directly root-signed one — is refused.
+    ///
+    /// As with [`Self::verify_bound_response`], the request-evidence handle is derived
+    /// from `request` rather than accepted beside it.
     pub fn verify_delegated_bound_response(
         &self,
         response: &HttpResponse,
         request: &HttpRequest,
-        bound_request_evidence: &RequestEvidence,
         expect: &DelegationExpectations<'_>,
         is_revoked: &dyn Fn(&str) -> bool,
         now: i64,
@@ -154,7 +150,6 @@ impl<'a, R: Into<ResolverOutcome>> Verifier<'a, R> {
         verify::delegated_bound_response(
             response,
             request,
-            bound_request_evidence,
             self.resolve_actor,
             self.policy,
             expect,

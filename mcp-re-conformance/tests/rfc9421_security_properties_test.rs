@@ -352,7 +352,7 @@ fn transport_identity_binds_to_the_request_actor() {
 // ---- §A: Response binding ----------------------------------------------------
 #[test]
 fn response_bound_to_the_wrong_request_is_rejected() {
-    let (req_a, ev_a) = signed("n-respA", CALL);
+    let (req_a, _ev_a) = signed("n-respA", CALL);
     let (req_b, _ev_b) = signed(
         "n-respB",
         br#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list"}}"#,
@@ -380,7 +380,7 @@ fn response_bound_to_the_wrong_request_is_rejected() {
     // The client that sent request A must NOT accept a response bound to B.
     assert!(
         Verifier::new(&VerifierPolicy::default(), &resolver())
-            .verify_bound_response(&resp, &req_a, &ev_a, NOW)
+            .verify_bound_response(&resp, &req_a, NOW)
             .is_err(),
         "a response bound to the WRONG request must be rejected"
     );

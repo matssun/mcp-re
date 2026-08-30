@@ -443,19 +443,12 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
     // Serve a batch under the one delegated key; each response verifies via the
     // credential→KMS-root chain, signed by the DELEGATED key (not the root).
     for i in 0..RESPONSES_PER_KEY {
-        let (req, _ev, verified_req) = signed_request(&format!("nonce-serve-{i}"), NOW);
+        let (req, _ev, _verified_req) = signed_request(&format!("nonce-serve-{i}"), NOW);
         let served = proxy.handle(served_of(&req), NOW).await;
         assert_eq!(served.status, 200, "delegated-required request served");
         let resp = http_response(served);
         let verified = Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
-            .verify_delegated_bound_response(
-                &resp,
-                &req,
-                verified_req.evidence(),
-                &expectations(&[EPOCH]),
-                &|_| false,
-                NOW,
-            )
+            .verify_delegated_bound_response(&resp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
             .expect("served response verifies via the KMS-rooted attestation chain");
         assert_eq!(
             verified.signature_facts.accepted_signer.identity.keyid, first_kid,
@@ -473,14 +466,13 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
 
     // Revocation seam (deny): the client denylists the active delegated kid → the
     // otherwise-valid response fails closed.
-    let (req, _ev, verified_req) = signed_request("nonce-revoke", NOW);
+    let (req, _ev, _verified_req) = signed_request("nonce-revoke", NOW);
     let resp = http_response(proxy.handle(served_of(&req), NOW).await);
     let revoked_kid = first_kid.clone();
     let deny = Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
         .verify_delegated_bound_response(
             &resp,
             &req,
-            verified_req.evidence(),
             &expectations(&[EPOCH]),
             &|id: &str| id == revoked_kid,
             NOW,
@@ -496,7 +488,6 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
         .verify_delegated_bound_response(
             &resp,
             &req,
-            verified_req.evidence(),
             &expectations(&[EPOCH]),
             &|id: &str| id == "some-other/delegated/9",
             NOW,
@@ -524,17 +515,10 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
         "rotation mints a distinct delegated key"
     );
 
-    let (req2, _ev2, verified_req2) = signed_request("nonce-after-rotation", after);
+    let (req2, _ev2, _verified_req2) = signed_request("nonce-after-rotation", after);
     let resp2 = http_response(proxy.handle(served_of(&req2), after).await);
     let verified2 = Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
-        .verify_delegated_bound_response(
-            &resp2,
-            &req2,
-            verified_req2.evidence(),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            after,
-        )
+        .verify_delegated_bound_response(&resp2, &req2, &expectations(&[EPOCH]), &|_| false, after)
         .expect("post-rotation response verifies");
     assert_eq!(
         verified2.signature_facts.accepted_signer.identity.keyid, second_kid,
@@ -576,7 +560,7 @@ fn kms_custody(
 
 fn run_kms_authority_flip(root: KmsResponseSigner) {
     let root_pub = root.response_public_key().expect("KMS root public key");
-    let (req, ev, verified_req) = signed_request("nonce-flip", NOW);
+    let (req, ev, _verified_req) = signed_request("nonce-flip", NOW);
 
     // --- Flip 1: the PRE-052 authority (KMS signs the response DIRECTLY) is
     // rejected by a delegated-required verifier — no downgrade. The SAME KMS key
@@ -598,14 +582,7 @@ fn run_kms_authority_flip(root: KmsResponseSigner) {
     )
     .expect("the KMS signs a direct-root RFC 9421 response");
     let downgrade = Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
-        .verify_delegated_bound_response(
-            &direct,
-            &req,
-            verified_req.evidence(),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            NOW,
-        )
+        .verify_delegated_bound_response(&direct, &req, &expectations(&[EPOCH]), &|_| false, NOW)
         .unwrap_err();
     // A genuine pre-052 direct-root response carries NO delegation evidence block at
     // all (unlike a delegation block with the credential stripped), so it fails
@@ -632,14 +609,7 @@ fn run_kms_authority_flip(root: KmsResponseSigner) {
         "the KMS issued exactly one credential"
     );
     Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
-        .verify_delegated_bound_response(
-            &delegated,
-            &req,
-            verified_req.evidence(),
-            &expectations(&[EPOCH]),
-            &|_| false,
-            NOW,
-        )
+        .verify_delegated_bound_response(&delegated, &req, &expectations(&[EPOCH]), &|_| false, NOW)
         .expect("the delegated (post-052) authority is accepted");
 
     // --- Flip 3: TRUST-EPOCH flip. The credential is bound to EPOCH. Advancing the
@@ -649,7 +619,6 @@ fn run_kms_authority_flip(root: KmsResponseSigner) {
         .verify_delegated_bound_response(
             &delegated,
             &req,
-            verified_req.evidence(),
             &expectations(&[NEW_EPOCH]),
             &|_| false,
             NOW,
@@ -664,7 +633,6 @@ fn run_kms_authority_flip(root: KmsResponseSigner) {
         .verify_delegated_bound_response(
             &delegated,
             &req,
-            verified_req.evidence(),
             &expectations(&[NEW_EPOCH, EPOCH]),
             &|_| false,
             NOW,
@@ -703,7 +671,6 @@ fn run_kms_authority_flip(root: KmsResponseSigner) {
         .verify_delegated_bound_response(
             &successor,
             &req,
-            verified_req.evidence(),
             &expectations(&[EPOCH]),
             &revoke_first,
             after,
@@ -713,7 +680,6 @@ fn run_kms_authority_flip(root: KmsResponseSigner) {
         .verify_delegated_bound_response(
             &predecessor,
             &req,
-            verified_req.evidence(),
             &expectations(&[EPOCH]),
             &revoke_first,
             after,
