@@ -201,11 +201,13 @@ attestations this view cannot see.
 | ASM-0027 | description, justification, scope or mechanism | http_profile.verifier_results | assumption review |
 | ASM-0028 | description, justification, scope or mechanism | http_profile.verifier_results | assumption review |
 | ASM-0029 | description, justification, scope or mechanism | http_profile.verifier_results | assumption review |
-| ASM-0030 | description, justification, scope or mechanism | proxy.certificate_identity, proxy.credential_currency | assumption review |
+| ASM-0030 | description, justification, scope or mechanism | proxy.certificate_identity | assumption review |
 | ASM-0031 | description, justification, scope or mechanism | proxy.ed25519_public_key | assumption review |
-| ASM-0032 | description, justification, scope or mechanism | proxy.credential_key_correspondence, proxy.delegated_resolver_materialization | assumption review |
+| ASM-0032 | description, justification, scope or mechanism | proxy.credential_key_correspondence | assumption review |
 | ASM-0033 | description, justification, scope or mechanism | proxy.channel_associated_credential | assumption review |
 | ASM-0034 | description, justification, scope or mechanism | proxy.channel_associated_identity | assumption review |
 | ASM-0035 | description, justification, scope or mechanism | proxy.mechanism_verified_credential | assumption review |
 | ASM-0036 | description, justification, scope or mechanism | proxy.authenticated_relationship_peer | assumption review |
 | ASM-0037 | description, justification, scope or mechanism | http_profile.keyid_selector | assumption review |
+| ASM-0038 | description, justification, scope or mechanism | proxy.credential_currency | assumption review |
+| ASM-0039 | description, justification, scope or mechanism | proxy.delegated_resolver_materialization | assumption review |

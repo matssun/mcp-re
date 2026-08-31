@@ -28,13 +28,20 @@ roots = TH["root_theorems"]
 units = {u["id"]: u for u in VE["unit"]}
 asms  = {a["id"]: a for a in AS["assumption"]}
 
-# assumptions reachable from a theorem: via its owner unit and its supported_by units
+# Assumptions reachable from a theorem: via its owner unit and its supported_by units.
+#
+# Derived from `[[assumption]].scope`, which ADR-MCPRE-059 §8 makes the one authoritative
+# direction. The packet used to read a unit-side declaration that nothing kept equal to the
+# scope the fingerprint was built from, so a reviewer could be told a claim rested on
+# premises other than the ones invalidating it.
 def asms_of(t):
     out = set()
     for uri in t.get("supported_by", []) + [f"unit://{t['owner']}"]:
-        u = units.get(uri.removeprefix("unit://"))
-        if u:
-            out.update(u.get("assumptions", []))
+        unit_id = uri.removeprefix("unit://")
+        if unit_id in units:
+            out.update(
+                a["id"] for a in AS["assumption"] if f"unit://{unit_id}" in a.get("scope", [])
+            )
     return sorted(out)
 
 def kind(tid, t):

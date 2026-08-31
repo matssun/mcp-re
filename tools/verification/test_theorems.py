@@ -211,7 +211,7 @@ def test_a_key_that_restates_a_unit_fact_is_refused_by_name():
     disagree, and the message must say which file owns it."""
     for key, owner in (
         ("paths", "[[unit]].paths"),
-        ("assumptions", "[[unit]].assumptions"),
+        ("assumptions", "[[assumption]].scope"),
         ("evidence", "[[unit]].evidence"),
         ("proved_symbols", "[[unit]].proved_symbols"),
     ):

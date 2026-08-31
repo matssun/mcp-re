@@ -13,6 +13,7 @@ fingerprint components draw, expressed in the module layout.
 
 from __future__ import annotations
 
+from _manifest import unit_assumptions
 from _view_format import header, one_line, table
 
 
@@ -76,7 +77,7 @@ def assumption_consumers(theorems: dict, verification: dict, assumptions: dict) 
     return body
 
 
-def owner_view(theorems: dict, verification: dict) -> str:
+def owner_view(theorems: dict, verification: dict, assumptions: dict) -> str:
     units = {unit["id"]: unit for unit in verification.get("unit", [])}
     by_owner: dict[str, list[dict]] = {}
     for row in theorems.get("theorem", []):
@@ -93,7 +94,7 @@ def owner_view(theorems: dict, verification: dict) -> str:
             unit_id,
             unit["class"],
             ", ".join(sorted(row["id"] for row in by_owner.get(unit_id, []))) or "_none_",
-            str(len(unit.get("assumptions", []))),
+            str(len(unit_assumptions(unit_id, assumptions))),
         )
         for unit_id, unit in sorted(units.items())
     ]

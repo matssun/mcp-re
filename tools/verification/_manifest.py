@@ -80,7 +80,6 @@ _UNIT_KEYS = {
     "exported_contracts",
     "consumed_contracts",
     "evidence",
-    "assumptions",
     "features",
     "pilot",
     "proved_symbols",
@@ -596,74 +595,58 @@ def boundary_class_violations(
     return violations
 
 
-def assumption_scope_disagreements(verification: dict, assumptions: dict) -> list[str]:
-    """Units and assumptions that disagree about whether the unit trusts the assumption.
+def unit_assumptions(unit_id: str, assumptions: dict) -> list[str]:
+    """The assumptions a unit trusts, derived from `[[assumption]].scope`.
 
-    One relation is written twice: a unit names the premises it rests on in
-    `[[unit]].assumptions`, and an assumption names the units it reaches in
-    `[[assumption]].scope`. Nothing forced the two to agree, and a disagreement is not
-    cosmetic drift between two views — the two halves feed DIFFERENT machinery, so each
-    direction of a disagreement produces a different defect:
+    ADR-MCPRE-059 §8 has one authoritative direction, and this is the only place the
+    inverse is computed. The relation used to be written twice — a unit named its premises
+    in `[[unit]].assumptions` and an assumption named its units in `scope` — with nothing
+    forcing the two to agree, and the two halves fed different machinery: `scope` reached
+    the fingerprint and `check-assumptions`, while the unit field reached `review-packet`
+    and the generated views. Nine pairs disagreed, and three units carried theorems whose
+    stated premises could be rewritten without the claim ever deriving DIRTY_ASSUMPTION.
 
-    * `scope` is what `_trusted_assumptions` puts into a unit's fingerprint and what
-      `check-assumptions` reads for per-unit escape-hatch registration. A premise a unit
-      declares but no scope names is therefore ABSENT from that unit's fingerprint: the
-      assumption can be rewritten, widened, or weakened and the unit resting on it never
-      derives DIRTY_ASSUMPTION. That is a false green about the freshness of a claim.
-    * `[[unit]].assumptions` is what `review-packet` reads to tell a reviewer which
-      premises a theorem stands on. A scope naming a unit that does not name it back puts
-      the premise in the generated views and in the fingerprint while the human review
-      artefact says the claim rests on nothing.
-
-    So the two directions must be the same set, and this is the control that makes them
-    be. It does not decide which side is right — a disagreement is a declaration defect
-    and the owner corrects it in whichever manifest states the wrong thing.
+    The repair is not a gate that keeps two sources equal; it is having one. `scope` is
+    authoritative because the assumption owns its own trust blast radius and can name a
+    boundary as readily as a unit. Everything that used to read the unit field reads this.
     """
-    declared: dict[str, set[str]] = {
-        unit["id"]: set(unit.get("assumptions", [])) for unit in verification.get("unit", [])
-    }
-    scoped: dict[str, set[str]] = {unit_id: set() for unit_id in declared}
-    unknown: list[str] = []
+    prefix = f"unit://{unit_id}"
+    return sorted(
+        entry["id"]
+        for entry in assumptions.get("assumption", [])
+        if prefix in [str(target) for target in entry.get("scope", [])]
+    )
+
+
+def assumption_scope_defects(verification: dict, assumptions: dict) -> list[str]:
+    """Scopes that name a unit no `[[unit]]` declares.
+
+    What remains checkable once the relation has one source. A scope entry naming a unit
+    that does not exist reads as a registration and trusts the assumption nowhere: the
+    premise reaches no fingerprint, no view and no packet, while the registry shows the
+    assumption as scoped. Misspelling a unit id is exactly how a premise silently stops
+    being carried.
+
+    The disagreement control this replaces had a second job — catching a unit that
+    declared an unregistered assumption — and the schema now does that one: `assumptions`
+    is no longer an admissible `[[unit]]` key, so there is no unit-side declaration left to
+    be wrong.
+    """
+    known_units = {unit["id"] for unit in verification.get("unit", [])}
+    defects: list[str] = []
     for entry in assumptions.get("assumption", []):
         for target in entry.get("scope", []):
             target = str(target)
             if not target.startswith("unit://"):
                 continue
             unit_id = target.removeprefix("unit://")
-            if unit_id not in scoped:
-                unknown.append(
+            if unit_id not in known_units:
+                defects.append(
                     f"assumption {entry['id']} is scoped to unit://{unit_id}, which no "
                     f"[[unit]] declares. A scope naming a unit that does not exist trusts "
                     f"the assumption nowhere while reading as a registration."
                 )
-                continue
-            scoped[unit_id].add(entry["id"])
-
-    known = {entry["id"] for entry in assumptions.get("assumption", [])}
-    disagreements: list[str] = list(unknown)
-    for unit_id in sorted(declared):
-        for missing in sorted(declared[unit_id] - known):
-            disagreements.append(
-                f"unit {unit_id} declares assumption {missing}, which the registry does "
-                f"not contain."
-            )
-        only_unit = sorted((declared[unit_id] & known) - scoped[unit_id])
-        only_scope = sorted(scoped[unit_id] - declared[unit_id])
-        for asm in only_unit:
-            disagreements.append(
-                f"unit {unit_id} declares assumption {asm}, but {asm} does not name "
-                f"unit://{unit_id} in its scope. The unit's fingerprint therefore carries "
-                f"no trusted_assumptions entry for it, so rewriting or weakening {asm} "
-                f"leaves every claim over {unit_id} reading as fresh."
-            )
-        for asm in only_scope:
-            disagreements.append(
-                f"assumption {asm} is scoped to unit://{unit_id}, but {unit_id} does not "
-                f"declare it. The premise reaches the generated views and the unit "
-                f"fingerprint while the review packet for its theorems states the claim "
-                f"rests on nothing of the kind."
-            )
-    return disagreements
+    return defects
 
 
 def load_toolchains() -> dict:
