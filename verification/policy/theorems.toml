@@ -3461,8 +3461,10 @@ exist was the claim. The same shape as the replay omission THM-0079 closed.
 
 Two halves. The VOCABULARY half is the owner's own: which bodies are messages, which answers
 correlate, and the two ways a correlation could be faked — a null id, and a reply that is also
-a request. The SINGLE-DECISION half is a source-text property of the serving path, and is
-evidence rather than unconstructibility: `outstanding_id` is a published API with legitimate
+a request. The SINGLE-DECISION half lives in a second unit,
+because the two halves are in different Cargo packages and a unit's test lane runs in one —
+a split the authorities agree with, since the vocabulary is the profile's and the single
+decision is the serving path's. It is evidence rather than unconstructibility: `outstanding_id` is a published API with legitimate
 callers on the client side and in the response validator, so it cannot be deleted to make a
 second read unavailable; what is held is that the serving path does not ask the same document
 twice, and that it carries the decided value to its terminal.
@@ -3473,6 +3475,9 @@ deliberately does not inspect.
 """
 owner = "http_profile.request_envelope"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://http_profile.request_envelope"]
+supported_by = [
+  "unit://http_profile.request_envelope",
+  "unit://proxy.outstanding_id_provenance",
+]
 depends_on = []
 

@@ -79,6 +79,7 @@ graph BT
     THM_0066["THM-0066<br/>The serving PEP resolves actors through the deployment's materialized trust authority"]
     THM_0067["THM-0067<br/>The composition root re-reads no owner's security semantics from the request"]
     THM_0069["THM-0069<br/>A security record states each authority's outcome in that authority's own coordinate"]
+    THM_0070["THM-0070<br/>The record stream is honest about what reached it"]
     THM_0071["ROOT — THM-0071<br/>Every reachable refusal has a typed provenance in its own authority's coordinate"]
     THM_0073["THM-0073<br/>Serving materialization refuses a deployment whose two signing roles are one key"]
     THM_0074["ROOT — THM-0074<br/>No unearned dispatch"]
@@ -142,6 +143,7 @@ graph BT
     THM_0046 --> THM_0069
     THM_0046 --> THM_0071
     THM_0069 --> THM_0071
+    THM_0070 --> THM_0071
     THM_0081 --> THM_0071
     THM_0049 --> THM_0073
     THM_0003 --> THM_0074
@@ -248,11 +250,4 @@ graph BT
     THM_0042["ROOT — THM-0042<br/>Retained evidence is the evidence the statement was made about"]
     classDef root stroke-width:3px;
     class THM_0042 root;
-```
-
-## Component 7
-
-```mermaid
-graph BT
-    THM_0070["THM-0070<br/>The record stream is honest about what reached it"]
 ```

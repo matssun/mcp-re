@@ -38,8 +38,6 @@
 //! where the response key lives; this is the relation between what they materialized, and
 //! it exists because neither machine can see the other's key.
 
-use mcp_re_core::VerificationKey;
-
 use crate::communication_assurance::certificate_chain_evidence::CertificateChainEvidence;
 use crate::communication_assurance::ed25519_public_key::Ed25519PublicKeyValue;
 use crate::key_source::{KeyError, KeySource};
@@ -53,18 +51,19 @@ pub struct MaterializedSigningRoles {
     source: Box<dyn KeySource + Send + Sync>,
 }
 
-/// Why the channel role contributes no comparable identity.
+/// What a role contributed to the comparison.
 ///
-/// Not a failure. A channel credential whose public key is not a canonical RFC 8410 Ed25519
-/// key CANNOT be the response-signing key, which is always one — so separation holds, and
-/// it holds for a reason worth naming rather than for an absent comparison.
+/// `NoKey` is not a failure and not a skipped check. The relation is over what
+/// materialization PRODUCED: a role that produced no key is not a role sharing one, so there
+/// is nothing to compare rather than something unchecked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ChannelIdentity {
-    /// The channel credential presents a canonical Ed25519 key.
-    Comparable(Ed25519PublicKeyValue),
-    /// It presents a key of another profile, so no collapse with the response role is
-    /// representable.
-    IncomparableProfile,
+enum RoleIdentity {
+    /// The role resolved to a canonical RFC 8410 Ed25519 public key.
+    Key(Ed25519PublicKeyValue),
+    /// It resolved to no key this comparison can use — the backend did not answer, the
+    /// material is not there, or the credential presents a key of another profile. In every
+    /// case no collapse between the two roles is representable.
+    NoKey,
 }
 
 impl MaterializedSigningRoles {
@@ -74,8 +73,9 @@ impl MaterializedSigningRoles {
     /// directly, the channel credential through the leaf of the chain this deployment
     /// serves — and refuses when they are the same key.
     pub(super) fn establish(source: Box<dyn KeySource + Send + Sync>) -> Result<Self, KeyError> {
-        let response = response_role_identity(&source.response_public_key()?);
-        if let ChannelIdentity::Comparable(channel) = channel_role_identity(source.as_ref())? {
+        let response = response_role_identity(source.as_ref());
+        let channel = channel_role_identity(source.as_ref());
+        if let (RoleIdentity::Key(response), RoleIdentity::Key(channel)) = (response, channel) {
             if channel.raw_point() == response.raw_point() {
                 return Err(KeyError::Malformed(
                     "the response-signing key and the channel-signing key are the same key. \
@@ -101,13 +101,21 @@ impl MaterializedSigningRoles {
 /// The response role's identity: its public verification key, in this crate's canonical
 /// form.
 ///
-/// Total. `spki_der_for_point` is the WRITE direction of the same owner that interprets,
-/// and its own contract is that interpreting what it produced yields the point back — so
-/// the round trip cannot fail and there is no arm here for a failure that cannot occur.
-fn response_role_identity(key: &VerificationKey) -> Ed25519PublicKeyValue {
+/// A backend that does not answer yields `NoKey` — see the note on
+/// [`channel_role_identity`], which is the same argument on the other side.
+///
+/// The canonical round trip itself cannot fail: `spki_der_for_point` is the WRITE direction
+/// of the same owner that interprets, and its own contract is that interpreting what it
+/// produced yields the point back. There is no arm here for that.
+fn response_role_identity(source: &(dyn KeySource + Send + Sync)) -> RoleIdentity {
+    let Ok(key) = source.response_public_key() else {
+        return RoleIdentity::NoKey;
+    };
     let spki = Ed25519PublicKeyValue::spki_der_for_point(key.to_bytes());
-    Ed25519PublicKeyValue::interpret_rfc8410_spki(&spki)
-        .unwrap_or_else(|_| unreachable!("the canonical encoder's output is canonical"))
+    match Ed25519PublicKeyValue::interpret_rfc8410_spki(&spki) {
+        Ok(value) => RoleIdentity::Key(value),
+        Err(_) => unreachable!("the canonical encoder's output is canonical"),
+    }
 }
 
 /// The channel role's identity: the public key inside the leaf of the credential chain this
@@ -118,60 +126,77 @@ fn response_role_identity(key: &VerificationKey) -> Ed25519PublicKeyValue {
 /// custody the served chain is what the handshake authenticates as. So asking the
 /// certificate asks the key that actually signs the handshake, without either path having
 /// to expose private material to be compared.
-fn channel_role_identity(
-    source: &(dyn KeySource + Send + Sync),
-) -> Result<ChannelIdentity, KeyError> {
-    let chain = source.tls_server_cert_chain()?;
-    let Some(leaf) = chain.first() else {
-        // No credential to serve. Nothing is comparable, and the deployment fails later on
-        // its own terms — inventing a refusal here would give this authority an opinion
-        // about the chain, which belongs to the credential owner.
-        return Ok(ChannelIdentity::IncomparableProfile);
+///
+/// # Infallible, and why that is not fail-open
+///
+/// An unreadable, absent or empty credential chain yields `NoKey` rather than a refusal, and
+/// the same holds for the response role. This authority owns ONE proposition — *the two
+/// roles are two keys* — and whether a backend answers belongs to the owner of that
+/// material. Refusing here would give this relation an opinion about a thing it does not
+/// own, and would move where an operator is told about it: a deployment with a missing
+/// certificate would start reporting the fault as a signing-role collapse.
+///
+/// It also cannot become a way to SKIP the comparison, because there is no execution in
+/// which a role produced no key and serving proceeds. The composition root reads the served
+/// chain immediately afterwards to build the listener, and the response public key to build
+/// the delegation — so a deployment where either is unavailable starts no server. The only
+/// executions this arm admits are executions that never serve.
+///
+/// That is also what keeps `build_key_source` a construction rather than a probe: a key
+/// source has always been buildable without the material being present, and a relation that
+/// turned an absent seed file into a role error would have changed what constructibility
+/// means.
+fn channel_role_identity(source: &(dyn KeySource + Send + Sync)) -> RoleIdentity {
+    let Ok(chain) = source.tls_server_cert_chain() else {
+        return RoleIdentity::NoKey;
     };
-    Ok(
-        match CertificateChainEvidence::from_leaf_der(leaf.as_ref())
-            .interpret_credential_public_key()
-        {
-            Ok(evidence) => ChannelIdentity::Comparable(evidence.key()),
-            Err(_) => ChannelIdentity::IncomparableProfile,
-        },
-    )
+    let Some(leaf) = chain.first() else {
+        return RoleIdentity::NoKey;
+    };
+    match CertificateChainEvidence::from_leaf_der(leaf.as_ref()).interpret_credential_public_key() {
+        Ok(evidence) => RoleIdentity::Key(evidence.key()),
+        Err(_) => RoleIdentity::NoKey,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Two distinct 32-byte points, each a valid Ed25519 public key.
-    fn two_keys() -> (VerificationKey, VerificationKey) {
-        let a = mcp_re_core::SigningKey::from_seed_bytes(&[1u8; 32]);
-        let b = mcp_re_core::SigningKey::from_seed_bytes(&[2u8; 32]);
-        (a.public_key(), b.public_key())
-    }
+    use mcp_re_core::VerificationKey;
 
     #[test]
     fn the_response_identity_round_trips_its_own_point() {
-        let (a, _) = two_keys();
-        assert_eq!(response_role_identity(&a).raw_point(), a.to_bytes());
+        let (leaf, key) = ed25519_leaf();
+        let source = RolesFixture {
+            response: key.clone(),
+            channel_leaf: leaf,
+        };
+        assert_eq!(
+            response_role_identity(&source),
+            RoleIdentity::Key(
+                Ed25519PublicKeyValue::interpret_rfc8410_spki(
+                    &Ed25519PublicKeyValue::spki_der_for_point(key.to_bytes())
+                )
+                .expect("canonical")
+            )
+        );
     }
 
     #[test]
     fn two_different_keys_have_two_different_identities() {
-        let (a, b) = two_keys();
+        let (leaf_a, a) = ed25519_leaf();
+        let (leaf_b, b) = ed25519_leaf();
+        let ia = response_role_identity(&RolesFixture {
+            response: a,
+            channel_leaf: leaf_a,
+        });
+        let ib = response_role_identity(&RolesFixture {
+            response: b,
+            channel_leaf: leaf_b,
+        });
         assert_ne!(
-            response_role_identity(&a).raw_point(),
-            response_role_identity(&b).raw_point(),
+            ia, ib,
             "two distinct keys must not share an identity, or the comparison is vacuous"
-        );
-    }
-
-    /// The same key read twice IS the same identity — the direction the refusal depends on.
-    #[test]
-    fn one_key_has_one_identity_however_often_it_is_asked() {
-        let (a, _) = two_keys();
-        assert_eq!(
-            response_role_identity(&a).raw_point(),
-            response_role_identity(&a).raw_point()
         );
     }
 
@@ -271,6 +296,79 @@ mod tests {
         assert!(
             MaterializedSigningRoles::establish(source).is_ok(),
             "a deployment holding two different keys must materialize"
+        );
+    }
+
+    /// A source whose credential chain cannot be READ contributes no comparison, and is not
+    /// a refusal.
+    ///
+    /// Found by CI rather than by design: `build_key_source` did not read the served chain
+    /// before this relation existed, so propagating a chain-read failure out of it turned a
+    /// missing certificate into a signing-role error and broke a fixture that had never
+    /// needed one. The relation owns whether the two roles are two keys; whether a chain is
+    /// readable is the credential owner's, and it refuses a moment later — no execution
+    /// reaches serving through this arm.
+    /// A source built over material that is not on disk contributes no comparison on either
+    /// side, and is not a refusal.
+    ///
+    /// Found by CI rather than by design. `build_key_source` touched no filesystem before
+    /// this relation existed — a key source has always been CONSTRUCTIBLE without its
+    /// material being present, which is what `file_key_source_is_always_constructible`
+    /// asserts — and propagating either read failure out of the relation turned an absent
+    /// seed or certificate into a signing-role error and changed what constructibility
+    /// means. The relation owns whether the two roles are two keys; whether a backend
+    /// answers is that material's owner's, and it refuses a moment later.
+    #[test]
+    fn a_source_over_absent_material_materializes_on_either_side() {
+        /// A source whose two roles answer or refuse independently.
+        struct Absent {
+            response: Option<VerificationKey>,
+            leaf: Option<Vec<u8>>,
+        }
+        impl crate::key_source::ResponseSigner for Absent {
+            fn sign_response(&self, _preimage: &[u8]) -> Result<String, KeyError> {
+                unreachable!("the role relation never signs")
+            }
+            fn response_public_key(&self) -> Result<VerificationKey, KeyError> {
+                self.response
+                    .clone()
+                    .ok_or_else(|| KeyError::NotFound("no seed here".to_string()))
+            }
+        }
+        impl KeySource for Absent {
+            fn tls_server_cert_chain(
+                &self,
+            ) -> Result<Vec<rustls_pki_types::CertificateDer<'static>>, KeyError> {
+                self.leaf
+                    .clone()
+                    .map(|der| vec![rustls_pki_types::CertificateDer::from(der)])
+                    .ok_or_else(|| KeyError::NotFound("no certificate here".to_string()))
+            }
+            fn tls_server_key(&self) -> Result<rustls_pki_types::PrivateKeyDer<'static>, KeyError> {
+                unreachable!("the role relation never exports a private key")
+            }
+            fn client_ca_roots(
+                &self,
+            ) -> Result<Vec<rustls_pki_types::CertificateDer<'static>>, KeyError> {
+                unreachable!("the role relation never reads the trust anchors")
+            }
+        }
+        let (leaf, key) = ed25519_leaf();
+        assert!(
+            MaterializedSigningRoles::establish(Box::new(Absent {
+                response: Some(key.clone()),
+                leaf: None,
+            }))
+            .is_ok(),
+            "an unreadable credential chain must not be reported as a signing-role collapse"
+        );
+        assert!(
+            MaterializedSigningRoles::establish(Box::new(Absent {
+                response: None,
+                leaf: Some(leaf),
+            }))
+            .is_ok(),
+            "an unreadable response key must not be reported as a signing-role collapse"
         );
     }
 

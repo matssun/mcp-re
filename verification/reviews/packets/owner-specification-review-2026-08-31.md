@@ -299,7 +299,7 @@ Independently reviewed already, and not reopened: THM-0015, THM-0014, THM-0001, 
 * **Kind:** owner-local
 * **Owner:** `http_profile.request_envelope`
 * **Depends on:** — (leaf)
-* **Support:** unit://http_profile.request_envelope — 11 declared symbol(s), lane(s): test
+* **Support:** unit://http_profile.request_envelope — 8 declared symbol(s), lane(s): test; unit://proxy.outstanding_id_provenance — 3 declared symbol(s), lane(s): test
 * **Assumptions:** none
 * **Review requirement:** Owner security-specification review
 
@@ -311,7 +311,7 @@ Independently reviewed already, and not reopened: THM-0015, THM-0014, THM-0001, 
 
 > Found by the missing-edge pass rather than by inspecting the registry: R1 quantifies over the pre-dispatch obligations a validated deployment selects, and this is one — it gates the continuation stage, the forwarded body and the choice of terminal — yet no node in the tree stated it. The authority, its contract and its battery all already existed; what did not exist was the claim. The same shape as the replay omission THM-0079 closed.
 >
-> Two halves. The VOCABULARY half is the owner's own: which bodies are messages, which answers correlate, and the two ways a correlation could be faked — a null id, and a reply that is also a request. The SINGLE-DECISION half is a source-text property of the serving path, and is evidence rather than unconstructibility: `outstanding_id` is a published API with legitimate callers on the client side and in the response validator, so it cannot be deleted to make a second read unavailable; what is held is that the serving path does not ask the same document twice, and that it carries the decided value to its terminal.
+> Two halves. The VOCABULARY half is the owner's own: which bodies are messages, which answers correlate, and the two ways a correlation could be faked — a null id, and a reply that is also a request. The SINGLE-DECISION half lives in a second unit, because the two halves are in different Cargo packages and a unit's test lane runs in one — a split the authorities agree with, since the vocabulary is the profile's and the single decision is the serving path's. It is evidence rather than unconstructibility: `outstanding_id` is a published API with legitimate callers on the client side and in the response validator, so it cannot be deleted to make a second read unavailable; what is held is that the serving path does not ask the same document twice, and that it carries the decided value to its terminal.
 >
 > It does not establish that the METHOD named is one this deployment serves, which is authorization's, nor anything about the body's application payload, which the profile deliberately does not inspect.
 >

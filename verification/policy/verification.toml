@@ -2314,23 +2314,13 @@ tested_symbols = [
 id = "http_profile.request_envelope"
 class = "V0"
 description = "What a JSON-RPC message IS on this profile, and what an answer must echo: the legality of a request envelope, the outstanding id it establishes, and the correlation rule a reply is held to — by value and by type, with no null-id correlation and no reply that is also a request."
-paths = [
-  "mcp-re-http-profile/src/envelope.rs",
-  "mcp-re-proxy/src/http_profile_serve/request_admission.rs",
-  "mcp-re-proxy/src/http_profile_serve/mod.rs",
-]
-test_package = "mcp-re-http-profile"
+paths = ["mcp-re-http-profile/src/envelope.rs"]
 exported_contracts = []
-evidence = [
-  "test://http_profile/envelope/request_and_correlation",
-  "test://proxy/serving/outstanding_id_provenance",
-]
+evidence = ["test://http_profile/envelope/request_and_correlation"]
 assumptions = []
-# Two batteries for two halves. The first is what the vocabulary MEANS — which bodies are
-# messages, which answers correlate, and the two ways a correlation could be faked (a null
-# id, and a reply that is also a request). The second is that the serving path decides it
-# ONCE: a published reader exists and legitimately has other callers, so what is measured is
-# that the serving path does not ask the same document twice.
+# The vocabulary half of THM-0083. The battery is largely negative: which bodies are NOT
+# messages, and the two ways a correlation could be faked — a null id, and a reply that is
+# also a request.
 tested_symbols = [
   "lib#envelope::tests::a_request_body_that_is_not_a_json_rpc_message_is_refused",
   "lib#envelope::tests::a_legal_request_yields_its_outstanding_id",
@@ -2340,6 +2330,28 @@ tested_symbols = [
   "lib#envelope::tests::a_null_id_does_not_correlate_to_an_id_bearing_request",
   "lib#envelope::tests::a_response_id_that_does_not_match_the_request_is_refused",
   "lib#envelope::tests::a_reply_that_is_also_a_request_is_refused",
+]
+
+[[unit]]
+id = "proxy.outstanding_id_provenance"
+class = "V0"
+description = "That the serving path decides what a request IS exactly once — by envelope validation, ahead of every stage that reads the body for meaning — and never reads the outstanding id from the body a second time, carrying the decided value to its terminal instead."
+# Separate from `http_profile.request_envelope` because the two halves are in different
+# CARGO PACKAGES, and a unit's test lane runs in one. That is not merely a mechanical split:
+# the vocabulary is the profile's and the single decision is the serving path's, so the
+# packages and the authorities agree.
+paths = [
+  "mcp-re-proxy/src/http_profile_serve/request_admission.rs",
+  "mcp-re-proxy/src/http_profile_serve/mod.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/serving/outstanding_id_provenance"]
+assumptions = []
+# `outstanding_id` is a published API with legitimate callers on the client side and in the
+# response validator, so it cannot be deleted to make a second read unavailable. What is
+# measured is that the SERVING PATH does not ask the same document twice — and the third
+# member is what stops the first two going vacuously true if a matcher stops matching.
+tested_symbols = [
   "tests/integration#outstanding_id_provenance_test::the_serving_path_decides_the_outstanding_id_exactly_once",
   "tests/integration#outstanding_id_provenance_test::no_production_serving_code_reads_the_outstanding_id_a_second_time",
   "tests/integration#outstanding_id_provenance_test::the_rules_would_catch_each_regression",
