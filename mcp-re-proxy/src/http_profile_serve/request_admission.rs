@@ -123,6 +123,12 @@ impl RequestAdmission {
     /// admission would burn a nonce, spend an approval and write a durable retention marker
     /// on behalf of a document that is not an MCP message.
     ///
+    /// REPRESENTABILITY is part of that shape, and for the same reason. A body carrying a
+    /// duplicate member name or a number the `f64` carrier rewrites is one the profile
+    /// cannot forward and sign unchanged, and every reader below — this validator included
+    /// — goes through `serde_json`, which answers for one winner rather than for the
+    /// document the client signed.
+    ///
     /// The returned [`OutstandingId`] is the exchange's single answer to "what is this
     /// request": the notification arm and the response envelope validator are both given
     /// this value rather than re-reading the body. Two readers of one document can disagree,
@@ -179,6 +185,23 @@ mod tests {
             panic!("a non-JSON-RPC body is not a legal request");
         };
         assert_eq!(refusal.status, 400);
+    }
+
+    #[test]
+    fn a_body_the_profile_cannot_carry_unchanged_is_refused_before_anything_is_spent() {
+        // Free, and 400 rather than 500. The scan used to run when the forwarded body was
+        // composed, which is after the nonce is burned, the approval retired and the
+        // retention marker written — so a document MCP-RE will not carry was refused at
+        // the cost of a document it would have.
+        for body in [
+            r#"{"jsonrpc":"2.0","method":"tools/call","id":1,"id":2}"#,
+            r#"{"jsonrpc":"2.0","method":"tools/call","params":{"n":123456789012345678901234567890}}"#,
+        ] {
+            let Err(refusal) = admission().validate_envelope(&request(body)) else {
+                panic!("{body} was accepted as a representable request");
+            };
+            assert_eq!(refusal.status, 400);
+        }
     }
 
     #[test]

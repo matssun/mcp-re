@@ -115,19 +115,32 @@ pub fn outstanding_id(request_body: &[u8]) -> Result<OutstandingId, HttpProfileE
 ///
 /// The checks, in the order a reader would apply them:
 ///
-/// 1. the body is JSON, and is an object;
-/// 2. `jsonrpc` is present and exactly `"2.0"`;
-/// 3. `method` is present and is a string — the member that makes a request a request,
+/// 1. the body is REPRESENTABLE — no duplicate member name, no number the `f64` carrier
+///    would alter. Asked first, and on the original bytes, because every check below
+///    reads the body through `serde_json`, which resolves a duplicate member to one
+///    winner and silently answers for a document that has two;
+/// 2. the body is JSON, and is an object;
+/// 3. `jsonrpc` is present and exactly `"2.0"`;
+/// 4. `method` is present and is a string — the member that makes a request a request,
 ///    and the one whose absence made "no `id`" mean "notification";
-/// 4. neither `result` nor `error` is present, so one document cannot be read as a
+/// 5. neither `result` nor `error` is present, so one document cannot be read as a
 ///    request by this boundary and as a response by the peer;
-/// 5. `params`, when present, is an object or an array (JSON-RPC 2.0 §4.2);
-/// 6. `id`, when present, is a string or a number. JSON-RPC also permits `null`, and MCP
+/// 6. `params`, when present, is an object or an array (JSON-RPC 2.0 §4.2);
+/// 7. `id`, when present, is a string or a number. JSON-RPC also permits `null`, and MCP
 ///    forbids it; a null-id request is refused rather than folded into a notification,
 ///    because the two are answered differently — one with a bound signed reply, the other
 ///    with a bodyless 202.
+///
+/// **On clause 1.** Representability is a property of the REQUEST DOCUMENT, so it belongs
+/// with the rest of the request-shape decision and at the same cost. It used to be decided
+/// on the dispatch path, when the forwarded body was composed — after a nonce had been
+/// burned, an approval retired and a retention marker written. A document MCP-RE will not
+/// carry unchanged is not a document those effects should have been spent on, and moving
+/// the clause here is what makes the refusal free rather than making it stricter.
 pub fn validate_request_envelope(request_body: &[u8]) -> Result<OutstandingId, HttpProfileError> {
     let malformed = HttpProfileError::MalformedEvidence;
+
+    crate::body::reject_unrepresentable_json(request_body)?;
 
     let parsed: Value =
         serde_json::from_slice(request_body).map_err(|_| malformed("request body is not JSON"))?;
@@ -538,6 +551,27 @@ mod tests {
             // The reader the serving path uses today sees no `id` in most of these and
             // calls them notifications, which is what the validator exists to stop.
             let _ = outstanding_id(body.as_bytes());
+        }
+    }
+
+    /// An unrepresentable request is refused HERE, where the refusal is free.
+    ///
+    /// Both bodies below are legal JSON-RPC by every other clause, and `serde_json` reads
+    /// each of them without complaint — a duplicate member resolves to one winner, and the
+    /// integer arrives as an `f64` that has lost thirteen significant digits. That is the
+    /// point: the validator
+    /// answers for the document the client signed, not for the one a parser picked out of
+    /// it, and the answer has to come before anything is spent.
+    #[test]
+    fn a_request_this_boundary_cannot_carry_unchanged_is_refused() {
+        for body in [
+            r#"{"jsonrpc":"2.0","method":"tools/call","id":1,"id":2}"#,
+            r#"{"jsonrpc":"2.0","method":"tools/call","params":{"n":123456789012345678901234567890}}"#,
+        ] {
+            assert!(
+                validate_request_envelope(body.as_bytes()).is_err(),
+                "{body} was accepted as a representable MCP request"
+            );
         }
     }
 
