@@ -1,0 +1,1319 @@
+{
+  "schema_version": 1,
+  "source": "work/security-audit-2026-08-11-r9 (gitignored) — 131 clusters, Stage 3 never run",
+  "re_derived_against": "main @ 8551061c",
+  "re_derived_on": "2026-08-31",
+  "status": "NON-NORMATIVE measurement. A disposition is evidence about the tree, not a work item.",
+  "dispositions": [
+    {
+      "cluster": "R9-C001",
+      "severity": "critical",
+      "title": "GCP Cloud KMS endpoint authority is never checked: userinfo re-points the root-key bootstrap and bearer token",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": "THM-0074",
+      "node": "THM-0074 / kms_endpoint_policy",
+      "area": "credential-acquisition",
+      "reason": "`kms_endpoint_policy::kms_endpoint_authority` is now the single decision, applied at GCP (`gcp_kms_keysource.rs:611`), AWS-KMS, STS and the config boundary. The three-flag asymmetry is gone."
+    },
+    {
+      "cluster": "R9-C002",
+      "severity": "high",
+      "title": "Deleted-specification control accepts prose: SPECIFICATION_TEXT is searched over comments too",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "assurance platform (no THM)",
+      "area": "assurance-platform",
+      "reason": "`check-assumptions:312` still folds comment lines into the attribute block and `SPECIFICATION_TEXT` (`:138`) is still a bare `\\bensures\\b|\\brequires\\b` searched over it at `:360`. A doc comment still satisfies the deleted-specification detector."
+    },
+    {
+      "cluster": "R9-C003",
+      "severity": "high",
+      "title": "required_lanes widening made every attestation un-issuable: attest refuses all 8 units",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "`attest` now loads `('test','verus','lean','mutation')`; the test-evidence lane exists and writes records."
+    },
+    {
+      "cluster": "R9-C004",
+      "severity": "high",
+      "title": "NotDispatched leaves a permanent retention marker for a request that never reached a backend",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0045",
+      "node": "THM-0045 / proxy.dispatch_commitment",
+      "area": "retention-marker",
+      "reason": "`commit_to_dispatch` reserves last, closing the `admit()` ordering — but `dispatch()` still returns `NotDispatched` for the in-flight bound (`http_inner:486`) and all-ejected (`:495`), refused at `inner_plane.rs:99/151` after the reservation, dropping the disposition with no release."
+    },
+    {
+      "cluster": "R9-C005",
+      "severity": "high",
+      "title": "trust-boundaries.toml became a gate but participates in no ReviewFingerprint — turning the cap off invalidates nothing",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "`trust-boundaries.toml` appears in no `_fingerprint.py` component. Raising or deleting `max_class_without_assumption` still invalidates nothing."
+    },
+    {
+      "cluster": "R9-C006",
+      "severity": "high",
+      "title": "reject_unrepresentable_json is enforced after the nonce burn and after the continuation is consumed",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0083",
+      "node": "THM-0083 / http_profile.request_envelope",
+      "area": "serving-body-shape",
+      "reason": "`reject_unrepresentable_json` still runs inside `body_boundary::prepare` at `forward_body_stage`, i.e. after the nonce burn, after continuation retirement, after `request.accepted`."
+    },
+    {
+      "cluster": "R9-C007",
+      "severity": "high",
+      "title": "The body-representability refusal runs after the nonce burn and the continuation retirement, unlike its sibling",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0083",
+      "node": "THM-0083",
+      "area": "serving-body-shape",
+      "reason": "Same site. `validate_request_envelope` does not call it; the sibling shape refusal is still one region late and still `Refusal::after_admission(e, 500)`."
+    },
+    {
+      "cluster": "R9-C008",
+      "severity": "high",
+      "title": "chain_issuers_within_validity refuses chains the handshake admits (unused presented certs, pinned-intermediate anchors)",
+      "disposition": "NO_LONGER_REPRODUCES",
+      "theorem": null,
+      "node": "—",
+      "area": "tls-listener-and-revocation",
+      "reason": "`chain_issuers_within_validity` no longer exists in the tree."
+    },
+    {
+      "cluster": "R9-C009",
+      "severity": "high",
+      "title": "chain_issuers_within_validity judges the presented chain, not the built path",
+      "disposition": "NO_LONGER_REPRODUCES",
+      "theorem": null,
+      "node": "—",
+      "area": "tls-listener-and-revocation",
+      "reason": "Same function removed. Certificate currency now has a semantic owner, `proxy.credential_currency` / THM-0032."
+    },
+    {
+      "cluster": "R9-C010",
+      "severity": "high",
+      "title": "Python mTLS aggregate read deadline never fires: `response.read(64 KiB)` blocks past it",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM (SDK unrooted)",
+      "area": "sdk-client-exchange",
+      "reason": "`_read_bounded` checks the deadline only between `response.read(want)` calls with `want` up to 64 KiB; `http.client` fills to `amt`. The docstring's cap claim is still false."
+    },
+    {
+      "cluster": "R9-C011",
+      "severity": "high",
+      "title": "Python SDK's new \"aggregate response read\" deadline is inert — http.client read(n) blocks until n bytes",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "sdk-client-exchange",
+      "reason": "Same defect, same lines."
+    },
+    {
+      "cluster": "R9-C012",
+      "severity": "high",
+      "title": "CodeBuild pre_build refuses `.claude`, which `git archive HEAD` always emits (it is tracked)",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "deployment-rendering",
+      "reason": "`deploy/codebuild/mcp-re-slo-bench.yaml:157` still refuses `.claude`; `git ls-files .claude` still returns tracked files; the documented upload is still `git archive HEAD`."
+    },
+    {
+      "cluster": "R9-C013",
+      "severity": "high",
+      "title": "CodeBuild guard refuses `.claude`, but `.claude/**` is TRACKED so every `git archive HEAD` upload fails pre_build",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "deployment-rendering",
+      "reason": "Same guard, same tracked files. Every correctly-produced source zip still aborts pre_build."
+    },
+    {
+      "cluster": "R9-C014",
+      "severity": "high",
+      "title": "New credential exclusions landed in .gcloudignore only; .dockerignore and the parity gate were not extended",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "deployment-rendering",
+      "reason": "`.dockerignore` still carries none of `.claude/`, `**/.claude/`, `.vscode/`, `.idea/`, `.verification/`; `REQUIRED_UPLOAD_EXCLUSIONS` still lists none of them, so the parity gate is blind."
+    },
+    {
+      "cluster": "R9-C015",
+      "severity": "high",
+      "title": "Helm plaintext-Redis de-fleet-gating skipped the admission-currency hop; values.yaml over-claims",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "deployment-rendering",
+      "reason": "`deployment.yaml:18` still reads `and .Values.fleet …`. The two sibling refusals in `_helpers.tpl:128-135` are fleet-independent and argue in comments that the hazard is independent of replica count."
+    },
+    {
+      "cluster": "R9-C016",
+      "severity": "high",
+      "title": "Round-8 'epoch is now live' fix has no live input: anchors are startup-frozen, so republish() always returns None",
+      "disposition": "SUPERSEDED_BY_ARCHITECTURE",
+      "theorem": "THM-0048",
+      "node": "THM-0048 / proxy.tls_listener_state",
+      "area": "tls-listener-and-revocation",
+      "reason": "ADR-MCPRE-062 replaced epoch advancement with immutable-listener / store-replacement. `tls_listener_state/mod.rs:29` now states proposition 2 as established by *nothing*, and names proposition 3 as the protection."
+    },
+    {
+      "cluster": "R9-C017",
+      "severity": "high",
+      "title": "Endpoint userinfo re-point closed only for --aws-kms-endpoint; STS and GCP endpoints still re-point",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": "THM-0074",
+      "node": "THM-0074 / kms_endpoint_policy",
+      "area": "credential-acquisition",
+      "reason": "One authority, three flags."
+    },
+    {
+      "cluster": "R9-C018",
+      "severity": "high",
+      "title": "validated_kms_endpoint's loopback check is defeated by URL userinfo; the GCP KMS path has no second gate",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": null,
+      "node": "kms_endpoint_policy",
+      "area": "credential-acquisition",
+      "reason": "`kms_endpoint_policy/mod.rs:97` refuses userinfo explicitly, before any loopback reading."
+    },
+    {
+      "cluster": "R9-C019",
+      "severity": "high",
+      "title": "Python SDK's new \"aggregate\" response-read deadline bounds nothing; its test stub ignores the read size",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "sdk-client-exchange",
+      "reason": "Unchanged."
+    },
+    {
+      "cluster": "R9-C020",
+      "severity": "high",
+      "title": "Python SDK aggregate response-read deadline is inert; its test uses a reader http.client never behaves like",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "sdk-client-exchange",
+      "reason": "Unchanged; the TypeScript twin is still bounded and Python is not."
+    },
+    {
+      "cluster": "R9-C021",
+      "severity": "high",
+      "title": "Ladder reorder puts an await between admit() and dispatch(), re-opening the durable-marker leak it closed",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0045",
+      "node": "THM-0045",
+      "area": "retention-marker",
+      "reason": "The awaited durable write is now `retention.reserve` between `inner_async.admit()` and `dispatch()`. The capacity check and the permit acquisition are still separated by an await."
+    },
+    {
+      "cluster": "R9-C022",
+      "severity": "high",
+      "title": "Boundary class cap is checked against declared paths while the proof cone is the whole crate plus its closure",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "`boundary_class_violations` still decides on `expand_paths(unit['paths'])` while the measured cone is the crate plus its path-dependency closure."
+    },
+    {
+      "cluster": "R9-C023",
+      "severity": "high",
+      "title": "attest gates issuance on a bundle.json no completed run has to have written",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "`verify:196` returns 1 before `write_bundle` at `:249`. A failed run leaves the previous bundle, and `attest` reads it as the last run's aggregate."
+    },
+    {
+      "cluster": "R9-C024",
+      "severity": "high",
+      "title": "attest can never issue: required_lanes widened to every scheme, attest still loads only verus/lean",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "Four lanes loaded."
+    },
+    {
+      "cluster": "R9-C025",
+      "severity": "high",
+      "title": "Fork-PR guard lives in the file a fork PR controls: pull_request runs the head's verification.yml",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "The guard is still an `if:` at `verification.yml:322/375` in the file a fork PR's merge ref supplies. Closing it is an Actions-settings decision, not a code one."
+    },
+    {
+      "cluster": "R9-C026",
+      "severity": "high",
+      "title": "Plaintext-Redis widening skipped the admission-currency hop: deployment.yaml:18 still requires fleet=true",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "deployment-rendering",
+      "reason": "Same as C015."
+    },
+    {
+      "cluster": "R9-C027",
+      "severity": "high",
+      "title": ".dockerignore missed round 8's .claude/.verification excludes; Dockerfile.bench is single-stage",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "deployment-rendering",
+      "reason": "Same as C014."
+    },
+    {
+      "cluster": "R9-C028",
+      "severity": "high",
+      "title": "Round-8 decimal rule refuses ordinary round-trip f64 values, killing signed replies after the tool ran",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0083",
+      "node": "THM-0083 (adjacent)",
+      "area": "serving-body-shape",
+      "reason": "`EXACTLY_CARRIED_DECIMAL_DIGITS = 15` still refuses 16–17-significant-digit shortest-round-trip forms, which are exactly what ryu emits for computed f64s and which round-trip exactly."
+    },
+    {
+      "cluster": "R9-C029",
+      "severity": "high",
+      "title": "verify_retained_evidence returns Ok on the both-empty submission case; round-8 vector now pins that path",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0042",
+      "node": "THM-0042 (root)",
+      "area": "scitt-retained-evidence",
+      "reason": "`corresponds_to` still falls through to `Ok(())` when neither side identifies a submission, and `submitted_commitment` is still copied verbatim from the caller-supplied reconstruction (`commitment/mod.rs:129`)."
+    },
+    {
+      "cluster": "R9-C030",
+      "severity": "high",
+      "title": "The trust epoch cannot advance in-process; round 8 removed the reload cache flush that replaced it",
+      "disposition": "SUPERSEDED_BY_ARCHITECTURE",
+      "theorem": "THM-0048",
+      "node": "THM-0048",
+      "area": "tls-listener-and-revocation",
+      "reason": "See C016."
+    },
+    {
+      "cluster": "R9-C031",
+      "severity": "high",
+      "title": "STS endpoint authority is never checked either: userinfo sends the pod's IRSA token to an attacker host",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": null,
+      "node": "kms_endpoint_policy",
+      "area": "credential-acquisition",
+      "reason": "`aws_sts.rs:258/461` now call the shared authority."
+    },
+    {
+      "cluster": "R9-C032",
+      "severity": "medium",
+      "title": "Body-fidelity refusal still runs after the nonce burn and the continuation consume",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0083",
+      "node": "THM-0083",
+      "area": "serving-body-shape",
+      "reason": "Same as C006."
+    },
+    {
+      "cluster": "R9-C033",
+      "severity": "medium",
+      "title": "Helm drain invariant is unsound: round 8's 2s post-drain audit flush is not in the arithmetic",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "deployment-rendering",
+      "reason": "`_helpers.tpl:190` DRAIN INVARIANT is still `pre + proxyDrain < kubelet`, with no budget for the post-serve audit flush."
+    },
+    {
+      "cluster": "R9-C034",
+      "severity": "medium",
+      "title": "Audit occupancy counter incremented after the send: a drain can wrap it to usize::MAX and drop every record",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": "THM-0070",
+      "node": "THM-0070 / proxy.audit_delivery",
+      "area": "audit-delivery",
+      "reason": "`offer` now reserves the slot before the send and releases it if the send fails, so the counter cannot underflow."
+    },
+    {
+      "cluster": "R9-C035",
+      "severity": "medium",
+      "title": "SCITT interop corpus is a stale pre-submitted_commitment statement; the round-8 test asserts a false fact about it",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0042",
+      "node": "THM-0042",
+      "area": "scitt-retained-evidence",
+      "reason": "Re-derived only to the level of the corpus writers; the interop artefact/committed-statement byte comparison is still absent. Treat the residual measurement as owed."
+    },
+    {
+      "cluster": "R9-C036",
+      "severity": "medium",
+      "title": "reject_unrepresentable_json still admits subnormal decimals the composer rewrites inside the signed bytes",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0083",
+      "node": "THM-0083 (adjacent)",
+      "area": "serving-body-shape",
+      "reason": "`decimal_survives_the_f64_carrier` still admits any ≤15-significant-digit decimal; `is_finite()` and `value != 0.0` do not exclude subnormals, which carry far fewer digits."
+    },
+    {
+      "cluster": "R9-C037",
+      "severity": "medium",
+      "title": "Per-unit registration is defeated by over-broad declared paths: ASM-0021 covers all of verify.rs",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "`is_registered` is still per (mechanism kind, unit) with no site, so one registration licenses every future site in every file the unit declares."
+    },
+    {
+      "cluster": "R9-C038",
+      "severity": "medium",
+      "title": "The only detector for a deleted specification is satisfied by 'requires'/'ensures' in a doc comment",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "Same as C002."
+    },
+    {
+      "cluster": "R9-C039",
+      "severity": "medium",
+      "title": "Fingerprint covers dependency source but not dependency Cargo.toml, so the verify feature can change unseen",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "`_build_configuration` still digests only `WORKSPACE_BUILD_INPUTS` plus the unit's own crates' `Cargo.toml`; the proof-dependency closure's manifests participate in no component."
+    },
+    {
+      "cluster": "R9-C040",
+      "severity": "medium",
+      "title": "build_configuration omits the manifests of the proof-dependency closure crates",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "Same measurement."
+    },
+    {
+      "cluster": "R9-C041",
+      "severity": "medium",
+      "title": "trust-boundaries.toml became a gate but participates in no fingerprint, so widening a cap invalidates nothing",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "Same as C005."
+    },
+    {
+      "cluster": "R9-C042",
+      "severity": "medium",
+      "title": "Duplicate-member refusal still runs at forward_body_stage, past the nonce burn and spent approval, as a 500",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0083",
+      "node": "THM-0083",
+      "area": "serving-body-shape",
+      "reason": "Same as C006."
+    },
+    {
+      "cluster": "R9-C043",
+      "severity": "medium",
+      "title": "Reorder decoupled the two ladder events from the work, so the release-active relation cannot see a re-swap",
+      "disposition": "SUPERSEDED_BY_ARCHITECTURE",
+      "theorem": "THM-0043",
+      "node": "THM-0043 / proxy.exchange_lifecycle",
+      "area": "exchange-lifecycle",
+      "reason": "`Established` / `progress.establish` now make the event derive from the value being consumed, so a stage cannot state an event it did not justify. The unconditional-literal shape is gone."
+    },
+    {
+      "cluster": "R9-C044",
+      "severity": "medium",
+      "title": "Notification arm still mints a signed 202 when the backend answered non-2xx (matches variant, not clause)",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0078",
+      "node": "THM-0078 (root)",
+      "area": "exchange-lifecycle",
+      "reason": "`observe_acknowledgement` still puts all of `InvalidUpstream` in the acknowledging arm, and `http_inner:391` still classifies a non-2xx as `InvalidUpstream`. A notification the backend refused is answered with a signed 202; the bodied arm answers 502."
+    },
+    {
+      "cluster": "R9-C045",
+      "severity": "medium",
+      "title": "New request-side body guard is wired after the nonce burn and approval spend, and blamed as a 500",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0083",
+      "node": "THM-0083",
+      "area": "serving-body-shape",
+      "reason": "Same as C006."
+    },
+    {
+      "cluster": "R9-C046",
+      "severity": "medium",
+      "title": "Request body-fidelity guard refuses after the nonce burn and approval spend, and maps a caller fault to 500",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0083",
+      "node": "THM-0083",
+      "area": "serving-body-shape",
+      "reason": "Same as C006."
+    },
+    {
+      "cluster": "R9-C047",
+      "severity": "medium",
+      "title": "chain_issuers_within_validity exempts on issuer==subject, not on anchor membership",
+      "disposition": "NO_LONGER_REPRODUCES",
+      "theorem": null,
+      "node": "—",
+      "area": "tls-listener-and-revocation",
+      "reason": "Function removed."
+    },
+    {
+      "cluster": "R9-C048",
+      "severity": "medium",
+      "title": "The self-issued exemption is claimable by a cross-signed, non-anchor intermediate",
+      "disposition": "NO_LONGER_REPRODUCES",
+      "theorem": null,
+      "node": "—",
+      "area": "tls-listener-and-revocation",
+      "reason": "Function removed."
+    },
+    {
+      "cluster": "R9-C049",
+      "severity": "medium",
+      "title": "Python SDK's new aggregate mTLS read deadline never fires — http.client blocks for the whole body in one read()",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "sdk-client-exchange",
+      "reason": "Unchanged."
+    },
+    {
+      "cluster": "R9-C050",
+      "severity": "medium",
+      "title": "`.dockerignore` not updated with `.gcloudignore`'s new exclusions; the parity gate is blind to them",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "deployment-rendering",
+      "reason": "Same as C014."
+    },
+    {
+      "cluster": "R9-C051",
+      "severity": "medium",
+      "title": "Plaintext-Redis refusal dropped `.Values.fleet` on two hops but not the admission-currency third",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "deployment-rendering",
+      "reason": "Same as C015."
+    },
+    {
+      "cluster": "R9-C052",
+      "severity": "medium",
+      "title": "Delegated TLS sign budget has no operator surface: rate_per_sec/burst/refused have no callers",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "tls-listener-and-revocation",
+      "reason": "`rate_per_sec`, `burst` and `refused` still have exactly one caller, the unit test at `delegated_tls.rs:439`. No posture line emits a sign-budget field."
+    },
+    {
+      "cluster": "R9-C053",
+      "severity": "medium",
+      "title": "Verification trigger widened to unit sources but not to the build inputs the fingerprint measures",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "`Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` and the per-crate manifests are in the trigger set, and `scripts/verification_trigger_gate.py` derives the requirement from the manifest."
+    },
+    {
+      "cluster": "R9-C054",
+      "severity": "medium",
+      "title": "Verification trigger widening omits the fingerprint's build inputs (Cargo.lock, rust-toolchain.toml, crate manifests)",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "Same fix."
+    },
+    {
+      "cluster": "R9-C055",
+      "severity": "medium",
+      "title": "Fork-PR guard is complete against RCE but yields a skipped-job green; no fork-safe verification lane replaces it",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "A skipped job still reports success, and nothing on the GitHub-hosted side runs any part of the lane for forks."
+    },
+    {
+      "cluster": "R9-C056",
+      "severity": "medium",
+      "title": "verification.yml triggers omit the build inputs ENCODING_VERSION 3 added to every fingerprint",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "Same fix."
+    },
+    {
+      "cluster": "R9-C057",
+      "severity": "medium",
+      "title": "GCP metadata single-flight serializes failing fetches, turning a 5s failure into a growing thread queue",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "credential-acquisition",
+      "reason": "`gcp_kms_keysource.rs:406` still takes `fetching` across the whole round trip with no negative caching, so waiters serialize their own full-timeout fetches."
+    },
+    {
+      "cluster": "R9-C058",
+      "severity": "medium",
+      "title": "New metadata-token single-flight has no failure path: 5s stalls now serialize across the TLS worker pool",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "credential-acquisition",
+      "reason": "Same lock, same absence of failure caching."
+    },
+    {
+      "cluster": "R9-C059",
+      "severity": "medium",
+      "title": "GCP metadata single-flight serializes failing fetches, starving every core's TLS handshake slots",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "credential-acquisition",
+      "reason": "Same."
+    },
+    {
+      "cluster": "R9-C060",
+      "severity": "medium",
+      "title": "Unknown-expiry floor pins a dead GCP token ~240s; doc claims it costs \"one failed KMS call\"",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "credential-acquisition",
+      "reason": "`UNKNOWN_EXPIRY_REUSE` is now 120 s and the doc at `:84` states the window a caller actually sees; the revocation path is named at `:163`."
+    },
+    {
+      "cluster": "R9-C061",
+      "severity": "medium",
+      "title": "New Python `send_notification_verified()` runs outside the concurrency bound its TypeScript twin enforces",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM (SDK unrooted)",
+      "area": "sdk-client-exchange",
+      "reason": "`send_notification_verified`'s whole body is still `await _notify(...)` — no `CapacityLimiter`, no lifecycle or abort check."
+    },
+    {
+      "cluster": "R9-C062",
+      "severity": "medium",
+      "title": "The Rust ambassador drops `bound` from the rejection it hands the local client; both SDKs emit `requestBound`",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0076",
+      "node": "THM-0076 (root, client side)",
+      "area": "client-proxy-and-sidecar",
+      "reason": "`plain_error_from_rejection` still emits exactly wire_code + the four contract members; `bound` is not among them, while both SDKs emit `requestBound`."
+    },
+    {
+      "cluster": "R9-C063",
+      "severity": "medium",
+      "title": "Ambassador never tells the local client whether a verified rejection was request-BOUND",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0076",
+      "node": "THM-0076",
+      "area": "client-proxy-and-sidecar",
+      "reason": "Same omission."
+    },
+    {
+      "cluster": "R9-C064",
+      "severity": "medium",
+      "title": "Audit queue occupancy counter underflows to usize::MAX, opening a window where every audit record is dropped",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": "THM-0070",
+      "node": "THM-0070",
+      "area": "audit-delivery",
+      "reason": "See C034."
+    },
+    {
+      "cluster": "R9-C065",
+      "severity": "medium",
+      "title": "The SCITT interop corpus is NOT the frozen s01 statement, and a round-8 test now pins the divergence",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0042",
+      "node": "THM-0042",
+      "area": "scitt-retained-evidence",
+      "reason": "See C035."
+    },
+    {
+      "cluster": "R9-C066",
+      "severity": "medium",
+      "title": "Release-active anomaly latch is unread on exactly the terminals its invariants can only be violated at",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0043",
+      "node": "THM-0043 (root closure)",
+      "area": "exchange-lifecycle",
+      "reason": "The latch's only production reader is `retry_semantics()`, reached only on refusal paths. Both success terminals still guard with `debug_assert!`, compiled out in release."
+    },
+    {
+      "cluster": "R9-C067",
+      "severity": "medium",
+      "title": "Per-unit registration still whitelists future escape-hatch sites in every file the unit declares",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "Same as C037."
+    },
+    {
+      "cluster": "R9-C068",
+      "severity": "medium",
+      "title": "Escape-hatch registration is per mechanism KIND: every declared file already reads 'registered' for external_body",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "Same as C037."
+    },
+    {
+      "cluster": "R9-C069",
+      "severity": "medium",
+      "title": "An absent toolchain pin is not an unresolved pin: verify-verus runs with [rust] and [verus.z3] deleted",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "`REQUIRED & set(unresolved_pins(...))` still detects only entries that exist with `state = \"unresolved\"`; `unresolved_pins` iterates existing tables, so a deleted one is never reported."
+    },
+    {
+      "cluster": "R9-C070",
+      "severity": "medium",
+      "title": "The solver has no measured identity and the lane inherits VERUS_Z3_PATH from the environment",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "`installed_identity` still digests only `vstd.vir` and `version.json`, and the lane still runs with `{**os.environ}`, so `VERUS_Z3_PATH` selects the solver undetected."
+    },
+    {
+      "cluster": "R9-C071",
+      "severity": "medium",
+      "title": "verify exits before writing the evidence bundle, so attest consumes the previous run's aggregate",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "Same as C023."
+    },
+    {
+      "cluster": "R9-C072",
+      "severity": "medium",
+      "title": "Workflow path triggers miss the build inputs the new fingerprint measures, including the verify-feature Cargo.toml",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "Same as C053."
+    },
+    {
+      "cluster": "R9-C073",
+      "severity": "medium",
+      "title": "Widened trigger lands on a currently-red gate: most core PRs now fail on an unrelated manifest-policy error",
+      "disposition": "NO_LONGER_REPRODUCES",
+      "theorem": null,
+      "node": "—",
+      "area": "assurance-platform",
+      "reason": "`verify --manifests` is PASS on current main (measured this session, including after the ASM-0037 correction)."
+    },
+    {
+      "cluster": "R9-C074",
+      "severity": "medium",
+      "title": "submitted_commitment covers no header but `signature`, so tail substitution stays open via signature-input",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0042",
+      "node": "THM-0042 (root)",
+      "area": "scitt-retained-evidence",
+      "reason": "`submitted_commitment` (`chain/mod.rs:202`) still folds only status, method, target-URI, request body, response body, and headers whose name is exactly `signature`. `signature-input`, `content-digest` and `mcp-re-delegation` are excluded."
+    },
+    {
+      "cluster": "R9-C075",
+      "severity": "medium",
+      "title": "submitted_commitment omits every header but `signature`, leaving the tail substitution open",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0042",
+      "node": "THM-0042 (root)",
+      "area": "scitt-retained-evidence",
+      "reason": "Same digest. The record's own doc still calls it the identity of what was submitted."
+    },
+    {
+      "cluster": "R9-C076",
+      "severity": "medium",
+      "title": "--trust-domain non-emptiness is still enforced only in parse_args after its five siblings moved to the boundary",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": "THM-0077",
+      "node": "THM-0077 (root)",
+      "area": "cli-boundary",
+      "reason": "`config_state/server_identity.rs::coordinate_violations` refuses an empty `--trust-domain` (and `--server-signer`) at the validation boundary."
+    },
+    {
+      "cluster": "R9-C077",
+      "severity": "medium",
+      "title": "Three semantic refusals are still enforced only in parse_args after the round-8 boundary sweep",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0013",
+      "node": "THM-0013 / proxy.online_ocsp_reachability",
+      "area": "cli-boundary",
+      "reason": "No `ocsp_responder_url` refusal exists in `config_state/`; the dangling-flag refusal is still argv-only, so a programmatic `Config` carries it into serving."
+    },
+    {
+      "cluster": "R9-C078",
+      "severity": "medium",
+      "title": "Both new retention APIs are unwired: nothing enumerates, releases or reclaims a .pending marker",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM (transparency unrooted)",
+      "area": "retention-marker",
+      "reason": "`release_before_dispatch` is called only from `durability.rs`'s own test; `pending_reservations` only from one proxy integration test."
+    },
+    {
+      "cluster": "R9-C079",
+      "severity": "medium",
+      "title": "release_before_dispatch() and pending_reservations() have no production caller — both are test-only",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "retention-marker",
+      "reason": "Same."
+    },
+    {
+      "cluster": "R9-C080",
+      "severity": "medium",
+      "title": "release_before_dispatch() and pending_reservations() have no production caller — R8-C093 is API-only",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "retention-marker",
+      "reason": "Same."
+    },
+    {
+      "cluster": "R9-C081",
+      "severity": "medium",
+      "title": "Inner-plane saturation still leaves a permanent retention marker when discovered at dispatch",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0045",
+      "node": "THM-0045",
+      "area": "retention-marker",
+      "reason": "Same as C004."
+    },
+    {
+      "cluster": "R9-C082",
+      "severity": "medium",
+      "title": "Both new round-8 verification test files are wired into nothing and will never run",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "`local_gate.sh:135-139` now runs `test_measured_inputs`, `test_escape_hatches`, `test_theorems` and `test_views`."
+    },
+    {
+      "cluster": "R9-C083",
+      "severity": "medium",
+      "title": "Prover binaries stay unidentified; the libvstd.rlib digest sits in a note field the fingerprint strips",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "`rust_verify`, `z3`, `cargo-verus` and `libvstd.rlib` are still undigested, and `_toolchain_identity` still drops every `note` key, where the recorded rlib digest lives."
+    },
+    {
+      "cluster": "R9-C084",
+      "severity": "medium",
+      "title": "verify_retained_evidence still returns a bare Ok when neither side identifies a submission",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0042",
+      "node": "THM-0042 (root)",
+      "area": "scitt-retained-evidence",
+      "reason": "Same as C029."
+    },
+    {
+      "cluster": "R9-C085",
+      "severity": "medium",
+      "title": "ScittServiceTrustPin.position_profile is still serde(default) = Unbound and both committed pins omit it",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0068",
+      "node": "THM-0068 / http_profile.scitt_service_pin",
+      "area": "scitt-retained-evidence",
+      "reason": "`position_profile` is still `#[serde(default)]` at `trust_pin/document.rs:85`, defaulting to `Unbound`."
+    },
+    {
+      "cluster": "R9-C086",
+      "severity": "medium",
+      "title": "Every trust pin in the tree defaults position_profile to Unbound; the Bound-from-a-pin path has zero coverage",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0068",
+      "node": "THM-0068",
+      "area": "scitt-retained-evidence",
+      "reason": "Same field; the Bound-from-a-pin path still has no committed artefact."
+    },
+    {
+      "cluster": "R9-C087",
+      "severity": "medium",
+      "title": "decimal_survives_the_f64_carrier admits subnormal decimals the carrier silently rewrites",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0083",
+      "node": "THM-0083 (adjacent)",
+      "area": "serving-body-shape",
+      "reason": "Same as C036."
+    },
+    {
+      "cluster": "R9-C088",
+      "severity": "medium",
+      "title": "max_connection_age doc still claims the age bound forces chain re-validation; async_serve.rs now says the opposite",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": "THM-0048",
+      "node": "THM-0048",
+      "area": "tls-listener-and-revocation",
+      "reason": "`tls.rs:218` now says the age bound *bounds the exposure without ending it* — the chain-re-validation claim is gone."
+    },
+    {
+      "cluster": "R9-C089",
+      "severity": "medium",
+      "title": "Republished TLS auth epoch can never differ, so TB-06 eviction still has no live input",
+      "disposition": "SUPERSEDED_BY_ARCHITECTURE",
+      "theorem": "THM-0048",
+      "node": "THM-0048",
+      "area": "tls-listener-and-revocation",
+      "reason": "See C016."
+    },
+    {
+      "cluster": "R9-C090",
+      "severity": "medium",
+      "title": "--trust-epoch-key with no URL silently mints under the bare label the round-8 refusal names",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": "THM-0077",
+      "node": "THM-0077 (root)",
+      "area": "cli-boundary",
+      "reason": "ADR-MCPRE-067 made the pair unrepresentable: the key coordinate now travels inside `TrustEpochSource`, and `config_state/trust_revocation.rs:372` records that the clause was deleted because no configuration can state it."
+    },
+    {
+      "cluster": "R9-C091",
+      "severity": "medium",
+      "title": "New GCP `fetching` mutex has no poison recovery and is held across I/O — one panic bricks KMS signing",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "credential-acquisition",
+      "reason": "Both locks now recover poison with `unwrap_or_else(|p| p.into_inner())` (`:346`, `:406`)."
+    },
+    {
+      "cluster": "R9-C092",
+      "severity": "medium",
+      "title": "Endpoint-authority refusal covers only the KMS client; STS and GCP endpoints still accept userinfo",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": null,
+      "node": "kms_endpoint_policy",
+      "area": "credential-acquisition",
+      "reason": "See C001."
+    },
+    {
+      "cluster": "R9-C093",
+      "severity": "medium",
+      "title": "`retry_is_refused()` treats an UNRECOGNIZED execution_status exactly like silence",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0061",
+      "node": "THM-0061 / client.execution_contract",
+      "area": "client-proxy-and-sidecar",
+      "reason": "`retry_is_refused` is `!matches!(retry(), Unstated) || matches!(execution(), PossiblyExecuted)`. An `ExecutionStatus::Unrecognized` with no `retry_safety` still returns false — the unknown disposition is resolved to the retry-safe side at the one accessor that decides a retry."
+    },
+    {
+      "cluster": "R9-C094",
+      "severity": "medium",
+      "title": "The Python test pinning the aggregate read bound uses a fake with short-read semantics http.client lacks",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "sdk-client-exchange",
+      "reason": "The fake's short-read semantics still differ from `http.client`, so the test passes over a property the production path lacks."
+    },
+    {
+      "cluster": "R9-C095",
+      "severity": "medium",
+      "title": "TypeScript mTLS now aborts any response whose TOTAL download exceeds `timeoutMs`, not just an idle one",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "sdk-client-exchange",
+      "reason": "`timeoutMs` is still both the inactivity bound and the aggregate wall clock — now stated in the module doc at `:27`, so the conflation is honest but unresolved and there is still no second knob."
+    },
+    {
+      "cluster": "R9-C096",
+      "severity": "medium",
+      "title": "`allow_any_host` wired from `allow_non_loopback` disables the rebinding guard even on a loopback bind",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM (client sidecar unrooted)",
+      "area": "client-proxy-and-sidecar",
+      "reason": "`mcp-re-client/src/lib.rs:195` still wires `allow_any_host` from `allow_non_loopback`, and `config/validation.rs:30` still accepts the flag together with a loopback bind."
+    },
+    {
+      "cluster": "R9-C097",
+      "severity": "medium",
+      "title": "flush_stderr_audit gives up instantly on a full queue — the one case it exists for — never spending its timeout",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0070",
+      "node": "THM-0070",
+      "area": "audit-delivery",
+      "reason": "`flush` still publishes with `try_send` and returns `OutcomeUnknown` immediately on a full queue, spending none of the timeout. THM-0070 admits *unknown* as its own case, so this is a precision gap rather than a false claim."
+    },
+    {
+      "cluster": "R9-C098",
+      "severity": "medium",
+      "title": "SCITT pin guard compares only the key thumbprint, so a re-run silently downgrades position/leaf profile",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0068",
+      "node": "THM-0068",
+      "area": "scitt-retained-evidence",
+      "reason": "`scitt_fetch_service_key.py:423` still compares only `public_key_thumbprint`, so a re-run rewrites `position_profile` / `leaf_profile` with no acknowledgement."
+    },
+    {
+      "cluster": "R9-C099",
+      "severity": "medium",
+      "title": "A failed reserve() can leave a credential-bearing .pending marker no release path can ever clear",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM (transparency unrooted)",
+      "area": "retention-marker",
+      "reason": "`reserve` still writes the marker durably before returning; a failure or cancellation after the write leaves a credential-bearing `.pending` with no reservation for any release path to consume."
+    },
+    {
+      "cluster": "R9-C100",
+      "severity": "medium",
+      "title": "flush_stderr_audit gives up when the queue is full — the exact backlog the shutdown drain was added for",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0070",
+      "node": "THM-0070",
+      "area": "audit-delivery",
+      "reason": "Same as C097."
+    },
+    {
+      "cluster": "R9-C101",
+      "severity": "medium",
+      "title": "flush_stderr_audit no-ops on a full queue — the shutdown-under-load case it was added for",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0070",
+      "node": "THM-0070",
+      "area": "audit-delivery",
+      "reason": "Same as C097."
+    },
+    {
+      "cluster": "R9-C102",
+      "severity": "medium",
+      "title": "SCITT pin position_profile made mandatory on the write side only; the verifier still defaults it to Unbound",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0068",
+      "node": "THM-0068",
+      "area": "scitt-retained-evidence",
+      "reason": "Write side requires it; read side still defaults it with no diagnostic."
+    },
+    {
+      "cluster": "R9-C103",
+      "severity": "medium",
+      "title": "submitted_commitment is inert on no-verified-hop records; attest_chain now skips the self-check there",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0042",
+      "node": "THM-0042 (root)",
+      "area": "scitt-retained-evidence",
+      "reason": "`corresponds_to` still refuses outright when either side has no verified hop, before the submission comparison — so the field that exists to identify such a record is unreachable for it."
+    },
+    {
+      "cluster": "R9-C104",
+      "severity": "medium",
+      "title": "The committed SCITT corpus freezes a fabricated submitted_commitment no reconstruction can produce",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0042",
+      "node": "THM-0042",
+      "area": "scitt-retained-evidence",
+      "reason": "`scitt_vectors_test.rs:177` still writes `format!(\"corpus-submitted-{hops}\")`, a literal no digest fold can produce, frozen inside nine signed vectors."
+    },
+    {
+      "cluster": "R9-C105",
+      "severity": "medium",
+      "title": "verify_retained_evidence returns Ok when neither side names a submission; the conformance test asserts that Ok",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0042",
+      "node": "THM-0042 (root)",
+      "area": "scitt-retained-evidence",
+      "reason": "Same as C029."
+    },
+    {
+      "cluster": "R9-C106",
+      "severity": "low",
+      "title": "Helm drain invariant does not budget the new 2s post-serve audit flush",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "deployment-rendering",
+      "reason": "Same as C033."
+    },
+    {
+      "cluster": "R9-C107",
+      "severity": "low",
+      "title": "Single-flight cannot protect the path its comment names: TLS and signing backends hold separate token sources",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "credential-acquisition",
+      "reason": "`MetadataServerTokenSource::new` is still constructed per backend (`:1032`), so the coalescing never spans the handshake and issuance paths."
+    },
+    {
+      "cluster": "R9-C108",
+      "severity": "low",
+      "title": "Unknown-expiry floor pins a metadata token for 300 s, contradicting the fail-closed clamp its doc describes",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "credential-acquisition",
+      "reason": "See C060."
+    },
+    {
+      "cluster": "R9-C109",
+      "severity": "low",
+      "title": "`send_notification_verified` claims TS `send()` parity but skips its concurrency bound and abort checks",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "sdk-client-exchange",
+      "reason": "Same as C061."
+    },
+    {
+      "cluster": "R9-C110",
+      "severity": "low",
+      "title": "New Python send_notification_verified() bypasses the concurrency bound the pump and the TS twin enforce",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "sdk-client-exchange",
+      "reason": "Same as C061."
+    },
+    {
+      "cluster": "R9-C111",
+      "severity": "low",
+      "title": "Rust ambassador deletes MCP's application-level `result._meta`; both SDKs pass it through",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0084",
+      "node": "THM-0084 / client.proxy_request_correspondence",
+      "area": "client-proxy-and-sidecar",
+      "reason": "`proxy.rs:463` still removes `result._meta`; the behaviour is now pinned by a test, so it is deliberate — but the three shipped clients still deliver the same signed reply differently."
+    },
+    {
+      "cluster": "R9-C112",
+      "severity": "low",
+      "title": "Interop test asserts tree_size/leaf_index as facts, but its pin omits position_profile (Unbound)",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0068",
+      "node": "THM-0068",
+      "area": "scitt-retained-evidence",
+      "reason": "The pins still omit `position_profile`, so the interop test still asserts a log position its bytes do not authenticate."
+    },
+    {
+      "cluster": "R9-C113",
+      "severity": "low",
+      "title": "execution_claim duplicates the retry-contract serializer and has already diverged from it",
+      "disposition": "NO_LONGER_REPRODUCES",
+      "theorem": null,
+      "node": "—",
+      "area": "retry-contract",
+      "reason": "`execution_claim` no longer exists in the tree."
+    },
+    {
+      "cluster": "R9-C114",
+      "severity": "low",
+      "title": "UNAVAILABLE/SKIPPED unreachable from the Verus lane: verify overrides the declared verdict on exit != 0",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "`verify:209` still sets FAIL from `returncode != 0` before reading the lane's own `VERDICT:` line, so UNAVAILABLE remains unreachable from the Verus lane."
+    },
+    {
+      "cluster": "R9-C115",
+      "severity": "low",
+      "title": "verify_retained_evidence gives its strongest verdict when neither side identifies a submission",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0042",
+      "node": "THM-0042 (root)",
+      "area": "scitt-retained-evidence",
+      "reason": "Same as C029."
+    },
+    {
+      "cluster": "R9-C116",
+      "severity": "low",
+      "title": "The frozen stage inventory now states a state order the transition relation refuses",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": "THM-0043",
+      "node": "THM-0043",
+      "area": "exchange-lifecycle",
+      "reason": "The drifting prose table was deleted and its removal recorded in `request_stages.rs:16-19`."
+    },
+    {
+      "cluster": "R9-C117",
+      "severity": "low",
+      "title": "validate_request_stage has no ExchangeEvent, so the reorder detector is blind to the new stage",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0083",
+      "node": "THM-0083 (root closure)",
+      "area": "exchange-lifecycle",
+      "reason": "`validate_envelope` still returns a bare `Result` and advances no event, so the reorder detector remains blind to it — but the placement claim is now carried by THM-0083 with declared evidence rather than by nothing."
+    },
+    {
+      "cluster": "R9-C118",
+      "severity": "low",
+      "title": "execution_claim() is a divergent second serializer of the retry contract and drops retention_status",
+      "disposition": "NO_LONGER_REPRODUCES",
+      "theorem": null,
+      "node": "—",
+      "area": "retry-contract",
+      "reason": "See C113."
+    },
+    {
+      "cluster": "R9-C119",
+      "severity": "low",
+      "title": "The release-active anomaly latch has no production reader: it blocks safe retries and tells nobody",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0043",
+      "node": "THM-0043 (root closure)",
+      "area": "exchange-lifecycle",
+      "reason": "Same as C066: no log line, no audit record, no metric on the success path."
+    },
+    {
+      "cluster": "R9-C120",
+      "severity": "low",
+      "title": "Escape hatches in undeclared verification/ files are unregisterable and the FAIL text names an impossible fix",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "`scan_paths` still gives undeclared `verification/` files an empty owner set, `is_registered` still answers false for it, and the FAIL text still names a remedy that does not exist for them."
+    },
+    {
+      "cluster": "R9-C121",
+      "severity": "low",
+      "title": "Self-hosted verification lane is the only workflow left on actions/checkout@v4",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": null,
+      "node": "assurance platform",
+      "area": "assurance-platform",
+      "reason": "Both self-hosted jobs are on `actions/checkout@v7`."
+    },
+    {
+      "cluster": "R9-C122",
+      "severity": "low",
+      "title": "outstanding_id survives as a pub, permissive second reader of request shape",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0083",
+      "node": "THM-0083",
+      "area": "serving-body-shape",
+      "reason": "`outstanding_id` is still `pub` and re-exported at `lib.rs:160`. THM-0083 honestly bounds its claim to production serving code, so the public weak reader is outside what the theorem covers."
+    },
+    {
+      "cluster": "R9-C123",
+      "severity": "low",
+      "title": "forwarded_body_fidelity_test claims byte fidelity the path cannot provide and its control does not test",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0083",
+      "node": "THM-0083 (adjacent)",
+      "area": "serving-body-shape",
+      "reason": "The headline sentence — *the bytes the inner server receives are the bytes the client signed* — still stands in `BUILD.bazel:925`, immediately qualified by the re-serialization it does not survive."
+    },
+    {
+      "cluster": "R9-C124",
+      "severity": "low",
+      "title": "Delegated TLS sign-budget sizing rests on 'session resumption is refused by design', which v0.16 does not do",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "tls-listener-and-revocation",
+      "reason": "`delegated_tls.rs:61/82` still state that *session resumption is refused by design*, which ADR-MCPRE-055/062 contradict; the 100/s sizing rests on it."
+    },
+    {
+      "cluster": "R9-C125",
+      "severity": "low",
+      "title": "CRL reload gate mirrors only NoNextUpdate; an already-stale CRL swaps in as a success",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0048",
+      "node": "THM-0048",
+      "area": "tls-listener-and-revocation",
+      "reason": "`crl_reload_worker.rs:150` still calls only `crl_next_update_required`; the startup posture additionally handles `Stale`. An already-stale CRL still swaps in over a fresher last-good."
+    },
+    {
+      "cluster": "R9-C126",
+      "severity": "low",
+      "title": "Sign-budget sizing rests on \"session resumption is refused by design\", which ADR-055 contradicts",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "tls-listener-and-revocation",
+      "reason": "Same as C124."
+    },
+    {
+      "cluster": "R9-C127",
+      "severity": "low",
+      "title": "Local leg now requires Content-Type and a loopback Host; the contract that defines it was not updated",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": null,
+      "node": "no THM",
+      "area": "client-proxy-and-sidecar",
+      "reason": "`docs/client-sidecar-deployment-guide.md` still documents neither the required `Content-Type` nor the loopback `Host`, and names none of 403/415/421."
+    },
+    {
+      "cluster": "R9-C128",
+      "severity": "low",
+      "title": "attest_chain issues zero-verified Signed Statements with no self-check, including of the one binding field",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0042",
+      "node": "THM-0042 (root)",
+      "area": "scitt-retained-evidence",
+      "reason": "Same short-circuit as C103, reached from the issuance side."
+    },
+    {
+      "cluster": "R9-C129",
+      "severity": "low",
+      "title": "forwarded_body_fidelity_test.rs, round 8's post-verification body-rewrite test, has no Bazel target",
+      "disposition": "FIXED_AND_COVERED",
+      "theorem": null,
+      "node": "—",
+      "area": "deployment-rendering",
+      "reason": "The test moved to `tests/integration_async/`, which is the Bazel `integration_async_test` glob target."
+    },
+    {
+      "cluster": "R9-C130",
+      "severity": "low",
+      "title": "External SCITT cross-verification gate asserts only 'some error' for five of six negatives",
+      "disposition": "SURVIVES_AND_MAPPED",
+      "theorem": "THM-0041",
+      "node": "THM-0041 / http_profile.scitt_receipt_offline",
+      "area": "scitt-retained-evidence",
+      "reason": "`external_kat.json` still records only `verify_ok` / `verify_fail`, while the internal corpus pins exact wire codes."
+    },
+    {
+      "cluster": "R9-C131",
+      "severity": "info",
+      "title": "ContinuationPrep::binding() doc still describes the pre-round-8 store-outage behaviour",
+      "disposition": "NO_LONGER_REPRODUCES",
+      "theorem": null,
+      "node": "—",
+      "area": "exchange-lifecycle",
+      "reason": "The store-outage wording is gone from the continuation-preparation contract."
+    }
+  ]
+}

@@ -588,7 +588,21 @@ evidence = [
   "test://http_profile/verify/freshness_window_vectors",
   "verus://http_profile/verify/check_params_admission_implies_fresh",
 ]
-assumptions = ["ASM-0005", "ASM-0006", "ASM-0007", "ASM-0008", "ASM-0009", "ASM-0010"]
+assumptions = [
+  "ASM-0005",
+  "ASM-0006",
+  "ASM-0007",
+  "ASM-0008",
+  "ASM-0009",
+  "ASM-0010",
+  "ASM-0024",
+  "ASM-0025",
+  "ASM-0026",
+]
+# ASM-0024/25/26 are the uninterpreted verus declarations this unit's proof is stated over
+# — the labelled digest as a function of its arguments, and the two policy getters. They
+# are premises of this unit and are named here for the same reason they are scoped to it:
+# one relation, declared in both manifests, and the two must agree.
 # The window battery spans two targets, and says so. `policy.rs` pins what a legal window
 # and skew may be; the wire vectors in `tests/proof_path_test` exercise the admission
 # decision over stale and degenerate windows. `verify.rs`'s own unit tests are structured-
@@ -670,7 +684,19 @@ evidence = [
   "mutation://http_profile/admission/subject_currency",
   "verus://http_profile/admission/check_admission_currency",
 ]
-assumptions = ["ASM-0011", "ASM-0012", "ASM-0013", "ASM-0014"]
+assumptions = [
+  "ASM-0011",
+  "ASM-0012",
+  "ASM-0013",
+  "ASM-0014",
+  "ASM-0024",
+  "ASM-0025",
+  "ASM-0026",
+]
+# ASM-0024/25/26 are the uninterpreted verus declarations this unit's proof is stated over
+# — the labelled digest as a function of its arguments, and the two policy getters. They
+# are premises of this unit and are named here for the same reason they are scoped to it:
+# one relation, declared in both manifests, and the two must agree.
 # Two batteries over one owner. Currency and the degraded window are the cases the §7
 # theorem is stated over all inputs of; assertion validity is the ASM-0012 surface the
 # theorems explicitly disclaim, carried here as test evidence rather than as a proof.
@@ -736,7 +762,18 @@ evidence = [
   "test://http_profile/artifact/typed_binding_battery",
   "verus://http_profile/artifact/typed_verifier_admits_only_its_own_type",
 ]
-assumptions = ["ASM-0018", "ASM-0019", "ASM-0020"]
+assumptions = [
+  "ASM-0018",
+  "ASM-0019",
+  "ASM-0020",
+  "ASM-0024",
+  "ASM-0025",
+  "ASM-0026",
+]
+# ASM-0024/25/26 are the uninterpreted verus declarations this unit's proof is stated over
+# — the labelled digest as a function of its arguments, and the two policy getters. They
+# are premises of this unit and are named here for the same reason they are scoped to it:
+# one relation, declared in both manifests, and the two must agree.
 # The seven typed cases the section above says the theorem generalises past, plus the
 # block-level rule that a binding carries a digest and never token bytes, plus the wire-
 # level mismatch cases. The theorem's value is that it covers the inputs these do not.
@@ -887,7 +924,11 @@ evidence = [
   "test://http_profile/dispatch/continuation_binding_battery",
   "verus://http_profile/dispatch/continuation_present_implies_verified",
 ]
-assumptions = ["ASM-0021"]
+assumptions = ["ASM-0021", "ASM-0024", "ASM-0025", "ASM-0026"]
+# ASM-0024/25/26 are the uninterpreted verus declarations this unit's proof is stated over
+# — the labelled digest as a function of its arguments, and the two policy getters. They
+# are premises of this unit and are named here for the same reason they are scoped to it:
+# one relation, declared in both manifests, and the two must agree.
 # Unbypassability is a property of `prepare_http_dispatch`, so the battery is the dispatch
 # integration target rather than any unit test: `dispatch.rs` carries no test module, and a
 # battery declared over the lib alone would run zero of the cases that matter.
@@ -937,7 +978,11 @@ evidence = [
   "test://http_profile/block/continuation_role_battery",
   "verus://http_profile/block/continuation_handles_match_in_role",
 ]
-assumptions = ["ASM-0023"]
+assumptions = ["ASM-0023", "ASM-0024", "ASM-0025", "ASM-0026"]
+# ASM-0024/25/26 are the uninterpreted verus declarations this unit's proof is stated over
+# — the labelled digest as a function of its arguments, and the two policy getters. They
+# are premises of this unit and are named here for the same reason they are scoped to it:
+# one relation, declared in both manifests, and the two must agree.
 # The role-labelled binding discipline at the block layer: a continuation that verifies, and
 # the three ways a handle presented under the wrong input or the wrong role must not.
 tested_symbols = [

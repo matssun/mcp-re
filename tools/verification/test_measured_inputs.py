@@ -30,6 +30,7 @@ sys.path.insert(0, str(HERE))
 
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _manifest import (  # noqa: E402
+    assumption_scope_disagreements,
     boundary_class_violations,
     load_assumptions,
     load_toolchains,
@@ -452,6 +453,81 @@ def test_the_preserved_unit_is_still_v1_and_assumes_nothing_about_a_clock():
         scope = [str(target) for target in entry.get("scope", [])]
         if "unit://core.time_rfc3339" in scope:
             assert "boundary://boundary.clock" not in scope, entry["id"]
+
+
+# --- the unit→assumption and assumption→unit declarations are one relation ----------
+#
+# Both halves were already written, and nothing compared them. The divergence that
+# motivated this control was real on main: ASM-0037 was scoped to `http_profile.keyid`
+# while `http_profile.keyid_selector` declared it, so `owners.md` and
+# `assumption-consumers.md` disagreed about which claim rests on SHA-256 collision
+# resistance AND — the part no view showed — the selector unit's fingerprint carried no
+# `trusted_assumptions` entry at all, leaving THM-0050 reading as fresh across any
+# rewrite of the premise it actually stands on.
+
+
+def _pair(unit_assumptions, scope):
+    return (
+        {"unit": [{"id": "u", "class": "V0", "paths": [], "assumptions": unit_assumptions}]},
+        {"assumption": [{"id": "ASM-X", "scope": list(scope)}]},
+    )
+
+
+def test_agreeing_declarations_are_not_a_disagreement():
+    verification, assumptions = _pair(["ASM-X"], ["unit://u"])
+    assert assumption_scope_disagreements(verification, assumptions) == []
+
+
+def test_an_assumption_named_by_neither_side_is_not_a_disagreement():
+    """A withdrawn or reserved entry reaches nothing and no unit claims it. ASM-0015 and
+    ASM-0022 are exactly this, and the control must not force them back into a scope."""
+    verification, assumptions = _pair([], [])
+    assert assumption_scope_disagreements(verification, assumptions) == []
+
+
+def test_a_unit_declaring_an_assumption_outside_its_scope_fails():
+    verification, assumptions = _pair(["ASM-X"], [])
+    disagreements = assumption_scope_disagreements(verification, assumptions)
+    assert len(disagreements) == 1
+    assert "fingerprint" in disagreements[0]
+
+
+def test_an_assumption_scoped_to_a_unit_that_does_not_declare_it_fails():
+    verification, assumptions = _pair([], ["unit://u"])
+    disagreements = assumption_scope_disagreements(verification, assumptions)
+    assert len(disagreements) == 1
+    assert "review packet" in disagreements[0]
+
+
+def test_the_swap_that_motivated_this_control_is_caught_in_both_directions():
+    """Neither half alone would report it: the premise IS declared and IS scoped, just to
+    two different units, so any count of assumptions or of scopes still balances."""
+    verification = {
+        "unit": [
+            {"id": "keyid", "class": "V0", "paths": [], "assumptions": []},
+            {"id": "keyid_selector", "class": "V0", "paths": [], "assumptions": ["ASM-X"]},
+        ]
+    }
+    assumptions = {"assumption": [{"id": "ASM-X", "scope": ["unit://keyid"]}]}
+    disagreements = assumption_scope_disagreements(verification, assumptions)
+    assert len(disagreements) == 2
+
+
+def test_a_scope_naming_no_such_unit_is_reported():
+    verification, assumptions = _pair([], ["unit://nope"])
+    disagreements = assumption_scope_disagreements(verification, assumptions)
+    assert len(disagreements) == 1
+    assert "which no [[unit]] declares" in disagreements[0]
+
+
+def test_a_unit_declaring_an_unregistered_assumption_is_reported():
+    verification, assumptions = _pair(["ASM-GONE"], [])
+    disagreements = assumption_scope_disagreements(verification, assumptions)
+    assert any("the registry does not contain" in note for note in disagreements)
+
+
+def test_the_shipped_manifests_agree():
+    assert assumption_scope_disagreements(DOC, ASSUMPTIONS) == []
 
 
 if __name__ == "__main__":

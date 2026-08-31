@@ -629,7 +629,15 @@ It stops being acceptable if the adapter starts branching on the parser's error 
 (today it maps every parse failure to one refusal), or if identity interpretation is ever
 given a second parser whose field sets must agree.
 """
-scope = ["unit://proxy.certificate_identity"]
+# PROVISIONAL on the second unit. `proxy.credential_currency` declares this premise and
+# consumes a foreign X.509 parser, so the scope names it — leaving it out put no
+# trusted_assumptions entry in that unit's fingerprint at all. But the wording above is
+# about SANs and the subject Common Name, and what the currency adapter reads is issuer
+# and subject Name equality and the validity window. A scope is not a restatement: this
+# assumption does not yet describe the contract its second consumer relies on, and the
+# repair is to split or restate it rather than to leave a broad scope on inaccurate
+# wording. Pending owner ruling — verification/reviews/packets/system-assurance-completeness-audit-2026-08-31.md §2.5.
+scope = ["unit://proxy.certificate_identity", "unit://proxy.credential_currency"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-063 Slice 1"
 review_requirement = "Owner review; any change to the certificate identity adapter or its parser dependency."
@@ -699,7 +707,15 @@ taking the parser's bytes verbatim — a re-encoding would make this code a seco
 what the credential says — or if a second certificate parser is introduced whose reported
 SPKI must agree with this one's.
 """
-scope = ["unit://proxy.credential_key_correspondence"]
+# PROVISIONAL on the second unit, for the same reason as ASM-0030. The resolver shares
+# `tls.rs` with the correspondence authority and declares this premise, so the scope names
+# it. But the SPKI the resolver uses comes from `signer.tls_public_key_spki_der()`, not
+# from a parsed certificate, so the wording above is not the contract that unit depends on.
+# Pending owner ruling — verification/reviews/packets/system-assurance-completeness-audit-2026-08-31.md §2.5.
+scope = [
+  "unit://proxy.credential_key_correspondence",
+  "unit://proxy.delegated_resolver_materialization",
+]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-063 Slice 2"
 review_requirement = "Owner review; any change to the credential adapter's certificate parsing or its parser dependency."
@@ -905,7 +921,7 @@ their own, so this premise is the whole of what is trusted between them and the 
 It stops being acceptable the day SHA-256 admits a practical collision, or if the keyid
 derivation is changed to a digest without an equivalent standing.
 """
-scope = ["unit://http_profile.keyid", "boundary://boundary.crypto_primitives"]
+scope = ["unit://http_profile.keyid_selector", "boundary://boundary.crypto_primitives"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 §28 closure ruling"
 review_requirement = "Owner review; any change to the keyid digest algorithm, and on any published weakening of SHA-256 collision resistance."

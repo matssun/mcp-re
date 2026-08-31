@@ -63,6 +63,7 @@ from _manifest import (  # noqa: E402
     REPO_ROOT,
     ManifestError,
     aggregate_verdict,
+    assumption_scope_disagreements,
     boundary_class_violations,
     load_assumptions,
     load_toolchains,
@@ -143,6 +144,13 @@ def validate_manifests() -> tuple[bool, list[str]]:
     violations = boundary_class_violations(doc, boundaries, assumptions)
     if violations:
         return False, violations
+    # The unit→assumption and assumption→unit declarations are one relation written twice,
+    # and they feed different machinery: `scope` drives the fingerprint and the generated
+    # views, `[[unit]].assumptions` drives the review packet. A disagreement is a claim
+    # about freshness that no lane would otherwise contradict.
+    disagreements = assumption_scope_disagreements(doc, assumptions)
+    if disagreements:
+        return False, disagreements
     notes.append(f"policy revision {doc['policy_revision']}")
     notes.append(f"{len(doc.get('unit', []))} unit(s), {len(doc.get('edge', []))} edge(s)")
     # Reported, never counted, and phrased as the structural fact it is. A resolving
