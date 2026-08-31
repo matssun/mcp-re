@@ -1,0 +1,17 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:53248632f6d1eb564a7557c6f4b400d16e21655bdb1037376abe64d51c0e6fdc",
+    "theorem_dependencies": {
+      "THM-0035": "sha256:7733c22f502533bc41cd2e887ac4e4eea2f215cf5e0b19f2f72a56d29d3571fc",
+      "THM-0037": "sha256:58a6dfe8b5cb1df5ce92320fc6a9f51518133ca8a25daf1db4980bda13a92214"
+    },
+    "theorem_id": "THM-0066",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31, given over verification/reviews/packets/owner-specification-review-2026-08-31.md. The ruling declared the consolidated review COMPLETE and approved every packet theorem not named in its bounded correction set at its current fingerprint. This theorem was not named, and its statement, security consequence and scope are unchanged from the packet the owner read.",
+  "reviewed_fingerprint": "sha256:2426e6c26764233a4fbf79c8e97aa61fda247f823baaeda620b6d76f7edbca25",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0066"
+}

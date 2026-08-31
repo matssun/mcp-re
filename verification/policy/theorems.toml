@@ -2216,10 +2216,18 @@ reached" cannot be recorded as "a policy denied" — the three collapses a pre-r
 made unrecoverable.
 """
 scope = """
-Establishes the vocabulary and its provenance. It does not establish that every production
-refusal site is inside the exchange lifecycle, that the audit record is written, or that the
-refusal is signed — those are propositions about the serving path and the response-emission
-authority. It does not establish that Core's own verdicts are correct.
+Establishes the vocabulary and its provenance. The closed set is the two AUDIT-VOCABULARY
+authorities represented at this boundary — the Core-owned verdict vocabulary and the
+Authorization-owned verdict vocabulary — and the claim is that a refusal arriving here carries
+which of those two reached it, whole. It is NOT a claim that only two semantic authorities
+participated in the exchange: admission, the transport binding, the continuation plane and the
+replay tier all decide things, and each reaches this boundary through one of the two
+vocabularies rather than by adding a third.
+
+It does not establish that every production refusal site is inside the exchange lifecycle,
+that the audit record is written, or that the refusal is signed — those are propositions about
+the serving path and the response-emission authority. It does not establish that Core's own
+verdicts are correct.
 """
 owner = "proxy.refusal_provenance"
 review_requirement = "Owner security-specification review"
@@ -2298,10 +2306,22 @@ source, silently doing nothing while the operator believes the handshake key is
 device-resident.
 """
 scope = """
-Establishes refusal by the classifier. It does not establish that the illegal combination is
-unrepresentable — `DeploymentRequest` can hold one, which is why the refusal is a check the
-classifier performs and not a structural fact. It does not establish that the classifier is
-consulted on every startup path.
+Establishes refusal by the classifier over the relations it actually decides. Two are live —
+X2a, that a delegated channel key object must name a backend the deployment already reaches,
+and X6, that a deny list no reachable authorization profile will consult enforces nothing —
+and those are what a validated deployment is held to.
+
+X9 is deliberately a NO-OP and the claim says so rather than implying a refusal. The
+trust-epoch posture is one decision, made by `TrustRevocationState` and carried in
+`DeploymentConfigState`, and both the trust plane and the delegated-signing plane consume
+THAT decision; neither re-derives it and neither asks the other. There is therefore no second
+decision left for a cross-machine rule to find incompatible. It is written down, empty,
+because a future rule joining those two machines needs an owner to be added to — not because
+it refuses anything today.
+
+It does not establish that the illegal combination is unrepresentable — `DeploymentRequest`
+can hold one, which is why the refusal is a check the classifier performs and not a structural
+fact. It does not establish that the classifier is consulted on every startup path.
 """
 owner = "proxy.cross_machine_legality"
 review_requirement = "Owner security-specification review"
@@ -2333,19 +2353,26 @@ not injective — it maps an unbounded domain onto 256 bits, so colliding keys E
 claimed is that none can be exhibited by an adversary the premise covers, which is the
 strongest true form of this proposition and the form ASM-0037 states.
 
-The claim decomposes into exactly two halves. THM-0055 is the MCP-RE-owned half, established:
-distinct admitted verification keys have distinct canonical thumbprint preimages, and the
-digest encoding merges nothing. ASM-0037 is the primitive half, owner-approved and scoped to
-this unit and `boundary.crypto_primitives`. Neither ASM-0028 nor ASM-0023 was widened to
-reach it: second-preimage resistance and collision resistance are different propositions, and
-ASM-0023's declining to assume the construction's separation properties stands unchanged.
+The claim decomposes into exactly two halves, and the REVIEW UNITS are split along that
+seam so the halves cannot be confused. THM-0055 is the MCP-RE-owned half and is owned by
+`http_profile.keyid`, a unit carrying NO primitive assumption: distinct admitted verification
+keys have distinct canonical thumbprint preimages, and the digest encoding merges nothing.
+ASM-0037 is the primitive half and is scoped to `http_profile.keyid_selector` — this claim's
+own unit — and to `boundary.crypto_primitives`. Two units over one file, because there are
+two propositions with two different trusted bases; a single unit would make collision
+resistance a premise of THM-0055, which is backwards, since the derivation half is proved
+without assuming anything about the digest and saying so is most of its value.
+
+Neither ASM-0028 nor ASM-0023 was widened to reach it: second-preimage resistance and
+collision resistance are different propositions, and ASM-0023's declining to assume the
+construction's separation properties stands unchanged.
 
 It does not establish that the seam answers for any particular keyid, that the key it returns
 is trusted for its slot, or that the enrolment set is correct.
 """
-owner = "http_profile.keyid"
+owner = "http_profile.keyid_selector"
 review_requirement = "Owner security-specification review; re-review on any change to the keyid digest algorithm"
-supported_by = ["unit://http_profile.keyid"]
+supported_by = ["unit://http_profile.keyid_selector"]
 depends_on = ["THM-0055"]
 
 [[theorem]]
@@ -2446,7 +2473,8 @@ never depended on it.
 
 It says nothing about whether the ISSUER should be trusted — that is the trust seam's, and a
 kid never introduces trust — nor about the authoritative state the verdict is checked
-against, which is THM-0007's and the currency unit's.
+against, which belongs to the admission currency and anti-rollback owner, principally
+THM-0004.
 """
 owner = "http_profile.admission_assertion"
 review_requirement = "Owner security-specification review"
@@ -2509,10 +2537,16 @@ wrote: not by a canonicalization that reorders or drops a member, not by an oper
 to nest structure inside the JWK, and not by an encoding that merges digests.
 """
 scope = """
-Everything except the digest. It says nothing about whether SHA-256 maps two distinct
-canonical forms to one value, which is the remaining premise of selector injectivity
-(THM-0050) and is a property of the primitive. It establishes nothing about the trust seam,
-about which keys are enrolled, or about whether a resolved key is trusted for its slot.
+Everything except the digest, and it INHERITS NOTHING about the digest either. Its unit,
+`http_profile.keyid`, carries no assumption at all: every property here is a property of code
+this project wrote, holding for any operand whatsoever. That is why the selector claim lives
+in a separate unit — ASM-0037 is scoped to `http_profile.keyid_selector`, so collision
+resistance is a premise of THM-0050 and of nothing else.
+
+It says nothing about whether SHA-256 maps two distinct canonical forms to one value, which
+is the remaining premise of selector injectivity and is a property of the primitive. It
+establishes nothing about the trust seam, about which keys are enrolled, or about whether a
+resolved key is trusted for its slot.
 """
 owner = "http_profile.keyid"
 review_requirement = "Owner security-specification review"
@@ -2677,9 +2711,13 @@ failed retention obligation survives beside whatever the execution status says. 
 and the contract are read in one parse.
 """
 security_consequence = """
-A client cannot repeat a side effect by reading the server's silence as *it did not run*,
-cannot retry an exchange whose human approval was already spent, and cannot be told a call is
-recorded when the deployment's audit store has no record of it.
+An explicit failed, unknown or unstated retention or execution result cannot be silently
+reinterpreted by the client library as successful retention or as known non-execution: what
+the server declined to claim reaches the caller as a claim the server declined to make.
+
+It does NOT establish that the server's statement is TRUE. Whether a call really did or did
+not run, and whether the evidence really was retained, are the serving-side roots' — this
+claim is only that the client does not improve on the answer it was given.
 """
 scope = """
 What the receipt SAYS, and what a client may conclude from it. It does not establish that the
@@ -2768,10 +2806,15 @@ material that made it inhabitable, and projects a single semantic fact —
 cannot start without is not built, and a state carries no neighbour's material.
 """
 security_consequence = """
-Where a deployment selects non-exporting custody, nothing that can read this process's
-memory or its seed file can obtain the signing key — the process can ask for a signature and
-never for the key. And a consumer asking whether the key may be read here cannot get a
-different answer by asking which mechanism it is, because the projection names none.
+Where a deployment selects non-exporting custody, this authority materializes no
+process-readable export path for the signing key: what the process receives is a signing
+CAPABILITY and a public identity, never a private signing seed, so there is no key in memory
+or on disk for this authority to have leaked. And a consumer asking whether the key may be
+read here cannot get a different answer by asking which mechanism it is, because the
+projection names none.
+
+It does NOT claim that the external KMS, HSM or token itself honours non-exportability. That
+is the provider's property, it is outside this boundary, and the scope below says so.
 """
 scope = """
 CONDITIONAL on the deployment's own selection: it establishes nothing about a deployment
@@ -2893,9 +2936,15 @@ wrote and reviewed. A malformed pin document never becomes a pin, and an illegal
 refused at deserialization rather than carried into a resolver that would answer from it.
 """
 security_consequence = """
-A receipt cannot be verified against a service whose key came from one place and whose
-profile expectations came from another — the pairing that lets a receipt satisfy a position
-profile the pinned service never declared.
+Where a resolver is projected from a `ScittServiceTrustPin`, a receipt cannot be verified
+against a service whose key came from one place and whose profile expectations came from
+another — the pairing that lets a receipt satisfy a position profile the pinned service never
+declared.
+
+Conditional on that provenance, deliberately. `ResolvedTransparencyService::stated` is a
+legitimate second provenance and is retained: the in-process prototype log and the conformance
+corpus have no pin to resolve from, and deleting it to make this consequence unconditional
+would remove a supported use to improve the wording of a claim.
 """
 scope = """
 It establishes the PROVENANCE of a pinned service, not that a deployment pinned one.
@@ -2941,8 +2990,10 @@ be left unable to tell whether a policy was consulted — the collapse a single 
 """
 scope = """
 What a record MAY say, not that the vocabulary is total over the outcomes that occur — that
-is the open proposition below, and it is an ADR-MCPS-035 decision rather than a registry
-edit. It does not establish that the record was delivered (THM-0070), and it establishes
+is THM-0071, which composes this with site totality and delivery. It needs no vocabulary
+decision: ADR-MCPRE-066 decided the coordinate algebra and its slices implemented it, so the
+two authorities are separately typed and `PolicyError -> &'static str -> Core reason` is gone
+as a route. It does not establish that the record was delivered (THM-0070), and it establishes
 nothing about the truth of either authority's verdict.
 """
 owner = "proxy.audit_record_coordinates"
@@ -2962,11 +3013,14 @@ slots. A drain that timed out is a distinct outcome from one that completed, and
 outcome that is unknown is its own case.
 """
 security_consequence = """
-An auditor cannot be shown a record stream that silently lost entries: a gap is visible in
-the sequence and a drop is counted and reported. An unattributed caller cannot suppress the
-records of an attributed one by flooding the queue. And a shutdown whose drain timed out
-cannot be read as one that emptied the queue — the difference between *these are all the
-records* and *these are the records that got out*.
+Within the modeled collector lifetime, an auditor cannot be shown a record stream that
+silently lost entries: a gap is visible in the sequence, a drop is counted and reported, an
+unattributed caller cannot suppress the records of an attributed one by flooding the queue,
+and a shutdown whose drain timed out cannot be read as one that emptied the queue.
+
+The boundary is explicit and is not durability. Queue loss, drop, ordering and drain-timeout
+loss are all REPRESENTED. Loss of the process itself is not: the sink is in-process, so
+records emitted and not yet drained disappear with it, and no claim here survives that.
 """
 scope = """
 Delivery integrity, not content (THM-0069) and not durability: the sink is in-process, so a
@@ -2981,63 +3035,79 @@ depends_on = []
 
 [[theorem]]
 id = "THM-0071"
-title = "Every reachable refusal has a typed provenance in its own authority's coordinate"
+title = "Every reachable in-exchange refusal has a typed provenance that reaches the record"
 statement = """
-Every outcome a served exchange can reach has a typed refusal provenance, and every authority
-that reached an outcome is represented in that authority's own record coordinate: no refusal
-becomes silent, and no authority's vocabulary is recorded as another authority's verdict.
+Every relevant IN-EXCHANGE refusal outcome a served exchange can reach carries a typed refusal
+provenance, that provenance reaches the audit-record emission boundary before the refusal is
+answered, and it is recorded as the audit-vocabulary authority the refusal carries — with the
+separately typed authorization coordinate beside it where one applies. No such refusal becomes
+silent within the modeled audit path, and no authority's vocabulary is recorded as another
+authority's verdict.
 """
 security_consequence = """
-An auditor reading the record cannot be shown silence where a refusal occurred, and cannot be
-shown a token that attributes a refusal to an authority that never ran.
+Within the modeled in-process audit path, an exchange-owned refusal cannot disappear through
+projection or through ordinary queue loss without that loss itself being represented, and
+cannot be recorded as another audit authority's verdict.
+
+It does NOT establish durable persistence. If the process itself disappears, records emitted
+and not yet drained go with it, and nothing here survives that — the boundary is THM-0070's
+and is carried forward unchanged.
 """
 scope = """
-TOTALITY over the typed coordinates, which is a different proposition from the one this id
-carried while ADR-MCPRE-066 was open. It is not a claim that one vocabulary covers the other,
-and it needs no new one: the algebra ADR-MCPRE-066 decided is that the Core verdict and the
-authorization verdict are SEPARATELY TYPED coordinates on one record, and its slices
-implemented it. `PolicyError -> &'static str -> Core reason` no longer exists as a route, so
-the union that was previously asked to be total is not the object of this claim.
+Bounded three ways, and each bound was a correction rather than a caveat.
 
-Four established facts compose it, and each closes one way an outcome could escape:
+IN-EXCHANGE outcomes, not every outcome. The four pre-exchange transport replies are outside
+this claim: no exchange exists to own them, there is no exchange record to emit, and bringing
+them in would need a separate audit requirement that is not claimed here. THM-0081 is what
+enumerates them.
 
-  * every SITE is inside the lifecycle or is the one declared pre-exchange refusal (THM-0081)
-    — nothing answers from source position, so there is no outcome outside the algebra;
-  * every refusal carries WHICH authority reached it, held whole (THM-0046), over a
-    `RefusalCause` closed by construction over exactly Core and Authorization;
-  * the two coordinates cannot be read as each other on a record (THM-0069), and a request
-    record always states an authorization outcome while a response record has none to carry;
-  * `CoreVerdict::error` is total over its three producers and `RefusalCause::core_verdict`
-    returns `None` for exactly one cause — an authorization policy decided — which is a
-    STATEMENT that Core reached nothing, not an omission;
-  * the record STREAM is honest about what reached it (THM-0070). Added by the missing-edge
-    pass while assembling the review packet, which found THM-0070 reachable from no root: a
-    refusal that is correctly typed and then silently dropped by the sink is silent, so a
-    totality claim about the record needs delivery to report its losses.
+The AUDIT-VOCABULARY authority the refusal carries, not every authority that participated.
+`RefusalCause` closes over the two vocabularies represented at this boundary — Core-owned and
+Authorization-owned — and admission, the transport binding, the continuation plane and the
+replay tier all reach the record through one of those rather than by adding a third. Where an
+authorization verdict applies it occupies its own coordinate, which is what stops a policy
+denial being recorded as a Core verdict.
 
-It does not establish that the right cause is chosen at any given site, nor that the frozen
-public tokens are individually well-named. Both are the owning units' controls, and neither is
-a totality property.
+Within the MODELED audit path. Durability is THM-0070's boundary and is not widened here.
 
-If a reachable refusal outcome is ever found that the typed record cannot represent, that
-outcome is a finding against this claim and not a reason to widen a vocabulary.
+Five established facts compose it, and each closes one way an outcome could escape: every
+SITE is inside the lifecycle or is an enumerated pre-exchange reply (THM-0081); a refusal
+carries WHICH authority reached it, held whole (THM-0046); the provenance REACHES the record,
+typed, before the answer is minted (THM-0085); the two coordinates cannot be read as each
+other on a record (THM-0069); and the stream is honest about what reached it (THM-0070).
+
+It needs no vocabulary decision. ADR-MCPRE-066 decided the coordinate algebra and its slices
+implemented it, so `PolicyError -> &'static str -> Core reason` no longer exists as a route
+and the union that was once asked to be total is not the object of this claim. It does not
+establish that the right cause is chosen at any given site, nor that the frozen public tokens
+are individually well-named; both are the owning units' controls and neither is a totality
+property.
 """
 owner = "proxy.audit_record_coordinates"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.audit_record_coordinates", "unit://proxy.refusal_provenance"]
-depends_on = ["THM-0069", "THM-0046", "THM-0081", "THM-0070"]
+depends_on = ["THM-0069", "THM-0046", "THM-0081", "THM-0070", "THM-0085"]
 
 [[theorem]]
 id = "THM-0072"
 title = "A verified receipt proves registration on the service this deployment pinned"
 statement = """
-A receipt this deployment verifies offline proves the Signed Statement was registered on the
-transparency service whose key, leaf profile and position profile came from the pin document
-the deployment resolved — not merely on some service whose key was supplied to the call.
+When offline receipt verification is performed through a resolver PROJECTED FROM a
+`ScittServiceTrustPin`, a receipt that verifies establishes that the Signed Statement was
+registered on the transparency service that pin describes — the key it verifies under, its
+leaf profile and its position profile all came from that one reviewed document, not merely
+from some service whose key was supplied to the call.
 """
 security_consequence = """
-An auditor cannot be shown a receipt from a log this deployment never pinned, and cannot be
-shown one that satisfies a position profile the pinned service never declared.
+Where verification runs through a pin-projected resolver, an auditor cannot be shown a receipt
+from a log that pin does not describe, and cannot be shown one that satisfies a position
+profile the pinned service never declared.
+
+It says nothing about a verification performed through a `stated` resolver, which is a
+supported non-pin provenance for prototype and conformance use. `verify_receipt_offline` takes
+its service through a `Fn(&str) -> Option<ResolvedTransparencyService>` seam, so which
+provenance backs a given call is deployment wiring — and no production wiring was invented to
+make this claim unconditional.
 """
 scope = """
 It composes the two facts and adds nothing: offline verification against a resolved service
@@ -3061,9 +3131,14 @@ key source only as the product of a comparison over the two materialized public 
 comparison refuses before any server starts.
 """
 security_consequence = """
-A party able to obtain a TLS handshake signature cannot thereby obtain a response
-attribution, and vice versa — the two roles stay separately attributable, which is the whole
-content of calling them two roles.
+The two roles rest on two different private keys, so compromise or possession of ONE private
+key does not, by key reuse, confer the other role: a party who extracts or coerces the channel
+key has not thereby obtained the ability to attribute a response, and the reverse.
+
+It does NOT claim administrative separation. A cloud IAM principal, an HSM session or an
+operator credential able to invoke one key may well be authorized to invoke the other; whether
+the two roles are separately AUTHORIZED is a different proposition with a different owner, and
+nothing here establishes it.
 """
 scope = """
 Over the MATERIALIZED identities, and that is the substance of the claim rather than an
@@ -3096,13 +3171,27 @@ deployment already reaches — and is not this claim.
 
 A channel credential whose public key is not a canonical Ed25519 key yields no comparison, and
 that is a statement rather than a gap: the response role's key always is one, so the two cannot
-be equal. It claims nothing about whether either key is the RIGHT one, about custody, about
-exposure, or about the chain being trusted.
+be equal. Likewise a role that materialized NO key contributes none — the composition root
+reads both immediately afterwards to build the listener and the delegation, so a deployment
+where either is unavailable starts no server, and the only executions that arm admits are
+executions that never serve.
+
+TWO PREMISES, both found by the missing-edge pass over this very claim rather than assumed.
+The comparison is over `raw_point()`, so "different points implies different keys" needs
+THM-0025: possession of an `Ed25519PublicKeyValue` means it was interpreted from the canonical
+RFC 8410 encoding and its projected point IS those bytes. Without that the inequality would be
+about two projections rather than about two keys. And the claim that the LEAF's key is the
+CHANNEL-SIGNING key is not free either — on the delegated path it is THM-0027, which
+establishes that a resolver cannot exist over a credential and a signer that do not correspond,
+which is what makes the served leaf the key that signs the handshake.
+
+It claims nothing about whether either key is the RIGHT one, about custody, about exposure, or
+about the chain being trusted.
 """
 owner = "proxy.signing_role_separation"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.signing_role_separation"]
-depends_on = ["THM-0049"]
+depends_on = ["THM-0049", "THM-0025", "THM-0027"]
 
 [[theorem]]
 id = "THM-0074"
@@ -3170,8 +3259,12 @@ a request can be established is explicitly unbound and cannot be interpreted as 
 """
 security_consequence = """
 A response cannot be attributed to the trust root directly, cannot be signed by a credential
-the deployment does not hold or no longer holds, cannot advertise validity its credential
-does not authorize, and a pre-parse receipt cannot be replayed as an answer to a request.
+the deployment does not hold or no longer holds, cannot advertise validity its credential does
+not authorize, and unbound evidence cannot successfully verify through the bound-response path
+as evidence for a particular request.
+
+This is the PRODUCER side. What a client ultimately presents to its caller as an answer is
+THM-0076 and is a different proposition on the other side of the same exchange.
 """
 scope = """
 SECURITY-BEARING SIGNED evidence only. Unsigned transport and error responses exist — a
@@ -3189,11 +3282,11 @@ depends_on = ["THM-0062", "THM-0063", "THM-0065", "THM-0022", "THM-0082"]
 id = "THM-0076"
 title = "A client accepts only an answer to its own request, under a signer it trusts"
 statement = """
-If `mcp-re-client-core` returns a response as verified, then that response was signed under a
-signer this client's current trust configuration authorizes in the Response slot, over a
-signature base that resolved against the request this client sent; a response that could not
-be bound is never reported as a success; and what the client may conclude about whether the
-work ran is what the receipt states, never what its silence might be read as.
+If the shipped MCP-RE client proxy returns a remote response as verified for a call, that
+response was verified against the request THAT PROXY SENT (THM-0084) and under a signer this
+client's current trust configuration authorizes in the Response slot; a response that could
+not be bound is never reported as a success; and what the client may conclude about whether
+the work ran is what the receipt states, never what its silence might be read as.
 """
 security_consequence = """
 An application cannot be handed, as this call's answer, a response from another exchange,
@@ -3203,16 +3296,26 @@ only in the unbound form — and cannot be led to repeat a side effect by readin
 """
 scope = """
 The consumer side, kept apart from THM-0075 because a deployment may run either side alone
-and producer attribution and consumer acceptance are different propositions. It does not
-establish that the deployment was right to trust an anchor, and it does not establish that
-the expectation was built from the request this client sent: `ResponseExpectation::new` is
-public for the FFI bindings, so that pairing is a caller obligation and sealing past the seam
-would be theatre.
+and producer attribution and consumer acceptance are different propositions.
+
+The system root is the SHIPPED `ClientProxy` path, not an arbitrary caller of the low-level
+verifier — and the two used to say different things. The statement claimed the response
+resolved against "the request this client sent" while the scope said the pairing was a caller
+obligation, which is a contradiction rather than a boundary. THM-0084 removes it by
+establishing the pairing where the shipped path owns it: `handle` builds one `SignedRequest`,
+forwards it, and derives the expectation from that same owner.
+
+The FFI boundary is unchanged and stays outside. `ResponseExpectation::new` remains public
+for bindings that rebuilt the request from scalars and hold no `SignedRequest`, and sealing
+past that seam would be theatre; what THM-0084 says is that the shipped path does not use it.
+Raw FFI and low-level reconstruction remain outside this system-root guarantee.
+
+It does not establish that the deployment was right to trust an anchor.
 """
 owner = "client.response_acceptance"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://client.response_acceptance"]
-depends_on = ["THM-0058", "THM-0059", "THM-0057", "THM-0060", "THM-0061"]
+depends_on = ["THM-0058", "THM-0059", "THM-0057", "THM-0060", "THM-0061", "THM-0084"]
 
 [[theorem]]
 id = "THM-0077"
@@ -3254,17 +3357,27 @@ id = "THM-0078"
 title = "Refusal is terminal, and no refusal-side effect reads as success"
 statement = """
 If an inbound exchange fails to establish a required pre-dispatch obligation, it reaches a
-declared refusal terminal — or a declared pre-exchange transport refusal — before backend
-dispatch. It cannot fall through into a success-path dispatch or a success response. Any
-refusal-side effect, including signed refusal evidence, audit and retention records, cleanup
-and continuation retirement, is authorized by the refusal and lifecycle state it was reached
-from, and none of them can be read as success.
+declared refusal terminal before backend dispatch, and cannot fall through into a success-path
+dispatch or a success response.
+
+WHERE AN EXCHANGE EXISTS, every refusal-side effect — signed refusal evidence, audit and
+retention records, cleanup, continuation retirement — is authorized by the refusal and
+lifecycle state it was reached from, and none can be read as success.
+
+A PRE-EXCHANGE transport reply has no exchange state, and therefore may not claim one: it
+carries no exchange effect, no execution claim and no lifecycle-derived retry contract, which
+is the only thing that can honestly be said of a reply reached before an exchange began.
 """
 security_consequence = """
-The complement of THM-0074 is not "some other path": it is a refusal that is recorded, that
-cannot reach the dispatch, and whose own effects cannot be mistaken for the effects of a
-served request — including the case that motivated the exchange machine, where an approval is
-spent and the refusal must not read as an ordinary retry.
+The complement of THM-0074 is not "some other path": it is a refusal that cannot reach the
+dispatch and whose own effects cannot be mistaken for the effects of a served request —
+including the case that motivated the exchange machine, where an approval is spent and the
+refusal must not read as an ordinary retry.
+
+The two kinds are kept apart because the guarantee differs. An exchange-owned refusal is
+recorded and its effects are authorized by a lifecycle state. A pre-exchange reply has no such
+state, so what protects a caller there is that it asserts nothing about execution rather than
+that its assertion was derived.
 """
 scope = """
 It forbids a SUCCESS-PATH effect, not any effect at all. The serving architecture emits
@@ -3272,6 +3385,11 @@ signed refusal evidence and performs audit, retention, cleanup and continuation 
 the refusal side, and those are legitimate. This and THM-0074 are two separate safety
 implications and never a biconditional: stating them as one would make this a liveness claim,
 which it is not.
+
+The exchange-owned and pre-exchange halves are stated separately rather than unified, because
+a single sentence would be false about one of them: there is no lifecycle state behind a reply
+reached before an exchange began, and pretending otherwise is exactly the kind of borrowed
+authority this tree exists to remove. THM-0081 measures which replies are in the second set.
 """
 owner = "proxy.exchange_lifecycle"
 review_requirement = "Owner security-specification review"
@@ -3352,15 +3470,25 @@ depends_on = ["THM-0031", "THM-0033"]
 id = "THM-0081"
 title = "Every production refusal is inside the exchange lifecycle"
 statement = """
-Every refusal a production serving path can reach is minted from a `Refusal` a stage named
-and served through the exchange machine's derived disposition, or is one of the transport
-frame's four enumerated pre-exchange replies, each reached before an exchange exists — there
-is no third kind, and no exit answers from source position.
+Every production refusal is either an EXCHANGE-OWNED refusal — minted from a `Refusal` a
+stage named and served under the exchange machine's derived disposition — or one of the four
+enumerated PRE-EXCHANGE transport replies, each reached before an exchange exists. There is no
+third, unclassified refusal path, and no exit answers from source position.
 """
 security_consequence = """
-No refusal can state a retry contract the exchange machine did not derive, which is how an
-exit reached after a human's approval was spent came to report an ordinary retry — the defect
-the machine exists to remove, closed at the sites the machine cannot see.
+For an EXCHANGE-OWNED refusal, no retry contract can be stated that the exchange machine did
+not derive — which is how an exit reached after a human's approval was spent came to report an
+ordinary retry, the defect the machine exists to remove, now closed at the sites the machine
+cannot see.
+
+For a PRE-EXCHANGE transport reply the claim is necessarily different, because no exchange
+exists to derive anything: what is established there is that the reply cannot claim execution
+or any other exchange effect. The three fail-closed frame replies carry no body and no
+evidence at all, and the one that does — the channel/routing refusal — is a bare JSON error
+reached before the handler. The shed's 503 is retry-safe on its own terms because the body is
+never read, so nothing ran.
+
+A single sentence covering both would be false about one of them.
 """
 scope = """
 The SITE SET, and nothing about which cause any site chooses. THM-0043 establishes that the
@@ -3480,4 +3608,85 @@ supported_by = [
   "unit://proxy.outstanding_id_provenance",
 ]
 depends_on = []
+
+[[theorem]]
+id = "THM-0084"
+title = "The shipped client proxy verifies against the request it sent"
+statement = """
+In the production `ClientProxy` request/reply path, the `SignedRequest` handed to
+`RemoteTransport::round_trip` is the same signed-request owner from which the
+`ResponseExpectation` passed to response verification is derived; on the notification path
+the acknowledgement verifier receives `signed.request()` from that same owner directly. The
+response is therefore verified against the request that this proxy sent.
+"""
+security_consequence = """
+A server cannot have an answer accepted by pairing a well-formed response with an expectation
+describing a request the proxy never sent. The expectation and the sent request are not two
+values that happen to agree — there is only one, so there is nothing for them to disagree
+about.
+"""
+scope = """
+The SHIPPED path, and that is the whole point of registering it. THM-0057 through THM-0061
+establish what the client-core verifier does with an expectation and a response; every one of
+them takes the PAIRING as given, and `client.response_acceptance`'s scope says so explicitly —
+pairing an expectation with the request it describes is the caller's obligation.
+
+For a raw FFI caller that is the honest boundary and it stays there: `ResponseExpectation::new`
+is public precisely so a binding that rebuilt the request from scalars can supply one, and
+nothing here narrows that. What this claim says is that the SYSTEM ROOT is not an arbitrary
+caller — it is `ClientProxy::handle`, and there the obligation is DISCHARGED rather than
+delegated. Raw FFI and low-level reconstruction remain outside the guarantee.
+
+Evidence, not unconstructibility. Both halves take `&SignedRequest`, so no signature can
+force them to be the same value; what is measured is that `handle` builds one, forwards it,
+and derives from it, and that the shipped path reconstructs no second request. Deleting the
+battery leaves the wrong composition compiling.
+
+It establishes nothing about whether the response is TRUSTWORTHY — that the signer is
+authorized, the credential current, the receipt bound — which is THM-0058 through THM-0061.
+"""
+owner = "client.proxy_request_correspondence"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://client.proxy_request_correspondence"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0085"
+title = "Every exchange-owned refusal reaches the audit boundary, typed, before it is answered"
+statement = """
+Every exchange-owned production refusal served by the MCP-RE serving path passes through one
+funnel, which dispatches to exactly two emitters; each emitter takes the typed `RefusalCause`
+and asks it for its Core-verdict and authorization-facet projections rather than rendering
+one; and each records at the audit boundary BEFORE the refusal response is minted.
+"""
+security_consequence = """
+A refusal cannot be served without the record of it having already been offered to the audit
+boundary, and cannot be recorded under a token this boundary chose rather than one an
+authority reached. The ordering matters on its own: recording after the answer leaves a window
+in which a refusal has been served and no record of it exists, which is the one case an
+auditor cannot reconstruct afterwards.
+"""
+scope = """
+The EMISSION joint, and the reason it is a separate claim is that its neighbours all hold
+without it. THM-0081 establishes that every refusal site is inside the lifecycle, THM-0046
+that a refusal carries which authority reached it, THM-0069 what a record may say in each
+coordinate — and a refusal could satisfy all three, be correctly typed and correctly sited,
+and simply never be recorded.
+
+Measured at the ONE boundary rather than reason by reason. A battery enumerating refusal
+causes would have to learn about the next one, and the failure mode of a stale enumeration is
+a clean pass over an unrecorded refusal.
+
+EXCHANGE-OWNED refusals only. The four pre-exchange transport replies are outside it: no
+exchange exists, so there is no exchange record to emit, and THM-0081 is what enumerates them.
+Bringing them in would require a separate audit requirement, and none is claimed here.
+
+It says nothing about DELIVERY once the record reaches the sink — that is THM-0070, and it
+carries its own durability boundary. Evidence rather than unconstructibility: the emitters are
+ordinary methods, so deleting the battery leaves a mint-before-record ordering compiling.
+"""
+owner = "proxy.refusal_audit_emission"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.refusal_audit_emission"]
+depends_on = ["THM-0046", "THM-0069", "THM-0081"]
 

@@ -78,20 +78,19 @@ pilot = "verus-candidate"
 [[unit]]
 id = "http_profile.keyid"
 class = "V0"
-description = "RFC 7638 JWK thumbprint keyids: the canonical JWK form and the derived selector."
+description = "The MCP-RE half of the keyid derivation: the RFC 7638 canonical JWK form, which embeds its operand verbatim between fixed affixes, and the base64url-no-pad encoding of the digest — neither of which introduces a collision of its own."
 paths = ["mcp-re-http-profile/src/keyid.rs"]
 exported_contracts = []
 evidence = [
   "test://http_profile/keyid/rfc8037_a3_known_answer",
   "test://http_profile/keyid/derivation_introduces_no_collisions",
 ]
-# Two entries, because two different propositions are measured here and a single membership
-# would let either stand for the other. The first is a third-party known answer — RFC 8037
-# §A.3 over the §A.1 key — and says the derivation agrees with the standard. The second is
-# the MCP-RE-owned half of selector injectivity (THM-0055): the canonical form embeds its
-# operand between fixed affixes, distinct operands never share a form, and the encoding does
-# not merge digests. Neither reaches THM-0050's primitive half, which is ASM-0037 and is
-# assumed rather than measured.
+# NO primitive assumption, and that is the point of the split. Everything this unit
+# measures is a property of code MCP-RE wrote: the form is a fixed prefix, the operand
+# verbatim, and a fixed suffix, so distinct operands have distinct forms for ANY operand
+# — including one carrying JSON metacharacters — and base64url-no-pad is injective over the
+# fixed 32-byte width of a SHA-256 output. THM-0055 rests here and inherits nothing about
+# the digest.
 tested_symbols = [
   "lib#keyid::tests::rfc8037_a3_known_answer",
   "lib#keyid::tests::canonical_form_is_lexicographic_and_unspaced",
@@ -100,50 +99,29 @@ tested_symbols = [
   "lib#keyid::tests::distinct_operands_never_share_a_canonical_form",
   "lib#keyid::tests::the_keyid_encoding_is_injective_over_the_digest_width",
 ]
-assumptions = ["ASM-0037"]
 pilot = "lean-candidate"
 
-# ---------------------------------------------------------------------------
-# The verifier's results — ADR-MCPRE-061 §2 class 9, closed by #570/#571
-# ---------------------------------------------------------------------------
-#
-# Seven public operations produce seven deliberately different propositions, and two of
-# those propositions have a genuinely shared half — the authorization-independent
-# cryptographic facts, which the trust-seam and delegation-chain paths both establish. One
-# review unit carries all of it, and the theorem layer allocates one claim per proposition,
-# nine in total: the attacker stories differ, the evidence is shared, and
-# `admission_currency` already sets the precedent for several claims over one unit.
-#
-# One unit rather than nine is the honest granularity. The propositions are separated by
-# TYPE, but the source is not: they share `verify.rs`, so a fingerprint per operation would
-# make the graph look more precise than the measurement is.
-#
-# This is class V0. There is no `ensures` over these operations — the prover reaches
-# `check_params` (`http_profile.freshness_window`), not the operations that call it — so
-# every claim resting here is supported by a test battery and nothing above it may say
-# otherwise.
-#
-# `paths` is the COMPLETE security-relevant implementation closure of those operations,
-# not the files whose names read like the claims. The first version named seven files and
-# omitted `delegation.rs` — which implements the root signature check, credential
-# freshness, audience/profile/scope, key-use, epoch, revocation and `cnf.jwk` consistency,
-# i.e. most of what the two delegated claims actually assert. An edit there could
-# materially weaken credential verification while this unit's fingerprint stayed put and
-# the delegated claims still derived FRESH. That is the false-freshness defect the
-# fingerprint exists to prevent, so the closure is now derived from what the operations
-# CALL: the module closure of `verifier.rs`/`verify.rs`/`rejection.rs` inside the crate,
-# plus the `mcp-re-core` files carrying the primitives (`crypto.rs` — `verify_ed25519_with`
-# and the key types — with `error.rs` and `encoding.rs`).
-#
-# It is deliberately wider than any single claim needs. A narrower closure is legitimate
-# only through a SEALED contract-consumption edge, and no unit here exports a contract yet;
-# until one does, "this file is not really part of the claim" is a reviewer's belief and
-# not a checked fact. Manufacturing fine-grained units to shrink fingerprints would trade a
-# measured over-approximation for an unmeasured under-approximation.
-#
-# `artifact.rs` and `block.rs` also belong to `http_profile.artifact_typing`, and `verify.rs`,
-# `policy.rs` and `ids.rs` also to `http_profile.freshness_window`. Overlap is not
-# duplication: two units measuring the same file answer two different questions about it.
+[[unit]]
+id = "http_profile.keyid_selector"
+class = "V0"
+description = "The keyid as a SELECTOR: that two distinct enrolled verification keys cannot feasibly be brought to the same keyid. It is the composition of the MCP-RE derivation with the primitive's collision resistance, and it is a separate unit precisely so the primitive assumption stays off the derivation claim."
+# The same file, deliberately. Two units over one file because there are two propositions
+# with two different trusted bases, and a single unit would make ASM-0037 a premise of
+# THM-0055 — which is exactly backwards: the derivation half is proved without any
+# assumption about the digest, and saying so is most of its value.
+paths = ["mcp-re-http-profile/src/keyid.rs"]
+exported_contracts = []
+evidence = ["test://http_profile/keyid/derivation_introduces_no_collisions"]
+assumptions = ["ASM-0037"]
+# The MCP-RE half is measured here too, because the composition rests on it. What is NOT
+# measurable is the other half, and nothing here pretends otherwise: no test can establish
+# collision resistance, which is why ASM-0037 exists and why it is scoped to this unit and
+# not to its sibling.
+tested_symbols = [
+  "lib#keyid::tests::the_canonical_form_embeds_its_operand_verbatim_between_fixed_affixes",
+  "lib#keyid::tests::distinct_operands_never_share_a_canonical_form",
+  "lib#keyid::tests::the_keyid_encoding_is_injective_over_the_digest_width",
+]
 
 [[unit]]
 id = "http_profile.verifier_results"
@@ -2036,6 +2014,30 @@ tested_symbols = [
 ]
 
 [[unit]]
+id = "proxy.refusal_audit_emission"
+class = "V0"
+description = "That every exchange-owned refusal reaches the audit boundary, typed, before it is answered: one funnel, two emitters, each taking the typed cause and asking it for its projections, and each recording before the refusal response is minted."
+paths = [
+  "mcp-re-proxy/src/http_profile_serve/receipt/mod.rs",
+  "mcp-re-proxy/src/http_profile_serve/receipt/audit_event.rs",
+  "mcp-re-proxy/src/http_profile_serve/mod.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/audit/refusal_emission"]
+assumptions = []
+# Measured at the ONE boundary rather than reason by reason: a battery enumerating refusal
+# causes would have to learn about the next one, and the failure mode of a stale enumeration
+# is a clean pass over an unrecorded refusal. The ordering member is the one that is easy to
+# lose — recording after the mint leaves a window in which a refusal has been served and no
+# record of it exists.
+tested_symbols = [
+  "tests/integration#refusal_audit_emission_test::every_exchange_owned_refusal_passes_through_one_funnel",
+  "tests/integration#refusal_audit_emission_test::each_emitter_records_the_typed_projections",
+  "tests/integration#refusal_audit_emission_test::the_record_is_emitted_before_the_refusal_is_minted",
+  "tests/integration#refusal_audit_emission_test::the_emission_rules_would_catch_each_regression",
+]
+
+[[unit]]
 id = "proxy.refusal_site_totality"
 class = "V0"
 description = "Where a served request can be answered from: the serving assembly mints no answer outside its one wrapper, every error arm of the pipeline returns what its stage produced, the single mint outside the exchange has exactly one production call site and that site sits ahead of the handler, and the retry contract a refusal carries is derived from the exchange machine rather than chosen at the exit."
@@ -2186,6 +2188,30 @@ tested_symbols = [
   "lib#trust_manifest::preimage::tests::the_signer_kid_manifest_boundary_cannot_be_moved",
   "lib#delegated_trust::manifest_validity::tests::the_deadline_is_inclusive_of_the_instant_it_names",
   "lib#delegated_trust::manifest_validity::tests::a_hand_assembled_picture_has_no_deadline_to_miss",
+]
+
+[[unit]]
+id = "client.proxy_request_correspondence"
+class = "V0"
+description = "The joint the shipped client proxy owns and the low-level verifier cannot: the SignedRequest handed to the transport and the ResponseExpectation handed to response verification come from ONE owner, so the response is verified against the request this proxy sent."
+# The composition authority alone — `proxy.rs` — and NOT the client-core verifier it calls.
+# `client.response_acceptance` establishes what the verifier does with a pairing and takes
+# the pairing as given; widening it to cover the pairing merely because it consumes the
+# result would put the relation in the unit that cannot see it.
+paths = ["mcp-re-client-proxy/src/proxy.rs"]
+exported_contracts = []
+evidence = ["test://client/proxy/request_correspondence"]
+assumptions = []
+# Measured through `include_str!`, which makes the scan a COMPILE-TIME dependency on the
+# file it is about: a module that moves or is renamed stops the battery compiling rather
+# than leaving it to measure nothing. The negative member is the load-bearing one —
+# `ResponseExpectation::new` takes any request at all, which is exactly what makes it right
+# for FFI and wrong here.
+tested_symbols = [
+  "lib#proxy::tests::the_proxy_sends_the_one_request_it_signed",
+  "lib#proxy::tests::both_verification_paths_take_the_signed_request_owner",
+  "lib#proxy::tests::the_shipped_path_reconstructs_no_second_request",
+  "lib#proxy::tests::the_correspondence_rules_would_catch_each_regression",
 ]
 
 [[unit]]

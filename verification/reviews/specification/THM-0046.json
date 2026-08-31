@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:ea9c7a5680ae2326df8620d90806dbfb5506edb8a25a65d5b2ed5afe334d4e8f",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0046",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. Clarified: the closed set is the two AUDIT-VOCABULARY authorities represented at this boundary \u2014 Core-owned and Authorization-owned verdict vocabularies \u2014 and the scope now says explicitly that this is NOT a claim that only two semantic authorities participated in the exchange. Admission, the transport binding, the continuation plane and the replay tier all reach the record through one of the two rather than by adding a third.",
+  "reviewed_fingerprint": "sha256:6929594776130d59ef275dac33f58d8a9ba1fbb40c1580164aa29218a63aa7e8",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0046"
+}

@@ -1,0 +1,21 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:e02aeb852b6b1eecd18ef4f2ad2ef1cc959f8582b11a03adf604efcba140c838",
+    "theorem_dependencies": {
+      "THM-0043": "sha256:1ece28b4aeef476884140e0c2e594036d64eea9a19110eef6dd085af4296adb7",
+      "THM-0046": "sha256:ea9c7a5680ae2326df8620d90806dbfb5506edb8a25a65d5b2ed5afe334d4e8f",
+      "THM-0069": "sha256:49c15da418ecfd8336d86978fe199be6f85eb945013482111ef100409eca4510",
+      "THM-0070": "sha256:7268a3e5f122492c784fe562a456a54cdd8a8d5e5890c33124837ccb02de1914",
+      "THM-0081": "sha256:cc31afc20983e87adddbc6f4a1903c95d4f8c8d89a866c978acbd86bb710cab2",
+      "THM-0085": "sha256:eb484cc34bf35f8c36e93dda8776c34902a6ce4e4358a05fb182ecc343c3789d"
+    },
+    "theorem_id": "THM-0071",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. Corrected in the three ways the ruling names: 'every outcome' becomes every relevant IN-EXCHANGE refusal outcome; 'every authority that reached an outcome' becomes the audit-vocabulary authority the refusal carries plus the separately typed authorization coordinate where applicable; and the four pre-exchange transport replies are placed outside the exchange-audit claim. THM-0085 is added so the composition runs site totality -> typed provenance -> authority-coordinate projection -> audit emission -> collector delivery, and the consequence stays inside the durability boundary: within the modeled in-process audit path, and NOT durable persistence if the process disappears.",
+  "reviewed_fingerprint": "sha256:3f514a8cf864db97d6463e50101a3555bf7afd2cf0a39af2af0715f8eef7338f",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0071"
+}

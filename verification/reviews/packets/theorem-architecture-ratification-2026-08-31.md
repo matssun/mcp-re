@@ -487,3 +487,74 @@ self-authored. They are collected, grouped by permanent root and ordered by depe
 registries by `tools/verification/review-packet`, so it shrinks by itself as records are
 written. That packet is the next human boundary.
 
+## 12. CLOSED — the compositional-closure campaign is complete
+
+The consolidated owner specification review of 2026-08-31 declared itself COMPLETE, approved
+every packet theorem at its current fingerprint except a bounded correction set, and
+conditionally approved the corrected semantics for that set. The corrections are made, the
+records are written, and the measured state is the target:
+
+```text
+84 of 84 theorem(s) established
+ROOT COMPLETENESS: COMPLETE
+  9 of 9 declared system root(s) established
+VERIFICATION: PASS   (manifests, assumptions, test, mutation, verus)
+all 60 unit(s) FRESH · 0 UNREVIEWED · 0 STALE · 0 GAP
+```
+
+`tools/verification/review-packet` now reports EMPTY, which is the packet working rather
+than the packet being skipped: its subject is the complement of
+`verification/reviews/specification/`, so it reaches nothing exactly when nothing is
+unreviewed, and a future theorem appears in it the moment it is registered.
+
+### The corrections, in one place
+
+| theorem | what the ruling corrected |
+|---|---|
+| THM-0050 / THM-0055 | review-unit granularity split so THM-0055 inherits no collision assumption |
+| THM-0053 | stale cross-reference THM-0007 → THM-0004 |
+| THM-0049 | X9 stated as a deliberate no-op, not as a refusal |
+| THM-0064 | consequence narrowed to *no process-readable export path*; the provider's own behaviour disclaimed |
+| THM-0073 | consequence narrowed to private-key reuse; administrative authorization separation disclaimed |
+| THM-0075 | replay clause → unbound evidence cannot verify through the bound path |
+| THM-0076 | restated to the shipped `ClientProxy` path; THM-0084 discharges the pairing |
+| THM-0061 | consequence → no silent reinterpretation; truth of the server's claim is the serving roots' |
+| THM-0068 / THM-0072 | conditional on the `pinned` provenance; `stated` retained |
+| THM-0046 | the closed set is the two AUDIT-VOCABULARY authorities, not every participant |
+| THM-0069 | stale ADR-MCPS-035 sentence removed |
+| THM-0070 | narrowed to the modeled collector lifetime |
+| THM-0081 / THM-0078 | four pre-exchange replies; exchange-owned and pre-exchange guarantees stated separately |
+| THM-0071 | in-exchange scope, vocabulary-authority wording, pre-exchange replies excluded |
+
+### Two composition joints registered
+
+**THM-0084** removed a contradiction rather than adding a claim: THM-0076's statement said
+the response resolved against the request this client sent while its scope called that
+pairing a caller obligation. In the shipped `ClientProxy` the obligation is discharged — one
+`SignedRequest` is built, forwarded, and derived from. `ResponseExpectation::new` stays
+public for FFI, and raw reconstruction stays outside the system root.
+
+**THM-0085** is the emission joint. Site totality, typed provenance and coordinate separation
+all hold of a refusal that is never recorded; this measures the common
+`rejection`/`response_rejection` boundary, its call-site totality, and that the record
+precedes the mint.
+
+### The missing-edge pass, re-run after the joints entered
+
+It found two premises missing from THM-0073 — a claim written one round earlier. The
+comparison is over `raw_point()`, so *different points implies different keys* needs THM-0025;
+and *the leaf's key is the channel-signing key* is THM-0027 on the delegated path. Both are
+now edges.
+
+Three theorems remain reachable from no root: THM-0002, THM-0017 and THM-0018. Each is a true
+claim about a published API that no current root requires, each was independently reviewed
+before this campaign, and none was forced into a closure to improve a number.
+
+### What this does NOT mean
+
+Not that MCP-RE is mathematically proved in Lean. The established set rests on the declared
+lanes — tests, mutation probes, six Verus units — and on 35 registered assumptions, and every
+theorem's scope says what it does not reach. #541 is a separate formal-evidence-depth
+campaign, and no `lean://` evidence or V2/V3 promotion is claimed until a digest-pinned
+extraction environment actually runs.
+

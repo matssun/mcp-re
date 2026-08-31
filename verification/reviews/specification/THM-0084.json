@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:6e2056c9c9a85ee5c42e9cd7c60711115968db07dcd422c9a98109c6d3ac9900",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0084",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31, which approved this missing composition proposition for registration and implementation and specified its content. Registered as ruled: in the production `ClientProxy` path the `SignedRequest` handed to `RemoteTransport::round_trip` is the same owner the `ResponseExpectation` is derived from, and the notification analogue is included because the root consumes it \u2014 the acknowledgement verifier receives `signed.request()` from that owner directly. Owned by `client.proxy_request_correspondence`, the smallest client-proxy composition authority; `client.response_acceptance` was NOT widened merely because it consumes the result. Evidence is a compile-time source scan through `include_str!`, whose negative member \u2014 the shipped path reconstructs no second request \u2014 is what makes the correspondence load-bearing.",
+  "reviewed_fingerprint": "sha256:235ff94049d233ca2bfd995b24a3219d23ab2a1b720469fa90a8dd8c5c163d4c",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0084"
+}

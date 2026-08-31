@@ -1,0 +1,20 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:03addb82f7e94c7e6b56fc34c89e6355f7a95d49f9584f421cd5e0e879ed213f",
+    "theorem_dependencies": {
+      "THM-0001": "sha256:b067364dff3ea3ee94ba4bc44f3eaa6b7d73dfd0a7f83fce66f6b974683c2868",
+      "THM-0016": "sha256:4c257ba6c8a5806b191849e424f57854dfb240e817196568849326145c101079",
+      "THM-0019": "sha256:68ed2898006f38a1b2a9e5ba26090c507a19dd375c6bccd69fa677e85fc025ea",
+      "THM-0021": "sha256:95a829f9b0e1e96d05d7718fce20ef57392757cc14cfa193e3d16a619bd882b9",
+      "THM-0057": "sha256:6af9416e71f599cefa633a6efd1174807feb9d8aab41658586b3ec15e8bfb4dd"
+    },
+    "theorem_id": "THM-0058",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31, given over verification/reviews/packets/owner-specification-review-2026-08-31.md. The ruling declared the consolidated review COMPLETE and approved every packet theorem not named in its bounded correction set at its current fingerprint. This theorem was not named, and its statement, security consequence and scope are unchanged from the packet the owner read.",
+  "reviewed_fingerprint": "sha256:1e7898d197a4ae48e2992ce6766f1ab2b8d33234bab85c1c476d2d915704a80d",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0058"
+}

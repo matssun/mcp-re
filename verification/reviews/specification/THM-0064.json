@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:d4ed4b51ee2b1642de63c8b8024310060f381ed421a151cfd76f51d4e9a43701",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0064",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. Consequence narrowed to what MCP-RE proves: a `NonExporting` selection materializes no process-readable export path, and the process receives signing capability and public identity rather than a private seed through this authority. The claim that an external KMS/HSM itself honours non-exportability is removed from the consequence; the scope already excluded it.",
+  "reviewed_fingerprint": "sha256:a4708937c5b3fba2bd4e77900eb4e8bf71352df1c0b2651d35368cb58653e30e",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0064"
+}

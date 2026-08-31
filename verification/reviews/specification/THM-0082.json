@@ -1,0 +1,22 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:d43412473064425b978c6712543d077545e09172b7d8899d7e71c4cf971765d4",
+    "theorem_dependencies": {
+      "THM-0025": "sha256:842f2d7c83658f810f1beaa1e5feac028eedab8234b8f418c5fe9e64129ca54e",
+      "THM-0026": "sha256:120750929aa1f77dd3432379326cf55c92a72da3986378a9df5663d5a2e0d585",
+      "THM-0027": "sha256:694cd5270497ed5c4880f3cd04306bcec0f7adcb506ec88ea4e6a8057cc44df3",
+      "THM-0049": "sha256:c90442429f9908e51506174e59083a636bdcc987f3d83f7987dee685875afdde",
+      "THM-0062": "sha256:84b35f28c53710c8f439b9ca783a411ac0621427f14e9ad5995d6425bea24f27",
+      "THM-0064": "sha256:d4ed4b51ee2b1642de63c8b8024310060f381ed421a151cfd76f51d4e9a43701",
+      "THM-0073": "sha256:1193224486e76a9ffcaf098325e3f701e100454779b066ca7c56be2edb2473ac"
+    },
+    "theorem_id": "THM-0082",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31, given over verification/reviews/packets/owner-specification-review-2026-08-31.md. The ruling declared the consolidated review COMPLETE and approved every packet theorem not named in its bounded correction set at its current fingerprint. This theorem was not named, and its statement, security consequence and scope are unchanged from the packet the owner read. Its own claim text is unchanged from the packet, but its fingerprint moved because a PREMISE in its dependency closure was corrected by this same ruling \u2014 which is exactly what the transitive closure exists to surface. The ruling approved both the corrected premise and this theorem, so the approval covers the resulting fingerprint.",
+  "reviewed_fingerprint": "sha256:b29cf670254862dbb5c36408bc0def05c1cf19871e32dc7118af453470044b98",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0082"
+}

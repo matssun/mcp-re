@@ -1,0 +1,25 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:a749c02dc595f02ba5ea5f86dd6aa47790237f5da0a9b1fee47152b0328f3c37",
+    "theorem_dependencies": {
+      "THM-0039": "sha256:37c800ce3d350ee3ab08049b866f1e5c4bb6c5a8e3627ab7837085fb16b48eed",
+      "THM-0040": "sha256:18d589f65510888649c2a3bb384d884766159dd85e245f4da0cc4edf75df8143",
+      "THM-0043": "sha256:1ece28b4aeef476884140e0c2e594036d64eea9a19110eef6dd085af4296adb7",
+      "THM-0044": "sha256:8038bf044ed2caff021630c0b00df30c4f12cd599eee8eeb6865e0c274591bfe",
+      "THM-0045": "sha256:482f12733c6594c6a4ce6a6919f623816869db48dcc671a79e186e0e834d5366",
+      "THM-0046": "sha256:ea9c7a5680ae2326df8620d90806dbfb5506edb8a25a65d5b2ed5afe334d4e8f",
+      "THM-0062": "sha256:84b35f28c53710c8f439b9ca783a411ac0621427f14e9ad5995d6425bea24f27",
+      "THM-0063": "sha256:eb4cdd9d67ec490bbcd229a812cad5dc012928d320ecf1cfa0375f93999bb90c",
+      "THM-0069": "sha256:49c15da418ecfd8336d86978fe199be6f85eb945013482111ef100409eca4510",
+      "THM-0081": "sha256:cc31afc20983e87adddbc6f4a1903c95d4f8c8d89a866c978acbd86bb710cab2"
+    },
+    "theorem_id": "THM-0078",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. Makes the same distinction as THM-0081: where an exchange exists, refusal-side effects are authorized by the refusal and lifecycle state; a pre-exchange reply has no exchange state and may not claim one. Its own claim text is unchanged from the packet, but its fingerprint moved because a PREMISE in its dependency closure was corrected by this same ruling \u2014 which is exactly what the transitive closure exists to surface. The ruling approved both the corrected premise and this theorem, so the approval covers the resulting fingerprint.",
+  "reviewed_fingerprint": "sha256:d6cdba202807ad03adab8f9667f7a51cbc8363e5de82fff2eb77b417546a05e3",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0078"
+}

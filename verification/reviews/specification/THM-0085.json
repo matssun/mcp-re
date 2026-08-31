@@ -1,0 +1,19 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:eb484cc34bf35f8c36e93dda8776c34902a6ce4e4358a05fb182ecc343c3789d",
+    "theorem_dependencies": {
+      "THM-0043": "sha256:1ece28b4aeef476884140e0c2e594036d64eea9a19110eef6dd085af4296adb7",
+      "THM-0046": "sha256:ea9c7a5680ae2326df8620d90806dbfb5506edb8a25a65d5b2ed5afe334d4e8f",
+      "THM-0069": "sha256:49c15da418ecfd8336d86978fe199be6f85eb945013482111ef100409eca4510",
+      "THM-0081": "sha256:cc31afc20983e87adddbc6f4a1903c95d4f8c8d89a866c978acbd86bb710cab2"
+    },
+    "theorem_id": "THM-0085",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31, which approved this missing composition proposition and specified its content. Measured at the common `rejection` / `response_rejection` boundary and its call-site totality, as the ruling directed, rather than by duplicating each refusal reason \u2014 a battery enumerating causes would have to learn about the next one, and a stale enumeration passes cleanly over an unrecorded refusal. The ordering conjunct is included because recording after the mint leaves a window in which a refusal has been served and no record of it exists.",
+  "reviewed_fingerprint": "sha256:14ed383167196887fce8db9f4e66e81a7dfc129b02fd9ed66d94610f5e48b3a0",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0085"
+}

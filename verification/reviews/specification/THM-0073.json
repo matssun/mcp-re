@@ -1,0 +1,19 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:1193224486e76a9ffcaf098325e3f701e100454779b066ca7c56be2edb2473ac",
+    "theorem_dependencies": {
+      "THM-0025": "sha256:842f2d7c83658f810f1beaa1e5feac028eedab8234b8f418c5fe9e64129ca54e",
+      "THM-0026": "sha256:120750929aa1f77dd3432379326cf55c92a72da3986378a9df5663d5a2e0d585",
+      "THM-0027": "sha256:694cd5270497ed5c4880f3cd04306bcec0f7adcb506ec88ea4e6a8057cc44df3",
+      "THM-0049": "sha256:c90442429f9908e51506174e59083a636bdcc987f3d83f7987dee685875afdde"
+    },
+    "theorem_id": "THM-0073",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. The unconditional distinct-signing-key policy is ratified and no policy switch was introduced. The comparison stays over `Ed25519PublicKeyValue`. The consequence is narrowed to key reuse: compromise or possession of one PRIVATE KEY does not by reuse confer the other role, and the claim that an IAM principal, HSM session or administrative credential able to invoke one is unauthorized to invoke the other is explicitly disclaimed as a different proposition. Two premises were also added, found by the missing-edge pass over this claim: THM-0025, without which a `raw_point()` inequality is about projections rather than keys, and THM-0027, which is what makes the served leaf the key that signs the handshake on the delegated path.",
+  "reviewed_fingerprint": "sha256:8c931d3d86a1e08e8dee46f619dd29cc3fd05dd23d0bc3c610c4e1993aa8d5e2",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0073"
+}

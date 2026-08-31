@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:0f11740849d75fdf37fe9bc78b7189592eb47d188be2f4902f214da8c6c65f9f",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0055",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. The proposition is unchanged; its unit is now one that carries no assumption, and the scope says so explicitly. That is the point of the split \u2014 the derivation half is proved without assuming anything about the digest, and inheriting ASM-0037 would have quietly made it a weaker claim than it is.",
+  "reviewed_fingerprint": "sha256:ee864a2158202fbcc6f41536796bf7dcc794e30101455677e86005c98cc2c533",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0055"
+}

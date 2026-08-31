@@ -18,6 +18,7 @@ not an omission to hide.
 |---|---|---|---|
 | client.delegation_policy_seal | V0 | THM-0060 | 0 |
 | client.execution_contract | V0 | THM-0061 | 0 |
+| client.proxy_request_correspondence | V0 | THM-0084 | 0 |
 | client.response_acceptance | V0 | THM-0058, THM-0059, THM-0076 | 0 |
 | client.trust_manifest_lifecycle | V0 | THM-0057 | 0 |
 | core.time_rfc3339 | V1 | THM-0002 | 4 |
@@ -28,7 +29,8 @@ not an omission to hide.
 | http_profile.continuation_binding | V1 | THM-0010 | 1 |
 | http_profile.continuation_unbypassability | V1 | THM-0009 | 1 |
 | http_profile.freshness_window | V1 | THM-0001 | 6 |
-| http_profile.keyid | V0 | THM-0050, THM-0055 | 1 |
+| http_profile.keyid | V0 | THM-0055 | 0 |
+| http_profile.keyid_selector | V0 | THM-0050 | 1 |
 | http_profile.pdp_decision_authentication | V0 | THM-0039 | 0 |
 | http_profile.replay_key | V0 | THM-0079 | 0 |
 | http_profile.request_envelope | V0 | THM-0083 | 0 |
@@ -60,6 +62,7 @@ not an omission to hide.
 | proxy.outstanding_id_provenance | V0 | _none_ | 0 |
 | proxy.pdp_decision_relation | V0 | THM-0040 | 0 |
 | proxy.peer_identity_value | V0 | THM-0023 | 0 |
+| proxy.refusal_audit_emission | V0 | THM-0085 | 0 |
 | proxy.refusal_provenance | V0 | THM-0046 | 0 |
 | proxy.refusal_site_totality | V0 | THM-0081 | 0 |
 | proxy.request_peer_binding | V0 | THM-0034 | 0 |

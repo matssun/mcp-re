@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:c90442429f9908e51506174e59083a636bdcc987f3d83f7987dee685875afdde",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0049",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. X9 wording corrected. The scope no longer implies `cross_machine` refuses an X9 incompatibility: it states the two relations actually refused (X2a, X6) and records that X9 is deliberately a no-op because the trust-epoch posture is already a single owner decision consumed by both sides, leaving no second decision to find incompatible.",
+  "reviewed_fingerprint": "sha256:708cb6db38e1d8a5171bac95857c6ef850620a27c9e003c9ce28bc878c5d595f",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0049"
+}
