@@ -73,19 +73,14 @@ impl MaterializedSigningRoles {
     /// directly, the channel credential through the leaf of the chain this deployment
     /// serves — and refuses when they are the same key.
     pub(super) fn establish(source: Box<dyn KeySource + Send + Sync>) -> Result<Self, KeyError> {
-        let response = response_role_identity(source.as_ref());
-        let channel = channel_role_identity(source.as_ref());
-        if let (RoleIdentity::Key(response), RoleIdentity::Key(channel)) = (response, channel) {
-            if channel.raw_point() == response.raw_point() {
-                return Err(KeyError::Malformed(
-                    "the response-signing key and the channel-signing key are the same key. \
-                     The two roles are separately attributable only while they are separate \
-                     keys: a party able to obtain a handshake signature would otherwise have \
-                     obtained a response attribution. Configure a distinct key for one of \
-                     them."
-                        .to_string(),
-                ));
-            }
+        if roles_collapse(source.as_ref()) {
+            return Err(KeyError::Malformed(
+                "the response-signing key and the channel-signing key are the same key. The \
+                 two roles are separately attributable only while they are separate keys: a \
+                 party able to obtain a handshake signature would otherwise have obtained a \
+                 response attribution. Configure a distinct key for one of them."
+                    .to_string(),
+            ));
         }
         Ok(MaterializedSigningRoles { source })
     }
@@ -95,6 +90,24 @@ impl MaterializedSigningRoles {
     /// Consuming, so the witness is not left behind to be presented for a second source.
     pub fn into_key_source(self) -> Box<dyn KeySource + Send + Sync> {
         self.source
+    }
+}
+
+/// Whether the two roles resolved to one key.
+///
+/// A predicate rather than a branch inside the constructor, so the constructor states the
+/// decision and this states the comparison. `false` covers two different situations and
+/// says so: the roles resolved to two keys, or at least one resolved to none — and the note
+/// on [`channel_role_identity`] is why the second is not a skipped check.
+fn roles_collapse(source: &(dyn KeySource + Send + Sync)) -> bool {
+    match (
+        response_role_identity(source),
+        channel_role_identity(source),
+    ) {
+        (RoleIdentity::Key(response), RoleIdentity::Key(channel)) => {
+            response.raw_point() == channel.raw_point()
+        }
+        _ => false,
     }
 }
 
