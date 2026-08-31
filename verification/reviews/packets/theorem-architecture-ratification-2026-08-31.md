@@ -397,3 +397,93 @@ The 40 unestablished theorems are dominated by one axis and it is not architectu
 claim this campaign allocated reports `SPECIFICATION REVIEW UNREVIEWED`. That is correct.
 The ratification was of the architecture, not of these statements, and a review record
 written from it would record an event that did not happen.
+
+## 11. Second closure round — the three ruled decision nodes, and the remaining gaps
+
+The owner ruled the three nodes §10 had left open as decisions rather than work, and
+authorized closing the rest. What that round produced, in the same order the ruling gave.
+
+### THM-0050 — restated computationally; ASM-0037 allocated
+
+The absolute wording is gone. Two distinct keys CAN share a SHA-256 digest — the domain is
+unbounded and the range is 256 bits — so the honest claim is that no computationally feasible
+adversary can exhibit such a pair, and that is what THM-0050 now says.
+
+**ASM-0037** carries the premise, scoped to `unit://http_profile.keyid` and
+`boundary://boundary.crypto_primitives` and to nothing else. ASM-0028 was NOT widened:
+second-preimage resistance bounds an adversary handed a target, collision resistance bounds
+one free to choose both, and the keyid threat model is the second because the adversary
+chooses the key it enrols. ASM-0023's refusal to assume the labelled digest's DOMAIN
+SEPARATION stands untouched — collision resistance says nothing about labels.
+
+THM-0055 remains the MCP-RE-owned half and is unchanged.
+
+### THM-0071 — restated around typed-coordinate totality; no ADR reopened
+
+ADR-MCPRE-066 had already decided the algebra, and its slices implemented it: the Core verdict
+and the authorization verdict are separately typed coordinates, and
+`PolicyError -> &'static str -> Core reason` no longer exists as a route. The old scope
+asked for a vocabulary decision that had been taken.
+
+The claim is now totality over those coordinates, composed from four established facts —
+site totality (THM-0081), authority provenance (THM-0046), coordinate separation (THM-0069)
+and delivery honesty (THM-0070). No `PolicyError` token was added to `McpReError`, no Core
+token was minted to stand for authorization, and the two coordinates were not collapsed.
+
+No reachable refusal outcome was found that the typed record cannot represent.
+
+### THM-0073 — sealed over the materialized identity
+
+The construction-site convention is no longer the boundary. `build_key_source` opens the
+source privately and returns `MaterializedSigningRoles`, whose only producer compares the two
+roles' **public verification keys** — the response signer's directly, the channel
+credential's through the leaf of the served chain — as `Ed25519PublicKeyValue`. No mechanism
+locator is compared, and no provider-specific equality semantics were invented. Deleting the
+call leaves a serving path that does not compile.
+
+The owner moved to `proxy.signing_role_separation`, out of `proxy.cross_machine_legality`, for
+the reason the ruling anticipated. ADR-MCPRE-067 §10's clarification is recorded in
+`docs/architecture/components/cli-and-materialization.md` §11; no new ADR was created.
+
+### The five remaining gaps
+
+All closed, and three of them by the same recurring shape — the authority and its evidence
+existed, and only the `[[unit]]` was missing.
+
+| gap | how it closed |
+|---|---|
+| THM-0053 admission-assertion authenticity | `http_profile.admission_assertion`, the discharge ASM-0012's own review requirement names |
+| THM-0054 unknown-status denial | the missing behavioural case WRITTEN — a client whose status the configured CRLs cannot determine — beside a construction-site battery |
+| THM-0080 serving identity provenance | `proxy.serving_identity_provenance`, binding the route to the signature that has no parameter for a second credential |
+| THM-0081 refusal-site totality | `proxy.refusal_site_totality` + clause 12 of the refusal gate |
+| THM-0082 materialized signer provenance | `proxy.signing_credential_provenance`, the counterpart of the resolver claim |
+
+Two of these are worth naming as measurement corrections rather than as work. THM-0054's
+existing handshake battery proved a revoked client denied and a stale CRL denying — both
+cases where revocation checking RAN and answered. The unknown-status decision itself, which is
+what the claim is about, had no control at all. And THM-0081's outside set is four transport
+replies rather than the one the proposal recorded, with a fifth exit — the framing fallback —
+named rather than absorbed.
+
+### Missing-edge pass, kept alive
+
+Two edges, both found by asking what a root requires rather than by reading the registry
+upward.
+
+* **THM-0083** — what a request IS, decided once, ahead of every stage that reads the body for
+  meaning. R1 quantifies over it; the authority, its contract and its battery all existed; no
+  node in the tree stated it. The same shape as the replay omission THM-0079 closed.
+* **THM-0070** — the record stream is honest about what reached it. It was reachable from no
+  root, and R5c's totality needs it: a refusal correctly typed and then silently dropped is
+  silent.
+
+Nothing was invented to make the graph look complete.
+
+### What is still open
+
+Every claim from THM-0043 to THM-0083 lacks an independent specification review, and none was
+self-authored. They are collected, grouped by permanent root and ordered by dependency, in
+`verification/reviews/packets/owner-specification-review-2026-08-31.md` — generated from the
+registries by `tools/verification/review-packet`, so it shrinks by itself as records are
+written. That packet is the next human boundary.
+

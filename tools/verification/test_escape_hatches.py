@@ -122,6 +122,20 @@ def test_a_method_named_admit_is_not_a_proof_escape_hatch():
     assert "assume" in matched("assume(x < 10);")
 
 
+def test_a_method_named_admit_is_not_a_hatch_where_it_is_defined_either():
+    """The other half of the same confusion, and it arrived separately.
+
+    `inner_plane.rs` DEFINES `fn admit(&self)` — the inner plane's own question about
+    whether it will accept a request. The call site stopped tripping the gate when the
+    caller entered a unit's paths; the definition started tripping it when the definition
+    did. A definition deletes no proof obligation.
+    """
+    assert matched("pub(super) fn admit(&self) -> Result<Established<()>, Refusal> {") == set()
+    assert matched("fn assume(x: u8) -> u8 { x }") == set()
+    # A definition is not a hatch; a CALL through a path still is.
+    assert "admit" in matched("vstd::pervasive::admit();")
+
+
 def test_the_production_scan_reads_the_shipped_half_only():
     """A region that ships in no binary cannot weaken a proof about one.
 

@@ -1653,6 +1653,7 @@ mod tests {
             &config.channel_credential.credential_chain,
             &config.peer_trust_anchors,
         )
+        .map(crate::capability_materialization::MaterializedSigningRoles::into_key_source)
     }
 
     // MCPS-076: the File key source is always constructible (default + dev builds).

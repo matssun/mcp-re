@@ -51,6 +51,34 @@ ADDED BY SLICE 2 (#648) — the containment stops being a rule and becomes a typ
      `response_rejection` take a typed `RefusalCause` and ask it for a Core verdict; neither
      passes a `wire_code()` result to an `AuditEvent` constructor.
 
+ADDED BY THE ADR-MCPRE-059 §28 CLOSURE (THM-0081) — the provenance is worth nothing at the
+sites it does not reach, so the last clause measures the SITE SET rather than a route:
+
+ 12. **Every production refusal is inside the exchange lifecycle.** Four facts, together
+     total over the exits a served request can take:
+
+     (a) the serving subtree mints no response of its own — the only construction of a
+         `ServedHttpResponse` under `http_profile_serve` is inside `served`, which wraps a
+         fully-built `HttpResponse` that the receipt owner produced from a `Refusal`;
+     (b) `handle` answers only through its stages — every `Err` arm returns the binding the
+         stage produced, and none builds a response at the exit;
+     (c) the pre-exchange transport refusals are exactly the DECLARED set. `ServedHttpResponse::json`
+         is the one mint of a SERVED response outside the exchange, it has exactly one production
+         call site anywhere in the workspace, and that site is reached before the handler — before
+         an exchange exists to be refused inside. The transport frame's other three replies are
+         built at the hyper type rather than this one and are enumerated by the unit battery
+         (`refusal_site_totality_test`), which can name the frame's files; this clause is the
+         WORKSPACE-width half, and its job is that no fourth crate acquires a served mint;
+     (d) the retry contract every refusal carries is DERIVED from the exchange machine.
+         `disposition` reads `retry_semantics()` and has no wildcard arm, so a new machine
+         consequence is a compile error rather than a silently inherited contract.
+
+     This is what THM-0043 and THM-0046 do not say. They establish that the relation is
+     decided everywhere and that a refusal remembers which authority reached it; neither says
+     that every SITE is inside the lifecycle, and an exit answering from source position would
+     satisfy both while stating a retry contract the machine never derived — the defect that
+     let a refusal after a spent approval report an ordinary retry.
+
 WHY (5) IS THE ONE THAT MATTERS. Every other check here constrains a shape that a reviewer
 would notice changing. A `From<PolicyError> for McpReError` would look like a convenience,
 would compile, would make every existing test pass, and would re-create the exact defect
@@ -74,6 +102,7 @@ Run:  python3 scripts/refusal_provenance_gate.py
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -89,10 +118,55 @@ SERVING = "mcp-re-proxy/src/http_profile_serve"
 RECORD = "mcp-re-proxy/src/audit_record.rs"
 CORE_AUDIT = "mcp-re-core/src/audit.rs"
 
-#: Where a `From<PolicyError>` conversion could plausibly be introduced. Every Rust file in
-#: the workspace, because the whole point is that it must exist NOWHERE — restricting the
-#: scan to the files that look relevant is how a gate stops covering its subject.
-WORKSPACE_GLOB = "**/*.rs"
+#: The transport frame the async fleet serves through, and the module that owns the served
+#: response type. Clause 12 reads both: the exchange lifecycle can only be shown total over
+#: the refusal sites if the sites OUTSIDE it are enumerable, and these are where they live.
+TRANSPORT = "mcp-re-proxy/src/async_serve/request.rs"
+
+#: Every production call site of the one mint outside the exchange. A set rather than a
+#: count, because "one site" is only reassuring if it is also the RIGHT site: a second
+#: production caller anywhere would be a refusal reached with no exchange to place it in, and
+#: this file is the pre-handler frame, where that is the whole point.
+DECLARED_TRANSPORT_REFUSAL_SITES = {TRANSPORT}
+
+#: The mint itself. Declared separately from its call sites so the definition module is not
+#: mistaken for a caller.
+SERVED_JSON = "ServedHttpResponse::json"
+
+#: Where `ServedHttpResponse::json` is DEFINED. Not a refusal site.
+SERVED_RESPONSE_OWNER = "mcp-re-proxy/src/async_serve/mod.rs"
+
+#: Directories the workspace walk never descends into. Pruned during the walk rather than
+#: filtered after it: `target/` holds hundreds of thousands of generated files on a built
+#: tree, and globbing them before discarding them was the whole cost of this gate.
+PRUNED = {"target", "node_modules", ".git"}
+
+
+def workspace_rust_files() -> list[str]:
+    """Every SHIPPED `.rs` path in the workspace: any Rust file under a crate's `src/`.
+
+    The scope of the two whole-workspace absence claims — no `From<PolicyError>` route into
+    the Core taxonomy, and no undeclared pre-exchange refusal site. Every crate, because the
+    point of both is that the shape exists NOWHERE, and restricting the scan to the files
+    that look relevant is how a gate stops covering its subject.
+
+    `src/` is the boundary, and it is a MEASUREMENT rather than an exemption: a file outside
+    it is compiled into no library and no binary that serves, so it cannot be a production
+    refusal site or a production conversion. The distinction is load-bearing — the battery
+    that measures clause 12 necessarily NAMES the mint it forbids, and a walk that counted
+    a test file's string constant as a call site would fail on its own control. The
+    exemption is visible rather than silent: `main` prints how many files were examined, and
+    a scope that collapsed to nothing shows as a number, not as an OK.
+    """
+    out = []
+    for root, dirs, files in os.walk(REPO):
+        dirs[:] = sorted(d for d in dirs if d not in PRUNED)
+        if "src" not in Path(root).relative_to(REPO).parts:
+            continue
+        for name in sorted(files):
+            if name.endswith(".rs"):
+                out.append(str((Path(root) / name).relative_to(REPO)))
+    return sorted(out)
 
 TEST_REGION = re.compile(r"^#\[cfg\((all\()?test")
 
@@ -217,10 +291,12 @@ def check(overrides: dict[str, str] | None = None) -> list[str]:
             )
 
     # 5. POISON PILL 2 — PolicyError may never reach the Core taxonomy
-    for path in sorted(REPO.glob(WORKSPACE_GLOB)):
-        if "target/" in str(path) or "/node_modules/" in str(path):
-            continue
-        rel = str(path.relative_to(REPO))
+    #
+    # 12c rides along on the SAME walk. Both are whole-workspace absence claims, and walking
+    # the tree twice to ask two questions about each file made the selftest — twenty fixtures,
+    # each a full pass — the slowest thing in the local gate.
+    transport_callers: set[str] = set()
+    for rel in workspace_rust_files():
         try:
             src = read(rel, overrides)
         except (OSError, UnicodeDecodeError):
@@ -229,6 +305,8 @@ def check(overrides: dict[str, str] | None = None) -> list[str]:
             problems.append(f"{rel}: a PolicyError -> McpReError conversion exists")
         if re.search(r"RefusalCause::Core\(\s*[A-Za-z_:]*[Pp]olicy", src):
             problems.append(f"{rel}: a PolicyError is being placed in the Core arm")
+        if SERVED_JSON in src and rel != SERVED_RESPONSE_OWNER:
+            transport_callers.add(rel)
 
     # 7/8. the record kind decides what each authority may say (R3, R5)
     record = read(RECORD, overrides)
@@ -273,6 +351,75 @@ def check(overrides: dict[str, str] | None = None) -> list[str]:
             problems.append(
                 "the serving path renders a token into an `AuditEvent` constructor instead "
                 "of passing a typed Core verdict (ADR-MCPRE-066 invariant 9)"
+            )
+
+    # 12a. the serving subtree mints no response of its own
+    minted = serving
+    wrapper = body_of(serving, "served")
+    if not wrapper:
+        problems.append(
+            "`served` is not in the serving subtree — the one wrapper clause 12a exempts is "
+            "gone, so the scope has moved rather than the property changed"
+        )
+    else:
+        minted = serving.replace(wrapper, "", 1)
+    for line in minted.split("\n"):
+        if "->" in line or line.lstrip().startswith("//"):
+            continue
+        if re.search(r"ServedHttpResponse\s*\{", line) or SERVED_JSON in line:
+            problems.append(
+                f"the serving path mints a response outside `served`: {line.strip()!r} — a "
+                f"refusal built at the exit is not inside the exchange lifecycle (THM-0081)"
+            )
+
+    # 12b. `handle` answers only through its stages
+    handle = body_of(serving, "handle")
+    if not handle:
+        problems.append("`handle` not found in the serving path")
+    else:
+        arms = re.findall(r"Err\((\w+)\)\s*=>\s*return\s+(\w+)\s*,", handle)
+        if len(arms) != handle.count("Err("):
+            problems.append(
+                "an `Err` arm in `handle` does something other than return the binding its "
+                "stage produced — an exit that builds its own answer is outside the "
+                "lifecycle (THM-0081)"
+            )
+        for bound, returned in arms:
+            if bound != returned:
+                problems.append(
+                    f"`handle` returns {returned!r} for an `Err({bound})` arm — the answer "
+                    f"served is not the one the stage produced"
+                )
+
+    # 12c. the pre-exchange transport refusals are exactly the declared set
+    callers = transport_callers
+    if callers != DECLARED_TRANSPORT_REFUSAL_SITES:
+        problems.append(
+            f"the pre-exchange refusal sites are {sorted(callers)}, declared "
+            f"{sorted(DECLARED_TRANSPORT_REFUSAL_SITES)} — an undeclared site is a refusal "
+            f"reached with no exchange to place it in (THM-0081)"
+        )
+    transport = read(TRANSPORT, overrides)
+    if SERVED_JSON in transport and "handler(" not in transport:
+        problems.append(
+            f"{TRANSPORT}: the declared transport refusal no longer sits ahead of the "
+            f"handler, so it is not established that it is reached before an exchange exists"
+        )
+
+    # 12d. the retry contract is derived from the machine, not chosen at the exit
+    disposition = body_of(serving, "disposition")
+    if not disposition:
+        problems.append("`disposition` not found — the retry contract has no derivation")
+    else:
+        if "retry_semantics()" not in disposition:
+            problems.append(
+                "`disposition` does not read `retry_semantics()` — a refusal's retry "
+                "contract would be chosen at the exit rather than derived from the exchange"
+            )
+        if re.search(r"^\s*_\s*=>", disposition, re.M):
+            problems.append(
+                "`disposition` has a wildcard arm — a new machine consequence would inherit "
+                "a retry contract instead of naming one"
             )
 
     # 6. the cause algebra is exhaustive by construction
@@ -353,19 +500,59 @@ SELFTEST = [
         {SERVING: "fn f() { self.audit(AuditEvent::request_rejected_code(cause.wire_code())) }\n"},
         1,
     ),
+    (
+        "the serving path mints a response at the exit (12a)",
+        {SERVING: "fn served(resp: HttpResponse) -> ServedHttpResponse {\n"
+                  "    ServedHttpResponse { status: resp.status }\n}\n"
+                  "fn oops() -> ServedHttpResponse {\n"
+                  "    ServedHttpResponse { status: 500, headers: vec![], body: vec![] }\n}\n"},
+        1,
+        'mints a response outside `served`',
+    ),
+    (
+        "an `Err` arm in `handle` builds its own answer (12b)",
+        {SERVING: "fn served(r: HttpResponse) -> ServedHttpResponse { ServedHttpResponse { s: 1 } }\n"
+                  "async fn handle(&self) -> ServedHttpResponse {\n"
+                  "    match self.verify_stage() {\n"
+                  "        Ok(v) => v,\n"
+                  "        Err(_rejection) => return self.responses.json(500),\n"
+                  "    }\n}\n"},
+        1,
+        'does something other than return the binding',
+    ),
+    (
+        "an undeclared pre-exchange refusal site appears (12c)",
+        {RECORD: "fn f() -> ServedHttpResponse { ServedHttpResponse::json(403, b) }\n"},
+        1,
+        'pre-exchange refusal sites are',
+    ),
+    (
+        "the retry contract stops being derived from the machine (12d)",
+        {SERVING: "fn served(r: HttpResponse) -> ServedHttpResponse { ServedHttpResponse { s: 1 } }\n"
+                  "fn disposition(progress: &ExchangeProgress) -> ExecutionDisposition {\n"
+                  "    ExecutionDisposition::NothingExecuted\n}\n"},
+        1,
+        'does not read `retry_semantics()`',
+    ),
 ]
 
 
 def selftest() -> int:
     failures = 0
-    for name, override, expected in SELFTEST:
-        base = {r: (REPO / r).read_text() for r in REFUSAL + [RECORD, CORE_AUDIT]}
+    for case in SELFTEST:
+        name, override, expected = case[0], case[1], case[2]
+        # The marker, where a case declares one: the fixture must trip the clause it was
+        # written for. Counting problems alone lets a fixture that breaks four unrelated
+        # shapes pass as evidence for a clause it never reached.
+        marker = case[3] if len(case) > 3 else None
+        base = {r: (REPO / r).read_text() for r in REFUSAL + [RECORD, CORE_AUDIT, TRANSPORT]}
         # The serving path is a subtree; a fixture that replaces it supplies its text as
         # one override, which `read_unit` honours ahead of the walk.
         base[SERVING] = read_unit(SERVING, None)
         base.update(override)
-        got = len(check(base))
-        ok = got >= expected
+        found = check(base)
+        got = len(found)
+        ok = got >= expected and (marker is None or any(marker in p for p in found))
         print(f"  {'ok ' if ok else 'FAIL'} {name}: {got} problem(s), expected >= {expected}")
         failures += 0 if ok else 1
     # And the tree as it stands must be clean, or the pills prove nothing.
@@ -383,6 +570,14 @@ def selftest() -> int:
 def main() -> int:
     if "--selftest" in sys.argv:
         return selftest()
+    examined = len(workspace_rust_files())
+    if examined < 100:
+        print(
+            f"refusal-provenance gate: FAIL — the workspace walk found {examined} shipped "
+            f"Rust file(s). The scope has collapsed; a clean pass over almost nothing is "
+            f"worse than a failure."
+        )
+        return 1
     problems = check()
     if problems:
         print("refusal-provenance gate: FAIL")
@@ -390,11 +585,13 @@ def main() -> int:
             print(f"  - {p}")
         return 1
     print(
-        "refusal-provenance gate: OK — a refusal carries its authority rather than a rendered "
+        f"refusal-provenance gate: OK — {examined} shipped Rust file(s) examined; "
+        "a refusal carries its authority rather than a rendered "
         "token, the authorization branch survives the stage boundary intact, PolicyError has "
         "no route into the Core taxonomy, the cause algebra is exhaustive, the record states "
-        "each authority's outcome in its own coordinate, and no rejection reason can be "
-        "built from a string."
+        "each authority's outcome in its own coordinate, no rejection reason can be built "
+        "from a string, and every production refusal site is inside the exchange lifecycle "
+        "or is the one declared pre-exchange transport refusal."
     )
     return 0
 

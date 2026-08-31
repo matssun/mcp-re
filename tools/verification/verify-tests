@@ -61,8 +61,28 @@ from _manifest import (  # noqa: E402
 
 EVIDENCE_STORE = REPO_ROOT / ".verification" / "evidence"
 
+#: The statuses libtest reports. Closed, because everything else on a result line is
+#: somebody ELSE's output — see below.
+TEST_STATUSES = ("ok", "FAILED", "ignored")
+
 #: libtest's per-test result line: `test block::tests::round_trips ... ok`.
-RESULT_LINE = re.compile(r"^test (\S+) \.\.\. (\w+)", re.MULTILINE)
+#:
+#: The status is taken from the END of the line rather than from the first word after the
+#: ellipsis, and the reason is a measured false RED. libtest writes `test <name> ... ` and
+#: the status from the harness thread, but a test that spawns a child process — or any code
+#: writing to the real fd 2 rather than to the capture buffer — lands its bytes BETWEEN
+#: them. On 2026-08-31 that produced
+#:
+#:     test audit_sink::tests::the_collector_preserves_emission_order ... mcp-re-proxy: ...ok
+#:
+#: and the old pattern read the status as `mcp`, reporting a deterministic two-assert test
+#: as not having passed. Anchoring to the end of the line is safe in the direction that
+#: matters: libtest writes the status LAST, so interleaved text containing the word `ok`
+#: cannot outrank a real `FAILED` — and if the interleave carries a newline the line does
+#: not match at all, which reads as `never ran` and fails loudly rather than quietly green.
+RESULT_LINE = re.compile(
+    r"^test (\S+) \.\.\. .*?(" + "|".join(TEST_STATUSES) + r")$", re.MULTILINE
+)
 
 #: A DOCTEST's result line, whose name contains spaces and a line number:
 #: `test src/verified_response.rs - verified_response::VerifiedMcpResponse (line 82) - compile fail ... ok`

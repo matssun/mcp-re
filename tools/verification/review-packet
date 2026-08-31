@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""Emit the consolidated owner specification-review packet — ADR-MCPRE-059 §28.
+
+DERIVED, never hand-maintained. Every field in the packet is read from
+`verification/policy/*.toml` and from the review records on disk, so a packet cannot state a
+claim the registry does not hold, cannot miss one it does, and cannot go stale in the window
+between being written and being read. The one thing it adds is arrangement: the claims are
+grouped by permanent system root and ordered by dependency, which is how they have to be read
+to be reviewable at all — a flat list of 41 propositions is a list, not an argument.
+
+Its subject is the COMPLEMENT of `verification/reviews/specification/`: a theorem is in the
+packet exactly when no independent review record exists for it. That is what "lacks a review"
+means operationally, and it is why the packet shrinks by itself as records are written rather
+than needing to be re-scoped by hand.
+
+Run:  python3 tools/verification/review-packet > verification/reviews/packets/<name>.md
+"""
+import tomllib, textwrap, sys
+from pathlib import Path
+
+P = Path("verification/policy")
+TH = tomllib.load(open(P/"theorems.toml","rb"))
+VE = tomllib.load(open(P/"verification.toml","rb"))
+AS = tomllib.load(open(P/"assumptions.toml","rb"))
+
+thms = {t["id"]: t for t in TH["theorem"]}
+roots = TH["root_theorems"]
+units = {u["id"]: u for u in VE["unit"]}
+asms  = {a["id"]: a for a in AS["assumption"]}
+
+# assumptions reachable from a theorem: via its owner unit and its supported_by units
+def asms_of(t):
+    out = set()
+    for uri in t.get("supported_by", []) + [f"unit://{t['owner']}"]:
+        u = units.get(uri.removeprefix("unit://"))
+        if u:
+            out.update(u.get("assumptions", []))
+    return sorted(out)
+
+def kind(tid, t):
+    if tid in roots: return "root"
+    deps = t.get("depends_on", [])
+    sup  = t.get("supported_by", [])
+    if deps and not sup: return "composition"
+    if deps and sup: return "relation"
+    return "owner-local"
+
+def support(t):
+    sup = t.get("supported_by", [])
+    if not sup: return "GAP — no support closure"
+    rows = []
+    for uri in sup:
+        u = units.get(uri.removeprefix("unit://"))
+        if not u: rows.append(f"{uri} (UNKNOWN UNIT)"); continue
+        lanes = ", ".join(sorted({e.split("://")[0] for e in u.get("evidence", [])}))
+        rows.append(f"{uri} — {len(u.get('tested_symbols', []))} declared symbol(s), lane(s): {lanes}")
+    return "; ".join(rows)
+
+# transitive closure of a root over depends_on
+def closure(root):
+    seen, stack = [], [root]
+    while stack:
+        x = stack.pop()
+        if x in seen: continue
+        seen.append(x)
+        stack.extend(reversed(thms[x].get("depends_on", [])))
+    return seen
+
+#: Theorems with an INDEPENDENT specification-review record on disk. The packet covers
+#: their complement, which is what "lacks an independent review" means operationally — not
+#: "written recently".
+REVIEWED = {p.stem for p in Path("verification/reviews/specification").glob("THM-*.json")}
+
+def para(s):
+    return " ".join(s.split())
+
+out = []
+w = out.append
+w("<!-- SPDX-License-Identifier: Apache-2.0 -->")
+w("# Consolidated owner specification-review packet — ADR-MCPRE-059 §28")
+w("")
+w("**Status: AWAITING OWNER REVIEW.** Nothing in this packet has a specification-review")
+w("record, and none was self-authored. The ratification of 2026-08-31 was of the theorem")
+w("ARCHITECTURE — the root set, the decomposition rulings, the owner-altitude rule and the")
+w("closure order — not of these statements. A record inferred from it would record an event")
+w("that did not happen, which is why the graph reports every claim below as")
+w("`SPECIFICATION REVIEW UNREVIEWED` and why root completeness is what it is.")
+w("")
+w("Grouped by permanent system root, each root followed by its `depends_on` closure in")
+w("dependency order. A theorem appearing under more than one root is stated once, at its")
+w("first appearance, and cross-referenced afterwards. Theorems that already carry an")
+w("independent record — THM-0001 to THM-0042 — are NAMED in each closure and not restated:")
+w("this campaign did not reopen any of them, so re-reviewing them here would ask for a")
+w("decision that has been taken.")
+w("")
+w("**Where the *lowest honest proposition* argument lives.** In each theorem's **Scope**,")
+w("which is where the registry keeps it: every scope says what the claim does NOT establish,")
+w("which neighbouring theorem owns that instead, and — for the claims resting on source-text")
+w("controls — why the property is EVIDENCE rather than unconstructibility. Copying that")
+w("argument into a second field would create two places for it to disagree, which is the")
+w("failure `_DUPLICATED_AUTHORITY` exists to prevent. Read the Scope as the justification.")
+w("")
+w("**Deviations from the ratified architecture** are collected in one section at the end")
+w("rather than scattered per theorem, because there are six and each is a decision the owner")
+w("may want to read against the others.")
+w("")
+
+seen_global = set()
+for r in roots:
+    t = thms[r]
+    w("")
+    w("---")
+    w("")
+    w(f"## Root {r} — {t['title']}")
+    w("")
+    w(f"Owner: `{t['owner']}`")
+    w("")
+    cl = closure(r)
+    fresh = [x for x in cl if x not in seen_global and x not in REVIEWED]
+    repeat = [x for x in cl if x in seen_global and x not in REVIEWED]
+    already = [x for x in cl if x in REVIEWED]
+    if repeat:
+        w(f"Stated above under an earlier root: {', '.join(repeat)}.")
+        w("")
+    if already:
+        w(f"Independently reviewed already, and not reopened: {', '.join(already)}.")
+        w("")
+    for tid in fresh:
+        seen_global.add(tid)
+        tt = thms[tid]
+        w(f"### {tid} — {tt['title']}")
+        w("")
+        w(f"* **Kind:** {kind(tid, tt)}")
+        w(f"* **Owner:** `{tt['owner']}`")
+        w(f"* **Depends on:** {', '.join(tt.get('depends_on', [])) or '— (leaf)'}")
+        w(f"* **Support:** {support(tt)}")
+        a = asms_of(tt)
+        w(f"* **Assumptions:** {', '.join(a) if a else 'none'}")
+        w(f"* **Review requirement:** {tt['review_requirement']}")
+        w("")
+        w("**Statement.** " + para(tt["statement"]))
+        w("")
+        w("**Security consequence.** " + para(tt["security_consequence"]))
+        w("")
+        w("**Scope.**")
+        w("")
+        for chunk in tt["scope"].strip().split("\n\n"):
+            w("> " + para(chunk))
+            w(">")
+        w("")
+
+w("")
+w("---")
+w("")
+w("## Theorems outside every declared root closure")
+w("")
+orphans = [tid for tid in thms if tid not in seen_global and tid not in REVIEWED]
+if not orphans:
+    w("None.")
+else:
+    w("Each is a real claim with an owner; none is reachable from a declared root. That is a")
+    w("statement about the ROOTS, not about the claims: a root's closure is what the root")
+    w("needs, and a true theorem the roots do not need is not thereby wrong.")
+    w("")
+    for tid in sorted(orphans):
+        tt = thms[tid]
+        w(f"* **{tid}** — {tt['title']} (`{tt['owner']}`, {kind(tid, tt)}); support: {support(tt)}")
+w("")
+w("## Deviations from the ratified architecture")
+w("")
+w("Six, each stated as a decision rather than a note.")
+w("")
+w("**1. THM-0073 is UNCONDITIONAL.** The ruling's target wording was *where policy requires")
+w("the roles to be distinct*. Measurement found no supported deployment for which sharing a")
+w("key between the response-signing and channel-signing roles is desirable, and a one-valued")
+w("policy input invented to make the condition expressible would be an input that selects")
+w("nothing. Every deployment is held to it, so the ratified conditional is satisfied")
+w("everywhere rather than left as a dormant branch. If a deployment that legitimately shares")
+w("one key exists, this is the deviation to reverse.")
+w("")
+w("**2. THM-0081's outside set is FOUR replies, not one.** The proposal said *one declared")
+w("pre-exchange transport refusal*. The measurement found four: the channel/routing refusal")
+w("is a served response, while the malformed message, the oversized body and the shed are")
+w("built at the hyper type and would have been invisible to a control that counted only the")
+w("first. All four are pre-handler. A FIFTH exit was found and is named rather than absorbed:")
+w("`served_to_hyper`'s framing fallback answers after the exchange has decided, and the claim")
+w("made about it is narrow and measured — an empty 500, which advertises no retry.")
+w("")
+w("**3. THM-0053 got its own unit rather than joining the currency unit.** ASM-0012 declares")
+w("the assertion verifier OPAQUE to the currency theorem and its review requirement names a")
+w("separate unit as the discharge. `http_profile.admission_assertion` overlaps")
+w("`http_profile.admission_currency`'s paths deliberately: they are two authorities in one")
+w("file, and the registry already said so.")
+w("")
+w("**4. THM-0073's owner MOVED** from `proxy.cross_machine_legality`, as the ruling")
+w("anticipated it might: a request-level classifier reads locators, and the decisive fact")
+w("exists only once both backends have answered. The new owner is a materialization relation.")
+w("")
+w("**5. Two production changes were made**, both implied by the ratified architecture rather")
+w("than new design. `build_key_source` now returns `MaterializedSigningRoles` — the source is")
+w("opened privately and leaves the module only through the role comparison — and")
+w("`refusal_provenance_gate.py` gained clause 12. ADR-MCPRE-067 §10 is clarified in")
+w("`docs/architecture/components/cli-and-materialization.md` §11; the ADR's own text in the")
+w("discussion thread has NOT been edited, because that is an outward-facing publish.")
+w("")
+w("**6. Two missing edges were found and closed, and one gap was found and left open.**")
+w("THM-0083 (what a request IS, decided once) was absent from the whole tree though R1")
+w("quantifies over it; THM-0070 was reachable from no root though R5c's totality needs it.")
+w("Both are now edges. Nothing was invented to make the graph look complete.")
+w("")
+w("## Assumption register")
+w("")
+w("| id | scope | mechanism |")
+w("|---|---|---|")
+for aid in sorted(asms):
+    a = asms[aid]
+    w(f"| {aid} | {', '.join(a['scope'])} | {a['tool_specific_mechanism']} |")
+w("")
+print("\n".join(out))

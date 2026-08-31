@@ -421,7 +421,8 @@ fn run_validated(
         &values.channel_credential.credential_chain,
         &values.peer_trust_anchors,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())?
+    .into_key_source();
     let server_chain = key_source
         .tls_server_cert_chain()
         .map_err(|e| e.to_string())?;

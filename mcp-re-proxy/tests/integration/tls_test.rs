@@ -1621,6 +1621,67 @@ fn stale_crl_fails_client_handshake_closed() {
     );
 }
 
+/// A chain the configured CRLs do not COVER: revocation status is unknown, and unknown is
+/// denied (ADR-MCPRE-059 THM-0054).
+///
+/// The gap the three tests above leave. A revoked cert is denied because a CRL says so, and a
+/// stale CRL is denied because expiration is enforced — both are cases where revocation
+/// checking ran and produced an answer. This is the case where it CANNOT: two client CAs are
+/// trusted, a CRL is supplied for the first only, and the client presents a leaf issued by
+/// the second. Nothing about that leaf is known to be bad; nothing is known to be good
+/// either, and `UnknownStatusPolicy::Deny` is what makes the difference between failing
+/// closed and admitting a credential whose status could not be determined.
+///
+/// It is the same posture `ClientRevocationIndex::admits` holds per request, measured at the
+/// handshake so the two cannot disagree.
+#[test]
+fn a_client_whose_revocation_status_cannot_be_determined_is_denied() {
+    let covered_ca = make_ca();
+    let uncovered_ca = make_ca();
+    // A CRL for the FIRST CA only. It revokes nothing this test presents; its role is to
+    // switch revocation checking ON, so the second CA's leaf reaches the unknown-status
+    // decision rather than the no-CRLs-configured path where no check runs at all.
+    let crl = make_crl(&covered_ca, &[0x00BA_DBAD]);
+    let server_ca = make_ca();
+    let (server_cert, server_key) =
+        make_leaf(&server_ca, vec![dns("localhost")], Some("localhost"), false);
+    let config = TlsListenerSecurityState::new(vec![
+        covered_ca.cert.der().clone(),
+        uncovered_ca.cert.der().clone(),
+    ])
+    .build_exported_key_config(vec![server_cert], server_key, vec![crl])
+    .expect("server config trusting both client CAs");
+    let config = Arc::new(config);
+
+    // The client is issued by the CA no CRL covers, and is not revoked by anything.
+    let (client_cert, client_key) = make_client_leaf_with_serial(
+        &uncovered_ca,
+        "spiffe://example.org/agent-uncovered",
+        0x0000_0077,
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        serve_once(&listener, config, &ServerOptions::default(), |_req, _id| {
+            b"{\"ok\":true}".to_vec()
+        })
+    });
+
+    let _ = client_round_trip(
+        addr,
+        client_config(Some((vec![client_cert], client_key))),
+        b"{\"jsonrpc\":\"2.0\"}",
+    );
+    let result = server.join().expect("join");
+    assert!(
+        result.is_err(),
+        "a client certificate whose revocation status the configured CRLs cannot determine \
+         must be denied. Admitting it is revocation checking failing OPEN: the credential \
+         is not known to be good, and the deployment cannot tell whether it was withdrawn."
+    );
+}
+
 // ADR-MCPS-023 §A1 (MCPS-58): the pure startup freshness gate. Boundaries are
 // derived from the minted CRL's own nextUpdate so the test is independent of the
 // absolute date.

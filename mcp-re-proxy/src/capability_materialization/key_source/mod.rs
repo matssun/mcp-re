@@ -16,8 +16,10 @@ mod file;
 mod gcp;
 mod pin;
 mod pkcs11;
+mod role_separation;
 
 pub use pin::read_pkcs11_pin;
+pub use role_separation::MaterializedSigningRoles;
 
 use crate::config_state::{ChannelCredentialCustodyState, CustodyMaterial, CustodyState};
 use crate::key_source::{KeyError, KeySource};
@@ -48,13 +50,30 @@ pub fn build_key_source(
     channel_credential_custody: &ChannelCredentialCustodyState,
     tls_cert: &str,
     client_ca: &str,
-) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
+) -> Result<MaterializedSigningRoles, KeyError> {
     let channel = channel_credential_custody.material();
     let material = ChannelMaterial {
         cert: tls_cert,
         key: channel.exported_key_path().unwrap_or(""),
         client_ca,
     };
+    let source = open_source(custody, channel, material)?;
+    // The relation between what the two custody machines materialized. Neither can see the
+    // other's key, so neither can own it; and it is asked HERE because the decisive fact —
+    // which key each role actually resolved to — exists only once both are open.
+    MaterializedSigningRoles::establish(source)
+}
+
+/// Open the key source the classified custody names.
+///
+/// The dispatch, and nothing else. Separate from [`build_key_source`] so that the role
+/// relation above cannot be reached without a source, and a source cannot leave this module
+/// without the relation.
+fn open_source(
+    custody: &CustodyState,
+    channel: crate::config_state::ChannelKeyMaterial<'_>,
+    material: ChannelMaterial<'_>,
+) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
     match custody.material() {
         CustodyMaterial::FileSeed { seed_path } => file::open(seed_path, material),
         CustodyMaterial::EnvSeed { env_var } => env::open(env_var, material),

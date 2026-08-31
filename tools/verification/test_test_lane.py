@@ -64,6 +64,46 @@ def test_a_battery_whose_every_member_passed_is_a_pass():
     assert "2 passed" in detail
 
 
+def test_output_interleaved_into_a_result_line_does_not_hide_the_status():
+    """A measured false RED, 2026-08-31.
+
+    libtest writes `test <name> ... ` and the status from the harness thread, but a test
+    that spawns a child process — or any code writing to the real fd 2 rather than to the
+    capture buffer — lands its bytes BETWEEN them. The lane read the status as `mcp` and
+    reported a deterministic two-assert test as not having passed.
+    """
+    ok, detail = run_with(
+        "test a::tests::one ... mcp-re-proxy: WARNING: --key-source env is a dev build ok\n"
+        "test a::tests::two ... ok\n"
+        "\ntest result: ok. 2 passed; 0 failed; 0 ignored\n"
+    )
+    assert ok, detail
+
+
+def test_interleaved_output_cannot_turn_a_failure_into_a_pass():
+    """The direction that matters. libtest writes the status LAST, so a stray `ok` inside
+    interleaved text cannot outrank the real result."""
+    ok, detail = run_with(
+        "test a::tests::one ... mcp-re-proxy: everything looks ok so far FAILED\n"
+        "test a::tests::two ... ok\n"
+        "\ntest result: FAILED. 1 passed; 1 failed; 0 ignored\n"
+    )
+    assert not ok
+    assert "a::tests::one (FAILED)" in detail
+
+
+def test_an_interleave_carrying_a_newline_reads_as_never_ran():
+    """The remaining case, and it fails in the safe direction: the line does not match at
+    all, so the member reports as never having run rather than as quietly green."""
+    ok, detail = run_with(
+        "test a::tests::one ... mcp-re-proxy: a line of its own\nok\n"
+        "test a::tests::two ... ok\n"
+        "\ntest result: ok. 2 passed; 0 failed; 0 ignored\n"
+    )
+    assert not ok
+    assert "a::tests::one (never ran)" in detail
+
+
 def test_a_selection_that_matched_nothing_is_not_a_pass():
     """The repository's standing hazard: `--exact` on a renamed test selects nothing,
     libtest prints `running 0 tests` and exits 0, and the lane must not read that as

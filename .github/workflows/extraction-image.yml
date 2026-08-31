@@ -87,17 +87,33 @@ jobs:
       - name: Smoke — mathlib is resolved at the revision the lock records
         run: |
           set -euo pipefail
+          # The manifest is COPIED OUT and read on the runner, rather than parsed by a
+          # python one-liner inside a `bash -lc` inside a `$(...)` inside YAML. That form
+          # never ran: four levels of quoting, and the shell died on an unterminated string
+          # before docker was ever reached. Reading both operands with
+          # the same interpreter in the same place is also the honest shape — the comparison
+          # below is between two values this step produced, not between a value and a
+          # rendering of one.
+          docker run --rm --entrypoint cat "${{ steps.tag.outputs.ref }}" \
+            /opt/aeneas/backends/lean/lake-manifest.json > lake-manifest.json
           want="$(python3 -c "import tomllib;print(tomllib.load(open('verification/policy/toolchains.lock.toml','rb'))['aeneas_lean_backend']['mathlib_revision'])")"
-          got="$(docker run --rm "${{ steps.tag.outputs.ref }}" \
-            bash -lc "python3 -c \"import json;m=json.load(open('/opt/aeneas/backends/lean/lake-manifest.json'));print(next(p['rev'] for p in m['packages'] if p['name']=='mathlib'))\"")
+          got="$(python3 -c "import json;print(next(p['rev'] for p in json.load(open('lake-manifest.json'))['packages'] if p['name']=='mathlib'))")"
           echo "manifest mathlib: $got"
           [ "$got" = "$want" ] || { echo "FAIL: mathlib is $got, lock records $want"; exit 1; }
 
       - name: Smoke — Charon and Aeneas execute
         run: |
           set -euo pipefail
+          # `--help`, not `--version`: the pinned Charon is a subcommand CLI and rejects
+          # `--version` outright, which is what this step measured on its first real run.
+          # The proposition is that the binaries EXECUTE, and `--help` establishes that for
+          # both without depending on a flag either project may reshape.
+          #
+          # Redirected rather than piped to `head`. Under `set -o pipefail` a producer that
+          # keeps writing after `head` exits takes SIGPIPE and fails the step — a check that
+          # would go red for a reason having nothing to do with the image.
           docker run --rm "${{ steps.tag.outputs.ref }}" \
-            bash -lc '"$CHARON_EXE" --version && "$AENEAS_EXE" -help | head -3'
+            bash -lc '"$CHARON_EXE" --help >/dev/null && "$AENEAS_EXE" -help >/dev/null'
 
       - name: Smoke — a tiny crate extracts and its Lean elaborates
         run: |
