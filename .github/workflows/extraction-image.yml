@@ -104,8 +104,16 @@ jobs:
       - name: Smoke — Charon and Aeneas execute
         run: |
           set -euo pipefail
+          # `--help`, not `--version`: the pinned Charon is a subcommand CLI and rejects
+          # `--version` outright, which is what this step measured on its first real run.
+          # The proposition is that the binaries EXECUTE, and `--help` establishes that for
+          # both without depending on a flag either project may reshape.
+          #
+          # Redirected rather than piped to `head`. Under `set -o pipefail` a producer that
+          # keeps writing after `head` exits takes SIGPIPE and fails the step — a check that
+          # would go red for a reason having nothing to do with the image.
           docker run --rm "${{ steps.tag.outputs.ref }}" \
-            bash -lc '"$CHARON_EXE" --version && "$AENEAS_EXE" -help | head -3'
+            bash -lc '"$CHARON_EXE" --help >/dev/null && "$AENEAS_EXE" -help >/dev/null'
 
       - name: Smoke — a tiny crate extracts and its Lean elaborates
         run: |
