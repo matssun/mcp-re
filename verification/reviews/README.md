@@ -63,3 +63,20 @@ consolidated family packets in `packets/owner-specification-review-2026-08-30.md
 record's `notes` states which family the claim sat in and what the ruling actually said about
 it, because "APPROVED" alone does not distinguish a claim that was read and found right from
 one that was waved through with its family.
+
+
+## The three layers, and which directory each lives in
+
+An audit measurement, a decision taken over it, and the authoritative state are three
+different things, and turning the first directly into the third is the failure this layout
+exists to prevent.
+
+| layer | where | what it is |
+|---|---|---|
+| 1 — raw measurement | `packets/` | evidence about the tree at a named commit. NON-NORMATIVE, kept permanently, never edited into truth |
+| 2 — owner decision | `rulings/` | what the owner decided over a packet: what is in scope, what is bounded out, what may not be inferred |
+| 3 — authoritative state | `verification/policy/*.toml`, ADR-MCPRE-059, `docs/spec/security-boundary.md` | changed only by encoding a layer-2 decision |
+
+`r9-dispositions.json` is layer 1 and machine-readable on purpose: 131 cluster dispositions
+are a record, not 131 prose entries for a human to maintain, and the appendix table in the
+packet is generated from it by `tools/verification/render-r9-dispositions`.

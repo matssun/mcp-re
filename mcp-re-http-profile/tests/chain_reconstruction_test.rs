@@ -362,7 +362,8 @@ fn reconstruct(hops: &[RetainedHop]) -> ChainLabel {
         &nothing_revoked,
         NOW,
     )
-    .label
+    .label()
+    .clone()
 }
 
 // --- positives ---------------------------------------------------------------
@@ -395,15 +396,15 @@ fn complete_chain_reports_every_hops_evidence() {
         &nothing_revoked,
         NOW,
     );
-    assert!(out.label.is_complete());
+    assert!(out.label().is_complete());
     assert_eq!(
-        out.hop_evidence.len(),
+        out.hop_evidence().len(),
         3,
         "the record accounts for all 3 hops"
     );
     // Request-role and response-role handles are domain-separated (§7.3), so no
     // hop's two handles collide even though both digest a signature base.
-    for h in &out.hop_evidence {
+    for h in out.hop_evidence() {
         assert_ne!(
             h.request_evidence.digest_value,
             h.response_evidence.digest_value
@@ -467,10 +468,10 @@ fn per_hop_validity_does_not_imply_a_complete_chain() {
         &nothing_revoked,
         NOW,
     );
-    assert!(!out.label.is_complete());
+    assert!(!out.label().is_complete());
     // The verified prefix is still reported: hop 0 IS accounted for. An auditor
     // learns which part of the record stands, not merely that it failed.
-    assert_eq!(out.hop_evidence.len(), 1);
+    assert_eq!(out.hop_evidence().len(), 1);
 }
 
 // --- other incomplete shapes -------------------------------------------------
@@ -532,16 +533,16 @@ fn front_truncated_chain_is_incomplete_not_a_complete_record() {
         NOW,
     );
     assert_eq!(
-        out.label,
-        ChainLabel::Incomplete {
+        out.label(),
+        &ChainLabel::Incomplete {
             hop: 0,
             reason: IncompleteReason::ContinuationDoesNotLink,
         },
         "a hop that names a predecessor absent from the record does not open a call"
     );
-    assert!(!out.label.is_complete());
+    assert!(!out.label().is_complete());
     // Nothing is reported as accounted for: the break is at the first hop.
-    assert!(out.hop_evidence.is_empty());
+    assert!(out.hop_evidence().is_empty());
 }
 
 /// The complementary positive: a genuine opening hop carries NO continuation and
@@ -837,11 +838,11 @@ fn an_aged_multi_hop_record_still_reconstructs_complete() {
         AUDIT_LATER,
     );
     assert_eq!(
-        out.label,
-        ChainLabel::Complete,
+        out.label(),
+        &ChainLabel::Complete,
         "an intact record does not stop being intact because it got old"
     );
-    assert_eq!(out.hop_evidence.len(), 3);
+    assert_eq!(out.hop_evidence().len(), 3);
 }
 
 /// The precondition that makes the test above meaningful: these hops genuinely
@@ -877,8 +878,8 @@ fn a_hop_created_after_the_audit_instant_is_refused() {
             &nothing_revoked,
             audit_at
         )
-        .label,
-        ChainLabel::Incomplete {
+        .label(),
+        &ChainLabel::Incomplete {
             hop: 1,
             reason: IncompleteReason::HopAfterAuditInstant,
         },
@@ -903,8 +904,8 @@ fn the_audit_ceiling_tolerates_the_configured_skew() {
             &nothing_revoked,
             within
         )
-        .label,
-        ChainLabel::Complete,
+        .label(),
+        &ChainLabel::Complete,
         "a hop one skew ahead of the auditor's clock is honest disagreement"
     );
 
@@ -918,8 +919,8 @@ fn the_audit_ceiling_tolerates_the_configured_skew() {
             &nothing_revoked,
             beyond
         )
-        .label,
-        ChainLabel::Incomplete {
+        .label(),
+        &ChainLabel::Incomplete {
             hop: 0,
             reason: IncompleteReason::HopAfterAuditInstant,
         },
@@ -947,7 +948,7 @@ fn an_over_wide_window_is_still_refused_in_an_aged_record() {
         &nothing_revoked,
         AUDIT_LATER,
     )
-    .label
+    .label()
     {
         ChainLabel::Incomplete {
             hop: 0,
@@ -974,7 +975,7 @@ fn a_degenerate_window_is_still_refused_in_an_aged_record() {
         &nothing_revoked,
         AUDIT_LATER,
     )
-    .label
+    .label()
     {
         ChainLabel::Incomplete {
             hop: 0,
@@ -1174,7 +1175,7 @@ fn a_binding_with_no_obtainable_credential_breaks_the_chain() {
         &nothing_revoked,
         NOW,
     );
-    match out.label {
+    match out.label() {
         ChainLabel::Incomplete {
             hop: 0,
             reason:
@@ -1223,14 +1224,14 @@ fn two_records_that_verified_nothing_are_still_distinguishable() {
     let (ra, rb) = (run(&a), run(&b));
 
     // Both verified nothing: the identity fields the old record had are identical.
-    assert!(ra.hop_evidence.is_empty() && rb.hop_evidence.is_empty());
-    assert_eq!(ra.label, rb.label, "they even fail the same way");
+    assert!(ra.hop_evidence().is_empty() && rb.hop_evidence().is_empty());
+    assert_eq!(ra.label(), rb.label(), "they even fail the same way");
 
     assert_ne!(
-        ra.submitted_commitment, rb.submitted_commitment,
+        ra.submitted_commitment(), rb.submitted_commitment(),
         "two different submissions must not share one identity",
     );
-    assert!(!ra.submitted_commitment.is_empty());
+    assert!(!ra.submitted_commitment().is_empty());
 }
 
 /// The identity is of the SUBMISSION, so it is stable across runs of the same bytes —
@@ -1247,7 +1248,8 @@ fn the_submitted_identity_is_a_function_of_the_bytes_alone() {
             &nothing_revoked,
             NOW,
         )
-        .submitted_commitment
+        .submitted_commitment()
+        .to_owned()
     };
     assert_eq!(run(), run());
     // And an empty chain, which verifies nothing and has no hops at all, still gets one.
@@ -1259,6 +1261,6 @@ fn the_submitted_identity_is_a_function_of_the_bytes_alone() {
         &nothing_revoked,
         NOW,
     );
-    assert!(!empty.submitted_commitment.is_empty());
-    assert_ne!(empty.submitted_commitment, run());
+    assert!(!empty.submitted_commitment().is_empty());
+    assert_ne!(empty.submitted_commitment(), run());
 }

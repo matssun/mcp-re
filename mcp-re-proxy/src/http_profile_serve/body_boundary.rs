@@ -194,12 +194,10 @@ mod tests {
 
     #[test]
     fn an_unrepresentable_body_is_refused_before_any_reserialization() {
-        // The claim is unchanged: a body whose meaning changes under re-serialization
-        // never reaches the backend. What changed is WHERE it is established. The scan ran
-        // here, on the dispatch path, where a refusal costs a burned nonce, a retired
-        // approval and a written retention marker; it now runs at the request-envelope
-        // boundary, where it is free — so this asserts against the owner rather than
-        // against the composer that used to ask a second time.
+        // A body whose meaning changes under re-serialization never reaches the backend,
+        // and the owner of that is the request-envelope boundary, where the refusal is free.
+        // Asserted against the owner rather than against this composer, which asks nothing
+        // and would otherwise look like a second opinion on the same question.
         assert!(
             mcp_re_http_profile::validate_request_envelope(
                 br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"a":1,"a":2}}"#

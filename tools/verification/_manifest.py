@@ -599,16 +599,16 @@ def unit_assumptions(unit_id: str, assumptions: dict) -> list[str]:
     """The assumptions a unit trusts, derived from `[[assumption]].scope`.
 
     ADR-MCPRE-059 §8 has one authoritative direction, and this is the only place the
-    inverse is computed. The relation used to be written twice — a unit named its premises
-    in `[[unit]].assumptions` and an assumption named its units in `scope` — with nothing
-    forcing the two to agree, and the two halves fed different machinery: `scope` reached
-    the fingerprint and `check-assumptions`, while the unit field reached `review-packet`
-    and the generated views. Nine pairs disagreed, and three units carried theorems whose
-    stated premises could be rewritten without the claim ever deriving DIRTY_ASSUMPTION.
+    inverse is computed. `scope` is the authoritative side because the assumption owns its
+    own trust blast radius and can name a boundary as readily as a unit; every consumer —
+    the review packet, the owner and blast-radius views, the evidence graph — derives the
+    unit→assumption direction here.
 
-    The repair is not a gate that keeps two sources equal; it is having one. `scope` is
-    authoritative because the assumption owns its own trust blast radius and can name a
-    boundary as readily as a unit. Everything that used to read the unit field reads this.
+    A second authored declaration on the unit is not a convenience, it is a second source:
+    the two halves feed different machinery, `scope` reaching the fingerprint and
+    `check-assumptions` while a unit-side field would reach only the human-facing artefacts.
+    A premise no scope names is absent from the unit's fingerprint, so the assumption can be
+    rewritten and every claim over that unit still reads as fresh.
     """
     prefix = f"unit://{unit_id}"
     return sorted(

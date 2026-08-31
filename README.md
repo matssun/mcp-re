@@ -403,9 +403,10 @@ conformance, reference implementation, demos, and non-goals):
    what it is, the threat, where it sits, what the current release proves, and what
    it does not claim.
 2. **Security boundary** — [`docs/spec/security-boundary.md`](docs/spec/security-boundary.md):
-   what MCP-RE protects and what it explicitly does not.
-3. **v0.5 claim matrix** — [`docs/spec/v0.5-claim-matrix.md`](docs/spec/v0.5-claim-matrix.md):
-   every reviewer-facing claim, each traceable to a green test.
+   what MCP-RE protects, what it explicitly does not, and which root theorem each claim
+   rests on. The only claim authority; DRAFT pending owner ratification.
+3. **Theorem registry** — `verification/policy/theorems.toml` and the views generated from
+   it: the argument behind every claim in the boundary.
 4. **GCP KMS validation** — [`docs/quickstart-gcp-kms.md`](docs/quickstart-gcp-kms.md)
    (front door) and [`docs/security/google-validation-plan.md`](docs/security/google-validation-plan.md)
    (full plan): the live enterprise key-custody proof.

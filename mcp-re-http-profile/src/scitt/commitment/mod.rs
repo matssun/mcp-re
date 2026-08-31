@@ -105,7 +105,7 @@ impl EvidenceCommitment {
         // still refuses to compare retained bytes against such a record rather than
         // reporting a match that holds for every unrelated record that failed the same
         // way.
-        let (request_evidence, response_evidence) = match reconstruction.hop_evidence.first() {
+        let (request_evidence, response_evidence) = match reconstruction.hop_evidence().first() {
             Some(h) => (
                 h.request_evidence.digest_value.clone(),
                 h.response_evidence.digest_value.clone(),
@@ -113,7 +113,7 @@ impl EvidenceCommitment {
             None => (String::new(), String::new()),
         };
         let mut shape = Sha256::new();
-        for h in &reconstruction.hop_evidence {
+        for h in reconstruction.hop_evidence() {
             shape.update(h.request_evidence.digest_value.as_bytes());
             shape.update([0x00]);
             shape.update(h.response_evidence.digest_value.as_bytes());
@@ -124,9 +124,9 @@ impl EvidenceCommitment {
             response_evidence,
             bindings_commitment,
             verified_context_commitment,
-            chain_label: label_token(&reconstruction.label),
+            chain_label: label_token(reconstruction.label()),
             chain_commitment: b64url_encode(&shape.finalize()),
-            submitted_commitment: reconstruction.submitted_commitment.clone(),
+            submitted_commitment: reconstruction.submitted_commitment().to_owned(),
         }
     }
 
@@ -270,14 +270,14 @@ mod tests {
     #[test]
     fn the_two_evidence_roles_are_not_interchangeable() {
         let same = b"identical-signature-base".as_slice();
-        let retained = ChainReconstruction {
-            label: ChainLabel::Complete,
-            hop_evidence: vec![HopEvidence {
+        let retained = ChainReconstruction::with_authored_submission_identity(
+            ChainLabel::Complete,
+            vec![HopEvidence {
                 request_evidence: RequestEvidence::from_signature_base(same),
                 response_evidence: RequestEvidence::from_response_signature_base(same),
             }],
-            submitted_commitment: "test-submitted".to_owned(),
-        };
+            "test-submitted".to_owned(),
+        );
         let commitment = EvidenceCommitment::from_reconstruction(&retained, None, None);
         assert_ne!(
             commitment.request_evidence, commitment.response_evidence,

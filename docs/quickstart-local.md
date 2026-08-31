@@ -89,5 +89,5 @@ See [`docs/quickstart-gcp-kms.md`](quickstart-gcp-kms.md).
 - [`docs/security/google-validation-plan.md`](security/google-validation-plan.md) — the full staged GCP validation plan.
 - [`docs/security/gcloud-kms-validation.sh`](security/gcloud-kms-validation.sh) — the live KMS harness.
 - [`docs/spec/security-boundary.md`](spec/security-boundary.md) — what MCP-RE protects and what it does not.
-- [`docs/spec/v0.5-claim-matrix.md`](spec/v0.5-claim-matrix.md) — every claim, each traceable to a green test.
+- `verification/policy/theorems.toml` — the argument behind every claim: root theorems, their support closure, and the registered premises. (`docs/spec/v0.5-claim-matrix.md` is historical.)
 - [`docs/sidecar-deployment-guide.md`](sidecar-deployment-guide.md) — running the PEP in front of a Streamable-HTTP inner backend.

@@ -207,11 +207,11 @@ mod fixtures {
                 ),
             })
             .collect();
-        ChainReconstruction {
+        ChainReconstruction::with_authored_submission_identity(
             label,
             hop_evidence,
-            submitted_commitment: "test-submitted".to_owned(),
-        }
+            "test-submitted".to_owned(),
+        )
     }
 
     pub(super) fn statement(commitment: EvidenceCommitment) -> SignedStatement {

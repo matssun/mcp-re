@@ -189,10 +189,10 @@ mod tests {
 
     #[test]
     fn a_body_the_profile_cannot_carry_unchanged_is_refused_before_anything_is_spent() {
-        // Free, and 400 rather than 500. The scan used to run when the forwarded body was
-        // composed, which is after the nonce is burned, the approval retired and the
-        // retention marker written — so a document MCP-RE will not carry was refused at
-        // the cost of a document it would have.
+        // Free, and 400 rather than 500: composing the forwarded body is after the nonce
+        // is burned, the approval retired and the retention marker written, so deciding
+        // representability there would refuse a document MCP-RE will not carry at the cost
+        // of one it would have.
         for body in [
             r#"{"jsonrpc":"2.0","method":"tools/call","id":1,"id":2}"#,
             r#"{"jsonrpc":"2.0","method":"tools/call","params":{"n":123456789012345678901234567890}}"#,

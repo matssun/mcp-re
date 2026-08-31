@@ -481,8 +481,8 @@ fn a_served_call_becomes_an_offline_verifiable_receipt() {
     .expect("the retained exchange attests");
 
     assert_eq!(
-        attestation.reconstruction.label,
-        ChainLabel::Complete,
+        attestation.reconstruction.label(),
+        &ChainLabel::Complete,
         "a single terminal hop, fully verified, is a complete record"
     );
     assert!(attestation.statement.commitment().is_complete_record());
@@ -785,14 +785,14 @@ fn a_chain_with_no_verified_hop_is_still_attested() {
 
     assert!(
         matches!(
-            attestation.reconstruction.label,
-            ChainLabel::Incomplete { hop: 0, .. }
+            attestation.reconstruction.label(),
+            &ChainLabel::Incomplete { hop: 0, .. }
         ),
         "the label is what says which hop broke: {:?}",
-        attestation.reconstruction.label
+        attestation.reconstruction.label()
     );
     assert!(
-        attestation.reconstruction.hop_evidence.is_empty(),
+        attestation.reconstruction.hop_evidence().is_empty(),
         "nothing verified, so there is no verified prefix"
     );
     assert!(

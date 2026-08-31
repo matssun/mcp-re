@@ -2066,12 +2066,27 @@ equals the commitment recomputed from the presented reconstruction together with
 optional binding and verified-context commitments. So the presented reconstruction is the
 one that statement committed to, and the `ChainLabel` the commitment embeds is the label of
 THAT reconstruction — including, when it is incomplete, which hop was missing and why.
+
+The equality is over EVERY field the commitment carries, and `submitted_commitment` is one
+of them. It is the only field that reaches the hops AFTER the verified prefix: every other
+identity field is derived from that prefix, so on an Incomplete record the unverified tail
+contributes to none of them. A statement that carries no submission identity therefore
+cannot bind one, and Ok is not returned for it — neither for a retained record that claims
+one, nor for a retained record that claims none. Both are the same record: one whose tail
+this comparison does not reach, and for which Ok would report a binding it does not have.
 """
 security_consequence = """
 Retained evidence cannot be swapped under a receipt, and a truncated call cannot become
 COMPLETE: the label is inside what the commitment covers, so a record that says complete and
 a record that says incomplete-because-hop-3-was-unverifiable are different commitments, and
 presenting the first for the second fails here.
+
+Nor can the unverified tail of an Incomplete record be substituted. An archivist holding a
+statement about `[h0, h1, h2-tampered]` cannot present `[h0, h1, h2']`: the verified prefix,
+the shape digest and the `incomplete:1:<reason>` label all still match, and only the
+submission identity separates them. And a record that identifies no submission is refused
+rather than reported as bound on the strength of its prefix — the archivist is exactly who
+would benefit from the weaker answer being indistinguishable from the stronger one.
 
 This theorem establishes NO CONFIDENTIALITY. The receipt does not itself carry the retained
 call bytes, and that is all: it is not unlinkability, not resistance to inference from the
@@ -2082,6 +2097,13 @@ scope = """
 Correspondence only. It does not establish that the retained bytes are THEMSELVES valid
 evidence, that the call described ever happened, or that the reconstruction is complete —
 only that whatever was reconstructed is what was committed to.
+
+It says nothing about a record that carries no submission identity beyond that such a record
+is refused. The `s01` interop corpus is one: its retained artifact records handles rather
+than the submitted messages, so the digest is not reproducible from it at all, and the
+conformance vector is demoted in place — it evidences receipt, statement and key-pin
+interoperation, and does NOT evidence this claim. Closing that needs a corpus produced by a
+real signed multi-hop exchange.
 
 It does not establish registration: whether any transparency service ever saw the statement
 is THM-0041. Nor does it establish that the commitment function is collision-resistant; the

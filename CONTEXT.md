@@ -29,16 +29,16 @@ Canonical glossary for the MCP-RE monorepo. One sentence per term. Distinct conc
 
 _Avoid_: "MCP-RE version" without qualifying release vs. wire; using "0.5" to imply a wire/protocol change.
 
-- **Canonical security boundary** — `docs/spec/security-boundary.md` is the single signed honesty gate. Under the 0.5 convention (ADR-MCPS-032) `docs/SECURITY_BOUNDARY.md` is reduced to a redirect stub, never a competing claim doc — that reduction is part of the 0.5 work (issue #149) and is not yet applied on `main`.
+- **Canonical security boundary** — `docs/spec/security-boundary.md` is the single honesty gate and the only claim authority. It was rewritten for the active RFC 9421 + RFC 9530 architecture under owner completeness ruling C (2026-08-31) and is DRAFT pending its own ratification; it inherits no signature from the 2026-06-23 record, which is preserved unedited at `docs/archive/security/security-boundary-signed-2026-06-23.md`. `docs/SECURITY_BOUNDARY.md` is a redirect stub, never a competing claim doc.
 - **Docs root** — top-level `docs/` is the only documentation root; `components/mcp-re/docs/` and `documents/mcp-re/` are forbidden (workspace is isolated, ADR-MCPS-012).
-- **Claim matrix lineage** — the 0.5 claim matrix `docs/spec/v0.5-claim-matrix.md` (created during the 0.5 work, ADR-MCPS-033 / issue #152) supersedes `docs/spec/v0.3-claim-matrix.md`, preserving the four-axis tiered structure (replay durability, trust propagation, key custody, ingress binding); never a flat list.
+- **Claim matrix lineage** — `docs/spec/v0.5-claim-matrix.md` and `docs/spec/threat-coverage-matrix.md` are SUPERSEDED as claim authorities (ruling C) and retained as historical artefacts. Do not edit them to agree with the boundary: two independently editable claim documents are two claim surfaces.
 
 - **Method-transparency proof** — CI-enforced (not just documented) via two artifacts mapped to ADR-MCPS-030: a behavioral equivalence test (verdict independent of JSON-RPC `method`) and a static drift guard banning concrete MCP method-name literals (`tools/list`, `tools/call`, `resources/list`, `resources/read`, `prompts/list`, `prompts/get`, `sampling/createMessage`, `completion/complete`) in non-test `mcp-re-core/src`.
 - **Method-aware logic** — Any future method-semantics enforcement lives outside `mcp-re-core` (MTCI / `mcp-re-policy` profile / `mcp-re-proxy` adapter / host layer), introduced with its own ADR; never inside Core.
 
 _Avoid_: a second/third security-boundary doc; a flat claim list parallel to the tiered matrix; banning the bare `"method"` field (the signed evidence still covers the whole message).
 
-- **Capability-claim matrix (§A)** — Reviewer-facing per-capability allowed/forbidden wording; every capability is either *unconditional* or *"deployment-dependent; see §B"* (no third category). Lives in `v0.5-claim-matrix.md` §A above the tiered §B.
+- **Capability-claim matrix (§A)** — historical, in `v0.5-claim-matrix.md`. Reviewer-facing claim wording now lives in `docs/spec/security-boundary.md` §2 (claims, each mapped to its root theorem) and §3 (explicit non-claims).
 - **Deployment-tier matrix (§B)** — The four-axis tiered composition (replay durability / trust propagation / key custody / ingress binding); composed claim is the AND of declared tiers, bounded by the weakest.
 
 - **Audit rejection vocabulary** — Derived from the frozen `McpReError::wire_code()` taxonomy (`error.rs` is the sole authority); rejection events are `event_type: mcp-re.request.rejected|mcp-re.response.rejected` + `reason: <frozen wire_code>`. CI drift guard asserts every emitted reason ∈ `wire_code()`. Optional non-normative `reason_label` for display only.

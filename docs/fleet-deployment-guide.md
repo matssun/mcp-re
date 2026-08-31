@@ -232,7 +232,7 @@ measure the concurrent serving path.)
   routing; MCP-RE does not move inner state between replicas.
 - **multi-tenant isolation between mutually distrusting operators** — the fleet
   is one trust domain / one operator (see
-  [security boundary §8](spec/security-boundary.md)).
+  [2026-06-23 signed boundary §8](archive/security/security-boundary-signed-2026-06-23.md), historical).
 
 Live-cluster validation on real Kubernetes (GKE) was performed (v0.11 fleet proof +
 the v0.12.1 KMS-via-Workload-Identity run); it validates the exercised deployment

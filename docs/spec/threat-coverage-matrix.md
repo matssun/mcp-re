@@ -1,5 +1,16 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+> ## SUPERSEDED AS A CLAIM AUTHORITY
+>
+> Owner completeness ruling C, 2026-08-31. The current claim boundary is
+> [`security-boundary.md`](security-boundary.md), and it is the only authority over what
+> MCP-RE claims. This file is retained as a historical artefact and must not be edited to
+> agree with it: two independently editable claim documents are how a project comes to hold
+> two claim surfaces, and a selectively updated one is worse than an obviously stale one,
+> because only the second announces itself.
+>
+> Record: [`../../verification/reviews/rulings/owner-completeness-rulings-2026-08-31.md`](../../verification/reviews/rulings/owner-completeness-rulings-2026-08-31.md)
+
 # MCP-RE Threat-Coverage Matrix
 
 > **⚠️ Currency (2026-07-15).** Derived from the **v0.5** claim matrix over the frozen

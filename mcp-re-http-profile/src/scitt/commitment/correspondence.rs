@@ -71,18 +71,21 @@ impl EvidenceCommitment {
         // contributes to none of them: an archivist holding a statement about
         // `[h0, h1, h2-tampered]` could present `[h0, h1, h2']`, and as long as `h2'` fails
         // at the same hop index for the same reason the label and both digests still match.
-        if self.identifies_a_submission() {
-            if recomputed.submitted_commitment != self.submitted_commitment {
-                return Err(HttpProfileError::MalformedEvidence(
-                    "retained submission does not match the commitment",
-                ));
-            }
-        } else if recomputed.identifies_a_submission() {
-            // The record predates the submission identity, so the retained tail is bound
-            // only as far as the verified prefix reaches. Saying so is the point: this is a
-            // weaker result than the one above, and it must not be reported as the same.
+        //
+        // A statement that carries no submission identity cannot bind one, whatever the
+        // retained side carries, so it is refused rather than reported as bound on the
+        // strength of its verified prefix. The condition is on THIS side alone, and
+        // deliberately: a record the statement cannot identify is the same record whether
+        // or not the retained half claims an identity, and one result is what that has to
+        // produce.
+        if !self.identifies_a_submission() {
             return Err(HttpProfileError::MalformedEvidence(
                 "the statement carries no submission identity, so the retained submission cannot be bound to it",
+            ));
+        }
+        if recomputed.submitted_commitment != self.submitted_commitment {
+            return Err(HttpProfileError::MalformedEvidence(
+                "retained submission does not match the commitment",
             ));
         }
         Ok(())

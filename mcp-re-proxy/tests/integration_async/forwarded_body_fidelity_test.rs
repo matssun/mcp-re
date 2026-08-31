@@ -9,9 +9,11 @@
 //! on a body that differs from the one the signature covers, while every signature
 //! check upstream still passes — the alteration happens after verification.
 //!
-//! So the served path refuses those two shapes on the ORIGINAL bytes, before the
-//! re-serialization. These tests assert the mechanism rather than the status: the
-//! recording inner backend must never be dispatched at all.
+//! So the served path refuses those two shapes on the ORIGINAL bytes, at the
+//! request-envelope boundary — before admission burns a nonce, retires an approval or
+//! writes a retention marker, and long before the re-serialization. What these tests assert
+//! is the mechanism: the recording inner backend must never be dispatched at all. The 400
+//! is checked too, because it says whose fault the refusal names.
 
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -256,7 +258,9 @@ async fn a_duplicate_member_name_is_never_forwarded() {
         "the inner server was dispatched with a body the re-serializer had already \
          collapsed to last-one-wins"
     );
-    assert_eq!(out.status, 500, "refused, not served");
+    // 400: the fault is in the request, and the refusal is taken at the request-envelope
+    // boundary before admission spends a nonce or an approval on it.
+    assert_eq!(out.status, 400, "refused, not served");
 }
 
 /// A number the `f64` carrier cannot hold exactly. `1234567890123456789.5` comes back
@@ -274,7 +278,7 @@ async fn a_number_the_f64_carrier_rewrites_is_never_forwarded() {
         seen.lock().unwrap().is_empty(),
         "the inner server was dispatched with a rewritten number"
     );
-    assert_eq!(out.status, 500, "refused, not served");
+    assert_eq!(out.status, 400, "refused, not served");
 }
 
 /// The negative control. The refusal is narrow: an ordinary body — including one

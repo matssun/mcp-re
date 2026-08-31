@@ -651,12 +651,6 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-http-profile/src/envelope.rs"
-baseline_prod_loc = 280
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
 path = "mcp-re-proxy/src/stage_timers/mod.rs"
 baseline_prod_loc = 275
 baseline_sha = "d1fc5fa"
