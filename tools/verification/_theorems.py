@@ -8,6 +8,16 @@ The registry holds the human claim and two edges — `supported_by` (`unit://`) 
 `depends_on` (`THM-NNNN`). Everything below the claim has an existing authority, so a key
 that would restate a `[[unit]]` fact is rejected by name rather than merely as unknown.
 
+`depends_on` means LOGICAL IMPLICATION and nothing else (§28.4): B is a premise required to
+establish A. It is not "A's function calls B's function", not "A's owner imports B's
+module", and not a build dependency between their units. Where the implication and the call
+coincide, the implication is the reason and the call is the coincidence.
+
+It also holds the one top-level declaration this layer owns: `root_theorems`, the claims
+that are MCP-RE system security promises (§28.1). Roots are declared, never inferred, and
+they are the source from which proof-tree completeness is derived (§28.8) — a property
+distinct from evidence freshness, and derived in `_review`.
+
 Two things this module refuses to do, both deliberate:
 
   * It stores no review or approval field. An approval is evidence about a fingerprint
@@ -36,7 +46,7 @@ THEOREMS_TOML = POLICY_DIR / "theorems.toml"
 #: `THM-NNNN`, matching the established `ASM-NNNN` convention.
 _ID_RE = re.compile(r"^THM-\d{4}$")
 
-_TOP_KEYS = {"schema_version", "theorem"}
+_TOP_KEYS = {"schema_version", "theorem", "root_theorems"}
 
 _THEOREM_KEYS = {
     "id",
@@ -72,6 +82,9 @@ _DUPLICATED_AUTHORITY = {
     "reviewed": "the review attestation, keyed by reviewed_fingerprint (§14.7)",
     "approved": "the review attestation, keyed by reviewed_fingerprint (§14.7)",
     "status": "the review attestation, keyed by reviewed_fingerprint (§14.7)",
+    "root": "the top-level `root_theorems` set (§28.1) — root membership is declared once",
+    "is_root": "the top-level `root_theorems` set (§28.1) — root membership is declared once",
+    "root_claim": "the top-level `root_theorems` set (§28.1) — root membership is declared once",
     "consumed_by": "derived — a reverse edge is never stored (§8.2)",
     "dependents": "derived — a reverse edge is never stored (§8.2)",
     "guarantees": "derived from supported_by — a reverse edge is never stored (§8.2)",
@@ -193,11 +206,62 @@ def _check_edges(doc: dict, ids: list[str], unit_ids: set[str]) -> None:
             )
 
 
+def _check_roots(doc: dict, ids: list[str]) -> None:
+    """The declared system roots — ADR-MCPRE-059 §28.1, §28.8.
+
+    `root_theorems` is the ONE authoritative statement of which claims are MCP-RE system
+    security promises, and it is the source from which proof-tree completeness is derived.
+
+    It is not inferred. "A theorem with no dependents" is a different property: an isolated
+    local claim nobody has yet composed has no dependents and is emphatically not a system
+    promise, so inferring roots that way would silently declare the registry complete the
+    moment it was populated with leaves. Declaration is the only way a root becomes one.
+
+    Fail-closed in every direction: an unknown id, a duplicate, or a deprecated claim named
+    as a root would each leave the completeness derivation quantifying over something other
+    than what the reviewer ratified.
+    """
+    where = "theorems.toml root_theorems"
+    roots = doc["root_theorems"]
+    if not isinstance(roots, list) or any(not isinstance(item, str) for item in roots):
+        raise ManifestError(f"{where}: must be a list of THM-NNNN strings")
+    declared = set(ids)
+    deprecated = {
+        entry["id"] for entry in doc.get("theorem", []) if entry.get("replaced_by")
+    }
+    seen: set[str] = set()
+    for root in roots:
+        if root in seen:
+            raise ManifestError(
+                f"{where}: duplicate root {root!r}. A root is declared once; a repeated "
+                f"entry makes the completeness quantifier read over a multiset."
+            )
+        seen.add(root)
+        if root not in declared:
+            raise ManifestError(
+                f"{where}: {root!r} is not a declared theorem. A root naming nothing is a "
+                f"system promise the tooling cannot resolve, so completeness would be "
+                f"derived over a claim that does not exist."
+            )
+        if root in deprecated:
+            raise ManifestError(
+                f"{where}: {root!r} is deprecated. A withdrawn claim cannot carry a system "
+                f"promise; declare its replacement as the root."
+            )
+
+
+def root_theorems(doc: dict) -> list[str]:
+    """The declared system roots, in declaration order. Never inferred (§28.1)."""
+    return list(doc.get("root_theorems", []))
+
+
 def _check_edge_directions(doc: dict, proof_edges: list[dict]) -> None:
     """A theorem's `depends_on` may not contradict a unit-level `PROOF_DEPENDENCY`.
 
-    The two are not a duplicated authority — the unit edge is about how evidence dirtiness
-    propagates, the theorem edge about which claim is a premise of which. But where both
+    The two are not a duplicated authority, and they do not mean the same thing: the unit
+    edge is about how evidence dirtiness propagates between units, the theorem edge about
+    which claim is a logical premise of which (§28.4). A unit-level edge is therefore
+    neither a reason to write a theorem edge nor a substitute for one. But where both
     exist over the same pair of owners they are two statements of one relation, and they
     may not disagree.
 
@@ -264,7 +328,7 @@ def validate_theorems(
     """Validate a parsed theorem registry against the declared review units."""
     where = "theorems.toml"
     _reject_unknown(where, doc, _TOP_KEYS)
-    _require(where, doc, {"schema_version"})
+    _require(where, doc, {"schema_version", "root_theorems"})
     if doc["schema_version"] != SCHEMA_VERSION:
         raise ManifestError(
             f"{where}: schema_version {doc['schema_version']} but this tooling implements "
@@ -272,6 +336,7 @@ def validate_theorems(
             f"handled, not tolerated."
         )
     ids = _check_ids(doc)
+    _check_roots(doc, ids)
     _check_edges(doc, ids, unit_ids)
     _check_edge_directions(doc, proof_edges or [])
     _check_acyclic(doc)

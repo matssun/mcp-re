@@ -10,6 +10,12 @@ called established:
     dependencies           every premise is itself established
     specification review   the owner's review covers the CURRENT theorem fingerprint
 
+and, separately, ROOT COMPLETENESS (§28.8): whether every claim the owner declared a system
+promise in `root_theorems` is established. That is a different question from freshness and is
+printed under its own heading for that reason. It is report-only by default — an honest
+unresolved GAP must not fail ordinary CI — and binding under `--require-root-complete`, the
+mode T6 and release assurance use.
+
 This command DERIVES and DISPLAYS. It never writes a review, and it must never grow a flag
 that does: an approval is a human act recorded as a commit under `verification/reviews/`,
 and a tool that could mint one on request would be the single-command self-approval §14.7
@@ -35,8 +41,59 @@ from _manifest import (  # noqa: E402
     load_toolchains,
     load_verification,
 )
-from _review import load_reviews, review_root, theorem_assurance  # noqa: E402
+from _review import (  # noqa: E402
+    UNDECLARED,
+    closure_satisfied,
+    load_reviews,
+    review_root,
+    root_completeness,
+    theorem_assurance,
+)
 from _theorems import load_theorems  # noqa: E402
+
+
+def _print_roots(roots: dict) -> None:
+    """The root-completeness section — ADR-MCPRE-059 §28.8.
+
+    Printed as its own block, under its own heading, precisely so it cannot be read as the
+    freshness verdict above it. The two answer different questions and a reader who conflates
+    them concludes that a fresh registry is a closed argument.
+    """
+    print(f"\nROOT COMPLETENESS: {roots['verdict']}")
+    if roots["verdict"] == UNDECLARED:
+        print(
+            "  no system root is declared in theorems.toml `root_theorems`.\n"
+            "  Nothing is claimed at the system boundary, so nothing about the system is\n"
+            "  established — this is not a pass, and it is never reported as one."
+        )
+        return
+    print(
+        f"  {len(roots['established_roots'])} of {len(roots['roots'])} declared "
+        f"system root(s) established"
+    )
+    for root, blocking in sorted(roots["blocking"].items()):
+        print(f"\n  {root} → not established")
+        for row in blocking:
+            print(f"    {row['theorem']}  {row['cause']}")
+
+
+def _root_ok(roots: dict, require: bool) -> bool:
+    """Report-only unless closure mode was asked for.
+
+    An honest unresolved GAP must not fail ordinary CI (§28.8): a gate that punishes
+    recording an obligation is a gate that teaches people not to record it. Closure mode is
+    where the obligation becomes binding — and `UNDECLARED` fails there too, because a
+    release that declares no system promise has not proved one.
+    """
+    if not require:
+        return True
+    if closure_satisfied(roots):
+        return True
+    print(
+        f"\nFAIL: --require-root-complete, and root completeness is {roots['verdict']}.",
+        file=sys.stderr,
+    )
+    return False
 
 
 def main() -> int:
@@ -46,6 +103,19 @@ def main() -> int:
         "--fingerprint",
         metavar="THM-NNNN",
         help="print one theorem's current fingerprint and components, for a review record",
+    )
+    parser.add_argument(
+        "--root-completeness",
+        action="store_true",
+        help="print only the root-completeness section; report-only, always exits 0",
+    )
+    parser.add_argument(
+        "--require-root-complete",
+        action="store_true",
+        help=(
+            "closure mode: fail unless every declared system root is established. "
+            "For T6 and release assurance; ordinary CI stays report-only (§28.8)"
+        ),
     )
     parser.add_argument(
         "--attestations",
@@ -90,16 +160,30 @@ def main() -> int:
         derived["states"],
     )
 
+    roots = root_completeness(theorems, assurance)
+
     if args.json:
-        print(json.dumps(assurance, indent=2, sort_keys=True, default=list))
-        return 0
+        print(
+            json.dumps(
+                {"theorems": assurance, "root_completeness": roots},
+                indent=2,
+                sort_keys=True,
+                default=list,
+            )
+        )
+        return 0 if _root_ok(roots, args.require_root_complete) else 1
+
+    if args.root_completeness:
+        _print_roots(roots)
+        return 0 if _root_ok(roots, args.require_root_complete) else 1
 
     if not entries:
         # Said in full rather than printed as an empty table: "no theorems are declared" and
         # "every theorem holds" are different facts, and only one of them is good news.
         print("no theorems declared in verification/policy/theorems.toml")
         print("(nothing is established, because nothing is claimed)")
-        return 0
+        _print_roots(roots)
+        return 0 if _root_ok(roots, args.require_root_complete) else 1
 
     print(f"theorem assurance @ policy {doc['policy_revision']}")
     for row in entries:
@@ -118,7 +202,8 @@ def main() -> int:
             print(f"    depends on             {', '.join(deps)}")
     established = sum(1 for state in assurance.values() if state["established"])
     print(f"\n  {established} of {len(entries)} theorem(s) established")
-    return 0
+    _print_roots(roots)
+    return 0 if _root_ok(roots, args.require_root_complete) else 1
 
 
 if __name__ == "__main__":
