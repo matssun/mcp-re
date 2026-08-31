@@ -90,6 +90,9 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 | THM-0066 | The serving PEP resolves actors through the deployment's materialized trust authority | proxy.serving_trust_seam | unit://proxy.serving_trust_seam, unit://proxy.trust_plan | live |
 | THM-0067 | The composition root re-reads no owner's security semantics from the request | proxy.trust_composition_root | unit://proxy.trust_composition_root | live |
 | THM-0068 | A pinned transparency service is one operator-reviewed document, or it is not a pin | http_profile.scitt_service_pin | unit://http_profile.scitt_service_pin | live |
+| THM-0069 | A security record states each authority's outcome in that authority's own coordinate | proxy.audit_record_coordinates | unit://proxy.audit_record_coordinates, unit://proxy.refusal_provenance | live |
+| THM-0070 | The record stream is honest about what reached it | proxy.audit_delivery | unit://proxy.audit_delivery | live |
+| THM-0071 | The refusal vocabulary is total over the outcomes that can occur | proxy.audit_record_coordinates | _none_ | live |
 
 ## Claims in full
 
@@ -832,3 +835,37 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 **Scope — what this does NOT establish.** It establishes the PROVENANCE of a pinned service, not that a deployment pinned one. `verify_receipt_offline` takes the service as a `Fn(&str) -> Option<ResolvedTransparencyService>` seam, and `stated` is a legitimate second provenance — the in-process prototype log is one, with no pin to resolve from. Against a seam a private field only forces a constructor taking the same arguments with the same absence of checking, so what these fields buy is that every producer is NAMED, not that the illegal pairing is unconstructible. Whether a given deployment's resolver is backed by a pin is deployment wiring and is not established here.
 
 **Review requirement.** Owner security-specification review
+
+### THM-0069 — A security record states each authority's outcome in that authority's own coordinate
+
+**Statement.** Every request record states an authorization outcome — not configured, authorized, or refused — and a response record carries none, because there is nothing after the dispatch for a policy to have decided. The Core verdict and the authorization verdict occupy separate coordinates on one record and neither can be read as the other: an unconfigured deployment is not rendered as an authorized one, a policy denial's token goes in the authorization coordinate, the two authorization refusal arms stay distinguishable, and the arm reached before any policy ran imports no policy vocabulary at all.
+
+**Security consequence.** A reader of the record cannot be shown *a policy permitted this* where none was deployed, cannot mistake a request that reached no policy verdict for one a policy denied, and cannot be left unable to tell whether a policy was consulted — the collapse a single rendered `reason` string produced, and which the type system prevented while the record restored.
+
+**Scope — what this does NOT establish.** What a record MAY say, not that the vocabulary is total over the outcomes that occur — that is the open proposition below, and it is an ADR-MCPS-035 decision rather than a registry edit. It does not establish that the record was delivered (THM-0070), and it establishes nothing about the truth of either authority's verdict.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0046
+
+### THM-0070 — The record stream is honest about what reached it
+
+**Statement.** Every emitted record carries a sequence number and the collector preserves emission order. A full queue drops rather than blocking the caller, the drop count is reported without a following record to carry it, an unattributed flood cannot consume the headroom an attributed record needs, and concurrent offers at the ceiling admit only the remaining slots. A drain that timed out is a distinct outcome from one that completed, and the outcome that is unknown is its own case.
+
+**Security consequence.** An auditor cannot be shown a record stream that silently lost entries: a gap is visible in the sequence and a drop is counted and reported. An unattributed caller cannot suppress the records of an attributed one by flooding the queue. And a shutdown whose drain timed out cannot be read as one that emptied the queue — the difference between *these are all the records* and *these are the records that got out*.
+
+**Scope — what this does NOT establish.** Delivery integrity, not content (THM-0069) and not durability: the sink is in-process, so a record that was emitted may still be lost with the process. It establishes nothing about whether a record SHOULD have been written for a given outcome, which is the totality proposition below.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0071 — The refusal vocabulary is total over the outcomes that can occur
+
+**Statement.** Every outcome a served exchange can reach is nameable in the recorded vocabulary, and no outcome is recorded under a token belonging to an authority that did not reach it.
+
+**Security consequence.** An auditor reading the record cannot be shown silence where a refusal occurred, and cannot be shown a token that attributes a refusal to an authority that never ran.
+
+**Scope — what this does NOT establish.** A GAP, and deliberately not closed here. `McpReError` is one frozen taxonomy and `PolicyError` is a second owned by another crate; the record now keeps their coordinates apart (THM-0069), which is what makes the remaining question answerable at all, and it does not make the union total. Closing this needs an ADR-MCPS-035 decision — a new category, new `McpReError` variants, or a rule that the authorization stage renders only Core tokens — and the ratification is explicit that the frozen vocabulary is not bypassed to close a theorem tree. There is also no single owner to assign: the taxonomies live in two crates and the totality relation is between them. Its owner is provisional, and the claim stays unestablished until the decision is taken.
+
+**Review requirement.** Owner security-specification review; ADR-MCPS-035 vocabulary decision
+
+**Depends on.** THM-0046, THM-0069

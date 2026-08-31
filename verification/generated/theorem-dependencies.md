@@ -218,6 +218,11 @@ graph BT
 ```mermaid
 graph BT
     THM_0046["THM-0046<br/>A refusal carries which authority reached it, over a closed set, unrendered"]
+    THM_0069["THM-0069<br/>A security record states each authority's outcome in that authority's own coordinate"]
+    THM_0071["THM-0071<br/>The refusal vocabulary is total over the outcomes that can occur"]
+    THM_0046 --> THM_0069
+    THM_0046 --> THM_0071
+    THM_0069 --> THM_0071
 ```
 
 ## Component 18
@@ -287,4 +292,11 @@ graph BT
 ```mermaid
 graph BT
     THM_0068["THM-0068<br/>A pinned transparency service is one operator-reviewed document, or it is not a pin"]
+```
+
+## Component 27
+
+```mermaid
+graph BT
+    THM_0070["THM-0070<br/>The record stream is honest about what reached it"]
 ```

@@ -76,6 +76,11 @@ on:
       - "mcp-re-proxy/src/http_profile_serve/**"
       # Stage 6: the transparency-service pin, whose provenance THM-0068 states.
       - "mcp-re-http-profile/src/scitt/**"
+      # Stage 7: what a record may say, and whether the stream is honest about what reached it.
+      - "mcp-re-proxy/src/audit_record.rs"
+      - "mcp-re-proxy/src/audit_sink/**"
+      - "mcp-re-proxy/src/authorization/audit.rs"
+      - "mcp-re-proxy/src/authorization/audit/**"
       # MCPRE-137: the listener-lifetime TLS security state, its subordinates, and the
       # production wiring that gives a listener a lifetime at all.
       - "mcp-re-proxy/src/tls_listener_state/**"
@@ -193,6 +198,11 @@ on:
       - "mcp-re-proxy/src/http_profile_serve/**"
       # Stage 6: the transparency-service pin, whose provenance THM-0068 states.
       - "mcp-re-http-profile/src/scitt/**"
+      # Stage 7: what a record may say, and whether the stream is honest about what reached it.
+      - "mcp-re-proxy/src/audit_record.rs"
+      - "mcp-re-proxy/src/audit_sink/**"
+      - "mcp-re-proxy/src/authorization/audit.rs"
+      - "mcp-re-proxy/src/authorization/audit/**"
       # MCPRE-137: the listener-lifetime TLS security state, its subordinates, and the
       # production wiring that gives a listener a lifetime at all.
       - "mcp-re-proxy/src/tls_listener_state/**"
