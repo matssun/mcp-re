@@ -187,6 +187,11 @@ false-green classes, in this priority order:
 9. undeclared verification-file ownership
 10. fork-PR verification integrity
 11. ASM-0016 / ASM-0017 tombstones
+12. `verify` report-mode verdict fidelity — measured 2026-08-31: a run whose
+    `generated-model` lane FAILED printed `VERIFICATION: FAIL` and still **exited 0**,
+    because without `--gate` the CLI is report-only. Anything reading the exit status rather
+    than the verdict line reads a failed lane as a pass. Recorded as platform-integrity
+    backlog; the CLI is not redesigned outside that campaign.
 
 ASM-0016 and ASM-0017 are **reserved historical gaps** and must never be reused. No semantic
 meaning is invented for them.

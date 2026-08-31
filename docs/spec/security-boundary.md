@@ -32,7 +32,7 @@ described as proved when part of it was never in the argument at all.
 |---|---|---|
 | **Runtime theorem coverage** | the ADR-MCPRE-059 root graph — declared roots, their support closure, and the registered assumptions | a stated proposition about the running enforcement boundary, resting on named premises |
 | **Deployment / release assurance** | release and conformance gates over the shipped artefacts: Helm charts, image build contexts, packaging, port registry, image tags | the artefact matches what the gates check. It is **not** a runtime theorem, and there is none |
-| **Assurance platform (meta-TCB)** | the ADR-MCPRE-059 tooling itself — `tools/verification`, the manifests, the lanes | you are entitled to believe a lane's verdict. It is a premise of everything above it, **not** a product claim |
+| **Assurance platform (meta-TCB)** | the ADR-MCPRE-059 tooling itself — `tools/verification`, the manifests, the lanes | once the platform-integrity obligations are satisfied, a green result is evidence that the lane verdict may be relied upon. Known current false-green defects are disclosed in §5 and must close before final assurance closure. It is a premise of everything above it, **not** a product claim |
 
 The theorem tree begins at an MCP-RE deployment, request or configuration boundary. It does
 not attempt to prove Helm, CodeBuild, image contexts or packaging scripts as part of the
@@ -68,11 +68,10 @@ it. A claim with no root in this table is not a claim this document makes.
 | A caller cannot reach the backend by omitting evidence, presenting another exchange's evidence, presenting a fact the deployment selected no authority for, or handing the pipeline a security value it constructed itself. | **THM-0074** — no unearned dispatch |
 | A refusal cannot reach the dispatch, and its own effects cannot be mistaken for those of a served request — including where an approval was spent and the refusal must not read as an ordinary retry. | **THM-0078** — refusal is terminal |
 | A response cannot be attributed to the trust root directly, signed by a credential the deployment does not hold or no longer holds, or advertise validity its credential does not authorize. | **THM-0075** — no unearned response attribution |
-| An application is not handed, as this call's answer, a response from another exchange or signer, or one that verified only unbound — and is not led to repeat a side effect by reading silence as *it did not run*. | **THM-0076** — a client accepts only its own answer |
+| **Through the shipped Rust client proxy**, an application is not handed, as this call's answer, a response from another exchange or signer, or one that verified only unbound — and is not led to repeat a side effect by reading silence as *it did not run*. The claim is over that implementation, not over the exchange path in general: the Python and TypeScript SDKs implement the boundary independently and are §4, not §2. | **THM-0076** — a client accepts only an answer to its own request |
 | An operator cannot obtain a weaker posture by supplying a combination nobody validated, and a serving component cannot disagree with the owner about what was configured. | **THM-0077** — no unselected posture |
 | A runtime that never bound a listener cannot be recorded as a clean drained shutdown. | **THM-0012** — the lifecycle record |
 | An auditor cannot be shown a receipt from a log the deployment's pin does not describe, where verification runs through a pin-projected resolver. | **THM-0072** — pinned-service receipt |
-| Retained evidence cannot be swapped under a receipt, a truncated call cannot become COMPLETE, and the unverified tail of an incomplete record cannot be substituted. | **THM-0042** — retained-evidence correspondence — **REOPENED, see §5** |
 | An exchange-owned refusal cannot disappear through projection or ordinary queue loss without that loss itself being represented, within the modeled in-process audit path. | **THM-0071** — typed refusal provenance reaches the record |
 
 The full graph — every subordinate theorem, its owner unit, its evidence and its premises —
@@ -88,17 +87,20 @@ otherwise reasonably infer it from a claim in §2.
 sandbox. It does not constrain what the inner server does once a request is dispatched to
 it, does not isolate it, and does not bound its side effects.
 
-**Confidentiality of retained evidence.** THM-0042 establishes correspondence, not secrecy.
-A receipt does not carry the retained call bytes, and that is all: it is not unlinkability,
-not resistance to inference from digests, and not resistance to guessing a low-entropy
-reconstruction and confirming it against the commitment.
+**Confidentiality of retained evidence.** No confidentiality is claimed, and none would be
+claimed even if retained-evidence correspondence were established: the THM-0042 branch is
+about correspondence, not secrecy. A receipt does not carry the retained call bytes, and
+that is all — it is not unlinkability, not resistance to inference from digests, and not
+resistance to guessing a low-entropy reconstruction and confirming it against the
+commitment.
 
 **Durable audit persistence.** THM-0071 is about the modeled in-process path. If the process
 disappears, records emitted and not yet drained go with it.
 
-**That the call described ever happened.** The retained-evidence claim is correspondence
-only: whatever was reconstructed is what was committed to. It does not establish that the
-retained bytes are themselves valid evidence, nor that the reconstruction is complete.
+**That a described call ever happened.** Retained-evidence correspondence is not currently
+claimed at all (§4). Even once established it would be correspondence only — whatever was
+reconstructed is what was committed to — and would not establish that the retained bytes are
+themselves valid evidence, nor that the reconstruction is complete.
 
 **Anything about a non-pinned resolver.** THM-0072 says nothing about a verification
 performed through a `stated` resolver, which remains a supported non-pin provenance for
@@ -108,6 +110,13 @@ prototype and conformance use.
 the correctness of foreign X.509, ASN.1 and TLS implementations are registered assumptions,
 not results. They are in `verification/policy/assumptions.toml` with their consequences
 stated. MCP-RE does not prove them and does not claim to.
+
+**MCP-RE's own behaviour, where a proof lane stops at it.** Some current theorem closures
+also terminate in registered assumptions over MCP-RE-owned implementation behaviour, where
+the current proof or evidence lane treats that behaviour as opaque. These are named
+premises, not proofs of that behaviour. They remain visible in
+`verification/policy/assumptions.toml` and may later be discharged by stronger local
+evidence. A premise being about code this project owns does not make it a result.
 
 **Deployment artefacts as runtime theorems.** See §0.
 
@@ -121,6 +130,7 @@ them is the point: an unstated gap is the failure mode this document exists to p
 | area | disposition | placement |
 |---|---|---|
 | Replay / continuation store durability | in scope | under THM-0077 (selected tier materializes honestly) and THM-0074 (a store that cannot establish its state must prevent dispatch) |
+| Retained-evidence correspondence | in scope, **NOT CURRENTLY CLAIMED** — THM-0042 branch reopened | the corrected `submitted_commitment` proposition must be independently reviewed and established against genuine retained-evidence correspondence evidence before it returns to §2. The theorem is not to be weakened to make it green |
 | Retained-evidence reservation fidelity | in scope | retained-evidence family; a pending marker may exist only under the execution threshold its owner defines |
 | Outbound credential acquisition (KMS / STS / metadata / remote signer) | in scope | under THM-0077 / materialization; a credential-bearing outbound call reaches only the authority selected and validated for that capability |
 | Client sidecar local ingress | in scope, **its own client-side root** | not folded into THM-0076; an unrelated browser origin or DNS-rebinding attacker must not cause a security-bearing outbound exchange |
