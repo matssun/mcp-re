@@ -109,8 +109,14 @@ PRODUCTION_MECHANISMS = {
     "opaque": r"verifier::opaque\b",
     "axiom": r"\baxiom\b",
     "sorry": r"\bsorry\b",
-    "assume": r"\bassume\s*[(!]",
-    "admit": r"\badmit\s*[(!]",
+    # A METHOD call is not a proof escape hatch. `self.inner_async.admit()` asks the inner
+    # plane whether it will accept a request; Verus' `admit()` deletes a proof obligation.
+    # The two share a name and nothing else, and a gate that conflated them would fire on
+    # ordinary serving code — the same failure the code-forms rule above exists to avoid.
+    # Path-qualified spellings (`vstd::pervasive::admit()`) are still matched: `::` is not
+    # `.`.
+    "assume": r"(?<!\.)\bassume\s*[(!]",
+    "admit": r"(?<!\.)\badmit\s*[(!]",
 }
 
 #: Mechanisms that, applied to the very function a unit claims to have proved, make the

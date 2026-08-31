@@ -42,6 +42,17 @@ on:
       # filter covers it.
       - "mcp-re-http-profile/tests/**"
       - "mcp-re-proxy/src/runtime_state.rs"
+      # The ratified theorem-architecture closure, Stage 1: three authorities that already
+      # existed and were simply unmeasured. Enumerated rather than given a subtree pattern
+      # because none of them IS a subtree — `exchange_state.rs` and `request_stages.rs` are
+      # single files, and the other two units take one file each out of directories whose
+      # remaining members belong to other owners.
+      - "mcp-re-proxy/src/exchange_state.rs"
+      - "mcp-re-proxy/src/request_stages.rs"
+      - "mcp-re-proxy/src/authorization/dispatch.rs"
+      - "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs"
+      - "mcp-re-proxy/src/refusal/**"
+      - "mcp-re-proxy/src/config_state/cross_machine.rs"
       # MCPRE-137: the listener-lifetime TLS security state, its subordinates, and the
       # production wiring that gives a listener a lifetime at all.
       - "mcp-re-proxy/src/tls_listener_state/**"
@@ -125,6 +136,17 @@ on:
       # filter covers it.
       - "mcp-re-http-profile/tests/**"
       - "mcp-re-proxy/src/runtime_state.rs"
+      # The ratified theorem-architecture closure, Stage 1: three authorities that already
+      # existed and were simply unmeasured. Enumerated rather than given a subtree pattern
+      # because none of them IS a subtree — `exchange_state.rs` and `request_stages.rs` are
+      # single files, and the other two units take one file each out of directories whose
+      # remaining members belong to other owners.
+      - "mcp-re-proxy/src/exchange_state.rs"
+      - "mcp-re-proxy/src/request_stages.rs"
+      - "mcp-re-proxy/src/authorization/dispatch.rs"
+      - "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs"
+      - "mcp-re-proxy/src/refusal/**"
+      - "mcp-re-proxy/src/config_state/cross_machine.rs"
       # MCPRE-137: the listener-lifetime TLS security state, its subordinates, and the
       # production wiring that gives a listener a lifetime at all.
       - "mcp-re-proxy/src/tls_listener_state/**"
