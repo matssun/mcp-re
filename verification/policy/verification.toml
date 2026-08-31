@@ -2422,18 +2422,19 @@ paths = [
 exported_contracts = []
 evidence = ["test://proxy/materialization/signing_role_separation"]
 assumptions = []
-# Both directions, and the third arm. A refusal control alone would pass on an authority
-# that refused everything, and a materialization control alone would pass on one that
-# compared nothing — so the battery has to show it separates the two cases, and that a
-# channel credential of another profile is treated as incomparable rather than as a
-# collapse.
+# Both directions, and the two arms that are NOT collapses. A refusal control alone would
+# pass on an authority that refused everything, and a materialization control alone would
+# pass on one that compared nothing — so the battery has to show it separates the cases. The
+# absent-material member is the one CI found: a role that produced no key is not a role
+# sharing one, and turning an unreadable seed or certificate into a signing-role error is
+# this authority claiming a proposition it does not own.
 tested_symbols = [
   "lib#capability_materialization::key_source::role_separation::tests::a_deployment_whose_two_roles_are_one_key_cannot_be_materialized",
   "lib#capability_materialization::key_source::role_separation::tests::two_distinct_roles_materialize",
   "lib#capability_materialization::key_source::role_separation::tests::an_incomparable_channel_credential_materializes",
+  "lib#capability_materialization::key_source::role_separation::tests::a_source_over_absent_material_materializes_on_either_side",
   "lib#capability_materialization::key_source::role_separation::tests::the_response_identity_round_trips_its_own_point",
   "lib#capability_materialization::key_source::role_separation::tests::two_different_keys_have_two_different_identities",
-  "lib#capability_materialization::key_source::role_separation::tests::one_key_has_one_identity_however_often_it_is_asked",
   "lib#capability_materialization::key_source::role_separation::tests::a_non_ed25519_credential_is_incomparable_rather_than_a_failure",
 ]
 
