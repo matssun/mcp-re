@@ -78,6 +78,11 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 | THM-0054 | Every production listener denies unknown client revocation status | proxy.tls_listener_state | _none_ | live |
 | THM-0055 | The keyid derivation introduces no collisions of its own | http_profile.keyid | unit://http_profile.keyid | live |
 | THM-0056 | The posture that claims nothing is produced only where no policy is configured | proxy.authorization_posture | unit://proxy.authorization_posture | live |
+| THM-0057 | A client's trust anchors are the ones the current signed manifest published | client.trust_manifest_lifecycle | unit://client.trust_manifest_lifecycle | live |
+| THM-0058 | A client accepts a response only under a signer its trust configuration authorizes | client.response_acceptance | unit://client.response_acceptance, unit://client.trust_manifest_lifecycle | live |
+| THM-0059 | An unbound receipt is never a success and never another request's answer | client.response_acceptance | unit://client.response_acceptance | live |
+| THM-0060 | The client's clock skew is bounded at construction and read once | client.delegation_policy_seal | unit://client.delegation_policy_seal | live |
+| THM-0061 | A receipt that says nothing is not a receipt that says nothing ran | client.execution_contract | unit://client.execution_contract | live |
 
 ## Claims in full
 
@@ -688,5 +693,59 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 **Security consequence.** A record cannot report *no policy is deployed* as *a policy permitted this*, and an authorized posture cannot be assembled from an attribution taken from one decision and evidence taken from another — the pairing this type exists to be evidence of.
 
 **Scope — what this does NOT establish.** A claim about the operation, not about the serving path: it does not establish that the posture the dispatch consumed is the one this operation returned, which is THM-0052. It establishes nothing about the policy mechanism's own correctness, and nothing about which evaluator a deployment attached.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0057 — A client's trust anchors are the ones the current signed manifest published
+
+**Statement.** Anchors are released only from a manifest whose signature verified under a trusted signer kid that the signature itself covers, whose profile is this one, and whose version is not below the monotone floor — a floor that rises on load and cannot be read as zero when it cannot be read at all. The manifest's own deadline travels with the anchors it published and outranks every root inside it, so an expired document resolves nothing, and the revocation half is carried by the same authority as the resolution half.
+
+**Security consequence.** A client cannot be moved back onto a superseded trust picture by replaying an older signed manifest, cannot be given anchors by a document nobody trusted signed, and cannot keep resolving roots from a document whose lifetime has passed — including when the floor's own storage fails, where anchors are withheld rather than released against an unknown floor.
+
+**Scope — what this does NOT establish.** Establishes what the document says and for how long. It does not establish that a response verified under one of these anchors is an answer to this request (THM-0058, THM-0059), that the publisher's key management is sound, or that a revocation list is complete — only that an identifier it names cannot resolve.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0058 — A client accepts a response only under a signer its trust configuration authorizes
+
+**Statement.** A response this client reports as verified was signed under a credential chaining to a root issuer the current trust picture resolves for the Response slot; where the route pins an issuer, a credential chaining to any other trusted anchor fails closed; and a credential whose issuer kid, delegated kid or jti the trust authority reports revoked resolves nothing, on both the success and the rejection path. A response carrying no credential is refused rather than read as a direct-root answer.
+
+**Security consequence.** An application cannot be handed a response signed by a party this deployment never authorized for the Response slot, by one whose authorization has been retired, or by the trust root directly — the mode this project does not support and therefore must not accept.
+
+**Scope — what this does NOT establish.** Signer authorization only. It does not establish that the response answers THIS request, which is the binding disposition (THM-0059), and it does not restate the underlying signature and `;req` facts, which are stated over the profile verifier (THM-0016, THM-0019, THM-0021). It says nothing about whether the deployment was right to trust the anchor.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0016, THM-0019, THM-0057
+
+### THM-0059 — An unbound receipt is never a success and never another request's answer
+
+**Statement.** A response verified without a request binding is reported as unbound and is never classified as a success, and there is no path on which a failed bound verification is retried as an unbound one. A preflight receipt is accepted as being about this call only when it commits to the digest of the bytes this client sent; one about another request, and one about no request at all, answer nothing.
+
+**Security consequence.** A pre-parse receipt cannot be replayed as the answer to a request, and a response that could not be bound cannot be presented to an application as this call's result by falling back to the weaker check.
+
+**Scope — what this does NOT establish.** The disposition, not the signer (THM-0058). The unbound receipt's binding is a BYTE binding: two transmissions of identical request bytes share it, so it is not an instance binding, and the client discloses it to the caller as unbound rather than claiming otherwise.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0020, THM-0022
+
+### THM-0060 — The client's clock skew is bounded at construction and read once
+
+**Statement.** `DelegationPolicy` clamps the configured clock skew to the profile's bound when it is constructed and keeps the result in a private field, so no inhabitant carries an unbounded tolerance; a negative configured skew narrows to zero rather than moving the window backwards; and both freshness windows read that one bounded number through the policy's single projection.
+
+**Security consequence.** An operator cannot widen a client's acceptance window past the profile bound by configuration, and the credential window and the signature window cannot disagree about the tolerance they applied — the disagreement that lets a credential be accepted outside the window its own signature was admitted under.
+
+**Scope — what this does NOT establish.** The bound and its single reading. It does not establish that the profile's bound is itself appropriate, and it establishes nothing about what either window checks beyond the tolerance it applies.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0061 — A receipt that says nothing is not a receipt that says nothing ran
+
+**Statement.** `ExecutionStatus::Unstated` and `ExecutionStatus::NotExecuted` are distinct inhabitants, and a rejection body carrying no execution contract yields the silent one rather than a guess. An unrecognized value is carried as unrecognized and never read as a known one, a spent elicitation is reported as requiring a new one rather than as an ordinary failure, and a failed retention obligation survives beside whatever the execution status says. The wire code and the contract are read in one parse.
+
+**Security consequence.** A client cannot repeat a side effect by reading the server's silence as *it did not run*, cannot retry an exchange whose human approval was already spent, and cannot be told a call is recorded when the deployment's audit store has no record of it.
+
+**Scope — what this does NOT establish.** What the receipt SAYS, and what a client may conclude from it. It does not establish that the server's statement is true — that is the serving path's exchange machine (THM-0044) — and it establishes nothing about the transport failures on which no receipt arrives at all.
 
 **Review requirement.** Owner security-specification review

@@ -2505,3 +2505,148 @@ owner = "proxy.authorization_posture"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.authorization_posture"]
 depends_on = []
+
+# =======================================================================================
+# Stage 4 — the client-side propositions.
+#
+# The six the client-response-verification blueprint recorded as gaps, placed under R3 and
+# partitioned by the four semantic owners that actually hold them. The seventh — that a
+# response expectation was derived from the request this client sent — is NOT registered:
+# `ResponseExpectation::new` is public because the FFI bindings rebuild the request from
+# scalars, and any caller that can reach it is the caller whose bug a wrong pairing is.
+# Sealing past that seam is theatre (`docs/dev/sealed-owners.md`), so the proposition is a
+# caller obligation and stays OUT_OF_SCOPE — the same disposition O-4 already gave the FFI
+# half, applied honestly to the in-process half rather than claimed away.
+# =======================================================================================
+
+[[theorem]]
+id = "THM-0057"
+title = "A client's trust anchors are the ones the current signed manifest published"
+statement = """
+Anchors are released only from a manifest whose signature verified under a trusted signer
+kid that the signature itself covers, whose profile is this one, and whose version is not
+below the monotone floor — a floor that rises on load and cannot be read as zero when it
+cannot be read at all. The manifest's own deadline travels with the anchors it published and
+outranks every root inside it, so an expired document resolves nothing, and the revocation
+half is carried by the same authority as the resolution half.
+"""
+security_consequence = """
+A client cannot be moved back onto a superseded trust picture by replaying an older signed
+manifest, cannot be given anchors by a document nobody trusted signed, and cannot keep
+resolving roots from a document whose lifetime has passed — including when the floor's own
+storage fails, where anchors are withheld rather than released against an unknown floor.
+"""
+scope = """
+Establishes what the document says and for how long. It does not establish that a response
+verified under one of these anchors is an answer to this request (THM-0058, THM-0059), that
+the publisher's key management is sound, or that a revocation list is complete — only that
+an identifier it names cannot resolve.
+"""
+owner = "client.trust_manifest_lifecycle"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://client.trust_manifest_lifecycle"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0058"
+title = "A client accepts a response only under a signer its trust configuration authorizes"
+statement = """
+A response this client reports as verified was signed under a credential chaining to a root
+issuer the current trust picture resolves for the Response slot; where the route pins an
+issuer, a credential chaining to any other trusted anchor fails closed; and a credential
+whose issuer kid, delegated kid or jti the trust authority reports revoked resolves nothing,
+on both the success and the rejection path. A response carrying no credential is refused
+rather than read as a direct-root answer.
+"""
+security_consequence = """
+An application cannot be handed a response signed by a party this deployment never
+authorized for the Response slot, by one whose authorization has been retired, or by the
+trust root directly — the mode this project does not support and therefore must not accept.
+"""
+scope = """
+Signer authorization only. It does not establish that the response answers THIS request,
+which is the binding disposition (THM-0059), and it does not restate the underlying
+signature and `;req` facts, which are stated over the profile verifier (THM-0016, THM-0019,
+THM-0021). It says nothing about whether the deployment was right to trust the anchor.
+"""
+owner = "client.response_acceptance"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://client.response_acceptance", "unit://client.trust_manifest_lifecycle"]
+depends_on = ["THM-0016", "THM-0019", "THM-0057"]
+
+[[theorem]]
+id = "THM-0059"
+title = "An unbound receipt is never a success and never another request's answer"
+statement = """
+A response verified without a request binding is reported as unbound and is never classified
+as a success, and there is no path on which a failed bound verification is retried as an
+unbound one. A preflight receipt is accepted as being about this call only when it commits to
+the digest of the bytes this client sent; one about another request, and one about no request
+at all, answer nothing.
+"""
+security_consequence = """
+A pre-parse receipt cannot be replayed as the answer to a request, and a response that could
+not be bound cannot be presented to an application as this call's result by falling back to
+the weaker check.
+"""
+scope = """
+The disposition, not the signer (THM-0058). The unbound receipt's binding is a BYTE binding:
+two transmissions of identical request bytes share it, so it is not an instance binding, and
+the client discloses it to the caller as unbound rather than claiming otherwise.
+"""
+owner = "client.response_acceptance"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://client.response_acceptance"]
+depends_on = ["THM-0020", "THM-0022"]
+
+[[theorem]]
+id = "THM-0060"
+title = "The client's clock skew is bounded at construction and read once"
+statement = """
+`DelegationPolicy` clamps the configured clock skew to the profile's bound when it is
+constructed and keeps the result in a private field, so no inhabitant carries an unbounded
+tolerance; a negative configured skew narrows to zero rather than moving the window
+backwards; and both freshness windows read that one bounded number through the policy's
+single projection.
+"""
+security_consequence = """
+An operator cannot widen a client's acceptance window past the profile bound by
+configuration, and the credential window and the signature window cannot disagree about the
+tolerance they applied — the disagreement that lets a credential be accepted outside the
+window its own signature was admitted under.
+"""
+scope = """
+The bound and its single reading. It does not establish that the profile's bound is itself
+appropriate, and it establishes nothing about what either window checks beyond the tolerance
+it applies.
+"""
+owner = "client.delegation_policy_seal"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://client.delegation_policy_seal"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0061"
+title = "A receipt that says nothing is not a receipt that says nothing ran"
+statement = """
+`ExecutionStatus::Unstated` and `ExecutionStatus::NotExecuted` are distinct inhabitants, and
+a rejection body carrying no execution contract yields the silent one rather than a guess. An
+unrecognized value is carried as unrecognized and never read as a known one, a spent
+elicitation is reported as requiring a new one rather than as an ordinary failure, and a
+failed retention obligation survives beside whatever the execution status says. The wire code
+and the contract are read in one parse.
+"""
+security_consequence = """
+A client cannot repeat a side effect by reading the server's silence as *it did not run*,
+cannot retry an exchange whose human approval was already spent, and cannot be told a call is
+recorded when the deployment's audit store has no record of it.
+"""
+scope = """
+What the receipt SAYS, and what a client may conclude from it. It does not establish that the
+server's statement is true — that is the serving path's exchange machine (THM-0044) — and it
+establishes nothing about the transport failures on which no receipt arrives at all.
+"""
+owner = "client.execution_contract"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://client.execution_contract"]
+depends_on = []

@@ -2048,3 +2048,130 @@ tested_symbols = [
   "lib#authorization::posture::tests::an_unconfigured_deployment_does_not_report_an_authorization",
   "lib#authorization::posture::tests::the_audit_projection_keeps_off_and_allow_apart",
 ]
+
+# ---------------------------------------------------------------------------------------
+# Stage 4 — the client-side semantic owners.
+#
+# The ratification is explicit that `mcp-re-client-core` does NOT become one unit: crate
+# boundaries do not determine review-unit boundaries, and the six propositions its blueprint
+# recorded as gaps concern four different semantic questions. Each unit below answers
+# question 1 of the twelve with no "and": what a trust document says and for how long; what
+# a client may accept as the answer to its own request; what the credential must satisfy;
+# and what a rejection receipt says about whether the work ran.
+# ---------------------------------------------------------------------------------------
+
+[[unit]]
+id = "client.trust_manifest_lifecycle"
+class = "V0"
+description = "The client's trust document and the anchors it publishes: the manifest's own signature and profile, its monotone version floor, its expiry deadline outranking every root inside it, and which credential identifiers are revoked."
+paths = [
+  "mcp-re-client-core/src/trust_manifest/mod.rs",
+  "mcp-re-client-core/src/trust_manifest/preimage.rs",
+  "mcp-re-client-core/src/delegated_trust/mod.rs",
+  "mcp-re-client-core/src/delegated_trust/anchors.rs",
+  "mcp-re-client-core/src/delegated_trust/manifest_validity.rs",
+  "mcp-re-client-core/src/delegated_trust/revocation.rs",
+]
+exported_contracts = []
+evidence = ["test://client/trust_manifest/lifecycle_battery"]
+assumptions = []
+# The negative controls carry this unit. A rolled-back version, a tampered signature, an
+# untrusted signer, a wrong profile and an expired deadline must each fail closed, and the
+# floor must not default to zero when it cannot be read — a fail-open there would accept
+# every superseded manifest ever published.
+tested_symbols = [
+  "lib#trust_manifest::tests::signed_manifest_loads_current_issuers",
+  "lib#trust_manifest::tests::tampered_manifest_fails_the_signature",
+  "lib#trust_manifest::tests::untrusted_signer_is_rejected",
+  "lib#trust_manifest::tests::wrong_profile_is_rejected",
+  "lib#trust_manifest::tests::rolled_back_manifest_version_is_rejected",
+  "lib#trust_manifest::tests::the_floor_rises_on_load_and_then_rejects_the_superseded_manifest",
+  "lib#trust_manifest::tests::the_in_memory_floor_is_monotonic",
+  "lib#trust_manifest::tests::an_unreadable_floor_fails_closed_rather_than_defaulting_to_zero",
+  "lib#trust_manifest::tests::anchors_are_withheld_when_the_floor_cannot_be_persisted",
+  "lib#trust_manifest::tests::expired_manifest_fails_closed",
+  "lib#trust_manifest::tests::the_manifests_deadline_travels_with_the_anchors_it_published",
+  "lib#trust_manifest::tests::overlap_and_revocation_round_trip_through_the_manifest",
+  "lib#trust_manifest::tests::the_signer_kid_is_covered_by_the_signature",
+  "lib#trust_manifest::preimage::tests::the_signer_kid_manifest_boundary_cannot_be_moved",
+  "lib#delegated_trust::manifest_validity::tests::the_deadline_is_inclusive_of_the_instant_it_names",
+  "lib#delegated_trust::manifest_validity::tests::a_hand_assembled_picture_has_no_deadline_to_miss",
+]
+
+[[unit]]
+id = "client.response_acceptance"
+class = "V0"
+description = "What a client may present to an application as the answer to its own request: which signer is authorized in the Response slot, whether a pinned issuer holds, and the bound/unbound disposition — an unbound receipt is never a success and never an answer to another request."
+paths = [
+  "mcp-re-client-core/src/response.rs",
+  "mcp-re-client-core/src/response_expectation.rs",
+  "mcp-re-client-core/src/delegated_evidence.rs",
+]
+exported_contracts = []
+evidence = ["test://client/response/acceptance_battery"]
+assumptions = []
+# Three separations, each with its negative control: the pin against the ROOT issuer rather
+# than the rotating delegated kid; revocation by every identifier the manifest can name; and
+# unbound-is-not-success, including a preflight receipt about another request's bytes.
+tested_symbols = [
+  "lib#response::delegated_tests::delegated_success_is_verified_and_classified",
+  "lib#response::delegated_tests::delegated_bound_rejection_is_verified_and_classified",
+  "lib#response::delegated_tests::delegated_preflight_rejection_is_verified_unbound",
+  "lib#response::delegated_tests::unbound_signature_is_not_accepted_as_success",
+  "lib#response::delegated_tests::unsigned_response_is_rejected",
+  "lib#response::delegated_tests::direct_root_success_is_rejected_no_credential",
+  "lib#response::delegated_tests::delegated_success_enforces_the_pin_against_the_root_issuer",
+  "lib#response::delegated_tests::delegated_rejection_enforces_the_pin_against_the_root_issuer",
+  "lib#response::delegated_tests::a_pinned_route_refuses_a_202_from_another_root",
+  "lib#response::delegated_tests::revoked_issuer_kid_rejects_success",
+  "lib#response::delegated_tests::revoked_delegated_kid_rejects_success",
+  "lib#response::delegated_tests::revoked_by_jti_rejects_success",
+  "lib#response::delegated_tests::revoked_delegated_key_rejection_receipt_is_rejected",
+  "lib#response::delegated_tests::non_revoked_credential_verifies_with_nonempty_list",
+  "lib#response::delegated_tests::rotation_to_new_delegated_key_succeeds_when_old_revoked",
+  "lib#response::delegated_tests::an_expired_trust_picture_stops_resolving_its_roots",
+  "lib#response::delegated_tests::a_preflight_receipt_for_another_request_is_not_an_answer_to_this_one",
+  "lib#response::delegated_tests::a_preflight_receipt_about_no_request_answers_nothing",
+  "lib#response_expectation::tests::the_projection_reports_the_request_the_expectation_was_built_from",
+  "lib#response_expectation::tests::a_pin_is_absent_until_it_is_set",
+]
+
+[[unit]]
+id = "client.delegation_policy_seal"
+class = "V0"
+description = "What the credential must satisfy, sealed: the clock skew is clamped to the profile bound at construction, so no inhabitant carries an unbounded tolerance and both freshness windows read the same bounded number."
+paths = ["mcp-re-client-core/src/delegation_policy.rs"]
+exported_contracts = []
+evidence = ["test://client/delegation_policy/skew_seal"]
+assumptions = []
+# The seal is the claim. A configured skew beyond the bound is not CONSTRUCTIBLE, rather
+# than rejected later by whichever window happens to check — which is what would let the two
+# windows disagree about the tolerance they applied.
+tested_symbols = [
+  "lib#delegation_policy::policy_seal_tests::a_configured_skew_beyond_the_profile_bound_is_not_constructible",
+  "lib#delegation_policy::policy_seal_tests::a_negative_skew_narrows_to_zero_rather_than_skewing_the_window_backwards",
+  "lib#delegation_policy::policy_seal_tests::both_gates_read_the_same_bounded_number",
+]
+
+[[unit]]
+id = "client.execution_contract"
+class = "V0"
+description = "What a verified rejection receipt says about whether the work ran: the distinction between a receipt that says nothing and one that says nothing ran, read in the same parse as the wire code."
+paths = [
+  "mcp-re-client-core/src/execution_contract.rs",
+  "mcp-re-client-core/src/result_classification.rs",
+]
+exported_contracts = []
+evidence = ["test://client/execution_contract/disposition_battery"]
+assumptions = []
+# The one distinction the whole module exists for is the second control: silence is not a
+# did-not-run verdict, and reading it as one is how a side effect gets repeated.
+tested_symbols = [
+  "lib#execution_contract::tests::a_receipt_that_says_nothing_is_not_a_receipt_that_says_it_did_not_run",
+  "lib#execution_contract::tests::a_body_carrying_no_contract_yields_the_silent_one_rather_than_a_guess",
+  "lib#execution_contract::tests::an_unrecognized_value_is_carried_and_never_read_as_a_known_one",
+  "lib#execution_contract::tests::the_wire_code_and_its_disposition_are_read_in_one_parse",
+  "lib#result_classification::tests::an_absent_result_type_is_terminal_as_the_spec_requires_of_clients",
+  "lib#result_classification::tests::an_unrecognized_result_type_is_never_terminal",
+  "lib#result_classification::tests::the_live_seam_refuses_what_the_reporting_seam_merely_names",
+]

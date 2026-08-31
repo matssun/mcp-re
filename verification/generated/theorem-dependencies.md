@@ -33,6 +33,9 @@ graph BT
     THM_0022["THM-0022<br/>A successful unbound-response verification establishes the shared facts and no request binding at all"]
     THM_0047["THM-0047<br/>The verifier's assurance products are not substitutable"]
     THM_0051["THM-0051<br/>The pipeline holds, at dispatch, the verification product of this very exchange"]
+    THM_0057["THM-0057<br/>A client's trust anchors are the ones the current signed manifest published"]
+    THM_0058["THM-0058<br/>A client accepts a response only under a signer its trust configuration authorizes"]
+    THM_0059["THM-0059<br/>An unbound receipt is never a success and never another request's answer"]
     THM_0007 --> THM_0008
     THM_0001 --> THM_0014
     THM_0007 --> THM_0015
@@ -47,6 +50,11 @@ graph BT
     THM_0001 --> THM_0022
     THM_0015 --> THM_0051
     THM_0047 --> THM_0051
+    THM_0016 --> THM_0058
+    THM_0019 --> THM_0058
+    THM_0057 --> THM_0058
+    THM_0020 --> THM_0059
+    THM_0022 --> THM_0059
 ```
 
 ## Component 2
@@ -235,4 +243,18 @@ graph BT
 ```mermaid
 graph BT
     THM_0053["THM-0053<br/>A presented admission assertion is authentic, in its window, and for this audience"]
+```
+
+## Component 22
+
+```mermaid
+graph BT
+    THM_0060["THM-0060<br/>The client's clock skew is bounded at construction and read once"]
+```
+
+## Component 23
+
+```mermaid
+graph BT
+    THM_0061["THM-0061<br/>A receipt that says nothing is not a receipt that says nothing ran"]
 ```

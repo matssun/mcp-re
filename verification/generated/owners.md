@@ -16,6 +16,10 @@ not an omission to hide.
 
 | unit | class | owns theorems | assumptions |
 |---|---|---|---|
+| client.delegation_policy_seal | V0 | THM-0060 | 0 |
+| client.execution_contract | V0 | THM-0061 | 0 |
+| client.response_acceptance | V0 | THM-0058, THM-0059 | 0 |
+| client.trust_manifest_lifecycle | V0 | THM-0057 | 0 |
 | core.time_rfc3339 | V1 | THM-0002 | 4 |
 | http_profile.admission_currency | V1 | THM-0003, THM-0004, THM-0005, THM-0006, THM-0053 | 4 |
 | http_profile.artifact_typing | V1 | THM-0007 | 3 |
