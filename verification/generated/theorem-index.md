@@ -17,9 +17,21 @@ derives, and it is not shown here because this view cannot see the attestations.
 
 ## System roots
 
-_No system root is declared._ Nothing here is claimed at the MCP-RE boundary,
-so no root is complete — an empty root set is never a pass. Roots are declared
-in `theorems.toml` `root_theorems` after theorem-architecture ratification.
+The claims MCP-RE makes at its boundary. Proof-tree completeness is derived over
+these and reported by `tools/verification/review`; this view cannot see whether
+any of them is closed.
+
+| root | claim |
+|---|---|
+| THM-0074 | No unearned dispatch |
+| THM-0078 | Refusal is terminal, and no refusal-side effect reads as success |
+| THM-0075 | No unearned response attribution |
+| THM-0076 | A client accepts only an answer to its own request, under a signer it trusts |
+| THM-0077 | No deployment serves a posture nobody selected |
+| THM-0012 | The lifecycle record cannot claim a shutdown that did not happen |
+| THM-0072 | A verified receipt proves registration on the service this deployment pinned |
+| THM-0042 | Retained evidence is the evidence the statement was made about |
+| THM-0071 | The refusal vocabulary is total over the outcomes that can occur |
 
 | id | title | owner | supported by | lifecycle |
 |---|---|---|---|---|
@@ -87,6 +99,23 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 | THM-0063 | A signed response never advertises validity its credential does not authorize | proxy.response_signing | unit://proxy.delegated_signing_credential, unit://proxy.response_signing | live |
 | THM-0064 | A non-exporting custody selection keeps the private key off this process | proxy.custody_exposure | unit://proxy.custody_exposure | live |
 | THM-0065 | An emitted bound response signature binds the request it answers | http_profile.response_emission_binding | unit://http_profile.response_emission_binding, unit://http_profile.verifier_results | live |
+| THM-0066 | The serving PEP resolves actors through the deployment's materialized trust authority | proxy.serving_trust_seam | unit://proxy.serving_trust_seam, unit://proxy.trust_plan | live |
+| THM-0067 | The composition root re-reads no owner's security semantics from the request | proxy.trust_composition_root | unit://proxy.trust_composition_root | live |
+| THM-0068 | A pinned transparency service is one operator-reviewed document, or it is not a pin | http_profile.scitt_service_pin | unit://http_profile.scitt_service_pin | live |
+| THM-0069 | A security record states each authority's outcome in that authority's own coordinate | proxy.audit_record_coordinates | unit://proxy.audit_record_coordinates, unit://proxy.refusal_provenance | live |
+| THM-0070 | The record stream is honest about what reached it | proxy.audit_delivery | unit://proxy.audit_delivery | live |
+| THM-0071 | The refusal vocabulary is total over the outcomes that can occur | proxy.audit_record_coordinates | _none_ | live |
+| THM-0072 | A verified receipt proves registration on the service this deployment pinned | http_profile.scitt_receipt_offline | unit://http_profile.scitt_receipt_offline, unit://http_profile.scitt_service_pin | live |
+| THM-0073 | A validated deployment cannot collapse signing roles policy requires distinct | proxy.cross_machine_legality | _none_ | live |
+| THM-0074 | No unearned dispatch | proxy.dispatch_commitment | unit://proxy.dispatch_commitment, unit://proxy.exchange_lifecycle | live |
+| THM-0075 | No unearned response attribution | proxy.response_signing | unit://http_profile.response_emission_binding, unit://proxy.response_signing | live |
+| THM-0076 | A client accepts only an answer to its own request, under a signer it trusts | client.response_acceptance | unit://client.response_acceptance | live |
+| THM-0077 | No deployment serves a posture nobody selected | proxy.trust_composition_root | unit://proxy.cross_machine_legality, unit://proxy.trust_composition_root | live |
+| THM-0078 | Refusal is terminal, and no refusal-side effect reads as success | proxy.exchange_lifecycle | unit://proxy.exchange_lifecycle, unit://proxy.refusal_provenance | live |
+| THM-0079 | Distinct signed exchanges have distinct replay keys | http_profile.replay_key | unit://http_profile.replay_key | live |
+| THM-0080 | Serving derives peer identity only from the credential the mechanism accepted | proxy.authenticated_relationship_peer | _none_ | live |
+| THM-0081 | Every production refusal is inside the exchange lifecycle | proxy.refusal_provenance | _none_ | live |
+| THM-0082 | The serving path signs under the credential source materialization produced | proxy.response_signing | _none_ | live |
 
 ## Claims in full
 
@@ -797,3 +826,199 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 **Review requirement.** Owner security-specification review
 
 **Depends on.** THM-0021, THM-0022
+
+### THM-0066 — The serving PEP resolves actors through the deployment's materialized trust authority
+
+**Statement.** The composition root builds the serving actor resolver exactly once, from the reloading signer directory's snapshot and the deployment's revocation-tier resolver. That seam resolves every Request-slot keyid through the tier on every request rather than through a map captured at process start; an unknown kid is a definitive negative, a store outage is reported as unavailable rather than as a binding failure, and every non-active outcome — revoked, not found, malformed, unavailable — yields no actor. The Response slot answers only for this deployment's own issuer kid.
+
+**Security consequence.** A key revoked in the trust store stops verifying at the instant the tier says so rather than at the next restart, and an operational failure of the tier is never softened into an allow. A deployment cannot announce one revocation tier at startup and run another on the data plane — the defect ADR-MCPS-021 recorded, in which the resolver chain was constructed, its guarantee printed, and then dropped.
+
+**Scope — what this does NOT establish.** Where the seam comes from and what it consults. It does not establish that the tier's own answer is correct, that the trust document is authentic, or that the resolved key is the right one for the signer — those are the tier's and the trust owner's. The composition half is held by source controls over `app.rs`, because `ActorResolver` is a closure seam: anything producing that signature is an inhabitant, so privacy buys nothing and the controls are EVIDENCE rather than unconstructibility.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0037
+
+### THM-0067 — The composition root re-reads no owner's security semantics from the request
+
+**Statement.** Every field the composition root still reads directly from the validated deployment request is a pinned ordinary parameter — one whose value changing, with every owner state unchanged, cannot change a security-sensitive decision or effect — and each is recorded with the sentence saying why. The inventory is checked against the file it describes in both directions, so a new raw read fails and a field that acquired an owner must leave the list.
+
+**Security consequence.** After layer A classifies a deployment, no post-validation consumer can reach back past an owner for a security decision the owner already made — which is how two components come to disagree about what was configured, with neither of them wrong locally.
+
+**Scope — what this does NOT establish.** The general claim over ALL owners; THM-0038 is its trust specialization and states in addition that the root passes trust as owner projections. It does not establish that the owners' own classifications are right, and it says nothing about consumers other than the root — a plane reaching back for a posture is a different failure with its own control. It is a source-text inventory, not a type: `ValidatedDeployment::config()` is legitimately readable, because the root builds things out of it. What is decidable is WHICH fields, and the list only means anything while adding to it costs a written reason.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0068 — A pinned transparency service is one operator-reviewed document, or it is not a pin
+
+**Statement.** `ResolvedTransparencyService::pinned` takes its verification key, leaf profile and position profile from a single `ScittServiceTrustPin`, so all three came from one document an operator wrote and reviewed. A malformed pin document never becomes a pin, and an illegal one is refused at deserialization rather than carried into a resolver that would answer from it.
+
+**Security consequence.** A receipt cannot be verified against a service whose key came from one place and whose profile expectations came from another — the pairing that lets a receipt satisfy a position profile the pinned service never declared.
+
+**Scope — what this does NOT establish.** It establishes the PROVENANCE of a pinned service, not that a deployment pinned one. `verify_receipt_offline` takes the service as a `Fn(&str) -> Option<ResolvedTransparencyService>` seam, and `stated` is a legitimate second provenance — the in-process prototype log is one, with no pin to resolve from. Against a seam a private field only forces a constructor taking the same arguments with the same absence of checking, so what these fields buy is that every producer is NAMED, not that the illegal pairing is unconstructible. Whether a given deployment's resolver is backed by a pin is deployment wiring and is not established here.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0069 — A security record states each authority's outcome in that authority's own coordinate
+
+**Statement.** Every request record states an authorization outcome — not configured, authorized, or refused — and a response record carries none, because there is nothing after the dispatch for a policy to have decided. The Core verdict and the authorization verdict occupy separate coordinates on one record and neither can be read as the other: an unconfigured deployment is not rendered as an authorized one, a policy denial's token goes in the authorization coordinate, the two authorization refusal arms stay distinguishable, and the arm reached before any policy ran imports no policy vocabulary at all.
+
+**Security consequence.** A reader of the record cannot be shown *a policy permitted this* where none was deployed, cannot mistake a request that reached no policy verdict for one a policy denied, and cannot be left unable to tell whether a policy was consulted — the collapse a single rendered `reason` string produced, and which the type system prevented while the record restored.
+
+**Scope — what this does NOT establish.** What a record MAY say, not that the vocabulary is total over the outcomes that occur — that is the open proposition below, and it is an ADR-MCPS-035 decision rather than a registry edit. It does not establish that the record was delivered (THM-0070), and it establishes nothing about the truth of either authority's verdict.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0046
+
+### THM-0070 — The record stream is honest about what reached it
+
+**Statement.** Every emitted record carries a sequence number and the collector preserves emission order. A full queue drops rather than blocking the caller, the drop count is reported without a following record to carry it, an unattributed flood cannot consume the headroom an attributed record needs, and concurrent offers at the ceiling admit only the remaining slots. A drain that timed out is a distinct outcome from one that completed, and the outcome that is unknown is its own case.
+
+**Security consequence.** An auditor cannot be shown a record stream that silently lost entries: a gap is visible in the sequence and a drop is counted and reported. An unattributed caller cannot suppress the records of an attributed one by flooding the queue. And a shutdown whose drain timed out cannot be read as one that emptied the queue — the difference between *these are all the records* and *these are the records that got out*.
+
+**Scope — what this does NOT establish.** Delivery integrity, not content (THM-0069) and not durability: the sink is in-process, so a record that was emitted may still be lost with the process. It establishes nothing about whether a record SHOULD have been written for a given outcome, which is the totality proposition below.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0071 — The refusal vocabulary is total over the outcomes that can occur
+
+**Statement.** Every outcome a served exchange can reach is nameable in the recorded vocabulary, and no outcome is recorded under a token belonging to an authority that did not reach it.
+
+**Security consequence.** An auditor reading the record cannot be shown silence where a refusal occurred, and cannot be shown a token that attributes a refusal to an authority that never ran.
+
+**Scope — what this does NOT establish.** A GAP, and deliberately not closed here. `McpReError` is one frozen taxonomy and `PolicyError` is a second owned by another crate; the record now keeps their coordinates apart (THM-0069), which is what makes the remaining question answerable at all, and it does not make the union total. Closing this needs an ADR-MCPS-035 decision — a new category, new `McpReError` variants, or a rule that the authorization stage renders only Core tokens — and the ratification is explicit that the frozen vocabulary is not bypassed to close a theorem tree. There is also no single owner to assign: the taxonomies live in two crates and the totality relation is between them. Its owner is provisional, and the claim stays unestablished until the decision is taken.
+
+**Review requirement.** Owner security-specification review; ADR-MCPS-035 vocabulary decision
+
+**Depends on.** THM-0046, THM-0069
+
+### THM-0072 — A verified receipt proves registration on the service this deployment pinned
+
+**Statement.** A receipt this deployment verifies offline proves the Signed Statement was registered on the transparency service whose key, leaf profile and position profile came from the pin document the deployment resolved — not merely on some service whose key was supplied to the call.
+
+**Security consequence.** An auditor cannot be shown a receipt from a log this deployment never pinned, and cannot be shown one that satisfies a position profile the pinned service never declared.
+
+**Scope — what this does NOT establish.** It composes the two facts and adds nothing: offline verification against a resolved service (THM-0041) and the provenance of a pinned one (THM-0068). It carries both scopes forward unchanged — nothing about the service being honest, its log append-only, or an entry unique, and nothing about whether the retained evidence is what the statement describes, which is THM-0042 and is a separate promise because no authority owns the conjunction.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0041, THM-0068
+
+### THM-0073 — A validated deployment cannot collapse signing roles policy requires distinct
+
+**Statement.** Where the selected roles and mechanisms require the response-signing key and the channel handshake key to be distinct, no validated deployment obtains a posture in which one key serves both.
+
+**Security consequence.** A party able to obtain a TLS handshake signature cannot thereby obtain a response attribution, and vice versa — the two roles stay separately attributable.
+
+**Scope — what this does NOT establish.** A GAP, and relocated here deliberately. The KMS blueprint records that the separation is held by a CONSTRUCTION SITE — `cli.rs::build_key_source` — rather than by any value, so it does not survive the deletion test and is not structural. It was recorded under response attribution; it does not belong there, because attribution does not logically require it. It is deployment/capability-role integrity, and it is CONDITIONAL: a deployment whose selected roles and mechanisms do not require distinctness is not in scope. The cross-machine relation X2a (THM-0049) states the adjacent fact — that the channel key object must live in a backend the deployment already reaches — and is not this claim.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0049
+
+### THM-0074 — No unearned dispatch
+
+**Statement.** If the serving path invokes the backend for an inbound request, every pre-dispatch security obligation selected by the validated deployment was first established by its owning authority from the inputs that obligation is defined to consult — request and exchange evidence and, where required, authoritative validated or materialized state — and the downstream pipeline consumed the earned product of that establishment for the same relevant request, actor, subject and exchange.
+
+**Security consequence.** A caller cannot reach the backend by omitting evidence, by presenting evidence for a different exchange, by presenting a fact the deployment did not select the authority for, by handing the pipeline a security value it constructed itself, or by having some other exchange's establishment succeed.
+
+**Scope — what this does NOT establish.** It ends at the invocation: what the backend does once dispatched is the application's. Obligations a deployment did NOT select are outside it by construction — this is a claim about the selected set, not a claim that the set is right. It says nothing about liveness: that a valid request IS served is not claimed, and the complement of this implication is THM-0078, not "some other path". Request-carried evidence does not stand in for authoritative state. Admission currency is stated against the state the enforcement point holds, and actor resolution against the MATERIALIZED trust authority (THM-0066), because an obligation defined over validated state is not discharged by anything the request carries.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0003, THM-0004, THM-0005, THM-0006, THM-0009, THM-0015, THM-0034, THM-0040, THM-0043, THM-0045, THM-0050, THM-0051, THM-0052, THM-0053, THM-0066, THM-0079, THM-0080
+
+### THM-0075 — No unearned response attribution
+
+**Statement.** Whenever MCP-RE emits signed response or refusal evidence, the signature is produced by the response-signing capability materialized for that deployment under the supported delegation model; bound evidence is bound to the exact request it answers, and evidence produced before a request can be established is explicitly unbound and cannot be interpreted as bound.
+
+**Security consequence.** A response cannot be attributed to the trust root directly, cannot be signed by a credential the deployment does not hold or no longer holds, cannot advertise validity its credential does not authorize, and a pre-parse receipt cannot be replayed as an answer to a request.
+
+**Scope — what this does NOT establish.** SECURITY-BEARING SIGNED evidence only. Unsigned transport and error responses exist — a last-resort receipt is emitted when no valid credential does — and they are outside this claim, which is why it does not say every response carries evidence. It does not establish that a client accepts the response, which is THM-0076 and a different proposition on the other side of the same exchange.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0022, THM-0062, THM-0063, THM-0065, THM-0082
+
+### THM-0076 — A client accepts only an answer to its own request, under a signer it trusts
+
+**Statement.** If `mcp-re-client-core` returns a response as verified, then that response was signed under a signer this client's current trust configuration authorizes in the Response slot, over a signature base that resolved against the request this client sent; a response that could not be bound is never reported as a success; and what the client may conclude about whether the work ran is what the receipt states, never what its silence might be read as.
+
+**Security consequence.** An application cannot be handed, as this call's answer, a response from another exchange, from another signer, from a signer whose authorization has been retired, or one that verified only in the unbound form — and cannot be led to repeat a side effect by reading silence as *it did not run*.
+
+**Scope — what this does NOT establish.** The consumer side, kept apart from THM-0075 because a deployment may run either side alone and producer attribution and consumer acceptance are different propositions. It does not establish that the deployment was right to trust an anchor, and it does not establish that the expectation was built from the request this client sent: `ResponseExpectation::new` is public for the FFI bindings, so that pairing is a caller obligation and sealing past the seam would be theatre.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0057, THM-0058, THM-0059, THM-0060, THM-0061
+
+### THM-0077 — No deployment serves a posture nobody selected
+
+**Statement.** Every security capability held by the serving runtime is derived from validated semantic owner state. Illegal, unsupported or internally contradictory deployment postures cannot be silently reinterpreted into a weaker posture during materialization or serving.
+
+**Security consequence.** An operator cannot obtain a weaker security posture by supplying a combination nobody validated, and a serving component cannot disagree with the owner about what was configured.
+
+**Scope — what this does NOT establish.** SECURITY POSTURE, not liveness and not permanent runtime availability. A runtime dependency may later fail and cause refusal or loss of availability; that does not violate this claim. What it forbids is a SILENT weakening of the selected policy — an unavailable tier failing closed is inside the claim, an unavailable tier being softened into an allow is not.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0005, THM-0013, THM-0036, THM-0038, THM-0048, THM-0049, THM-0054, THM-0064, THM-0066, THM-0067, THM-0073
+
+### THM-0078 — Refusal is terminal, and no refusal-side effect reads as success
+
+**Statement.** If an inbound exchange fails to establish a required pre-dispatch obligation, it reaches a declared refusal terminal — or a declared pre-exchange transport refusal — before backend dispatch. It cannot fall through into a success-path dispatch or a success response. Any refusal-side effect, including signed refusal evidence, audit and retention records, cleanup and continuation retirement, is authorized by the refusal and lifecycle state it was reached from, and none of them can be read as success.
+
+**Security consequence.** The complement of THM-0074 is not "some other path": it is a refusal that is recorded, that cannot reach the dispatch, and whose own effects cannot be mistaken for the effects of a served request — including the case that motivated the exchange machine, where an approval is spent and the refusal must not read as an ordinary retry.
+
+**Scope — what this does NOT establish.** It forbids a SUCCESS-PATH effect, not any effect at all. The serving architecture emits signed refusal evidence and performs audit, retention, cleanup and continuation retirement on the refusal side, and those are legitimate. This and THM-0074 are two separate safety implications and never a biconditional: stating them as one would make this a liveness claim, which it is not.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0043, THM-0044, THM-0045, THM-0046, THM-0063, THM-0069, THM-0081
+
+### THM-0079 — Distinct signed exchanges have distinct replay keys
+
+**Statement.** The replay five-tuple — profile id, signature label, actor id, audience hash, nonce — is pre-serialized onto the core cache's three slots with a separator that cannot appear in any component, so equality of the composite slots holds exactly when the full five-tuple is equal; every component discriminates; and a key admitted once is reported as a replay thereafter.
+
+**Security consequence.** Evidence produced under a different profile, a different signature role, a different actor or a different audience can never satisfy a replay check meant for another, and the same signed exchange cannot be admitted twice against the same cache.
+
+**Scope — what this does NOT establish.** The KEY and the cache's decision over it. It does not establish that the cache is consulted on every path reaching dispatch, that a distributed backend's insert is atomic, or that the retention window outlives the signature's own validity — those are the replay plane's and are not stated here. Freshness admission itself is THM-0001.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0080 — Serving derives peer identity only from the credential the mechanism accepted
+
+**Statement.** Neither direct-TLS serving path reconstructs peer identity or credential currency from certificate representation: each asks its authority once, through a resolver whose signature admits its predecessor and the options and nothing else, so an acceptance from one relationship cannot be paired with an identity derived from another credential.
+
+**Security consequence.** A served request cannot be attributed to an identity read out of a certificate the communication mechanism did not accept for THIS relationship — the composition ADR-MCPRE-064 Slice 2 forbids, and the one no behavioural control notices, because each still measures a true thing about a correctly-composed value.
+
+**Scope — what this does NOT establish.** A GAP, and the reason is a measurement correction rather than an absence of evidence. The proposal packet recorded this as STRUCTURAL; under the deletion test it is not, because the enforcement is `scripts/serving_identity_provenance_gate.py`, a gate over source text — delete it and a second identity route compiles. The gate is self-tested and runs in CI, and the behavioural half is real handshakes against a chain carrying a rival identity; what does not exist is a `[[unit]]` binding them to this proposition, and the controls sit in a feature-gated lane whose selection has to be established before they can be declared. It does not restate THM-0031, which says the resolved identity is right.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0031, THM-0033
+
+### THM-0081 — Every production refusal is inside the exchange lifecycle
+
+**Statement.** Every refusal a production serving path can reach is minted from a `Refusal` a stage named and served through the exchange machine's disposition, or is a declared pre-exchange transport refusal reached before an exchange exists — there is no third kind, and no exit answers from source position.
+
+**Security consequence.** No refusal can state a retry contract the exchange machine did not derive, which is how an exit reached after a human's approval was spent came to report an ordinary retry — the defect the machine exists to remove, closed at the sites the machine cannot see.
+
+**Scope — what this does NOT establish.** A GAP. THM-0043 establishes that the relation is decided everywhere and THM-0046 that a refusal carries which authority reached it; neither says that every SITE is inside the lifecycle, and THM-0046's scope says so explicitly. The decidable form is a source-text property over the serving subtree — the shape `scripts/refusal_provenance_gate.py` already measures for provenance — and the clause that would measure site totality is not written.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0043, THM-0046
+
+### THM-0082 — The serving path signs under the credential source materialization produced
+
+**Statement.** The response-signing authority the serving path holds was built by the composition root from the custody state the deployment validated, so a response is signed under the capability that deployment materialized and not under one assembled beside it.
+
+**Security consequence.** A deployment cannot announce one signing custody at startup and sign with another on the data plane — the same shape as the resolver defect ADR-MCPS-021 recorded on the trust side, where the chain was constructed, its guarantee printed, and then dropped.
+
+**Scope — what this does NOT establish.** A GAP, and the counterpart of THM-0066 on the signing side. THM-0062 establishes what the credential source yields and when it yields nothing; THM-0064 establishes what a custody selection asserts about exposure. Neither says the source the serving path holds came from that selection, and the composition controls that would say it — the shape `serving_trust_seam_test` uses for the resolver — are not written for the signer.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0062, THM-0064

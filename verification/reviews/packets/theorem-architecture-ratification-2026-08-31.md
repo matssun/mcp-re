@@ -293,3 +293,107 @@ children into parent claims.
 It does **not** authorize: inventing a synthetic owner, bypassing ADR-MCPS-035, replacing a
 theorem identity, changing root scope, adding a trusted external assumption, or choosing
 between materially plausible production designs. Those are §28's semantic stop conditions.
+
+---
+
+## 10. Closure outcome — recorded 2026-08-31
+
+The campaign this record authorized ran to Stage 8. What follows is the state it left, and
+it is a record of measurement, not a claim of completeness.
+
+### The permanent root set, and its owners
+
+Nine roots, because R5 is a family. Every one is owned by a real composition review unit;
+none is owned by a synthetic "system" unit.
+
+| root | proposition | owner | established |
+|---|---|---|---|
+| THM-0074 | R1 — no unearned dispatch | `proxy.dispatch_commitment` | no |
+| THM-0078 | R6 — refusal is terminal, and no refusal-side effect reads as success | `proxy.exchange_lifecycle` | no |
+| THM-0075 | R2 — no unearned response attribution | `proxy.response_signing` | no |
+| THM-0076 | R3 — a client accepts only an answer to its own request | `client.response_acceptance` | no |
+| THM-0077 | R4 — no deployment serves a posture nobody selected | `proxy.trust_composition_root` | no |
+| THM-0012 | R5a — the lifecycle record cannot claim a shutdown that did not happen | `proxy.runtime_lifecycle` | **yes** |
+| THM-0072 | R5b-i — a verified receipt proves registration on the pinned service | `http_profile.scitt_receipt_offline` | no |
+| THM-0042 | R5b-ii — retained evidence is the evidence the statement was made about | `http_profile.scitt_retained_correspondence` | **yes** |
+| THM-0071 | R5c — the refusal vocabulary is total over the outcomes that occur | `proxy.audit_record_coordinates` (provisional) | no |
+
+**Root completeness: INCOMPLETE, 2 of 9.** That is the truthful state of a campaign in
+progress. The dominant blocker is not architecture: 40 of the theorems allocated by this
+campaign carry no owner specification review, because the ratification was of the
+ARCHITECTURE and not of these statements, and a review record inferred from it would record
+an event that did not happen.
+
+### What remains open
+
+Eight claims are `GAP` terminals — a ratified proposition, a real owner, no support closure.
+
+| id | proposition | what is missing |
+|---|---|---|
+| THM-0050 | keyid selector injectivity | one primitive property: SHA-256 collision resistance over the canonical JWK form. **An owner TCB decision**, because ASM-0023's justification records that this project has deliberately declined to assume the digest construction's separation properties |
+| THM-0053 | the admission assertion is authentic, in-window, for this audience | ASM-0012 stands in its place inside the proof cone; discharging it is proof work over MCP-RE's own verifier |
+| THM-0054 | every production listener denies unknown revocation status | a sole-producer gate over `build_client_verifier`, and a handshake control against an undeterminable status |
+| THM-0071 | audit-vocabulary totality | an **ADR-MCPS-035 decision**. Two frozen taxonomies in two crates; the record now keeps their coordinates apart, which is what makes totality answerable, and does not make the union total |
+| THM-0073 | signing roles policy requires distinct are not collapsed | held by a construction site (`cli.rs::build_key_source`), so it fails the deletion test; relocated out from under R2 to R4, conditional on the selected roles |
+| THM-0080 | serving derives peer identity only from the accepted credential | reclassified out of S-1. Gate and handshake controls exist; no `[[unit]]` binds them, and the controls sit in a feature-gated lane whose selection must be established first |
+| THM-0081 | every production refusal is inside the exchange lifecycle | a site-totality clause in the refusal-provenance gate |
+| THM-0082 | the serving path signs under the credential source materialization produced | the composition controls `serving_trust_seam_test` writes for the resolver, written for the signer |
+
+Three of the eight are decisions rather than work: THM-0050 (a TCB assumption), THM-0071 (an
+ADR amendment), and THM-0073 (whether to seal the role separation or accept the site).
+
+### Structural leaves after strict reclassification
+
+**Three survive: S-2, S-3, S-9** (§3). Six were reclassified, and each became a proposition
+or a disposition rather than disappearing: S-1 → THM-0080, S-4 → THM-0073, S-6 → THM-0049,
+S-7 → THM-0046, S-8 → THM-0054, and S-5 → OUT_OF_SCOPE as a caller obligation.
+
+### Assumptions
+
+34 registered, unchanged. **No new trusted external assumption was allocated**, which is a
+§28 stop condition — THM-0050's residue is recorded and left for the owner rather than
+closed by an ASM this campaign wrote for itself. ASM-0012 remains a proof-cone device and no
+longer closes a root: THM-0053 is registered as the gap it stands in for.
+
+### Architecture changes made
+
+None to production semantics. What changed:
+
+- `scripts/serving_product_provenance_gate.py` — new, self-tested, wired into the local gate
+  and CI;
+- clause 10 of `scripts/authorization_provenance_gate.py` — the posture that claims nothing
+  has one producer;
+- `scripts/check-assumptions` — `assume`/`admit` no longer match a method call, with the
+  test pinning both directions;
+- `mcp-re-proxy/tests/integration/serving_trust_seam_test.rs` — new controls over the
+  composition of the serving trust seam;
+- `mcp-re-http-profile/src/keyid.rs` — three controls for the injectivity halves that are
+  ours;
+- `tools/verification/check-assumptions` — the PRODUCTION scan now reads the shipped half
+  only. Its mechanism list exists because the bare words are ordinary Rust, and a test
+  region is where ordinary Rust is densest: `replay.rs` has a helper `fn admit(..)`, and
+  Verus' `admit()` deletes a proof obligation. A region that ships in no binary cannot
+  weaken a proof about one;
+- path filters in `.github/workflows/verification.yml` for every new fingerprint input.
+
+### The missing-edge pass
+
+Four edges the proposal packet's tree did not have, found by asking of each root what it
+requires rather than by reading the registry upward:
+
+1. **replay admission** — a pre-dispatch obligation R1 quantifies over, with no node at all.
+   Closed: `http_profile.replay_key` and THM-0079.
+2. **serving identity provenance** — THM-0080, open.
+3. **the materialized signer** — THM-0082, open. The counterpart of THM-0066 on the signing
+   side, and the same defect shape.
+4. **refusal-site totality** — THM-0081, open.
+
+### Census
+
+50 review units · 81 theorems (41 established) · 88 mutation probes · 34 assumptions ·
+9 declared roots (2 established). `VERIFICATION: PASS` across every required lane.
+
+The 40 unestablished theorems are dominated by one axis and it is not architecture: every
+claim this campaign allocated reports `SPECIFICATION REVIEW UNREVIEWED`. That is correct.
+The ratification was of the architecture, not of these statements, and a review record
+written from it would record an event that did not happen.

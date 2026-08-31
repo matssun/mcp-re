@@ -1710,7 +1710,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.trust_composition_root"
 class = "V0"
-description = "The composition root's TRUST consumption only: after layer A classifies, the root passes owner projections and re-reads no trust field from the validated request. Deliberately narrow — it claims nothing else about `app.rs`, whose other responsibilities are outside this unit."
+description = "The composition root's consumption of the validated request: after layer A classifies, the root passes owner projections, and every field it still reads raw is a pinned ordinary parameter whose reason is written down. Measured over ALL owners, not only trust — the inventory the controls check is the whole set of `values.<field>` reads."
 paths = ["mcp-re-proxy/src/app.rs"]
 exported_contracts = []
 evidence = ["test://proxy/trust/composition_reads_only_projections"]
@@ -2297,4 +2297,157 @@ tested_symbols = [
   "tests/delegated_202_test#a_delegated_202_verifies_via_the_credential_chain",
   "tests/delegated_202_test#a_delegated_202_refuses_a_retransmission_of_the_same_notification",
   "tests/delegated_202_test#a_delegated_202_refuses_a_content_distinct_notification",
+]
+
+# ---------------------------------------------------------------------------------------
+# Stage 6 — the deployment-composition owners.
+#
+# A-1 was recorded as a genuine missing composition authority. Measurement disagrees in the
+# same way it did for A-2: `build_actor_resolver` IS the composition, `revocation_serving_wiring_test`
+# already measures what it does, and what was missing is a `[[unit]]` and the composition
+# half — that the seam the serving path runs was built from the materialized authority
+# rather than from a snapshot beside it.
+# ---------------------------------------------------------------------------------------
+
+[[unit]]
+id = "proxy.serving_trust_seam"
+class = "V0"
+description = "Where the serving PEP's actor resolver comes from and what it consults: built once by the composition root from the reloading signer snapshot and the revocation tier, resolving every Request-slot signer through the tier rather than a map captured at process start."
+paths = [
+  "mcp-re-proxy/src/app.rs",
+  "mcp-re-proxy/src/http_profile_serve/request_admission.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/trust/serving_seam_wiring"]
+assumptions = []
+# Two halves, and the second is the one the first cannot say. The wiring battery pins what
+# the seam DOES — whatever the tier decides, the Request slot obeys — taking the seam as
+# given. The composition controls pin that the seam the serving path runs is the one built
+# from the materialized authority, which is invisible to every behavioural control because
+# each still measures a true thing about a correctly-composed seam.
+tested_symbols = [
+  "tests/integration#revocation_serving_wiring_test::active_binding_resolves_the_key_the_tier_returns",
+  "tests/integration#revocation_serving_wiring_test::revoked_binding_yields_no_actor",
+  "tests/integration#revocation_serving_wiring_test::not_found_and_malformed_yield_no_actor",
+  "tests/integration#revocation_serving_wiring_test::revocation_takes_effect_without_a_restart",
+  "tests/integration#revocation_serving_wiring_test::rotated_key_is_served_from_the_tier",
+  "tests/integration#revocation_serving_wiring_test::slot_discipline_holds",
+  "tests/integration#revocation_serving_wiring_test::unavailable_tier_fails_closed_and_is_never_softened_to_an_allow",
+  "tests/integration#revocation_serving_wiring_test::a_resolver_outage_is_reported_as_unavailable_not_as_a_binding_failure",
+  "tests/integration#revocation_serving_wiring_test::the_production_resolver_surfaces_a_store_outage",
+  "tests/integration#serving_trust_seam_test::the_serving_trust_seam_is_built_once_from_the_materialized_authority",
+  "tests/integration#serving_trust_seam_test::the_seam_resolves_through_the_tier_rather_than_a_frozen_map",
+  "tests/integration#serving_trust_seam_test::the_rules_would_catch_each_regression",
+]
+
+[[unit]]
+id = "http_profile.scitt_service_pin"
+class = "V0"
+description = "What an operator-written transparency-service pin document is, and when it becomes a resolvable service: the three parts a receipt is verified against — key, leaf profile, position profile — come from one reviewed document or from a caller asserting them, and the two provenances are named."
+paths = [
+  "mcp-re-http-profile/src/scitt/trust_pin/document.rs",
+  "mcp-re-http-profile/src/scitt/trust_pin/mod.rs",
+  "mcp-re-http-profile/src/scitt/service.rs",
+]
+exported_contracts = []
+evidence = ["test://http_profile/scitt/service_pin"]
+assumptions = []
+# The refusals are the claim: a malformed document never becomes a pin, and an illegal one
+# is refused at deserialization rather than carried into a resolver that would then answer
+# from it.
+tested_symbols = [
+  "lib#scitt::trust_pin::tests::a_pinned_es256_key_verifies_a_receipt",
+  "lib#scitt::trust_pin::tests::a_malformed_pin_document_never_becomes_a_pin",
+  "lib#scitt::trust_pin::tests::an_illegal_pin_document_is_refused_at_deserialization",
+]
+
+# ---------------------------------------------------------------------------------------
+# Stage 7 — accountability, up to the exception channel.
+#
+# The ratification accepts audit TOTALITY as an ADR-MCPS-035 decision and forbids bypassing
+# it to close the tree. What is registrable without touching the frozen vocabulary is
+# everything below it: what a record may say and in whose coordinate, and whether the record
+# stream is honest about what reached it. Two owners, because a record's CONTENT and a
+# record's DELIVERY fail differently and are measured by different controls.
+# ---------------------------------------------------------------------------------------
+
+[[unit]]
+id = "proxy.audit_record_coordinates"
+class = "V0"
+description = "What a security record may say, and in whose vocabulary: a request record always states an authorization outcome, a response record has none to carry, and the Core verdict and the authorization verdict occupy separate coordinates that cannot be read as each other."
+paths = [
+  "mcp-re-proxy/src/audit_record.rs",
+  "mcp-re-proxy/src/authorization/audit.rs",
+  "mcp-re-proxy/src/authorization/audit/fields.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/audit/record_coordinates"]
+assumptions = []
+# `before_policy_imports_no_vocabulary` is the ADR-MCPRE-066 poison pill: the arm reached
+# before any policy ran must not borrow a policy token, because a reader holding one cannot
+# tell whether a policy was ever consulted.
+tested_symbols = [
+  "lib#audit_record::tests::a_request_record_always_states_an_authorization_outcome",
+  "lib#audit_record::tests::a_response_record_has_no_authorization_coordinate_to_carry",
+  "lib#audit_record::tests::the_two_coordinates_stay_separate_on_one_record",
+  "lib#authorization::audit::tests::an_unconfigured_deployment_is_not_rendered_as_an_authorized_one",
+  "lib#authorization::audit::tests::a_policy_denial_puts_its_token_in_the_authorization_coordinate",
+  "lib#authorization::audit::tests::the_two_refusal_arms_are_distinguishable_in_the_record",
+  "lib#authorization::audit::tests::before_policy_imports_no_vocabulary",
+  "lib#authorization::audit::fields::tests::the_unconfigured_line_cannot_be_read_as_an_authorization",
+]
+
+[[unit]]
+id = "proxy.audit_delivery"
+class = "V0"
+description = "Whether the record stream is honest about what reached it: bounded and non-blocking, order-preserving, every record sequence-numbered, drops counted and reported, and a timed-out drain distinguishable from a completed one."
+paths = [
+  "mcp-re-proxy/src/audit_sink/mod.rs",
+  "mcp-re-proxy/src/audit_sink/drain.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/audit/delivery_integrity"]
+assumptions = []
+# The last two are the ones a reader depends on. A gap in the sequence is visible; a silent
+# drop is not — so the drop count is reported without a following record. And a drain that
+# TIMED OUT has not established that the queue emptied, which is a different fact from a
+# drain that completed, and must never collapse into it.
+tested_symbols = [
+  "lib#audit_sink::tests::every_record_carries_a_sequence_number",
+  "lib#audit_sink::tests::the_collector_preserves_emission_order",
+  "lib#audit_sink::tests::a_full_audit_queue_drops_rather_than_blocking_the_caller",
+  "lib#audit_sink::tests::the_drop_count_is_reported_without_a_following_record",
+  "lib#audit_sink::tests::an_unattributed_flood_cannot_consume_the_headroom_an_attributed_record_needs",
+  "lib#audit_sink::tests::concurrent_offers_at_the_ceiling_admit_only_the_remaining_slots",
+  "lib#audit_sink::tests::the_no_audit_sink_records_nothing_and_does_not_panic",
+  "lib#audit_sink::drain::tests::a_timed_out_audit_drain_never_reads_as_a_completed_one",
+  "lib#audit_sink::drain::tests::the_unknown_outcome_is_its_own_case",
+]
+
+# ---------------------------------------------------------------------------------------
+# Stage 8 — closed by the whole-system missing-edge pass.
+#
+# Replay admission is a pre-dispatch obligation R1 quantifies over, and the proposal packet's
+# tree did not have a node for it: `ExchangeState::ReplayAdmitted` sits in the pipeline, the
+# five-tuple has an injectivity argument in prose, and no theorem named either. Found by
+# asking of each root what it requires rather than by reading the registry upward.
+# ---------------------------------------------------------------------------------------
+
+[[unit]]
+id = "http_profile.replay_key"
+class = "V0"
+description = "The ADR-MCPRE-050 replay five-tuple and its injective pre-serialization onto the core cache's three slots: equality of the composite slots holds exactly when the full five-tuple is equal, and an admitted key is fresh once."
+paths = ["mcp-re-http-profile/src/replay.rs"]
+exported_contracts = []
+evidence = ["test://http_profile/replay/key_injectivity"]
+assumptions = []
+# Injectivity here is a REAL claim about this code, not a primitive assumption: the separator
+# is a code point that cannot appear in a profile id, an RFC 9421 label, an escaped actor id
+# or a base64url audience hash, so the join cannot be forged. `every_component_discriminates`
+# is the control that keeps a widened component from silently collapsing the tuple.
+tested_symbols = [
+  "lib#replay::tests::composite_slots_are_injective",
+  "lib#replay::tests::every_component_discriminates",
+  "lib#replay::tests::core_replay_key_carries_the_same_injective_slots",
+  "lib#replay::tests::first_insert_is_fresh_replay_is_detected",
 ]
