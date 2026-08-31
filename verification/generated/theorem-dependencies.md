@@ -167,10 +167,12 @@ graph BT
     THM_0040["THM-0040<br/>An authorized request was permitted by a decision about that very request"]
     THM_0045["THM-0045<br/>The backend is reached only by consuming a fully assembled pre-dispatch commitment"]
     THM_0052["THM-0052<br/>A dispatched body was released by the decision a configured policy produced"]
+    THM_0056["THM-0056<br/>The posture that claims nothing is produced only where no policy is configured"]
     THM_0039 --> THM_0040
     THM_0040 --> THM_0045
     THM_0040 --> THM_0052
     THM_0045 --> THM_0052
+    THM_0056 --> THM_0052
 ```
 
 ## Component 14
@@ -224,6 +226,8 @@ graph BT
 ```mermaid
 graph BT
     THM_0050["THM-0050<br/>Distinct verification keys have distinct keyids"]
+    THM_0055["THM-0055<br/>The keyid derivation introduces no collisions of its own"]
+    THM_0055 --> THM_0050
 ```
 
 ## Component 21

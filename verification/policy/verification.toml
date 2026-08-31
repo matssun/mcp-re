@@ -2021,3 +2021,30 @@ tested_symbols = [
   "lib#config_state::cross_machine::tests::the_exclusive_custody_relation_has_no_configuration_left_to_refuse",
   "lib#config_state::cross_machine::tests::the_trust_epoch_posture_is_not_re_derived_here",
 ]
+
+[[unit]]
+id = "proxy.authorization_posture"
+class = "V0"
+description = "What this deployment may honestly say about a served request's permission: the one operation that produces a posture, and the two facts it keeps apart — no policy is deployed, and a policy permitted this."
+paths = [
+  "mcp-re-proxy/src/authorization/decide.rs",
+  "mcp-re-proxy/src/authorization/posture.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/authorization/posture_selection"]
+assumptions = []
+# The two directions of the selection, and the two projections that must not collapse it.
+# `Off` is not `Allow`: an unconfigured deployment claims nothing, and a record that reported
+# it as an allow would manufacture a permission nobody granted.
+tested_symbols = [
+  "lib#authorization::decide::tests::no_evaluator_yields_no_policy_configured_and_never_a_grant",
+  "lib#authorization::decide::tests::a_granting_evaluator_yields_an_attributed_authorization",
+  "lib#authorization::decide::tests::a_denying_evaluator_refuses_with_its_own_token",
+  "lib#authorization::decide::tests::an_evaluator_that_could_not_decide_fails_closed_and_says_which_fact_that_is",
+  "lib#authorization::decide::tests::a_request_with_no_readable_action_is_refused_before_any_policy_is_consulted",
+  "lib#authorization::decide::tests::the_coordinate_is_read_whether_or_not_a_policy_is_configured",
+  "lib#authorization::decide::tests::a_denial_and_a_missing_coordinate_project_to_different_authorities",
+  "lib#authorization::decide::tests::an_authorized_request_projects_the_grant_and_the_coordinate_it_was_taken_over",
+  "lib#authorization::posture::tests::an_unconfigured_deployment_does_not_report_an_authorization",
+  "lib#authorization::posture::tests::the_audit_projection_keeps_off_and_allow_apart",
+]

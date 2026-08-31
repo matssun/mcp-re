@@ -72,10 +72,12 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 | THM-0048 | Every listener obtains its whole security posture through one listener state | proxy.tls_listener_state | unit://proxy.tls_listener_state | live |
 | THM-0049 | Every illegal cross-owner configuration combination is refused at layer A | proxy.cross_machine_legality | unit://proxy.cross_machine_legality | live |
 | THM-0050 | Distinct verification keys have distinct keyids | http_profile.keyid | _none_ | live |
-| THM-0051 | The pipeline holds, at dispatch, the verification product of this very exchange | proxy.dispatch_commitment | _none_ | live |
-| THM-0052 | A dispatched body was released by the decision a configured policy produced | proxy.dispatch_commitment | _none_ | live |
+| THM-0051 | The pipeline holds, at dispatch, the verification product of this very exchange | proxy.dispatch_commitment | unit://http_profile.verifier_result_separation, unit://proxy.dispatch_commitment | live |
+| THM-0052 | A dispatched body was released by the decision a configured policy produced | proxy.dispatch_commitment | unit://proxy.dispatch_commitment, unit://proxy.pdp_decision_relation | live |
 | THM-0053 | A presented admission assertion is authentic, in its window, and for this audience | http_profile.admission_currency | _none_ | live |
 | THM-0054 | Every production listener denies unknown client revocation status | proxy.tls_listener_state | _none_ | live |
+| THM-0055 | The keyid derivation introduces no collisions of its own | http_profile.keyid | unit://http_profile.keyid | live |
+| THM-0056 | The posture that claims nothing is produced only where no policy is configured | proxy.authorization_posture | unit://proxy.authorization_posture | live |
 
 ## Claims in full
 
@@ -617,9 +619,11 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 
 **Security consequence.** A signer cannot be accepted under a keyid that resolves to another party's key, which is what would let one enrolled actor's signature be attributed to another.
 
-**Scope — what this does NOT establish.** Selector injectivity only. It does not establish that the seam answers for any particular keyid, that the key it returns is trusted, or that the enrolment set is correct. It says nothing about the canonical JWK encoding beyond what injectivity requires.
+**Scope — what this does NOT establish.** Selector injectivity only. It does not establish that the seam answers for any particular keyid, that the key it returns is trusted, or that the enrolment set is correct. The encoding half is THM-0055 and is established. What remains between THM-0055 and this claim is exactly one property, and it is a property of the primitive rather than of this code: that SHA-256 does not map two distinct canonical JWK forms to one digest. No test can establish it, and no assumption in this registry currently states it — ASM-0028 states second-preimage resistance, which is weaker and differently scoped, and ASM-0023's own justification records that this project has deliberately DECLINED to assume the separation properties of the digest construction. Allocating a collision-resistance assumption is therefore an owner TCB decision, not a registry edit, and this claim stays a gap until it is taken.
 
 **Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0055
 
 ### THM-0051 — The pipeline holds, at dispatch, the verification product of this very exchange
 
@@ -627,7 +631,7 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 
 **Security consequence.** A caller cannot reach the backend by having some other exchange's verification succeed, and no stage between verification and dispatch can substitute a value for the one the verifier produced.
 
-**Scope — what this does NOT establish.** Possession provenance across the serving pipeline. It does not restate what the verification established (THM-0015) or that the products are type-separated (THM-0047); it is the joint those two explicitly exclude.
+**Scope — what this does NOT establish.** Possession provenance across the serving pipeline. It does not restate what the verification established (THM-0015) or that the products are type-separated (THM-0047); it is the joint those two explicitly exclude. The mechanism is a self-tested source-text gate, `scripts/serving_product_provenance_gate.py`: the assembly calls the verification stage exactly once and builds exactly one carrier, the stage hands its product to `ExchangeProgress::establish` so the machine learns it ran, the carrier has no public field, and no production module of `mcp-re-proxy` constructs the product. That is EVIDENCE and not unconstructibility, and the reason it cannot be a type is recorded rather than worked around: `VerifiedMcpRequest` keeps PUBLIC fields because the Verus obligation on `prepare_http_dispatch` reads `verified.request_block` as a field so the prover can relate the obligation to the value, and `#[verifier::external_type_specification]` refuses a non-public field. A proved postcondition outranks a seal. So this claim holds for the serving path of this crate and says nothing about a product another crate fabricates.
 
 **Review requirement.** Owner security-specification review
 
@@ -639,11 +643,11 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 
 **Security consequence.** A serving path cannot bypass a configured policy by releasing the body under the posture that claims nothing, which is the one gap the sealed body type leaves open: possession proves a decision was taken, and this proves it was the one the deployment selected.
 
-**Scope — what this does NOT establish.** It does not restate the seal (THM-0045) or the decision relation (THM-0040). It establishes nothing about the policy's own correctness, and nothing about deployments that configure no policy, which are entitled to serve while claiming nothing.
+**Scope — what this does NOT establish.** It does not restate the seal (THM-0045), the decision relation (THM-0040) or the operation's own selection (THM-0056). It establishes nothing about the policy's own correctness, and nothing about deployments that configure no policy, which are entitled to serve while claiming nothing. The structural half — that the serving path names no `AuthorizationPosture` variant, that the authority builds them in exactly one operation, and that the assembly calls `release` exactly once — is held by `scripts/authorization_provenance_gate.py` clauses 4, 7 and 10, a self-tested source-text gate. That is EVIDENCE, not unconstructibility: `NoPolicyConfigured` is a public variant, and a body released under a synthesized one is byte-for-byte the body a real decision would have released, so no type can refuse it. Deleting the gate leaves the bypass constructible.
 
 **Review requirement.** Owner security-specification review
 
-**Depends on.** THM-0040, THM-0045
+**Depends on.** THM-0040, THM-0045, THM-0056
 
 ### THM-0053 — A presented admission assertion is authentic, in its window, and for this audience
 
@@ -661,8 +665,28 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 
 **Security consequence.** A client whose revocation status cannot be determined — because the CRL is stale, absent for its issuer, or does not cover its position in the chain — cannot complete a handshake, so a revoked credential cannot be admitted by the checking silently failing open.
 
-**Scope — what this does NOT establish.** The verifier value is a foreign trait object that plainly admits permissive implementations, so this is a proposition about every production construction site, not a property of a type this project owns. It does not establish that the CRLs a deployment loads are current or complete, and it establishes nothing about the per-request revocation check, which is a separate authority holding the same invariant.
+**Scope — what this does NOT establish.** The verifier value is a foreign trait object that plainly admits permissive implementations, so this is a proposition about every production construction site, not a property of a type this project owns. It does not establish that the CRLs a deployment loads are current or complete, and it establishes nothing about the per-request revocation check, which is a separate authority holding the same invariant. Two halves are needed and neither exists yet, which is why this is a gap rather than a scoped claim. The SOURCE half — that `build_client_verifier` is the only production producer of a `ClientCertVerifier`, that it takes no argument that could relax the posture, and that it calls `enforce_revocation_expiration` — is measurable by a self-tested gate of the same kind as the four this repository already runs, and is not written. The BEHAVIOURAL half — a handshake driven against a chain whose revocation status cannot be determined, refused — is not in `proxy.tls_listener_state`'s battery, which measures the anchor epoch and resumption and says nothing about revocation admission. Declaring this supported by that battery would attach the claim to controls that do not reach it.
 
 **Review requirement.** Owner security-specification review
 
 **Depends on.** THM-0048
+
+### THM-0055 — The keyid derivation introduces no collisions of its own
+
+**Statement.** `canonical_ed25519_jwk` embeds its operand verbatim between a fixed prefix and a fixed suffix, so the operand is recoverable from the form and distinct operands never share one — for any operand, including one carrying JSON metacharacters. The keyid's base64url-no-pad encoding is injective over the fixed 32-byte width of a SHA-256 output.
+
+**Security consequence.** Two distinct verification keys cannot be given the same keyid by anything this project wrote: not by a canonicalization that reorders or drops a member, not by an operand chosen to nest structure inside the JWK, and not by an encoding that merges digests.
+
+**Scope — what this does NOT establish.** Everything except the digest. It says nothing about whether SHA-256 maps two distinct canonical forms to one value, which is the remaining premise of selector injectivity (THM-0050) and is a property of the primitive. It establishes nothing about the trust seam, about which keys are enrolled, or about whether a resolved key is trusted for its slot.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0056 — The posture that claims nothing is produced only where no policy is configured
+
+**Statement.** `authorize` returns `AuthorizationPosture::NoPolicyConfigured` exactly when the deployment attached no evaluator, and `AuthorizationPosture::Authorized` only from a grant an evaluator actually returned, carrying the request the decision was taken over and that decision whole. An evaluator that denies, and one that could not complete, are the `Err` half and never a posture. The action coordinate is read whether or not a policy is configured, so enabling one cannot change which requests are well-formed enough to serve.
+
+**Security consequence.** A record cannot report *no policy is deployed* as *a policy permitted this*, and an authorized posture cannot be assembled from an attribution taken from one decision and evidence taken from another — the pairing this type exists to be evidence of.
+
+**Scope — what this does NOT establish.** A claim about the operation, not about the serving path: it does not establish that the posture the dispatch consumed is the one this operation returned, which is THM-0052. It establishes nothing about the policy mechanism's own correctness, and nothing about which evaluator a deployment attached.
+
+**Review requirement.** Owner security-specification review

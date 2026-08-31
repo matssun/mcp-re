@@ -125,6 +125,8 @@ stage_static() {
     && python3 scripts/authorization_provenance_gate.py \
     && python3 scripts/refusal_provenance_gate.py --selftest \
     && python3 scripts/refusal_provenance_gate.py \
+    && python3 scripts/serving_product_provenance_gate.py --selftest \
+    && python3 scripts/serving_product_provenance_gate.py \
     && python3 tools/verification/test_verdict_algebra.py \
     && python3 tools/verification/test_invalidation.py \
     && python3 tools/verification/test_attest.py \

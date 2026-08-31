@@ -53,6 +53,10 @@ on:
       - "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs"
       - "mcp-re-proxy/src/refusal/**"
       - "mcp-re-proxy/src/config_state/cross_machine.rs"
+      # Stage 3 gave the posture authority its own unit: the one operation that produces an
+      # AuthorizationPosture, and the two facts it keeps apart.
+      - "mcp-re-proxy/src/authorization/decide.rs"
+      - "mcp-re-proxy/src/authorization/posture.rs"
       # MCPRE-137: the listener-lifetime TLS security state, its subordinates, and the
       # production wiring that gives a listener a lifetime at all.
       - "mcp-re-proxy/src/tls_listener_state/**"
@@ -147,6 +151,10 @@ on:
       - "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs"
       - "mcp-re-proxy/src/refusal/**"
       - "mcp-re-proxy/src/config_state/cross_machine.rs"
+      # Stage 3 gave the posture authority its own unit: the one operation that produces an
+      # AuthorizationPosture, and the two facts it keeps apart.
+      - "mcp-re-proxy/src/authorization/decide.rs"
+      - "mcp-re-proxy/src/authorization/posture.rs"
       # MCPRE-137: the listener-lifetime TLS security state, its subordinates, and the
       # production wiring that gives a listener a lifetime at all.
       - "mcp-re-proxy/src/tls_listener_state/**"

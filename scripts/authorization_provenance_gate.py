@@ -27,6 +27,14 @@ WHAT THIS PROVES, exactly, over production Rust (test regions excluded):
      pipeline that dropped the decision would not compile at the dispatch.
   8. No configuration promotes a conformance evaluator to production authority:
      `--authz reference` is still refused by Layer-A validation.
+ 10. **The posture that claims nothing has one producer.** `AuthorizationPosture`'s variants
+     are named in production only in `decide.rs`, which builds them, and `posture.rs`, which
+     projects them. Nowhere else in the authority, and nowhere in the serving path. This is
+     what closes the gap the sealed body type leaves open: `NoPolicyConfigured` is a public
+     variant, so possession of an `AuthorizedRequestBody` proves a decision was TAKEN and
+     not that a configured policy produced it — unless nothing else can synthesize the
+     posture that claims nothing.
+
   9. **The Mode-1 linkage form can never become Mode-2 evidence.** The candidate filter in
      `bound_decision_evidence` selects on `BindingType::OpaqueDigest`, so a
      `pdp-decision` / `reference-digest` entry — which names an external decision MCP-RE
@@ -130,6 +138,16 @@ SEALED = (
 #: consumes a `ReadyForDispatch`, that state carries an `AuthorizedRequestBody`, and the
 #: only way to obtain one is an authorization decision releasing it. A pipeline that dropped
 #: the stage does not become a subtly weaker proxy that still compiles.
+#: The posture and where its variants may be named in production.
+#:
+#: `decide.rs` BUILDS them and is the only operation entitled to; `posture.rs` OWNS them and
+#: projects them. A third file naming a variant is either a second producer — which would let
+#: a serving path release a body under the posture that claims nothing, on a deployment where
+#: a policy is configured — or a consumer destructuring what it should be asking for.
+POSTURE = "AuthorizationPosture"
+POSTURE_VARIANTS = ("NoPolicyConfigured", "Authorized")
+POSTURE_SITES = ("decide.rs", "posture.rs")
+
 DISPATCH_BODY = "AuthorizedRequestBody"
 RELEASE = "release"
 STAGES = "mcp-re-proxy/src/request_stages.rs"
@@ -291,6 +309,26 @@ def check_authority(sources: dict[str, str]) -> list[str]:
                 f"which is the only in-crate seal there is: a public field lets a caller "
                 f"assemble the product from parts nobody verified."
             )
+    problems += check_posture_producers(sources)
+    return problems
+
+
+def check_posture_producers(sources: dict[str, str]) -> list[str]:
+    """(10) — the posture that claims nothing has one producer."""
+    problems: list[str] = []
+    for path, text in sources.items():
+        if path.endswith(POSTURE_SITES):
+            continue
+        code = code_only(text)
+        for variant in POSTURE_VARIANTS:
+            if f"{POSTURE}::{variant}" in code:
+                problems.append(
+                    f"{path}: names `{POSTURE}::{variant}` in production. The posture is "
+                    f"built in `decide.rs` and projected by `posture.rs`; a third site is "
+                    f"either a second producer — and `NoPolicyConfigured` released at the "
+                    f"dispatch is a configured policy bypassed — or a consumer "
+                    f"destructuring what it should be asking for."
+                )
     return problems
 
 
@@ -352,6 +390,14 @@ def check_serving(text: str) -> list[str]:
             f"decide`. The serving file owns the ORDERING; a stage that decided here would "
             f"be a second authority over what a decision means."
         )
+    for variant in POSTURE_VARIANTS:
+        if f"{POSTURE}::{variant}" in text:
+            problems.append(
+                f"{SERVING}: names `{POSTURE}::{variant}` in production. The serving path "
+                f"CARRIES the posture the stage returned and never states one. A synthesized "
+                f"`NoPolicyConfigured` at the dispatch is a configured policy bypassed, and "
+                f"no type can refuse it — the body it releases is indistinguishable."
+            )
     return problems
 
 
@@ -442,6 +488,14 @@ def check(repo: Path) -> tuple[list[str], int]:
 
 def selftest() -> int:
     cases: list[tuple[str, callable, int]] = [
+        # (10), the authority half: a second producer of the posture.
+        (
+            "a second producer of the posture in the authority",
+            lambda s: {**s, f"{AUTHORITY_DIR}/serving.rs": s[f"{AUTHORITY_DIR}/serving.rs"]
+                       + "\nfn shortcut() -> AuthorizationPosture "
+                       "{ AuthorizationPosture::NoPolicyConfigured }\n"},
+            1,
+        ),
         (
             "a certificate route in the authority",
             lambda s: {**s, f"{AUTHORITY_DIR}/request.rs": s[f"{AUTHORITY_DIR}/request.rs"]
@@ -561,6 +615,12 @@ def selftest() -> int:
          read(REPO, STAGES), 1),
         ("the reference-profile refusal removed", check_validation,
          read(REPO, VALIDATION).replace("AuthzKind::Reference", "AuthzKind::Off"), 1),
+        # (10), the serving half. The bypass this refuses is the one no type can catch:
+        # a body released under a synthesized `NoPolicyConfigured` is byte-for-byte the
+        # body a real decision would have released.
+        ("the serving path synthesizing the posture that claims nothing", check_serving,
+         read(REPO, SERVING) + "\nfn back_door() -> AuthorizedRequestBody { "
+         "AuthorizationPosture::NoPolicyConfigured.release(Vec::new()) }\n", 1),
     ]
     for name, fn, text, expected in text_cases:
         found = fn(text)
