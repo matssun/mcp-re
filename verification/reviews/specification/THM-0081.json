@@ -1,0 +1,17 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:cc31afc20983e87adddbc6f4a1903c95d4f8c8d89a866c978acbd86bb710cab2",
+    "theorem_dependencies": {
+      "THM-0043": "sha256:1ece28b4aeef476884140e0c2e594036d64eea9a19110eef6dd085af4296adb7",
+      "THM-0046": "sha256:ea9c7a5680ae2326df8620d90806dbfb5506edb8a25a65d5b2ed5afe334d4e8f"
+    },
+    "theorem_id": "THM-0081",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. The measured outside set is corrected to FOUR enumerated pre-exchange transport replies plus the separately measured post-decision framing fallback. The proposition becomes the classification \u2014 exchange-owned, or one of the enumerated pre-exchange replies, with no third unclassified path \u2014 and the consequence no longer says every refusal's retry contract was derived by the exchange machine. For exchange-owned refusals it was; for a pre-exchange reply no exchange exists, so what is established instead is that it cannot claim execution or another exchange effect. One sentence covering both would be false about one of them.",
+  "reviewed_fingerprint": "sha256:bf723ba252cf5ed8ae595e4e7db470ecc277a5c56d7a64eb0c5c236b1b93ee86",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0081"
+}

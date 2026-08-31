@@ -50,6 +50,6 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0034 | rustls::ServerConnection::peer_certificates() reports the peer certificate chain in TLS order: element 0 is the peer/end-entity credential, and later elements certify preceding elements. | proxy.channel_associated_identity | THM-0029 |
 | ASM-0035 | The TLS establishment mechanism faithfully reports which establishment path a relationship took, and admits a resumed session only where an earlier full handshake accepted the peer under an anchor set that has not changed since. | proxy.mechanism_verified_credential | THM-0030 |
 | ASM-0036 | A TLS establishment mechanism accepts a client credential only under proof that binds the peer to it: on a FULL handshake, current control of the credential's private key, proved by CertificateVerify; on a RESUMED handshake, possession of resumption secret material derived from an earlier authenticated handshake — authentication CONTINUITY, not a fresh private-key proof. | proxy.authenticated_relationship_peer | THM-0031 |
-| ASM-0037 | SHA-256 is collision resistant: no computationally feasible adversary exhibits two distinct byte strings sharing a digest. | http_profile.keyid | THM-0050, THM-0055 |
+| ASM-0037 | SHA-256 is collision resistant: no computationally feasible adversary exhibits two distinct byte strings sharing a digest. | http_profile.keyid | THM-0055 |
 
-17 assumption(s) are reached by more than one theorem.
+16 assumption(s) are reached by more than one theorem.

@@ -65,6 +65,10 @@ on:
       # The manifest too: the fingerprint reads it, and a dependency change that moves a
       # unit's measurement must reach the lane that re-measures it.
       - "mcp-re-client-core/Cargo.toml"
+      # The shipped client PROXY: THM-0084 is the joint between the request it sends and
+      # the expectation it verifies against, and it lives here rather than in client-core.
+      - "mcp-re-client-proxy/src/**"
+      - "mcp-re-client-proxy/Cargo.toml"
       # Stage 5 gave the response-emission cluster its four owners.
       - "mcp-re-proxy/src/delegated_server_signer/**"
       - "mcp-re-proxy/src/delegated_response_signer.rs"
@@ -193,6 +197,10 @@ on:
       # The manifest too: the fingerprint reads it, and a dependency change that moves a
       # unit's measurement must reach the lane that re-measures it.
       - "mcp-re-client-core/Cargo.toml"
+      # The shipped client PROXY: THM-0084 is the joint between the request it sends and
+      # the expectation it verifies against, and it lives here rather than in client-core.
+      - "mcp-re-client-proxy/src/**"
+      - "mcp-re-client-proxy/Cargo.toml"
       # Stage 5 gave the response-emission cluster its four owners.
       - "mcp-re-proxy/src/delegated_server_signer/**"
       - "mcp-re-proxy/src/delegated_response_signer.rs"

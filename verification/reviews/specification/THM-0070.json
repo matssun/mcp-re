@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:7268a3e5f122492c784fe562a456a54cdd8a8d5e5890c33124837ccb02de1914",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0070",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. Consequence narrowed to the modeled collector lifetime. Queue, drop, ordering and drain-timeout loss are explicit and represented; durability across process failure is explicitly not claimed, and tail loss when the process disappears stays outside scope exactly as the theorem already said.",
+  "reviewed_fingerprint": "sha256:c09edc926379dc1817b58be06ea042570247d318592959b9cc55a8d01c29fa0b",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0070"
+}

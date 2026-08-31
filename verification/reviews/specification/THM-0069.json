@@ -1,0 +1,16 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:49c15da418ecfd8336d86978fe199be6f85eb945013482111ef100409eca4510",
+    "theorem_dependencies": {
+      "THM-0046": "sha256:ea9c7a5680ae2326df8620d90806dbfb5506edb8a25a65d5b2ed5afe334d4e8f"
+    },
+    "theorem_id": "THM-0069",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. The stale sentence claiming totality still needs an ADR-MCPS-035 decision is removed. ADR-MCPRE-066 decided the coordinate algebra and its slices implemented it; no vocabulary was widened.",
+  "reviewed_fingerprint": "sha256:1109d3129a26e26db7f9db049819a49c20621119092ffe02da420b3d33072022",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0069"
+}

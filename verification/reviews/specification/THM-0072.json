@@ -1,0 +1,17 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:f2e67d93555c28d7c6c4475f01d7de7a1e5e2f31f9d30badb2225060257b456f",
+    "theorem_dependencies": {
+      "THM-0041": "sha256:82b88990baab1f1198436ec725e2d6c631722ff33e86708f1059aac9e75907cc",
+      "THM-0068": "sha256:1cdf69a60aa56c5cf43915894dc704fc79df60decfe0d53045aa77008cb92c92"
+    },
+    "theorem_id": "THM-0072",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. Restated conditionally as ruled: when offline receipt verification runs through a resolver projected from a `ScittServiceTrustPin`, a successful verification establishes registration on the service that pin describes. It no longer claims every invocation of `verify_receipt_offline` is pin-backed, because the resolver is a seam and `stated` is a supported provenance.",
+  "reviewed_fingerprint": "sha256:cfbf5265b5ef33cf73e952ad02a8a07678ec027498782d08b0cf81e4e1500447",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0072"
+}

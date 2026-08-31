@@ -40,6 +40,9 @@ graph BT
     THM_0022["THM-0022<br/>A successful unbound-response verification establishes the shared facts and no request binding at all"]
     THM_0023["THM-0023<br/>Every peer identity value is well-formed, whatever evidence produced it"]
     THM_0024["THM-0024<br/>Certificate identity interpretation reads the configured field and refuses rather than falling back"]
+    THM_0025["THM-0025<br/>Every canonical Ed25519 public key value is the canonical RFC 8410 encoding of its own point"]
+    THM_0026["THM-0026<br/>Credential/key correspondence relates two independently interpreted keys and attributes every refusal to the side that failed"]
+    THM_0027["THM-0027<br/>A delegated resolver's existence proves its credential and signer corresponded"]
     THM_0028["THM-0028<br/>Channel-associated certificate credential evidence originates only from an established relationship's mechanism report"]
     THM_0029["THM-0029<br/>A channel-associated peer identity is interpreted from the leaf of that relationship's own credential"]
     THM_0030["THM-0030<br/>Verified-credential evidence records the mechanism's own acceptance and the path it was reached on"]
@@ -80,7 +83,7 @@ graph BT
     THM_0067["THM-0067<br/>The composition root re-reads no owner's security semantics from the request"]
     THM_0069["THM-0069<br/>A security record states each authority's outcome in that authority's own coordinate"]
     THM_0070["THM-0070<br/>The record stream is honest about what reached it"]
-    THM_0071["ROOT — THM-0071<br/>Every reachable refusal has a typed provenance in its own authority's coordinate"]
+    THM_0071["ROOT — THM-0071<br/>Every reachable in-exchange refusal has a typed provenance that reaches the record"]
     THM_0073["THM-0073<br/>Serving materialization refuses a deployment whose two signing roles are one key"]
     THM_0074["ROOT — THM-0074<br/>No unearned dispatch"]
     THM_0075["ROOT — THM-0075<br/>No unearned response attribution"]
@@ -92,6 +95,8 @@ graph BT
     THM_0081["THM-0081<br/>Every production refusal is inside the exchange lifecycle"]
     THM_0082["THM-0082<br/>The serving path signs under the credential source materialization produced"]
     THM_0083["THM-0083<br/>What a request is, is decided once, before anything reads it for meaning"]
+    THM_0084["THM-0084<br/>The shipped client proxy verifies against the request it sent"]
+    THM_0085["THM-0085<br/>Every exchange-owned refusal reaches the audit boundary, typed, before it is answered"]
     THM_0007 --> THM_0008
     THM_0010 --> THM_0009
     THM_0001 --> THM_0014
@@ -106,6 +111,8 @@ graph BT
     THM_0001 --> THM_0021
     THM_0001 --> THM_0022
     THM_0023 --> THM_0024
+    THM_0025 --> THM_0026
+    THM_0026 --> THM_0027
     THM_0024 --> THM_0029
     THM_0028 --> THM_0029
     THM_0028 --> THM_0030
@@ -145,6 +152,9 @@ graph BT
     THM_0069 --> THM_0071
     THM_0070 --> THM_0071
     THM_0081 --> THM_0071
+    THM_0085 --> THM_0071
+    THM_0025 --> THM_0073
+    THM_0027 --> THM_0073
     THM_0049 --> THM_0073
     THM_0003 --> THM_0074
     THM_0004 --> THM_0074
@@ -174,6 +184,7 @@ graph BT
     THM_0059 --> THM_0076
     THM_0060 --> THM_0076
     THM_0061 --> THM_0076
+    THM_0084 --> THM_0076
     THM_0005 --> THM_0077
     THM_0013 --> THM_0077
     THM_0036 --> THM_0077
@@ -199,6 +210,9 @@ graph BT
     THM_0062 --> THM_0082
     THM_0064 --> THM_0082
     THM_0073 --> THM_0082
+    THM_0046 --> THM_0085
+    THM_0069 --> THM_0085
+    THM_0081 --> THM_0085
     classDef root stroke-width:3px;
     class THM_0071,THM_0074,THM_0075,THM_0076,THM_0077,THM_0078 root;
 ```
@@ -223,17 +237,6 @@ graph BT
 
 ```mermaid
 graph BT
-    THM_0025["THM-0025<br/>Every canonical Ed25519 public key value is the canonical RFC 8410 encoding of its own point"]
-    THM_0026["THM-0026<br/>Credential/key correspondence relates two independently interpreted keys and attributes every refusal to the side that failed"]
-    THM_0027["THM-0027<br/>A delegated resolver's existence proves its credential and signer corresponded"]
-    THM_0025 --> THM_0026
-    THM_0026 --> THM_0027
-```
-
-## Component 5
-
-```mermaid
-graph BT
     THM_0041["THM-0041<br/>An offline-verified receipt proves registration, and its root was never supplied"]
     THM_0068["THM-0068<br/>A pinned transparency service is one operator-reviewed document, or it is not a pin"]
     THM_0072["ROOT — THM-0072<br/>A verified receipt proves registration on the service this deployment pinned"]
@@ -243,7 +246,7 @@ graph BT
     class THM_0072 root;
 ```
 
-## Component 6
+## Component 5
 
 ```mermaid
 graph BT

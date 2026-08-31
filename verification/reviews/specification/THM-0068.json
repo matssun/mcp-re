@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:1cdf69a60aa56c5cf43915894dc704fc79df60decfe0d53045aa77008cb92c92",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0068",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. `ResolvedTransparencyService::stated` is preserved as a legitimate non-pin provenance for prototype and conformance use, and the consequence is made conditional on the `pinned` provenance accordingly. No production deployment wiring was invented to make the claim unconditional.",
+  "reviewed_fingerprint": "sha256:5963693271f27520e9d4c46ea8707a8c246a29caf873e89d399705f037060118",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0068"
+}

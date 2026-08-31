@@ -1,0 +1,31 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:c37c7e0bbf738372218737fd9687e7d808198485c7ba74d1ea2652d40e35315d",
+    "theorem_dependencies": {
+      "THM-0005": "sha256:2432f2895f1fa66bcc761fb826a89b5ec4ff43aaa0b61f11680a5848f04b9078",
+      "THM-0013": "sha256:deea7f9f26706639b65fdae02ac4cd5c2a4593102c0d50820dba4f3ef5cecd7b",
+      "THM-0025": "sha256:842f2d7c83658f810f1beaa1e5feac028eedab8234b8f418c5fe9e64129ca54e",
+      "THM-0026": "sha256:120750929aa1f77dd3432379326cf55c92a72da3986378a9df5663d5a2e0d585",
+      "THM-0027": "sha256:694cd5270497ed5c4880f3cd04306bcec0f7adcb506ec88ea4e6a8057cc44df3",
+      "THM-0035": "sha256:7733c22f502533bc41cd2e887ac4e4eea2f215cf5e0b19f2f72a56d29d3571fc",
+      "THM-0036": "sha256:7b2450f945dd5015b55072c85485e729102e8e31fa8e6d2b0c5548eb9cbc26f0",
+      "THM-0037": "sha256:58a6dfe8b5cb1df5ce92320fc6a9f51518133ca8a25daf1db4980bda13a92214",
+      "THM-0038": "sha256:620c3803c792ff1743a301855e73336a1d13089d92429cb3a97577998269d0ce",
+      "THM-0048": "sha256:fdfe85b7883105e261d857c6ac8121cf983d2b8ca30a0b5137a8742ddfb38de3",
+      "THM-0049": "sha256:c90442429f9908e51506174e59083a636bdcc987f3d83f7987dee685875afdde",
+      "THM-0054": "sha256:acba4f5ce1579af0e47a2cd7867ee961de18df5f7a8e014bbeceb5b9e5c53470",
+      "THM-0064": "sha256:d4ed4b51ee2b1642de63c8b8024310060f381ed421a151cfd76f51d4e9a43701",
+      "THM-0066": "sha256:53248632f6d1eb564a7557c6f4b400d16e21655bdb1037376abe64d51c0e6fdc",
+      "THM-0067": "sha256:10ada285a51969bc917f49fad14a6ec471c16cbcf8082a14ea9d697092b70433",
+      "THM-0073": "sha256:1193224486e76a9ffcaf098325e3f701e100454779b066ca7c56be2edb2473ac"
+    },
+    "theorem_id": "THM-0077",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31, given over verification/reviews/packets/owner-specification-review-2026-08-31.md. The ruling declared the consolidated review COMPLETE and approved every packet theorem not named in its bounded correction set at its current fingerprint. This theorem was not named, and its statement, security consequence and scope are unchanged from the packet the owner read. Its own claim text is unchanged from the packet, but its fingerprint moved because a PREMISE in its dependency closure was corrected by this same ruling \u2014 which is exactly what the transitive closure exists to surface. The ruling approved both the corrected premise and this theorem, so the approval covers the resulting fingerprint.",
+  "reviewed_fingerprint": "sha256:d08f6f2322a50f0bff07911b7236d698cd7195b609efc92ffc1a553449f739dc",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0077"
+}

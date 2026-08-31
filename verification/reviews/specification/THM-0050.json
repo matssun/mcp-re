@@ -1,0 +1,16 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:4fe55846eab53f1d5d64209458b67048bbea1b4bf968e49d4d7715cbcb259e95",
+    "theorem_dependencies": {
+      "THM-0055": "sha256:0f11740849d75fdf37fe9bc78b7189592eb47d188be2f4902f214da8c6c65f9f"
+    },
+    "theorem_id": "THM-0050",
+    "theorem_review_requirement": "Owner security-specification review; re-review on any change to the keyid digest algorithm"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. Kept as ruled, with ASM-0037. What changed is REVIEW-UNIT GRANULARITY: `http_profile.keyid` now owns the MCP-RE derivation/encoding proposition and carries no primitive assumption at all, while a second unit, `http_profile.keyid_selector`, carries ASM-0037 and supports this claim. Two units over one file, so THM-0055 cannot inherit collision resistance. No production change.",
+  "reviewed_fingerprint": "sha256:dc3245b21e3bb034f0a71cbe07379c2d54d1f582d32a257478b1c38815ffd7f4",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0050"
+}

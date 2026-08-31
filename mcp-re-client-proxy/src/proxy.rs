@@ -736,4 +736,174 @@ mod tests {
             ResultClass::Unrecognized
         );
     }
+
+    // ---------------------------------------------------------------------------------
+    // THM-0084 — the response is verified against the request THIS proxy sent.
+    //
+    // `client.response_acceptance` establishes what the verifier does with an expectation
+    // and a response. It takes the PAIRING as given, and says so: pairing an expectation
+    // with the request it describes is the caller's obligation. For a raw FFI caller that
+    // is the honest boundary — `ResponseExpectation::new` is public precisely so a binding
+    // that rebuilt the request from scalars can supply one.
+    //
+    // But the SYSTEM ROOT is not an arbitrary caller. It is this shipped path, and here the
+    // obligation is discharged rather than delegated: `handle` builds ONE `SignedRequest`,
+    // hands `signed.request()` to the transport, and derives the expectation from that same
+    // owner. Nothing reconstructs a second request, so there is no second request for the
+    // two halves to disagree about.
+    //
+    // Measured over this file's own source through `include_str!`, which makes the scan a
+    // COMPILE-TIME dependency: if the module moves or is renamed the battery stops
+    // compiling rather than silently measuring nothing.
+    // ---------------------------------------------------------------------------------
+
+    /// This module's own source, at compile time.
+    const PROXY_SRC: &str = include_str!("proxy.rs");
+
+    /// Everything outside a `#[cfg(test)]` region — the shipped half of this file.
+    fn production(source: &str) -> String {
+        let mut out = Vec::new();
+        let lines: Vec<&str> = source.lines().collect();
+        let mut i = 0;
+        while i < lines.len() {
+            if lines[i].trim_start().starts_with("#[cfg(test)]") {
+                let mut depth: i64 = 0;
+                let mut opened = false;
+                while i < lines.len() {
+                    depth += lines[i].matches('{').count() as i64;
+                    depth -= lines[i].matches('}').count() as i64;
+                    opened = opened || lines[i].contains('{');
+                    i += 1;
+                    if opened && depth <= 0 {
+                        break;
+                    }
+                }
+                continue;
+            }
+            out.push(lines[i]);
+            i += 1;
+        }
+        out.join("\n")
+    }
+
+    /// The body of `fn <name>`, by brace depth, over code lines only.
+    fn body_of(source: &str, name: &str) -> String {
+        let code: String = source
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let at = code
+            .find(&format!("fn {name}"))
+            .unwrap_or_else(|| panic!("`fn {name}` is not in this module any more"));
+        let open = at + code[at..].find('{').expect("a body");
+        let chars: Vec<char> = code[open..].chars().collect();
+        let mut depth = 0i64;
+        for (offset, c) in chars.iter().enumerate() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return chars[..=offset].iter().collect();
+                    }
+                }
+                _ => {}
+            }
+        }
+        chars.iter().collect()
+    }
+
+    /// `handle` signs once, and sends THAT signed request.
+    #[test]
+    fn the_proxy_sends_the_one_request_it_signed() {
+        let handle = body_of(&production(PROXY_SRC), "handle");
+        assert_eq!(
+            handle.matches("self.sign_request(").count(),
+            1,
+            "`handle` must build exactly one signed request. None means the request came \
+             from somewhere this test cannot see; more than one means two requests, and \
+             nothing decides which the response is verified against."
+        );
+        assert!(
+            handle.contains(".round_trip(signed.request())"),
+            "`handle` no longer forwards `signed.request()`. Whatever it sends is then a \
+             request the expectation below was not derived from."
+        );
+    }
+
+    /// Both verification paths receive that same owner, and nothing rebuilds a request.
+    #[test]
+    fn both_verification_paths_take_the_signed_request_owner() {
+        let source = production(PROXY_SRC);
+        let handle = body_of(&source, "handle");
+        for call in [
+            "self.verify_reply(route, &signed,",
+            "self.verify_notification_ack(route, &signed,",
+        ] {
+            assert!(
+                handle.contains(call),
+                "`handle` no longer passes `&signed` to `{call}...`. The expectation would \
+                 then be derived from something other than the request that was sent."
+            );
+        }
+        assert!(
+            body_of(&source, "verify_reply").contains("ResponseExpectation::for_signed(signed)"),
+            "`verify_reply` no longer derives its expectation from the signed request it was \
+             given. `ResponseExpectation::new` takes any request at all — that is what makes \
+             it usable from FFI, and what makes deriving from the owner load-bearing here."
+        );
+        assert!(
+            body_of(&source, "verify_notification_ack").contains("signed.request()"),
+            "the acknowledgement path no longer verifies against `signed.request()`. A \
+             bodyless 202 carries no response block to bind an expectation to, so this \
+             direct hand-off IS the correspondence on that path."
+        );
+    }
+
+    /// No second request is reconstructed anywhere in the shipped path.
+    ///
+    /// The defect this forbids by name: rebuilding an `HttpRequest` and handing it to
+    /// `ResponseExpectation::new` produces an expectation that is well-formed, verifies
+    /// against a well-formed response, and describes a request this proxy never sent.
+    #[test]
+    fn the_shipped_path_reconstructs_no_second_request() {
+        let source = production(PROXY_SRC);
+        assert!(
+            !source.contains("ResponseExpectation::new("),
+            "the shipped client-proxy path calls `ResponseExpectation::new`. That \
+             constructor exists for FFI callers that rebuilt the request from scalars and \
+             hold no `SignedRequest`; in this path the owner is right there, and taking it \
+             is what makes the correspondence a fact rather than a caller obligation."
+        );
+    }
+
+    /// The rules detect what they claim to.
+    #[test]
+    fn the_correspondence_rules_would_catch_each_regression() {
+        let broken = "fn handle(&self) {\n    let a = self.sign_request(x);\n    \
+                      let b = self.sign_request(y);\n    t.round_trip(b.request());\n}";
+        let body = body_of(broken, "handle");
+        assert_eq!(
+            body.matches("self.sign_request(").count(),
+            2,
+            "two signings must be seen"
+        );
+        assert!(
+            !body.contains(".round_trip(signed.request())"),
+            "sending something other than the signed owner must be seen"
+        );
+        // A test region is out of scope, so this module's own fixtures cannot satisfy a rule.
+        assert!(
+            !production("#[cfg(test)]\nmod t {\n    ResponseExpectation::new(r);\n}\n")
+                .contains("ResponseExpectation::new("),
+            "a call inside a test region is not a production call"
+        );
+        // Production below a test module is still production.
+        assert!(
+            production("#[cfg(test)]\nmod t {\n}\nfn late() { ResponseExpectation::new(r); }\n")
+                .contains("ResponseExpectation::new("),
+            "a call below a test module must still be seen"
+        );
+    }
 }

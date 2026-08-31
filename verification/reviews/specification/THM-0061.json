@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:60ac9474f7a2ae28be7fa0020a8f123a09cd468bd036a3b9e7d842481df594e2",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0061",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. The parsing/preservation theorem is kept. The consequence no longer implies the server's retention statement is true: it is now that an explicit failed, unknown or unstated retention or execution result cannot be silently reinterpreted by the client library as successful retention or known non-execution. Truth of the server's claim belongs to the serving-side roots.",
+  "reviewed_fingerprint": "sha256:0b5ec6c9032561d5de456796d26561cb1e60935441c5c8b0360f9b681e56ec87",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0061"
+}

@@ -1,0 +1,27 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:ca9f67566bbe6c733aeba9afb46fea496d8af415b36624f9dde8f91a926e6269",
+    "theorem_dependencies": {
+      "THM-0001": "sha256:b067364dff3ea3ee94ba4bc44f3eaa6b7d73dfd0a7f83fce66f6b974683c2868",
+      "THM-0016": "sha256:4c257ba6c8a5806b191849e424f57854dfb240e817196568849326145c101079",
+      "THM-0019": "sha256:68ed2898006f38a1b2a9e5ba26090c507a19dd375c6bccd69fa677e85fc025ea",
+      "THM-0020": "sha256:7f630ee9ad02ca2137b43296c775cebab478498de18e2580b147c7ce6335a380",
+      "THM-0021": "sha256:95a829f9b0e1e96d05d7718fce20ef57392757cc14cfa193e3d16a619bd882b9",
+      "THM-0022": "sha256:5a6ae3fc8d7e8da6cc64a01fd68effcf12734ed195160466e6eaede46794467e",
+      "THM-0057": "sha256:6af9416e71f599cefa633a6efd1174807feb9d8aab41658586b3ec15e8bfb4dd",
+      "THM-0058": "sha256:03addb82f7e94c7e6b56fc34c89e6355f7a95d49f9584f421cd5e0e879ed213f",
+      "THM-0059": "sha256:61c436753de5a58ea8afb6d533e3c219dc98ce7608793888e1886c01f9933266",
+      "THM-0060": "sha256:993e13ab515e251b36a384bd4b92602f3bdad949d09f6196103b5b81fd621269",
+      "THM-0061": "sha256:60ac9474f7a2ae28be7fa0020a8f123a09cd468bd036a3b9e7d842481df594e2",
+      "THM-0084": "sha256:6e2056c9c9a85ee5c42e9cd7c60711115968db07dcd422c9a98109c6d3ac9900"
+    },
+    "theorem_id": "THM-0076",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. Restated to the shipped `ClientProxy` path, which removes a contradiction rather than adding a caveat: the statement claimed the response resolved against the request this client sent while the scope called that pairing a caller obligation. THM-0084 is added as a logical dependency and discharges it where the shipped path owns it. `ResponseExpectation::new` stays public for FFI, and raw FFI/low-level reconstruction remain outside the system-root guarantee.",
+  "reviewed_fingerprint": "sha256:3d10b59aa7ff1e6d3b8ff90dd3ddd3fb308fa5359c5518ce6f41885e259cc2c8",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0076"
+}

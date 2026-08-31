@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:e7da225982526a6d1bbbcf43e0b872851f7596e186699b307495234c144d1ebe",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0053",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. Scope cross-reference only: the authoritative-state pointer said THM-0007 and now names the admission currency/anti-rollback owner, principally THM-0004. No proposition change.",
+  "reviewed_fingerprint": "sha256:456fbfac0ee6f856c528966874f3aa0b0251e25e3a11425ed2330af856714010",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0053"
+}
