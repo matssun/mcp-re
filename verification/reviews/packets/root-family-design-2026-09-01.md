@@ -6,334 +6,434 @@
 STATUS:  DESIGN PACKET — ADR-MCPRE-059 §28
          NON-NORMATIVE. Proposes a decomposition; establishes nothing.
          Temporary node identifiers only. No THM allocated, no root declared.
+         Altitude table RATIFIED 2026-09-01; node statements corrected below.
 ```
 
-**Authority.** Owner completeness rulings 1–5 of 2026-08-31
-([`../rulings/owner-completeness-rulings-2026-08-31.md`](../rulings/owner-completeness-rulings-2026-08-31.md)),
-under the security-claim boundary ratified 2026-09-01
+**Authority.** Owner completeness rulings 1–5 of 2026-08-31, and the owner ruling of
+2026-09-01 that ratified this packet's altitude pass and corrected six node statements.
+Under the claim boundary ratified 2026-09-01
 ([`../../../docs/spec/security-boundary.md`](../../../docs/spec/security-boundary.md) §4).
 
-**Measured against** `main @ e6496173`.
+**Measured against** `main @ 11a3a83f`.
 
-Node names `D1`, `D1.1`, … are handles for this review and appear nowhere else. A node that
-earns permanent identity gets a `THM-NNNN` only after ratification, and only then.
-
----
-
-## 0. Altitude first: the ruling named five areas, not five roots
-
-The ruling asked for the five areas; it did not say each needs a root. Determining altitude
-before proposing nodes is the whole of §1, because the failure it prevents is the expensive
-one: a new root is a new top-level security promise, and one minted where a child would do
-makes the root set look like a list of subsystems rather than a set of independent promises.
-
-The test applied to each area, in order:
-
-1. **Is there a proposition here that no existing root's statement already quantifies over?**
-   If an existing root's promise is simply *false* in a case this area covers, the area is a
-   child of that root, not a peer of it.
-2. **Can a deployment run this area without the candidate parent, or the parent without it?**
-   Mutual independence is what makes two propositions peers. THM-0075 and THM-0076 are
-   separate roots for exactly this reason — a deployment may run either side alone.
-3. **Does an honest semantic owner exist for it in the tree today?** An architecture gap is
-   a claim to *measure*, not to assert. Two of the five turned out to have real authorities
-   that merely lack a `[[unit]]`.
-
-### Verdict table
-
-| # | area | altitude | why |
-|---|---|---|---|
-| 1 | Replay / continuation store durability | **EXISTING_ROOT_EXTENSION** (two children: THM-0077, THM-0074) | not independent of either parent — a store is *selected posture* and *a dispatch precondition*; a deployment cannot run "the store promise" alone |
-| 2 | Retained-evidence correspondence | **REOPENED_BRANCH** (THM-0042) | the root exists and is declared; its statement is corrected and its review is `STALE_CLAIM`. Nothing new is minted |
-| 2b | Retained-evidence reservation fidelity | **EXISTING_ROOT_EXTENSION** (THM-0074, with a refusal-side relation to THM-0078) | a marker's legality is a fact about the *execution threshold*, which is the dispatch root's subject |
-| 3 | Outbound credential acquisition | **EXISTING_ROOT_EXTENSION** (THM-0077) | materialization: the deployment reaches only the authority it selected. Not a peer promise — it is what "the posture it selected" *means* for a credential |
-| 4 | Client-sidecar local ingress | **NEW_ROOT** | passes test 2 in both directions: the sidecar runs with no MCP-RE proxy in the deployment, and every existing root holds with the sidecar absent |
-| 5 | Python / TypeScript exchange paths | **ROOT_FAMILY_MEMBER** ×2, under a family whose Rust member is THM-0076 | independently implemented boundaries; a common implementation theorem would be a claim about neither |
-
-**Three of five need no new root.** That is the result of the altitude pass, not a shortcut
-through it.
+Node names `D1`…`D10` are handles for this review and appear nowhere else.
 
 ---
 
-## 1. Area 1 — replay / continuation store durability
+## 0. Altitude — ratified
 
-Two propositions, not one, and they belong under different parents. Folding them would
-produce a node whose answer to *what single security fact does this own?* needs an "and".
+| # | area | altitude |
+|---|---|---|
+| 1 | Replay tier fidelity | **EXISTING_ROOT_EXTENSION** — D1a under THM-0077 |
+| 1 | Continuation tier fidelity | **EXISTING_ROOT_EXTENSION** — D1b under THM-0077 |
+| 1 | Replay establishment fail-closed | **EXISTING_ROOT_EXTENSION** — D2a under THM-0074 |
+| 1 | Continuation establishment fail-closed | **EXISTING_ROOT_EXTENSION** — D2b under THM-0074 |
+| 2 | Retained-evidence correspondence | **REOPENED_BRANCH** — THM-0042. No node minted |
+| 2b | Retention reservation state relation | **EXISTING_ROOT_EXTENSION** — D4 under THM-0074, rescind relation consumed by THM-0078 |
+| 3 | Credential egress authority | **EXISTING_ROOT_EXTENSION** — D5 under THM-0077 |
+| 4 | Sidecar local ingress | **NEW_ROOT** — D6 |
+| 5 | Python exchange path | **ROOT_FAMILY_MEMBER** — D7 |
+| 5 | TypeScript exchange path | **ROOT_FAMILY_MEMBER** — D8 |
 
-### D1 — the materialized tier is the tier that was selected
+### One new root SHAPE, three new declared roots
 
-`EXISTING_ROOT_EXTENSION` — child of **THM-0077** (no unselected posture).
+Stated because the earlier revision of this packet blurred it. If D6, D7 and D8 are
+established as designed, **all three become entries in `root_theorems`** — the declared root
+set goes from nine to twelve.
 
-- **Proposition.** For every started deployment, the replay and continuation stores the
-  serving path uses are the tier the validated configuration selected, at the durability the
-  tier advertises; a tier that cannot be established prevents startup rather than being
-  silently substituted.
-- **Security consequence.** An operator who selected a shared, durable replay tier cannot be
-  served by a local in-memory one. The failure this excludes is not a crash: it is a
-  deployment that believes it has cross-replica replay protection and has per-process
-  protection, which is the exact shape of the single-node claim ceiling the historical
-  boundary was written around.
-- **Scope / non-claim.** Says nothing about whether Redis or etcd is *itself* correct, or
-  about availability. Tier fidelity, not tier quality.
-- **Owner.** `mcp-re-proxy/src/replay_plane/` — a real authority today, with a documented
-  materializer contract, and no `[[unit]]`. `continuation_store/` is its sibling for the
-  continuation half.
-- **Parent / dependencies.** THM-0077; consumes THM-0037 (trust plan) and THM-0013 shape.
-- **Reusable.** `replay_tier.rs`, `shared_replay.rs`, the `async_replay` backends and their
-  existing tests; the ADR-MCPRE-056 §6 materialization argument already written in the
-  module doc.
-- **Required new proposition.** That the plan→plane relation is total and injective on the
-  selected tier — today the argument is prose in the materializer, not a stated claim.
-- **Assumptions.** Will need a registered premise over the Redis/etcd client libraries'
-  reported success, in the shape of ASM-0033 (a mechanism faithfully reports what it did).
-  None exists yet.
-- **R9 disposed.** None directly; this closes an *omission*, which is why the audit found it
-  by boundary-action enumeration rather than by finding.
+Only **D6 is a new root shape**: a top-level security promise of a kind the system did not
+previously make. D7 and D8 are two new *implementation-specific members* of the
+supported-client family whose shape THM-0076 already established. "One new root" is true of
+the shape and false of the count, and the count is what `root_theorems` holds.
 
-### D2 — a store that cannot establish its state prevents dispatch
+---
 
-`EXISTING_ROOT_EXTENSION` — child of **THM-0074** (no unearned dispatch).
+## 1. Area 1 — four leaves, not two
 
-- **Proposition.** Where the selected tier is unavailable, or cannot durably establish the
-  replay or continuation state a request requires, the exchange does not dispatch.
-- **Security consequence.** Replay admission cannot degrade to *fail-open on infrastructure
-  trouble*. This is the direction that matters: an unavailable store must not become an
-  admitted request.
-- **Scope / non-claim.** Not availability, not latency, not a retry policy. It says the
-  refusal happens, not that the deployment stays useful.
-- **Owner.** `proxy.dispatch_commitment` already owns the pre-dispatch commitment; the store
-  arm is the new part and sits with the replay plane's projection.
-- **Parent / dependencies.** THM-0074; relates to THM-0045 (retention reservation ordering).
+The parent may quantify over replay and continuation together. A leaf may not, because
+`replay_plane/` and `continuation_store/` are sibling authorities and neither owns the
+other's facts. Putting the joint on whichever leaf existed first is the shallow-boundary
+move the twelve questions exist to catch.
+
+There is a second split inside each leaf, and it is the one that decides where an external
+premise is needed:
+
+```text
+selected tier IS what was materialized          ← configuration projection. MCP-RE-owned.
+                                                   needs NO external mechanism premise.
+that mechanism's reported success establishes   ← external fact. Needs a narrow,
+its advertised durable effect                      mechanism-specific premise.
+```
+
+D1a/D1b claim only the first. The second is a separate obligation, and it is where Redis and
+etcd stop being interchangeable.
+
+### D1a — the materialized replay tier is the selected replay tier
+
+`EXISTING_ROOT_EXTENSION` — child of **THM-0077**.
+
+- **Proposition.** For every started deployment, the replay store the serving path uses is
+  the tier the validated configuration selected; a tier that cannot be established prevents
+  startup rather than being substituted.
+- **Security consequence.** An operator who selected a shared replay tier cannot be served
+  by a per-process one. The excluded failure is not a crash — it is a deployment that
+  believes it has cross-replica replay protection and has process-local protection.
+- **Scope / non-claim.** Projection only. Says nothing about whether the backend's
+  acknowledgement means what the backend documents, nothing about availability.
+- **Owner.** `mcp-re-proxy/src/replay_plane/` — real authority, documented materializer
+  contract, **no `[[unit]]`**.
+- **Parent.** THM-0077. Consumes THM-0037 (trust plan).
+- **Reusable.** `replay_tier.rs`, `shared_replay.rs`, the ADR-MCPRE-056 §6 argument already
+  in the module doc.
+- **Required new proposition.** That the plan→plane relation is total and preserves the
+  selected tier. Today it is prose in the materializer.
+- **Assumptions.** **None.** This is the point of the split: a configuration-projection
+  claim does not need a backend-behaviour premise, and giving it one would widen a blast
+  radius the claim does not use.
+- **R9 disposed.** None. Closes an omission the boundary-action enumeration found.
+
+### D1b — the materialized continuation tier is the selected continuation tier
+
+`EXISTING_ROOT_EXTENSION` — child of **THM-0077**. As D1a, owned by
+`mcp-re-proxy/src/continuation_store/`, with `redis_continuation_store.rs` as the shared-tier
+arm. Separate node because separate owner; identical shape, no shared representation.
+
+### D2a / D2b — a store that cannot establish required state prevents dispatch
+
+`EXISTING_ROOT_EXTENSION` ×2 — children of **THM-0074**, one per mechanism family.
+
+- **Proposition (per store).** Where the selected tier cannot durably establish the replay
+  (resp. continuation) state a request requires, the exchange does not dispatch.
+- **Security consequence.** Replay admission cannot degrade to fail-open on infrastructure
+  trouble. An unavailable store must not become an admitted request.
+- **Scope / non-claim.** Not availability, not latency, not retry policy.
+- **Owner.** The dispatch-side owner is `proxy.dispatch_commitment`; each store's
+  establishment projection is its own plane's.
 - **Reusable.** THM-0009, THM-0053 and the admission chain under THM-0074.
-- **Required new proposition.** The fail-closed direction, stated over the *tier*, not over
-  a particular backend's error type.
-- **Assumptions.** Shares D1's mechanism premise.
-- **R9 disposed.** None open; recorded because the ruling put it here.
+- **Assumptions.** **Here** the external premise is needed, and separately per mechanism:
+  what a Redis `WAIT` acknowledgement establishes is not what an etcd transaction success
+  establishes, and neither is what a filesystem `fsync` establishes. Three narrow premises,
+  registered only where a root actually consumes the fact. No "the client library reports
+  success faithfully" umbrella.
+- **R9 disposed.** None open.
 
 ---
 
-## 2. Area 2 — retained evidence: one reopened branch, one extension
+## 2. Area 2 — retained evidence
 
-### D3 — retained-evidence correspondence (REOPENED)
+### D3 — THM-0042, reopened. Identity, not a field list
 
-`REOPENED_BRANCH` — **THM-0042**, already a declared root. No new node.
+`REOPENED_BRANCH`. No node minted; the root is declared and its review is `STALE_CLAIM`.
 
-The statement was corrected on `main` and the specification review is consequently
-`STALE_CLAIM`. What remains before it can return to boundary §2:
+The measured gap: `submitted_commitment` digests method, target URI, status, both bodies,
+and **only the `signature` header**. `signature-input` is absent. For the unverified tail —
+the only part the field exists to bind — two hops differing solely in `signature-input` (a
+different `created`, a different covered-component set, a different keyid) share a submission
+identity.
 
-- **Residual gap, measured and still open: R9-C074 / R9-C075.**
-  `submitted_commitment` digests method, target URI, status, both bodies, and *only the
-  `signature` header*. `signature-input` is not covered. For the UNVERIFIED tail — the only
-  part this field exists to bind — two hops differing solely in `signature-input` (a
-  different `created`, a different covered-component set, a different keyid) produce the
-  same submission identity. Nothing verifies those hops, so nothing else catches it. **The
-  tail substitution the field was added to close is therefore still open in one dimension.**
-  This must be fixed before the branch closes; widening the digest is a change to what an
-  identity *is*, so it is a proposition, not a patch.
-- **Evidence gap.** The `s01` corpus cannot evidence this claim at all (its artefact records
-  handles, not messages). A corpus from a real signed multi-hop exchange is required. This
-  is corpus generation, not verifier work, and it is the long pole.
-- **R9 disposed by work already merged:** R9-C029, R9-C084, R9-C105, R9-C115 (both-empty
-  `Ok`) — closed by the statement correction; R9-C035, R9-C065, R9-C104 (corpus fabrication
-  and staleness) — closed by `from_retained_handles` plus the in-place demotion.
-- **R9 still open here:** R9-C074, R9-C075, R9-C103, R9-C128 (zero-verified-hop records
-  issued with no self-check).
-- **Not in this branch:** R9-C085/C086/C098/C102/C112 are THM-0068 (pin `position_profile`),
-  a different claim under THM-0072.
+**This is not closed by appending `signature-input` to the recipe.** A hand-maintained field
+checklist has already failed once; the same defect recurs the next time a security-bearing
+field is added and nobody remembers the digest. What is missing is the semantic value:
 
-**No node is proposed.** Reopening is not redesign, and the ratification established nothing
-here by declaration.
+```text
+SubmittedHttpHop
+    method / status
+    target
+    body
+    signature-input
+    signature
+    the header values Signature-Input's covered components NAME
+    every other retained fact the correspondence claim treats as part of the hop
+          ↓  closed canonical representation
+SubmittedHopCommitment
+```
 
-### D4 — a retention marker exists only under its execution threshold
+The invariant to establish:
 
-`EXISTING_ROOT_EXTENSION` — child of **THM-0074**, with a refusal-side relation consumed by
+> Two retained submitted hops that differ in any fact the correspondence claim treats as
+> part of the submitted hop have distinct commitment preimages.
+
+Note the recursive obligation the ruling names: `signature-input` *names covered components*.
+If those components refer to header values not otherwise represented in the commitment, those
+values are part of the hop's identity too. A digest over `signature-input`'s text alone does
+not discharge it.
+
+**Omission must be mechanically hard.** Adding a field to the canonical representation has to
+force the commitment implementation and its controls to account for it — a struct the digest
+destructures exhaustively, not a function that reads the fields it remembers. Mutation
+controls then alter every field of the closed representation and require the commitment to
+move.
+
+**THM-0042 stays out of boundary §2 until all four hold:**
+
+1. the semantic submitted-hop identity is corrected as above;
+2. the zero-verified-hop and self-check findings are disposed (R9-C103, R9-C128);
+3. a real signed multi-hop retained corpus reproduces the commitment;
+4. the corrected statement receives independent specification review.
+
+- **Disposed by work already on `main`:** R9-C029, R9-C084, R9-C105, R9-C115 (both-empty
+  `Ok`); R9-C035, R9-C065, R9-C104 (corpus fabrication and staleness).
+- **Still open here:** R9-C074, R9-C075 (the identity gap), R9-C103, R9-C128.
+- **Not this branch:** R9-C085/C086/C098/C102/C112 are THM-0068 under THM-0072.
+
+### D4 — the retention reservation state relation
+
+`EXISTING_ROOT_EXTENSION` — child of **THM-0074**; the rescind relation is consumed by
 **THM-0078**.
 
-- **Proposition.** A `.pending` retention marker exists at an instant only if the exchange it
-  names has crossed the execution threshold its semantic owner defines; a pre-dispatch
-  failure leaves no marker readable as executed work.
-- **Security consequence.** A durable marker is an assertion that the deployment became
-  answerable for a call. A marker for a call that provably never reached a backend makes the
-  retained record a source of false positives exactly where an auditor trusts it most —
-  and unlike a missing record, a spurious one cannot be distinguished from a real one after
-  the fact.
-- **Scope / non-claim.** Not that the record's *contents* are correct (that is
-  `retained_record`'s and THM-0042's), and not that the write succeeded (that is the
-  durability barrier). Existence and threshold only.
-- **Owner.** `mcp-re-proxy/src/transparency/durability.rs` — a real authority with an
-  explicit "WHEN responsibility has been durably established" contract, and no `[[unit]]`.
-  `retained_record.rs` is the separate WHAT owner and stays separate.
-- **Parent / dependencies.** THM-0074; THM-0045 (reservation is the last pre-dispatch
-  refusal) is the existing edge to reuse; the rescind relation is consumed by THM-0078.
-- **Reusable.** THM-0045 and the ordering argument in `durability.rs`'s module doc; the
-  bounded-queue argument in `durability_bounds.rs`.
-- **Required new proposition.** The *release* half. Today the ordering is established and
-  the undo is not: `release_before_dispatch()` and `pending_reservations()` exist and have
-  **no production caller**. A proposition that a marker is rescinded is not evidenced by an
-  API that could rescind it.
-- **Assumptions.** A filesystem durability premise will be needed for the barrier; none is
-  registered.
-- **R9 disposed.** R9-C004 and R9-C021 (high — `NotDispatched` and ladder-reorder marker
-  leaks), R9-C081 (inner-plane saturation at dispatch), R9-C078/C079/C080 (both retention
-  APIs unwired), R9-C099 (a failed `reserve()` can leave a credential-bearing marker no
-  path can clear). **Seven, including two High.**
+The earlier revision of this packet stated D4 as *a marker exists only after execution*.
+**That was wrong**, and wrong in the direction that would have damaged the architecture: the
+reservation is deliberately taken *before* irreversible dispatch, precisely so that lack of
+retention capacity can still refuse safely. THM-0045 already establishes that the reservation
+is the last pre-dispatch refusal. A proposition forbidding pre-dispatch reservations would
+contradict the design it is supposed to protect.
+
+The honest model is a transition relation:
+
+```text
+NoReservation
+      ↓
+Reserved                     pre-dispatch. NOT evidence that execution occurred.
+      ├─ refusal before dispatch ──→ Released
+      └─ dispatch commitment crossed ──→ DispatchedPending ──→ retained terminal state
+```
+
+- **Proposition.** An exchange that never crosses the dispatch commitment cannot terminate
+  holding a retention artefact readable as evidence of execution or of retention
+  responsibility beyond what the reservation itself earned. And: a pre-dispatch reservation
+  is rescinded on every path that terminates before dispatch.
+- **Security consequence.** A durable artefact is an assertion that the deployment became
+  answerable for a call. A spurious one cannot be told from a real one after the fact —
+  unlike a missing record, which announces itself.
+- **Scope / non-claim.** Not what the record contains (that is `retained_record` and
+  THM-0042). Not that the write succeeded (that is the durability barrier). **Do not collapse
+  WHAT was retained with WHEN execution responsibility was acquired.**
+- **Owner.** `mcp-re-proxy/src/transparency/durability.rs` — real authority, explicit "WHEN
+  responsibility has been durably established" contract, **no `[[unit]]`**.
+- **Reusable.** THM-0045; the ordering argument in `durability.rs`; the bounded-queue
+  argument in `durability_bounds.rs`.
+- **Required new proposition — and the representation defect behind it.** Measured: the
+  release half does not exist in production. `release_before_dispatch()` and
+  `pending_reservations()` are reachable **only from tests** (`durability.rs:887-899` and one
+  integration test). More fundamentally, if the current `.pending` representation cannot
+  distinguish *reserved but not dispatched* from *dispatch occurred, retention pending*, then
+  no cleanup discipline can make the invariant true — the two states are the same artefact.
+  **Treat that as a representation defect and give the states distinct types or
+  representations**, rather than relying on a caller remembering to release. This is the
+  R-SEAL test applied to a state machine: can the release call be deleted and still leave the
+  forbidden state unconstructible?
+- **Assumptions.** A narrow filesystem-durability premise for the barrier, stated as what
+  `fsync` on this platform establishes — not a general "the filesystem is correct".
+- **R9 disposed.** R9-C004, R9-C021 (**High** — `NotDispatched` and ladder-reorder marker
+  leaks), R9-C081, R9-C078, R9-C079, R9-C080, R9-C099. Seven, two High.
 
 ---
 
-## 3. Area 3 — outbound credential acquisition
+## 3. Area 3 — credential egress. The owner was remeasured
 
-### D5 — a credential-bearing outbound call reaches only the selected authority
+`EXISTING_ROOT_EXTENSION` — child of **THM-0077**.
 
-`EXISTING_ROOT_EXTENSION` — child of **THM-0077** (materialization).
+The ruling refused to let `kms_endpoint_policy` become the generic owner of KMS + STS +
+metadata + remote-signer egress merely because useful predicates live there. Remeasuring
+found something better and worse than expected.
 
-- **Proposition.** Every outbound request that carries a credential, a bearer token or a
-  workload identity — KMS, STS, instance metadata, remote signer — is issued to the
-  authority the validated configuration selected for that capability, where the authority is
-  the one the client will actually reach, not the one the configured text appears to name.
-- **Security consequence.** The threat is not misconfiguration, it is *redirection*: an
-  endpoint whose literal spelling names one host and whose machine interpretation names
-  another sends the pod's IRSA token, or the root-key trust bootstrap, to an attacker. R9's
-  single Critical was exactly this.
-- **Scope / non-claim.** Says nothing about what the remote authority does with the
-  credential, nothing about token lifetime or refresh correctness, and nothing about
-  availability of the acquisition path.
-- **Owner.** `mcp-re-proxy/src/kms_endpoint_policy/` — a real, fully documented authority
-  that already states the invariant ("accepted only when its literal human-readable
-  representation and the machine interpretation used by the client agree") and owns the rule
-  rather than its callers. **It lacks a `[[unit]]` and nothing else.** This is the clearest
-  case of the audit's "an architecture gap needs a measurement" result.
-- **Parent / dependencies.** THM-0077; THM-0064 (custody exposure) is adjacent and must not
-  be re-derived here.
-- **Reusable.** `authority.rs`'s `check_host` / `check_port` predicates and their tests;
-  `config_state/kms_endpoint.rs`.
-- **Required new proposition.** Coverage: that *every* credential-bearing egress consults
-  this authority. Today the rule is owned but its application is per-call-site, which is the
-  R-SEAL shape — the check is a deletable statement at each site.
-- **Assumptions.** A premise over the HTTP client's authority resolution matching the
-  policy's interpretation. None registered; this is the load-bearing one and it should be
-  narrow.
-- **R9 disposed.** R9-C001 (**critical**), R9-C017, R9-C018, R9-C031, R9-C092 — already
-  FIXED, but currently mapped to a node that does not exist as a unit, so the fix is
-  unrooted. Bringing the owner into the graph is what makes those five *covered* rather than
-  merely *fixed*.
+**A mechanism-neutral destination authority already exists**: `mcp-re-proxy/src/outbound_fetch/`.
+Its stated fact is *a destination has passed the guard its PROVENANCE requires*, it is
+explicitly not RFC-6960-specific, and — the part that matters here — `VettedDestination::agent`
+hands out the configured HTTP client rather than a boolean, **so the connect-time half of the
+guard travels with the value that earned it.** Its subordinates are `url` (scheme/host),
+`address` (is this outside our network) and `resolver` (every connected address passed the
+guard).
+
+**And no credential-egress path consumes it.** Measured across `mcp-re-proxy/src`, the only
+consumer of `VettedDestination` is `ocsp.rs`. It has no `[[unit]]` either.
+
+So the shape is:
+
+```text
+D5   credential-sensitive outbound capability
+       → validated semantic destination        ← outbound_fetch, the generic authority
+       → actual connect-time authority         ← resolver, guard travels with the value
+     ├─ D5.1  AWS KMS
+     ├─ D5.2  GCP KMS
+     ├─ D5.3  STS / workload credential
+     ├─ D5.4  instance metadata
+     └─ D5.5  remote signer
+```
+
+- **Proposition.** Every outbound request carrying a credential, bearer token or workload
+  identity reaches only the authority selected and validated for that capability — where
+  *reaches* means the authority actually connected to, not the one the configured text
+  appears to name.
+- **Security consequence.** The threat is redirection, not misconfiguration: an endpoint
+  whose literal spelling names one host and whose machine interpretation names another sends
+  the pod's IRSA token, or the root-key trust bootstrap, to an attacker. R9's only Critical
+  was exactly this.
+- **Scope / non-claim.** Nothing about what the remote authority does with the credential;
+  nothing about token lifetime, refresh or availability.
+- **Owner.** `outbound_fetch/` for the generic relation. `kms_endpoint_policy/` stays the
+  **KMS-specific leaf**, which is what it actually owns — a config-time agreement between
+  literal spelling and machine interpretation. **It is not renamed and its authority is not
+  widened.**
+- **The honest gap.** `kms_endpoint_policy`'s proof ends at configuration parsing. Under a
+  rebinding-capable threat model a config-time host-string check cannot establish
+  *actual-destination* safety; that needs the connect-time vetting `outbound_fetch/resolver`
+  already implements. **D5 may not claim actual-destination safety until credential egress
+  consumes that authority.** Do not duplicate the SSRF/DNS logic into the KMS paths.
+- **Reusable.** All of `outbound_fetch`; `authority.rs`'s `check_host`/`check_port` and their
+  tests; `config_state/kms_endpoint.rs`.
+- **Assumptions.** One narrow premise that the HTTP client's authority resolution is the one
+  the resolver vetted. `outbound_fetch`'s design already minimises this by handing out the
+  agent rather than a verdict.
+- **R9 disposed.** R9-C001 (**Critical**), R9-C017, R9-C018, R9-C031, R9-C092 — fixed but
+  currently unrooted.
 - **Deliberately excluded.** R9-C057/C058/C059/C107 (metadata single-flight stalls) are
-  availability, not this proposition. They are real defects and belong to ordinary
-  engineering, not to this branch. Naming them here so the exclusion is a decision rather
-  than an omission.
+  availability. Real defects, ordinary engineering, not this proposition.
 
 ---
 
-## 4. Area 4 — client-sidecar local ingress
+## 4. Area 4 — sidecar local ingress
 
-### D6 — the local ingress admits only a caller the operator selected
+### D6 — ingress authority, NOT caller identity
 
-`NEW_ROOT` — the only one proposed.
+`NEW_ROOT`. The only new root shape.
 
-- **Proposition.** A security-bearing outbound MCP-RE exchange is initiated by the sidecar
-  only for a local request whose origin the deployment selected; a request reaching the
-  listener from an origin the operator did not select does not become a signed outbound
+The earlier revision said *a local request whose origin the deployment selected*, while also
+saying there is no local-caller authentication. Those cannot both hold: any local process
+that can reach the listener and supply an acceptable `Host` still calls it. "Origin" is also
+ambiguous where no HTTP `Origin` is authenticated.
+
+- **Proposition.** A request reaching the shipped sidecar outside the deployment-selected
+  listener and HTTP-authority policy cannot cause the sidecar to initiate a signed MCP-RE
   exchange.
-- **Security consequence.** The sidecar signs with the agent's key. An unrelated web page
-  in the user's browser that can reach the loopback listener — via DNS rebinding, or simply
-  because the listener answers any `Host` — obtains signed, attributed MCP-RE calls made
-  under someone else's identity. No existing root excludes this: THM-0076 is about what a
-  client *accepts as an answer*, and the attack is complete before any answer exists.
-- **Scope / non-claim.** Not authentication of the local caller (there is none, and none is
-  claimed); not confidentiality of the local leg; not a claim about anything the sidecar
-  does after admission, which is THM-0076's.
-- **Why NEW_ROOT and not a THM-0076 child.** Both directions of the independence test pass.
-  The sidecar runs against a deployment with no MCP-RE proxy at all, so its ingress
-  proposition holds where THM-0076's producer side is absent; and every current root holds
-  in a deployment with no sidecar. Folding it under THM-0076 would also put an *ingress*
-  fact under a root whose subject is *response acceptance* — two authorities under one
-  promise, which is the shallow boundary the twelve questions exist to catch.
-- **Owner.** `mcp-re-client/src/serve/head_fields.rs` (the caller-shape and loopback-`Host`
-  check) with `serve/request.rs`. A real authority; no `[[unit]]`.
-- **Parent / dependencies.** None — it is a root. Consumes `client.trust_manifest_lifecycle`
-  for what the sidecar is configured to be.
-- **Reusable.** The existing `is_loopback_host` check and `local_leg_e2e_test.rs`.
-- **Required new proposition, and the defect it must fix.** **R9-C096 is a live conflation:**
-  `allow_any_host: config.local.allow_non_loopback` makes one operator flag govern two
-  independent facts — *where the listener binds* and *whether the rebinding guard runs*. An
-  operator who legitimately binds non-loopback thereby disables the `Host` guard, and a
-  deployment that sets the flag for the bind reason gets the guard removed silently. Two
-  facts, one input: the proposition cannot be stated honestly until they are separated.
-- **Assumptions.** None foreign expected; this is MCP-RE-owned throughout.
-- **R9 disposed.** R9-C096 (the conflation), R9-C127 (the local-leg contract not updated
-  when `Content-Type` and loopback `Host` became required). R9-C062/C063 (`bound` dropped
-  from the rejection handed to the local client) sit on the THM-0076 side and are named here
-  only so the split is explicit.
+- **Explicit non-claim.** **This does not identify or authenticate which local process
+  originated an otherwise admissible local request.** Nor is the local leg confidential.
+- **Security consequence.** The sidecar signs with the agent's key. A web page in the user's
+  browser that reaches the loopback listener — by DNS rebinding, or because the listener
+  answers any `Host` — obtains signed, attributed MCP-RE calls under someone else's identity.
+  No existing root excludes it: THM-0076 concerns what a client *accepts as an answer*, and
+  the attack completes before any answer exists.
+- **Why NEW_ROOT.** Independence holds both ways: the sidecar runs against deployments with
+  no MCP-RE proxy, and every current root holds where no sidecar exists.
+- **Owner.** `mcp-re-client/src/serve/head_fields.rs` (caller-shape and loopback-`Host`
+  check) with `serve/request.rs`. Real authority, **no `[[unit]]`**.
+- **Required prerequisite — R9-C096, and it blocks registration.** Measured at
+  `mcp-re-client/src/lib.rs:195`: `allow_any_host: config.local.allow_non_loopback`. One
+  operator input governs two independent facts. Separate them into distinct semantic values:
+
+  ```text
+  BindScope                      where the listener is exposed
+  AcceptedHttpAuthority          which HTTP authority names may reach signing
+  ```
+
+  Permitting a non-loopback bind must **not** disable `Host`-authority validation. One
+  boolean with two meanings makes the proposition unstatable, not merely unproven, so this
+  is fixed **before** the root is registered.
+- **Reusable.** `is_loopback_host`, `local_leg_e2e_test.rs`.
+- **Assumptions.** None foreign expected.
+- **R9 disposed.** R9-C096, R9-C127. (R9-C062/C063 sit on the THM-0076 side; named so the
+  split is explicit.)
 
 ---
 
 ## 5. Area 5 — the supported-client root family
 
-### D7 / D8 — the Python and TypeScript exchange paths
+### D7 / D8 — Python and TypeScript members
 
-`ROOT_FAMILY_MEMBER` ×2. The family's existing member is **THM-0076** (Rust `ClientProxy`).
+`ROOT_FAMILY_MEMBER` ×2, beside **THM-0076** (Rust `ClientProxy`). Both become declared
+roots.
 
 - **Proposition (per member).** For the shipped `<language>` SDK, an application is not
   handed, as this call's answer, a response from another exchange or signer, or one that
   verified only unbound — and is not led to repeat a side effect by reading silence as *it
   did not run*.
-- **Security consequence.** Identical in words to THM-0076 and *not* implied by it. The
-  boundary is implemented independently in each language, so the Rust proof establishes
-  nothing about the Python or TypeScript path.
-- **Scope / non-claim.** Per-implementation. A member says nothing about its siblings.
-- **Why two members and not one language-neutral theorem.** A single implementation theorem
-  would be a claim about no shipped artefact. The measured evidence for this is direct: the
-  byte-level parity fixtures are green while the implementations *diverge behaviourally* —
-  Python's `send_notification_verified()` runs outside the concurrency bound its TypeScript
-  twin enforces (R9-C061, C109, C110), and the two disagree about what a response deadline
-  bounds (R9-C095 total download vs idle). A theorem quantifying over "the SDK" would be
-  true of neither.
-- **Owner.** No Rust `[[unit]]` can own these; the source is `sdk/python/python/mcp_re_sdk/`
-  and `sdk/typescript/src/`. **This is the one area where the unit model itself is the
-  obstacle**, and it is a real one: a review unit's fingerprint is built from Cargo packages
-  and Rust test selectors. Resolving that is a prerequisite, not a detail — see §6.
-- **Parent / dependencies.** Family peers of THM-0076; each depends on the profile-level
-  claims THM-0057…THM-0061 that are language-independent facts about the wire.
-- **Reusable.** `test_parity.py` and the TypeScript twin; the existing per-language transport
-  and correlation suites.
-- **Required new proposition.** For each member, that its deadline and concurrency semantics
-  are the ones its claim rests on — the divergences above are not incidental, they are the
-  claim.
-- **Assumptions.** Per-language runtime premises: `http.client`'s read semantics for Python
-  (R9-C010/C011/C019/C020/C049 all turn on `read(n)` blocking until `n` bytes), and the
-  `AbortSignal`/fetch semantics for TypeScript. Neither is registered.
-- **R9 disposed.** All ten `sdk-client-exchange` clusters, including four High, plus
-  R9-C093 (`retry_is_refused()` treating an UNRECOGNIZED `execution_status` as silence,
-  which is THM-0061's neighbourhood).
+- **Why two members, never one language-neutral theorem.** A theorem quantifying over "the
+  SDK" would be a claim about no shipped artefact. The boundary is implemented independently
+  per language and the Rust proof establishes nothing about either.
+
+### What is and is not theorem material
+
+The earlier revision said the deadline and concurrency divergences "are the claim." **That
+was too wide.** The security root concerns response↔request correlation, signer and trust
+acceptance, bound-vs-unbound verification, execution-status interpretation, and safe-retry
+interpretation. A concurrency ceiling is resource management. Widening a security root into a
+general availability theorem by accident is exactly the drift these rulings exist to stop.
+
+Each SDK finding, classified:
+
+| finding | classification | why |
+|---|---|---|
+| R9-C061, C109, C110 — `send_notification_verified()` outside the concurrency bound its TS twin enforces | **ORDINARY ENGINEERING** | a resource ceiling. Does not change what the client concludes about authenticity, correlation or execution |
+| R9-C095 — TS aborts any response whose TOTAL download exceeds `timeoutMs`, not just an idle one | **SECURITY-ROOT RELEVANT** | the client aborts a request the server may have executed. If that surfaces as a clean failure rather than ambiguous execution, safe-retry interpretation is wrong |
+| R9-C010, C011, C019, C020, C049 — Python aggregate read deadline inert (`http.client` `read(n)` blocks) | **ORDINARY ENGINEERING, conditionally security-relevant** | an inert deadline yields *no* conclusion rather than a wrong one. It crosses into the root only if a caller's outer timeout then produces a retry whose execution status the SDK never determined — state that condition rather than assuming it |
+| R9-C094 — the Python test pins the bound with a fake `http.client` never behaves like | **EVIDENCE DEFECT** | not a claim defect: a control that cannot fail. Belongs to the member's evidence, and it is why C010's classification cannot currently be settled by that test |
+| R9-C093 — `retry_is_refused()` treats an UNRECOGNIZED `execution_status` like silence | **SECURITY-ROOT RELEVANT** | execution-status interpretation, directly. Rust client-proxy side, THM-0061's neighbourhood |
+
+- **Owner.** No Rust `[[unit]]` can own D7/D8 — see §6.
+- **Assumptions.** Narrow and exact: the specific `http.client` read semantics D7 rests on;
+  the specific `AbortSignal`/fetch semantics D8 rests on. **Not** "the Python runtime is
+  correct" or "fetch is correct".
 
 ---
 
-## 6. What must be settled before any of this is encoded
+## 6. Prerequisite: generalize the unit model, do not special-case a language
 
-Stated because a design packet that hides its own prerequisites produces a work plan that
-stalls at the first one.
+A `[[unit]]` is meant to be *the smallest semantic authority whose source, assumptions,
+evidence and review can be fingerprinted*. That concept is not inherently Cargo. Today's
+implementation is: `_unit_packages` splits paths on the crate directory, `test_package` names
+a Cargo package, selectors are Rust test paths, and `crate_features` is a fingerprint
+component.
 
-1. **The SDK members need a unit model that can hold them.** A `[[unit]]` today is measured
-   through Cargo packages, Rust test selectors and `crate_features`. D7/D8 have none of
-   those. Either the manifest grows a non-Rust unit kind with its own fingerprint components,
-   or the family's non-Rust members cannot be evidenced at all — and an unevidenceable root
-   is worse than an absent one, because it reads as coverage.
-2. **Five of the six proposed nodes have owners with no `[[unit]]`.** Four of those owners
-   are real, documented authorities today (`replay_plane`, `transparency/durability`,
-   `kms_endpoint_policy`, `mcp-re-client/src/serve`). Declaring the units is mechanical;
-   deciding their `paths` and evidence is not.
-3. **Three new assumption families will be needed** — store-mechanism reporting, filesystem
-   durability, and per-language runtime semantics. Each should be narrow and separately
-   registered; none should be widened from an existing entry, which is what ruling A already
-   had to undo once.
-4. **D6 cannot be stated until R9-C096 is fixed.** The conflated flag makes the proposition
-   unstatable, not merely unproven.
-5. **THM-0042's branch is gated on corpus generation**, which is the longest single item
-   here and is not verifier work.
+**Do not bolt on `kind = "python"` / `kind = "typescript"`.** Generalize:
 
-## 7. What this packet does not do
+```text
+semantic unit
+    owned source closure
+    dependency / configuration inputs
+    typed evidence providers
+    registered assumptions
+    review fingerprint
+        ↑ adapters
+  Cargo/Rust   ·   Python/pytest   ·   TypeScript/npm
+```
 
-No `THM-NNNN` is allocated. `root_theorems` is untouched. No specification-review record is
-written. No graph is implemented. Nothing here is established, and the §4 rows of the
-ratified boundary stay exactly where the ratification left them.
+The platform slice must demonstrate, with negative controls:
 
-The next boundary is an owner ruling on §0's altitude table and on the six proposed nodes.
+1. changing owned Python/TS source dirties the unit;
+2. changing the relevant dependency manifest or lockfile dirties it;
+3. stale evidence cannot establish it;
+4. an unknown evidence provider fails closed;
+5. a non-Rust unit with no executed evidence cannot become established;
+6. owner, dependency and assumption views derive identically;
+7. root-completeness treats a non-Rust member exactly as a Rust member once evidence is
+   valid.
+
+This belongs to the Assurance Platform Integrity layer. **The SDK roots may not be claimed
+before the platform can honestly measure them** — an unevidenceable root reads as coverage
+while being none.
+
+---
+
+## 7. Execution order
+
+1. **THM-0042 corpus** — real signed multi-hop retained corpus. Started first: longest pole,
+   and not verifier work.
+2. **Generalize the unit model** for non-Rust semantic units, with the §6 negative controls.
+3. **Register the existing-authority units** — `outbound_fetch`, `kms_endpoint_policy`,
+   `replay_plane`, `continuation_store`, `transparency/durability`, `mcp-re-client/src/serve`.
+   Mechanical; the owners already exist.
+4. **Close D1a/D1b projection and D2a/D2b fail-closed.**
+5. **Repair the retention reservation state machine** (typed states, production release path)
+   and close D4's relations.
+6. **Split `BindScope` from `AcceptedHttpAuthority`**, then register D6.
+7. **Close D7/D8** on the generalized unit model.
+8. **Close THM-0042** once identity and corpus are ready.
+9. **Whole-system missing-edge pass and root completeness.**
+
+No §4 boundary row moves to §2 until its root or member is established **and independently
+reviewed**.
+
+## 8. What this packet does not do
+
+No `THM-NNNN` allocated. `root_theorems` untouched. No specification-review record. No
+implementation. Nothing established.
