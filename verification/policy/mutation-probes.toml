@@ -2257,3 +2257,79 @@ expect_red = [
   "lib#scitt::retained::tests::a_truncated_chain_is_refused_even_though_hop_zero_matches",
   "lib#scitt::retained::tests::a_substituted_unverified_tail_is_refused_even_though_the_verified_prefix_matches",
 ]
+
+# ---------------------------------------------------------------------------------------
+# `proxy.exchange_lifecycle` — Stage 1 of the ratified closure.
+#
+# Three conjuncts, chosen because each is a NEGATIVE property whose control a green battery
+# says nothing about: the anomaly latch, the derived backend projection, and the monotone
+# continuation observation. No `theorem` key yet — the propositions are registered in
+# Stage 2, and a probe defending an unstated proposition is better than an unstated
+# proposition defended by nothing.
+# ---------------------------------------------------------------------------------------
+
+[[probe]]
+id = "M81-an-illegal-advance-is-latched-not-ignored"
+unit = "proxy.exchange_lifecycle"
+conjunct = "an advance the relation does not admit latches an anomaly, in every build"
+# The latch is the whole enforcement. `advance` cannot refuse — the serving path is
+# straight-line code and a refused step would silently under-report — so the disagreement
+# between model and code is recorded instead, and `retry_semantics` reports it at full
+# strength. Delete the latch and an exchange that left the legal path reports as though it
+# never did, which is the one direction a retry contract may not err in.
+path = "mcp-re-proxy/src/exchange_state.rs"
+anchor = """
+        if transition(self.request, event).is_err() {
+            self.latch("the serving path drove an illegal exchange transition");
+        }
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#exchange_state::tests::an_illegal_advance_is_refused_and_latched_in_every_build",
+  "lib#exchange_state::tests::an_illegal_advance_never_reports_the_exchange_as_retry_safe",
+]
+
+[[probe]]
+id = "M82-the-backend-projection-is-derived-not-asserted"
+unit = "proxy.exchange_lifecycle"
+conjunct = "the backend projection is derived from the request state, so the two cannot disagree"
+# The second-source-of-truth failure this module exists to avoid. Freeze the projection and
+# `BackendState` becomes a value someone must remember to set, which is the shape that let a
+# post-dispatch exchange claim nothing had run.
+path = "mcp-re-proxy/src/exchange_state.rs"
+anchor = """
+        self.backend = if self.request.backend_may_have_executed() {
+            BackendState::Dispatched
+        } else {
+            BackendState::NotDispatched
+        };
+"""
+weakening = """
+        self.backend = BackendState::NotDispatched;
+"""
+expect_red = [
+  "lib#exchange_state::tests::the_backend_projection_never_disagrees_with_the_exchange_state",
+]
+
+[[probe]]
+id = "M83-a-spent-approval-stays-spent"
+unit = "proxy.exchange_lifecycle"
+conjunct = "Consumed latches: no later observation may report a spent approval as unspent"
+# The defect the module was built around. Once a human's approval is destroyed it is
+# destroyed for the rest of the exchange; a later `Peeked` observation overwriting it makes
+# the refusal read as an ordinary retry, and the retry cannot succeed because the approval
+# is gone.
+path = "mcp-re-proxy/src/exchange_state.rs"
+anchor = """
+        if self.continuation == ContinuationState::Consumed {
+            return;
+        }
+        self.continuation = observed;
+"""
+weakening = """
+        self.continuation = observed;
+"""
+expect_red = [
+  "lib#exchange_state::tests::nothing_observed_after_an_approval_is_spent_makes_it_look_unspent",
+]

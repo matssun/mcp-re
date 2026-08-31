@@ -1886,3 +1886,120 @@ tested_symbols = [
   "lib#scitt::commitment::tests::the_two_evidence_roles_are_not_interchangeable",
   "lib#scitt::commitment::tests::a_record_with_no_verified_hop_has_no_identity",
 ]
+
+# ---------------------------------------------------------------------------------------
+# Stage 1 of the ratified theorem-architecture closure (§28.13 ratification, 2026-08-31 §8).
+#
+# Three units over authorities that already existed and were simply unmeasured. None of
+# them is new architecture, and no production shape was changed to make one fit: the
+# ratification is explicit that the exchange machine must NOT be refactored to create a
+# unit. What was missing was a `[[unit]]`, which is registry work.
+#
+# The three are separated by authority, not by directory. `exchange_state.rs` owns the
+# relation; `request_stages.rs` owns the one boundary the compiler can hold; `refusal/`
+# owns what a refusal IS and which authority reached it. Each answers question 1 of the
+# twelve with no "and" in the sentence.
+# ---------------------------------------------------------------------------------------
+
+[[unit]]
+id = "proxy.exchange_lifecycle"
+class = "V0"
+description = "The per-exchange lifecycle relation and the invariants over the five live machines: which (state, event) pairs are legal, that the backend projection cannot disagree with the exchange state, and that an exchange's retry consequence never moves backward — including on the path where the model and the code driving it disagree."
+paths = ["mcp-re-proxy/src/exchange_state.rs"]
+exported_contracts = []
+# TWO evidence classes, for the same reason `proxy.runtime_lifecycle` carries two. The
+# interesting conjuncts here are negative — an illegal advance is LATCHED, a spent approval
+# never reads as unspent, a post-threshold state never reads as retry-safe — and a green
+# battery is not evidence that any of those checks is load-bearing.
+evidence = [
+  "test://proxy/exchange_lifecycle/transition_relation",
+  "mutation://proxy/exchange_lifecycle/transition_relation",
+]
+assumptions = []
+# The battery libtest reports under `exchange_state::tests`. Ordered as the three
+# measurements the ratification names: legal reachability to dispatch, refusal coverage,
+# and work/event correspondence.
+tested_symbols = [
+  "lib#exchange_state::tests::the_pipeline_path_is_legal_end_to_end",
+  "lib#exchange_state::tests::the_open_leg_path_is_legal_end_to_end_and_ends_somewhere_else",
+  "lib#exchange_state::tests::every_state_event_pair_has_a_decided_outcome",
+  "lib#exchange_state::tests::a_terminal_state_admits_nothing_at_all",
+  "lib#exchange_state::tests::the_execution_threshold_partitions_the_pipeline_into_two_non_empty_halves",
+  "lib#exchange_state::tests::a_refusal_at_or_after_the_dispatch_can_only_reach_the_post_dispatch_terminal",
+  "lib#exchange_state::tests::the_notification_terminal_is_reachable_only_from_the_dispatch_and_reads_as_executed",
+  "lib#exchange_state::tests::nothing_reaches_the_signature_without_being_validated_and_classified",
+  "lib#exchange_state::tests::a_validated_response_can_still_be_refused_at_classification",
+  "lib#exchange_state::tests::an_open_leg_cannot_be_served_without_a_durable_record",
+  "lib#exchange_state::tests::a_reply_that_opens_a_leg_is_never_served_as_a_completed_exchange",
+  "lib#exchange_state::tests::an_incurred_open_leg_obligation_cannot_be_downgraded",
+  "lib#exchange_state::tests::an_ordinary_backend_reply_reaches_the_success_terminals_cleanly",
+  "lib#exchange_state::tests::the_backend_projection_never_disagrees_with_the_exchange_state",
+  "lib#exchange_state::tests::no_state_in_the_response_region_can_report_a_retry_safe_posture",
+  "lib#exchange_state::tests::past_the_threshold_no_continuation_state_makes_a_retry_safe",
+  "lib#exchange_state::tests::a_refusal_after_the_approval_is_spent_never_reads_as_an_ordinary_retry",
+  "lib#exchange_state::tests::the_same_refusal_without_a_spent_approval_is_an_ordinary_retry",
+  "lib#exchange_state::tests::a_peeked_continuation_leaves_the_refusal_retry_safe",
+  "lib#exchange_state::tests::nothing_observed_after_an_approval_is_spent_makes_it_look_unspent",
+  "lib#exchange_state::tests::synthesized_transport_failure_bytes_are_never_a_successful_response",
+  "lib#exchange_state::tests::a_dispatch_that_became_indeterminate_cannot_be_downgraded_to_a_clean_reply",
+  "lib#exchange_state::tests::the_consequence_of_an_exchange_never_moves_backward",
+  "lib#exchange_state::tests::all_three_consequence_classes_are_reachable",
+  "lib#exchange_state::tests::the_whole_legal_ladder_latches_no_anomaly",
+  "lib#exchange_state::tests::an_illegal_advance_is_refused_and_latched_in_every_build",
+  "lib#exchange_state::tests::an_illegal_advance_never_reports_the_exchange_as_retry_safe",
+  "lib#exchange_state::tests::a_violated_invariant_is_latched_on_the_advance_that_causes_it",
+  "lib#exchange_state::tests::the_latch_keeps_the_first_anomaly",
+  "lib#exchange_state::tests::an_illegal_advance_still_never_moves_consequence_backward",
+  "lib#exchange_state::tests::an_illegal_transition_names_both_halves",
+]
+
+[[unit]]
+id = "proxy.dispatch_commitment"
+class = "V0"
+description = "The one pre-dispatch boundary the compiler holds: the backend is reached only by consuming a ReadyForDispatch, which cannot be assembled without an authorization-released body, a signing window snapshotted before the backend runs, and a discharged retention disposition — and crossing it is one-way."
+paths = [
+  "mcp-re-proxy/src/request_stages.rs",
+  "mcp-re-proxy/src/authorization/dispatch.rs",
+  "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/serving/dispatch_commitment_boundary"]
+assumptions = []
+# What each control measures, in the order the boundary is crossed. The last one is the
+# separation this unit does NOT claim: an unconfigured deployment releases a body too, so
+# possession proves the decision was TAKEN, never that a policy permitted.
+tested_symbols = [
+  "lib#http_profile_serve::dispatch_commitment::tests::the_reservation_is_the_last_pre_dispatch_state",
+  "lib#request_stages::tests::the_retention_obligation_has_exactly_two_cases",
+  "lib#request_stages::tests::the_dispatch_boundary_consumes_the_ready_state",
+  "lib#authorization::dispatch::tests::an_unconfigured_deployment_still_releases_a_body",
+]
+
+[[unit]]
+id = "proxy.refusal_provenance"
+class = "V0"
+description = "What a refusal is and which authority reached it: the cause is carried whole rather than rendered, the authority set is closed over exactly Core and Authorization, an authorization refusal keeps its two arms distinguishable, and rendering happens only at the presentation boundary."
+paths = [
+  "mcp-re-proxy/src/refusal/mod.rs",
+  "mcp-re-proxy/src/refusal/cause.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/refusal/provenance_battery"]
+assumptions = []
+# The negative controls carry this unit. `a_policy_denial_has_no_core_verdict_to_be_recorded_under`
+# and `a_core_verdict_never_attributes_a_refusal_to_a_policy` are the two directions of the
+# separation `PolicyError` may never acquire a route across.
+tested_symbols = [
+  "lib#refusal::tests::a_refusal_renders_only_at_the_presentation_boundary",
+  "lib#refusal::tests::the_posture_is_independent_of_the_cause",
+  "lib#refusal::cause::tests::every_core_producer_names_a_verdict_and_the_token_follows_from_it",
+  "lib#refusal::cause::tests::every_core_producer_renders_a_token_its_own_authority_owns",
+  "lib#refusal::cause::tests::a_carrier_failure_arrives_as_a_core_verdict_that_remembers_its_producer",
+  "lib#refusal::cause::tests::a_dispatch_failure_is_a_core_verdict_and_keeps_its_own_token",
+  "lib#refusal::cause::tests::an_unreadable_action_coordinate_is_a_core_verdict_after_all",
+  "lib#refusal::cause::tests::an_authorization_refusal_stays_authorization_provenance",
+  "lib#refusal::cause::tests::the_two_authorization_arms_stay_distinguishable",
+  "lib#refusal::cause::tests::a_policy_denial_reaches_the_record_as_policy_provenance",
+  "lib#refusal::cause::tests::a_policy_denial_has_no_core_verdict_to_be_recorded_under",
+  "lib#refusal::cause::tests::a_core_verdict_never_attributes_a_refusal_to_a_policy",
+]
