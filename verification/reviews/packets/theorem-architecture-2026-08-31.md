@@ -2,6 +2,13 @@
 
 # Theorem-architecture ratification packet — 2026-08-31
 
+> **RATIFIED WITH CORRECTIONS.** The owner's decision is
+> [`theorem-architecture-ratification-2026-08-31.md`](theorem-architecture-ratification-2026-08-31.md).
+> Where the two disagree, the ratification record governs — R1/R2/R4/R6 are reworded, R5 is
+> split into a family, six of the nine structural leaves are reclassified as non-structural,
+> and four GAP owners move altitude. This file is left as the reasoning that produced the
+> decision and is deliberately not edited to match, so the corrections stay visible.
+
 **Proposal artifact under ADR-MCPRE-059 §28.13.** Nothing here is authoritative. No `THM`
 identity is allocated, no existing theorem statement is changed, no production code is
 touched, no review unit is created. `R1`, `R1.2.3` … are temporary handles for this

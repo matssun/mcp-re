@@ -111,6 +111,17 @@ def test_ordinary_english_still_does_not_trip_the_production_scan():
     assert matched("let external_id = header.external_reference();") == set()
 
 
+def test_a_method_named_admit_is_not_a_proof_escape_hatch():
+    """`inner_async.admit()` asks the inner plane whether it will accept a request. Verus'
+    `admit()` deletes a proof obligation. A gate that fired on the first would be ignored
+    by the time it mattered for the second."""
+    assert matched("match self.inner_async.admit() {") == set()
+    assert matched("if index.assume(peer) {") == set()
+    # Path-qualified is still the mechanism: `::` is not `.`.
+    assert "admit" in matched("vstd::pervasive::admit();")
+    assert "assume" in matched("assume(x < 10);")
+
+
 # --- a claimed theorem the prover was told not to check -----------------------
 
 

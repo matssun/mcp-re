@@ -64,6 +64,18 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 | THM-0040 | An authorized request was permitted by a decision about that very request | proxy.pdp_decision_relation | unit://proxy.pdp_decision_relation | live |
 | THM-0041 | An offline-verified receipt proves registration, and its root was never supplied | http_profile.scitt_receipt_offline | unit://http_profile.scitt_receipt_offline | live |
 | THM-0042 | Retained evidence is the evidence the statement was made about | http_profile.scitt_retained_correspondence | unit://http_profile.scitt_retained_correspondence | live |
+| THM-0043 | The exchange relation is decided everywhere and the execution threshold partitions it | proxy.exchange_lifecycle | unit://proxy.exchange_lifecycle | live |
+| THM-0044 | An exchange's retry consequence never under-reports what may have happened | proxy.exchange_lifecycle | unit://proxy.exchange_lifecycle | live |
+| THM-0045 | The backend is reached only by consuming a fully assembled pre-dispatch commitment | proxy.dispatch_commitment | unit://proxy.dispatch_commitment | live |
+| THM-0046 | A refusal carries which authority reached it, over a closed set, unrendered | proxy.refusal_provenance | unit://proxy.refusal_provenance | live |
+| THM-0047 | The verifier's assurance products are not substitutable | http_profile.verifier_result_separation | unit://http_profile.verifier_result_separation | live |
+| THM-0048 | Every listener obtains its whole security posture through one listener state | proxy.tls_listener_state | unit://proxy.tls_listener_state | live |
+| THM-0049 | Every illegal cross-owner configuration combination is refused at layer A | proxy.cross_machine_legality | unit://proxy.cross_machine_legality | live |
+| THM-0050 | Distinct verification keys have distinct keyids | http_profile.keyid | _none_ | live |
+| THM-0051 | The pipeline holds, at dispatch, the verification product of this very exchange | proxy.dispatch_commitment | _none_ | live |
+| THM-0052 | A dispatched body was released by the decision a configured policy produced | proxy.dispatch_commitment | _none_ | live |
+| THM-0053 | A presented admission assertion is authentic, in its window, and for this audience | http_profile.admission_currency | _none_ | live |
+| THM-0054 | Every production listener denies unknown client revocation status | proxy.tls_listener_state | _none_ | live |
 
 ## Claims in full
 
@@ -524,3 +536,133 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 **Scope — what this does NOT establish.** Correspondence only. It does not establish that the retained bytes are THEMSELVES valid evidence, that the call described ever happened, or that the reconstruction is complete — only that whatever was reconstructed is what was committed to. It does not establish registration: whether any transparency service ever saw the statement is THM-0041. Nor does it establish that the commitment function is collision-resistant; the digest is an opaque primitive here.
 
 **Review requirement.** Owner security-specification review
+
+### THM-0043 — The exchange relation is decided everywhere and the execution threshold partitions it
+
+**Statement.** Every (ExchangeState, ExchangeEvent) pair is either explicitly legal or explicitly rejected by `transition`; no event moves a terminal state; the pipeline order is a directed path whose only branches are the notification arm and the open-leg/terminal split; and no state at or past the execution threshold can reach a pre-dispatch terminal. An advance the relation does not admit latches an anomaly in every build, release included, rather than being ignored or panicking.
+
+**Security consequence.** A serving path cannot reach the backend from a state the relation does not admit, cannot reach a pre-dispatch refusal terminal after the backend has been handed the request, and cannot silently drive the machine off the legal path — a disagreement between the model and the code is recorded, and every consequence derived afterwards is derived from a machine that says so.
+
+**Scope — what this does NOT establish.** Establishes the relation and the latch. It does not establish that the serving path drives this machine, that a given stage advances it, or that any particular refusal site is inside the lifecycle — those are propositions about the caller and are registered against the serving composition, not here. It establishes nothing about what any stage verified.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0044 — An exchange's retry consequence never under-reports what may have happened
+
+**Statement.** `ExchangeProgress::retry_semantics` is monotone along every legal path and reports `NotRetrySafe` whenever an anomaly is latched or the backend was dispatched, and `RequiresNewElicitation` whenever a continuation approval was consumed and the backend was not. `Consumed` latches, so no later observation can report a spent approval as unspent; the backend projection is derived from the exchange state rather than asserted beside it, so the two cannot disagree.
+
+**Security consequence.** A client cannot be told that nothing executed when the backend may have run, and cannot be told an ordinary retry is available after a human's one-shot approval was destroyed — the combination that leaves the retry's fresh nonce admitted and the answer refused as already-answered, with the approval gone.
+
+**Scope — what this does NOT establish.** A claim about the machine's derivation, not about the wire. It does not establish that the serving path maps a consequence onto a particular HTTP status, that a client acts on it, or that any effect was in fact performed. It establishes nothing about the truth of the observations fed to it — only that no observation can move the consequence backward.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0043
+
+### THM-0045 — The backend is reached only by consuming a fully assembled pre-dispatch commitment
+
+**Statement.** The inner dispatch consumes a `ReadyForDispatch`, whose representation and constructor take each pre-dispatch prerequisite by value: an `AuthorizedRequestBody`, a `SigningWindow` snapshotted before the backend runs, and a `RetentionDisposition` that is either `NotConfigured` or a taken `Reserved`. `AuthorizedRequestBody` is sealed with exactly one producer, `AuthorizationPosture::release`. Crossing is one-way: `dispatched` consumes the ready state and yields a `DispatchedExchange`, so no caller holds both.
+
+**Security consequence.** A serving path that skipped the authorization decision, the signing-window snapshot or the retention reservation has nothing to hand the dispatch — the failure is a compile error at the dispatch line, not a proxy that quietly serves unjudged requests or discovers a missing credential after the tool has already run. And a post-dispatch failure cannot be answered as though the backend had not run, because the value that would say so is gone.
+
+**Scope — what this does NOT establish.** It establishes that the decision was TAKEN, never that a policy permitted: `NoPolicyConfigured` releases a body too, because a deployment with no policy is entitled to serve while claiming nothing. It does not establish that the posture released was the one a configured policy produced — that proposition is registered separately and is open. It says nothing about what the verifier established, and nothing about the retention record's contents.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0040
+
+### THM-0046 — A refusal carries which authority reached it, over a closed set, unrendered
+
+**Statement.** Every `Refusal` carries a `RefusalCause` rather than a rendered token, and `RefusalCause` is closed over exactly the two authorities on this path — a Core verification verdict, in whichever of Core's own producers reached it, and the ADR-MCPRE-065 authorization boundary, held whole so its two arms stay distinguishable. `PolicyError` has no route into the Core taxonomy anywhere in the workspace. Rendering to a wire code happens only at the presentation boundary, and the signing posture is independent of the cause.
+
+**Security consequence.** An authorization refusal cannot arrive at the audit boundary wearing Core's provenance, a foreign taxonomy cannot reach a record's reason field unnoticed, and "no policy verdict was reached" cannot be recorded as "a policy denied" — the three collapses a pre-rendered token made unrecoverable.
+
+**Scope — what this does NOT establish.** Establishes the vocabulary and its provenance. It does not establish that every production refusal site is inside the exchange lifecycle, that the audit record is written, or that the refusal is signed — those are propositions about the serving path and the response-emission authority. It does not establish that Core's own verdicts are correct.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0047 — The verifier's assurance products are not substitutable
+
+**Statement.** The products the verifier operations return are distinct types whose representations are private to their own modules, so a product that establishes a weaker proposition cannot be passed where a stronger one is required: a floor-verified request is not a full-profile verified request, a bound response is not an unbound one, and a delegated response is not a trust-seam one.
+
+**Security consequence.** A serving path cannot satisfy a consumer that requires a full-profile verification by handing it a value that only cleared the cryptographic floor, and the substitution is a compile error rather than a silently weaker check.
+
+**Scope — what this does NOT establish.** Type separation only. It does not establish that the value a consumer holds was produced by the operation whose type it has for THAT consumer's exchange — possession provenance is a proposition about the caller and is registered against the serving composition. It establishes nothing about what any of the operations verify.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0048 — Every listener obtains its whole security posture through one listener state
+
+**Statement.** Every MCP-RE construction path obtains a listener's trust anchors, epoch-bound session store, signing budget and client-certificate verifier through one `TlsListenerSecurityState`; the terms cannot be supplied to it independently. The epoch is a function of the anchor set alone, a rebuild that republishes the same trust keeps the resumption cache while a rebuild with withdrawn trust advances the epoch and stops resumption, and no configuration this owner builds can resume outside the store.
+
+**Security consequence.** A withdrawn trust anchor cannot be survived by a resumed session, and a listener cannot be assembled with anchors from one source and a session store or signing budget from another — the pairing that lets a session outlive the trust that admitted it.
+
+**Scope — what this does NOT establish.** Establishes that the terms travel together and that the epoch tracks the anchors. It does not establish that the client-certificate verifier denies unknown revocation status: that is a property of one construction site over a foreign trait object, not of any type this owner holds, and it is registered separately as an open proposition. It says nothing about the handshake's own correctness.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0049 — Every illegal cross-owner configuration combination is refused at layer A
+
+**Statement.** The cross-machine pass reads classified owner states and validated request selections, never raw fields a machine already classified, and refuses every relation it declares — the channel key object living in a backend the deployment does not reach, a revocation deny list no configured profile will read, and a trust-epoch posture incompatible with delegated signing. Each refusal is unconditional in the classifier rather than conditional on a caller having asked.
+
+**Security consequence.** An operator cannot obtain a weaker posture by supplying a combination of individually legal selections that no machine alone can refuse — a PKCS#11 channel key under a KMS signing source, silently doing nothing while the operator believes the handshake key is device-resident.
+
+**Scope — what this does NOT establish.** Establishes refusal by the classifier. It does not establish that the illegal combination is unrepresentable — `DeploymentRequest` can hold one, which is why the refusal is a check the classifier performs and not a structural fact. It does not establish that the classifier is consulted on every startup path.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0050 — Distinct verification keys have distinct keyids
+
+**Statement.** The RFC 7638 thumbprint selector is injective over the keys a deployment can enrol: two distinct verification keys cannot present the same keyid, so resolving a keyid through the trust seam selects at most one key.
+
+**Security consequence.** A signer cannot be accepted under a keyid that resolves to another party's key, which is what would let one enrolled actor's signature be attributed to another.
+
+**Scope — what this does NOT establish.** Selector injectivity only. It does not establish that the seam answers for any particular keyid, that the key it returns is trusted, or that the enrolment set is correct. It says nothing about the canonical JWK encoding beyond what injectivity requires.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0051 — The pipeline holds, at dispatch, the verification product of this very exchange
+
+**Statement.** The verified request the serving path carries from the verification stage to the dispatch, and to every stage between them, is the product that stage's verification of THIS inbound message returned — not a product of another exchange, not one reconstructed downstream, and not one a caller supplied.
+
+**Security consequence.** A caller cannot reach the backend by having some other exchange's verification succeed, and no stage between verification and dispatch can substitute a value for the one the verifier produced.
+
+**Scope — what this does NOT establish.** Possession provenance across the serving pipeline. It does not restate what the verification established (THM-0015) or that the products are type-separated (THM-0047); it is the joint those two explicitly exclude.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0015, THM-0047
+
+### THM-0052 — A dispatched body was released by the decision a configured policy produced
+
+**Statement.** On a deployment where an authorization policy is configured, the `AuthorizationPosture` that released the body reaching the backend was produced by that policy's evaluation of this request's verified facts — `NoPolicyConfigured` is reachable at the dispatch only on a deployment that configured no policy.
+
+**Security consequence.** A serving path cannot bypass a configured policy by releasing the body under the posture that claims nothing, which is the one gap the sealed body type leaves open: possession proves a decision was taken, and this proves it was the one the deployment selected.
+
+**Scope — what this does NOT establish.** It does not restate the seal (THM-0045) or the decision relation (THM-0040). It establishes nothing about the policy's own correctness, and nothing about deployments that configure no policy, which are entitled to serve while claiming nothing.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0040, THM-0045
+
+### THM-0053 — A presented admission assertion is authentic, in its window, and for this audience
+
+**Statement.** The admission assertion an enforcement point acts on verified under a key resolved for its issuer, the instant of the call lies within the assertion's [nbf, exp] window, and its audience names this enforcement point.
+
+**Security consequence.** An admission verdict cannot rest on an assertion another party minted, on one whose validity window has passed, or on one issued to a different enforcement point and replayed here.
+
+**Scope — what this does NOT establish.** Assertion authenticity only. It does not restate verdict integrity (THM-0003), anti-rollback (THM-0004), presenter binding (THM-0006) or the degraded-admission opt-in (THM-0005), all of which characterize what the verdict says once the assertion is believed. ASM-0012 currently stands in place of this proposition inside the Verus proof cone; an assumption over MCP-RE's own verifier is a legitimate proof-cone device and is not an acceptable terminal for a load-bearing system obligation.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0054 — Every production listener denies unknown client revocation status
+
+**Statement.** Every client-certificate verifier a production MCP-RE listener uses denies unknown revocation status, enforces revocation over the full chain, and enforces CRL expiration, with no configuration or argument that can relax any of the three.
+
+**Security consequence.** A client whose revocation status cannot be determined — because the CRL is stale, absent for its issuer, or does not cover its position in the chain — cannot complete a handshake, so a revoked credential cannot be admitted by the checking silently failing open.
+
+**Scope — what this does NOT establish.** The verifier value is a foreign trait object that plainly admits permissive implementations, so this is a proposition about every production construction site, not a property of a type this project owns. It does not establish that the CRLs a deployment loads are current or complete, and it establishes nothing about the per-request revocation check, which is a separate authority holding the same invariant.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0048
