@@ -29,6 +29,7 @@ not an omission to hide.
 | http_profile.freshness_window | V1 | THM-0001 | 6 |
 | http_profile.keyid | V0 | THM-0050, THM-0055 | 0 |
 | http_profile.pdp_decision_authentication | V0 | THM-0039 | 0 |
+| http_profile.response_emission_binding | V0 | THM-0065 | 0 |
 | http_profile.scitt_receipt_offline | V0 | THM-0041 | 0 |
 | http_profile.scitt_retained_correspondence | V0 | THM-0042 | 0 |
 | http_profile.verifier_result_separation | V0 | THM-0047 | 0 |
@@ -42,7 +43,9 @@ not an omission to hide.
 | proxy.credential_key_correspondence | V0 | THM-0026 | 1 |
 | proxy.cross_machine_legality | V0 | THM-0049 | 0 |
 | proxy.current_authenticated_peer | V0 | THM-0033 | 0 |
+| proxy.custody_exposure | V0 | THM-0064 | 0 |
 | proxy.delegated_resolver_materialization | V0 | THM-0027 | 1 |
+| proxy.delegated_signing_credential | V0 | THM-0062 | 0 |
 | proxy.dispatch_commitment | V0 | THM-0045, THM-0051, THM-0052 | 0 |
 | proxy.ed25519_public_key | V0 | THM-0025 | 1 |
 | proxy.exchange_lifecycle | V0 | THM-0043, THM-0044 | 0 |
@@ -52,6 +55,7 @@ not an omission to hide.
 | proxy.peer_identity_value | V0 | THM-0023 | 0 |
 | proxy.refusal_provenance | V0 | THM-0046 | 0 |
 | proxy.request_peer_binding | V0 | THM-0034 | 0 |
+| proxy.response_signing | V0 | THM-0063 | 0 |
 | proxy.runtime_lifecycle | V0 | THM-0012 | 0 |
 | proxy.tls_listener_state | V0 | THM-0048, THM-0054 | 0 |
 | proxy.trust_composition_root | V0 | THM-0038 | 0 |

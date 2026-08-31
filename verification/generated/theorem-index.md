@@ -83,6 +83,10 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 | THM-0059 | An unbound receipt is never a success and never another request's answer | client.response_acceptance | unit://client.response_acceptance | live |
 | THM-0060 | The client's clock skew is bounded at construction and read once | client.delegation_policy_seal | unit://client.delegation_policy_seal | live |
 | THM-0061 | A receipt that says nothing is not a receipt that says nothing ran | client.execution_contract | unit://client.execution_contract | live |
+| THM-0062 | A response-signing credential exists only while a valid delegated key does | proxy.delegated_signing_credential | unit://proxy.delegated_signing_credential | live |
+| THM-0063 | A signed response never advertises validity its credential does not authorize | proxy.response_signing | unit://proxy.delegated_signing_credential, unit://proxy.response_signing | live |
+| THM-0064 | A non-exporting custody selection keeps the private key off this process | proxy.custody_exposure | unit://proxy.custody_exposure | live |
+| THM-0065 | An emitted bound response signature binds the request it answers | http_profile.response_emission_binding | unit://http_profile.response_emission_binding, unit://http_profile.verifier_results | live |
 
 ## Claims in full
 
@@ -749,3 +753,47 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 **Scope — what this does NOT establish.** What the receipt SAYS, and what a client may conclude from it. It does not establish that the server's statement is true — that is the serving path's exchange machine (THM-0044) — and it establishes nothing about the transport failures on which no receipt arrives at all.
 
 **Review requirement.** Owner security-specification review
+
+### THM-0062 — A response-signing credential exists only while a valid delegated key does
+
+**Statement.** The response signer publishes a credential snapshot only from a successful rotation, and yields none before the first rotation, past the published key's expiry, after a fail-closed issuance has retired the snapshot, after a terminal retirement — including for a mint that lands afterwards — and when its snapshot lock is poisoned. An issuance failure serves the still-valid key and then fails closed at its expiry rather than extending it, and the retry schedule never sleeps past a still-valid key.
+
+**Security consequence.** A response cannot be signed under a credential the deployment no longer holds, under one whose window has closed, or after the signer has been retired — and there is no longer-lived or root credential to fall back to, because no such mode exists. What a caller gets instead is an unsigned last-resort receipt, which it can tell from a signature.
+
+**Scope — what this does NOT establish.** The credential's existence, not its content: it does not establish that the credential chains to the deployment's root, that its scope is right, or that a verifier will accept it. It says nothing about what is signed under it, which is THM-0063 and THM-0065.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0063 — A signed response never advertises validity its credential does not authorize
+
+**Statement.** `SigningWindow` keeps `expires` private and no constructor accepts one: every window is derived as the earlier of the configured TTL from `now` and the credential's own `exp`, with saturating arithmetic so an absurd configured TTL cannot wrap past it. A credential already past its bound yields a window claiming no future validity rather than one running backwards. The same owner opens every window this deployment signs under, reply and refusal alike, and a refusal signs under the snapshot its own exchange took.
+
+**Security consequence.** A client cannot be given a receipt asserting validity beyond the moment its credential stops authorizing signatures — a window the verifier refuses as soon as the credential's own closes, which the client would learn about only by failing. And a refusal minted late in an exchange cannot advertise more validity for having been reached by a different path.
+
+**Scope — what this does NOT establish.** The advertised window, not the signature. It does not establish that a credential existed (THM-0062) or what the signature covers (THM-0065). Where no valid credential exists the receipt is UNSIGNED, and what such a receipt may still state is a separate conjunct of this unit rather than part of this claim.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0062
+
+### THM-0064 — A non-exporting custody selection keeps the private key off this process
+
+**Statement.** The custody owner classifies each legal selection into exactly one state carrying the material that made it inhabitable, and projects a single semantic fact — `PrivateKeyExposure` — that is `NonExporting` for the device- and service-held states and `ProcessReadable` only for the state that loads a seed. A state missing a parameter it cannot start without is not built, and a state carries no neighbour's material.
+
+**Security consequence.** Where a deployment selects non-exporting custody, nothing that can read this process's memory or its seed file can obtain the signing key — the process can ask for a signature and never for the key. And a consumer asking whether the key may be read here cannot get a different answer by asking which mechanism it is, because the projection names none.
+
+**Scope — what this does NOT establish.** CONDITIONAL on the deployment's own selection: it establishes nothing about a deployment that selects file custody, which is `ProcessReadable` and honestly says so. It establishes what the classified STATE asserts, not that the remote signer implementation honours it — that a KMS does not export a key is the provider's property, outside this boundary. It does not establish that response signing and channel signing use different keys.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0065 — An emitted bound response signature binds the request it answers
+
+**Statement.** A response this proxy signs in the bound form carries a signature whose `;req` components resolved against the request being answered, and a response evidence block whose request-evidence handle is over that same request. Signing and verification agree end to end: a response minted for one exchange does not verify as the answer to another, at the evidence block or at the cryptographic floor, and two requests differing only in one signed parameter have different handles.
+
+**Security consequence.** A response cannot be lifted from one exchange and presented as the answer to another, and a `;req` splice cannot be repaired by reconstructing the block — the floor refuses it independently.
+
+**Scope — what this does NOT establish.** The bound form only: an unbound emission carries no binding by construction, and that a verifier can never read one as bound is THM-0022 on the verification side. It does not establish which credential the signature was made under (THM-0062, THM-0063), and it says nothing about responses this proxy does not sign.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0021, THM-0022

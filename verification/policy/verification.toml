@@ -2175,3 +2175,126 @@ tested_symbols = [
   "lib#result_classification::tests::an_unrecognized_result_type_is_never_terminal",
   "lib#result_classification::tests::the_live_seam_refuses_what_the_reporting_seam_merely_names",
 ]
+
+# ---------------------------------------------------------------------------------------
+# Stage 5 — the response-emission cluster.
+#
+# The ratification refuses one "response emission" authority absorbing delegation-only
+# signing, custody provenance, request binding and non-exporting custody. Four owners,
+# because there are four questions: where the credential comes from and when it stops
+# existing; what validity a response may advertise under it; whether the private key is on
+# this process at all; and whether the emitted signature binds the request it answers.
+# ---------------------------------------------------------------------------------------
+
+[[unit]]
+id = "proxy.delegated_signing_credential"
+class = "V0"
+description = "The delegated response-signing credential source: when a valid short-TTL key exists, when it stops existing, and that every one of those transitions fails CLOSED rather than falling back to a longer-lived or root credential."
+paths = [
+  "mcp-re-proxy/src/delegated_server_signer/mod.rs",
+  "mcp-re-proxy/src/delegated_server_signer/retry_schedule.rs",
+  "mcp-re-proxy/src/delegated_response_signer.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/signing/delegated_credential_lifecycle"]
+assumptions = []
+# Every control here is about ABSENCE: before the first rotation, past expiry, after a
+# terminal retirement, under a poisoned lock. There is no direct-root fallback to measure,
+# because there is no direct-root mode — so what has to be measured is that the fail-closed
+# answer is the one every one of those states gives.
+tested_symbols = [
+  "lib#delegated_server_signer::tests::no_key_before_first_rotate_fails_closed",
+  "lib#delegated_server_signer::tests::rotate_publishes_a_snapshot_the_hot_path_reads",
+  "lib#delegated_server_signer::tests::snapshot_fails_closed_past_expiry",
+  "lib#delegated_server_signer::tests::fail_closed_issuance_retires_the_snapshot",
+  "lib#delegated_server_signer::tests::issuance_failure_serves_the_valid_key_then_fails_closed_at_expiry",
+  "lib#delegated_server_signer::tests::advance_trust_epoch_republishes_a_fresh_key_under_the_new_epoch",
+  "lib#delegated_server_signer::tests::a_declined_advance_is_reported_as_declined_and_keeps_the_prior_key",
+  "lib#delegated_server_signer::tests::seconds_to_expiry_tracks_the_published_key",
+  "lib#delegated_server_signer::tests::metrics_count_success_and_reset_the_failure_streak",
+  "lib#delegated_server_signer::tests::backoff_is_exponential_then_ceilinged",
+  "lib#delegated_server_signer::tests::backoff_never_sleeps_past_a_still_valid_key",
+  "lib#delegated_server_signer::tests::backoff_once_expired_uses_the_ceiling_not_the_negative_ttl",
+  "lib#delegated_server_signer::terminal_retirement_tests::a_mint_landing_after_the_owner_is_gone_cannot_restore_signing",
+  "lib#delegated_server_signer::terminal_retirement_tests::a_rotor_retirement_is_still_undone_by_the_next_successful_mint",
+  "lib#delegated_server_signer::terminal_retirement_tests::a_poisoned_snapshot_lock_fails_closed_and_still_recovers",
+]
+
+[[unit]]
+id = "proxy.response_signing"
+class = "V0"
+description = "The deployment's response-signing authority: one owner for the credential snapshot, the validity a response may advertise under it, and which receipt a refusal is served as — so the reply path and the refusal path cannot drift apart."
+paths = [
+  "mcp-re-proxy/src/http_profile_serve/signing_window.rs",
+  "mcp-re-proxy/src/http_profile_serve/receipt/mod.rs",
+  "mcp-re-proxy/src/http_profile_serve/receipt/artifact.rs",
+  "mcp-re-proxy/src/http_profile_serve/receipt/audit_event.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/signing/response_window_and_receipt"]
+assumptions = []
+# The window controls are the seal: `expires` is private and no constructor takes one, so
+# the four cases below are the whole derivation rather than four call sites that remembered
+# to clamp. The last-resort controls are the other half — what an UNSIGNED receipt may still
+# state when no valid credential exists.
+tested_symbols = [
+  "lib#http_profile_serve::signing_window::tests::the_configured_ttl_bounds_a_window_inside_the_credential",
+  "lib#http_profile_serve::signing_window::tests::the_credential_bounds_a_ttl_that_would_outlive_it",
+  "lib#http_profile_serve::signing_window::tests::an_expired_credential_advertises_no_future_validity",
+  "lib#http_profile_serve::signing_window::tests::a_saturating_ttl_does_not_wrap_past_the_credential",
+  "lib#http_profile_serve::receipt::artifact::last_resort_receipt_tests::a_spent_approval_last_resort_receipt_names_the_consumed_continuation",
+  "lib#http_profile_serve::receipt::artifact::last_resort_receipt_tests::a_retention_indeterminate_last_resort_receipt_still_names_the_failed_obligation",
+  "lib#http_profile_serve::receipt::artifact::last_resort_receipt_tests::an_ordinary_post_dispatch_failure_claims_no_retention_status",
+  "lib#http_profile_serve::receipt::artifact::last_resort_receipt_tests::an_unstated_disposition_adds_no_claim",
+]
+
+[[unit]]
+id = "proxy.custody_exposure"
+class = "V0"
+description = "Whether the signing private key is readable by this process: the ADR-MCPRE-067 exposure fact, classified from the custody selection and projected as a semantic answer that names no mechanism."
+paths = ["mcp-re-proxy/src/config_state/custody.rs"]
+exported_contracts = []
+evidence = ["test://proxy/config_state/custody_exposure"]
+assumptions = []
+# The first two controls are the claim; the third is what makes it ADR-067-shaped. A
+# consumer asks *may the key be read here*, never *is this AWS* — so a mechanism that does
+# not exist yet drives the same consumer without editing it, which is the property a
+# provider enumeration would destroy.
+tested_symbols = [
+  "lib#config_state::custody::tests::only_the_device_states_hold_the_key_off_this_process",
+  "lib#config_state::custody::tests::a_consumer_of_the_exposure_fact_names_no_mechanism",
+  "lib#config_state::custody::tests::a_mechanism_that_does_not_exist_drives_the_same_consumer",
+  "lib#config_state::custody::tests::every_legal_state_form_is_classified_and_accepted",
+  "lib#config_state::custody::tests::a_state_missing_its_material_is_not_built",
+  "lib#config_state::custody::tests::each_state_names_every_parameter_it_cannot_start_without",
+  "lib#config_state::custody::tests::each_state_carries_the_material_that_made_it_inhabitable",
+  "lib#config_state::custody::tests::a_selection_projects_its_own_material_and_no_neighbours",
+  "lib#config_state::custody::tests::a_seed_path_left_over_on_a_device_state_is_not_forbidden",
+  "lib#config_state::custody::tests::an_admissible_endpoint_override_reaches_the_state_it_parameterizes",
+  "lib#config_state::custody::tests::an_endpoint_the_authority_guard_refused_is_not_carried_by_the_built_state",
+  "lib#config_state::custody::tests::an_sts_endpoint_without_the_mode_it_parameterizes_is_refused",
+  "lib#config_state::custody::tests::the_aws_credential_mode_is_a_posture_and_not_a_flag_beside_an_endpoint",
+]
+
+[[unit]]
+id = "http_profile.response_emission_binding"
+class = "V0"
+description = "What an emitted response signature binds: the `;req` components resolved against the request being answered, and the response evidence block's request-evidence handle over that same request."
+paths = ["mcp-re-http-profile/src/sign.rs"]
+exported_contracts = []
+evidence = ["test://http_profile/sign/response_binding_roundtrip"]
+assumptions = []
+# ROUND-TRIP controls, deliberately: they sign and then verify, so they measure the EMISSION
+# side rather than restating what the verifier establishes. The third and fourth are the
+# negative half — a response minted for one exchange must not verify as the answer to
+# another, at the block and at the cryptographic floor.
+tested_symbols = [
+  "tests/full_profile_test#full_response_roundtrip_binds_request_evidence",
+  "tests/full_profile_test#response_request_evidence_mismatch_emits_request_binding_mismatch",
+  "tests/full_profile_test#a_valid_exchange_cannot_be_verified_as_the_answer_to_a_different_request",
+  "tests/full_profile_test#cryptographic_req_splice_still_fails_at_the_floor",
+  "tests/full_profile_test#two_requests_differing_only_in_a_signed_parameter_have_different_handles",
+  "tests/delegated_202_test#a_delegated_202_verifies_via_the_credential_chain",
+  "tests/delegated_202_test#a_delegated_202_refuses_a_retransmission_of_the_same_notification",
+  "tests/delegated_202_test#a_delegated_202_refuses_a_content_distinct_notification",
+]

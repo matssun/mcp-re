@@ -65,6 +65,15 @@ on:
       # The manifest too: the fingerprint reads it, and a dependency change that moves a
       # unit's measurement must reach the lane that re-measures it.
       - "mcp-re-client-core/Cargo.toml"
+      # Stage 5 gave the response-emission cluster its four owners.
+      - "mcp-re-proxy/src/delegated_server_signer/**"
+      - "mcp-re-proxy/src/delegated_response_signer.rs"
+      - "mcp-re-proxy/src/config_state/custody.rs"
+      # The serving subtree, read whole: three units now take files out of it — the
+      # dispatch commitment, the response-signing authority, and the verification stage the
+      # product-provenance gate measures — and a filter enumerating today's members would go
+      # stale the next time a region moves.
+      - "mcp-re-proxy/src/http_profile_serve/**"
       # MCPRE-137: the listener-lifetime TLS security state, its subordinates, and the
       # production wiring that gives a listener a lifetime at all.
       - "mcp-re-proxy/src/tls_listener_state/**"
@@ -171,6 +180,15 @@ on:
       # The manifest too: the fingerprint reads it, and a dependency change that moves a
       # unit's measurement must reach the lane that re-measures it.
       - "mcp-re-client-core/Cargo.toml"
+      # Stage 5 gave the response-emission cluster its four owners.
+      - "mcp-re-proxy/src/delegated_server_signer/**"
+      - "mcp-re-proxy/src/delegated_response_signer.rs"
+      - "mcp-re-proxy/src/config_state/custody.rs"
+      # The serving subtree, read whole: three units now take files out of it — the
+      # dispatch commitment, the response-signing authority, and the verification stage the
+      # product-provenance gate measures — and a filter enumerating today's members would go
+      # stale the next time a region moves.
+      - "mcp-re-proxy/src/http_profile_serve/**"
       # MCPRE-137: the listener-lifetime TLS security state, its subordinates, and the
       # production wiring that gives a listener a lifetime at all.
       - "mcp-re-proxy/src/tls_listener_state/**"

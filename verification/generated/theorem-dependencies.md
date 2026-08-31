@@ -36,6 +36,7 @@ graph BT
     THM_0057["THM-0057<br/>A client's trust anchors are the ones the current signed manifest published"]
     THM_0058["THM-0058<br/>A client accepts a response only under a signer its trust configuration authorizes"]
     THM_0059["THM-0059<br/>An unbound receipt is never a success and never another request's answer"]
+    THM_0065["THM-0065<br/>An emitted bound response signature binds the request it answers"]
     THM_0007 --> THM_0008
     THM_0001 --> THM_0014
     THM_0007 --> THM_0015
@@ -55,6 +56,8 @@ graph BT
     THM_0057 --> THM_0058
     THM_0020 --> THM_0059
     THM_0022 --> THM_0059
+    THM_0021 --> THM_0065
+    THM_0022 --> THM_0065
 ```
 
 ## Component 2
@@ -257,4 +260,20 @@ graph BT
 ```mermaid
 graph BT
     THM_0061["THM-0061<br/>A receipt that says nothing is not a receipt that says nothing ran"]
+```
+
+## Component 24
+
+```mermaid
+graph BT
+    THM_0062["THM-0062<br/>A response-signing credential exists only while a valid delegated key does"]
+    THM_0063["THM-0063<br/>A signed response never advertises validity its credential does not authorize"]
+    THM_0062 --> THM_0063
+```
+
+## Component 25
+
+```mermaid
+graph BT
+    THM_0064["THM-0064<br/>A non-exporting custody selection keeps the private key off this process"]
 ```
