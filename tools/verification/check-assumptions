@@ -223,13 +223,56 @@ def scan_paths() -> list[tuple[Path, bool, frozenset[str]]]:
     return out
 
 
+#: A test region opens here — ADR-MCPRE-061 §5.1, the same definition
+#: `scripts/module_size_gate.py` reads.
+TEST_REGION = re.compile(r"^#\[cfg\((all\()?test\b")
+
+
+def production_lines(text: str) -> list[tuple[int, str]]:
+    """`(1-based line number, line)` for every line OUTSIDE a test region.
+
+    A region runs from its `#[cfg(test)]`-family attribute to the end of the module it
+    introduces, tracked by brace depth, and scanning resumes afterwards — not "everything
+    above the first one", which would discard production items below a test module.
+
+    Why the PRODUCTION scan needs this at all: its mechanism list exists because the bare
+    words are ordinary English and ordinary Rust, and a test region is where ordinary Rust
+    is densest. `mcp-re-http-profile/src/replay.rs` has a test helper `fn admit(..)`; Verus'
+    `admit()` deletes a proof obligation, and the two share a name and nothing else. A
+    region that ships in no binary cannot weaken a proof about one, so the honest scope for
+    "which escape hatches does this shipped code use" is the shipped code.
+    """
+    lines = text.splitlines()
+    kept: list[tuple[int, str]] = []
+    i = 0
+    while i < len(lines):
+        if TEST_REGION.match(lines[i].lstrip()):
+            depth = 0
+            opened = False
+            while i < len(lines):
+                depth += lines[i].count("{") - lines[i].count("}")
+                if "{" in lines[i]:
+                    opened = True
+                i += 1
+                if opened and depth <= 0:
+                    break
+            continue
+        kept.append((i + 1, lines[i]))
+        i += 1
+    return kept
+
+
 def scan() -> list[tuple[Path, int, str, str, frozenset[str]]]:
     hits: list[tuple[Path, int, str, str, frozenset[str]]] = []
     for path, is_production, owners in scan_paths():
         mechanisms = PRODUCTION_MECHANISMS if is_production else MECHANISMS
-        for lineno, line in enumerate(
-            path.read_text(encoding="utf-8").splitlines(), start=1
-        ):
+        text = path.read_text(encoding="utf-8")
+        numbered = (
+            production_lines(text)
+            if is_production
+            else list(enumerate(text.splitlines(), start=1))
+        )
+        for lineno, line in numbered:
             for name, pattern in mechanisms.items():
                 if re.search(pattern, line):
                     hits.append(

@@ -2423,3 +2423,31 @@ tested_symbols = [
   "lib#audit_sink::drain::tests::a_timed_out_audit_drain_never_reads_as_a_completed_one",
   "lib#audit_sink::drain::tests::the_unknown_outcome_is_its_own_case",
 ]
+
+# ---------------------------------------------------------------------------------------
+# Stage 8 — closed by the whole-system missing-edge pass.
+#
+# Replay admission is a pre-dispatch obligation R1 quantifies over, and the proposal packet's
+# tree did not have a node for it: `ExchangeState::ReplayAdmitted` sits in the pipeline, the
+# five-tuple has an injectivity argument in prose, and no theorem named either. Found by
+# asking of each root what it requires rather than by reading the registry upward.
+# ---------------------------------------------------------------------------------------
+
+[[unit]]
+id = "http_profile.replay_key"
+class = "V0"
+description = "The ADR-MCPRE-050 replay five-tuple and its injective pre-serialization onto the core cache's three slots: equality of the composite slots holds exactly when the full five-tuple is equal, and an admitted key is fresh once."
+paths = ["mcp-re-http-profile/src/replay.rs"]
+exported_contracts = []
+evidence = ["test://http_profile/replay/key_injectivity"]
+assumptions = []
+# Injectivity here is a REAL claim about this code, not a primitive assumption: the separator
+# is a code point that cannot appear in a profile id, an RFC 9421 label, an escaped actor id
+# or a base64url audience hash, so the join cannot be forged. `every_component_discriminates`
+# is the control that keeps a widened component from silently collapsing the tuple.
+tested_symbols = [
+  "lib#replay::tests::composite_slots_are_injective",
+  "lib#replay::tests::every_component_discriminates",
+  "lib#replay::tests::core_replay_key_carries_the_same_injective_slots",
+  "lib#replay::tests::first_insert_is_fresh_replay_is_detected",
+]

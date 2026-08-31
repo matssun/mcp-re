@@ -81,6 +81,8 @@ on:
       - "mcp-re-proxy/src/audit_sink/**"
       - "mcp-re-proxy/src/authorization/audit.rs"
       - "mcp-re-proxy/src/authorization/audit/**"
+      # Stage 8: the replay five-tuple, found by the missing-edge pass.
+      - "mcp-re-http-profile/src/replay.rs"
       # MCPRE-137: the listener-lifetime TLS security state, its subordinates, and the
       # production wiring that gives a listener a lifetime at all.
       - "mcp-re-proxy/src/tls_listener_state/**"
@@ -203,6 +205,8 @@ on:
       - "mcp-re-proxy/src/audit_sink/**"
       - "mcp-re-proxy/src/authorization/audit.rs"
       - "mcp-re-proxy/src/authorization/audit/**"
+      # Stage 8: the replay five-tuple, found by the missing-edge pass.
+      - "mcp-re-http-profile/src/replay.rs"
       # MCPRE-137: the listener-lifetime TLS security state, its subordinates, and the
       # production wiring that gives a listener a lifetime at all.
       - "mcp-re-proxy/src/tls_listener_state/**"

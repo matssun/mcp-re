@@ -18,7 +18,7 @@ not an omission to hide.
 |---|---|---|---|
 | client.delegation_policy_seal | V0 | THM-0060 | 0 |
 | client.execution_contract | V0 | THM-0061 | 0 |
-| client.response_acceptance | V0 | THM-0058, THM-0059 | 0 |
+| client.response_acceptance | V0 | THM-0058, THM-0059, THM-0076 | 0 |
 | client.trust_manifest_lifecycle | V0 | THM-0057 | 0 |
 | core.time_rfc3339 | V1 | THM-0002 | 4 |
 | http_profile.admission_currency | V1 | THM-0003, THM-0004, THM-0005, THM-0006, THM-0053 | 4 |
@@ -29,39 +29,40 @@ not an omission to hide.
 | http_profile.freshness_window | V1 | THM-0001 | 6 |
 | http_profile.keyid | V0 | THM-0050, THM-0055 | 0 |
 | http_profile.pdp_decision_authentication | V0 | THM-0039 | 0 |
+| http_profile.replay_key | V0 | THM-0079 | 0 |
 | http_profile.response_emission_binding | V0 | THM-0065 | 0 |
-| http_profile.scitt_receipt_offline | V0 | THM-0041 | 0 |
+| http_profile.scitt_receipt_offline | V0 | THM-0041, THM-0072 | 0 |
 | http_profile.scitt_retained_correspondence | V0 | THM-0042 | 0 |
 | http_profile.scitt_service_pin | V0 | THM-0068 | 0 |
 | http_profile.verifier_result_separation | V0 | THM-0047 | 0 |
 | http_profile.verifier_results | V0 | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022 | 3 |
 | proxy.audit_delivery | V0 | THM-0070 | 0 |
 | proxy.audit_record_coordinates | V0 | THM-0069, THM-0071 | 0 |
-| proxy.authenticated_relationship_peer | V0 | THM-0031 | 1 |
+| proxy.authenticated_relationship_peer | V0 | THM-0031, THM-0080 | 1 |
 | proxy.authorization_posture | V0 | THM-0056 | 0 |
 | proxy.certificate_identity | V0 | THM-0024 | 1 |
 | proxy.channel_associated_credential | V0 | THM-0028 | 1 |
 | proxy.channel_associated_identity | V0 | THM-0029 | 1 |
 | proxy.credential_currency | V0 | THM-0032 | 1 |
 | proxy.credential_key_correspondence | V0 | THM-0026 | 1 |
-| proxy.cross_machine_legality | V0 | THM-0049 | 0 |
+| proxy.cross_machine_legality | V0 | THM-0049, THM-0073 | 0 |
 | proxy.current_authenticated_peer | V0 | THM-0033 | 0 |
 | proxy.custody_exposure | V0 | THM-0064 | 0 |
 | proxy.delegated_resolver_materialization | V0 | THM-0027 | 1 |
 | proxy.delegated_signing_credential | V0 | THM-0062 | 0 |
-| proxy.dispatch_commitment | V0 | THM-0045, THM-0051, THM-0052 | 0 |
+| proxy.dispatch_commitment | V0 | THM-0045, THM-0051, THM-0052, THM-0074 | 0 |
 | proxy.ed25519_public_key | V0 | THM-0025 | 1 |
-| proxy.exchange_lifecycle | V0 | THM-0043, THM-0044 | 0 |
+| proxy.exchange_lifecycle | V0 | THM-0043, THM-0044, THM-0078 | 0 |
 | proxy.mechanism_verified_credential | V0 | THM-0030 | 1 |
 | proxy.online_ocsp_reachability | V0 | THM-0013 | 0 |
 | proxy.pdp_decision_relation | V0 | THM-0040 | 0 |
 | proxy.peer_identity_value | V0 | THM-0023 | 0 |
-| proxy.refusal_provenance | V0 | THM-0046 | 0 |
+| proxy.refusal_provenance | V0 | THM-0046, THM-0081 | 0 |
 | proxy.request_peer_binding | V0 | THM-0034 | 0 |
-| proxy.response_signing | V0 | THM-0063 | 0 |
+| proxy.response_signing | V0 | THM-0063, THM-0075, THM-0082 | 0 |
 | proxy.runtime_lifecycle | V0 | THM-0012 | 0 |
 | proxy.serving_trust_seam | V0 | THM-0066 | 0 |
 | proxy.tls_listener_state | V0 | THM-0048, THM-0054 | 0 |
-| proxy.trust_composition_root | V0 | THM-0038, THM-0067 | 0 |
+| proxy.trust_composition_root | V0 | THM-0038, THM-0067, THM-0077 | 0 |
 | proxy.trust_configuration_state | V0 | THM-0035, THM-0036 | 0 |
 | proxy.trust_plan | V0 | THM-0037 | 0 |

@@ -122,6 +122,26 @@ def test_a_method_named_admit_is_not_a_proof_escape_hatch():
     assert "assume" in matched("assume(x < 10);")
 
 
+def test_the_production_scan_reads_the_shipped_half_only():
+    """A region that ships in no binary cannot weaken a proof about one.
+
+    `replay.rs` has a test helper `fn admit(..)`; Verus' `admit()` deletes a proof
+    obligation. Scanning the whole file reports the first as the second.
+    """
+    lines = gate.production_lines(
+        "fn ship() {}\n"
+        "#[cfg(test)]\nmod tests {\n    fn admit(x: u8) -> u8 { x }\n}\n"
+        "fn late() {}\n"
+    )
+    kept = [text for _, text in lines]
+    assert "fn ship() {}" in kept
+    assert "fn late() {}" in kept, "production below a test module is still production"
+    assert not any("admit" in text for text in kept)
+    assert [n for n, text in lines if text == "fn late() {}"] == [6], (
+        "line numbers must stay absolute, or a report points at the wrong line"
+    )
+
+
 # --- a claimed theorem the prover was told not to check -----------------------
 
 
