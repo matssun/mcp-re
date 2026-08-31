@@ -122,23 +122,27 @@ jobs:
           # check proves one component answers; only this proves they compose.
           #
           # `--preset=aeneas` is mandatory — the 2026-08-30 measurement found the default
-          # preset produces LLBC that Aeneas rejects — but the pinned Charon takes it under a
-          # SUBCOMMAND. The 2026-08-30 measurement was made against a locally built image and
-          # its invocation form did not survive to this pin: `charon --preset=...` is rejected
-          # outright, and this step is the first thing that ever ran far enough to find out.
-          # The help output is printed before the invocation so a failure here names the
-          # subcommand set rather than leaving the next reader to guess it again.
+          # preset produces LLBC that Aeneas rejects — but at this pin it is an option of a
+          # SUBCOMMAND, not a top-level flag. Measured 2026-08-31 by running the image, which
+          # is the first time anything got this far:
+          #
+          #     Usage: charon <COMMAND>
+          #     Commands: rustc  cargo  ui_test  toolchain-path  toolchain-version
+          #               pretty-print  version  help
+          #
+          # and `charon cargo --help` lists `--preset <PRESET>`. So the form is
+          # `charon cargo --preset=aeneas`, and the 2026-08-30 pilot's `charon --preset=...`
+          # was measured against a locally built image at a different Charon.
+          #
+          # `2>&1` and an explicit exit report: the previous run failed with a bare exit 101
+          # and no captured diagnostic, which says the extraction stopped without saying why.
           docker run --rm "${{ steps.tag.outputs.ref }}" bash -lc '
             set -euo pipefail
             mkdir -p /tmp/smoke/src && cd /tmp/smoke
             printf "[package]\nname = \"smoke\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[lib]\npath = \"src/lib.rs\"\n" > Cargo.toml
             printf "pub fn double(x: u32) -> u32 { x.wrapping_add(x) }\n" > src/lib.rs
-            echo "--- charon --help (the subcommand set this pin offers) ---"
-            "$CHARON_EXE" --help
-            echo "--- charon cargo --help ---"
-            "$CHARON_EXE" cargo --help || true
-            echo "--- extracting ---"
-            "$CHARON_EXE" cargo --preset=aeneas --dest-file /tmp/smoke/smoke.llbc
+            "$CHARON_EXE" cargo --preset=aeneas --dest-file /tmp/smoke/smoke.llbc 2>&1 \
+              || { rc=$?; echo "charon exited $rc — the output above is the whole diagnostic"; exit "$rc"; }
             "$AENEAS_EXE" -backend lean -dest /tmp/smoke/out /tmp/smoke/smoke.llbc
             ls /tmp/smoke/out
             cd /opt/aeneas/backends/lean
