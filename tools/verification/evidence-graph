@@ -93,15 +93,13 @@ def main() -> int:
         # Without this view, N units trusting one un-`ensures`d seam read as N independent
         # security results; they are not.
         "trusts_assumption": {
-            asm_id: sorted(
-                unit["id"] for unit in units if asm_id in unit.get("assumptions", [])
+            entry["id"]: sorted(
+                unit["id"]
+                for unit in units
+                if f"unit://{unit['id']}" in entry.get("scope", [])
             )
-            for asm_id in sorted(
-                {
-                    asm_id
-                    for unit in units
-                    for asm_id in unit.get("assumptions", [])
-                }
+            for entry in sorted(
+                assumptions.get("assumption", []), key=lambda row: row["id"]
             )
         },
         "trust_boundaries": [entry["id"] for entry in boundaries.get("boundary", [])],

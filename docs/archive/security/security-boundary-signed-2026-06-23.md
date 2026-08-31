@@ -1,0 +1,555 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+> # SUPERSEDED — historical signed record
+>
+> **This is not the current MCP-RE security-claim boundary.** It is preserved because it
+> carries owner signatures, and a signature is evidence about the text it was given. The
+> text is therefore unchanged below this banner: editing it under the old sign-offs would
+> make the signature record dishonest, which is the one thing an honesty gate may not do.
+>
+> It records the native / object profile (Ed25519-over-JCS, `_meta` envelope) and the
+> single-node claim ceiling as they stood on 2026-06-23. Both are historical: the one live
+> carrier is RFC 9421 + RFC 9530.
+>
+> The current boundary is [`docs/spec/security-boundary.md`](../../spec/security-boundary.md),
+> which requires its own owner ratification and does not inherit these signatures.
+>
+> Superseded by owner completeness ruling C, 2026-08-31 —
+> [`verification/reviews/rulings/owner-completeness-rulings-2026-08-31.md`](../../../verification/reviews/rulings/owner-completeness-rulings-2026-08-31.md).
+
+---
+
+# MCP-RE Security Boundary
+
+**Status: SIGNED OFF by the owner — Mats Sundvall, 2026-05-30 (release gate satisfied for the single-node profile). See Section 7.**
+
+**v0.5 proposal-readiness: SIGNED OFF by the owner — Mats Sundvall, 2026-06-23 (mechanical gate #156 green; no wire-envelope change, draft-01 frozen). See Section 10.**
+
+> **Profile status (ADR-MCPRE-050).** The object-signature guarantees described
+> below are those of the MCP-RE **native / object profile** (Ed25519-over-JCS,
+> `_meta` envelope), which is **DEPRECATED** — not a security mechanism, not an
+> alternative carrier, not a fallback. The one live security carrier is the
+> RFC 9421 + RFC 9530 HTTP profile (`mcp-re-http-profile`). The sign-off below
+> records the native-profile boundary as it stood; see
+> [../CURRENT_ARCHITECTURE.md](../CURRENT_ARCHITECTURE.md) and the
+> [Active Profile Boundary and Legacy Quarantine](../design/active-profile-and-legacy-quarantine.md)
+> note. Do not treat any JCS/object material here as current design.
+
+This document is the project's **honesty gate**. It states exactly what MCP-RE
+protects and — equally important — what it does **not** protect, so that a
+security reviewer cannot over-trust the system. It is a **merge/release gate**:
+release of any MCP-RE production-claim artifact is blocked until this document
+exists and has been signed off by the human owner. It is **type:HITL** — it is
+authored by an agent but requires the human owner's explicit approval; the
+author does **not** self-approve it.
+
+Tracking issue: MCPS-039.
+
+The authorities for the claim boundary are:
+
+- [ADR-MCPS-017 — Single-Node Production Claim Ceiling and Deferred Enterprise
+  Capabilities](https://github.com/matssun/mcp-re/discussions/366) — the
+  authority for the **allowed claim** vs the **forbidden claims** and the
+  deferred-capability list.
+- [ADR-MCPS-016 — Inner-Server Isolation Boundary
+](https://github.com/matssun/mcp-re/discussions/365) — the
+  **non-containment** boundary between the proxy and the inner MCP server.
+- [ADR-MCPS-018 — CI Reproducibility Posture and Conformance-Manifest Authority
+](https://github.com/matssun/mcp-re/discussions/367) — the
+  reproducibility posture.
+
+Where this document and any older planning brief disagree, this document and the
+cited ADRs win.
+
+---
+
+## 1. The allowed claim
+
+MCP-RE MAY be described as:
+
+> **"production-hardened for single-node Rust-native deployments."**
+
+That is the entire claim. Anything stated beyond this single-node ceiling is a
+**forbidden claim** (Section 2) until the named follow-up lands. The claim is
+bounded to a single node for exactly **one** reason: the durable replay
+protection MCP-RE ships is a **local, file-backed** cache, so replay safety holds
+only within a single proxy instance — see
+[ADR-MCPS-017](https://github.com/matssun/mcp-re/discussions/366). Key
+custody (file/env vs HSM/KMS) is a **separate, independent** hardening axis and
+is **not** a reason for the single-node ceiling — see "Two independent
+boundaries" below.
+
+### Two independent hardening boundaries
+
+MCP-RE has two distinct hardening axes. They are **orthogonal**: moving along one
+does not require moving along the other, and neither is required for MCP-RE's core
+object-signature verification.
+
+- **Scale boundary — this is what bounds the claim to a single node.** Replay
+  protection uses a local, file-backed `ReplayCache`, so it is safe only within
+  one proxy instance. A horizontally-scaled / multi-node deployment requires a
+  **shared, atomic `ReplayCache`** across proxy instances
+. This — and only this —
+  is why the production claim is single-node.
+- **Key-custody boundary — independent of scale.** Signing keys are loaded from a
+  **file/env `KeySource`**. Claiming non-exporting / hardware-backed /
+  enterprise-grade signing keys requires an **HSM / KMS / remote-signer
+  `KeySource`**. HSM/KMS is
+  **not** required for signature verification, and **not** required to move from
+  single-node to horizontally-scaled deployment: once the shared `ReplayCache`
+  lands, a multi-node deployment using file/env keys is possible. HSM/KMS is a
+  separate, additive key-custody hardening, claimed only when hardware-backed key
+  custody itself is the requirement.
+
+---
+
+## 2. Forbidden claims (NOT provided)
+
+The system MUST NOT be described as providing any of the following. Each is a
+deferred, named follow-up. Asserting any of these as delivered is a release-gate
+violation (Section 6).
+
+| Forbidden claim                                                            | Status                | Follow-up                                                       |
+| -------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------------- |
+| Horizontal-scale replay protection (multi-node) — **scale boundary**       | NOT provided — single-node only (local file ReplayCache) | (shared atomic ReplayCache) |
+| Full certificate revocation (online CRL / OCSP)                            | NOT provided          |           |
+| Hardware-backed / non-exporting signing keys (HSM / KMS) — **key-custody boundary**, independent of scale | NOT provided (file/env KeySource only) |           |
+| Reverse-proxy mTLS / enterprise ingress                                    | NOT provided          |           |
+| Kernel / filesystem / network containment of the inner server             | NOT provided — OS sandbox profile |           |
+| Signed-tool-manifest protection (tool identity / rug-pull detection)       | NOT provided          |           |
+| Offline-hermetic / air-gapped / vendored build reproducibility            | NOT provided (network-reproducible only) | future supply-chain item                            |
+| Client-side remote (non-local) transport                                   | NOT provided          | future seam                                                    |
+| Committed production rollout / SLA / monitoring ownership                  | NOT provided          | future seam                                                    |
+
+None of these is partially delivered. "Deferred future seam" means the interface
+may exist to make the capability addable later — it does **not** mean the
+capability is present.
+
+---
+
+## 3. Inner-server non-containment boundary
+
+Authority: [ADR-MCPS-016
+](https://github.com/matssun/mcp-re/discussions/365).
+
+The proxy (`mcp-re-proxy`) controls the inner MCP server's **launch hygiene** and
+propagates verified context. It does **not** contain a malicious or compromised
+inner server.
+
+**What the proxy DOES do (launch hygiene + context propagation):**
+
+- environment minimization (the inner server runs with a minimal, explicit
+  environment, not the proxy's full environment);
+- explicit working directory;
+- stdout/stderr separation;
+- process-lifecycle logging;
+- best-effort resource limits (`setrlimit`);
+- verified-context propagation (the proxy strips any caller-supplied verified
+  context and injects its own, so the inner server sees only proxy-asserted
+  identity).
+
+**What the proxy does NOT do (the boundary):**
+
+- It does **not** contain the inner server at the kernel, filesystem, or network
+  level. There is no seccomp / Landlock / container / eBPF enforcement in this
+  release.
+
+**Consequence — stated plainly:** a compromised or malicious inner MCP server can
+still access whatever its OS user can access (files, network, processes), within
+only the best-effort `setrlimit` bounds, until a separate OS sandbox profile
+lands. Launch hygiene
+reduces accidental blast radius; it is **not** a containment guarantee against a
+hostile inner server.
+
+---
+
+## 4. What IS protected (the positive claim surface)
+
+The following are delivered and may be claimed within the single-node ceiling.
+This is the complete positive surface; nothing outside it should be implied.
+
+- **Object-signature verification of every JSON-RPC request and response.** Every
+  protected message is verified through the canonical 12-step request pipeline
+  (and the response pipeline) defined in
+  [mcp-re-core-spec.md §9](./mcp-re-core-spec.md). Ed25519-over-JCS signs the
+  **complete JSON-RPC object**, not just an envelope
+  ([ADR-MCPS-004](https://github.com/matssun/mcp-re/discussions/353),
+  [ADR-MCPS-003](https://github.com/matssun/mcp-re/discussions/352)).
+- **Fail-closed message constraints.** Batches, security-relevant
+  notifications, and unknown envelope fields are rejected; the pipeline fails
+  closed at the first failing step
+  ([ADR-MCPS-009](https://github.com/matssun/mcp-re/discussions/358)).
+- **Freshness + single-node durable replay protection.** A freshness window
+  (`issued_at`/`expires_at` ± skew) plus a replay cache keyed by
+  `(signer, audience, nonce)`, checked only **after** signature verification so
+  invalid-signature traffic cannot burn nonces. Cache failure fails closed,
+  distinct from a replay verdict
+  ([ADR-MCPS-006](https://github.com/matssun/mcp-re/discussions/355)). The
+  durable replay cache is **single-node** — multi-node replay protection is
+  forbidden (Section 2).
+- **Delegated authorization — SELECTABLE, and off unless selected.** The reference
+  signed-authorization profile (Phase 5,
+  [ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362)) was bound to the
+  retired object carrier, and `--authz reference` is **refused at configuration
+  validation**. The production mechanism is the carried PDP decision of
+  [ADR-MCPRE-065](https://github.com/matssun/mcp-re/discussions/629): an external
+  authority signs the decision, the client carries it bound into the signed request, and
+  `--authz pdp-decision` installs the evaluator that authenticates and enforces it. That
+  posture is **strict** — a request carrying no applicable decision is refused — and it is
+  what a deployment must select. With `--authz off`, the default, MCP-RE answers **who
+  signed this** and **which channel it arrived on**, never **may-act**, and authorization
+  must be enforced upstream of the proxy. The startup transcript states which of the two a
+  deployment is running. The preserved vectors at
+  `mcp-re-policy/tests/vectors/phase5_vectors.json` specify non-live semantics for a
+  future profile and are not evidence about any release; nothing executes them.
+- **Rust-native mTLS transport termination + transport binding + v1 revocation
+  posture** (Phase 6 / 6.1). `mcp-re-proxy` terminates TLS itself
+  (`RustlsDirectProvider`, rustls + ring), binds the verified transport peer to
+  the object signer (transport binding), and enforces a maximum client-cert
+  lifetime as its v1 revocation posture. This is **not** online revocation —
+  full CRL/OCSP is forbidden (Section 2,
+  #3839)
+  ([ADR-MCPS-014](https://github.com/matssun/mcp-re/discussions/363)).
+- **Transport-free, key-custody-safe host layer (HostSession).** The host /
+  ambassador signs requests and verifies responses without exposing any key
+  accessor; the model never touches a private key
+  ([ADR-MCPS-015](https://github.com/matssun/mcp-re/discussions/364)).
+- **Signing-key loading via a file/env `KeySource`.** Signing keys load from a
+  file or (hard-guarded) environment `KeySource`; the proxy and host sign without
+  exposing private-key material through public APIs. This is the delivered
+  key-custody level — hardware-backed / non-exporting keys (HSM/KMS) are a
+  **separate, additive** boundary (Section 1,
+  #3838) and are **not** required
+  for signature verification or for horizontal scale.
+
+### Two live checks, and one that is not live
+
+These are independent proofs and must not be conflated:
+
+- **mTLS** proves the **transport peer**: the party that demonstrates possession
+  of the TLS client credential.
+- **The RFC 9421 HTTP Message Signature** proves the **signer** for the **covered
+  components** of this request or response. Where the signature covers the RFC 9530
+  `Content-Digest`, it also binds the signature to the HTTP message content.
+
+A valid mTLS peer is not automatically a valid message signer. Both live checks are
+required, and neither substitutes for the other.
+
+**Delegated authorization — whether that signer may act — is a third live check only
+where a deployment installs one.** The reference authorization profile was bound to the
+retired object carrier and `--authz reference` is refused during configuration
+validation. The ADR-MCPRE-065 PDP-decision mechanism is implemented, enforced by the
+serving path, and selectable with `--authz pdp-decision`; a deployment that selects it
+has three live checks, and one that does not has two. The proxy never infers the third
+from the first two, and its startup transcript names which posture is running.
+
+---
+
+## 5. Reproducibility honesty
+
+Authority: [ADR-MCPS-018
+](https://github.com/matssun/mcp-re/discussions/367).
+
+- **CI-enforced on every relevant PR.** The Core conformance and transport tests
+  run in CI on every PR that touches MCP-RE, building the self-contained module
+  (`bazel test //...`).
+- **Lockfile-reproducible WITH network access — NOT offline-hermetic.** The build
+  is reproducible from the committed lockfiles **provided crates.io network
+  access is available**. It is **not** offline-hermetic / air-gapped, and vendored
+  build reproducibility is **not** claimed (Section 2).
+- **Submodule-free cold clone — achieved.** This repository is a self-contained
+  Bazel module (`MODULE.bazel`); it builds from a fresh clone with
+  **no submodules** and no parent module graph. A scheduled cold-clone
+  (no-submodule, cold-cache) CI job validates this. Tracked work is done:
+  (no-submodule reproducibility)
+  and (module isolation) are
+  both closed.
+- **Granian is fully removed from the MCP-RE build.** MCP-RE is not a Granian
+  plugin and does not depend on Granian or any Granian ASGI-TLS fork.
+
+---
+
+## 6. How to use this gate
+
+- **Release is blocked until this document is signed off** by the human owner.
+  This document existing is not sufficient; owner approval is required because it
+  is type:HITL.
+- **Reviewers reject deferred-capability claims.** Code review rejects any PR,
+  README, marketing line, doc, commit message, or comment that asserts a
+  capability listed in Section 2 as delivered, or that describes MCP-RE beyond the
+  single-node ceiling in Section 1.
+- **The only sanctioned positive claim is Section 1's exact wording** plus the
+  surface enumerated in Section 4. If a desired claim is not in Section 4, it is
+  forbidden until the corresponding follow-up lands and this document is updated
+  and re-signed.
+- **When in doubt, under-claim.** This document is the honesty artifact; partial
+  compliance is not compliance.
+
+---
+
+## 7. Owner sign-off
+
+| Field          | Value                                            |
+| -------------- | ------------------------------------------------ |
+| Document       | `docs/spec/security-boundary.md`                 |
+| Gate type      | HITL release gate (release blocked until signed) |
+| Author         | _(agent — does not self-approve)_                |
+| Owner sign-off | **Mats Sundvall — 2026-05-30** (signed)          |
+
+**Scope of approval:** Approval of the MCP-RE security boundary and claim ceiling
+for the current single-node Rust-native deployment profile. This approval does
+**not** cover future enterprise / horizontal-scale claims until the named
+follow-up issues (Section 2) are implemented and tested.
+
+The single-node release gate is satisfied as of 2026-05-30.
+
+---
+
+## 8. v0.3 multi-node profile — composed claim (SIGNED OFF — ACTIVE)
+
+> **STATUS: SIGNED OFF — ACTIVE as of 2026-06-15.** This section composes
+> ADR-MCPS-020 through ADR-MCPS-023 into the v0.3 multi-node claim. The owner
+> signed §8.1 below on 2026-06-15 (epic #7 release gate satisfied), so for a
+> deployment that declares all four modes the composed multi-node claim is now
+> active alongside the single-node ceiling of Section 1; the horizontal-scale row
+> of Section 2 is licensed at the declared tier.
+
+When signed, MCP-RE MAY additionally be described — for a deployment that declares
+all four modes — as:
+
+> **"production-hardened for multi-node deployments within one trust domain / one
+> operator, at the security tier composed from the four declared deployment
+> modes."**
+
+The claim is **tiered, not unconditional**, and is read off the
+[v0.3 security-claim matrix](./v0.3-claim-matrix.md). It is the conjunction of:
+
+- **Replay durability** (ADR-MCPS-020) — the declared `ReplayDurabilityTier`; the
+  proxy surfaces that tier's own guarantee and cannot over-claim. Strict
+  production requires `REDIS_WAIT_QUORUM` or stronger.
+- **Trust propagation** (ADR-MCPS-021) — revocation enforced fleet-wide within the
+  bounded window `T` (default 60s); zero-window revocation is **not** claimed. The
+  cross-replica revocation-lag bound is stated **per tier** (ADR-MCPS-049 clause 3,
+  MCPS-85), because the two tiers have physically different cadences:
+  - **Trust key-status (signer revocation/rotation)** — with a networked
+    trust-epoch source (`--revocation-tier push` + `--trust-epoch-redis-url`,
+    MCPS-84) the lag is near-zero when the source is healthy (a sibling flushes and
+    re-resolves on its next request after the epoch advances) and degrades to the
+    bounded window `T` on a source read-outage (fail-closed, never zero-window);
+    without a networked source it is the bounded `T`.
+  - **Client-certificate CRL** — bounded by the CRL `nextUpdate` / in-process
+    reload cadence (MCPS-66), **not** zero; a cert revoked mid-life is honored only
+    on replicas that have reloaded the newer CRL, so a fleet's CRL-rollout window
+    is the bound.
+
+  Both bounds are surfaced from real config at startup (`mcp-re.revocation.posture`
+  and the tier guarantee line), not asserted in prose.
+- **Key custody** (ADR-MCPS-022) — `per_node_keyset` (default; tight blast radius,
+  explicit authorized key set) or `shared_remote_signer` (higher custody, not
+  smaller blast radius). A copied shared private key is forbidden.
+- **Ingress binding** (ADR-MCPS-023) — `end_to_end_mtls` or
+  `trusted_ingress_asserted`; SEP-2243 routing headers are never trusted
+  (ADR-MCPS-025).
+
+**Still forbidden in v0.3** (unchanged from Section 2 / the epic's "Not in v0.3"):
+multi-tenant isolation between mutually distrusting operators; unconditional
+replay safety on async failover; zero-window revocation; end-to-end channel
+binding under `trusted_ingress_asserted`; a smaller blast radius for shared-KMS
+identity than for per-node keys; copied private keys; a hostile shared-store
+threat model; cross-operator replay-store isolation.
+
+The RC-conditional delta ADRs (024 multi round-trip, 025 routing headers, 026
+signing-scope partition) are **implemented and tested** but remain conditional on
+the MCP 2026-07-28 release candidate; they harden the same deployment shape and
+do not themselves widen this claim.
+
+### 8.1 v0.3 owner sign-off
+
+| Field          | Value                                                     |
+| -------------- | --------------------------------------------------------- |
+| Document       | `docs/spec/security-boundary.md` §8 + `v0.3-claim-matrix.md` |
+| Gate type      | HITL release gate (multi-node claim blocked until signed) |
+| Author         | _(agent — does not self-approve)_                         |
+| Owner sign-off | **Mats Sundvall — 2026-06-15** (signed; execution delegated to the agent in-session) |
+
+**Release-gate checklist (epic #7) — all conditions satisfied:** ADRs 020–023
+accepted ✅ (020 and 023 moved Proposed→Accepted 2026-06-15; 021/022 already
+Accepted); supported tiers implemented ✅; this composition section signed ✅;
+conformance manifest lists the tiers + tests ✅ (`drift_guard_test` green); claim
+matrix states allowed/forbidden per tier ✅; **CI green** ✅ — `.github/workflows/ci.yml`
+(blocking `cargo build`/`cargo test --workspace` + feature-gated backend job — the
+latter runs the PKCS#11 sign+verify e2e against a hermetic in-tree mock provider) and
+the nightly `live-infra-e2e` lane (Redis primary+replica, OpenSSL OCSP) are green on
+`main`. The v0.3 multi-node claim is **active** as of 2026-06-15.
+
+---
+
+## 9. Audit-evidence vocabulary (derived from the frozen error taxonomy)
+
+> **Non-goal:** this is **not** a SIEM schema and does not replace deployment
+> audit policy. It fixes only the stable machine tokens MCP-RE Core emits as
+> evidence for its own verdicts; everything else (storage, correlation, retention,
+> human dashboards) is the deploying operator's concern.
+
+MCP-RE can emit audit evidence for the verdicts it reaches. To keep that evidence
+honest, its **rejection reasons are derived from the frozen
+`McpReError::wire_code()` taxonomy** — `mcp-re-core/src/error.rs` is the **sole
+authority** (ADR-MCPS-002/007/009, ADR-MCPS-035). The vocabulary lives in one
+place, `mcp-re-core/src/audit.rs`, keyed off `wire_code()`; there is **no parallel
+rejection vocabulary**.
+
+- **Rejection events** use a small fixed `event_type` — `mcp-re.request.rejected`
+  or `mcp-re.response.rejected` — with `reason` set to the **exact**
+  `McpReError::wire_code()` token. Example:
+  `{ "event_type": "mcp-re.request.rejected", "reason": "mcp-re.invalid_signature" }`.
+  No minted sub-names (no `…rejected.bad_signature`, `…expired`, `…replay`,
+  `…untrusted_signer`). This is now a property of the TYPE: no audit constructor
+  takes a string, so a token from another authority's taxonomy cannot be written
+  into `reason` (ADR-MCPRE-066 Slice 2).
+- **A rejection Core did not decide carries no `reason`.** Where the authority
+  that terminated the exchange is not Core — today, an authorization policy's
+  denial — Core has no verdict and states none rather than borrowing another
+  authority's token. `reason` is absent and `decision` is `Rejected`, which is a
+  combination no success event can produce; §9.1's authorization coordinate names
+  who did refuse. The client still receives the refusing authority's own code in
+  the signed rejection: this changed the record, not the wire.
+- **Success events** are the only net-new surface, because the error enum cannot
+  express a success/lifecycle outcome. The set is **exactly two**:
+  `mcp-re.request.accepted` and `mcp-re.response.signed`. No third success event may
+  be minted without an ADR.
+- **No `authorization_hash_mismatch`.** Core **binds** `authorization_hash` and
+  never **interprets** the authorization artifact (ADR-MCPS-013); "mismatch" would
+  imply a semantic comparison Core does not perform, so no such audit reason
+  exists. (The `mcp-re.authorization_hash_mismatch` token is a *policy-layer*
+  `PolicyError` produced by the configured AuthorizationProfile — outside Core, and
+  not an audit reason.)
+- **Optional `reason_label`.** A non-normative, human-readable label (e.g.
+  "Invalid signature") may accompany an event for readability. It is display-only
+  and **must never be parsed**; the stable machine token is always `reason`.
+
+**Adding a rejection outcome** therefore requires adding an `McpReError` variant
+first (the frozen-taxonomy process), which the audit layer inherits
+automatically — the vocabulary cannot drift from the verdicts the pipeline
+actually makes. Carriers that legitimately represent Core outcomes
+(`HttpProfileError`, `DispatchError`, `ProxyDispatchError`) declare an exhaustive
+projection onto `McpReError` and **derive** their wire token from it; none keeps a
+token table of its own.
+
+### 9.1 The authorization coordinate (ADR-MCPRE-066)
+
+A **request** record additionally carries an authorization outcome, in the
+authorization authority's own vocabulary and **never** in `reason`:
+
+```text
+NotConfigured   no policy is deployed; this boundary claims nothing
+Authorized      authority · version · action · request-evidence handle
+Refused         BeforePolicy  no policy verdict was reached
+                ByPolicy      a policy decided and denied (a PolicyError token)
+```
+
+This **widens nothing above.** `event_type`, `reason` and the two-item success
+allowlist are unchanged and remain Core-owned; the drift guard's claim is
+untouched. The point is the opposite of a widening: `PolicyError` is a *second*
+authority's taxonomy, and giving it its own coordinate is what stops it being
+rendered into Core's `reason`, where no reader could tell which authority spoke
+(issue #637). **Co-location is not conflation.**
+
+Two properties are structural rather than conventional:
+
+- A request record **always** states one of the three. Absence therefore means
+  exactly one thing — a record predating ADR-MCPRE-066 — and in particular
+  *nobody asked* is a state, not an absence. An unconfigured proxy's record is
+  distinguishable from a policy-protected one's, which is the whole reason
+  ADR-MCPRE-065 built three postures instead of a boolean.
+- A **response** record carries no authorization coordinate. Authorization is
+  request-side; a response does not represent a second decision.
+
+**Enforcement.** A CI drift guard
+(`//mcp-re-conformance:audit_vocabulary_guard_test`, ADR-MCPS-035) reads
+`error.rs` and `audit.rs` from disk and FAILS if any audit rejection `reason` is
+not a member of `McpReError::wire_code()`, if the success set is not exactly the
+two-item allowlist, or if an `authorization_hash_mismatch` notion reappears as an
+audit reason. `scripts/refusal_provenance_gate.py` (ADR-MCPRE-066) additionally
+holds the two structural properties above and asserts `PolicyError` has no route
+into the Core taxonomy.
+
+## 10. v0.5 owner sign-off (proposal-readiness)
+
+> **STATUS: SIGNED OFF — Mats Sundvall, 2026-06-23.** MCP-RE 0.5 is
+> proposal-readiness over the **frozen draft-01** envelope. This sign-off adds
+> **no new claim** to Sections 1–9 and **no wire-envelope field**; it attests that
+> the 0.5 proposal-facing material is accurate and that the mechanical
+> proposal-readiness gate is green. The dual gate of ADR-MCPS-036 (mechanical +
+> HITL) is satisfied: the mechanical half below is CI-enforced, and this section is
+> the human half.
+
+| Item | Value |
+|---|---|
+| Scope | MCP-RE 0.5 proposal-readiness over frozen draft-01 (no wire change) |
+| Boundary + claim matrix | this doc + [`v0.5-claim-matrix.md`](v0.5-claim-matrix.md) (§A capability + §B deployment-tier) |
+| Mechanical gate (#156) | **green on `main`** — traceability spine, method-transparency pair, audit drift guard, forbidden-claim guard all passing |
+| Owner sign-off | **Mats Sundvall — 2026-06-23** (signed; execution delegated to the agent in-session) |
+
+**Mechanical evidence (CI-enforced).** Every §A claim maps to a named green test
+in `security_traceability_manifest.json`
+(`//mcp-re-conformance:security_traceability_guard_test`); the method-transparency
+behavioral-equivalence test + static drift guard (ADR-MCPS-030/034), the
+audit-vocabulary drift guard (ADR-MCPS-035), and the forbidden-claim guard over
+the proposal-facing docs (ADR-MCPS-036) are all green. Rule: **no
+traceability-mapped green test, no proposal claim.**
+
+**ADR status.** ADR-MCPS-031 … 036 moved **Proposed → Accepted** on 2026-06-23
+with this sign-off. The 0.5 proposal-readiness release gate is satisfied as of
+2026-06-23; any wire-envelope field gap is ejected to a separate `draft-02` ADR
+as post-0.5 work.
+
+## 11. Strict-mode ingress postures (ADR-MCPS-023 §C amendment, v0.10)
+
+> **Delivery status.** Only posture **(A)** is reachable on the shipped RFC 9421
+> serving path. As of v0.16 `--transport-binding attested-ingress` and
+> `--transport-binding lb-assertion` are **refused by configuration validation**, each
+> naming its own mode — no path into the runtime, command line or programmatic, can
+> carry either. The serving path does not consult an ingress assertion, so the identity
+> a request would be bound to is not the one the assertion carries.
+>
+> Mode C is **retained** as a future capability rather than removed. Its verification
+> code (`build_attested_ingress_binding`, `LbAssertionV2Binding::verify`,
+> `AttestedIngressVerified`) has no non-test caller but is exercised end to end by
+> tests that mint a signed assertion and verify it through a built verifier, so the
+> capability stays correct while it is unreachable. Admitting it requires first stating
+> what an attestor is permitted to assert and where the node's own authority begins.
+>
+> The rest of this section is therefore the specified design, not a delivered posture:
+> no deployment can run Mode C today, and the three §C2 audit trust facts below are
+> emitted by nothing. Fail-closed — a chart or command line that selects it does not
+> start.
+
+Strict mode specifies **two** ingress postures, with **different, honestly-labelled
+trust properties**:
+
+- **(A) `end_to_end_mtls` (default).** End-to-end client↔node mTLS: the node
+  terminates the client's mTLS itself and binds the verified transport peer to the
+  request signer. No load balancer sits in the identity path.
+- **(C) Attested Ingress (`attested_ingress`, explicit opt-in).** A controlled
+  ingress attestor terminates or receives validated client mTLS, checks certificate
+  revocation, and signs a request-bound `mcp-re/lb-ingress-assertion/v2` assertion the
+  node verifies over a **pinned attestor→node channel**. Mode C is **attested
+  delegation**, explicit opt-in, and is **NOT** end-to-end client↔node binding — the
+  load balancer witnesses proof-of-possession and **remains in the trusted computing
+  base**. The node **binds** the assertion (signature, freshness, `request_hash`
+  equality, audience/route, ingress identity) and treats the attestor's
+  `revocation_result` / `cert_verification_result` as **opaque asserted facts** it
+  records/audits — it performs no certificate-path validation and no CRL-freshness
+  computation of its own. Mode C MUST NEVER be surfaced as `end_to_end_mtls`.
+
+The attestor is **two** trusted-computing-base components — the load balancer (the
+only proof-of-possession witness; forwards spoofable client-cert headers) and the
+operator-run signing filter (attests "the LB reported the cert verified"; does not
+witness PoP). Audit therefore records **three** trust facts, never fewer:
+`delegated_client_identity`, `ingress_internal_hop` (the LB→attestor trust
+assumption, PoP stays with the LB), and `backend_channel_binding = pinned_mtls`.
+
+**Raw forwarded-identity headers remain forbidden under strict.** The legacy
+`trusted_ingress_asserted` header (Tier 2) and plain `lb-assertion` (Tier 3, Mode B)
+paths are **strict-rejected** and are labelled legacy/migration only — never
+presented beside Mode A/C as an enterprise option.

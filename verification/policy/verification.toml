@@ -29,8 +29,16 @@ threat_model_revision = "mcpre-threat-r0"
 # ---------------------------------------------------------------------------
 #
 # A review unit is the smallest architectural unit for which MCP-RE can make a stable
-# statement about its source, contracts, evidence, and assumptions (§1). It is NOT a file
-# and NOT necessarily a crate.
+# statement about its source, contracts, and evidence (§1). It is NOT a file and NOT
+# necessarily a crate.
+#
+# A unit does NOT declare the assumptions it trusts. That relation has one authoritative
+# direction — `[[assumption]].scope` in assumptions.toml, §8 — because the assumption owns
+# its own trust blast radius and can name a boundary as readily as a unit. `assumptions` is
+# not an admissible key here, so the two declarations cannot disagree, which is what they
+# did: nine pairs diverged, and three units carried theorems whose stated premises could be
+# rewritten without the claim ever deriving DIRTY_ASSUMPTION. What a unit trusts is read
+# from the generated owner and assumption-consumer views, which derive it.
 #
 # Classes (§9):
 #   V0  ordinary code                      tests/conformance + Security Review Funnel
@@ -112,7 +120,6 @@ description = "The keyid as a SELECTOR: that two distinct enrolled verification 
 paths = ["mcp-re-http-profile/src/keyid.rs"]
 exported_contracts = []
 evidence = ["test://http_profile/keyid/derivation_introduces_no_collisions"]
-assumptions = ["ASM-0037"]
 # The MCP-RE half is measured here too, because the composition rests on it. What is NOT
 # measurable is the other half, and nothing here pretends otherwise: no test can establish
 # collision resistance, which is why ASM-0037 exists and why it is scoped to this unit and
@@ -334,7 +341,6 @@ tested_symbols = [
   "lib#delegation::tests::cnf_kid_not_delegated_kid_is_credential_invalid",
   "lib#delegation::tests::not_three_segments_is_credential_invalid",
 ]
-assumptions = ["ASM-0027", "ASM-0028", "ASM-0029"]
 
 # The structural half: the products are not interchangeable, and that is checked by the
 # compiler rather than asserted in prose. The controls were landed and PROBED in #570/#571
@@ -531,7 +537,6 @@ evidence = [
   "test://core/time/grammar_and_truncation",
   "verus://core/time/parse_rfc3339_utc_total_and_bounded",
 ]
-assumptions = ["ASM-0001", "ASM-0002", "ASM-0003", "ASM-0004"]
 # Grammar and truncation, which is the whole of what `time.rs` tests: the accepted shapes,
 # the rejected ones, and the truncating treatment of fractional seconds.
 tested_symbols = [
@@ -588,17 +593,6 @@ evidence = [
   "test://http_profile/verify/freshness_window_vectors",
   "verus://http_profile/verify/check_params_admission_implies_fresh",
 ]
-assumptions = [
-  "ASM-0005",
-  "ASM-0006",
-  "ASM-0007",
-  "ASM-0008",
-  "ASM-0009",
-  "ASM-0010",
-  "ASM-0024",
-  "ASM-0025",
-  "ASM-0026",
-]
 # ASM-0024/25/26 are the uninterpreted verus declarations this unit's proof is stated over
 # — the labelled digest as a function of its arguments, and the two policy getters. They
 # are premises of this unit and are named here for the same reason they are scoped to it:
@@ -649,7 +643,6 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://http_profile/admission/assertion_authenticity"]
-assumptions = []
 # The battery is negative on purpose. Each member removes one way an assertion could be
 # believed without being this enforcement point's to believe: another issuer's key, another
 # credential profile, another audience, another profile id, or a window that has passed in
@@ -683,15 +676,6 @@ evidence = [
   "test://http_profile/admission/currency_and_degraded_battery",
   "mutation://http_profile/admission/subject_currency",
   "verus://http_profile/admission/check_admission_currency",
-]
-assumptions = [
-  "ASM-0011",
-  "ASM-0012",
-  "ASM-0013",
-  "ASM-0014",
-  "ASM-0024",
-  "ASM-0025",
-  "ASM-0026",
 ]
 # ASM-0024/25/26 are the uninterpreted verus declarations this unit's proof is stated over
 # — the labelled digest as a function of its arguments, and the two policy getters. They
@@ -761,14 +745,6 @@ exported_contracts = ["contract://http_profile/artifact/verify_artifact_binding"
 evidence = [
   "test://http_profile/artifact/typed_binding_battery",
   "verus://http_profile/artifact/typed_verifier_admits_only_its_own_type",
-]
-assumptions = [
-  "ASM-0018",
-  "ASM-0019",
-  "ASM-0020",
-  "ASM-0024",
-  "ASM-0025",
-  "ASM-0026",
 ]
 # ASM-0024/25/26 are the uninterpreted verus declarations this unit's proof is stated over
 # — the labelled digest as a function of its arguments, and the two policy getters. They
@@ -924,7 +900,6 @@ evidence = [
   "test://http_profile/dispatch/continuation_binding_battery",
   "verus://http_profile/dispatch/continuation_present_implies_verified",
 ]
-assumptions = ["ASM-0021", "ASM-0024", "ASM-0025", "ASM-0026"]
 # ASM-0024/25/26 are the uninterpreted verus declarations this unit's proof is stated over
 # — the labelled digest as a function of its arguments, and the two policy getters. They
 # are premises of this unit and are named here for the same reason they are scoped to it:
@@ -978,7 +953,6 @@ evidence = [
   "test://http_profile/block/continuation_role_battery",
   "verus://http_profile/block/continuation_handles_match_in_role",
 ]
-assumptions = ["ASM-0023", "ASM-0024", "ASM-0025", "ASM-0026"]
 # ASM-0024/25/26 are the uninterpreted verus declarations this unit's proof is stated over
 # — the labelled digest as a function of its arguments, and the two policy getters. They
 # are premises of this unit and are named here for the same reason they are scoped to it:
@@ -1110,10 +1084,6 @@ evidence = [
   "test://proxy/certificate_identity/no_fallback_interpretation",
   "mutation://proxy/certificate_identity/no_fallback_interpretation",
 ]
-# The X.509 parser. Declared on the unit as well as scoped from the assumption, so the
-# dependency is visible from the side a reviewer reads first — "what does this unit trust?"
-# — and so a change to the assumption takes the unit DIRTY by derivation.
-assumptions = ["ASM-0030"]
 # The battery spans two targets on purpose, and the split is the parser boundary.
 #
 # The `lib#` members exercise the PURE selector over an interpreted field set: they are
@@ -1210,7 +1180,6 @@ tested_symbols = [
   "lib#communication_assurance::ed25519_public_key::tests::the_two_directions_are_inverse",
   "lib#communication_assurance::ed25519_public_key::tests::two_keys_differing_in_one_byte_are_different_values",
 ]
-assumptions = ["ASM-0031"]
 pilot = "verus-candidate"
 
 [[unit]]
@@ -1232,10 +1201,6 @@ evidence = [
   "test://proxy/credential_key_correspondence/side_attributed_relation",
   "mutation://proxy/credential_key_correspondence/side_attributed_relation",
 ]
-# The credential side's foreign premise: that the certificate parser reports the leaf's own
-# SubjectPublicKeyInfo. It sits on the ACCEPTING path, which is what distinguishes it from
-# ASM-0031 — that one is contained to refusal classification and cannot affect acceptance.
-assumptions = ["ASM-0032"]
 tested_symbols = [
   # --- the adapters, each refusing on its own side ---
   "lib#communication_assurance::credential_public_key_evidence::tests::no_credential_is_absence_not_an_unreadable_one",
@@ -1308,7 +1273,6 @@ tested_symbols = [
   "lib#delegated_tls::resolver::correspondence_gate::tls_facade_cannot_bypass_the_materialization_gate",
   "lib#delegated_tls::resolver::budget_continuity::resolvers_sharing_a_budget_share_one_bucket",
 ]
-assumptions = ["ASM-0032"]
 pilot = "verus-candidate"
 
 [[edge]]
@@ -1341,9 +1305,6 @@ evidence = [
   "test://proxy/channel_associated_credential/mechanism_association",
   "mutation://proxy/channel_associated_credential/mechanism_association",
 ]
-# The mechanism's report is the whole content of the product; ASM-0033 is that premise, and
-# it is why the controls drive real handshakes rather than synthesising a chain.
-assumptions = ["ASM-0033"]
 # The four handshake controls are the characterization, kept: each names a state a
 # production relationship can actually be in, and one of them —
 # `a_peer_with_no_credential_never_reaches_an_established_relationship` — is what decides
@@ -1397,15 +1358,6 @@ evidence = [
   "test://proxy/channel_associated_identity/credential_provenance",
   "mutation://proxy/channel_associated_identity/credential_provenance",
 ]
-# ONE new premise, narrowly. The mechanism premise (ASM-0033) and the parser premise
-# (ASM-0030) stay under the authorities that own them: this unit consumes their semantic
-# products and re-states neither, because duplicating them upward would make the closure
-# look like the place those trust decisions are taken.
-#
-# ASM-0034 is genuinely this unit's own. Reading element 0 and calling it the peer's leaf
-# needs the mechanism to report the chain in TLS order, and ASM-0033 does not say that — it
-# says the mechanism reports the credential it associated, which holds under any ordering.
-assumptions = ["ASM-0034"]
 # The controls measure PROVENANCE, not a successful identity outcome: every relationship is
 # established with a leaf carrying identity A and an intermediate carrying identity B in the
 # same field, so a derivation reading any certificate other than the peer's leaf returns the
@@ -1450,10 +1402,6 @@ evidence = [
   "test://proxy/mechanism_verified_credential/establishment_path",
   "mutation://proxy/mechanism_verified_credential/establishment_path",
 ]
-# The path report, and the epoch gate behind a resumed acceptance. ASM-0033 stays under the
-# association authority: what THIS unit adds is the second report, and broadening the first
-# would widen a blast radius THM-0028 does not need.
-assumptions = ["ASM-0035"]
 # The controls drive REAL handshakes on both paths, including a genuine resumption. A control
 # asserting only that acceptance succeeded would stay green while a resumed relationship was
 # reported as one whose verifier had just run.
@@ -1505,11 +1453,6 @@ evidence = [
   "test://proxy/authenticated_relationship_peer/one_credential",
   "mutation://proxy/authenticated_relationship_peer/one_credential",
 ]
-# ONE new premise, and it is the one the NAME needs. ASM-0033 and ASM-0035 speak to what the
-# mechanism reports; ASM-0036 is what acceptance required of the peer, and without it the
-# composition would be two true facts under a word neither earns. ASM-0034 stays under the
-# identity linkage that reads element 0.
-assumptions = ["ASM-0036"]
 # The controls drive REAL handshakes, on both establishment paths and with an intermediate
 # carrying a RIVAL identity in the configured field, so a derivation reaching any certificate
 # other than the accepted credential's leaf returns the wrong identity rather than merely a
@@ -1565,9 +1508,6 @@ evidence = [
   "test://proxy/credential_currency/five_facts",
   "mutation://proxy/credential_currency/five_facts",
 ]
-# The parser premise, and nothing else. The mechanism premises stay under the authorities
-# that own them: this unit consumes their products and restates neither.
-assumptions = ["ASM-0030"]
 # The controls mint hostile certificates a handshake never produces — an inverted window, a
 # zero-length one, unparseable DER — because those are the inputs the fail-closed direction
 # has to survive, and they drive real signed chains and real signed CRLs where the question
@@ -1628,9 +1568,6 @@ evidence = [
   "test://proxy/current_authenticated_peer/one_relationship",
   "mutation://proxy/current_authenticated_peer/one_relationship",
 ]
-# No new premise. Both halves are registered products and this unit adds only the fact that
-# they are about one relationship — which is structural, not assumed.
-assumptions = []
 # The controls drive REAL handshakes, including a genuine resumption and two relationships
 # with different peers. A control asserting only that a current peer was produced would stay
 # green while the composition reached past its own authentication.
@@ -1681,9 +1618,6 @@ evidence = [
   "test://proxy/request_peer_binding/same_principal",
   "mutation://proxy/request_peer_binding/same_principal",
 ]
-# No new premise. Both operands are registered products, and the relation between them is
-# decided here rather than assumed.
-assumptions = []
 # The channel operand is driven through a REAL mutual-TLS handshake in every control, because
 # the whole difference from the `TransportIdentity` it replaces is that it cannot be
 # fabricated — and the control that let the wrong coordinate survive fabricated exactly that
@@ -1734,9 +1668,6 @@ evidence = [
   # green battery can hold while none of them is load-bearing. M63-M65 ask.
   "mutation://proxy/trust/revocation_state_witnesses",
 ]
-# No new premise. The states and the locator are classified from an already-validated
-# request; nothing here is trusted that the boundary did not establish.
-assumptions = []
 # Both directions of each witness rule: the states that REQUIRE a cadence carry one and are
 # refused without it, and the one state whose cadence is OPTIONAL keeps both postures — so
 # a green lane cannot mean the witness rule was over-applied.
@@ -1779,7 +1710,6 @@ evidence = [
   "test://proxy/trust/reload_is_a_projection",
   "mutation://proxy/trust/reload_is_a_projection",
 ]
-assumptions = []
 # The reload rule in both directions, plus the CF-09 property that the shared values are
 # INPUTS: a plan built with a value the configuration does not name carries that value,
 # which is only possible because nothing inside re-derives it.
@@ -1797,7 +1727,6 @@ description = "The composition root's consumption of the validated request: afte
 paths = ["mcp-re-proxy/src/app.rs"]
 exported_contracts = []
 evidence = ["test://proxy/trust/composition_reads_only_projections"]
-assumptions = []
 # The guard is a source-text inventory, so its own self-check is part of the evidence: a
 # rule that cannot detect a new raw read is a rule that passes vacuously. It runs in the
 # `integration` target and nowhere else — a lane identity, not a detail.
@@ -1821,7 +1750,6 @@ evidence = [
   "test://http_profile/pdp_decision/authentication_battery",
   "mutation://http_profile/pdp_decision/authentication",
 ]
-assumptions = []
 # Each refusal asked as its own fact, because the point of the split from the relation
 # authority is that these are ten different things for an operator to do about. The two
 # saturation cases are here rather than in a policy note: an extreme `iat` out of a JWS
@@ -1859,7 +1787,6 @@ evidence = [
   "test://proxy/authorization/pdp_relation_serving_battery",
   "mutation://proxy/authorization/pdp_relation",
 ]
-assumptions = []
 # Measured through the SERVING path, not against the evaluator directly. The claim is that
 # a decision cannot authorize a caller it is not about, and the operands it is compared
 # against have to be the verified actor and the signed action — which only the serving path
@@ -1906,7 +1833,6 @@ evidence = [
   "test://http_profile/scitt/offline_receipt_battery",
   "mutation://http_profile/scitt/offline_receipt",
 ]
-assumptions = []
 # The fold's own arithmetic is separately controlled, because "the inclusion algorithm was
 # run" and "the inclusion algorithm is RFC 9162's" are two claims and only the second makes
 # a restated position fail. `prototype` is NOT in the closure: it builds a tree where these
@@ -1953,7 +1879,6 @@ evidence = [
   "test://http_profile/scitt/retained_correspondence_battery",
   "mutation://http_profile/scitt/retained_correspondence",
 ]
-assumptions = []
 # The truncation control is the one the theorem's consequence is stated over: a record whose
 # hop zero matches and whose tail is missing must not correspond, because the label is inside
 # what the commitment covers. The last entry is the SEPARATION: a verified receipt does not
@@ -1963,6 +1888,7 @@ tested_symbols = [
   "lib#scitt::retained::tests::a_truncated_chain_is_refused_even_though_hop_zero_matches",
   "lib#scitt::retained::tests::a_substituted_unverified_tail_is_refused_even_though_the_verified_prefix_matches",
   "lib#scitt::retained::tests::a_statement_with_no_submission_identity_cannot_bind_retained_bytes",
+  "lib#scitt::retained::tests::a_statement_that_identifies_no_submission_binds_nothing",
   "lib#scitt::retained::tests::retained_evidence_cannot_be_bound_to_a_record_with_no_verified_hop",
   "lib#scitt::retained::tests::absent_bindings_do_not_satisfy_a_commitment_that_names_them",
   "lib#scitt::retained::tests::a_verified_receipt_does_not_imply_the_evidence_is_retained",
@@ -1998,7 +1924,6 @@ evidence = [
   "test://proxy/exchange_lifecycle/transition_relation",
   "mutation://proxy/exchange_lifecycle/transition_relation",
 ]
-assumptions = []
 # The battery libtest reports under `exchange_state::tests`. Ordered as the three
 # measurements the ratification names: legal reachability to dispatch, refusal coverage,
 # and work/event correspondence.
@@ -2047,7 +1972,6 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://proxy/serving/dispatch_commitment_boundary"]
-assumptions = []
 # What each control measures, in the order the boundary is crossed. The last one is the
 # separation this unit does NOT claim: an unconfigured deployment releases a body too, so
 # possession proves the decision was TAKEN, never that a policy permitted.
@@ -2069,7 +1993,6 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://proxy/audit/refusal_emission"]
-assumptions = []
 # Measured at the ONE boundary rather than reason by reason: a battery enumerating refusal
 # causes would have to learn about the next one, and the failure mode of a stale enumeration
 # is a clean pass over an unrecorded refusal. The ordering member is the one that is easy to
@@ -2098,7 +2021,6 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://proxy/refusal/site_totality"]
-assumptions = []
 # Six members, and the last is not decoration. Four rules over source text are vacuously
 # true the moment a matcher stops matching, so the battery that would report a clean pass
 # over a moved subtree is the battery that must also demonstrate it still detects each
@@ -2122,7 +2044,6 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://proxy/refusal/provenance_battery"]
-assumptions = []
 # The negative controls carry this unit. `a_policy_denial_has_no_core_verdict_to_be_recorded_under`
 # and `a_core_verdict_never_attributes_a_refusal_to_a_policy` are the two directions of the
 # separation `PolicyError` may never acquire a route across.
@@ -2148,7 +2069,6 @@ description = "Pass 2 of the layer-A legality boundary: the relations that join 
 paths = ["mcp-re-proxy/src/config_state/cross_machine.rs"]
 exported_contracts = []
 evidence = ["test://proxy/config_state/cross_machine_relations"]
-assumptions = []
 # The last control is the one that keeps this pass from becoming a second opinion: the
 # trust-epoch posture is NOT re-derived here, it is read from the machine that owns it.
 tested_symbols = [
@@ -2169,7 +2089,6 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://proxy/authorization/posture_selection"]
-assumptions = []
 # The two directions of the selection, and the two projections that must not collapse it.
 # `Off` is not `Allow`: an unconfigured deployment claims nothing, and a record that reported
 # it as an allow would manufacture a permission nobody granted.
@@ -2211,7 +2130,6 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://client/trust_manifest/lifecycle_battery"]
-assumptions = []
 # The negative controls carry this unit. A rolled-back version, a tampered signature, an
 # untrusted signer, a wrong profile and an expired deadline must each fail closed, and the
 # floor must not default to zero when it cannot be read — a fail-open there would accept
@@ -2246,7 +2164,6 @@ description = "The joint the shipped client proxy owns and the low-level verifie
 paths = ["mcp-re-client-proxy/src/proxy.rs"]
 exported_contracts = []
 evidence = ["test://client/proxy/request_correspondence"]
-assumptions = []
 # Measured through `include_str!`, which makes the scan a COMPILE-TIME dependency on the
 # file it is about: a module that moves or is renamed stops the battery compiling rather
 # than leaving it to measure nothing. The negative member is the load-bearing one —
@@ -2270,7 +2187,6 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://client/response/acceptance_battery"]
-assumptions = []
 # Three separations, each with its negative control: the pin against the ROOT issuer rather
 # than the rotating delegated kid; revocation by every identifier the manifest can name; and
 # unbound-is-not-success, including a preflight receipt about another request's bytes.
@@ -2304,7 +2220,6 @@ description = "What the credential must satisfy, sealed: the clock skew is clamp
 paths = ["mcp-re-client-core/src/delegation_policy.rs"]
 exported_contracts = []
 evidence = ["test://client/delegation_policy/skew_seal"]
-assumptions = []
 # The seal is the claim. A configured skew beyond the bound is not CONSTRUCTIBLE, rather
 # than rejected later by whichever window happens to check — which is what would let the two
 # windows disagree about the tolerance they applied.
@@ -2324,7 +2239,6 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://client/execution_contract/disposition_battery"]
-assumptions = []
 # The one distinction the whole module exists for is the second control: silence is not a
 # did-not-run verdict, and reading it as one is how a side effect gets repeated.
 tested_symbols = [
@@ -2358,7 +2272,6 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://proxy/signing/delegated_credential_lifecycle"]
-assumptions = []
 # Every control here is about ABSENCE: before the first rotation, past expiry, after a
 # terminal retirement, under a poisoned lock. There is no direct-root fallback to measure,
 # because there is no direct-root mode — so what has to be measured is that the fail-closed
@@ -2385,22 +2298,24 @@ tested_symbols = [
 id = "http_profile.request_envelope"
 class = "V0"
 description = "What a JSON-RPC message IS on this profile, and what an answer must echo: the legality of a request envelope, the outstanding id it establishes, and the correlation rule a reply is held to — by value and by type, with no null-id correlation and no reply that is also a request."
-paths = ["mcp-re-http-profile/src/envelope.rs"]
+paths = ["mcp-re-http-profile/src/envelope/request.rs",
+  "mcp-re-http-profile/src/envelope/response.rs",
+  "mcp-re-http-profile/src/envelope/mod.rs"]
 exported_contracts = []
 evidence = ["test://http_profile/envelope/request_and_correlation"]
-assumptions = []
 # The vocabulary half of THM-0083. The battery is largely negative: which bodies are NOT
-# messages, and the two ways a correlation could be faked — a null id, and a reply that is
-# also a request.
+# messages, which bodies this profile cannot carry unchanged, and the two ways a correlation
+# could be faked — a null id, and a reply that is also a request.
 tested_symbols = [
-  "lib#envelope::tests::a_request_body_that_is_not_a_json_rpc_message_is_refused",
-  "lib#envelope::tests::a_legal_request_yields_its_outstanding_id",
-  "lib#envelope::tests::the_outstanding_id_is_read_from_the_request",
-  "lib#envelope::tests::a_notification_has_no_correlatable_response",
-  "lib#envelope::tests::ids_correlate_by_value_and_by_type",
-  "lib#envelope::tests::a_null_id_does_not_correlate_to_an_id_bearing_request",
-  "lib#envelope::tests::a_response_id_that_does_not_match_the_request_is_refused",
-  "lib#envelope::tests::a_reply_that_is_also_a_request_is_refused",
+  "lib#envelope::request::tests::a_request_body_that_is_not_a_json_rpc_message_is_refused",
+  "lib#envelope::request::tests::a_request_this_boundary_cannot_carry_unchanged_is_refused",
+  "lib#envelope::request::tests::a_legal_request_yields_its_outstanding_id",
+  "lib#envelope::request::tests::the_outstanding_id_is_read_from_the_request",
+  "lib#envelope::response::tests::a_notification_has_no_correlatable_response",
+  "lib#envelope::response::tests::ids_correlate_by_value_and_by_type",
+  "lib#envelope::response::tests::a_null_id_does_not_correlate_to_an_id_bearing_request",
+  "lib#envelope::response::tests::a_response_id_that_does_not_match_the_request_is_refused",
+  "lib#envelope::response::tests::a_reply_that_is_also_a_request_is_refused",
 ]
 
 [[unit]]
@@ -2417,7 +2332,6 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://proxy/serving/outstanding_id_provenance"]
-assumptions = []
 # `outstanding_id` is a published API with legitimate callers on the client side and in the
 # response validator, so it cannot be deleted to make a second read unavailable. What is
 # measured is that the SERVING PATH does not ask the same document twice — and the third
@@ -2442,7 +2356,6 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://proxy/serving/identity_provenance"]
-assumptions = []
 # The third member is the load-bearing one: the mechanism that forbids pairing an acceptance
 # from one relationship with an identity from another credential is the ABSENCE of a
 # parameter, which is a property of a signature — and a signature is what an edit widens
@@ -2467,7 +2380,6 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://proxy/signing/credential_provenance"]
-assumptions = []
 # The fourth member is not decoration. Three source-text rules go vacuously true the moment
 # a matcher stops matching, and a green run over a moved composition root would then mean
 # nothing at all.
@@ -2492,7 +2404,6 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://proxy/materialization/signing_role_separation"]
-assumptions = []
 # Both directions, and the two arms that are NOT collapses. A refusal control alone would
 # pass on an authority that refused everything, and a materialization control alone would
 # pass on one that compared nothing — so the battery has to show it separates the cases. The
@@ -2521,7 +2432,6 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://proxy/signing/response_window_and_receipt"]
-assumptions = []
 # The window controls are the seal: `expires` is private and no constructor takes one, so
 # the four cases below are the whole derivation rather than four call sites that remembered
 # to clamp. The last-resort controls are the other half — what an UNSIGNED receipt may still
@@ -2544,7 +2454,6 @@ description = "Whether the signing private key is readable by this process: the 
 paths = ["mcp-re-proxy/src/config_state/custody.rs"]
 exported_contracts = []
 evidence = ["test://proxy/config_state/custody_exposure"]
-assumptions = []
 # The first two controls are the claim; the third is what makes it ADR-067-shaped. A
 # consumer asks *may the key be read here*, never *is this AWS* — so a mechanism that does
 # not exist yet drives the same consumer without editing it, which is the property a
@@ -2572,7 +2481,6 @@ description = "What an emitted response signature binds: the `;req` components r
 paths = ["mcp-re-http-profile/src/sign.rs"]
 exported_contracts = []
 evidence = ["test://http_profile/sign/response_binding_roundtrip"]
-assumptions = []
 # ROUND-TRIP controls, deliberately: they sign and then verify, so they measure the EMISSION
 # side rather than restating what the verifier establishes. The third and fourth are the
 # negative half — a response minted for one exchange must not verify as the answer to
@@ -2608,7 +2516,6 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://proxy/trust/serving_seam_wiring"]
-assumptions = []
 # Two halves, and the second is the one the first cannot say. The wiring battery pins what
 # the seam DOES — whatever the tier decides, the Request slot obeys — taking the seam as
 # given. The composition controls pin that the seam the serving path runs is the one built
@@ -2640,7 +2547,6 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://http_profile/scitt/service_pin"]
-assumptions = []
 # The refusals are the claim: a malformed document never becomes a pin, and an illegal one
 # is refused at deserialization rather than carried into a resolver that would then answer
 # from it.
@@ -2671,7 +2577,6 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://proxy/audit/record_coordinates"]
-assumptions = []
 # `before_policy_imports_no_vocabulary` is the ADR-MCPRE-066 poison pill: the arm reached
 # before any policy ran must not borrow a policy token, because a reader holding one cannot
 # tell whether a policy was ever consulted.
@@ -2696,7 +2601,6 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://proxy/audit/delivery_integrity"]
-assumptions = []
 # The last two are the ones a reader depends on. A gap in the sequence is visible; a silent
 # drop is not — so the drop count is reported without a following record. And a drain that
 # TIMED OUT has not established that the queue emptied, which is a different fact from a
@@ -2729,7 +2633,6 @@ description = "The ADR-MCPRE-050 replay five-tuple and its injective pre-seriali
 paths = ["mcp-re-http-profile/src/replay.rs"]
 exported_contracts = []
 evidence = ["test://http_profile/replay/key_injectivity"]
-assumptions = []
 # Injectivity here is a REAL claim about this code, not a primitive assumption: the separator
 # is a code point that cannot appear in a profile id, an RFC 9421 label, an escaped actor id
 # or a base64url audience hash, so the join cannot be forged. `every_component_discriminates`

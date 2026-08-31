@@ -41,6 +41,7 @@ use mcp_re_http_profile::chain::HopEvidence;
 use mcp_re_http_profile::evidence::RequestEvidence;
 use mcp_re_http_profile::scitt::verify_receipt_offline;
 use mcp_re_http_profile::scitt::verify_retained_evidence;
+use mcp_re_http_profile::scitt::EvidenceCommitment;
 use mcp_re_http_profile::scitt::Receipt;
 use mcp_re_http_profile::scitt::ScittServiceTrustPin;
 use mcp_re_http_profile::scitt::SignedStatement;
@@ -78,6 +79,13 @@ fn artifact(name: &str) -> Vec<u8> {
 /// The artifact records EVERY hop's signature bases, because the statement's
 /// `chain_commitment` covers every hop: a retained set that stopped at hop 0 could not
 /// reproduce it.
+///
+/// It records HANDLES, not the submitted messages, so the submission digest is not
+/// reproducible from it and the record identifies no submission.
+/// [`ChainReconstruction::from_retained_handles`] is how a reconstruction says that, and
+/// it is the only producer that can: the identity field is private, so this corpus cannot
+/// author one it never computed. That limit is what
+/// `a_statement_identifying_no_submission_binds_no_retained_record` records.
 fn retained_chain(bytes: &[u8]) -> ChainReconstruction {
     let retained: serde_json::Value = serde_json::from_slice(bytes).expect("retained parses");
     assert_eq!(
@@ -85,9 +93,9 @@ fn retained_chain(bytes: &[u8]) -> ChainReconstruction {
         Some("complete"),
         "the corpus record is a complete chain"
     );
-    ChainReconstruction {
-        label: ChainLabel::Complete,
-        hop_evidence: retained["hops"]
+    ChainReconstruction::from_retained_handles(
+        ChainLabel::Complete,
+        retained["hops"]
             .as_array()
             .expect("hops")
             .iter()
@@ -100,13 +108,7 @@ fn retained_chain(bytes: &[u8]) -> ChainReconstruction {
                 ),
             })
             .collect(),
-        // The submission identity is a digest over the submitted MESSAGES — method,
-        // target, bodies, signature headers. This artifact carries handles, so that
-        // digest is not reproducible from it, and an empty value is how a
-        // reconstruction says exactly that. The vector binds the verified prefix and
-        // claims nothing about which submission produced it.
-        submitted_commitment: String::new(),
-    }
+    )
 }
 
 fn pin() -> ScittServiceTrustPin {
@@ -194,60 +196,75 @@ fn a_third_party_receipt_verifies_offline_under_mcp_re() {
     assert_eq!(r.leaf_index(), 1, "our statement is leaf 1");
 }
 
-/// The retained evidence reproduces what the statement committed to — the other half of
-/// the retained/committed split. A receipt alone is not the evidence.
+/// What the frozen `s01` corpus can and cannot evidence about retained evidence.
+///
+/// DEMOTED IN PLACE, and the demotion is the result. `s01` is a pre-revision record: its
+/// statement carries no `submitted_commitment`, so it identifies no submission, and
+/// `verify_retained_evidence` refuses it rather than reporting the verified-prefix match
+/// as though it reached the whole record. The vector is preserved because what it does
+/// establish is real — a foreign service's receipt, statement and key pin verifying
+/// offline against these bytes — and because deleting a vector is how a coverage gap
+/// stops being visible.
+///
+/// What it does NOT establish, and no assertion here may be read as establishing:
+/// retained-evidence correspondence over a real call. Its `retained-evidence.bin` carries
+/// the handles `req-0`/`rsp-0` rather than retained MESSAGES, so the submission digest is
+/// not reproducible from it at all — the artifact cannot be made to bind a submission by
+/// any change on this side. Closing that needs a regenerated corpus produced by a real
+/// signed multi-hop exchange, which is a corpus-generation job and not a verifier one.
 #[test]
-fn the_retained_evidence_reproduces_the_committed_handles() {
+fn the_pre_revision_corpus_cannot_bind_a_submission() {
     let statement = statement();
     let retained = retained_chain(&artifact("retained-evidence.bin"));
 
-    // The statement commits to a TWO-hop record, so the retained artifact carries both
-    // hops. `verify_retained_evidence` compares the whole reconstruction — every hop's
-    // handles, the chain label, and the chain shape — not just hop 0. An artifact that
-    // held only the first hop used to pass this, which is the whole reason the check
-    // now takes a reconstruction.
-    verify_retained_evidence(statement.commitment(), &retained, None, None)
-        .expect("the retained bytes match the commitment");
+    assert!(
+        !statement.commitment().identifies_a_submission(),
+        "the frozen s01 statement is a pre-revision record"
+    );
+    let err = verify_retained_evidence(statement.commitment(), &retained, None, None)
+        .expect_err("a statement identifying no submission cannot bind retained evidence");
+    assert!(matches!(err, HttpProfileError::MalformedEvidence(_)));
 
-    // Altered retained evidence is refused, even though the receipt still verifies.
-    let mut tampered = retained.clone();
-    tampered.hop_evidence[0].request_evidence =
-        RequestEvidence::from_signature_base(b"req-tampered");
-    assert!(verify_retained_evidence(statement.commitment(), &tampered, None, None).is_err());
+    // The prefix comparison the corpus can still exercise through the public surface: the
+    // chain label the issuer committed to is the one the retained artifact reproduces.
+    assert_eq!(
+        EvidenceCommitment::from_reconstruction(&retained, None, None).chain_label(),
+        statement.commitment().chain_label(),
+        "the retained artifact reproduces the committed chain label"
+    );
 
-    // And so is a chain truncated after the first hop — the case a hop-0-only check
-    // could not see.
-    let mut truncated = retained.clone();
-    truncated.hop_evidence.truncate(1);
-    assert!(verify_retained_evidence(statement.commitment(), &truncated, None, None).is_err());
+    // The tamper and truncation controls are NOT here any more, and their absence is
+    // deliberate rather than an omission. Both used to run through
+    // `verify_retained_evidence`, which now refuses this corpus before reaching them, and
+    // the only way to keep them here would be to widen a production projection so a test
+    // could read a digest. They live with the owner instead: the retained-correspondence
+    // module's own controls alter a hop, truncate the chain and substitute the unverified
+    // tail, against reconstructions that carry a submission identity — which is what this
+    // corpus cannot supply.
 }
 
-/// A retained record may not claim a submission identity the statement never made.
+/// A statement identifying no submission binds no retained record — the corpus case.
 ///
 /// The frozen `s01` statement carries no `submitted_commitment`, so it identifies no
-/// submission. A reconstruction that supplies one is not a stronger reading of the same
-/// record: it asserts a binding the issuer's COSE_Sign1 never covered. The verifier
-/// refuses it rather than reporting the verified-prefix match as though it reached the
-/// submission — the archivist holding the record is exactly who would benefit from the
-/// weaker answer being indistinguishable from the stronger one.
+/// submission, and the verifier refuses rather than reporting the verified-prefix match as
+/// though it reached the whole record. The archivist holding the record is exactly who
+/// would benefit from the weaker answer being indistinguishable from the stronger one.
+///
+/// The mirror control — a retained record that CLAIMS an identity the statement never made
+/// — lives with the owner in `mcp-re-http-profile`, because building one means authoring a
+/// submission digest, and a reconstruction cannot be given one from outside the crate that
+/// computes it. That is the seal working, not a gap here.
 #[test]
-fn a_retained_record_cannot_claim_a_submission_the_statement_never_made() {
+fn a_statement_identifying_no_submission_binds_no_retained_record() {
     let statement = statement();
     assert!(
         !statement.commitment().identifies_a_submission(),
         "the frozen s01 statement identifies no submission"
     );
 
-    // Control: the same bytes, claiming nothing about the submission, bind on the
-    // verified prefix.
     let retained = retained_chain(&artifact("retained-evidence.bin"));
-    verify_retained_evidence(statement.commitment(), &retained, None, None)
-        .expect("the verified prefix binds");
-
-    let mut claims_a_submission = retained.clone();
-    claims_a_submission.submitted_commitment = "interop-submitted".to_owned();
-    let err = verify_retained_evidence(statement.commitment(), &claims_a_submission, None, None)
-        .expect_err("a submission identity the statement never committed to is refused");
+    let err = verify_retained_evidence(statement.commitment(), &retained, None, None)
+        .expect_err("a statement that identifies no submission cannot bind one");
     assert!(matches!(err, HttpProfileError::MalformedEvidence(_)));
 }
 

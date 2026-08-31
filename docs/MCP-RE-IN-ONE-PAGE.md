@@ -184,7 +184,7 @@ for full setup and exit criteria.
 
 - **Specification briefs:** [`docs/spec/`](spec/) — the core spec, the
   [security boundary](spec/security-boundary.md), the
-  [v0.5 claim matrix](spec/v0.5-claim-matrix.md), and
+  the theorem registry `verification/policy/theorems.toml`, and
   [proposal scope](spec/proposal-scope.md) (the wire-envelope freeze).
 - **Architecture decisions:** [`docs/adr/`](adr/) — start with
   [ADR-MCPS-001](https://github.com/matssun/mcp-re/discussions/350) (trust model) and

@@ -16,6 +16,24 @@
 
 schema_version = 1
 
+# ---------------------------------------------------------------------------
+# Reserved identifiers
+# ---------------------------------------------------------------------------
+#
+# ASM-0016 and ASM-0017 are RESERVED and must never be allocated.
+#
+# The registry runs ASM-0001..ASM-0015 and then ASM-0018 onward; git history records no
+# entry, no withdrawal, and no reference for the two in between. What they were, if they
+# were anything, is not recoverable, and nothing here invents a meaning for them.
+#
+# They are tombstoned rather than reclaimed because an identifier in this registry is a
+# claim about what is trusted, and a reused one would let a future premise inherit whatever
+# an old reference outside this tree still says. A gap costs nothing; a collision would
+# cost the property the registry exists to have.
+#
+# Owner completeness ruling, 2026-08-31 —
+# verification/reviews/rulings/owner-completeness-rulings-2026-08-31.md.
+
 # Required fields on every entry:
 #
 #   id                       stable, never reused: ASM-NNNN
@@ -629,15 +647,7 @@ It stops being acceptable if the adapter starts branching on the parser's error 
 (today it maps every parse failure to one refusal), or if identity interpretation is ever
 given a second parser whose field sets must agree.
 """
-# PROVISIONAL on the second unit. `proxy.credential_currency` declares this premise and
-# consumes a foreign X.509 parser, so the scope names it — leaving it out put no
-# trusted_assumptions entry in that unit's fingerprint at all. But the wording above is
-# about SANs and the subject Common Name, and what the currency adapter reads is issuer
-# and subject Name equality and the validity window. A scope is not a restatement: this
-# assumption does not yet describe the contract its second consumer relies on, and the
-# repair is to split or restate it rather than to leave a broad scope on inaccurate
-# wording. Pending owner ruling — verification/reviews/packets/system-assurance-completeness-audit-2026-08-31.md §2.5.
-scope = ["unit://proxy.certificate_identity", "unit://proxy.credential_currency"]
+scope = ["unit://proxy.certificate_identity"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-063 Slice 1"
 review_requirement = "Owner review; any change to the certificate identity adapter or its parser dependency."
@@ -699,6 +709,10 @@ let correspondence hold against a key the credential does not present — so unl
 this assumption can affect acceptance, and it is registered rather than folded into a
 neighbouring one for that reason.
 
+It is contained to the credential half of the correspondence relation. The signer half —
+that the exported SPKI names the key that will actually sign — is a different premise
+crossing a different boundary, and is ASM-0039.
+
 It is not proved here: an X.509 decoder is a far larger verification target than the
 authority consuming it, and attempting it would put the proof boundary in the wrong place.
 
@@ -707,15 +721,7 @@ taking the parser's bytes verbatim — a re-encoding would make this code a seco
 what the credential says — or if a second certificate parser is introduced whose reported
 SPKI must agree with this one's.
 """
-# PROVISIONAL on the second unit, for the same reason as ASM-0030. The resolver shares
-# `tls.rs` with the correspondence authority and declares this premise, so the scope names
-# it. But the SPKI the resolver uses comes from `signer.tls_public_key_spki_der()`, not
-# from a parsed certificate, so the wording above is not the contract that unit depends on.
-# Pending owner ruling — verification/reviews/packets/system-assurance-completeness-audit-2026-08-31.md §2.5.
-scope = [
-  "unit://proxy.credential_key_correspondence",
-  "unit://proxy.delegated_resolver_materialization",
-]
+scope = ["unit://proxy.credential_key_correspondence"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-063 Slice 2"
 review_requirement = "Owner review; any change to the credential adapter's certificate parsing or its parser dependency."
@@ -927,3 +933,98 @@ introduced_by = "ADR-MCPRE-059 §28 closure ruling"
 review_requirement = "Owner review; any change to the keyid digest algorithm, and on any published weakening of SHA-256 collision resistance."
 affected_contracts = []
 tool_specific_mechanism = "none:trusted-primitive"
+
+# ---------------------------------------------------------------------------
+# Owner completeness ruling A, 2026-08-31 — restated, not widened
+# ---------------------------------------------------------------------------
+#
+# verification/reviews/rulings/owner-completeness-rulings-2026-08-31.md.
+#
+# Two units consumed a foreign contract that no registered assumption stated, and the
+# provisional repair scoped a neighbouring assumption over them. The ruling withdrew that:
+# a scope is not a restatement, and a premise a consumer does not actually rely on is not
+# made true by naming that consumer. The two entries below say what those units trust.
+
+[[assumption]]
+id = "ASM-0038"
+description = "The X.509 parser faithfully reports a certificate's validity instants, the DER encodings of its issuer and subject `Name`, and its serial number."
+justification = """
+`x509_parser` is a foreign ASN.1/X.509 implementation, and `credential_currency/x509_adapter`
+is the one place the currency authority meets it. The adapter reads and decides nothing: it
+reports `notBefore`, `notAfter`, `issuer.as_raw()`, `raw_serial()`, and whether the issuer
+`Name` encoding equals the subject `Name` encoding.
+
+This is NOT ASM-0030. That assumption is about identity fields — URI and DNS SANs, the
+subject Common Name, and their presentation order — and about the authority that decides
+WHO a peer is. Currency decides something else from a different field set: whether a
+credential is still acceptable at a named instant. Neither premise implies the other, and
+the earlier attempt to let ASM-0030 stand for both is what this entry replaces.
+
+The consequences of the two halves differ, and both are stated rather than averaged:
+
+  * The VALIDITY INSTANTS bound the claim. A parser reporting the wrong window yields a
+    faithful evaluation of the wrong window — a wrong currency verdict, not an unsound
+    proof — which is exactly why it is recorded.
+  * The `Name` ENCODINGS and the SERIAL are lookup keys into a CRL index. A parser that
+    reported another certificate's issuer or serial would look up another certificate's
+    revocation standing, so a failure here can make a revoked credential read as current.
+    That is a stronger consequence than the identity case and is not softened here.
+
+Equality of the two `Name` encodings is trusted only as a REPORTED SHAPE. What a self-issued
+certificate is exempt from is `evaluation`'s decision, not the parser's, and this premise
+does not reach it.
+
+It is not proved here: an ASN.1 decoder is a far larger verification target than the
+authority that consumes it, and attempting it would put the proof boundary in the wrong
+place.
+
+It stops being acceptable if the currency authority acquires a second certificate parser
+whose reported fields must agree with this one's, if it begins branching on the parser's
+error kinds (today every parse failure is one refusal), or if revocation lookup moves to a
+key this premise does not name.
+"""
+scope = ["unit://proxy.credential_currency"]
+owner = "mats@sundvall.name"
+introduced_by = "Owner completeness ruling A, 2026-08-31"
+review_requirement = "Owner review; any change to the credential-currency X.509 adapter, to its parser dependency, or to the field set revocation lookup is keyed by."
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0039"
+description = "A `RawEd25519TlsSigner` reports, as `tls_public_key_spki_der`, the SubjectPublicKeyInfo of the very key `sign_tls_ed25519` signs with."
+justification = """
+`DelegatedCertResolver::materialize` establishes correspondence between the credential's
+public key and `signer.tls_public_key_spki_der()`. The credential half is a local parse and
+is covered by ASM-0032. The signer half is not local at all: `RawEd25519TlsSigner` is a
+trait seam whose production implementations are a PKCS#11 token and the AWS and GCP KMS
+backends, and the private half is by construction non-exportable. Nothing in MCP-RE can
+derive the public key from the key that will sign; the device or service is asked, and its
+answer is taken.
+
+That is why this is a foreign premise rather than something to establish locally. The
+relation being trusted is PAIRING — that the exported SPKI and the signing operation name
+one key — and the seam is where it stops being checkable: an implementation free to report
+one key's SPKI while signing with another would make correspondence hold against a key the
+credential does not present, and the resolver's structural precondition would be satisfied
+by material that does not correspond.
+
+It is deliberately NOT ASM-0032. That premise is about a parser reading bytes MCP-RE holds;
+this one is about a remote custody service answering a question about a key MCP-RE cannot
+read. Both concern SPKI bytes, and that is the whole of what they share — the earlier
+provisional scoping of ASM-0032 over this unit is what this entry replaces.
+
+The seam also bounds what privacy or sealing could buy here: an invalid pairing is the
+implementor's bug, not a state a constructor could refuse, so the premise is registered
+rather than designed away.
+
+It stops being acceptable if a `RawEd25519TlsSigner` implementation is admitted whose
+exported key is derived from a source other than the signing key's own custody, or if the
+resolver ever accepts an export from one signer and installs another.
+"""
+scope = ["unit://proxy.delegated_resolver_materialization"]
+owner = "mats@sundvall.name"
+introduced_by = "Owner completeness ruling A, 2026-08-31"
+review_requirement = "Owner review; any new RawEd25519TlsSigner implementation, and any change to how the resolver obtains or installs the signer's exported key."
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"

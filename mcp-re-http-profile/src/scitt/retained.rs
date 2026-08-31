@@ -172,7 +172,7 @@ mod tests {
             .expect("the retained bytes match");
 
         let mut tampered_request = retained.clone();
-        tampered_request.hop_evidence[0].request_evidence =
+        tampered_request.hop_evidence_mut()[0].request_evidence =
             RequestEvidence::from_signature_base(b"req-tampered");
         assert_eq!(
             verify_retained_evidence(&commitment, &tampered_request, None, None).unwrap_err(),
@@ -182,7 +182,7 @@ mod tests {
         );
 
         let mut tampered_response = retained.clone();
-        tampered_response.hop_evidence[0].response_evidence =
+        tampered_response.hop_evidence_mut()[0].response_evidence =
             RequestEvidence::from_response_signature_base(b"rsp-tampered");
         assert_eq!(
             verify_retained_evidence(&commitment, &tampered_response, None, None).unwrap_err(),
@@ -201,9 +201,10 @@ mod tests {
         let commitment = EvidenceCommitment::from_reconstruction(&full, None, None);
 
         let mut truncated = full.clone();
-        truncated.hop_evidence.truncate(1);
+        truncated.hop_evidence_mut().truncate(1);
         assert_eq!(
-            truncated.hop_evidence[0], full.hop_evidence[0],
+            truncated.hop_evidence()[0],
+            full.hop_evidence()[0],
             "hop 0 is retained honestly — the old check compared only this"
         );
         assert_eq!(
@@ -215,9 +216,35 @@ mod tests {
 
         // Substituting a later hop is the same defect in the other direction.
         let mut substituted = full.clone();
-        substituted.hop_evidence[2].request_evidence =
+        substituted.hop_evidence_mut()[2].request_evidence =
             RequestEvidence::from_signature_base(b"req-substituted");
         assert!(verify_retained_evidence(&commitment, &substituted, None, None).is_err());
+    }
+
+    /// A record that identifies NO submission is refused, not matched.
+    ///
+    /// The companion to the case where the RETAINED side claims an identity the statement
+    /// never made. Both are the same record — one this comparison does not reach past the
+    /// verified prefix — so both refuse, and the condition is on the statement alone.
+    #[test]
+    fn a_statement_that_identifies_no_submission_binds_nothing() {
+        let handles = recon(ChainLabel::Complete, 2);
+        let without = ChainReconstruction::from_retained_handles(
+            handles.label().clone(),
+            handles.hop_evidence().to_vec(),
+        );
+        let commitment = EvidenceCommitment::from_reconstruction(&without, None, None);
+        assert!(
+            !commitment.identifies_a_submission(),
+            "a record built from handles alone identifies no submission"
+        );
+        assert_eq!(
+            verify_retained_evidence(&commitment, &without, None, None).unwrap_err(),
+            HttpProfileError::MalformedEvidence(
+                "the statement carries no submission identity, so the retained submission cannot be bound to it"
+            ),
+            "every other field matches, and that is exactly why Ok would be a false report"
+        );
     }
 
     /// The UNVERIFIED tail of an Incomplete record. Every field derived from the
@@ -226,22 +253,29 @@ mod tests {
     /// bytes the statement was issued over from an archivist's substitute.
     #[test]
     fn a_substituted_unverified_tail_is_refused_even_though_the_verified_prefix_matches() {
-        let mut issued = recon(
+        let issued = recon(
             ChainLabel::Incomplete {
                 hop: 1,
                 reason: IncompleteReason::MissingContinuation,
             },
             1,
         );
-        issued.submitted_commitment = "submission-as-issued".to_owned();
+        let issued = ChainReconstruction::with_authored_submission_identity(
+            issued.label().clone(),
+            issued.hop_evidence().to_vec(),
+            "submission-as-issued".to_owned(),
+        );
         let commitment = EvidenceCommitment::from_reconstruction(&issued, None, None);
         verify_retained_evidence(&commitment, &issued, None, None)
             .expect("the retained bytes are the ones the statement was issued over");
 
         // A different hop 1 — different bytes, failing at the same index for the same
         // reason. The verified prefix is untouched.
-        let mut substituted = issued.clone();
-        substituted.submitted_commitment = "submission-substituted".to_owned();
+        let substituted = ChainReconstruction::with_authored_submission_identity(
+            issued.label().clone(),
+            issued.hop_evidence().to_vec(),
+            "submission-substituted".to_owned(),
+        );
         let recomputed = EvidenceCommitment::from_reconstruction(&substituted, None, None);
         assert_eq!(
             recomputed.verified_prefix_fields(),

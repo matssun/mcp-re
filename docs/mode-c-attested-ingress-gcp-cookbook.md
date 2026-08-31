@@ -384,4 +384,4 @@ is the offline node-side rejection above). Recommended live checks:
 
 For the rationale and the normative contract, see
 [ADR-MCPS-023 §C](https://github.com/matssun/mcp-re/discussions/372) and the two-posture statement in
-[`docs/spec/security-boundary.md` §11](spec/security-boundary.md).
+[the 2026-06-23 signed boundary §11](archive/security/security-boundary-signed-2026-06-23.md), historical.

@@ -2356,7 +2356,7 @@ fn frozen_http_profile_corpus_verifies() {
                 // The label IS the frozen verdict: an incomplete record must name
                 // the hop that broke it, so the comparison covers WHICH hop too.
                 assert_eq!(
-                    label_token(&out.label),
+                    label_token(out.label()),
                     check.expected_label,
                     "{name}: chain label drifted from the frozen expectation"
                 );

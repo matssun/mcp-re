@@ -5,8 +5,14 @@
 ```text
 STATUS:  REVIEW / MEASUREMENT PACKET
          NON-NORMATIVE
-         OWNER RULINGS PENDING
+         OWNER RULINGS GIVEN 2026-08-31 — see below
 ```
+
+> **The rulings have been given.** They are in
+> [`../rulings/owner-completeness-rulings-2026-08-31.md`](../rulings/owner-completeness-rulings-2026-08-31.md),
+> and that record — not this one — is what decides what is in scope and what is bounded out.
+> Where the two differ, the ruling record wins: several proposals below were reversed by it,
+> including both scope widenings in §2.5. This packet is left as it was measured.
 
 **This document is evidence, not architecture.** It records what was measured, against
 which repository state, and what the measurements imply. It is not an authority over

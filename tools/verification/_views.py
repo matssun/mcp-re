@@ -56,7 +56,7 @@ def render_all(theorems: dict, verification: dict, assumptions: dict) -> dict[st
         f"{GENERATED_ROOT}/assumption-consumers.md": assumption_consumers(
             theorems, verification, assumptions
         ),
-        f"{GENERATED_ROOT}/owners.md": owner_view(theorems, verification),
+        f"{GENERATED_ROOT}/owners.md": owner_view(theorems, verification, assumptions),
         f"{GENERATED_ROOT}/blast-radius.md": structural_blast_radius(
             theorems, verification, assumptions
         ),

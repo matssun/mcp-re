@@ -159,9 +159,9 @@ fn corpus_digest(entries: &[ManifestEntry]) -> String {
 }
 
 fn reconstruction(label: ChainLabel, hops: usize) -> ChainReconstruction {
-    ChainReconstruction {
+    ChainReconstruction::with_authored_submission_identity(
         label,
-        hop_evidence: (0..hops)
+        (0..hops)
             .map(|i| HopEvidence {
                 request_evidence: RequestEvidence::from_signature_base(
                     format!("req-{i}").as_bytes(),
@@ -174,8 +174,8 @@ fn reconstruction(label: ChainLabel, hops: usize) -> ChainReconstruction {
         // A synthetic corpus fixture: the vectors pin the encoding of a commitment, not
         // the bytes of a real submission, so this is a stable stand-in rather than a
         // digest of hops that do not exist here.
-        submitted_commitment: format!("corpus-submitted-{hops}"),
-    }
+        format!("corpus-submitted-{hops}"),
+    )
 }
 
 fn statement(commitment: EvidenceCommitment, key: &SigningKey) -> SignedStatement {

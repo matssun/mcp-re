@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The X.509 parse the currency authority needs — the ADR-MCPRE-059 assumed boundary
-//! (ASM-0030), confined to one adapter as Slice 1's identity parse is.
+//! (ASM-0038), confined to one adapter as Slice 1's identity parse is.
 //!
 //! It reads and decides nothing. Which of these facts is required of which certificate,
 //! and what an absent one means, is [`super::evaluation`]'s: a peer's own leaf and the

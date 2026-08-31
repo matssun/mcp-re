@@ -152,7 +152,7 @@ count = 0
 [[debt]]
 crate = "mcp-re-http-profile"
 lint = "excessive_nesting"
-count = 18
+count = 17
 
 [[debt]]
 crate = "mcp-re-http-profile"

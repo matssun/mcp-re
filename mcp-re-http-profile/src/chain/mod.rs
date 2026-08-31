@@ -70,6 +70,11 @@ mod hop;
 /// chain's shape.
 mod record;
 
+/// The record a reconstruction produces, and the identity only this crate can compute.
+mod reconstruction;
+
+pub use reconstruction::ChainReconstruction;
+
 use hop::ChainVerification;
 use hop::HopPosition;
 
@@ -144,33 +149,6 @@ impl ChainLabel {
     pub fn is_complete(&self) -> bool {
         matches!(self, ChainLabel::Complete)
     }
-}
-
-/// The reconstruction output. Shaped so a Layer 5 receipt can commit to it: the
-/// label is part of the record, so an incomplete chain is representable and
-/// distinguishable rather than being an absence of a record.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChainReconstruction {
-    pub label: ChainLabel,
-    /// The per-hop (request handle, response handle) pairs, in order, for every
-    /// hop that verified before the chain was labeled. On a `Complete` chain this
-    /// is every hop; on an `Incomplete` one it is the verified prefix — the part
-    /// of the record that IS accounted for.
-    pub hop_evidence: Vec<HopEvidence>,
-    /// A digest over the SUBMITTED hop bytes, whether or not any of them verified.
-    ///
-    /// [`hop_evidence`](Self::hop_evidence) is the verified prefix, so a chain that
-    /// broke at hop 0 contributes nothing to it and every such record collapsed to the
-    /// same three identity fields: two empty handles and a fold over zero bytes. A
-    /// Signed Statement about one could not be told from a statement about any other
-    /// call that failed the same way, which makes "this record is about that call" an
-    /// unanswerable question exactly where an auditor most needs it answered.
-    ///
-    /// This is the answer, and it is deliberately taken from what was SUBMITTED rather
-    /// than from what verified: unverified bytes are still specific bytes. It is an
-    /// identity, never an endorsement — nothing here asserts the submission was
-    /// well-formed, authentic, or served.
-    pub submitted_commitment: String,
 }
 
 /// The full-profile inputs a retained record cannot supply for itself.
@@ -344,14 +322,14 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
     let submitted = submitted_commitment(hops);
 
     if hops.is_empty() {
-        return ChainReconstruction {
-            label: ChainLabel::Incomplete {
+        return ChainReconstruction::from_verified_chain(
+            ChainLabel::Incomplete {
                 hop: 0,
                 reason: IncompleteReason::EmptyChain,
             },
             hop_evidence,
-            submitted_commitment: submitted,
-        };
+            submitted,
+        );
     }
 
     let verification = ChainVerification {
@@ -373,11 +351,7 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
         }
     }
 
-    ChainReconstruction {
-        label: ChainLabel::Complete,
-        hop_evidence,
-        submitted_commitment: submitted,
-    }
+    ChainReconstruction::from_verified_chain(ChainLabel::Complete, hop_evidence, submitted)
 }
 
 /// Why an instant could not be taken from a retained message.
@@ -438,11 +412,11 @@ fn incomplete(
     reason: IncompleteReason,
     submitted_commitment: String,
 ) -> ChainReconstruction {
-    ChainReconstruction {
-        label: ChainLabel::Incomplete { hop, reason },
+    ChainReconstruction::from_verified_chain(
+        ChainLabel::Incomplete { hop, reason },
         hop_evidence,
         submitted_commitment,
-    }
+    )
 }
 
 #[cfg(test)]

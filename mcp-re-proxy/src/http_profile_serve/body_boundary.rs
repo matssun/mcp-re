@@ -55,11 +55,12 @@ pub fn extract_request_state(body: &[u8]) -> Option<String> {
 /// PEP removes what it owns and leaves what it does not is a property of the request body
 /// alone, with no verified request and no policy in it.
 fn strip_pep_owned(body: &[u8]) -> Result<(Vec<u8>, bool), HttpProfileError> {
-    // The forwarded bytes are re-serialized below, which cannot carry a duplicate
-    // member name or a number the f64 carrier alters. Refuse those on the ORIGINAL
-    // bytes, using the same scan the response path applies, so the backend never sees
-    // a body that differs from what the client signed.
-    mcp_re_http_profile::reject_unrepresentable_json(body)?;
+    // The bytes are re-serialized below, which cannot carry a duplicate member name or a
+    // number the f64 carrier alters. That question is asked at the request-envelope
+    // boundary, on the original bytes and before admission spends anything, so a body that
+    // reaches this function has already answered it — asking again here would be a second
+    // opinion on a decision that has an owner, and the one thing it could still change is
+    // which stage a refusal is attributed to.
     let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(body) else {
         // A non-object body never verified as a full-profile request, so this is
         // unreachable on the served path; pass it through rather than invent bytes.
@@ -193,11 +194,15 @@ mod tests {
 
     #[test]
     fn an_unrepresentable_body_is_refused_before_any_reserialization() {
-        // Duplicate member names cannot survive the re-serialization, so they are refused
-        // on the ORIGINAL bytes — otherwise the backend would see a body that differs from
-        // the one the client signed.
+        // A body whose meaning changes under re-serialization never reaches the backend,
+        // and the owner of that is the request-envelope boundary, where the refusal is free.
+        // Asserted against the owner rather than against this composer, which asks nothing
+        // and would otherwise look like a second opinion on the same question.
         assert!(
-            strip_pep_owned(br#"{"a":1,"a":2}"#).is_err(),
+            mcp_re_http_profile::validate_request_envelope(
+                br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"a":1,"a":2}}"#
+            )
+            .is_err(),
             "a body whose meaning changes under re-serialization never reaches the backend"
         );
     }
