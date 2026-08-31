@@ -405,7 +405,7 @@ conformance, reference implementation, demos, and non-goals):
 2. **Security boundary** — [`docs/spec/security-boundary.md`](docs/spec/security-boundary.md):
    what MCP-RE protects, what it explicitly does not, and which root theorem each claim
    rests on, plus its explicit non-claims and the areas in scope but not yet
-   established. The only claim authority; ratified 2026-08-31.
+   established. The only claim authority; ratified 2026-09-01.
 3. **Theorem registry** — `verification/policy/theorems.toml` and the views generated from
    it: the argument behind every claim in the boundary.
 4. **GCP KMS validation** — [`docs/quickstart-gcp-kms.md`](docs/quickstart-gcp-kms.md)

@@ -158,7 +158,7 @@ obviously stale prose.
 
 **No agent signature.** The new boundary is prepared for one owner ratification return.
 
-**SATISFIED 2026-08-31.** The new boundary was ratified by the owner over commit `23a727ac`,
+**SATISFIED 2026-09-01.** The new boundary was ratified by the owner over commit `23a727ac`,
 after four honesty corrections: THM-0042 removed from the current positive claim surface,
 THM-0076 scoped to the shipped Rust client proxy, the MCP-RE-owned proof-boundary premises
 disclosed, and the assurance-platform row reconciled with the §5 disclosure. The ratification

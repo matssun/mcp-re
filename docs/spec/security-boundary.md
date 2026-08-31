@@ -4,7 +4,7 @@
 
 ```
 STATUS:  RATIFIED — the current canonical MCP-RE security-claim boundary
-         Owner: Mats Sundvall, 2026-08-31, over commit 23a727ac. See §7.
+         Owner: Mats Sundvall, 2026-09-01, over commit 23a727ac. See §7.
          It inherits no signature from any earlier boundary and carries its own.
 ```
 
@@ -172,8 +172,10 @@ obviously stale one, because only the second announces itself.
 
 ## 7. Ratification
 
-**RATIFIED by the owner — Mats Sundvall, 2026-08-31**, over this document at commit
-`23a727ac`, following the four honesty corrections applied at that commit.
+**RATIFIED by the owner — Mats Sundvall, 2026-09-01** (Europe/Stockholm), over this
+document at commit `23a727ac`, following the four honesty corrections applied at that
+commit. The ruling that ordered the rewrite is a separate, earlier event: owner completeness
+ruling C of 2026-08-31.
 
 Ratification is an event, not an inference: no conditional, no agreement in principle, and
 no signature written on the owner's behalf. This record was written after the event, and the
