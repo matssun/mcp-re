@@ -72,4 +72,77 @@ mod tests {
         assert_ne!(a, jwk_thumbprint_ed25519("AAAB"));
         assert!(!a.ends_with('='), "base64url no-pad");
     }
+
+    /// The half of selector injectivity that is a property of THIS code.
+    ///
+    /// Two distinct keys have distinct canonical forms, because the form is a fixed prefix,
+    /// the operand verbatim, and a fixed suffix. Concatenation with fixed affixes is
+    /// injective on any input at all, so no `x` — however chosen — can produce another
+    /// `x`'s form. The claim needs no assumption about the operand's alphabet, which is
+    /// what makes it hold for the delegated-credential path too.
+    #[test]
+    fn the_canonical_form_embeds_its_operand_verbatim_between_fixed_affixes() {
+        const PREFIX: &str = r#"{"crv":"Ed25519","kty":"OKP","x":""#;
+        const SUFFIX: &str = r#""}"#;
+        for x in [
+            "",
+            "AAAA",
+            "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+            // Adversarial: JSON metacharacters. The form is not escaped, so a caller could
+            // in principle nest structure here — and it still cannot COLLIDE, because the
+            // affixes pin where the operand starts and ends.
+            r#"A","x":"B"#,
+            "\\",
+        ] {
+            let form = canonical_ed25519_jwk(x);
+            assert_eq!(form, format!("{PREFIX}{x}{SUFFIX}"));
+            assert_eq!(
+                form.strip_prefix(PREFIX)
+                    .and_then(|r| r.strip_suffix(SUFFIX)),
+                Some(x),
+                "the operand is recoverable, so distinct operands have distinct forms"
+            );
+        }
+    }
+
+    /// Distinct operands give distinct canonical forms, asked directly over a corpus that
+    /// includes the pairs a naive concatenation would confuse.
+    #[test]
+    fn distinct_operands_never_share_a_canonical_form() {
+        let corpus = [
+            "",
+            "A",
+            "AA",
+            "AAAA",
+            "AAAB",
+            r#"A","x":"B"#,
+            r#"B","x":"A"#,
+            "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+        ];
+        for (i, a) in corpus.iter().enumerate() {
+            for b in corpus.iter().skip(i + 1) {
+                assert_ne!(
+                    canonical_ed25519_jwk(a),
+                    canonical_ed25519_jwk(b),
+                    "{a:?} and {b:?} share a canonical form"
+                );
+            }
+        }
+    }
+
+    /// The other half of the derivation that is ours: the digest encoding does not merge
+    /// distinct digests. base64url-no-pad is injective over fixed-width inputs, and the
+    /// keyid is always a 32-byte SHA-256 output.
+    #[test]
+    fn the_keyid_encoding_is_injective_over_the_digest_width() {
+        let mut seen = std::collections::BTreeSet::new();
+        for byte in 0u8..=255 {
+            let digest = [byte; 32];
+            assert!(
+                seen.insert(b64url_encode(&digest)),
+                "two distinct digests encoded to the same keyid"
+            );
+        }
+        assert_eq!(seen.len(), 256);
+    }
 }

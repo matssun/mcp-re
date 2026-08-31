@@ -2021,3 +2021,280 @@ tested_symbols = [
   "lib#config_state::cross_machine::tests::the_exclusive_custody_relation_has_no_configuration_left_to_refuse",
   "lib#config_state::cross_machine::tests::the_trust_epoch_posture_is_not_re_derived_here",
 ]
+
+[[unit]]
+id = "proxy.authorization_posture"
+class = "V0"
+description = "What this deployment may honestly say about a served request's permission: the one operation that produces a posture, and the two facts it keeps apart — no policy is deployed, and a policy permitted this."
+paths = [
+  "mcp-re-proxy/src/authorization/decide.rs",
+  "mcp-re-proxy/src/authorization/posture.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/authorization/posture_selection"]
+assumptions = []
+# The two directions of the selection, and the two projections that must not collapse it.
+# `Off` is not `Allow`: an unconfigured deployment claims nothing, and a record that reported
+# it as an allow would manufacture a permission nobody granted.
+tested_symbols = [
+  "lib#authorization::decide::tests::no_evaluator_yields_no_policy_configured_and_never_a_grant",
+  "lib#authorization::decide::tests::a_granting_evaluator_yields_an_attributed_authorization",
+  "lib#authorization::decide::tests::a_denying_evaluator_refuses_with_its_own_token",
+  "lib#authorization::decide::tests::an_evaluator_that_could_not_decide_fails_closed_and_says_which_fact_that_is",
+  "lib#authorization::decide::tests::a_request_with_no_readable_action_is_refused_before_any_policy_is_consulted",
+  "lib#authorization::decide::tests::the_coordinate_is_read_whether_or_not_a_policy_is_configured",
+  "lib#authorization::decide::tests::a_denial_and_a_missing_coordinate_project_to_different_authorities",
+  "lib#authorization::decide::tests::an_authorized_request_projects_the_grant_and_the_coordinate_it_was_taken_over",
+  "lib#authorization::posture::tests::an_unconfigured_deployment_does_not_report_an_authorization",
+  "lib#authorization::posture::tests::the_audit_projection_keeps_off_and_allow_apart",
+]
+
+# ---------------------------------------------------------------------------------------
+# Stage 4 — the client-side semantic owners.
+#
+# The ratification is explicit that `mcp-re-client-core` does NOT become one unit: crate
+# boundaries do not determine review-unit boundaries, and the six propositions its blueprint
+# recorded as gaps concern four different semantic questions. Each unit below answers
+# question 1 of the twelve with no "and": what a trust document says and for how long; what
+# a client may accept as the answer to its own request; what the credential must satisfy;
+# and what a rejection receipt says about whether the work ran.
+# ---------------------------------------------------------------------------------------
+
+[[unit]]
+id = "client.trust_manifest_lifecycle"
+class = "V0"
+description = "The client's trust document and the anchors it publishes: the manifest's own signature and profile, its monotone version floor, its expiry deadline outranking every root inside it, and which credential identifiers are revoked."
+paths = [
+  "mcp-re-client-core/src/trust_manifest/mod.rs",
+  "mcp-re-client-core/src/trust_manifest/preimage.rs",
+  "mcp-re-client-core/src/delegated_trust/mod.rs",
+  "mcp-re-client-core/src/delegated_trust/anchors.rs",
+  "mcp-re-client-core/src/delegated_trust/manifest_validity.rs",
+  "mcp-re-client-core/src/delegated_trust/revocation.rs",
+]
+exported_contracts = []
+evidence = ["test://client/trust_manifest/lifecycle_battery"]
+assumptions = []
+# The negative controls carry this unit. A rolled-back version, a tampered signature, an
+# untrusted signer, a wrong profile and an expired deadline must each fail closed, and the
+# floor must not default to zero when it cannot be read — a fail-open there would accept
+# every superseded manifest ever published.
+tested_symbols = [
+  "lib#trust_manifest::tests::signed_manifest_loads_current_issuers",
+  "lib#trust_manifest::tests::tampered_manifest_fails_the_signature",
+  "lib#trust_manifest::tests::untrusted_signer_is_rejected",
+  "lib#trust_manifest::tests::wrong_profile_is_rejected",
+  "lib#trust_manifest::tests::rolled_back_manifest_version_is_rejected",
+  "lib#trust_manifest::tests::the_floor_rises_on_load_and_then_rejects_the_superseded_manifest",
+  "lib#trust_manifest::tests::the_in_memory_floor_is_monotonic",
+  "lib#trust_manifest::tests::an_unreadable_floor_fails_closed_rather_than_defaulting_to_zero",
+  "lib#trust_manifest::tests::anchors_are_withheld_when_the_floor_cannot_be_persisted",
+  "lib#trust_manifest::tests::expired_manifest_fails_closed",
+  "lib#trust_manifest::tests::the_manifests_deadline_travels_with_the_anchors_it_published",
+  "lib#trust_manifest::tests::overlap_and_revocation_round_trip_through_the_manifest",
+  "lib#trust_manifest::tests::the_signer_kid_is_covered_by_the_signature",
+  "lib#trust_manifest::preimage::tests::the_signer_kid_manifest_boundary_cannot_be_moved",
+  "lib#delegated_trust::manifest_validity::tests::the_deadline_is_inclusive_of_the_instant_it_names",
+  "lib#delegated_trust::manifest_validity::tests::a_hand_assembled_picture_has_no_deadline_to_miss",
+]
+
+[[unit]]
+id = "client.response_acceptance"
+class = "V0"
+description = "What a client may present to an application as the answer to its own request: which signer is authorized in the Response slot, whether a pinned issuer holds, and the bound/unbound disposition — an unbound receipt is never a success and never an answer to another request."
+paths = [
+  "mcp-re-client-core/src/response.rs",
+  "mcp-re-client-core/src/response_expectation.rs",
+  "mcp-re-client-core/src/delegated_evidence.rs",
+]
+exported_contracts = []
+evidence = ["test://client/response/acceptance_battery"]
+assumptions = []
+# Three separations, each with its negative control: the pin against the ROOT issuer rather
+# than the rotating delegated kid; revocation by every identifier the manifest can name; and
+# unbound-is-not-success, including a preflight receipt about another request's bytes.
+tested_symbols = [
+  "lib#response::delegated_tests::delegated_success_is_verified_and_classified",
+  "lib#response::delegated_tests::delegated_bound_rejection_is_verified_and_classified",
+  "lib#response::delegated_tests::delegated_preflight_rejection_is_verified_unbound",
+  "lib#response::delegated_tests::unbound_signature_is_not_accepted_as_success",
+  "lib#response::delegated_tests::unsigned_response_is_rejected",
+  "lib#response::delegated_tests::direct_root_success_is_rejected_no_credential",
+  "lib#response::delegated_tests::delegated_success_enforces_the_pin_against_the_root_issuer",
+  "lib#response::delegated_tests::delegated_rejection_enforces_the_pin_against_the_root_issuer",
+  "lib#response::delegated_tests::a_pinned_route_refuses_a_202_from_another_root",
+  "lib#response::delegated_tests::revoked_issuer_kid_rejects_success",
+  "lib#response::delegated_tests::revoked_delegated_kid_rejects_success",
+  "lib#response::delegated_tests::revoked_by_jti_rejects_success",
+  "lib#response::delegated_tests::revoked_delegated_key_rejection_receipt_is_rejected",
+  "lib#response::delegated_tests::non_revoked_credential_verifies_with_nonempty_list",
+  "lib#response::delegated_tests::rotation_to_new_delegated_key_succeeds_when_old_revoked",
+  "lib#response::delegated_tests::an_expired_trust_picture_stops_resolving_its_roots",
+  "lib#response::delegated_tests::a_preflight_receipt_for_another_request_is_not_an_answer_to_this_one",
+  "lib#response::delegated_tests::a_preflight_receipt_about_no_request_answers_nothing",
+  "lib#response_expectation::tests::the_projection_reports_the_request_the_expectation_was_built_from",
+  "lib#response_expectation::tests::a_pin_is_absent_until_it_is_set",
+]
+
+[[unit]]
+id = "client.delegation_policy_seal"
+class = "V0"
+description = "What the credential must satisfy, sealed: the clock skew is clamped to the profile bound at construction, so no inhabitant carries an unbounded tolerance and both freshness windows read the same bounded number."
+paths = ["mcp-re-client-core/src/delegation_policy.rs"]
+exported_contracts = []
+evidence = ["test://client/delegation_policy/skew_seal"]
+assumptions = []
+# The seal is the claim. A configured skew beyond the bound is not CONSTRUCTIBLE, rather
+# than rejected later by whichever window happens to check — which is what would let the two
+# windows disagree about the tolerance they applied.
+tested_symbols = [
+  "lib#delegation_policy::policy_seal_tests::a_configured_skew_beyond_the_profile_bound_is_not_constructible",
+  "lib#delegation_policy::policy_seal_tests::a_negative_skew_narrows_to_zero_rather_than_skewing_the_window_backwards",
+  "lib#delegation_policy::policy_seal_tests::both_gates_read_the_same_bounded_number",
+]
+
+[[unit]]
+id = "client.execution_contract"
+class = "V0"
+description = "What a verified rejection receipt says about whether the work ran: the distinction between a receipt that says nothing and one that says nothing ran, read in the same parse as the wire code."
+paths = [
+  "mcp-re-client-core/src/execution_contract.rs",
+  "mcp-re-client-core/src/result_classification.rs",
+]
+exported_contracts = []
+evidence = ["test://client/execution_contract/disposition_battery"]
+assumptions = []
+# The one distinction the whole module exists for is the second control: silence is not a
+# did-not-run verdict, and reading it as one is how a side effect gets repeated.
+tested_symbols = [
+  "lib#execution_contract::tests::a_receipt_that_says_nothing_is_not_a_receipt_that_says_it_did_not_run",
+  "lib#execution_contract::tests::a_body_carrying_no_contract_yields_the_silent_one_rather_than_a_guess",
+  "lib#execution_contract::tests::an_unrecognized_value_is_carried_and_never_read_as_a_known_one",
+  "lib#execution_contract::tests::the_wire_code_and_its_disposition_are_read_in_one_parse",
+  "lib#result_classification::tests::an_absent_result_type_is_terminal_as_the_spec_requires_of_clients",
+  "lib#result_classification::tests::an_unrecognized_result_type_is_never_terminal",
+  "lib#result_classification::tests::the_live_seam_refuses_what_the_reporting_seam_merely_names",
+]
+
+# ---------------------------------------------------------------------------------------
+# Stage 5 — the response-emission cluster.
+#
+# The ratification refuses one "response emission" authority absorbing delegation-only
+# signing, custody provenance, request binding and non-exporting custody. Four owners,
+# because there are four questions: where the credential comes from and when it stops
+# existing; what validity a response may advertise under it; whether the private key is on
+# this process at all; and whether the emitted signature binds the request it answers.
+# ---------------------------------------------------------------------------------------
+
+[[unit]]
+id = "proxy.delegated_signing_credential"
+class = "V0"
+description = "The delegated response-signing credential source: when a valid short-TTL key exists, when it stops existing, and that every one of those transitions fails CLOSED rather than falling back to a longer-lived or root credential."
+paths = [
+  "mcp-re-proxy/src/delegated_server_signer/mod.rs",
+  "mcp-re-proxy/src/delegated_server_signer/retry_schedule.rs",
+  "mcp-re-proxy/src/delegated_response_signer.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/signing/delegated_credential_lifecycle"]
+assumptions = []
+# Every control here is about ABSENCE: before the first rotation, past expiry, after a
+# terminal retirement, under a poisoned lock. There is no direct-root fallback to measure,
+# because there is no direct-root mode — so what has to be measured is that the fail-closed
+# answer is the one every one of those states gives.
+tested_symbols = [
+  "lib#delegated_server_signer::tests::no_key_before_first_rotate_fails_closed",
+  "lib#delegated_server_signer::tests::rotate_publishes_a_snapshot_the_hot_path_reads",
+  "lib#delegated_server_signer::tests::snapshot_fails_closed_past_expiry",
+  "lib#delegated_server_signer::tests::fail_closed_issuance_retires_the_snapshot",
+  "lib#delegated_server_signer::tests::issuance_failure_serves_the_valid_key_then_fails_closed_at_expiry",
+  "lib#delegated_server_signer::tests::advance_trust_epoch_republishes_a_fresh_key_under_the_new_epoch",
+  "lib#delegated_server_signer::tests::a_declined_advance_is_reported_as_declined_and_keeps_the_prior_key",
+  "lib#delegated_server_signer::tests::seconds_to_expiry_tracks_the_published_key",
+  "lib#delegated_server_signer::tests::metrics_count_success_and_reset_the_failure_streak",
+  "lib#delegated_server_signer::tests::backoff_is_exponential_then_ceilinged",
+  "lib#delegated_server_signer::tests::backoff_never_sleeps_past_a_still_valid_key",
+  "lib#delegated_server_signer::tests::backoff_once_expired_uses_the_ceiling_not_the_negative_ttl",
+  "lib#delegated_server_signer::terminal_retirement_tests::a_mint_landing_after_the_owner_is_gone_cannot_restore_signing",
+  "lib#delegated_server_signer::terminal_retirement_tests::a_rotor_retirement_is_still_undone_by_the_next_successful_mint",
+  "lib#delegated_server_signer::terminal_retirement_tests::a_poisoned_snapshot_lock_fails_closed_and_still_recovers",
+]
+
+[[unit]]
+id = "proxy.response_signing"
+class = "V0"
+description = "The deployment's response-signing authority: one owner for the credential snapshot, the validity a response may advertise under it, and which receipt a refusal is served as — so the reply path and the refusal path cannot drift apart."
+paths = [
+  "mcp-re-proxy/src/http_profile_serve/signing_window.rs",
+  "mcp-re-proxy/src/http_profile_serve/receipt/mod.rs",
+  "mcp-re-proxy/src/http_profile_serve/receipt/artifact.rs",
+  "mcp-re-proxy/src/http_profile_serve/receipt/audit_event.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/signing/response_window_and_receipt"]
+assumptions = []
+# The window controls are the seal: `expires` is private and no constructor takes one, so
+# the four cases below are the whole derivation rather than four call sites that remembered
+# to clamp. The last-resort controls are the other half — what an UNSIGNED receipt may still
+# state when no valid credential exists.
+tested_symbols = [
+  "lib#http_profile_serve::signing_window::tests::the_configured_ttl_bounds_a_window_inside_the_credential",
+  "lib#http_profile_serve::signing_window::tests::the_credential_bounds_a_ttl_that_would_outlive_it",
+  "lib#http_profile_serve::signing_window::tests::an_expired_credential_advertises_no_future_validity",
+  "lib#http_profile_serve::signing_window::tests::a_saturating_ttl_does_not_wrap_past_the_credential",
+  "lib#http_profile_serve::receipt::artifact::last_resort_receipt_tests::a_spent_approval_last_resort_receipt_names_the_consumed_continuation",
+  "lib#http_profile_serve::receipt::artifact::last_resort_receipt_tests::a_retention_indeterminate_last_resort_receipt_still_names_the_failed_obligation",
+  "lib#http_profile_serve::receipt::artifact::last_resort_receipt_tests::an_ordinary_post_dispatch_failure_claims_no_retention_status",
+  "lib#http_profile_serve::receipt::artifact::last_resort_receipt_tests::an_unstated_disposition_adds_no_claim",
+]
+
+[[unit]]
+id = "proxy.custody_exposure"
+class = "V0"
+description = "Whether the signing private key is readable by this process: the ADR-MCPRE-067 exposure fact, classified from the custody selection and projected as a semantic answer that names no mechanism."
+paths = ["mcp-re-proxy/src/config_state/custody.rs"]
+exported_contracts = []
+evidence = ["test://proxy/config_state/custody_exposure"]
+assumptions = []
+# The first two controls are the claim; the third is what makes it ADR-067-shaped. A
+# consumer asks *may the key be read here*, never *is this AWS* — so a mechanism that does
+# not exist yet drives the same consumer without editing it, which is the property a
+# provider enumeration would destroy.
+tested_symbols = [
+  "lib#config_state::custody::tests::only_the_device_states_hold_the_key_off_this_process",
+  "lib#config_state::custody::tests::a_consumer_of_the_exposure_fact_names_no_mechanism",
+  "lib#config_state::custody::tests::a_mechanism_that_does_not_exist_drives_the_same_consumer",
+  "lib#config_state::custody::tests::every_legal_state_form_is_classified_and_accepted",
+  "lib#config_state::custody::tests::a_state_missing_its_material_is_not_built",
+  "lib#config_state::custody::tests::each_state_names_every_parameter_it_cannot_start_without",
+  "lib#config_state::custody::tests::each_state_carries_the_material_that_made_it_inhabitable",
+  "lib#config_state::custody::tests::a_selection_projects_its_own_material_and_no_neighbours",
+  "lib#config_state::custody::tests::a_seed_path_left_over_on_a_device_state_is_not_forbidden",
+  "lib#config_state::custody::tests::an_admissible_endpoint_override_reaches_the_state_it_parameterizes",
+  "lib#config_state::custody::tests::an_endpoint_the_authority_guard_refused_is_not_carried_by_the_built_state",
+  "lib#config_state::custody::tests::an_sts_endpoint_without_the_mode_it_parameterizes_is_refused",
+  "lib#config_state::custody::tests::the_aws_credential_mode_is_a_posture_and_not_a_flag_beside_an_endpoint",
+]
+
+[[unit]]
+id = "http_profile.response_emission_binding"
+class = "V0"
+description = "What an emitted response signature binds: the `;req` components resolved against the request being answered, and the response evidence block's request-evidence handle over that same request."
+paths = ["mcp-re-http-profile/src/sign.rs"]
+exported_contracts = []
+evidence = ["test://http_profile/sign/response_binding_roundtrip"]
+assumptions = []
+# ROUND-TRIP controls, deliberately: they sign and then verify, so they measure the EMISSION
+# side rather than restating what the verifier establishes. The third and fourth are the
+# negative half — a response minted for one exchange must not verify as the answer to
+# another, at the block and at the cryptographic floor.
+tested_symbols = [
+  "tests/full_profile_test#full_response_roundtrip_binds_request_evidence",
+  "tests/full_profile_test#response_request_evidence_mismatch_emits_request_binding_mismatch",
+  "tests/full_profile_test#a_valid_exchange_cannot_be_verified_as_the_answer_to_a_different_request",
+  "tests/full_profile_test#cryptographic_req_splice_still_fails_at_the_floor",
+  "tests/full_profile_test#two_requests_differing_only_in_a_signed_parameter_have_different_handles",
+  "tests/delegated_202_test#a_delegated_202_verifies_via_the_credential_chain",
+  "tests/delegated_202_test#a_delegated_202_refuses_a_retransmission_of_the_same_notification",
+  "tests/delegated_202_test#a_delegated_202_refuses_a_content_distinct_notification",
+]

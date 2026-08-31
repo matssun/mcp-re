@@ -53,6 +53,27 @@ on:
       - "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs"
       - "mcp-re-proxy/src/refusal/**"
       - "mcp-re-proxy/src/config_state/cross_machine.rs"
+      # Stage 3 gave the posture authority its own unit: the one operation that produces an
+      # AuthorizationPosture, and the two facts it keeps apart.
+      - "mcp-re-proxy/src/authorization/decide.rs"
+      - "mcp-re-proxy/src/authorization/posture.rs"
+      # Stage 4 gave the client crate its four semantic owners. A subtree pattern: the four
+      # units between them name most of the crate, and a filter enumerating today's members
+      # would go stale the next time one is added — silently, because a filter that matches
+      # nothing reports nothing.
+      - "mcp-re-client-core/src/**"
+      # The manifest too: the fingerprint reads it, and a dependency change that moves a
+      # unit's measurement must reach the lane that re-measures it.
+      - "mcp-re-client-core/Cargo.toml"
+      # Stage 5 gave the response-emission cluster its four owners.
+      - "mcp-re-proxy/src/delegated_server_signer/**"
+      - "mcp-re-proxy/src/delegated_response_signer.rs"
+      - "mcp-re-proxy/src/config_state/custody.rs"
+      # The serving subtree, read whole: three units now take files out of it — the
+      # dispatch commitment, the response-signing authority, and the verification stage the
+      # product-provenance gate measures — and a filter enumerating today's members would go
+      # stale the next time a region moves.
+      - "mcp-re-proxy/src/http_profile_serve/**"
       # MCPRE-137: the listener-lifetime TLS security state, its subordinates, and the
       # production wiring that gives a listener a lifetime at all.
       - "mcp-re-proxy/src/tls_listener_state/**"
@@ -147,6 +168,27 @@ on:
       - "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs"
       - "mcp-re-proxy/src/refusal/**"
       - "mcp-re-proxy/src/config_state/cross_machine.rs"
+      # Stage 3 gave the posture authority its own unit: the one operation that produces an
+      # AuthorizationPosture, and the two facts it keeps apart.
+      - "mcp-re-proxy/src/authorization/decide.rs"
+      - "mcp-re-proxy/src/authorization/posture.rs"
+      # Stage 4 gave the client crate its four semantic owners. A subtree pattern: the four
+      # units between them name most of the crate, and a filter enumerating today's members
+      # would go stale the next time one is added — silently, because a filter that matches
+      # nothing reports nothing.
+      - "mcp-re-client-core/src/**"
+      # The manifest too: the fingerprint reads it, and a dependency change that moves a
+      # unit's measurement must reach the lane that re-measures it.
+      - "mcp-re-client-core/Cargo.toml"
+      # Stage 5 gave the response-emission cluster its four owners.
+      - "mcp-re-proxy/src/delegated_server_signer/**"
+      - "mcp-re-proxy/src/delegated_response_signer.rs"
+      - "mcp-re-proxy/src/config_state/custody.rs"
+      # The serving subtree, read whole: three units now take files out of it — the
+      # dispatch commitment, the response-signing authority, and the verification stage the
+      # product-provenance gate measures — and a filter enumerating today's members would go
+      # stale the next time a region moves.
+      - "mcp-re-proxy/src/http_profile_serve/**"
       # MCPRE-137: the listener-lifetime TLS security state, its subordinates, and the
       # production wiring that gives a listener a lifetime at all.
       - "mcp-re-proxy/src/tls_listener_state/**"

@@ -72,10 +72,21 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 | THM-0048 | Every listener obtains its whole security posture through one listener state | proxy.tls_listener_state | unit://proxy.tls_listener_state | live |
 | THM-0049 | Every illegal cross-owner configuration combination is refused at layer A | proxy.cross_machine_legality | unit://proxy.cross_machine_legality | live |
 | THM-0050 | Distinct verification keys have distinct keyids | http_profile.keyid | _none_ | live |
-| THM-0051 | The pipeline holds, at dispatch, the verification product of this very exchange | proxy.dispatch_commitment | _none_ | live |
-| THM-0052 | A dispatched body was released by the decision a configured policy produced | proxy.dispatch_commitment | _none_ | live |
+| THM-0051 | The pipeline holds, at dispatch, the verification product of this very exchange | proxy.dispatch_commitment | unit://http_profile.verifier_result_separation, unit://proxy.dispatch_commitment | live |
+| THM-0052 | A dispatched body was released by the decision a configured policy produced | proxy.dispatch_commitment | unit://proxy.dispatch_commitment, unit://proxy.pdp_decision_relation | live |
 | THM-0053 | A presented admission assertion is authentic, in its window, and for this audience | http_profile.admission_currency | _none_ | live |
 | THM-0054 | Every production listener denies unknown client revocation status | proxy.tls_listener_state | _none_ | live |
+| THM-0055 | The keyid derivation introduces no collisions of its own | http_profile.keyid | unit://http_profile.keyid | live |
+| THM-0056 | The posture that claims nothing is produced only where no policy is configured | proxy.authorization_posture | unit://proxy.authorization_posture | live |
+| THM-0057 | A client's trust anchors are the ones the current signed manifest published | client.trust_manifest_lifecycle | unit://client.trust_manifest_lifecycle | live |
+| THM-0058 | A client accepts a response only under a signer its trust configuration authorizes | client.response_acceptance | unit://client.response_acceptance, unit://client.trust_manifest_lifecycle | live |
+| THM-0059 | An unbound receipt is never a success and never another request's answer | client.response_acceptance | unit://client.response_acceptance | live |
+| THM-0060 | The client's clock skew is bounded at construction and read once | client.delegation_policy_seal | unit://client.delegation_policy_seal | live |
+| THM-0061 | A receipt that says nothing is not a receipt that says nothing ran | client.execution_contract | unit://client.execution_contract | live |
+| THM-0062 | A response-signing credential exists only while a valid delegated key does | proxy.delegated_signing_credential | unit://proxy.delegated_signing_credential | live |
+| THM-0063 | A signed response never advertises validity its credential does not authorize | proxy.response_signing | unit://proxy.delegated_signing_credential, unit://proxy.response_signing | live |
+| THM-0064 | A non-exporting custody selection keeps the private key off this process | proxy.custody_exposure | unit://proxy.custody_exposure | live |
+| THM-0065 | An emitted bound response signature binds the request it answers | http_profile.response_emission_binding | unit://http_profile.response_emission_binding, unit://http_profile.verifier_results | live |
 
 ## Claims in full
 
@@ -617,9 +628,11 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 
 **Security consequence.** A signer cannot be accepted under a keyid that resolves to another party's key, which is what would let one enrolled actor's signature be attributed to another.
 
-**Scope — what this does NOT establish.** Selector injectivity only. It does not establish that the seam answers for any particular keyid, that the key it returns is trusted, or that the enrolment set is correct. It says nothing about the canonical JWK encoding beyond what injectivity requires.
+**Scope — what this does NOT establish.** Selector injectivity only. It does not establish that the seam answers for any particular keyid, that the key it returns is trusted, or that the enrolment set is correct. The encoding half is THM-0055 and is established. What remains between THM-0055 and this claim is exactly one property, and it is a property of the primitive rather than of this code: that SHA-256 does not map two distinct canonical JWK forms to one digest. No test can establish it, and no assumption in this registry currently states it — ASM-0028 states second-preimage resistance, which is weaker and differently scoped, and ASM-0023's own justification records that this project has deliberately DECLINED to assume the separation properties of the digest construction. Allocating a collision-resistance assumption is therefore an owner TCB decision, not a registry edit, and this claim stays a gap until it is taken.
 
 **Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0055
 
 ### THM-0051 — The pipeline holds, at dispatch, the verification product of this very exchange
 
@@ -627,7 +640,7 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 
 **Security consequence.** A caller cannot reach the backend by having some other exchange's verification succeed, and no stage between verification and dispatch can substitute a value for the one the verifier produced.
 
-**Scope — what this does NOT establish.** Possession provenance across the serving pipeline. It does not restate what the verification established (THM-0015) or that the products are type-separated (THM-0047); it is the joint those two explicitly exclude.
+**Scope — what this does NOT establish.** Possession provenance across the serving pipeline. It does not restate what the verification established (THM-0015) or that the products are type-separated (THM-0047); it is the joint those two explicitly exclude. The mechanism is a self-tested source-text gate, `scripts/serving_product_provenance_gate.py`: the assembly calls the verification stage exactly once and builds exactly one carrier, the stage hands its product to `ExchangeProgress::establish` so the machine learns it ran, the carrier has no public field, and no production module of `mcp-re-proxy` constructs the product. That is EVIDENCE and not unconstructibility, and the reason it cannot be a type is recorded rather than worked around: `VerifiedMcpRequest` keeps PUBLIC fields because the Verus obligation on `prepare_http_dispatch` reads `verified.request_block` as a field so the prover can relate the obligation to the value, and `#[verifier::external_type_specification]` refuses a non-public field. A proved postcondition outranks a seal. So this claim holds for the serving path of this crate and says nothing about a product another crate fabricates.
 
 **Review requirement.** Owner security-specification review
 
@@ -639,11 +652,11 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 
 **Security consequence.** A serving path cannot bypass a configured policy by releasing the body under the posture that claims nothing, which is the one gap the sealed body type leaves open: possession proves a decision was taken, and this proves it was the one the deployment selected.
 
-**Scope — what this does NOT establish.** It does not restate the seal (THM-0045) or the decision relation (THM-0040). It establishes nothing about the policy's own correctness, and nothing about deployments that configure no policy, which are entitled to serve while claiming nothing.
+**Scope — what this does NOT establish.** It does not restate the seal (THM-0045), the decision relation (THM-0040) or the operation's own selection (THM-0056). It establishes nothing about the policy's own correctness, and nothing about deployments that configure no policy, which are entitled to serve while claiming nothing. The structural half — that the serving path names no `AuthorizationPosture` variant, that the authority builds them in exactly one operation, and that the assembly calls `release` exactly once — is held by `scripts/authorization_provenance_gate.py` clauses 4, 7 and 10, a self-tested source-text gate. That is EVIDENCE, not unconstructibility: `NoPolicyConfigured` is a public variant, and a body released under a synthesized one is byte-for-byte the body a real decision would have released, so no type can refuse it. Deleting the gate leaves the bypass constructible.
 
 **Review requirement.** Owner security-specification review
 
-**Depends on.** THM-0040, THM-0045
+**Depends on.** THM-0040, THM-0045, THM-0056
 
 ### THM-0053 — A presented admission assertion is authentic, in its window, and for this audience
 
@@ -661,8 +674,126 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 
 **Security consequence.** A client whose revocation status cannot be determined — because the CRL is stale, absent for its issuer, or does not cover its position in the chain — cannot complete a handshake, so a revoked credential cannot be admitted by the checking silently failing open.
 
-**Scope — what this does NOT establish.** The verifier value is a foreign trait object that plainly admits permissive implementations, so this is a proposition about every production construction site, not a property of a type this project owns. It does not establish that the CRLs a deployment loads are current or complete, and it establishes nothing about the per-request revocation check, which is a separate authority holding the same invariant.
+**Scope — what this does NOT establish.** The verifier value is a foreign trait object that plainly admits permissive implementations, so this is a proposition about every production construction site, not a property of a type this project owns. It does not establish that the CRLs a deployment loads are current or complete, and it establishes nothing about the per-request revocation check, which is a separate authority holding the same invariant. Two halves are needed and neither exists yet, which is why this is a gap rather than a scoped claim. The SOURCE half — that `build_client_verifier` is the only production producer of a `ClientCertVerifier`, that it takes no argument that could relax the posture, and that it calls `enforce_revocation_expiration` — is measurable by a self-tested gate of the same kind as the four this repository already runs, and is not written. The BEHAVIOURAL half — a handshake driven against a chain whose revocation status cannot be determined, refused — is not in `proxy.tls_listener_state`'s battery, which measures the anchor epoch and resumption and says nothing about revocation admission. Declaring this supported by that battery would attach the claim to controls that do not reach it.
 
 **Review requirement.** Owner security-specification review
 
 **Depends on.** THM-0048
+
+### THM-0055 — The keyid derivation introduces no collisions of its own
+
+**Statement.** `canonical_ed25519_jwk` embeds its operand verbatim between a fixed prefix and a fixed suffix, so the operand is recoverable from the form and distinct operands never share one — for any operand, including one carrying JSON metacharacters. The keyid's base64url-no-pad encoding is injective over the fixed 32-byte width of a SHA-256 output.
+
+**Security consequence.** Two distinct verification keys cannot be given the same keyid by anything this project wrote: not by a canonicalization that reorders or drops a member, not by an operand chosen to nest structure inside the JWK, and not by an encoding that merges digests.
+
+**Scope — what this does NOT establish.** Everything except the digest. It says nothing about whether SHA-256 maps two distinct canonical forms to one value, which is the remaining premise of selector injectivity (THM-0050) and is a property of the primitive. It establishes nothing about the trust seam, about which keys are enrolled, or about whether a resolved key is trusted for its slot.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0056 — The posture that claims nothing is produced only where no policy is configured
+
+**Statement.** `authorize` returns `AuthorizationPosture::NoPolicyConfigured` exactly when the deployment attached no evaluator, and `AuthorizationPosture::Authorized` only from a grant an evaluator actually returned, carrying the request the decision was taken over and that decision whole. An evaluator that denies, and one that could not complete, are the `Err` half and never a posture. The action coordinate is read whether or not a policy is configured, so enabling one cannot change which requests are well-formed enough to serve.
+
+**Security consequence.** A record cannot report *no policy is deployed* as *a policy permitted this*, and an authorized posture cannot be assembled from an attribution taken from one decision and evidence taken from another — the pairing this type exists to be evidence of.
+
+**Scope — what this does NOT establish.** A claim about the operation, not about the serving path: it does not establish that the posture the dispatch consumed is the one this operation returned, which is THM-0052. It establishes nothing about the policy mechanism's own correctness, and nothing about which evaluator a deployment attached.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0057 — A client's trust anchors are the ones the current signed manifest published
+
+**Statement.** Anchors are released only from a manifest whose signature verified under a trusted signer kid that the signature itself covers, whose profile is this one, and whose version is not below the monotone floor — a floor that rises on load and cannot be read as zero when it cannot be read at all. The manifest's own deadline travels with the anchors it published and outranks every root inside it, so an expired document resolves nothing, and the revocation half is carried by the same authority as the resolution half.
+
+**Security consequence.** A client cannot be moved back onto a superseded trust picture by replaying an older signed manifest, cannot be given anchors by a document nobody trusted signed, and cannot keep resolving roots from a document whose lifetime has passed — including when the floor's own storage fails, where anchors are withheld rather than released against an unknown floor.
+
+**Scope — what this does NOT establish.** Establishes what the document says and for how long. It does not establish that a response verified under one of these anchors is an answer to this request (THM-0058, THM-0059), that the publisher's key management is sound, or that a revocation list is complete — only that an identifier it names cannot resolve.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0058 — A client accepts a response only under a signer its trust configuration authorizes
+
+**Statement.** A response this client reports as verified was signed under a credential chaining to a root issuer the current trust picture resolves for the Response slot; where the route pins an issuer, a credential chaining to any other trusted anchor fails closed; and a credential whose issuer kid, delegated kid or jti the trust authority reports revoked resolves nothing, on both the success and the rejection path. A response carrying no credential is refused rather than read as a direct-root answer.
+
+**Security consequence.** An application cannot be handed a response signed by a party this deployment never authorized for the Response slot, by one whose authorization has been retired, or by the trust root directly — the mode this project does not support and therefore must not accept.
+
+**Scope — what this does NOT establish.** Signer authorization only. It does not establish that the response answers THIS request, which is the binding disposition (THM-0059), and it does not restate the underlying signature and `;req` facts, which are stated over the profile verifier (THM-0016, THM-0019, THM-0021). It says nothing about whether the deployment was right to trust the anchor.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0016, THM-0019, THM-0057
+
+### THM-0059 — An unbound receipt is never a success and never another request's answer
+
+**Statement.** A response verified without a request binding is reported as unbound and is never classified as a success, and there is no path on which a failed bound verification is retried as an unbound one. A preflight receipt is accepted as being about this call only when it commits to the digest of the bytes this client sent; one about another request, and one about no request at all, answer nothing.
+
+**Security consequence.** A pre-parse receipt cannot be replayed as the answer to a request, and a response that could not be bound cannot be presented to an application as this call's result by falling back to the weaker check.
+
+**Scope — what this does NOT establish.** The disposition, not the signer (THM-0058). The unbound receipt's binding is a BYTE binding: two transmissions of identical request bytes share it, so it is not an instance binding, and the client discloses it to the caller as unbound rather than claiming otherwise.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0020, THM-0022
+
+### THM-0060 — The client's clock skew is bounded at construction and read once
+
+**Statement.** `DelegationPolicy` clamps the configured clock skew to the profile's bound when it is constructed and keeps the result in a private field, so no inhabitant carries an unbounded tolerance; a negative configured skew narrows to zero rather than moving the window backwards; and both freshness windows read that one bounded number through the policy's single projection.
+
+**Security consequence.** An operator cannot widen a client's acceptance window past the profile bound by configuration, and the credential window and the signature window cannot disagree about the tolerance they applied — the disagreement that lets a credential be accepted outside the window its own signature was admitted under.
+
+**Scope — what this does NOT establish.** The bound and its single reading. It does not establish that the profile's bound is itself appropriate, and it establishes nothing about what either window checks beyond the tolerance it applies.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0061 — A receipt that says nothing is not a receipt that says nothing ran
+
+**Statement.** `ExecutionStatus::Unstated` and `ExecutionStatus::NotExecuted` are distinct inhabitants, and a rejection body carrying no execution contract yields the silent one rather than a guess. An unrecognized value is carried as unrecognized and never read as a known one, a spent elicitation is reported as requiring a new one rather than as an ordinary failure, and a failed retention obligation survives beside whatever the execution status says. The wire code and the contract are read in one parse.
+
+**Security consequence.** A client cannot repeat a side effect by reading the server's silence as *it did not run*, cannot retry an exchange whose human approval was already spent, and cannot be told a call is recorded when the deployment's audit store has no record of it.
+
+**Scope — what this does NOT establish.** What the receipt SAYS, and what a client may conclude from it. It does not establish that the server's statement is true — that is the serving path's exchange machine (THM-0044) — and it establishes nothing about the transport failures on which no receipt arrives at all.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0062 — A response-signing credential exists only while a valid delegated key does
+
+**Statement.** The response signer publishes a credential snapshot only from a successful rotation, and yields none before the first rotation, past the published key's expiry, after a fail-closed issuance has retired the snapshot, after a terminal retirement — including for a mint that lands afterwards — and when its snapshot lock is poisoned. An issuance failure serves the still-valid key and then fails closed at its expiry rather than extending it, and the retry schedule never sleeps past a still-valid key.
+
+**Security consequence.** A response cannot be signed under a credential the deployment no longer holds, under one whose window has closed, or after the signer has been retired — and there is no longer-lived or root credential to fall back to, because no such mode exists. What a caller gets instead is an unsigned last-resort receipt, which it can tell from a signature.
+
+**Scope — what this does NOT establish.** The credential's existence, not its content: it does not establish that the credential chains to the deployment's root, that its scope is right, or that a verifier will accept it. It says nothing about what is signed under it, which is THM-0063 and THM-0065.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0063 — A signed response never advertises validity its credential does not authorize
+
+**Statement.** `SigningWindow` keeps `expires` private and no constructor accepts one: every window is derived as the earlier of the configured TTL from `now` and the credential's own `exp`, with saturating arithmetic so an absurd configured TTL cannot wrap past it. A credential already past its bound yields a window claiming no future validity rather than one running backwards. The same owner opens every window this deployment signs under, reply and refusal alike, and a refusal signs under the snapshot its own exchange took.
+
+**Security consequence.** A client cannot be given a receipt asserting validity beyond the moment its credential stops authorizing signatures — a window the verifier refuses as soon as the credential's own closes, which the client would learn about only by failing. And a refusal minted late in an exchange cannot advertise more validity for having been reached by a different path.
+
+**Scope — what this does NOT establish.** The advertised window, not the signature. It does not establish that a credential existed (THM-0062) or what the signature covers (THM-0065). Where no valid credential exists the receipt is UNSIGNED, and what such a receipt may still state is a separate conjunct of this unit rather than part of this claim.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0062
+
+### THM-0064 — A non-exporting custody selection keeps the private key off this process
+
+**Statement.** The custody owner classifies each legal selection into exactly one state carrying the material that made it inhabitable, and projects a single semantic fact — `PrivateKeyExposure` — that is `NonExporting` for the device- and service-held states and `ProcessReadable` only for the state that loads a seed. A state missing a parameter it cannot start without is not built, and a state carries no neighbour's material.
+
+**Security consequence.** Where a deployment selects non-exporting custody, nothing that can read this process's memory or its seed file can obtain the signing key — the process can ask for a signature and never for the key. And a consumer asking whether the key may be read here cannot get a different answer by asking which mechanism it is, because the projection names none.
+
+**Scope — what this does NOT establish.** CONDITIONAL on the deployment's own selection: it establishes nothing about a deployment that selects file custody, which is `ProcessReadable` and honestly says so. It establishes what the classified STATE asserts, not that the remote signer implementation honours it — that a KMS does not export a key is the provider's property, outside this boundary. It does not establish that response signing and channel signing use different keys.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0065 — An emitted bound response signature binds the request it answers
+
+**Statement.** A response this proxy signs in the bound form carries a signature whose `;req` components resolved against the request being answered, and a response evidence block whose request-evidence handle is over that same request. Signing and verification agree end to end: a response minted for one exchange does not verify as the answer to another, at the evidence block or at the cryptographic floor, and two requests differing only in one signed parameter have different handles.
+
+**Security consequence.** A response cannot be lifted from one exchange and presented as the answer to another, and a `;req` splice cannot be repaired by reconstructing the block — the floor refuses it independently.
+
+**Scope — what this does NOT establish.** The bound form only: an unbound emission carries no binding by construction, and that a verifier can never read one as bound is THM-0022 on the verification side. It does not establish which credential the signature was made under (THM-0062, THM-0063), and it says nothing about responses this proxy does not sign.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0021, THM-0022

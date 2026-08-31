@@ -33,6 +33,10 @@ graph BT
     THM_0022["THM-0022<br/>A successful unbound-response verification establishes the shared facts and no request binding at all"]
     THM_0047["THM-0047<br/>The verifier's assurance products are not substitutable"]
     THM_0051["THM-0051<br/>The pipeline holds, at dispatch, the verification product of this very exchange"]
+    THM_0057["THM-0057<br/>A client's trust anchors are the ones the current signed manifest published"]
+    THM_0058["THM-0058<br/>A client accepts a response only under a signer its trust configuration authorizes"]
+    THM_0059["THM-0059<br/>An unbound receipt is never a success and never another request's answer"]
+    THM_0065["THM-0065<br/>An emitted bound response signature binds the request it answers"]
     THM_0007 --> THM_0008
     THM_0001 --> THM_0014
     THM_0007 --> THM_0015
@@ -47,6 +51,13 @@ graph BT
     THM_0001 --> THM_0022
     THM_0015 --> THM_0051
     THM_0047 --> THM_0051
+    THM_0016 --> THM_0058
+    THM_0019 --> THM_0058
+    THM_0057 --> THM_0058
+    THM_0020 --> THM_0059
+    THM_0022 --> THM_0059
+    THM_0021 --> THM_0065
+    THM_0022 --> THM_0065
 ```
 
 ## Component 2
@@ -167,10 +178,12 @@ graph BT
     THM_0040["THM-0040<br/>An authorized request was permitted by a decision about that very request"]
     THM_0045["THM-0045<br/>The backend is reached only by consuming a fully assembled pre-dispatch commitment"]
     THM_0052["THM-0052<br/>A dispatched body was released by the decision a configured policy produced"]
+    THM_0056["THM-0056<br/>The posture that claims nothing is produced only where no policy is configured"]
     THM_0039 --> THM_0040
     THM_0040 --> THM_0045
     THM_0040 --> THM_0052
     THM_0045 --> THM_0052
+    THM_0056 --> THM_0052
 ```
 
 ## Component 14
@@ -224,6 +237,8 @@ graph BT
 ```mermaid
 graph BT
     THM_0050["THM-0050<br/>Distinct verification keys have distinct keyids"]
+    THM_0055["THM-0055<br/>The keyid derivation introduces no collisions of its own"]
+    THM_0055 --> THM_0050
 ```
 
 ## Component 21
@@ -231,4 +246,34 @@ graph BT
 ```mermaid
 graph BT
     THM_0053["THM-0053<br/>A presented admission assertion is authentic, in its window, and for this audience"]
+```
+
+## Component 22
+
+```mermaid
+graph BT
+    THM_0060["THM-0060<br/>The client's clock skew is bounded at construction and read once"]
+```
+
+## Component 23
+
+```mermaid
+graph BT
+    THM_0061["THM-0061<br/>A receipt that says nothing is not a receipt that says nothing ran"]
+```
+
+## Component 24
+
+```mermaid
+graph BT
+    THM_0062["THM-0062<br/>A response-signing credential exists only while a valid delegated key does"]
+    THM_0063["THM-0063<br/>A signed response never advertises validity its credential does not authorize"]
+    THM_0062 --> THM_0063
+```
+
+## Component 25
+
+```mermaid
+graph BT
+    THM_0064["THM-0064<br/>A non-exporting custody selection keeps the private key off this process"]
 ```

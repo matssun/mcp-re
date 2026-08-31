@@ -163,7 +163,7 @@ each with the deleted "structural" terminal replaced by a proved/evidenced claim
 |---|---|---|
 | S-1 | composition/provenance proposition: serving resolves transport identity only through the authenticated-relationship authority. The source-text gate is *evidence*, not the terminal | R1 (R1.2.2) |
 | S-4 | **moved out from under R2.2.** Role separation is not logically required for response *attribution*; it is deployment/capability-role integrity. It becomes a conditional R4 proposition: *a validated deployment cannot collapse semantically distinct signing roles where the selected roles and mechanisms require them distinct* | R4 |
-| S-5 | client-side proposition: a verified response's expectation was derived from the request this client sent | R3 (A-3 cluster) |
+| S-5 | **refined at Stage 4 to OUT_OF_SCOPE, not a proposition.** `ResponseExpectation::new` is public because the FFI bindings rebuild the request from scalars, and any caller that can reach it is the caller whose bug a wrong pairing is. Sealing past that seam is theatre, so this is a caller obligation — the disposition O-4 already gave the FFI half, applied honestly to the in-process half rather than claimed away | R3 (no theorem) |
 | S-6 | proposition over the layer-A classifier: every illegal cross-owner combination is refused. Evidenced, not structural | R4 (R4.7) |
 | S-7 | proposition over the refusal authority: refusal causes have one vocabulary. The drift gate is evidence | R6 (R6.4) |
 | S-8 | proposition over the listener-state authority: every production listener obtains a verifier that denies unknown revocation status. Folds into GAP-11's owner | R2.5 / R4 |
