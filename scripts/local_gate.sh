@@ -135,9 +135,13 @@ stage_static() {
     && python3 tools/verification/test_theorems.py \
     && python3 tools/verification/test_theorem_review.py \
     && python3 tools/verification/test_views.py \
-    `# A display, not a gate: run so a broken import or a renamed component surfaces here` \
-    `# rather than the first time someone reaches for the review state.` \
-    && python3 tools/verification/review >/dev/null \
+    `# A report, not a gate: run so a broken import or a renamed component surfaces here` \
+    `# rather than the first time someone reaches for the review state. It derives the` \
+    `# whole assurance conjunction and prints only ROOT COMPLETENESS (ADR-MCPRE-059 §28.8),` \
+    `# which is deliberately NOT a gate here: an honest unresolved GAP under a ratified` \
+    `# root must not fail ordinary development, or the incentive becomes to leave the` \
+    `# obligation unrecorded. T6 and release assurance use --require-root-complete.` \
+    && python3 tools/verification/review --root-completeness \
     `# Ahead of the verdict, so a host that cannot run the verifier says so in those` \
     `# words. Same script the CI lanes start with: the environment it checks is the` \
     `# one both places depend on, and it names the fix instead of surfacing as a TOML` \

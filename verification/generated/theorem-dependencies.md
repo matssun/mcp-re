@@ -10,8 +10,10 @@
 
 # Theorem dependency graph
 
-Which claims rest on which. Rendered as one diagram per connected component —
-a single global diagram is unreadable at the size where it would matter.
+Which claims rest on which — `depends_on` is logical implication, never a call
+or a build edge. Rendered as one diagram per connected component: a single global
+diagram is unreadable at the size where it would matter. Declared system roots are
+marked; a component containing none is not yet attached to a system promise.
 
 ## Component 1
 

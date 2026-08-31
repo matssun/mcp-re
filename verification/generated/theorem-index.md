@@ -15,6 +15,12 @@ Support is STRUCTURAL — that a unit exists and is named, not that its evidence
 fresh. Whether a claim is established is the conjunction `tools/verification/review`
 derives, and it is not shown here because this view cannot see the attestations.
 
+## System roots
+
+_No system root is declared._ Nothing here is claimed at the MCP-RE boundary,
+so no root is complete — an empty root set is never a pass. Roots are declared
+in `theorems.toml` `root_theorems` after theorem-architecture ratification.
+
 | id | title | owner | supported by | lifecycle |
 |---|---|---|---|---|
 | THM-0001 | Admitted request parameters imply a current freshness window | http_profile.freshness_window | unit://http_profile.freshness_window | live |

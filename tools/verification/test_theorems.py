@@ -34,6 +34,7 @@ from _manifest import ManifestError, load_verification  # noqa: E402
 from _theorems import (  # noqa: E402
     structurally_supported_theorems,
     load_theorems,
+    root_theorems,
     unsupported_theorems,
     validate_theorems,
 )
@@ -57,14 +58,27 @@ def theorem(**overrides) -> dict:
     return {key: value for key, value in entry.items() if value is not None}
 
 
-def doc(*theorems) -> dict:
-    return {"schema_version": 1, "theorem": list(theorems)}
+def doc(*theorems, roots: list[str] | None = None) -> dict:
+    return {
+        "schema_version": 1,
+        "root_theorems": list(roots or []),
+        "theorem": list(theorems),
+    }
 
 
 def refused(*theorems) -> str:
     """The message validation refused with, or an assertion failure if it accepted."""
     try:
         validate_theorems(doc(*theorems), UNITS)
+    except ManifestError as exc:
+        return str(exc)
+    raise AssertionError("validation accepted a registry it must refuse")
+
+
+def refused_registry(registry: dict) -> str:
+    """As `refused`, for a case whose defect is in the registry's top level."""
+    try:
+        validate_theorems(registry, UNITS)
     except ManifestError as exc:
         return str(exc)
     raise AssertionError("validation accepted a registry it must refuse")
@@ -338,6 +352,78 @@ def test_the_direction_check_is_off_when_no_edges_are_supplied():
         supported_by=["unit://http_profile.freshness_window"],
     )
     validate_theorems(doc(inverted, other), UNITS)
+
+
+# --- the system root set, ADR-MCPRE-059 §28.1 --------------------------------
+
+
+def test_a_root_naming_an_unknown_theorem_is_refused():
+    """Fail closed. A root that resolves to nothing would make proof-tree completeness
+    quantify over a claim that does not exist — and an empty quantifier is satisfied.
+    """
+    message = refused_registry(doc(theorem(), roots=["THM-9999"]))
+    assert "not a declared theorem" in message, message
+
+
+def test_a_deprecated_theorem_may_not_be_a_root():
+    """A withdrawn claim carries no system promise. Naming one as a root would let the
+    registry report a promise as closed while the proposition behind it has been retired.
+    """
+    live = theorem(id="THM-0002", owner="core.time_rfc3339")
+    dead = theorem(id="THM-0001", replaced_by="THM-0002")
+    message = refused_registry(doc(dead, live, roots=["THM-0001"]))
+    assert "is deprecated" in message, message
+
+
+def test_a_duplicate_root_is_refused():
+    message = refused_registry(doc(theorem(), roots=["THM-0001", "THM-0001"]))
+    assert "duplicate root" in message, message
+
+
+def test_root_theorems_must_be_declared():
+    """Absence is not "no roots are needed". The key is required so that a registry which
+    has never been asked the question cannot read as one that answered it with "none".
+    """
+    registry = {"schema_version": 1, "theorem": [theorem()]}
+    message = refused_registry(registry)
+    assert "root_theorems" in message, message
+
+
+def test_root_theorems_must_be_a_list_of_strings():
+    registry = doc(theorem())
+    registry["root_theorems"] = "THM-0001"
+    message = refused_registry(registry)
+    assert "list of THM-NNNN strings" in message, message
+
+
+def test_a_root_is_declared_and_never_inferred_from_graph_shape():
+    """The control for the inference nobody may implement.
+
+    THM-0001 has no dependents: nothing rests on it. Under a "roots are the theorems with
+    no dependents" rule it would be a system promise, and the registry would report itself
+    complete the moment it held leaves. It is not a root, because it was not declared one.
+    """
+    isolated = theorem(id="THM-0001")
+    consumer = theorem(
+        id="THM-0002", owner="core.time_rfc3339", depends_on=[], supported_by=[
+            "unit://core.time_rfc3339"
+        ]
+    )
+    registry = doc(isolated, consumer)
+    validate_theorems(registry, UNITS)
+    assert root_theorems(registry) == [], root_theorems(registry)
+    # And the declaration is what makes one:
+    declared = doc(isolated, consumer, roots=["THM-0001"])
+    validate_theorems(declared, UNITS)
+    assert root_theorems(declared) == ["THM-0001"]
+
+
+def test_root_membership_may_not_be_restated_on_a_theorem():
+    """One authority for one fact (§8.2). A per-theorem `root = true` beside the top-level
+    set is how the two come to disagree about what the system promises.
+    """
+    message = refused_registry(doc(theorem(root=True)))
+    assert "root_theorems" in message, message
 
 
 if __name__ == "__main__":

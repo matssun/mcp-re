@@ -26,6 +26,30 @@
 
 schema_version = 1
 
+# The system security promises — ADR-MCPRE-059 §28.1, §28.8.
+#
+# The claims MCP-RE makes at its boundary, from which proof-tree COMPLETENESS is derived:
+# every proposition a declared root requires has a closed path to an established claim, a
+# structural fact, or an accepted assumption, with no unresolved GAP.
+#
+# Completeness is not freshness. Freshness asks whether the registry still describes the
+# tree; every theorem here can be FRESH while the system argument is wide open. The two are
+# reported separately by `tools/verification/review`, and only `--require-root-complete`
+# makes this set binding — an honest unresolved gap must not fail ordinary CI, or the
+# incentive becomes to leave the obligation unrecorded.
+#
+# Roots are DECLARED, never inferred. "A theorem with no dependents" is a different
+# property: an isolated local claim nobody has composed yet has no dependents and is not a
+# system promise, so inferring roots from graph shape would declare the registry complete
+# the moment it held leaves.
+#
+# EMPTY, deliberately, and it reports UNDECLARED rather than PASS. The root set is
+# populated by the theorem-architecture ratification (§28, ADR-MCPRE-059 rev. 3 → T6):
+# a root enters here after its statement and decomposition have been owner-ratified, never
+# because a claim looked important. Adding or removing an entry is a security-sensitive
+# change under §21.1.
+root_theorems = []
+
 # Required fields on every entry:
 #
 #   id                    stable, never reused: THM-NNNN

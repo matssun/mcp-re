@@ -31,7 +31,7 @@ before any verification toolchain exists — which is exactly the state they are
 | `check-generated` | drift gate for BOTH generated artifacts: the Lean model and the assurance views | works for the views; Lean reports "nothing to drift" |
 | `generate-views` | renders `verification/generated/` from the three catalogues | works |
 | `review-frontier` | minimum review obligation | Phase 4; falls back to everything-dirty |
-| `review` | theorem fingerprints, review state, and the establishment conjunction | works |
+| `review` | theorem fingerprints, review state, the establishment conjunction, and root completeness | works |
 
 `_manifest.py` is the shared loader. Its validation is strict: an unknown key is a
 failure, not an ignored field, because a mistyped security declaration must not read as an
@@ -69,6 +69,17 @@ unit's evidence may still be stale, `BLOCKED`, or resting on a dirty assumption.
 is deliberately reserved for the later conjunction (structural support AND fresh unit evidence
 AND established dependencies AND fresh specification review AND fresh assumption review),
 which T2 makes derivable and T3 displays.
+
+Root completeness is the SECOND property, and it is separate — ADR-MCPRE-059 §28.8. Freshness
+asks whether the registry still describes the tree; completeness asks whether the claims declared
+system promises in `theorems.toml` `root_theorems` are closed. Every theorem can be fresh while
+the system argument is wide open, which is the normal state of a campaign in progress. So
+`review` prints `ROOT COMPLETENESS` under its own heading, report-only: an honest unresolved GAP
+under a ratified root must not fail ordinary development, or the incentive becomes to leave the
+obligation unrecorded. `--require-root-complete` is the closure mode T6 and release assurance
+use, and `UNDECLARED` — no root declared at all — fails there too. A GAP itself is derived, never
+stored: a ratified claim with a real owner and no resolving support closure already reads as
+unsupported and unestablished, and that derivation is the gap.
 
 ## Three verdicts, never conflated
 
@@ -122,6 +133,11 @@ introduced, observed to fail, and reverted:
 | a theorem key restating a `[[unit]]` fact | duplicate-authority failure naming the owning file |
 | a stored `review = "approved"` in the registry | refused — an approval is evidence about a fingerprint |
 | a theorem no unit supports | declared, and reported as without a structural support closure |
+| `root_theorems` naming an unknown, duplicate, or deprecated claim | manifest validation failure — completeness may not quantify over a fiction |
+| `root_theorems` absent from the registry | required-key failure; absence must not read as an answered "none" |
+| root membership restated on a theorem entry | duplicate-authority failure — the set is declared once |
+| a root declared, its premise unsupported | evidence lanes stay PASS; `ROOT COMPLETENESS: INCOMPLETE`; `--require-root-complete` fails |
+| no root declared | `ROOT COMPLETENESS: UNDECLARED` — never a pass, and closure mode refuses it |
 | a theorem statement weakened, prover untouched | specification review `STALE_CLAIM`, unit fingerprint unmoved |
 | a premise restated two levels down | every claim above it `STALE_DEPENDENCY_CLAIM` |
 | `review_requirement` relaxed | `STALE_REVIEW_REQUIREMENT` — an approval under a stronger bar is not one under a weaker |

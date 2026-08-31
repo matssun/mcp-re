@@ -42,9 +42,13 @@ _loader.exec_module(generator)
 UNIT = "http_profile.freshness_window"
 
 
-def catalogues(*theorem_rows) -> tuple[dict, dict, dict]:
+def catalogues(*theorem_rows, roots: list[str] | None = None) -> tuple[dict, dict, dict]:
     doc = load_verification()
-    theorems = {"schema_version": 1, "theorem": list(theorem_rows)}
+    theorems = {
+        "schema_version": 1,
+        "root_theorems": list(roots or []),
+        "theorem": list(theorem_rows),
+    }
     return theorems, doc, load_assumptions()
 
 
@@ -255,6 +259,43 @@ def test_the_theorem_only_views_do_not_read_the_other_catalogues():
     # a mutation too weak to reach any renderer would pass as a boundary proof.
     owners = f"{GENERATED_ROOT}/owners.md"
     assert baseline[owners] != moved[owners]
+
+
+def test_the_root_set_is_rendered_from_the_declaration_not_from_graph_shape():
+    """ADR-MCPRE-059 §28.1, in the view layer. THM-0001 has no dependents in either case;
+    only the declaration decides whether it is drawn as a system root, so a reader can never
+    learn a root set from this page that the owner did not ratify."""
+    index = f"{GENERATED_ROOT}/theorem-index.md"
+    graph = f"{GENERATED_ROOT}/theorem-dependencies.md"
+
+    undeclared = render_all(*catalogues(theorem()))
+    assert "_No system root is declared._" in undeclared[index]
+    assert "never a pass" in undeclared[index]
+    assert "ROOT — THM-0001" not in undeclared[graph]
+
+    declared = render_all(*catalogues(theorem(), roots=["THM-0001"]))
+    assert "## System roots" in declared[index]
+    assert "| THM-0001 |" in declared[index]
+    assert "ROOT — THM-0001" in declared[graph]
+
+
+def test_declaring_a_root_moves_the_registry_views_and_nothing_else():
+    """The root set lives in `theorems.toml`, so it may only reach views derived from it."""
+    baseline = render_all(*catalogues(theorem()))
+    rooted = render_all(*catalogues(theorem(), roots=["THM-0001"]))
+    for name in ("theorem-index.md", "theorem-dependencies.md"):
+        key = f"{GENERATED_ROOT}/{name}"
+        assert baseline[key] != rooted[key], name
+    for name in ("owners.md", "assumption-consumers.md", "blast-radius.md"):
+        key = f"{GENERATED_ROOT}/{name}"
+        assert baseline[key] == rooted[key], name
+
+
+def test_the_root_views_are_reproducible():
+    """Same catalogues, same bytes — the property the drift gate rests on."""
+    once = render_all(*catalogues(theorem(), roots=["THM-0001"]))
+    twice = render_all(*catalogues(theorem(), roots=["THM-0001"]))
+    assert once == twice
 
 
 def test_the_structural_blast_radius_does_not_claim_to_be_live():
