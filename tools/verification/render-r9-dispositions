@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Render the R9 disposition appendix into its audit packet from the JSON record.
+
+WHY THIS EXISTS. The disposition set is 131 rows of structured data — cluster, severity,
+disposition, theorem, area, reason. Maintaining that as prose in a markdown table means
+maintaining it twice the first time anything is re-derived, and a table nobody can
+recompute stops being evidence and becomes a memory of evidence. The JSON is the record;
+the appendix is a view of it, regenerated in place between the two marker comments.
+
+WHAT IT IS NOT. Not an authority over anything. `verification/reviews/` holds measurement,
+not policy: no theorem, unit, or assumption is read from here, and no gate consults it.
+The packet it writes into is NON-NORMATIVE by its own banner.
+
+`--check` verifies the appendix matches the record without writing, for a lane that wants
+to notice drift rather than repair it.
+"""
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+RECORD = REPO_ROOT / "verification" / "reviews" / "r9-dispositions.json"
+PACKET = (
+    REPO_ROOT
+    / "verification"
+    / "reviews"
+    / "packets"
+    / "system-assurance-completeness-audit-2026-08-31.md"
+)
+BEGIN = "<!-- BEGIN GENERATED: r9-dispositions -->"
+END = "<!-- END GENERATED: r9-dispositions -->"
+
+#: Severity order for presentation. Not a ranking of what to fix — the packet is explicit
+#: that a disposition is evidence about the tree, and that the areas, not the rows, are
+#: what carries a decision.
+SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+
+
+def escape(text: str) -> str:
+    """A cell may not silently end its own column."""
+    return text.replace("|", "\\|")
+
+
+def table(rows: list[dict]) -> str:
+    lines = [
+        "| Cluster | Sev | Area | Round-9 title | Disposition | Node | "
+        "Re-derivation against current main |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for row in sorted(
+        rows, key=lambda r: (SEVERITY_ORDER[r["severity"]], r["cluster"])
+    ):
+        lines.append(
+            f"| {row['cluster']} | {row['severity']} | `{row['area']}` | "
+            f"{escape(row['title'])} | `{row['disposition']}` | "
+            f"{escape(row['node'])} | {escape(row['reason'])} |"
+        )
+    return "\n".join(lines)
+
+
+def render() -> str:
+    record = json.loads(RECORD.read_text(encoding="utf-8"))
+    return f"{BEGIN}\n\n{table(record['dispositions'])}\n\n{END}"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="report drift between the record and the packet, and write nothing",
+    )
+    args = parser.parse_args()
+
+    text = PACKET.read_text(encoding="utf-8")
+    if BEGIN not in text or END not in text:
+        print(f"FAIL: {PACKET} carries no generated region", file=sys.stderr)
+        return 1
+    head, rest = text.split(BEGIN, 1)
+    _, tail = rest.split(END, 1)
+    updated = head + render() + tail
+
+    if args.check:
+        if updated != text:
+            print("FAIL: the appendix does not match r9-dispositions.json", file=sys.stderr)
+            return 1
+        print("render-r9-dispositions: appendix matches the record")
+        return 0
+
+    PACKET.write_text(updated, encoding="utf-8")
+    count = len(json.loads(RECORD.read_text(encoding="utf-8"))["dispositions"])
+    print(f"render-r9-dispositions: wrote {count} row(s) into {PACKET.name}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

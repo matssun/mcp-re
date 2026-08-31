@@ -23,12 +23,12 @@ not an omission to hide.
 | client.trust_manifest_lifecycle | V0 | THM-0057 | 0 |
 | core.time_rfc3339 | V1 | THM-0002 | 4 |
 | http_profile.admission_assertion | V0 | THM-0053 | 0 |
-| http_profile.admission_currency | V1 | THM-0003, THM-0004, THM-0005, THM-0006 | 4 |
-| http_profile.artifact_typing | V1 | THM-0007 | 3 |
+| http_profile.admission_currency | V1 | THM-0003, THM-0004, THM-0005, THM-0006 | 7 |
+| http_profile.artifact_typing | V1 | THM-0007 | 6 |
 | http_profile.artifact_verification_boundary | V0 | THM-0008 | 0 |
-| http_profile.continuation_binding | V1 | THM-0010 | 1 |
-| http_profile.continuation_unbypassability | V1 | THM-0009 | 1 |
-| http_profile.freshness_window | V1 | THM-0001 | 6 |
+| http_profile.continuation_binding | V1 | THM-0010 | 4 |
+| http_profile.continuation_unbypassability | V1 | THM-0009 | 4 |
+| http_profile.freshness_window | V1 | THM-0001 | 9 |
 | http_profile.keyid | V0 | THM-0055 | 0 |
 | http_profile.keyid_selector | V0 | THM-0050 | 1 |
 | http_profile.pdp_decision_authentication | V0 | THM-0039 | 0 |
