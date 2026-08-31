@@ -2111,7 +2111,10 @@ digest is an opaque primitive here.
 """
 owner = "http_profile.scitt_retained_correspondence"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://http_profile.scitt_retained_correspondence"]
+supported_by = [
+  "unit://http_profile.scitt_retained_correspondence",
+  "unit://http_profile.submitted_hop_identity",
+]
 depends_on = []
 
 # =======================================================================================

@@ -1235,6 +1235,98 @@ fn two_records_that_verified_nothing_are_still_distinguishable() {
     assert!(!ra.submitted_commitment().is_empty());
 }
 
+/// Every retained fact about a hop is part of its identity — the control that makes the
+/// closed representation a claim rather than a comment.
+///
+/// Each case alters exactly one field of the retained hop and requires the commitment to
+/// move. `signature-input` is the case that motivated the closed representation: a curated
+/// field list folded `signature` and not the header that says WHAT was signed, so two
+/// unverified tail hops naming different covered components shared an identity. The
+/// remaining cases exist so that a future curation cannot pass this test by re-adding one
+/// header.
+#[test]
+fn every_retained_field_of_a_hop_is_part_of_its_identity() {
+    let base = hop_with_block("n-identity", &block(None), r#"{"ok":true}"#);
+    let identity = |h: &RetainedHop| {
+        reconstruct_chain(
+            std::slice::from_ref(h),
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
+            &expectations(),
+            &audit(),
+            &nothing_revoked,
+            NOW,
+        )
+        .submitted_commitment()
+        .to_owned()
+    };
+    let baseline = identity(&base);
+
+    let mutate: Vec<(&str, Box<dyn Fn(&mut RetainedHop)>)> = vec![
+        (
+            "request method",
+            Box::new(|h: &mut RetainedHop| h.request.method = "PUT".into()),
+        ),
+        (
+            "request target",
+            Box::new(|h: &mut RetainedHop| h.request.target_uri.push('x')),
+        ),
+        (
+            "request body",
+            Box::new(|h: &mut RetainedHop| h.request.body.push(b' ')),
+        ),
+        (
+            "response status",
+            Box::new(|h: &mut RetainedHop| h.response.status = 503),
+        ),
+        (
+            "response body",
+            Box::new(|h: &mut RetainedHop| h.response.body.push(b' ')),
+        ),
+        (
+            "a request header VALUE",
+            Box::new(|h: &mut RetainedHop| {
+                h.request.headers[0].1.push('x');
+            }),
+        ),
+        (
+            "a request header NAME",
+            Box::new(|h: &mut RetainedHop| {
+                h.request.headers[0].0.push('x');
+            }),
+        ),
+        (
+            "signature-input — the header a curated list omitted",
+            Box::new(|h: &mut RetainedHop| {
+                for (name, value) in &mut h.request.headers {
+                    if name.eq_ignore_ascii_case("signature-input") {
+                        value.push_str(";x=1");
+                    }
+                }
+            }),
+        ),
+        (
+            "a response header",
+            Box::new(|h: &mut RetainedHop| {
+                h.response.headers.push(("x-added".into(), "1".into()));
+            }),
+        ),
+        (
+            "header ORDER",
+            Box::new(|h: &mut RetainedHop| h.request.headers.swap(0, 1)),
+        ),
+    ];
+
+    for (what, apply) in mutate {
+        let mut altered = base.clone();
+        apply(&mut altered);
+        assert_ne!(
+            identity(&altered),
+            baseline,
+            "altering {what} left the submission identity unchanged"
+        );
+    }
+}
+
 /// The identity is of the SUBMISSION, so it is stable across runs of the same bytes —
 /// otherwise it could not be compared by anyone but the process that computed it.
 #[test]
