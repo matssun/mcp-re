@@ -97,7 +97,8 @@ mod tests {
             let form = canonical_ed25519_jwk(x);
             assert_eq!(form, format!("{PREFIX}{x}{SUFFIX}"));
             assert_eq!(
-                form.strip_prefix(PREFIX).and_then(|r| r.strip_suffix(SUFFIX)),
+                form.strip_prefix(PREFIX)
+                    .and_then(|r| r.strip_suffix(SUFFIX)),
                 Some(x),
                 "the operand is recoverable, so distinct operands have distinct forms"
             );
