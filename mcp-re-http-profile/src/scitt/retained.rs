@@ -203,7 +203,8 @@ mod tests {
         let mut truncated = full.clone();
         truncated.hop_evidence_mut().truncate(1);
         assert_eq!(
-            truncated.hop_evidence()[0], full.hop_evidence()[0],
+            truncated.hop_evidence()[0],
+            full.hop_evidence()[0],
             "hop 0 is retained honestly — the old check compared only this"
         );
         assert_eq!(

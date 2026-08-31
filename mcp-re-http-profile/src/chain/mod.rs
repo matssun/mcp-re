@@ -151,7 +151,6 @@ impl ChainLabel {
     }
 }
 
-
 /// The full-profile inputs a retained record cannot supply for itself.
 ///
 /// Audience-tuple equality needs the VERIFIER's own tuple, and `artifact_bindings[]`

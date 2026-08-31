@@ -360,7 +360,6 @@ mod tests {
         .is_err());
     }
 
-
     /// A document that is simultaneously a legal response and a legal request is refused.
     /// Every other clause passes, so nothing else in the validator would have caught it,
     /// and the PEP would have delegated-signed a server-initiated request aimed at the
@@ -390,9 +389,6 @@ mod tests {
         )
         .is_ok());
     }
-
-
-
 
     /// The envelope validator does NOT read application payload. Whatever is inside
     /// `result` beyond the MCP lifecycle members is carried untouched — the boundary this

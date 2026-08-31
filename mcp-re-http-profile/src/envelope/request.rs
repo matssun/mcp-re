@@ -227,4 +227,5 @@ mod tests {
             .expect("a legal notification"),
             OutstandingId::Notification
         );
-    }}
+    }
+}

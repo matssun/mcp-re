@@ -1228,7 +1228,8 @@ fn two_records_that_verified_nothing_are_still_distinguishable() {
     assert_eq!(ra.label(), rb.label(), "they even fail the same way");
 
     assert_ne!(
-        ra.submitted_commitment(), rb.submitted_commitment(),
+        ra.submitted_commitment(),
+        rb.submitted_commitment(),
         "two different submissions must not share one identity",
     );
     assert!(!ra.submitted_commitment().is_empty());
