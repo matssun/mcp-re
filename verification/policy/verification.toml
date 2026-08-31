@@ -2003,3 +2003,21 @@ tested_symbols = [
   "lib#refusal::cause::tests::a_policy_denial_has_no_core_verdict_to_be_recorded_under",
   "lib#refusal::cause::tests::a_core_verdict_never_attributes_a_refusal_to_a_policy",
 ]
+
+[[unit]]
+id = "proxy.cross_machine_legality"
+class = "V0"
+description = "Pass 2 of the layer-A legality boundary: the relations that join two configuration machines. Every relation reads classified owner states rather than raw request fields, and each illegal combination is refused unconditionally rather than reinterpreted into a weaker posture."
+paths = ["mcp-re-proxy/src/config_state/cross_machine.rs"]
+exported_contracts = []
+evidence = ["test://proxy/config_state/cross_machine_relations"]
+assumptions = []
+# The last control is the one that keeps this pass from becoming a second opinion: the
+# trust-epoch posture is NOT re-derived here, it is read from the machine that owns it.
+tested_symbols = [
+  "lib#config_state::cross_machine::tests::a_selector_matching_the_custody_state_is_legal",
+  "lib#config_state::cross_machine::tests::every_selector_is_refused_under_every_other_custody_state",
+  "lib#config_state::cross_machine::tests::a_deny_list_no_profile_will_read_is_refused",
+  "lib#config_state::cross_machine::tests::the_exclusive_custody_relation_has_no_configuration_left_to_refuse",
+  "lib#config_state::cross_machine::tests::the_trust_epoch_posture_is_not_re_derived_here",
+]

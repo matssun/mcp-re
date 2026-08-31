@@ -2071,3 +2071,345 @@ owner = "http_profile.scitt_retained_correspondence"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://http_profile.scitt_retained_correspondence"]
 depends_on = []
+
+# =======================================================================================
+# Stage 2 of the ratified theorem-architecture closure
+# (verification/reviews/packets/theorem-architecture-ratification-2026-08-31.md §8).
+#
+# The child propositions the ratified roots require, registered at the altitude the
+# ratification assigned them — never at the altitude of a unit that merely mentions one of
+# the values. Four are supported by the Stage 1 units; five are ratified claims with a real
+# owner and no support closure, which is the §28.5 `GAP` terminal and is DERIVED from the
+# empty `supported_by`, never stored.
+#
+# `root_theorems` stays empty. It is declared once, when the COMPLETE ratified root set has
+# resolvable identities — R2's emission composition, R3's client composition, R4's
+# materialized-runtime composition and R5c's audit totality have no honest owner yet, and a
+# root whose blocking child cannot be registered would report COMPLETE while its argument is
+# open. Declaring three of six roots early would buy a number at the cost of the one
+# property the root set exists to have.
+# =======================================================================================
+
+[[theorem]]
+id = "THM-0043"
+title = "The exchange relation is decided everywhere and the execution threshold partitions it"
+statement = """
+Every (ExchangeState, ExchangeEvent) pair is either explicitly legal or explicitly rejected
+by `transition`; no event moves a terminal state; the pipeline order is a directed path
+whose only branches are the notification arm and the open-leg/terminal split; and no state
+at or past the execution threshold can reach a pre-dispatch terminal. An advance the
+relation does not admit latches an anomaly in every build, release included, rather than
+being ignored or panicking.
+"""
+security_consequence = """
+A serving path cannot reach the backend from a state the relation does not admit, cannot
+reach a pre-dispatch refusal terminal after the backend has been handed the request, and
+cannot silently drive the machine off the legal path — a disagreement between the model and
+the code is recorded, and every consequence derived afterwards is derived from a machine
+that says so.
+"""
+scope = """
+Establishes the relation and the latch. It does not establish that the serving path drives
+this machine, that a given stage advances it, or that any particular refusal site is inside
+the lifecycle — those are propositions about the caller and are registered against the
+serving composition, not here. It establishes nothing about what any stage verified.
+"""
+owner = "proxy.exchange_lifecycle"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.exchange_lifecycle"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0044"
+title = "An exchange's retry consequence never under-reports what may have happened"
+statement = """
+`ExchangeProgress::retry_semantics` is monotone along every legal path and reports
+`NotRetrySafe` whenever an anomaly is latched or the backend was dispatched, and
+`RequiresNewElicitation` whenever a continuation approval was consumed and the backend was
+not. `Consumed` latches, so no later observation can report a spent approval as unspent;
+the backend projection is derived from the exchange state rather than asserted beside it,
+so the two cannot disagree.
+"""
+security_consequence = """
+A client cannot be told that nothing executed when the backend may have run, and cannot be
+told an ordinary retry is available after a human's one-shot approval was destroyed — the
+combination that leaves the retry's fresh nonce admitted and the answer refused as
+already-answered, with the approval gone.
+"""
+scope = """
+A claim about the machine's derivation, not about the wire. It does not establish that the
+serving path maps a consequence onto a particular HTTP status, that a client acts on it, or
+that any effect was in fact performed. It establishes nothing about the truth of the
+observations fed to it — only that no observation can move the consequence backward.
+"""
+owner = "proxy.exchange_lifecycle"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.exchange_lifecycle"]
+depends_on = ["THM-0043"]
+
+[[theorem]]
+id = "THM-0045"
+title = "The backend is reached only by consuming a fully assembled pre-dispatch commitment"
+statement = """
+The inner dispatch consumes a `ReadyForDispatch`, whose representation and constructor take
+each pre-dispatch prerequisite by value: an `AuthorizedRequestBody`, a `SigningWindow`
+snapshotted before the backend runs, and a `RetentionDisposition` that is either
+`NotConfigured` or a taken `Reserved`. `AuthorizedRequestBody` is sealed with exactly one
+producer, `AuthorizationPosture::release`. Crossing is one-way: `dispatched` consumes the
+ready state and yields a `DispatchedExchange`, so no caller holds both.
+"""
+security_consequence = """
+A serving path that skipped the authorization decision, the signing-window snapshot or the
+retention reservation has nothing to hand the dispatch — the failure is a compile error at
+the dispatch line, not a proxy that quietly serves unjudged requests or discovers a missing
+credential after the tool has already run. And a post-dispatch failure cannot be answered as
+though the backend had not run, because the value that would say so is gone.
+"""
+scope = """
+It establishes that the decision was TAKEN, never that a policy permitted:
+`NoPolicyConfigured` releases a body too, because a deployment with no policy is entitled to
+serve while claiming nothing. It does not establish that the posture released was the one a
+configured policy produced — that proposition is registered separately and is open. It says
+nothing about what the verifier established, and nothing about the retention record's
+contents.
+"""
+owner = "proxy.dispatch_commitment"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.dispatch_commitment"]
+depends_on = ["THM-0040"]
+
+[[theorem]]
+id = "THM-0046"
+title = "A refusal carries which authority reached it, over a closed set, unrendered"
+statement = """
+Every `Refusal` carries a `RefusalCause` rather than a rendered token, and `RefusalCause` is
+closed over exactly the two authorities on this path — a Core verification verdict, in
+whichever of Core's own producers reached it, and the ADR-MCPRE-065 authorization boundary,
+held whole so its two arms stay distinguishable. `PolicyError` has no route into the Core
+taxonomy anywhere in the workspace. Rendering to a wire code happens only at the
+presentation boundary, and the signing posture is independent of the cause.
+"""
+security_consequence = """
+An authorization refusal cannot arrive at the audit boundary wearing Core's provenance, a
+foreign taxonomy cannot reach a record's reason field unnoticed, and "no policy verdict was
+reached" cannot be recorded as "a policy denied" — the three collapses a pre-rendered token
+made unrecoverable.
+"""
+scope = """
+Establishes the vocabulary and its provenance. It does not establish that every production
+refusal site is inside the exchange lifecycle, that the audit record is written, or that the
+refusal is signed — those are propositions about the serving path and the response-emission
+authority. It does not establish that Core's own verdicts are correct.
+"""
+owner = "proxy.refusal_provenance"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.refusal_provenance"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0047"
+title = "The verifier's assurance products are not substitutable"
+statement = """
+The products the verifier operations return are distinct types whose representations are
+private to their own modules, so a product that establishes a weaker proposition cannot be
+passed where a stronger one is required: a floor-verified request is not a full-profile
+verified request, a bound response is not an unbound one, and a delegated response is not a
+trust-seam one.
+"""
+security_consequence = """
+A serving path cannot satisfy a consumer that requires a full-profile verification by
+handing it a value that only cleared the cryptographic floor, and the substitution is a
+compile error rather than a silently weaker check.
+"""
+scope = """
+Type separation only. It does not establish that the value a consumer holds was produced by
+the operation whose type it has for THAT consumer's exchange — possession provenance is a
+proposition about the caller and is registered against the serving composition. It
+establishes nothing about what any of the operations verify.
+"""
+owner = "http_profile.verifier_result_separation"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://http_profile.verifier_result_separation"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0048"
+title = "Every listener obtains its whole security posture through one listener state"
+statement = """
+Every MCP-RE construction path obtains a listener's trust anchors, epoch-bound session
+store, signing budget and client-certificate verifier through one
+`TlsListenerSecurityState`; the terms cannot be supplied to it independently. The epoch is a
+function of the anchor set alone, a rebuild that republishes the same trust keeps the
+resumption cache while a rebuild with withdrawn trust advances the epoch and stops
+resumption, and no configuration this owner builds can resume outside the store.
+"""
+security_consequence = """
+A withdrawn trust anchor cannot be survived by a resumed session, and a listener cannot be
+assembled with anchors from one source and a session store or signing budget from another —
+the pairing that lets a session outlive the trust that admitted it.
+"""
+scope = """
+Establishes that the terms travel together and that the epoch tracks the anchors. It does
+not establish that the client-certificate verifier denies unknown revocation status: that is
+a property of one construction site over a foreign trait object, not of any type this owner
+holds, and it is registered separately as an open proposition. It says nothing about the
+handshake's own correctness.
+"""
+owner = "proxy.tls_listener_state"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.tls_listener_state"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0049"
+title = "Every illegal cross-owner configuration combination is refused at layer A"
+statement = """
+The cross-machine pass reads classified owner states and validated request selections, never
+raw fields a machine already classified, and refuses every relation it declares —
+the channel key object living in a backend the deployment does not reach, a revocation deny
+list no configured profile will read, and a trust-epoch posture incompatible with delegated
+signing. Each refusal is unconditional in the classifier rather than conditional on a caller
+having asked.
+"""
+security_consequence = """
+An operator cannot obtain a weaker posture by supplying a combination of individually legal
+selections that no machine alone can refuse — a PKCS#11 channel key under a KMS signing
+source, silently doing nothing while the operator believes the handshake key is
+device-resident.
+"""
+scope = """
+Establishes refusal by the classifier. It does not establish that the illegal combination is
+unrepresentable — `DeploymentRequest` can hold one, which is why the refusal is a check the
+classifier performs and not a structural fact. It does not establish that the classifier is
+consulted on every startup path.
+"""
+owner = "proxy.cross_machine_legality"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.cross_machine_legality"]
+depends_on = []
+
+# --- The §28.5 GAP terminals: a real owner, a ratified proposition, no support closure. ---
+#
+# Each of these was a branch the proof tree required and nothing established. Registering
+# them is what makes the obligation visible; the empty `supported_by` is what makes the
+# gap DERIVED rather than a status field somebody must remember to flip.
+
+[[theorem]]
+id = "THM-0050"
+title = "Distinct verification keys have distinct keyids"
+statement = """
+The RFC 7638 thumbprint selector is injective over the keys a deployment can enrol: two
+distinct verification keys cannot present the same keyid, so resolving a keyid through the
+trust seam selects at most one key.
+"""
+security_consequence = """
+A signer cannot be accepted under a keyid that resolves to another party's key, which is
+what would let one enrolled actor's signature be attributed to another.
+"""
+scope = """
+Selector injectivity only. It does not establish that the seam answers for any particular
+keyid, that the key it returns is trusted, or that the enrolment set is correct. It says
+nothing about the canonical JWK encoding beyond what injectivity requires.
+"""
+owner = "http_profile.keyid"
+review_requirement = "Owner security-specification review"
+supported_by = []
+depends_on = []
+
+[[theorem]]
+id = "THM-0051"
+title = "The pipeline holds, at dispatch, the verification product of this very exchange"
+statement = """
+The verified request the serving path carries from the verification stage to the dispatch,
+and to every stage between them, is the product that stage's verification of THIS inbound
+message returned — not a product of another exchange, not one reconstructed downstream, and
+not one a caller supplied.
+"""
+security_consequence = """
+A caller cannot reach the backend by having some other exchange's verification succeed, and
+no stage between verification and dispatch can substitute a value for the one the verifier
+produced.
+"""
+scope = """
+Possession provenance across the serving pipeline. It does not restate what the verification
+established (THM-0015) or that the products are type-separated (THM-0047); it is the joint
+those two explicitly exclude.
+"""
+owner = "proxy.dispatch_commitment"
+review_requirement = "Owner security-specification review"
+supported_by = []
+depends_on = ["THM-0015", "THM-0047"]
+
+[[theorem]]
+id = "THM-0052"
+title = "A dispatched body was released by the decision a configured policy produced"
+statement = """
+On a deployment where an authorization policy is configured, the `AuthorizationPosture` that
+released the body reaching the backend was produced by that policy's evaluation of this
+request's verified facts — `NoPolicyConfigured` is reachable at the dispatch only on a
+deployment that configured no policy.
+"""
+security_consequence = """
+A serving path cannot bypass a configured policy by releasing the body under the posture
+that claims nothing, which is the one gap the sealed body type leaves open: possession
+proves a decision was taken, and this proves it was the one the deployment selected.
+"""
+scope = """
+It does not restate the seal (THM-0045) or the decision relation (THM-0040). It establishes
+nothing about the policy's own correctness, and nothing about deployments that configure no
+policy, which are entitled to serve while claiming nothing.
+"""
+owner = "proxy.dispatch_commitment"
+review_requirement = "Owner security-specification review"
+supported_by = []
+depends_on = ["THM-0045", "THM-0040"]
+
+[[theorem]]
+id = "THM-0053"
+title = "A presented admission assertion is authentic, in its window, and for this audience"
+statement = """
+The admission assertion an enforcement point acts on verified under a key resolved for its
+issuer, the instant of the call lies within the assertion's [nbf, exp] window, and its
+audience names this enforcement point.
+"""
+security_consequence = """
+An admission verdict cannot rest on an assertion another party minted, on one whose validity
+window has passed, or on one issued to a different enforcement point and replayed here.
+"""
+scope = """
+Assertion authenticity only. It does not restate verdict integrity (THM-0003), anti-rollback
+(THM-0004), presenter binding (THM-0006) or the degraded-admission opt-in (THM-0005), all of
+which characterize what the verdict says once the assertion is believed. ASM-0012 currently
+stands in place of this proposition inside the Verus proof cone; an assumption over MCP-RE's
+own verifier is a legitimate proof-cone device and is not an acceptable terminal for a
+load-bearing system obligation.
+"""
+owner = "http_profile.admission_currency"
+review_requirement = "Owner security-specification review"
+supported_by = []
+depends_on = []
+
+[[theorem]]
+id = "THM-0054"
+title = "Every production listener denies unknown client revocation status"
+statement = """
+Every client-certificate verifier a production MCP-RE listener uses denies unknown
+revocation status, enforces revocation over the full chain, and enforces CRL expiration, with
+no configuration or argument that can relax any of the three.
+"""
+security_consequence = """
+A client whose revocation status cannot be determined — because the CRL is stale, absent for
+its issuer, or does not cover its position in the chain — cannot complete a handshake, so a
+revoked credential cannot be admitted by the checking silently failing open.
+"""
+scope = """
+The verifier value is a foreign trait object that plainly admits permissive
+implementations, so this is a proposition about every production construction site, not a
+property of a type this project owns. It does not establish that the CRLs a deployment
+loads are current or complete, and it establishes nothing about the per-request revocation
+check, which is a separate authority holding the same invariant.
+"""
+owner = "proxy.tls_listener_state"
+review_requirement = "Owner security-specification review"
+supported_by = []
+depends_on = ["THM-0048"]

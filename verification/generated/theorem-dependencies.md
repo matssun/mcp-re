@@ -31,6 +31,8 @@ graph BT
     THM_0020["THM-0020<br/>A successful delegated unbound response verification establishes a chain and never a binding"]
     THM_0021["THM-0021<br/>A successful bound-response verification establishes the shared cryptographic and request-binding facts"]
     THM_0022["THM-0022<br/>A successful unbound-response verification establishes the shared facts and no request binding at all"]
+    THM_0047["THM-0047<br/>The verifier's assurance products are not substitutable"]
+    THM_0051["THM-0051<br/>The pipeline holds, at dispatch, the verification product of this very exchange"]
     THM_0007 --> THM_0008
     THM_0001 --> THM_0014
     THM_0007 --> THM_0015
@@ -43,6 +45,8 @@ graph BT
     THM_0022 --> THM_0020
     THM_0001 --> THM_0021
     THM_0001 --> THM_0022
+    THM_0015 --> THM_0051
+    THM_0047 --> THM_0051
 ```
 
 ## Component 2
@@ -161,7 +165,12 @@ graph BT
 graph BT
     THM_0039["THM-0039<br/>An accepted PDP decision was authenticated under a key the trust seam resolved"]
     THM_0040["THM-0040<br/>An authorized request was permitted by a decision about that very request"]
+    THM_0045["THM-0045<br/>The backend is reached only by consuming a fully assembled pre-dispatch commitment"]
+    THM_0052["THM-0052<br/>A dispatched body was released by the decision a configured policy produced"]
     THM_0039 --> THM_0040
+    THM_0040 --> THM_0045
+    THM_0040 --> THM_0052
+    THM_0045 --> THM_0052
 ```
 
 ## Component 14
@@ -176,4 +185,50 @@ graph BT
 ```mermaid
 graph BT
     THM_0042["THM-0042<br/>Retained evidence is the evidence the statement was made about"]
+```
+
+## Component 16
+
+```mermaid
+graph BT
+    THM_0043["THM-0043<br/>The exchange relation is decided everywhere and the execution threshold partitions it"]
+    THM_0044["THM-0044<br/>An exchange's retry consequence never under-reports what may have happened"]
+    THM_0043 --> THM_0044
+```
+
+## Component 17
+
+```mermaid
+graph BT
+    THM_0046["THM-0046<br/>A refusal carries which authority reached it, over a closed set, unrendered"]
+```
+
+## Component 18
+
+```mermaid
+graph BT
+    THM_0048["THM-0048<br/>Every listener obtains its whole security posture through one listener state"]
+    THM_0054["THM-0054<br/>Every production listener denies unknown client revocation status"]
+    THM_0048 --> THM_0054
+```
+
+## Component 19
+
+```mermaid
+graph BT
+    THM_0049["THM-0049<br/>Every illegal cross-owner configuration combination is refused at layer A"]
+```
+
+## Component 20
+
+```mermaid
+graph BT
+    THM_0050["THM-0050<br/>Distinct verification keys have distinct keyids"]
+```
+
+## Component 21
+
+```mermaid
+graph BT
+    THM_0053["THM-0053<br/>A presented admission assertion is authentic, in its window, and for this audience"]
 ```
