@@ -3,8 +3,9 @@
 # MCP-RE Security Boundary
 
 ```
-STATUS:  DRAFT — PREPARED FOR OWNER RATIFICATION
-         NOT SIGNED. It inherits no signature from any earlier boundary.
+STATUS:  RATIFIED — the current canonical MCP-RE security-claim boundary
+         Owner: Mats Sundvall, 2026-09-01, over commit 23a727ac. See §7.
+         It inherits no signature from any earlier boundary and carries its own.
 ```
 
 This document states what MCP-RE protects, and — with equal weight — what it does **not**.
@@ -171,10 +172,29 @@ obviously stale one, because only the second announces itself.
 
 ## 7. Ratification
 
-Not signed. This document requires an explicit owner ratification, which is an event and not
-an inference — no conditional, no agreement in principle, and no signature written on the
-owner's behalf.
+**RATIFIED by the owner — Mats Sundvall, 2026-09-01** (Europe/Stockholm), over this
+document at commit `23a727ac`, following the four honesty corrections applied at that
+commit. The ruling that ordered the rewrite is a separate, earlier event: owner completeness
+ruling C of 2026-08-31.
 
-Ratifying it means accepting §2 as the claims MCP-RE makes, §3 as the ones it refuses, §4 as
-where the boundary is still being built, and §5 as where it is currently weaker than it
-reads.
+Ratification is an event, not an inference: no conditional, no agreement in principle, and
+no signature written on the owner's behalf. This record was written after the event, and the
+text ratified is the text at `23a727ac` — the same text this file carries, with this section
+and the status banner recording what happened to it.
+
+The ratification states exactly this:
+
+- **§2** is the positive security claim surface MCP-RE may currently make.
+- **§3** is the explicit non-claim boundary.
+- **§4** records security areas that are in scope but **not yet established**, and are
+  therefore **not** current product claims.
+- **§5** accurately discloses the known weaknesses in the current assurance state.
+- The historical signed boundary remains historical and superseded.
+- **It does not establish THM-0042, or any §4 root family, by declaration.**
+
+That last clause is the load-bearing one. Ratifying a boundary that honestly says a branch is
+unestablished does not establish it; it ratifies the honesty. A §4 row moves to §2 only by
+being established and independently reviewed, never by this section having been signed.
+
+Equally, this signature is not permission to weaken an existing claim. A §2 row whose
+evidence stops holding leaves §2; it is not rewritten until it fits what remains.
