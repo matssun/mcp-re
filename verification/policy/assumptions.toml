@@ -875,3 +875,39 @@ introduced_by = "ADR-MCPRE-064 Slice 2"
 review_requirement = "Owner review; any change that composes an authenticated peer from an acceptance produced by a different establishment mechanism, or that makes client authentication optional."
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0037"
+description = "SHA-256 is collision resistant: no computationally feasible adversary exhibits two distinct byte strings sharing a digest."
+justification = """
+The remaining premise of keyid selector injectivity (THM-0050), allocated by owner ruling and
+scoped as narrowly as the claim it serves.
+
+It is a DIFFERENT proposition from ASM-0028, which was deliberately not widened to cover it.
+Second-preimage resistance bounds an adversary handed a target string and asked for another
+with the same digest; collision resistance bounds an adversary free to choose BOTH. The
+keyid claim needs the second, because the adversary in its threat model chooses the key it
+enrols, and a registry that let one assumption stand for the other would report a premise
+nobody agreed to.
+
+It is also different from what ASM-0023 declines. ASM-0023 refuses to assume the labelled
+digest's DOMAIN SEPARATION — that distinct labels cannot be made to agree — and that refusal
+stands unchanged. Collision resistance says nothing about labels; it is the flat, standard,
+single-input property, and assuming it does not license any separation reading.
+
+What it costs is stated plainly. SHA-256 is not injective — the domain is unbounded and the
+range is 256 bits, so colliding canonical JWK forms EXIST. THM-0050 therefore claims
+computational, not mathematical, non-substitutability, and no wording in this registry may
+upgrade it. The MCP-RE-owned half is proved separately and needs none of this: THM-0055
+establishes that the canonical form and the base64url encoding introduce no collisions of
+their own, so this premise is the whole of what is trusted between them and the selector.
+
+It stops being acceptable the day SHA-256 admits a practical collision, or if the keyid
+derivation is changed to a digest without an equivalent standing.
+"""
+scope = ["unit://http_profile.keyid", "boundary://boundary.crypto_primitives"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 §28 closure ruling"
+review_requirement = "Owner review; any change to the keyid digest algorithm, and on any published weakening of SHA-256 collision resistance."
+affected_contracts = []
+tool_specific_mechanism = "none:trusted-primitive"

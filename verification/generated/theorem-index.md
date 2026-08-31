@@ -31,7 +31,7 @@ any of them is closed.
 | THM-0012 | The lifecycle record cannot claim a shutdown that did not happen |
 | THM-0072 | A verified receipt proves registration on the service this deployment pinned |
 | THM-0042 | Retained evidence is the evidence the statement was made about |
-| THM-0071 | The refusal vocabulary is total over the outcomes that can occur |
+| THM-0071 | Every reachable refusal has a typed provenance in its own authority's coordinate |
 
 | id | title | owner | supported by | lifecycle |
 |---|---|---|---|---|
@@ -83,11 +83,11 @@ any of them is closed.
 | THM-0047 | The verifier's assurance products are not substitutable | http_profile.verifier_result_separation | unit://http_profile.verifier_result_separation | live |
 | THM-0048 | Every listener obtains its whole security posture through one listener state | proxy.tls_listener_state | unit://proxy.tls_listener_state | live |
 | THM-0049 | Every illegal cross-owner configuration combination is refused at layer A | proxy.cross_machine_legality | unit://proxy.cross_machine_legality | live |
-| THM-0050 | Distinct verification keys have distinct keyids | http_profile.keyid | _none_ | live |
+| THM-0050 | Distinct verification keys cannot feasibly be made to share a keyid | http_profile.keyid | unit://http_profile.keyid | live |
 | THM-0051 | The pipeline holds, at dispatch, the verification product of this very exchange | proxy.dispatch_commitment | unit://http_profile.verifier_result_separation, unit://proxy.dispatch_commitment | live |
 | THM-0052 | A dispatched body was released by the decision a configured policy produced | proxy.dispatch_commitment | unit://proxy.dispatch_commitment, unit://proxy.pdp_decision_relation | live |
-| THM-0053 | A presented admission assertion is authentic, in its window, and for this audience | http_profile.admission_currency | _none_ | live |
-| THM-0054 | Every production listener denies unknown client revocation status | proxy.tls_listener_state | _none_ | live |
+| THM-0053 | A presented admission assertion is authentic, in its window, and for this audience | http_profile.admission_assertion | unit://http_profile.admission_assertion | live |
+| THM-0054 | Every production listener denies unknown client revocation status | proxy.tls_listener_state | unit://proxy.tls_listener_state | live |
 | THM-0055 | The keyid derivation introduces no collisions of its own | http_profile.keyid | unit://http_profile.keyid | live |
 | THM-0056 | The posture that claims nothing is produced only where no policy is configured | proxy.authorization_posture | unit://proxy.authorization_posture | live |
 | THM-0057 | A client's trust anchors are the ones the current signed manifest published | client.trust_manifest_lifecycle | unit://client.trust_manifest_lifecycle | live |
@@ -104,18 +104,19 @@ any of them is closed.
 | THM-0068 | A pinned transparency service is one operator-reviewed document, or it is not a pin | http_profile.scitt_service_pin | unit://http_profile.scitt_service_pin | live |
 | THM-0069 | A security record states each authority's outcome in that authority's own coordinate | proxy.audit_record_coordinates | unit://proxy.audit_record_coordinates, unit://proxy.refusal_provenance | live |
 | THM-0070 | The record stream is honest about what reached it | proxy.audit_delivery | unit://proxy.audit_delivery | live |
-| THM-0071 | The refusal vocabulary is total over the outcomes that can occur | proxy.audit_record_coordinates | _none_ | live |
+| THM-0071 | Every reachable refusal has a typed provenance in its own authority's coordinate | proxy.audit_record_coordinates | unit://proxy.audit_record_coordinates, unit://proxy.refusal_provenance | live |
 | THM-0072 | A verified receipt proves registration on the service this deployment pinned | http_profile.scitt_receipt_offline | unit://http_profile.scitt_receipt_offline, unit://http_profile.scitt_service_pin | live |
-| THM-0073 | A validated deployment cannot collapse signing roles policy requires distinct | proxy.cross_machine_legality | _none_ | live |
+| THM-0073 | Serving materialization refuses a deployment whose two signing roles are one key | proxy.signing_role_separation | unit://proxy.signing_role_separation | live |
 | THM-0074 | No unearned dispatch | proxy.dispatch_commitment | unit://proxy.dispatch_commitment, unit://proxy.exchange_lifecycle | live |
 | THM-0075 | No unearned response attribution | proxy.response_signing | unit://http_profile.response_emission_binding, unit://proxy.response_signing | live |
 | THM-0076 | A client accepts only an answer to its own request, under a signer it trusts | client.response_acceptance | unit://client.response_acceptance | live |
 | THM-0077 | No deployment serves a posture nobody selected | proxy.trust_composition_root | unit://proxy.cross_machine_legality, unit://proxy.trust_composition_root | live |
 | THM-0078 | Refusal is terminal, and no refusal-side effect reads as success | proxy.exchange_lifecycle | unit://proxy.exchange_lifecycle, unit://proxy.refusal_provenance | live |
 | THM-0079 | Distinct signed exchanges have distinct replay keys | http_profile.replay_key | unit://http_profile.replay_key | live |
-| THM-0080 | Serving derives peer identity only from the credential the mechanism accepted | proxy.authenticated_relationship_peer | _none_ | live |
-| THM-0081 | Every production refusal is inside the exchange lifecycle | proxy.refusal_provenance | _none_ | live |
-| THM-0082 | The serving path signs under the credential source materialization produced | proxy.response_signing | _none_ | live |
+| THM-0080 | Serving derives peer identity only from the credential the mechanism accepted | proxy.serving_identity_provenance | unit://proxy.serving_identity_provenance | live |
+| THM-0081 | Every production refusal is inside the exchange lifecycle | proxy.refusal_site_totality | unit://proxy.refusal_site_totality | live |
+| THM-0082 | The serving path signs under the credential source materialization produced | proxy.signing_credential_provenance | unit://proxy.signing_credential_provenance | live |
+| THM-0083 | What a request is, is decided once, before anything reads it for meaning | http_profile.request_envelope | unit://http_profile.request_envelope | live |
 
 ## Claims in full
 
@@ -651,15 +652,15 @@ any of them is closed.
 
 **Review requirement.** Owner security-specification review
 
-### THM-0050 — Distinct verification keys have distinct keyids
+### THM-0050 — Distinct verification keys cannot feasibly be made to share a keyid
 
-**Statement.** The RFC 7638 thumbprint selector is injective over the keys a deployment can enrol: two distinct verification keys cannot present the same keyid, so resolving a keyid through the trust seam selects at most one key.
+**Statement.** Under the accepted SHA-256 collision-resistance premise (ASM-0037), no computationally feasible adversary can cause two distinct enrolled verification keys with distinct canonical RFC 7638 JWK representations to resolve to the same keyid, so resolving a keyid through the trust seam selects at most one key against any adversary the premise covers.
 
-**Security consequence.** A signer cannot be accepted under a keyid that resolves to another party's key, which is what would let one enrolled actor's signature be attributed to another.
+**Security consequence.** A signer cannot be brought to acceptance under a keyid that resolves to another party's key, which is what would let one enrolled actor's signature be attributed to another.
 
-**Scope — what this does NOT establish.** Selector injectivity only. It does not establish that the seam answers for any particular keyid, that the key it returns is trusted, or that the enrolment set is correct. The encoding half is THM-0055 and is established. What remains between THM-0055 and this claim is exactly one property, and it is a property of the primitive rather than of this code: that SHA-256 does not map two distinct canonical JWK forms to one digest. No test can establish it, and no assumption in this registry currently states it — ASM-0028 states second-preimage resistance, which is weaker and differently scoped, and ASM-0023's own justification records that this project has deliberately DECLINED to assume the separation properties of the digest construction. Allocating a collision-resistance assumption is therefore an owner TCB decision, not a registry edit, and this claim stays a gap until it is taken.
+**Scope — what this does NOT establish.** Computational selector injectivity only, and deliberately not a mathematical one. SHA-256 is not injective — it maps an unbounded domain onto 256 bits, so colliding keys EXIST. What is claimed is that none can be exhibited by an adversary the premise covers, which is the strongest true form of this proposition and the form ASM-0037 states. The claim decomposes into exactly two halves. THM-0055 is the MCP-RE-owned half, established: distinct admitted verification keys have distinct canonical thumbprint preimages, and the digest encoding merges nothing. ASM-0037 is the primitive half, owner-approved and scoped to this unit and `boundary.crypto_primitives`. Neither ASM-0028 nor ASM-0023 was widened to reach it: second-preimage resistance and collision resistance are different propositions, and ASM-0023's declining to assume the construction's separation properties stands unchanged. It does not establish that the seam answers for any particular keyid, that the key it returns is trusted for its slot, or that the enrolment set is correct.
 
-**Review requirement.** Owner security-specification review
+**Review requirement.** Owner security-specification review; re-review on any change to the keyid digest algorithm
 
 **Depends on.** THM-0055
 
@@ -689,11 +690,11 @@ any of them is closed.
 
 ### THM-0053 — A presented admission assertion is authentic, in its window, and for this audience
 
-**Statement.** The admission assertion an enforcement point acts on verified under a key resolved for its issuer, the instant of the call lies within the assertion's [nbf, exp] window, and its audience names this enforcement point.
+**Statement.** The admission assertion an enforcement point acts on verified under a key resolved for its issuer through the trust seam, carries the required credential type and algorithm, names this profile and an audience this enforcement point answers to, and the instant of the call lies inside both its own [nbf, exp] window and the verifier's own staleness budget.
 
-**Security consequence.** An admission verdict cannot rest on an assertion another party minted, on one whose validity window has passed, or on one issued to a different enforcement point and replayed here.
+**Security consequence.** An admission verdict cannot rest on an assertion another party minted, on one carrying a different credential profile, on one whose validity window has passed or has not begun, or on one issued to a different enforcement point and replayed here.
 
-**Scope — what this does NOT establish.** Assertion authenticity only. It does not restate verdict integrity (THM-0003), anti-rollback (THM-0004), presenter binding (THM-0006) or the degraded-admission opt-in (THM-0005), all of which characterize what the verdict says once the assertion is believed. ASM-0012 currently stands in place of this proposition inside the Verus proof cone; an assumption over MCP-RE's own verifier is a legitimate proof-cone device and is not an acceptable terminal for a load-bearing system obligation.
+**Scope — what this does NOT establish.** Assertion authenticity only. It does not restate verdict integrity (THM-0003), anti-rollback (THM-0004), presenter binding (THM-0006) or the degraded-admission opt-in (THM-0005), all of which characterize what the verdict SAYS once the assertion is believed. Its relationship to ASM-0012 is the point of registering it separately. That assumption makes `verify_admission_assertion` opaque to the currency theorem — no `ensures` at all, so it can neither weaken nor be relied on inside the Verus cone — and its own review requirement names a separate unit for assertion validity as the discharge rather than an `ensures` added there. `http_profile.admission_assertion` is that unit, and nothing here is inside the proof cone: this is a test-lane claim, and the reason it can exist at all is that the currency proof never depended on it. It says nothing about whether the ISSUER should be trusted — that is the trust seam's, and a kid never introduces trust — nor about the authoritative state the verdict is checked against, which is THM-0007's and the currency unit's.
 
 **Review requirement.** Owner security-specification review
 
@@ -703,7 +704,7 @@ any of them is closed.
 
 **Security consequence.** A client whose revocation status cannot be determined — because the CRL is stale, absent for its issuer, or does not cover its position in the chain — cannot complete a handshake, so a revoked credential cannot be admitted by the checking silently failing open.
 
-**Scope — what this does NOT establish.** The verifier value is a foreign trait object that plainly admits permissive implementations, so this is a proposition about every production construction site, not a property of a type this project owns. It does not establish that the CRLs a deployment loads are current or complete, and it establishes nothing about the per-request revocation check, which is a separate authority holding the same invariant. Two halves are needed and neither exists yet, which is why this is a gap rather than a scoped claim. The SOURCE half — that `build_client_verifier` is the only production producer of a `ClientCertVerifier`, that it takes no argument that could relax the posture, and that it calls `enforce_revocation_expiration` — is measurable by a self-tested gate of the same kind as the four this repository already runs, and is not written. The BEHAVIOURAL half — a handshake driven against a chain whose revocation status cannot be determined, refused — is not in `proxy.tls_listener_state`'s battery, which measures the anchor epoch and resumption and says nothing about revocation admission. Declaring this supported by that battery would attach the claim to controls that do not reach it.
+**Scope — what this does NOT establish.** A proposition about every production CONSTRUCTION SITE, not a property of a type this project owns: the verifier is a foreign `dyn` trait object and rustls ships both a permissive policy and a builder method that selects it, so nothing here can make a permissive inhabitant unconstructible. Recorded as evidence accordingly. Two halves, and both are now measured. The BEHAVIOURAL half drives real handshakes: a revoked client denied, a stale CRL denying even a client it does not revoke, and — the case the other two leave open — a client whose status the configured CRLs CANNOT determine, denied. The first two are cases where revocation checking ran and answered; only the third is the unknown-status decision itself, and it is what separates failing closed from admitting a credential that may have been withdrawn. The SOURCE half pins the site set: one production producer, no `allow_unknown_revocation_status` anywhere, `enforce_revocation_expiration` positively stated, and no parameter through which a caller could choose the posture. The one other `ClientCertVerifier` implementation in the crate is named rather than filtered out: it is behind `fault_accept_any_client`, a feature that exists to break the control deliberately and prove it is live, and the control asserts it stays behind that gate. It does not establish that the CRLs a deployment loads are current or complete, and it establishes nothing about the per-request revocation check, which is a separate authority holding the same invariant.
 
 **Review requirement.** Owner security-specification review
 
@@ -881,17 +882,17 @@ any of them is closed.
 
 **Review requirement.** Owner security-specification review
 
-### THM-0071 — The refusal vocabulary is total over the outcomes that can occur
+### THM-0071 — Every reachable refusal has a typed provenance in its own authority's coordinate
 
-**Statement.** Every outcome a served exchange can reach is nameable in the recorded vocabulary, and no outcome is recorded under a token belonging to an authority that did not reach it.
+**Statement.** Every outcome a served exchange can reach has a typed refusal provenance, and every authority that reached an outcome is represented in that authority's own record coordinate: no refusal becomes silent, and no authority's vocabulary is recorded as another authority's verdict.
 
 **Security consequence.** An auditor reading the record cannot be shown silence where a refusal occurred, and cannot be shown a token that attributes a refusal to an authority that never ran.
 
-**Scope — what this does NOT establish.** A GAP, and deliberately not closed here. `McpReError` is one frozen taxonomy and `PolicyError` is a second owned by another crate; the record now keeps their coordinates apart (THM-0069), which is what makes the remaining question answerable at all, and it does not make the union total. Closing this needs an ADR-MCPS-035 decision — a new category, new `McpReError` variants, or a rule that the authorization stage renders only Core tokens — and the ratification is explicit that the frozen vocabulary is not bypassed to close a theorem tree. There is also no single owner to assign: the taxonomies live in two crates and the totality relation is between them. Its owner is provisional, and the claim stays unestablished until the decision is taken.
+**Scope — what this does NOT establish.** TOTALITY over the typed coordinates, which is a different proposition from the one this id carried while ADR-MCPRE-066 was open. It is not a claim that one vocabulary covers the other, and it needs no new one: the algebra ADR-MCPRE-066 decided is that the Core verdict and the authorization verdict are SEPARATELY TYPED coordinates on one record, and its slices implemented it. `PolicyError -> &'static str -> Core reason` no longer exists as a route, so the union that was previously asked to be total is not the object of this claim. Four established facts compose it, and each closes one way an outcome could escape: * every SITE is inside the lifecycle or is the one declared pre-exchange refusal (THM-0081) — nothing answers from source position, so there is no outcome outside the algebra; * every refusal carries WHICH authority reached it, held whole (THM-0046), over a `RefusalCause` closed by construction over exactly Core and Authorization; * the two coordinates cannot be read as each other on a record (THM-0069), and a request record always states an authorization outcome while a response record has none to carry; * `CoreVerdict::error` is total over its three producers and `RefusalCause::core_verdict` returns `None` for exactly one cause — an authorization policy decided — which is a STATEMENT that Core reached nothing, not an omission. It does not establish that the right cause is chosen at any given site, nor that the frozen public tokens are individually well-named. Both are the owning units' controls, and neither is a totality property. If a reachable refusal outcome is ever found that the typed record cannot represent, that outcome is a finding against this claim and not a reason to widen a vocabulary.
 
-**Review requirement.** Owner security-specification review; ADR-MCPS-035 vocabulary decision
+**Review requirement.** Owner security-specification review
 
-**Depends on.** THM-0046, THM-0069
+**Depends on.** THM-0046, THM-0069, THM-0081
 
 ### THM-0072 — A verified receipt proves registration on the service this deployment pinned
 
@@ -905,13 +906,13 @@ any of them is closed.
 
 **Depends on.** THM-0041, THM-0068
 
-### THM-0073 — A validated deployment cannot collapse signing roles policy requires distinct
+### THM-0073 — Serving materialization refuses a deployment whose two signing roles are one key
 
-**Statement.** Where the selected roles and mechanisms require the response-signing key and the channel handshake key to be distinct, no validated deployment obtains a posture in which one key serves both.
+**Statement.** Serving materialization cannot succeed when the response-signing role and the channel-signing role resolve to the same cryptographic signing-key identity: the composition root obtains its key source only as the product of a comparison over the two materialized public keys, and that comparison refuses before any server starts.
 
-**Security consequence.** A party able to obtain a TLS handshake signature cannot thereby obtain a response attribution, and vice versa — the two roles stay separately attributable.
+**Security consequence.** A party able to obtain a TLS handshake signature cannot thereby obtain a response attribution, and vice versa — the two roles stay separately attributable, which is the whole content of calling them two roles.
 
-**Scope — what this does NOT establish.** A GAP, and relocated here deliberately. The KMS blueprint records that the separation is held by a CONSTRUCTION SITE — `cli.rs::build_key_source` — rather than by any value, so it does not survive the deletion test and is not structural. It was recorded under response attribution; it does not belong there, because attribution does not logically require it. It is deployment/capability-role integrity, and it is CONDITIONAL: a deployment whose selected roles and mechanisms do not require distinctness is not in scope. The cross-machine relation X2a (THM-0049) states the adjacent fact — that the channel key object must live in a backend the deployment already reaches — and is not this claim.
+**Scope — what this does NOT establish.** Over the MATERIALIZED identities, and that is the substance of the claim rather than an implementation note. A comparison of mechanism LOCATORS would establish nothing: an ARN, a key id and an alias are three names for one AWS key, a PKCS#11 label is scoped to a token, and a filesystem path resolves through symlinks — two locators that differ can be one key, and a check comparing them would report a separation that does not exist while looking exactly like one that does. So both roles are asked for their public verification key after materialization and compared as `Ed25519PublicKeyValue`, the canonical RFC 8410 identity this crate already owns. No AWS-, GCP- or PKCS#11-specific equality semantics were invented. UNCONDITIONAL, and deliberately not conditioned on a policy input. The ratified wording is "where policy requires the roles to be distinct"; measurement found no supported deployment for which sharing is desirable, and inventing a one-valued policy knob to make the condition expressible would fabricate an input that selects nothing. Every deployment is held to it, so the conditional is satisfied everywhere rather than left as a dormant branch. It is load-bearing rather than a construction-site convention, which is what moved it here. `MaterializedSigningRoles` holds the source privately and `establish` is its only producer, so a serving path cannot hold a key source that did not come through the comparison — deleting the call does not leave a path that skips it, it leaves one that does not compile. What that does NOT settle is whether the composition root uses the materializer at all: `FileKeySource` and the KMS adapters are public constructors that external embedders need, and THM-0082 is what measures the root. The owner moved from `proxy.cross_machine_legality`, and had to: a request-level classifier reads locators, and the decisive fact here exists only once both backends have answered. X2a (THM-0049) states the adjacent relation — that the channel key object lives in a backend the deployment already reaches — and is not this claim. A channel credential whose public key is not a canonical Ed25519 key yields no comparison, and that is a statement rather than a gap: the response role's key always is one, so the two cannot be equal. It claims nothing about whether either key is the RIGHT one, about custody, about exposure, or about the chain being trusted.
 
 **Review requirement.** Owner security-specification review
 
@@ -927,7 +928,7 @@ any of them is closed.
 
 **Review requirement.** Owner security-specification review
 
-**Depends on.** THM-0003, THM-0004, THM-0005, THM-0006, THM-0009, THM-0015, THM-0034, THM-0040, THM-0043, THM-0045, THM-0050, THM-0051, THM-0052, THM-0053, THM-0066, THM-0079, THM-0080
+**Depends on.** THM-0003, THM-0004, THM-0005, THM-0006, THM-0009, THM-0015, THM-0034, THM-0040, THM-0043, THM-0045, THM-0050, THM-0051, THM-0052, THM-0053, THM-0066, THM-0079, THM-0080, THM-0083
 
 ### THM-0075 — No unearned response attribution
 
@@ -989,11 +990,11 @@ any of them is closed.
 
 ### THM-0080 — Serving derives peer identity only from the credential the mechanism accepted
 
-**Statement.** Neither direct-TLS serving path reconstructs peer identity or credential currency from certificate representation: each asks its authority once, through a resolver whose signature admits its predecessor and the options and nothing else, so an acceptance from one relationship cannot be paired with an identity derived from another credential.
+**Statement.** Neither direct-TLS serving path reconstructs peer identity or credential currency from certificate representation: each asks its authority exactly once, through a resolver whose signature admits its predecessor and the options and nothing else, so an acceptance from one relationship cannot be paired with an identity derived from another credential.
 
 **Security consequence.** A served request cannot be attributed to an identity read out of a certificate the communication mechanism did not accept for THIS relationship — the composition ADR-MCPRE-064 Slice 2 forbids, and the one no behavioural control notices, because each still measures a true thing about a correctly-composed value.
 
-**Scope — what this does NOT establish.** A GAP, and the reason is a measurement correction rather than an absence of evidence. The proposal packet recorded this as STRUCTURAL; under the deletion test it is not, because the enforcement is `scripts/serving_identity_provenance_gate.py`, a gate over source text — delete it and a second identity route compiles. The gate is self-tested and runs in CI, and the behavioural half is real handshakes against a chain carrying a rival identity; what does not exist is a `[[unit]]` binding them to this proposition, and the controls sit in a feature-gated lane whose selection has to be established before they can be declared. It does not restate THM-0031, which says the resolved identity is right.
+**Scope — what this does NOT establish.** The ROUTE, and recorded as evidence rather than as unconstructibility — a measurement correction against the proposal packet, which had this as STRUCTURAL. Under the deletion test it is not: the historical extractor is a published API with its own X.509 conformance suite over real DER, so it cannot be removed to make the wrong call unavailable, and deleting the controls leaves a second identity route compiling. What can be held is that the SERVING PATHS do not take it, which is a call-site fact. The third conjunct is the load-bearing one. The mechanism that forbids the wrong composition is the ABSENCE OF A PARAMETER through which a second credential could enter — a property of a signature, and a signature is exactly what a future edit widens first. "Just pass the leaf too, we already have it" reintroduces the defect without touching a single check. Measured twice at different widths. The battery holds the route inside this crate and pins that its own rules still detect each regression; `scripts/serving_identity_provenance_gate.py` carries two further clauses over the same subject — the historical facade's exemption, and the `online_ocsp` residue, which ADR-MCPRE-064 Slice 3 deliberately did not migrate and which is allowed only while its feature gate stands. It does not restate THM-0031, which says the resolved identity is RIGHT; this says only where it may come from.
 
 **Review requirement.** Owner security-specification review
 
@@ -1001,11 +1002,11 @@ any of them is closed.
 
 ### THM-0081 — Every production refusal is inside the exchange lifecycle
 
-**Statement.** Every refusal a production serving path can reach is minted from a `Refusal` a stage named and served through the exchange machine's disposition, or is a declared pre-exchange transport refusal reached before an exchange exists — there is no third kind, and no exit answers from source position.
+**Statement.** Every refusal a production serving path can reach is minted from a `Refusal` a stage named and served through the exchange machine's derived disposition, or is one of the transport frame's four enumerated pre-exchange replies, each reached before an exchange exists — there is no third kind, and no exit answers from source position.
 
 **Security consequence.** No refusal can state a retry contract the exchange machine did not derive, which is how an exit reached after a human's approval was spent came to report an ordinary retry — the defect the machine exists to remove, closed at the sites the machine cannot see.
 
-**Scope — what this does NOT establish.** A GAP. THM-0043 establishes that the relation is decided everywhere and THM-0046 that a refusal carries which authority reached it; neither says that every SITE is inside the lifecycle, and THM-0046's scope says so explicitly. The decidable form is a source-text property over the serving subtree — the shape `scripts/refusal_provenance_gate.py` already measures for provenance — and the clause that would measure site totality is not written.
+**Scope — what this does NOT establish.** The SITE SET, and nothing about which cause any site chooses. THM-0043 establishes that the transition relation is decided everywhere and THM-0046 that a refusal carries which authority reached it; neither says every SITE is inside the lifecycle, and an exit answering from source position would satisfy both. Four facts, together total over the exits a served request can take: the serving subtree mints no answer outside `served`; every `Err` arm of `handle` returns the binding its stage produced; the answers given outside the exchange are exactly the transport frame's, minted in its own three files and each reached ahead of the handler; and `disposition` derives the retry contract from `retry_semantics()` with no wildcard arm. The outside set is FOUR replies, not one, and the correction came from the measurement rather than from the packet: the channel/routing refusal is a served response, while the malformed message, the oversized body and the shed are built at the hyper type and would have been invisible to a control that only counted the first. All four are pre-handler, and the shed's 503 is retry-safe on its own terms — the body is never read, so nothing ran. One exit answers AFTER the exchange has decided and is named rather than absorbed: `served_to_hyper`'s fallback, taken when a decided answer cannot be framed at all. It is recorded because it is the single place an exchange's derived answer can be replaced, and the claim made about it is narrow and measured — it answers an empty 500, which asserts nothing about retry, and never a status clients retry. Source-text evidence, and recorded as evidence rather than as unconstructibility. `ServedHttpResponse` is a wire frame with public fields, as the async fleet, the blocking harness and external embedders all construct one — privacy would buy nothing, so deleting the battery leaves an out-of-lifecycle exit compiling. The third fact is measured at two widths: the battery names the transport frame's files inside this crate, and `scripts/refusal_provenance_gate.py` clause 12c holds the served mint to one call site across the whole workspace, so no other crate can acquire one. The blocking mTLS harness is out of scope and by its own module documentation is not an MCP-RE serving path: it frames every reply as a literal 200, so it carries no RFC 9421 evidence and cannot serve a signed refusal at all.
 
 **Review requirement.** Owner security-specification review
 
@@ -1013,12 +1014,22 @@ any of them is closed.
 
 ### THM-0082 — The serving path signs under the credential source materialization produced
 
-**Statement.** The response-signing authority the serving path holds was built by the composition root from the custody state the deployment validated, so a response is signed under the capability that deployment materialized and not under one assembled beside it.
+**Statement.** The response-signing authority the serving path holds was built by the composition root from the custody state the deployment validated: the root opens one key source through the materializer, opens the role-separation witness once, constructs no key source of its own, and installs the signing plane from that same source.
 
-**Security consequence.** A deployment cannot announce one signing custody at startup and sign with another on the data plane — the same shape as the resolver defect ADR-MCPS-021 recorded on the trust side, where the chain was constructed, its guarantee printed, and then dropped.
+**Security consequence.** A deployment cannot announce one signing custody at startup and sign with another on the data plane — the same shape as the resolver defect ADR-MCPS-021 recorded on the trust side, where the chain was constructed, its guarantee printed, and then dropped. Every signature would still verify and every startup line would still be true; the two facts would simply be about different keys.
 
-**Scope — what this does NOT establish.** A GAP, and the counterpart of THM-0066 on the signing side. THM-0062 establishes what the credential source yields and when it yields nothing; THM-0064 establishes what a custody selection asserts about exposure. Neither says the source the serving path holds came from that selection, and the composition controls that would say it — the shape `serving_trust_seam_test` uses for the resolver — are not written for the signer.
+**Scope — what this does NOT establish.** The counterpart of THM-0066 on the signing side, and the composition half THM-0073's seal cannot reach. THM-0062 establishes what the credential source yields and when it yields nothing; THM-0064 establishes what a custody selection asserts about exposure; THM-0073 establishes that a source obtained through the materializer kept its two roles apart. None of them says the root USED the materializer — `FileKeySource` and the KMS adapters are public constructors, as external embedders need, so a root that opened one beside it would compile. Evidence, not unconstructibility, and for that exact reason. The measurement is over the composition root's own source, the shape `serving_trust_seam_test` uses for the resolver: delete it and the old defect compiles again. It says nothing about what the signing plane does with the source once installed, which is `proxy.response_signing`'s.
 
 **Review requirement.** Owner security-specification review
 
-**Depends on.** THM-0062, THM-0064
+**Depends on.** THM-0062, THM-0064, THM-0073
+
+### THM-0083 — What a request is, is decided once, before anything reads it for meaning
+
+**Statement.** A body reaching the serving path is refused unless it is a legal JSON-RPC 2.0 request, and the outstanding id that selects its terminal is established by that one validation, ahead of every stage that reads the body for meaning; no production serving code reads the id again, and a reply is correlated to it by value AND by type, with a null id correlating to nothing.
+
+**Security consequence.** A body cannot be dispatched as a request and acknowledged as a notification — the tool runs and the caller is answered under a receipt that claims nothing ran. Nor can a document that is not an MCP message burn a nonce, spend a human approval, or write a durable retention marker on its own behalf, because the shape is decided before any of those happen.
+
+**Scope — what this does NOT establish.** Found by the missing-edge pass rather than by inspecting the registry: R1 quantifies over the pre-dispatch obligations a validated deployment selects, and this is one — it gates the continuation stage, the forwarded body and the choice of terminal — yet no node in the tree stated it. The authority, its contract and its battery all already existed; what did not exist was the claim. The same shape as the replay omission THM-0079 closed. Two halves. The VOCABULARY half is the owner's own: which bodies are messages, which answers correlate, and the two ways a correlation could be faked — a null id, and a reply that is also a request. The SINGLE-DECISION half is a source-text property of the serving path, and is evidence rather than unconstructibility: `outstanding_id` is a published API with legitimate callers on the client side and in the response validator, so it cannot be deleted to make a second read unavailable; what is held is that the serving path does not ask the same document twice, and that it carries the decided value to its terminal. It does not establish that the METHOD named is one this deployment serves, which is authorization's, nor anything about the body's application payload, which the profile deliberately does not inspect.
+
+**Review requirement.** Owner security-specification review

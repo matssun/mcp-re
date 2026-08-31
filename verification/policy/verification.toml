@@ -81,11 +81,26 @@ class = "V0"
 description = "RFC 7638 JWK thumbprint keyids: the canonical JWK form and the derived selector."
 paths = ["mcp-re-http-profile/src/keyid.rs"]
 exported_contracts = []
-evidence = ["test://http_profile/keyid/rfc8037_a3_known_answer"]
-# One member, because the URI names one known-answer test rather than a battery. The unit's
-# other two tests are real and pass, but nothing here claims them: widening the membership
-# to match the file would make the evidence entry say more than its name does.
-tested_symbols = ["lib#keyid::tests::rfc8037_a3_known_answer"]
+evidence = [
+  "test://http_profile/keyid/rfc8037_a3_known_answer",
+  "test://http_profile/keyid/derivation_introduces_no_collisions",
+]
+# Two entries, because two different propositions are measured here and a single membership
+# would let either stand for the other. The first is a third-party known answer — RFC 8037
+# §A.3 over the §A.1 key — and says the derivation agrees with the standard. The second is
+# the MCP-RE-owned half of selector injectivity (THM-0055): the canonical form embeds its
+# operand between fixed affixes, distinct operands never share a form, and the encoding does
+# not merge digests. Neither reaches THM-0050's primitive half, which is ASM-0037 and is
+# assumed rather than measured.
+tested_symbols = [
+  "lib#keyid::tests::rfc8037_a3_known_answer",
+  "lib#keyid::tests::canonical_form_is_lexicographic_and_unspaced",
+  "lib#keyid::tests::thumbprint_is_deterministic_and_key_bound",
+  "lib#keyid::tests::the_canonical_form_embeds_its_operand_verbatim_between_fixed_affixes",
+  "lib#keyid::tests::distinct_operands_never_share_a_canonical_form",
+  "lib#keyid::tests::the_keyid_encoding_is_injective_over_the_digest_width",
+]
+assumptions = ["ASM-0037"]
 pilot = "lean-candidate"
 
 # ---------------------------------------------------------------------------
@@ -455,8 +470,23 @@ exported_contracts = []
 evidence = [
   "test://proxy/tls/listener_security_state",
   "mutation://proxy/tls/listener_security_state",
+  # A DIFFERENT proposition from the two above, named separately so neither can stand for
+  # the other. The state battery measures the anchor epoch, resumption and the signing
+  # budget, and says nothing about revocation admission. This one is THM-0054: the
+  # handshake half — a revoked client, a stale CRL, and a client whose status the configured
+  # CRLs cannot determine — with the construction-site half beside it.
+  "test://proxy/tls/client_revocation_admission",
 ]
 tested_symbols = [
+  "tests/integration#tls_test::revoked_client_cert_handshake_is_rejected",
+  "tests/integration#tls_test::non_revoked_client_cert_completes_handshake_with_crl_configured",
+  "tests/integration#tls_test::stale_crl_fails_client_handshake_closed",
+  "tests/integration#tls_test::a_client_whose_revocation_status_cannot_be_determined_is_denied",
+  "tests/integration#client_verifier_posture_test::one_production_file_builds_the_client_certificate_verifier",
+  "tests/integration#client_verifier_posture_test::no_production_code_relaxes_the_unknown_status_policy",
+  "tests/integration#client_verifier_posture_test::the_builder_enforces_expiration_and_admits_no_posture_argument",
+  "tests/integration#client_verifier_posture_test::the_only_other_verifier_is_the_declared_fault_injector",
+  "tests/integration#client_verifier_posture_test::the_rules_would_catch_each_regression",
   "lib#tls_listener_state::tests::the_epoch_digests_the_anchors_this_state_owns",
   "lib#tls_listener_state::tests::a_rebuild_keeps_the_cache_and_the_epoch_of_the_state_it_was_built_through",
   "lib#tls_listener_state::tests::a_different_anchor_set_is_a_different_state_with_its_own_empty_cache",
@@ -611,6 +641,36 @@ pilot = "verus-pilot"
 # SHA-256, and NONE of them is in the theorem's dependency cone, because the property is
 # established by the function's own comparisons. ASM-0012 records that this is a limit on
 # what the theorem SAYS, not a hole in what it proves.
+
+[[unit]]
+id = "http_profile.admission_assertion"
+class = "V0"
+description = "What a presented admission assertion has to be before any verdict is read from it: signed under a key resolved for its own issuer through the trust seam, carrying the required credential type and algorithm, naming this profile and an audience this enforcement point answers to, and inside both its own [nbf, exp] window and the verifier's independent staleness budget."
+# Overlaps `http_profile.admission_currency`'s paths deliberately. They are two authorities
+# in one file and the registry already says so: ASM-0012 declares the verifier OPAQUE to the
+# currency theorem, contributing no postcondition, and its review requirement names a
+# separate unit for assertion validity as the discharge rather than an `ensures` added
+# there. This is that unit. Nothing here is inside the Verus cone.
+paths = [
+  "mcp-re-http-profile/src/admission.rs",
+  "mcp-re-http-profile/src/admission_policy.rs",
+]
+exported_contracts = []
+evidence = ["test://http_profile/admission/assertion_authenticity"]
+assumptions = []
+# The battery is negative on purpose. Each member removes one way an assertion could be
+# believed without being this enforcement point's to believe: another issuer's key, another
+# credential profile, another audience, another profile id, or a window that has passed in
+# either direction.
+tested_symbols = [
+  "lib#admission::tests::an_untrusted_issuer_is_rejected",
+  "lib#admission::tests::an_assertion_the_authority_did_not_sign_is_rejected",
+  "lib#admission::tests::an_assertion_carrying_another_credentials_type_or_algorithm_is_rejected",
+  "lib#admission::tests::an_assertion_for_another_profile_or_audience_is_rejected",
+  "lib#admission::tests::an_assertion_outside_its_validity_window_is_rejected",
+  "lib#admission::tests::an_assertion_older_than_the_verifiers_own_budget_is_rejected",
+  "lib#admission::tests::an_assertion_dated_ahead_of_the_verifier_is_rejected",
+]
 
 [[unit]]
 id = "http_profile.admission_currency"
@@ -1976,6 +2036,36 @@ tested_symbols = [
 ]
 
 [[unit]]
+id = "proxy.refusal_site_totality"
+class = "V0"
+description = "Where a served request can be answered from: the serving assembly mints no answer outside its one wrapper, every error arm of the pipeline returns what its stage produced, the single mint outside the exchange has exactly one production call site and that site sits ahead of the handler, and the retry contract a refusal carries is derived from the exchange machine rather than chosen at the exit."
+# The SUBTREE, by glob, plus the transport frame that is the one site outside it. A file
+# list would have to learn about the next serving region, and the failure mode of a stale
+# list is a clean pass over unmeasured code — which is exactly the thing this unit claims
+# cannot happen. `async_serve/mod.rs` is here because it DEFINES the mint: a change to the
+# constructor is a change to what the claim is about, even though the module is not a site.
+paths = [
+  "mcp-re-proxy/src/http_profile_serve/**/*.rs",
+  "mcp-re-proxy/src/async_serve/request.rs",
+  "mcp-re-proxy/src/async_serve/mod.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/refusal/site_totality"]
+assumptions = []
+# Six members, and the last is not decoration. Four rules over source text are vacuously
+# true the moment a matcher stops matching, so the battery that would report a clean pass
+# over a moved subtree is the battery that must also demonstrate it still detects each
+# regression.
+tested_symbols = [
+  "tests/integration#refusal_site_totality_test::the_serving_subtree_answers_only_through_its_one_wrapper",
+  "tests/integration#refusal_site_totality_test::every_error_arm_of_handle_returns_what_its_stage_produced",
+  "tests/integration#refusal_site_totality_test::the_answers_outside_the_exchange_are_exactly_the_transport_frames",
+  "tests/integration#refusal_site_totality_test::the_one_post_exchange_frame_exit_advertises_no_retry",
+  "tests/integration#refusal_site_totality_test::the_retry_contract_is_derived_from_the_exchange_machine",
+  "tests/integration#refusal_site_totality_test::the_rules_would_catch_each_regression",
+]
+
+[[unit]]
 id = "proxy.refusal_provenance"
 class = "V0"
 description = "What a refusal is and which authority reached it: the cause is carried whole rather than rendered, the authority set is closed over exactly Core and Authorization, an authorization refusal keeps its two arms distinguishable, and rendering happens only at the presentation boundary."
@@ -2218,6 +2308,121 @@ tested_symbols = [
   "lib#delegated_server_signer::terminal_retirement_tests::a_mint_landing_after_the_owner_is_gone_cannot_restore_signing",
   "lib#delegated_server_signer::terminal_retirement_tests::a_rotor_retirement_is_still_undone_by_the_next_successful_mint",
   "lib#delegated_server_signer::terminal_retirement_tests::a_poisoned_snapshot_lock_fails_closed_and_still_recovers",
+]
+
+[[unit]]
+id = "http_profile.request_envelope"
+class = "V0"
+description = "What a JSON-RPC message IS on this profile, and what an answer must echo: the legality of a request envelope, the outstanding id it establishes, and the correlation rule a reply is held to — by value and by type, with no null-id correlation and no reply that is also a request."
+paths = [
+  "mcp-re-http-profile/src/envelope.rs",
+  "mcp-re-proxy/src/http_profile_serve/request_admission.rs",
+  "mcp-re-proxy/src/http_profile_serve/mod.rs",
+]
+test_package = "mcp-re-http-profile"
+exported_contracts = []
+evidence = [
+  "test://http_profile/envelope/request_and_correlation",
+  "test://proxy/serving/outstanding_id_provenance",
+]
+assumptions = []
+# Two batteries for two halves. The first is what the vocabulary MEANS — which bodies are
+# messages, which answers correlate, and the two ways a correlation could be faked (a null
+# id, and a reply that is also a request). The second is that the serving path decides it
+# ONCE: a published reader exists and legitimately has other callers, so what is measured is
+# that the serving path does not ask the same document twice.
+tested_symbols = [
+  "lib#envelope::tests::a_request_body_that_is_not_a_json_rpc_message_is_refused",
+  "lib#envelope::tests::a_legal_request_yields_its_outstanding_id",
+  "lib#envelope::tests::the_outstanding_id_is_read_from_the_request",
+  "lib#envelope::tests::a_notification_has_no_correlatable_response",
+  "lib#envelope::tests::ids_correlate_by_value_and_by_type",
+  "lib#envelope::tests::a_null_id_does_not_correlate_to_an_id_bearing_request",
+  "lib#envelope::tests::a_response_id_that_does_not_match_the_request_is_refused",
+  "lib#envelope::tests::a_reply_that_is_also_a_request_is_refused",
+  "tests/integration#outstanding_id_provenance_test::the_serving_path_decides_the_outstanding_id_exactly_once",
+  "tests/integration#outstanding_id_provenance_test::no_production_serving_code_reads_the_outstanding_id_a_second_time",
+  "tests/integration#outstanding_id_provenance_test::the_rules_would_catch_each_regression",
+]
+
+[[unit]]
+id = "proxy.serving_identity_provenance"
+class = "V0"
+description = "The route each direct-TLS serving path takes to a peer identity: one call to one resolver per path, a resolver signature that admits its predecessor and the options and nothing else, and no step of the certificate-representation route named anywhere in either path."
+# Both serving paths and the dispatch module that holds the resolver's signature. The paths
+# are globs because each is a SUBTREE — the async listener is one module per region, and a
+# unit naming one file would keep its fingerprint still while the derivation moved.
+paths = [
+  "mcp-re-proxy/src/async_serve/**/*.rs",
+  "mcp-re-proxy/src/blocking_mtls_harness/**/*.rs",
+  "mcp-re-proxy/src/tls.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/serving/identity_provenance"]
+assumptions = []
+# The third member is the load-bearing one: the mechanism that forbids pairing an acceptance
+# from one relationship with an identity from another credential is the ABSENCE of a
+# parameter, which is a property of a signature — and a signature is what an edit widens
+# first, leaving every other control green.
+tested_symbols = [
+  "tests/integration#serving_identity_provenance_test::each_serving_path_asks_its_authority_exactly_once",
+  "tests/integration#serving_identity_provenance_test::neither_serving_path_reconstructs_identity_from_representation",
+  "tests/integration#serving_identity_provenance_test::the_resolver_admits_no_second_credential",
+  "tests/integration#serving_identity_provenance_test::the_rules_would_catch_each_regression",
+]
+
+[[unit]]
+id = "proxy.signing_credential_provenance"
+class = "V0"
+description = "Where the response-signing authority the serving path holds came from: the composition root opens one key source through the materializer, opens the role-separation witness once, constructs none of its own, and installs the signing plane from that same source."
+# The composition root and the plane the signer is installed through — the closure the claim
+# actually reads. It deliberately does NOT include the receipt or window modules: what those
+# do with a signer is `proxy.response_signing`'s, and this says only which signer they get.
+paths = [
+  "mcp-re-proxy/src/app.rs",
+  "mcp-re-proxy/src/signing_plane/mod.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/signing/credential_provenance"]
+assumptions = []
+# The fourth member is not decoration. Three source-text rules go vacuously true the moment
+# a matcher stops matching, and a green run over a moved composition root would then mean
+# nothing at all.
+tested_symbols = [
+  "tests/integration#signing_credential_provenance_test::the_composition_root_opens_one_key_source_through_the_materializer",
+  "tests/integration#signing_credential_provenance_test::the_composition_root_constructs_no_rival_key_source",
+  "tests/integration#signing_credential_provenance_test::the_signing_plane_is_materialized_from_the_materialized_source",
+  "tests/integration#signing_credential_provenance_test::the_rules_would_catch_each_regression",
+]
+
+[[unit]]
+id = "proxy.signing_role_separation"
+class = "V0"
+description = "The relation between what the two custody machines materialized: the response-signing role's public key and the channel-signing role's, compared as cryptographic identities rather than as mechanism locators, with a serving capability unobtainable when they are one key."
+# The relation's own module plus the dispatch it is reached through. `mod.rs` is inside the
+# closure because it is what makes the relation unavoidable: it opens the source privately
+# and returns only the witness, so a caller cannot obtain a source that skipped the
+# comparison.
+paths = [
+  "mcp-re-proxy/src/capability_materialization/key_source/role_separation.rs",
+  "mcp-re-proxy/src/capability_materialization/key_source/mod.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/materialization/signing_role_separation"]
+assumptions = []
+# Both directions, and the third arm. A refusal control alone would pass on an authority
+# that refused everything, and a materialization control alone would pass on one that
+# compared nothing — so the battery has to show it separates the two cases, and that a
+# channel credential of another profile is treated as incomparable rather than as a
+# collapse.
+tested_symbols = [
+  "lib#capability_materialization::key_source::role_separation::tests::a_deployment_whose_two_roles_are_one_key_cannot_be_materialized",
+  "lib#capability_materialization::key_source::role_separation::tests::two_distinct_roles_materialize",
+  "lib#capability_materialization::key_source::role_separation::tests::an_incomparable_channel_credential_materializes",
+  "lib#capability_materialization::key_source::role_separation::tests::the_response_identity_round_trips_its_own_point",
+  "lib#capability_materialization::key_source::role_separation::tests::two_different_keys_have_two_different_identities",
+  "lib#capability_materialization::key_source::role_separation::tests::one_key_has_one_identity_however_often_it_is_asked",
+  "lib#capability_materialization::key_source::role_separation::tests::a_non_ed25519_credential_is_incomparable_rather_than_a_failure",
 ]
 
 [[unit]]

@@ -60,7 +60,7 @@ graph BT
     THM_0047["THM-0047<br/>The verifier's assurance products are not substitutable"]
     THM_0048["THM-0048<br/>Every listener obtains its whole security posture through one listener state"]
     THM_0049["THM-0049<br/>Every illegal cross-owner configuration combination is refused at layer A"]
-    THM_0050["THM-0050<br/>Distinct verification keys have distinct keyids"]
+    THM_0050["THM-0050<br/>Distinct verification keys cannot feasibly be made to share a keyid"]
     THM_0051["THM-0051<br/>The pipeline holds, at dispatch, the verification product of this very exchange"]
     THM_0052["THM-0052<br/>A dispatched body was released by the decision a configured policy produced"]
     THM_0053["THM-0053<br/>A presented admission assertion is authentic, in its window, and for this audience"]
@@ -79,8 +79,8 @@ graph BT
     THM_0066["THM-0066<br/>The serving PEP resolves actors through the deployment's materialized trust authority"]
     THM_0067["THM-0067<br/>The composition root re-reads no owner's security semantics from the request"]
     THM_0069["THM-0069<br/>A security record states each authority's outcome in that authority's own coordinate"]
-    THM_0071["ROOT — THM-0071<br/>The refusal vocabulary is total over the outcomes that can occur"]
-    THM_0073["THM-0073<br/>A validated deployment cannot collapse signing roles policy requires distinct"]
+    THM_0071["ROOT — THM-0071<br/>Every reachable refusal has a typed provenance in its own authority's coordinate"]
+    THM_0073["THM-0073<br/>Serving materialization refuses a deployment whose two signing roles are one key"]
     THM_0074["ROOT — THM-0074<br/>No unearned dispatch"]
     THM_0075["ROOT — THM-0075<br/>No unearned response attribution"]
     THM_0076["ROOT — THM-0076<br/>A client accepts only an answer to its own request, under a signer it trusts"]
@@ -90,6 +90,7 @@ graph BT
     THM_0080["THM-0080<br/>Serving derives peer identity only from the credential the mechanism accepted"]
     THM_0081["THM-0081<br/>Every production refusal is inside the exchange lifecycle"]
     THM_0082["THM-0082<br/>The serving path signs under the credential source materialization produced"]
+    THM_0083["THM-0083<br/>What a request is, is decided once, before anything reads it for meaning"]
     THM_0007 --> THM_0008
     THM_0010 --> THM_0009
     THM_0001 --> THM_0014
@@ -141,6 +142,7 @@ graph BT
     THM_0046 --> THM_0069
     THM_0046 --> THM_0071
     THM_0069 --> THM_0071
+    THM_0081 --> THM_0071
     THM_0049 --> THM_0073
     THM_0003 --> THM_0074
     THM_0004 --> THM_0074
@@ -159,6 +161,7 @@ graph BT
     THM_0066 --> THM_0074
     THM_0079 --> THM_0074
     THM_0080 --> THM_0074
+    THM_0083 --> THM_0074
     THM_0022 --> THM_0075
     THM_0062 --> THM_0075
     THM_0063 --> THM_0075
@@ -193,6 +196,7 @@ graph BT
     THM_0046 --> THM_0081
     THM_0062 --> THM_0082
     THM_0064 --> THM_0082
+    THM_0073 --> THM_0082
     classDef root stroke-width:3px;
     class THM_0071,THM_0074,THM_0075,THM_0076,THM_0077,THM_0078 root;
 ```

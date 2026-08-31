@@ -74,6 +74,10 @@ on:
       # product-provenance gate measures — and a filter enumerating today's members would go
       # stale the next time a region moves.
       - "mcp-re-proxy/src/http_profile_serve/**"
+      - "mcp-re-proxy/src/async_serve/**"
+      - "mcp-re-proxy/src/blocking_mtls_harness/**"
+      - "mcp-re-proxy/src/capability_materialization/key_source/**"
+      - "mcp-re-proxy/src/signing_plane/**"
       # Stage 6: the transparency-service pin, whose provenance THM-0068 states.
       - "mcp-re-http-profile/src/scitt/**"
       # Stage 7: what a record may say, and whether the stream is honest about what reached it.
@@ -198,6 +202,10 @@ on:
       # product-provenance gate measures — and a filter enumerating today's members would go
       # stale the next time a region moves.
       - "mcp-re-proxy/src/http_profile_serve/**"
+      - "mcp-re-proxy/src/async_serve/**"
+      - "mcp-re-proxy/src/blocking_mtls_harness/**"
+      - "mcp-re-proxy/src/capability_materialization/key_source/**"
+      - "mcp-re-proxy/src/signing_plane/**"
       # Stage 6: the transparency-service pin, whose provenance THM-0068 states.
       - "mcp-re-http-profile/src/scitt/**"
       # Stage 7: what a record may say, and whether the stream is honest about what reached it.

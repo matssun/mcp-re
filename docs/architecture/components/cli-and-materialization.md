@@ -286,3 +286,49 @@ it alone. Nothing in `DeploymentRequest` records CLI presence.
 - [x] ADR-058's `parse_args` ruling treated as evidence for neither side
 - [x] Outcome recorded: **move materialization and the legality predicate out; `parse_args` keeps its exception**
 - [x] No code changed
+
+## 11. Amendment (2026-08-31) — the materialized signing roles are a relation, and it is enforced
+
+Narrow clarification to **ADR-MCPRE-067 §10**, which models the response-signing source and
+the channel credential as two values so that nothing forces them to agree, and gives X2a the
+job of saying that the channel key object must live in a backend the deployment already
+reaches. §10 said nothing about whether the two roles may be the **same key**, and nothing
+enforced that they are not.
+
+They may not be. Response signing attributes an answer to this proxy; channel signing proves
+possession during the handshake that establishes a relationship. One key serving both means a
+party able to obtain a handshake signature has thereby obtained a response attribution, and
+the two roles stop being separately accountable — which is the whole content of calling them
+two roles.
+
+**The relation is over the materialized cryptographic identity, never the locator.** A
+comparison of `--aws-kms-key-id` against `--aws-kms-tls-key-id`, of two PKCS#11 labels, or of
+two filesystem paths establishes nothing: an ARN, a key id and an alias are three names for
+one AWS key, a label is scoped to a token, and a path resolves through symlinks. Two locators
+that differ can be one key, so a locator check would report a separation that does not exist
+while looking exactly like one that does. Both roles are therefore asked for their **public
+verification key** after materialization — the response signer directly, the channel
+credential through the leaf of the chain the deployment serves — and compared as
+`Ed25519PublicKeyValue`, the canonical RFC 8410 identity `communication_assurance` already
+owns. No provider-specific equality semantics were introduced.
+
+**It is unconditional.** The ratified wording was *where policy requires the roles to be
+distinct*; measurement found no supported deployment for which sharing is desirable, and a
+one-valued policy input invented to make the condition expressible would be an input that
+selects nothing. Every deployment is held to it.
+
+**Possession is the proof.** `capability_materialization::key_source::MaterializedSigningRoles`
+holds the key source privately, `establish` is its only producer, and `build_key_source`
+returns the witness rather than the source — so a serving path cannot hold a key source that
+did not come through the comparison. Deleting the call does not leave a path that skips it; it
+leaves one that does not compile. What that does not settle is whether the composition root
+uses the materializer at all, since `FileKeySource` and the KMS adapters are public
+constructors external embedders need; that is measured separately, over `app.rs`.
+
+Registry: THM-0073 (`proxy.signing_role_separation`) and THM-0082
+(`proxy.signing_credential_provenance`).
+
+**Which layer decides.** Not `config_state::cross_machine`: a request-level classifier reads
+locators, and the decisive fact here exists only once both backends have answered. This is a
+materialization relation and lives with the materializer.
+
