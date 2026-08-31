@@ -74,6 +74,8 @@ on:
       # product-provenance gate measures — and a filter enumerating today's members would go
       # stale the next time a region moves.
       - "mcp-re-proxy/src/http_profile_serve/**"
+      # Stage 6: the transparency-service pin, whose provenance THM-0068 states.
+      - "mcp-re-http-profile/src/scitt/**"
       # MCPRE-137: the listener-lifetime TLS security state, its subordinates, and the
       # production wiring that gives a listener a lifetime at all.
       - "mcp-re-proxy/src/tls_listener_state/**"
@@ -189,6 +191,8 @@ on:
       # product-provenance gate measures — and a filter enumerating today's members would go
       # stale the next time a region moves.
       - "mcp-re-proxy/src/http_profile_serve/**"
+      # Stage 6: the transparency-service pin, whose provenance THM-0068 states.
+      - "mcp-re-http-profile/src/scitt/**"
       # MCPRE-137: the listener-lifetime TLS security state, its subordinates, and the
       # production wiring that gives a listener a lifetime at all.
       - "mcp-re-proxy/src/tls_listener_state/**"

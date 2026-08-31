@@ -32,6 +32,7 @@ not an omission to hide.
 | http_profile.response_emission_binding | V0 | THM-0065 | 0 |
 | http_profile.scitt_receipt_offline | V0 | THM-0041 | 0 |
 | http_profile.scitt_retained_correspondence | V0 | THM-0042 | 0 |
+| http_profile.scitt_service_pin | V0 | THM-0068 | 0 |
 | http_profile.verifier_result_separation | V0 | THM-0047 | 0 |
 | http_profile.verifier_results | V0 | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022 | 3 |
 | proxy.authenticated_relationship_peer | V0 | THM-0031 | 1 |
@@ -57,7 +58,8 @@ not an omission to hide.
 | proxy.request_peer_binding | V0 | THM-0034 | 0 |
 | proxy.response_signing | V0 | THM-0063 | 0 |
 | proxy.runtime_lifecycle | V0 | THM-0012 | 0 |
+| proxy.serving_trust_seam | V0 | THM-0066 | 0 |
 | proxy.tls_listener_state | V0 | THM-0048, THM-0054 | 0 |
-| proxy.trust_composition_root | V0 | THM-0038 | 0 |
+| proxy.trust_composition_root | V0 | THM-0038, THM-0067 | 0 |
 | proxy.trust_configuration_state | V0 | THM-0035, THM-0036 | 0 |
 | proxy.trust_plan | V0 | THM-0037 | 0 |

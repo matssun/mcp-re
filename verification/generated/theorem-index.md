@@ -87,6 +87,9 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 | THM-0063 | A signed response never advertises validity its credential does not authorize | proxy.response_signing | unit://proxy.delegated_signing_credential, unit://proxy.response_signing | live |
 | THM-0064 | A non-exporting custody selection keeps the private key off this process | proxy.custody_exposure | unit://proxy.custody_exposure | live |
 | THM-0065 | An emitted bound response signature binds the request it answers | http_profile.response_emission_binding | unit://http_profile.response_emission_binding, unit://http_profile.verifier_results | live |
+| THM-0066 | The serving PEP resolves actors through the deployment's materialized trust authority | proxy.serving_trust_seam | unit://proxy.serving_trust_seam, unit://proxy.trust_plan | live |
+| THM-0067 | The composition root re-reads no owner's security semantics from the request | proxy.trust_composition_root | unit://proxy.trust_composition_root | live |
+| THM-0068 | A pinned transparency service is one operator-reviewed document, or it is not a pin | http_profile.scitt_service_pin | unit://http_profile.scitt_service_pin | live |
 
 ## Claims in full
 
@@ -504,7 +507,7 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 
 **Review requirement.** Owner security-specification review
 
-**Depends on.** THM-0035, THM-0037
+**Depends on.** THM-0035, THM-0037, THM-0067
 
 ### THM-0039 — An accepted PDP decision was authenticated under a key the trust seam resolved
 
@@ -797,3 +800,35 @@ in `theorems.toml` `root_theorems` after theorem-architecture ratification.
 **Review requirement.** Owner security-specification review
 
 **Depends on.** THM-0021, THM-0022
+
+### THM-0066 — The serving PEP resolves actors through the deployment's materialized trust authority
+
+**Statement.** The composition root builds the serving actor resolver exactly once, from the reloading signer directory's snapshot and the deployment's revocation-tier resolver. That seam resolves every Request-slot keyid through the tier on every request rather than through a map captured at process start; an unknown kid is a definitive negative, a store outage is reported as unavailable rather than as a binding failure, and every non-active outcome — revoked, not found, malformed, unavailable — yields no actor. The Response slot answers only for this deployment's own issuer kid.
+
+**Security consequence.** A key revoked in the trust store stops verifying at the instant the tier says so rather than at the next restart, and an operational failure of the tier is never softened into an allow. A deployment cannot announce one revocation tier at startup and run another on the data plane — the defect ADR-MCPS-021 recorded, in which the resolver chain was constructed, its guarantee printed, and then dropped.
+
+**Scope — what this does NOT establish.** Where the seam comes from and what it consults. It does not establish that the tier's own answer is correct, that the trust document is authentic, or that the resolved key is the right one for the signer — those are the tier's and the trust owner's. The composition half is held by source controls over `app.rs`, because `ActorResolver` is a closure seam: anything producing that signature is an inhabitant, so privacy buys nothing and the controls are EVIDENCE rather than unconstructibility.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0037
+
+### THM-0067 — The composition root re-reads no owner's security semantics from the request
+
+**Statement.** Every field the composition root still reads directly from the validated deployment request is a pinned ordinary parameter — one whose value changing, with every owner state unchanged, cannot change a security-sensitive decision or effect — and each is recorded with the sentence saying why. The inventory is checked against the file it describes in both directions, so a new raw read fails and a field that acquired an owner must leave the list.
+
+**Security consequence.** After layer A classifies a deployment, no post-validation consumer can reach back past an owner for a security decision the owner already made — which is how two components come to disagree about what was configured, with neither of them wrong locally.
+
+**Scope — what this does NOT establish.** The general claim over ALL owners; THM-0038 is its trust specialization and states in addition that the root passes trust as owner projections. It does not establish that the owners' own classifications are right, and it says nothing about consumers other than the root — a plane reaching back for a posture is a different failure with its own control. It is a source-text inventory, not a type: `ValidatedDeployment::config()` is legitimately readable, because the root builds things out of it. What is decidable is WHICH fields, and the list only means anything while adding to it costs a written reason.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0068 — A pinned transparency service is one operator-reviewed document, or it is not a pin
+
+**Statement.** `ResolvedTransparencyService::pinned` takes its verification key, leaf profile and position profile from a single `ScittServiceTrustPin`, so all three came from one document an operator wrote and reviewed. A malformed pin document never becomes a pin, and an illegal one is refused at deserialization rather than carried into a resolver that would answer from it.
+
+**Security consequence.** A receipt cannot be verified against a service whose key came from one place and whose profile expectations came from another — the pairing that lets a receipt satisfy a position profile the pinned service never declared.
+
+**Scope — what this does NOT establish.** It establishes the PROVENANCE of a pinned service, not that a deployment pinned one. `verify_receipt_offline` takes the service as a `Fn(&str) -> Option<ResolvedTransparencyService>` seam, and `stated` is a legitimate second provenance — the in-process prototype log is one, with no pin to resolve from. Against a seam a private field only forces a constructor taking the same arguments with the same absence of checking, so what these fields buy is that every producer is NAMED, not that the illegal pairing is unconstructible. Whether a given deployment's resolver is backed by a pin is deployment wiring and is not established here.
+
+**Review requirement.** Owner security-specification review

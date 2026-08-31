@@ -164,10 +164,14 @@ graph BT
     THM_0036["THM-0036<br/>A networked trust-epoch source is handed over as a paired locator and key, or not at all"]
     THM_0037["THM-0037<br/>A trust plan's reload cadence is a projection of the revocation posture, never a second value"]
     THM_0038["THM-0038<br/>The composition root consumes trust as owner projections and re-reads no trust field from the request"]
+    THM_0066["THM-0066<br/>The serving PEP resolves actors through the deployment's materialized trust authority"]
+    THM_0067["THM-0067<br/>The composition root re-reads no owner's security semantics from the request"]
     THM_0035 --> THM_0036
     THM_0035 --> THM_0037
     THM_0035 --> THM_0038
     THM_0037 --> THM_0038
+    THM_0067 --> THM_0038
+    THM_0037 --> THM_0066
 ```
 
 ## Component 13
@@ -276,4 +280,11 @@ graph BT
 ```mermaid
 graph BT
     THM_0064["THM-0064<br/>A non-exporting custody selection keeps the private key off this process"]
+```
+
+## Component 26
+
+```mermaid
+graph BT
+    THM_0068["THM-0068<br/>A pinned transparency service is one operator-reviewed document, or it is not a pin"]
 ```

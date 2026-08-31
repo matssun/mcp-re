@@ -1710,7 +1710,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.trust_composition_root"
 class = "V0"
-description = "The composition root's TRUST consumption only: after layer A classifies, the root passes owner projections and re-reads no trust field from the validated request. Deliberately narrow — it claims nothing else about `app.rs`, whose other responsibilities are outside this unit."
+description = "The composition root's consumption of the validated request: after layer A classifies, the root passes owner projections, and every field it still reads raw is a pinned ordinary parameter whose reason is written down. Measured over ALL owners, not only trust — the inventory the controls check is the whole set of `values.<field>` reads."
 paths = ["mcp-re-proxy/src/app.rs"]
 exported_contracts = []
 evidence = ["test://proxy/trust/composition_reads_only_projections"]
@@ -2297,4 +2297,66 @@ tested_symbols = [
   "tests/delegated_202_test#a_delegated_202_verifies_via_the_credential_chain",
   "tests/delegated_202_test#a_delegated_202_refuses_a_retransmission_of_the_same_notification",
   "tests/delegated_202_test#a_delegated_202_refuses_a_content_distinct_notification",
+]
+
+# ---------------------------------------------------------------------------------------
+# Stage 6 — the deployment-composition owners.
+#
+# A-1 was recorded as a genuine missing composition authority. Measurement disagrees in the
+# same way it did for A-2: `build_actor_resolver` IS the composition, `revocation_serving_wiring_test`
+# already measures what it does, and what was missing is a `[[unit]]` and the composition
+# half — that the seam the serving path runs was built from the materialized authority
+# rather than from a snapshot beside it.
+# ---------------------------------------------------------------------------------------
+
+[[unit]]
+id = "proxy.serving_trust_seam"
+class = "V0"
+description = "Where the serving PEP's actor resolver comes from and what it consults: built once by the composition root from the reloading signer snapshot and the revocation tier, resolving every Request-slot signer through the tier rather than a map captured at process start."
+paths = [
+  "mcp-re-proxy/src/app.rs",
+  "mcp-re-proxy/src/http_profile_serve/request_admission.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/trust/serving_seam_wiring"]
+assumptions = []
+# Two halves, and the second is the one the first cannot say. The wiring battery pins what
+# the seam DOES — whatever the tier decides, the Request slot obeys — taking the seam as
+# given. The composition controls pin that the seam the serving path runs is the one built
+# from the materialized authority, which is invisible to every behavioural control because
+# each still measures a true thing about a correctly-composed seam.
+tested_symbols = [
+  "tests/integration#revocation_serving_wiring_test::active_binding_resolves_the_key_the_tier_returns",
+  "tests/integration#revocation_serving_wiring_test::revoked_binding_yields_no_actor",
+  "tests/integration#revocation_serving_wiring_test::not_found_and_malformed_yield_no_actor",
+  "tests/integration#revocation_serving_wiring_test::revocation_takes_effect_without_a_restart",
+  "tests/integration#revocation_serving_wiring_test::rotated_key_is_served_from_the_tier",
+  "tests/integration#revocation_serving_wiring_test::slot_discipline_holds",
+  "tests/integration#revocation_serving_wiring_test::unavailable_tier_fails_closed_and_is_never_softened_to_an_allow",
+  "tests/integration#revocation_serving_wiring_test::a_resolver_outage_is_reported_as_unavailable_not_as_a_binding_failure",
+  "tests/integration#revocation_serving_wiring_test::the_production_resolver_surfaces_a_store_outage",
+  "tests/integration#serving_trust_seam_test::the_serving_trust_seam_is_built_once_from_the_materialized_authority",
+  "tests/integration#serving_trust_seam_test::the_seam_resolves_through_the_tier_rather_than_a_frozen_map",
+  "tests/integration#serving_trust_seam_test::the_rules_would_catch_each_regression",
+]
+
+[[unit]]
+id = "http_profile.scitt_service_pin"
+class = "V0"
+description = "What an operator-written transparency-service pin document is, and when it becomes a resolvable service: the three parts a receipt is verified against — key, leaf profile, position profile — come from one reviewed document or from a caller asserting them, and the two provenances are named."
+paths = [
+  "mcp-re-http-profile/src/scitt/trust_pin/document.rs",
+  "mcp-re-http-profile/src/scitt/trust_pin/mod.rs",
+  "mcp-re-http-profile/src/scitt/service.rs",
+]
+exported_contracts = []
+evidence = ["test://http_profile/scitt/service_pin"]
+assumptions = []
+# The refusals are the claim: a malformed document never becomes a pin, and an illegal one
+# is refused at deserialization rather than carried into a resolver that would then answer
+# from it.
+tested_symbols = [
+  "lib#scitt::trust_pin::tests::a_pinned_es256_key_verifies_a_receipt",
+  "lib#scitt::trust_pin::tests::a_malformed_pin_document_never_becomes_a_pin",
+  "lib#scitt::trust_pin::tests::an_illegal_pin_document_is_refused_at_deserialization",
 ]
