@@ -2598,6 +2598,109 @@ tested_symbols = [
   "lib#authorization::audit::fields::tests::the_unconfigured_line_cannot_be_read_as_an_authorization",
 ]
 
+# ADR-MCPRE-059 §28 / issue #742. TWO owners, not one, and the split is the finding: R9's
+# only Critical was a credential-bearing egress reaching an authority the configuration did
+# not select, and BOTH modules were already fixed and neither was a declared unit. A fix
+# that maps to no unit is not covered by anything, so a later change to it invalidates
+# nothing. Registering the owners is what turns FIXED into COVERED.
+#
+# They are separate because they answer different questions. `outbound_fetch` decides
+# whether a destination passed the guard its PROVENANCE requires — mechanism-neutral, and
+# the generic authority the census asked for. `kms_endpoint_policy` decides whether a KMS
+# endpoint's literal spelling and its machine interpretation name the SAME authority — a
+# leaf about agreement, not about reachability. Folding the second into the first would
+# widen an authority by renaming it, which #742 rules out in as many words.
+[[unit]]
+id = "proxy.outbound_destination"
+class = "V0"
+description = "A destination this proxy reaches out to has passed the guard its provenance requires: an operator-configured URL the scheme allowlist, a certificate-derived one that plus private-address protection over the address a parser actually resolves."
+paths = [
+  "mcp-re-proxy/src/outbound_fetch/mod.rs",
+  # The two subordinate facts the rule is stated over. A closure naming only `mod.rs` would
+  # fingerprint the two constructors while the predicates deciding them — which spellings
+  # are one address, which ranges are our own network — moved outside its provenance.
+  "mcp-re-proxy/src/outbound_fetch/address.rs",
+  "mcp-re-proxy/src/outbound_fetch/url.rs",
+  # The connect-time half. In the closure because it is part of what the claim is about,
+  # even though this unit's evidence lane does not reach it — see the note on
+  # `tested_symbols`. A file whose change cannot invalidate the claim would be worse.
+  "mcp-re-proxy/src/outbound_fetch/resolver.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/outbound_destination/provenance_guard",
+]
+# WHAT THIS EVIDENCE DOES NOT REACH, stated rather than implied. `verify-tests` runs
+# `cargo test -p mcp-re-proxy --lib` with default features, and
+# `outbound_fetch::resolver` — the connect-time vetting that makes `VettedDestination`
+# more than a parse-time verdict — is `#[cfg(feature = "online_ocsp")]`. Its own control,
+# `vetting_resolver_rejects_rebinding_to_internal_addresses`, therefore compiles to zero
+# tests in this lane and is deliberately NOT named here: a symbol this lane cannot run is
+# not evidence, and naming it would be the "green lane that measured nothing" shape.
+#
+# So this unit's claim is over the CONSTRUCTION boundary — that provenance decides the
+# guard and a caller never holds the switch — and not over what happens at connect time.
+# The connect-time conjunct is measured only in the `online_ocsp` lane, and #742 slice 2
+# is where it acquires evidence a unit may cite.
+tested_symbols = [
+  # Provenance decides the guard: the certificate-derived constructor applies the scheme
+  # allowlist AND the private-address protection, over the address a parser resolves to
+  # rather than the one the text appears to name.
+  "lib#outbound_fetch::tests::aia_guard_blocks_schemes_and_private_ranges",
+  "lib#outbound_fetch::tests::aia_guard_blocks_alternate_ip_encodings",
+  "lib#outbound_fetch::tests::aia_guard_blocks_malformed_empty_label_hosts",
+  # The mirror. Without it the three above are satisfied by a constructor that refuses
+  # everything, which would be a guard and not this one.
+  "lib#outbound_fetch::tests::aia_guard_accepts_normal_public_url",
+  "lib#outbound_fetch::tests::aia_guard_allows_public_alternate_encodings_and_hostnames",
+  # The asymmetry is the authority's content, not an exemption: an operator may name an
+  # internal address and a certificate may not, and both are held to the scheme floor.
+  "lib#outbound_fetch::tests::operator_override_scheme_checked_not_ip_blocked",
+  # The subordinate fact the whole rule rests on — that four spellings of one address are
+  # one address. A guard over the text would pass every control above and still admit
+  # `http://0x7f.1/`.
+  "lib#outbound_fetch::address::tests::inet_aton_parser_canonicalizes_each_encoding",
+]
+
+[[unit]]
+id = "proxy.kms_endpoint_authority"
+class = "V0"
+description = "A KMS endpoint's literal spelling and its machine interpretation name the same authority: the host and port a reader sees are the host and port that will be reached."
+paths = [
+  "mcp-re-proxy/src/kms_endpoint_policy/mod.rs",
+  "mcp-re-proxy/src/kms_endpoint_policy/authority.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/kms_endpoint_authority/spelling_is_interpretation",
+]
+# WHAT THIS IS AND IS NOT. It is the KMS-specific leaf: an AGREEMENT between two readings
+# of one string. It is NOT a reachability claim — a config-time check over a host string
+# cannot establish which authority a connection reaches under a rebinding-capable threat
+# model, and #742 records that the proof ends at configuration parsing. The unit is
+# registered at the width it owns so the fixes are covered; widening it by renaming would
+# be the move the issue rules out.
+tested_symbols = [
+  # The two readings agree, which is the whole claim.
+  "lib#kms_endpoint_policy::tests::the_authority_returned_is_the_host_and_port_that_will_be_reached",
+  "lib#kms_endpoint_policy::tests::check_host_refuses_a_host_a_parser_would_rewrite_to_a_different_address",
+  "lib#kms_endpoint_policy::tests::check_port_refuses_a_port_whose_text_and_value_differ",
+  # Where the two readings diverge is at the authority split, and userinfo is how R9's
+  # Critical re-pointed the root-key bootstrap: a `@` makes the host a reader sees and the
+  # host a URL parser reaches two different strings.
+  "lib#kms_endpoint_policy::tests::split_authority_divides_on_the_bracket_not_the_first_colon",
+  "lib#kms_endpoint_policy::tests::split_authority_refuses_a_bracket_that_does_not_close_or_is_followed_by_junk",
+  "lib#kms_endpoint_policy::tests::check_host_refuses_a_bracket_shaped_host_that_is_not_an_address",
+  # The allowlist is stated as exactly what a resolver can answer for, so the agreement is
+  # over a closed character set rather than over whatever the parser tolerated today.
+  "lib#kms_endpoint_policy::tests::the_host_allowlist_is_exactly_the_characters_a_resolver_can_answer_for",
+  "lib#kms_endpoint_policy::tests::a_host_that_ends_in_a_number_must_already_be_the_address_it_resolves_to",
+  "lib#kms_endpoint_policy::tests::a_port_must_be_a_tcp_port_number",
+  # The exception follows the ADDRESS, not the spelling — the same rule as the rest, and
+  # the one place a reader might expect the text to decide.
+  "lib#kms_endpoint_policy::tests::the_plaintext_exception_follows_the_address_not_the_spelling",
+]
+
 [[unit]]
 id = "proxy.audit_delivery"
 class = "V0"
