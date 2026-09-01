@@ -9,16 +9,22 @@
 //!
 //! | moment | question | refusal |
 //! |---|---|---|
-//! | [`InnerPlane::admit`] | may a dispatch begin at all? | free, and free of DURABLE consequence |
+//! | [`InnerPlane::prepare`] | may a dispatch begin at all? | free, and free of DURABLE consequence |
 //! | [`InnerPlane::observe_reply`] | what came back for a request? | never free |
 //! | [`InnerPlane::observe_acknowledgement`] | did a notification get there? | never free |
 //!
-//! The admission question exists because local saturation and a fully-ejected backend set
-//! are facts about THIS proxy, knowable without putting a byte on the wire. Discovering
-//! them from the far side of the threshold — which is what a seam returning only bytes
-//! forces — turned a definitely-not-executed outage into an exchange that must claim
+//! The preparation exists because local saturation and a fully-ejected backend set are
+//! facts about THIS proxy, knowable without putting a byte on the wire. Discovering them
+//! from the far side of the threshold — which is what a seam returning only bytes forces —
+//! turned a definitely-not-executed outage into an exchange that must claim
 //! `possibly_executed` forever after, and served it as a signed HTTP 200 carrying an error
 //! body.
+//!
+//! Since #741 it does more than ask: it TAKES what the dispatch needs and hands back a
+//! [`PreparedInnerDispatch`]. The predecessor read the plane's capacity and let the
+//! dispatch acquire it later, so a lost race was still discoverable after the threshold —
+//! reported honestly, but too late for the retention reservation the exchange had already
+//! written. There is nothing left to lose the race to.
 //!
 //! Past the dispatch, an outcome is never collapsed into a neighbouring one. A timeout is
 //! not a failure and is not a success: the request was transmitted and the answer never
@@ -30,7 +36,9 @@ use mcp_re_core::McpReError;
 use mcp_re_http_profile::HttpProfileError;
 
 use crate::async_inner::AsyncInnerServer;
-use crate::async_inner::InnerOutcome;
+use crate::async_inner::DispatchedOutcome;
+use crate::async_inner::PreparedInnerDispatch;
+use crate::authorization::AuthorizedRequestBody;
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
 use crate::exchange_state::ExchangeProgress;
@@ -52,25 +60,37 @@ impl InnerPlane {
         InnerPlane { inner }
     }
 
-    /// INNER-PLANE-ACCEPTED — can a dispatch begin at all?
+    /// INNER-PLANE-ACCEPTED — take what a dispatch requires, and transmit nothing.
     ///
     /// ```text
-    /// ensures   Ok  => the inner plane has a permit and a live backend
+    /// ensures   Ok  => the in-flight permit, the selected backend and the built
+    ///                  transport request are HELD by the returned value
     ///           Err => 503, bound
     /// forbids   transmitting anything
     /// refusal   free, and free of DURABLE consequence — asked before the retention
     ///           reservation, so a saturated plane leaves nothing behind on disk
     /// ```
-    pub(super) fn admit(&self) -> Result<Established<()>, Refusal> {
+    ///
+    /// The body is taken as an [`AuthorizedRequestBody`], by value. That is where
+    /// "dispatch only from an authorized request" stops being a sentence: the type has one
+    /// producer, `AuthorizationPosture::release`, so a serving path that skipped the
+    /// ADR-MCPRE-065 decision has nothing to prepare with — and since the prepared value
+    /// owns the bytes it will send, there is no second copy of the body for a later stage
+    /// to substitute.
+    ///
+    /// What comes back is a capability, not a prediction, and it is not this module's to
+    /// spend: it crosses the remaining pre-dispatch stages inside the exchange's ready
+    /// state and is consumed there. Dropping it on any refusal path releases the permit
+    /// and any recovery-probe claim, which is why no release call appears anywhere in the
+    /// serving path.
+    pub(super) fn prepare(
+        &self,
+        forwarded: AuthorizedRequestBody,
+    ) -> Result<Established<PreparedInnerDispatch<'_>>, Refusal> {
         self.inner
-            .admit()
-            .map(|_| Established::new((), ExchangeEvent::InnerPlaneAccepted))
+            .prepare(forwarded.bytes())
+            .map(|prepared| Established::new(prepared, ExchangeEvent::InnerPlaneAccepted))
             .map_err(|_| Refusal::after_admission(McpReError::InnerPlaneUnavailable, 503))
-    }
-
-    /// Transmit. Past this call no exit can claim nothing happened.
-    pub(super) async fn dispatch(&self, forwarded: &[u8]) -> InnerOutcome {
-        self.inner.dispatch(forwarded).await
     }
 
     /// RESPONSE-OBSERVED — what did the inner plane actually manage to do?
@@ -81,33 +101,27 @@ impl InnerPlane {
     /// refusal   NOT free — every arm below reports possibly-executed
     /// ```
     ///
-    /// The three failing arms are three different facts and get three different codes.
+    /// The two failing arms are two different facts and get two different codes. There is
+    /// no third: *nothing was transmitted* is not an answer a committed dispatch can give,
+    /// because [`DispatchedOutcome`] has no case for it.
     pub(super) fn observe_reply(
         &self,
         progress: &mut ExchangeProgress,
-        outcome: InnerOutcome,
+        outcome: DispatchedOutcome,
     ) -> Result<Established<Vec<u8>>, Refusal> {
         match outcome {
-            InnerOutcome::Replied(bytes) => {
+            DispatchedOutcome::Replied(bytes) => {
                 progress.observe_origin(ResponseOrigin::BackendReplied);
                 Ok(Established::new(bytes, ExchangeEvent::ResponseObserved))
             }
-            // A lost race against `admit`: the last permit went to another core between the
-            // question and the dispatch. Reported as what it is, at the consequence the
-            // exchange has already crossed — the floor does not move back for a more
-            // precise late observation.
-            InnerOutcome::NotDispatched(_) => Err(Refusal::after_admission(
-                McpReError::InnerPlaneUnavailable,
-                503,
-            )),
-            InnerOutcome::Indeterminate(_) => {
+            DispatchedOutcome::Indeterminate(_) => {
                 progress.observe_origin(ResponseOrigin::DispatchIndeterminate);
                 Err(Refusal::after_admission(
                     McpReError::InnerDispatchIndeterminate,
                     504,
                 ))
             }
-            InnerOutcome::InvalidUpstream(clause) => Err(Refusal::after_admission(
+            DispatchedOutcome::InvalidUpstream(clause) => Err(Refusal::after_admission(
                 HttpProfileError::UpstreamResponseInvalid(clause),
                 502,
             )),
@@ -118,18 +132,22 @@ impl InnerPlane {
     ///
     /// ```text
     /// ensures   Ok  => the backend RECEIVED the message
-    ///           Err => 503 (nothing was transmitted) / 504 (transmitted, no answer)
+    ///           Err => 504 — transmitted, no answer
     /// refusal   NOT free — the exchange has crossed the threshold either way
     /// ```
     ///
-    /// Two outcomes acknowledge and two refuse, split on whether the backend ANSWERED. The
+    /// Two outcomes acknowledge and one refuses, split on whether the backend ANSWERED. The
     /// 202 says the enforcement boundary authenticated and accepted the message and the
     /// inner plane received it; it never says any action completed (#418). What the backend
     /// answered is discarded unread, as JSON-RPC requires — but WHETHER it was reached is
     /// not a detail of the answer, and a message that never left the proxy has been
     /// accepted by nothing.
     ///
-    /// [`InnerOutcome::InvalidUpstream`] acknowledges, and that is not a concession: a
+    /// A message that never left the proxy no longer reaches here at all: the plane is
+    /// prepared before the threshold, so *nothing was transmitted* is a pre-commitment
+    /// refusal and never a notification outcome to read.
+    ///
+    /// [`DispatchedOutcome::InvalidUpstream`] acknowledges, and that is not a concession: a
     /// conformant Streamable-HTTP backend answers a notification with `202 Accepted` and no
     /// body, which carries no `application/json` content type and therefore arrives here as
     /// an unusable answer FROM A BACKEND THAT RECEIVED THE MESSAGE
@@ -138,21 +156,17 @@ impl InnerPlane {
     pub(super) fn observe_acknowledgement(
         &self,
         progress: &mut ExchangeProgress,
-        outcome: &InnerOutcome,
+        outcome: &DispatchedOutcome,
     ) -> Result<Established<()>, Refusal> {
         match outcome {
-            InnerOutcome::Replied(_) | InnerOutcome::InvalidUpstream(_) => {
+            DispatchedOutcome::Replied(_) | DispatchedOutcome::InvalidUpstream(_) => {
                 progress.observe_origin(ResponseOrigin::BackendReplied);
                 Ok(Established::new(
                     (),
                     ExchangeEvent::NotificationAcknowledged,
                 ))
             }
-            InnerOutcome::NotDispatched(_) => Err(Refusal::after_admission(
-                McpReError::InnerPlaneUnavailable,
-                503,
-            )),
-            InnerOutcome::Indeterminate(_) => {
+            DispatchedOutcome::Indeterminate(_) => {
                 progress.observe_origin(ResponseOrigin::DispatchIndeterminate);
                 Err(Refusal::after_admission(
                     McpReError::InnerDispatchIndeterminate,
@@ -166,32 +180,33 @@ impl InnerPlane {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::async_inner::NotAdmitted;
+    use crate::async_inner::PreparedInnerDispatch;
 
-    /// A seam that admits nothing. The dispatch is never exercised here: what these
+    /// A seam that prepares nothing. The dispatch is never exercised here: what these
     /// controls are about is the READING of an outcome, which is this module's whole
     /// content, and every outcome is constructed directly.
-    struct AdmitsNothing;
+    struct PreparesNothing;
 
-    impl AsyncInnerServer for AdmitsNothing {
-        fn admit(&self) -> Result<(), crate::async_inner::NotAdmitted> {
-            Err(crate::async_inner::NotAdmitted("saturated"))
-        }
-        fn dispatch<'a>(
+    impl AsyncInnerServer for PreparesNothing {
+        fn prepare<'a>(
             &'a self,
-            _request: &'a [u8],
-        ) -> crate::async_inner::InnerResponseFuture<'a> {
-            Box::pin(async { InnerOutcome::NotDispatched("never dispatched") })
+            _request: &[u8],
+        ) -> Result<PreparedInnerDispatch<'a>, NotAdmitted> {
+            Err(NotAdmitted("saturated"))
         }
     }
 
     #[test]
     fn a_saturated_plane_refuses_before_a_byte_is_transmitted() {
-        // The whole reason `admit` exists. Answering saturation after the threshold turns a
-        // definitely-not-executed outage into an exchange that must claim possibly-executed
-        // forever after.
-        let plane = InnerPlane::over(Box::new(AdmitsNothing));
-        let Err(refused) = plane.admit() else {
-            panic!("a saturated plane admits nothing");
+        // The whole reason the preparation exists. Answering saturation after the threshold
+        // turns a definitely-not-executed outage into an exchange that must claim
+        // possibly-executed forever after.
+        let plane = InnerPlane::over(Box::new(PreparesNothing));
+        let body =
+            crate::authorization::AuthorizationPosture::NoPolicyConfigured.release(b"{}".to_vec());
+        let Err(refused) = plane.prepare(body) else {
+            panic!("a saturated plane prepares nothing");
         };
         assert_eq!(refused.status, 503);
     }
@@ -201,10 +216,10 @@ mod tests {
         // The distinction this module exists for. A transmitted request whose answer never
         // came leaves execution UNKNOWN, and the exchange records that origin so every
         // refusal downstream reports possibly-executed rather than a clean failure.
-        let plane = InnerPlane::over(Box::new(AdmitsNothing));
+        let plane = InnerPlane::over(Box::new(PreparesNothing));
         let mut progress = ExchangeProgress::new();
         let Err(refused) =
-            plane.observe_reply(&mut progress, InnerOutcome::Indeterminate("timeout"))
+            plane.observe_reply(&mut progress, DispatchedOutcome::Indeterminate("timeout"))
         else {
             panic!("a timeout is not a reply");
         };
@@ -212,31 +227,37 @@ mod tests {
     }
 
     #[test]
-    fn a_notification_the_backend_never_received_is_not_acknowledged() {
-        // A 202 states that the inner plane RECEIVED the message. Minting one for a message
-        // that never left the proxy would be the enforcement boundary asserting, under
-        // signature, that a backend accepted something no backend has seen — and it is the
-        // one exit a client could select by omitting `id`.
-        let plane = InnerPlane::over(Box::new(AdmitsNothing));
-        let mut progress = ExchangeProgress::new();
-        assert!(plane
-            .observe_acknowledgement(&mut progress, &InnerOutcome::NotDispatched("no permit"),)
-            .is_err());
-    }
-
-    #[test]
     fn an_unusable_answer_to_a_notification_still_says_the_backend_was_reached() {
         // Not a concession. A conformant Streamable-HTTP backend answers a notification
         // with a bodyless 202, which arrives here as an unusable answer FROM A BACKEND THAT
-        // RECEIVED THE MESSAGE. The two refused outcomes are the two that say it did not
-        // get there.
-        let plane = InnerPlane::over(Box::new(AdmitsNothing));
+        // RECEIVED THE MESSAGE. The refused outcome is the one that says it may not have
+        // got there.
+        let plane = InnerPlane::over(Box::new(PreparesNothing));
         let mut progress = ExchangeProgress::new();
         assert!(plane
             .observe_acknowledgement(
                 &mut progress,
-                &InnerOutcome::InvalidUpstream("content-type")
+                &DispatchedOutcome::InvalidUpstream("content-type")
             )
             .is_ok());
+    }
+
+    /// A notification the backend may not have received is not acknowledged.
+    ///
+    /// The 202 states that the inner plane RECEIVED the message. Minting one for a message
+    /// that may never have arrived would be the enforcement boundary asserting, under
+    /// signature, that a backend accepted something no backend is known to have seen — and
+    /// it is the one exit a client could select by omitting `id`.
+    ///
+    /// The stronger case, a message that PROVABLY never left the proxy, cannot reach this
+    /// reading at all any more: it is refused by [`InnerPlane::prepare`], before the
+    /// exchange crosses anything.
+    #[test]
+    fn a_notification_the_backend_may_not_have_received_is_not_acknowledged() {
+        let plane = InnerPlane::over(Box::new(PreparesNothing));
+        let mut progress = ExchangeProgress::new();
+        assert!(plane
+            .observe_acknowledgement(&mut progress, &DispatchedOutcome::Indeterminate("timeout"))
+            .is_err());
     }
 }

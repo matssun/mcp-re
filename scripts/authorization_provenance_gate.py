@@ -21,10 +21,18 @@ WHAT THIS PROVES, exactly, over production Rust (test regions excluded):
   6. Both sealed products keep their representation private: no `pub` field in
      `VerifiedAuthorizationActor`, `VerifiedAuthorizationAction`, `AuthorizationRequest` or
      `AuthorizedRequestFacts`.
-  7. **Dispatch is gated by the type, not by source order.** `ReadyForDispatch::new` takes
-     an `AuthorizedRequestBody`; that type has exactly ONE producer, `release`, defined once
-     on `AuthorizationPosture`; and the serving assembly calls `release` exactly once. A
-     pipeline that dropped the decision would not compile at the dispatch.
+  7. **Dispatch is gated by the type, not by source order.** `InnerPlane::prepare` takes an
+     `AuthorizedRequestBody` and is the only thing that can transmit; `ReadyForDispatch::new`
+     takes the `PreparedInnerDispatch` it returns rather than bytes; that body type has
+     exactly ONE producer, `release`, defined once on `AuthorizationPosture`; and the
+     serving assembly calls `release` exactly once. A pipeline that dropped the decision
+     would not compile at the dispatch.
+
+     The parameter moved with #741 and the chain did not weaken. It used to be
+     `ReadyForDispatch::new(AuthorizedRequestBody, ..)` with the dispatch borrowing the
+     bytes back out; now the released body is CONSUMED by `prepare`, which owns the bytes it
+     will send, so there is no second copy of the body for a later stage to substitute and
+     no way to reach the backend except through the value a decision produced.
   8. No configuration promotes a conformance evaluator to production authority:
      `--authz reference` is still refused by Layer-A validation.
  10. **The posture that claims nothing has one producer.** `AuthorizationPosture`'s variants
@@ -132,12 +140,14 @@ SEALED = (
     "AuthorizedRequestFacts",
 )
 
-#: The type that gates the dispatch, its single producer, and where the ready state lives.
+#: The type that gates the dispatch, its single producer, and the two links it passes
+#: through.
 #:
-#: This is the enforcement, and it is stronger than an ordering check: the inner dispatch
-#: consumes a `ReadyForDispatch`, that state carries an `AuthorizedRequestBody`, and the
-#: only way to obtain one is an authorization decision releasing it. A pipeline that dropped
-#: the stage does not become a subtly weaker proxy that still compiles.
+#: This is the enforcement, and it is stronger than an ordering check: transmitting consumes
+#: a `ReadyForDispatch`, that state carries the capability `InnerPlane::prepare` returns,
+#: `prepare` takes an `AuthorizedRequestBody` by value, and the only way to obtain one is an
+#: authorization decision releasing it. A pipeline that dropped the stage does not become a
+#: subtly weaker proxy that still compiles.
 #: The posture and where its variants may be named in production.
 #:
 #: `decide.rs` BUILDS them and is the only operation entitled to; `posture.rs` OWNS them and
@@ -151,6 +161,14 @@ POSTURE_SITES = ("decide.rs", "posture.rs")
 DISPATCH_BODY = "AuthorizedRequestBody"
 RELEASE = "release"
 STAGES = "mcp-re-proxy/src/request_stages.rs"
+
+#: The capability the ready state carries, and the one function that produces it from a
+#: released body. Two links rather than one since #741, and both are checked: a
+#: `ReadyForDispatch` built from anything else, or a `prepare` that would accept bare bytes,
+#: each restores a route to the backend that no decision authorized.
+DISPATCH_CAPABILITY = "PreparedInnerDispatch"
+PREPARE = "prepare"
+PLANE = "mcp-re-proxy/src/http_profile_serve/inner_plane.rs"
 
 #: A parameter through which a header, a certificate or a rival identity could enter.
 FORBIDDEN_PARAM = re.compile(
@@ -401,15 +419,23 @@ def check_serving(text: str) -> list[str]:
     return problems
 
 
-def check_dispatch(stages: str, authority: str, serving: str) -> list[str]:
+def check_dispatch(stages: str, authority: str, serving: str, plane: str) -> list[str]:
     """(7) — dispatch is gated by the type, not by source order."""
     problems = []
-    ready = signature_re("new").search(stages)
-    if ready is None or DISPATCH_BODY not in ready.group("params"):
+    prepare = signature_re(PREPARE).search(plane)
+    if prepare is None or DISPATCH_BODY not in prepare.group("params"):
         problems.append(
-            f"{STAGES}: `ReadyForDispatch::new` no longer takes an `{DISPATCH_BODY}`. That "
+            f"{PLANE}: `InnerPlane::{PREPARE}` no longer takes an `{DISPATCH_BODY}`. That "
             f"parameter IS the gate: a body typed `Vec<u8>` can be produced by any path, "
-            f"including one that never asked a policy."
+            f"including one that never asked a policy, and `{PREPARE}` is the only thing "
+            f"that can transmit."
+        )
+    ready = signature_re("new").search(stages)
+    if ready is None or DISPATCH_CAPABILITY not in ready.group("params"):
+        problems.append(
+            f"{STAGES}: `ReadyForDispatch::new` no longer takes a `{DISPATCH_CAPABILITY}`. "
+            f"The ready state must carry the capability `{PREPARE}` returned, or it can be "
+            f"assembled from bytes again and the released body stops being what goes out."
         )
     producers = len(re.findall(r"\bfn\s+" + RELEASE + r"\s*\(", authority))
     if producers != 1:
@@ -476,7 +502,10 @@ def check(repo: Path) -> tuple[list[str], int]:
     problems = check_authority(sources)
     problems += check_serving(serving)
     problems += check_dispatch(
-        read(repo, STAGES), code_only("\n".join(sources.values())), serving
+        read(repo, STAGES),
+        code_only("\n".join(sources.values())),
+        serving,
+        read(repo, PLANE),
     )
     problems += check_validation(read(repo, VALIDATION))
     return problems, len(sources)
@@ -606,13 +635,21 @@ def selftest() -> int:
          read(REPO, SERVING).replace(
              ".admit_request(&ex, req.peer.as_ref(), &mut progress)", ".no_region()"), 1),
         ("a second producer of the dispatchable body",
-         lambda t: check_dispatch(read(REPO, STAGES), t, read(REPO, SERVING)),
-         code_only("\n".join(sources.values())) + "\n    fn release(self, b: Vec<u8>) -> AuthorizedRequestBody { todo!() }\n", 1),
-        ("the dispatch gate widened back to `Vec<u8>`",
          lambda t: check_dispatch(
-             t.replace("forwarded: AuthorizedRequestBody,", "forwarded: Vec<u8>,"),
-             code_only("\n".join(sources.values())), read(REPO, SERVING)),
-         read(REPO, STAGES), 1),
+             read(REPO, STAGES), t, read(REPO, SERVING), read(REPO, PLANE)),
+         code_only("\n".join(sources.values())) + "\n    fn release(self, b: Vec<u8>) -> AuthorizedRequestBody { todo!() }\n", 1),
+        ("the transmitting seam widened back to `Vec<u8>`",
+         lambda t: check_dispatch(
+             read(REPO, STAGES), code_only("\n".join(sources.values())),
+             read(REPO, SERVING), t),
+         read(REPO, PLANE).replace(
+             "forwarded: AuthorizedRequestBody,", "forwarded: Vec<u8>,"), 1),
+        ("the ready state assembled from something other than the capability",
+         lambda t: check_dispatch(
+             t, code_only("\n".join(sources.values())), read(REPO, SERVING),
+             read(REPO, PLANE)),
+         read(REPO, STAGES).replace(
+             "prepared: PreparedInnerDispatch<'a>,", "prepared: Vec<u8>,"), 1),
         ("the reference-profile refusal removed", check_validation,
          read(REPO, VALIDATION).replace("AuthzKind::Reference", "AuthzKind::Off"), 1),
         # (10), the serving half. The bypass this refuses is the one no type can catch:

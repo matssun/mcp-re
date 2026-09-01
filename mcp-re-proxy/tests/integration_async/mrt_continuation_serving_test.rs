@@ -46,7 +46,7 @@ use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_proxy::async_inner::AsyncInnerServer;
-use mcp_re_proxy::async_inner::InnerOutcome;
+use mcp_re_proxy::async_inner::DispatchedOutcome;
 use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve::ServedHttpRequest;
@@ -1087,49 +1087,61 @@ async fn a_legal_envelope_is_still_served_and_a_json_rpc_error_is_one() {
     }
 }
 
-/// An inner plane that ADMITS and then reports that nothing was dispatched.
+/// An inner plane that prepares, then reports a transport failure after transmitting.
 ///
-/// This is the `admit`/`dispatch` race made deterministic: in production it happens when the
-/// last in-flight permit is taken by another core between the two calls. The race itself is
-/// not constructible in a test worth trusting — it needs two cores contending at a
-/// controlled instant, and a test that merely simulated the timing would be asserting on its
-/// own scaffolding. What IS worth pinning, and what this fixture pins, is the HANDLING: a
-/// `NotDispatched` seen after the threshold must not walk the exchange's consequence back.
-struct RacingInner;
+/// The fixture that used to sit here reported `NotDispatched` from a committed dispatch —
+/// the `admit`/`dispatch` race made deterministic, where the last in-flight permit went to
+/// another core between the capacity question and the acquisition. #741 removed the shape:
+/// `prepare` takes the permit rather than reading it, so there is no window to lose, and a
+/// committed dispatch has no outcome meaning *nothing was transmitted* to construct.
+///
+/// What is still worth pinning is the surviving half of the property — a post-threshold
+/// outcome does not walk the exchange's consequence back — so the fixture reports the
+/// weakest post-threshold fact there is.
+struct IndeterminateInner;
 
-impl AsyncInnerServer for RacingInner {
-    fn admit(&self) -> Result<(), mcp_re_proxy::async_inner::NotAdmitted> {
-        Ok(())
-    }
-    fn dispatch<'a>(
+impl AsyncInnerServer for IndeterminateInner {
+    fn prepare<'a>(
         &'a self,
-        _request: &'a [u8],
-    ) -> mcp_re_proxy::async_inner::InnerResponseFuture<'a> {
-        Box::pin(async {
-            mcp_re_proxy::async_inner::InnerOutcome::NotDispatched("lost the permit race")
-        })
+        _request: &[u8],
+    ) -> Result<
+        mcp_re_proxy::async_inner::PreparedInnerDispatch<'a>,
+        mcp_re_proxy::async_inner::NotAdmitted,
+    > {
+        Ok(mcp_re_proxy::async_inner::PreparedInnerDispatch::over(
+            || {
+                Box::pin(async {
+                    mcp_re_proxy::async_inner::DispatchedOutcome::Indeterminate(
+                        "the answer never came",
+                    )
+                })
+            },
+        ))
     }
 }
 
-/// **§8.5 gap (a).** A `NotDispatched` that arrives AFTER the threshold is reported at the
+/// **§8.5 gap (a).** An outcome that arrives AFTER the threshold is reported at the
 /// consequence the exchange has already crossed, not at the one the outcome would justify
 /// on its own.
 ///
-/// The tempting broken implementation is the one that looks MORE precise: `NotDispatched`
-/// means nothing was transmitted, so answer `NothingExecuted` and let the client retry
-/// safely. That is right about the outcome and wrong about the exchange. The floor was set
-/// at the dispatch, and monotone consequence is not negotiable against a more precise late
-/// observation — if it were, every post-dispatch refinement would be a chance to walk the
-/// claim back.
+/// The tempting broken implementation is the one that looks MORE precise: answer from what
+/// the far side of the threshold turned out to be, and let the client retry when the
+/// evidence looks benign. That is right about the outcome and wrong about the exchange. The
+/// floor was set at the dispatch, and monotone consequence is not negotiable against a more
+/// precise late observation — if it were, every post-dispatch refinement would be a chance
+/// to walk the claim back.
 #[tokio::test]
-async fn a_late_not_dispatched_does_not_walk_the_consequence_back() {
-    let proxy = replica_without_store(Box::new(RacingInner));
+async fn a_post_threshold_outcome_does_not_walk_the_consequence_back() {
+    let proxy = replica_without_store(Box::new(IndeterminateInner));
 
     let (req, _ev) = signed_request("nonce-race", OPEN_BODY, None);
     let served = proxy.handle(served_of(&req), NOW).await;
 
-    assert_eq!(served.status, 503);
-    assert_eq!(wire_code_of(&served.body), "mcp-re.inner_plane_unavailable");
+    assert_eq!(served.status, 504);
+    assert_eq!(
+        wire_code_of(&served.body),
+        "mcp-re.inner_dispatch_indeterminate"
+    );
     assert_eq!(
         execution_status_of(&served.body),
         Some("possibly_executed".to_owned()),
@@ -1146,16 +1158,16 @@ async fn a_late_not_dispatched_does_not_walk_the_consequence_back() {
 struct SaturatedInner;
 
 impl AsyncInnerServer for SaturatedInner {
-    fn admit(&self) -> Result<(), mcp_re_proxy::async_inner::NotAdmitted> {
+    fn prepare<'a>(
+        &'a self,
+        _request: &[u8],
+    ) -> Result<
+        mcp_re_proxy::async_inner::PreparedInnerDispatch<'a>,
+        mcp_re_proxy::async_inner::NotAdmitted,
+    > {
         Err(mcp_re_proxy::async_inner::NotAdmitted(
             "inner plane is at its in-flight bound",
         ))
-    }
-    fn dispatch<'a>(
-        &'a self,
-        _request: &'a [u8],
-    ) -> mcp_re_proxy::async_inner::InnerResponseFuture<'a> {
-        panic!("a plane that refused at admit must never be dispatched to")
     }
 }
 
@@ -1173,8 +1185,8 @@ async fn a_saturated_plane_refused_before_the_threshold_is_retry_safe() {
         Some("possibly_executed".to_owned()),
         "nothing was transmitted and the threshold was never crossed"
     );
-    // The `panic!` in `SaturatedInner::dispatch` is the real assertion: refusing at admit
-    // must mean the dispatch never happens, not that it happens and is discarded.
+    // There is no dispatch to guard against: a plane that prepares nothing hands back no
+    // capability, and transmitting requires one. The absent `dispatch` is the assertion.
 }
 
 // --- the SDK-boundary fixture for the same defect (C059/C060) ----------------
@@ -2317,16 +2329,16 @@ async fn an_indeterminate_continuation_retirement_is_never_reported_as_retry_saf
 struct ClosedInnerPlane;
 
 impl AsyncInnerServer for ClosedInnerPlane {
-    fn admit(&self) -> Result<(), mcp_re_proxy::async_inner::NotAdmitted> {
+    fn prepare<'a>(
+        &'a self,
+        _request: &[u8],
+    ) -> Result<
+        mcp_re_proxy::async_inner::PreparedInnerDispatch<'a>,
+        mcp_re_proxy::async_inner::NotAdmitted,
+    > {
         Err(mcp_re_proxy::async_inner::NotAdmitted(
             "every inner backend is ejected",
         ))
-    }
-    fn dispatch<'a>(
-        &'a self,
-        _request: &'a [u8],
-    ) -> mcp_re_proxy::async_inner::InnerResponseFuture<'a> {
-        panic!("a refused inner plane must never be dispatched to")
     }
 }
 
@@ -2420,22 +2432,27 @@ async fn an_inner_plane_refusal_leaves_no_durable_retention_marker() {
 
 /// An inner plane that admits, then reports a fixed outcome without transmitting anything
 /// the test can observe.
-struct FixedOutcomeInner(InnerOutcome);
+struct FixedOutcomeInner(DispatchedOutcome);
 
 impl AsyncInnerServer for FixedOutcomeInner {
-    fn dispatch<'a>(
+    fn prepare<'a>(
         &'a self,
-        _request: &'a [u8],
-    ) -> mcp_re_proxy::async_inner::InnerResponseFuture<'a> {
+        _request: &[u8],
+    ) -> Result<
+        mcp_re_proxy::async_inner::PreparedInnerDispatch<'a>,
+        mcp_re_proxy::async_inner::NotAdmitted,
+    > {
         let outcome = self.0.clone();
-        Box::pin(async move { outcome })
+        Ok(mcp_re_proxy::async_inner::PreparedInnerDispatch::over(
+            move || Box::pin(async move { outcome }),
+        ))
     }
 }
 
 const NOTIFICATION_BODY: &[u8] =
     br#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"1"}}"#;
 
-fn notification_proxy(outcome: InnerOutcome) -> HttpProfileProxy {
+fn notification_proxy(outcome: DispatchedOutcome) -> HttpProfileProxy {
     HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
@@ -2457,31 +2474,22 @@ fn notification_proxy(outcome: InnerOutcome) -> HttpProfileProxy {
 /// is not acknowledged with a signed 202.
 ///
 /// Broken implementation this must catch: branch to `answer_notification` before
-/// `observe_inner_stage` and drop the `InnerOutcome` unread. All four outcomes then
-/// collapse into one delegated-signed bodyless 202 that the client verifies and, per the
-/// SDK contract, treats as the signal to stop — so a `notifications/cancelled` the proxy
-/// provably never transmitted is indistinguishable from one the backend received, under a
-/// signature from the enforcement boundary. Because `observe_origin` was never called on
-/// that arm, the machine's own guard against serving synthesized transport-failure bytes
-/// as a success could not fire either.
+/// `observe_inner_stage` and drop the `DispatchedOutcome` unread. Every outcome then
+/// collapses into one delegated-signed bodyless 202 that the client verifies and, per the
+/// SDK contract, treats as the signal to stop — so a `notifications/cancelled` whose answer
+/// never came is indistinguishable from one the backend received, under a signature from
+/// the enforcement boundary. Because `observe_origin` was never called on that arm, the
+/// machine's own guard against serving synthesized transport-failure bytes as a success
+/// could not fire either.
 ///
-/// RB-09's split is asserted per outcome: nothing transmitted is 503, transmitted with no
-/// answer is 504, and the 504 states that the message may have been acted on.
+/// RB-09's split is asserted per outcome. The *nothing was transmitted* half is no longer
+/// among them: since #741 it is decided before the exchange commits to a dispatch, by
+/// `ClosedInnerPlane` above, and there is no post-commitment outcome that can claim it.
+/// What remains here is the harder case — transmitted with no answer is 504, and the 504
+/// states that the message may have been acted on.
 #[tokio::test]
 async fn a_notification_the_inner_plane_never_delivered_is_not_acknowledged() {
-    let lost = notification_proxy(InnerOutcome::NotDispatched(
-        "every inner backend is ejected",
-    ));
-    let (req, _e) = signed_request("nonce-R8-note-lost", NOTIFICATION_BODY, None);
-    let served = lost.handle(served_of(&req), NOW).await;
-    assert_ne!(
-        served.status, 202,
-        "a message that was never transmitted must not earn a signed acknowledgement"
-    );
-    assert_eq!(served.status, 503);
-    assert_eq!(wire_code_of(&served.body), "mcp-re.inner_plane_unavailable");
-
-    let timed_out = notification_proxy(InnerOutcome::Indeterminate("inner request timed out"));
+    let timed_out = notification_proxy(DispatchedOutcome::Indeterminate("inner request timed out"));
     let (req2, _e) = signed_request("nonce-R8-note-timeout", NOTIFICATION_BODY, None);
     let served2 = timed_out.handle(served_of(&req2), NOW).await;
     assert_ne!(served2.status, 202);
@@ -2508,13 +2516,13 @@ async fn a_notification_the_inner_plane_never_delivered_is_not_acknowledged() {
 /// whether the reply was usable.
 #[tokio::test]
 async fn a_delivered_notification_is_still_acknowledged_with_a_202() {
-    let replied = notification_proxy(InnerOutcome::Replied(Vec::new()));
+    let replied = notification_proxy(DispatchedOutcome::Replied(Vec::new()));
     let (req, _e) = signed_request("nonce-R8-note-ok", NOTIFICATION_BODY, None);
     let served = replied.handle(served_of(&req), NOW).await;
     assert_eq!(served.status, 202, "the backend received the message");
     assert!(served.body.is_empty(), "the 202 is bodyless");
 
-    let bodyless_202 = notification_proxy(InnerOutcome::InvalidUpstream(
+    let bodyless_202 = notification_proxy(DispatchedOutcome::InvalidUpstream(
         "inner backend did not answer application/json",
     ));
     let (req2, _e) = signed_request("nonce-R8-note-202", NOTIFICATION_BODY, None);
@@ -2529,12 +2537,22 @@ async fn a_delivered_notification_is_still_acknowledged_with_a_202() {
 struct SignerRetiringInner(Arc<DelegatedServerSigner>);
 
 impl AsyncInnerServer for SignerRetiringInner {
-    fn dispatch<'a>(
+    fn prepare<'a>(
         &'a self,
-        _request: &'a [u8],
-    ) -> mcp_re_proxy::async_inner::InnerResponseFuture<'a> {
-        self.0.retire();
-        Box::pin(async { InnerOutcome::Indeterminate("inner request timed out") })
+        _request: &[u8],
+    ) -> Result<
+        mcp_re_proxy::async_inner::PreparedInnerDispatch<'a>,
+        mcp_re_proxy::async_inner::NotAdmitted,
+    > {
+        let signer = Arc::clone(&self.0);
+        Ok(mcp_re_proxy::async_inner::PreparedInnerDispatch::over(
+            move || {
+                // At the DISPATCH, not at the preparation: the point of the fixture is a
+                // signer that goes away while the exchange is past its threshold.
+                signer.retire();
+                Box::pin(async { DispatchedOutcome::Indeterminate("inner request timed out") })
+            },
+        ))
     }
 }
 
@@ -2722,7 +2740,7 @@ async fn the_two_legal_request_shapes_still_reach_their_terminals() {
     assert_eq!(bodied.handle(served_of(&req), NOW).await.status, 200);
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 
-    let notes = notification_proxy(InnerOutcome::Replied(Vec::new()));
+    let notes = notification_proxy(DispatchedOutcome::Replied(Vec::new()));
     let (note, _e) = signed_request("nonce-R8-env-note", NOTIFICATION_BODY, None);
     assert_eq!(notes.handle(served_of(&note), NOW).await.status, 202);
 }

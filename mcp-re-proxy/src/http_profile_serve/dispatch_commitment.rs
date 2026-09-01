@@ -10,7 +10,9 @@
 //! `RetentionReserved` is its last pre-dispatch state, so a pipeline that asked in the
 //! other order would be refused by the machine rather than merely recorded oddly.
 
+use crate::async_inner::PreparedInnerDispatch;
 use crate::async_serve::ServedHttpResponse;
+use crate::authorization::AuthorizationPosture;
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
 use crate::exchange_state::ExchangeProgress;
@@ -53,26 +55,34 @@ impl HttpProfileProxy {
     /// possible.
     ///
     /// The body is prepared first because preparing it decides nothing; the inner plane is
-    /// asked second because its answer is free; the reservation is taken last because it is
-    /// the only one of the three that writes.
-    pub(super) async fn commit_to_dispatch(
-        &self,
+    /// prepared second because its refusal is free and leaves nothing behind; the
+    /// reservation is taken last because it is the only one of the three that writes.
+    ///
+    /// The inner-plane capability is HELD from here to the dispatch. If the reservation
+    /// then refuses, the prepared dispatch is dropped on the way out and everything it took
+    /// — the in-flight permit, any claimed recovery probe — goes back without a release
+    /// call. That is why the ordering is safe to state as an ordering: nothing between the
+    /// two steps can leak the plane's capacity, and nothing after the reservation can
+    /// refuse.
+    pub(super) async fn commit_to_dispatch<'p>(
+        &'p self,
         ex: &Exchange<'_>,
+        authorized: AuthorizationPosture,
         progress: &mut ExchangeProgress,
-    ) -> Result<(Vec<u8>, RetentionDisposition), ServedHttpResponse> {
+    ) -> Result<(PreparedInnerDispatch<'p>, RetentionDisposition), ServedHttpResponse> {
         let forwarded = match self.forward_body_stage(ex) {
             Ok(body) => progress.establish(body),
             Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
         };
-        match self.inner_async.admit() {
-            Ok(accepted) => progress.establish(accepted),
+        let prepared = match self.inner_async.prepare(authorized.release(forwarded)) {
+            Ok(prepared) => progress.establish(prepared),
             Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
-        }
+        };
         let retention = match self.retention.reserve(ex.http_req).await {
             Ok(disposition) => progress.establish(disposition),
             Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
         };
-        Ok((forwarded, retention))
+        Ok((prepared, retention))
     }
 }
 

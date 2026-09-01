@@ -478,7 +478,8 @@ impl HttpProfileProxy {
             Err(rejection) => return rejection,
         };
         self.record_request_accepted(&admitted, &actor_id, now);
-        let (forwarded, retention) = match self.commit_to_dispatch(&ex, &mut progress).await {
+        let commitment = self.commit_to_dispatch(&ex, admitted.authorized, &mut progress);
+        let (prepared, retention) = match commitment.await {
             Ok(committed) => committed,
             Err(rejection) => return rejection,
         };
@@ -486,18 +487,16 @@ impl HttpProfileProxy {
         // ===================== IRREVERSIBLE INNER DISPATCH =====================
         //
         // Every pre-dispatch prerequisite is now in hand, and `ReadyForDispatch` is what
-        // says so: it cannot be built without them, and the dispatch consumes it. Past this
+        // says so: it cannot be built without them, and transmitting consumes it. Past this
         // line no exit can claim nothing happened — which is why every one of them is a
         // `response_rejection` rather than a `rejection`.
-        let ready =
-            ReadyForDispatch::new(admitted.authorized.release(forwarded), window, retention);
+        let ready = ReadyForDispatch::new(prepared, window, retention);
         // BEFORE the await, not after it. Once the request is committed to the backend the
         // exchange must read as possibly-executed, whatever the dispatch goes on to return:
         // a state entered only on the way out would leave a cancelled or panicking dispatch
         // claiming nothing happened.
         progress.advance(ExchangeEvent::BackendDispatched);
-        let outcome = self.inner_async.dispatch(ready.forwarded()).await;
-        let (outcome, window, retention) = ready.dispatched(outcome).into_parts();
+        let (outcome, window, retention) = ready.dispatch().await.into_parts();
 
         // NOTIFICATION — a one-way message with no JSON-RPC `id` is its own terminal: it
         // says the boundary accepted the message, never that anything completed. Decided

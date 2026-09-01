@@ -11,11 +11,14 @@
 //! the only component that knows whether bytes left the process:
 //!
 //! ```text
-//! no permit / all backends ejected  -> NotDispatched     nothing was transmitted
-//! timeout, connect or transport     -> Indeterminate     execution is UNKNOWN
-//! non-2xx / non-JSON / over-cap     -> InvalidUpstream   the backend answered, unusably
-//! 2xx JSON                          -> Replied
+//! prepare:  no permit / all backends ejected  -> NotAdmitted      nothing was transmitted
+//! dispatch: timeout, connect or transport     -> Indeterminate    execution is UNKNOWN
+//! dispatch: non-2xx / non-JSON / over-cap     -> InvalidUpstream  answered, unusably
+//! dispatch: 2xx JSON                          -> Replied
 //! ```
+//!
+//! The first row is decided BEFORE commitment since #741, by taking the capacity rather
+//! than reading it, so a committed dispatch has no outcome meaning nothing was transmitted.
 //!
 //! Resilience (ADR-MCPRE-051 §3, MCPRE-119): a failing or slow backend is ejected
 //! after a bounded number of failures, traffic rebalances onto healthy backends,
@@ -43,7 +46,7 @@ use hyper_util::server::conn::auto;
 use tokio::net::TcpListener;
 
 use mcp_re_proxy::async_inner::AsyncInnerServer;
-use mcp_re_proxy::async_inner::InnerOutcome;
+use mcp_re_proxy::async_inner::DispatchedOutcome;
 use mcp_re_proxy::http_inner::BreakerConfig;
 use mcp_re_proxy::http_inner::HttpInnerPool;
 
@@ -103,12 +106,10 @@ fn dispatch_returns_backend_response_verbatim() {
         let pool =
             HttpInnerPool::new(vec![uri_for(addr)], Duration::from_secs(5)).expect("pool builds");
 
-        let out = pool
-            .dispatch(br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#)
-            .await;
+        let out = round_trip(&pool, br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#).await;
         assert_eq!(
             out,
-            InnerOutcome::Replied(INNER_OK.to_vec()),
+            DispatchedOutcome::Replied(INNER_OK.to_vec()),
             "the inner backend's JSON response must be returned verbatim"
         );
     });
@@ -117,10 +118,10 @@ fn dispatch_returns_backend_response_verbatim() {
 /// A refused connection is INDETERMINATE, not "definitely not dispatched".
 ///
 /// The conservative call, and deliberate: hyper does not reliably distinguish "the
-/// connection was refused" from "the request was written and the peer went away", and
-/// `NotDispatched` is a claim that the action did not run. Only outcomes the pool can
-/// PROVE never reached a backend earn it — which is why saturation and full ejection do
-/// and this does not.
+/// connection was refused" from "the request was written and the peer went away", so it is
+/// not a fact the pool can PROVE never reached a backend. Saturation and full ejection are
+/// — and they are decided at `prepare`, before anything commits, which is why nothing past
+/// the commitment claims it.
 #[test]
 fn dead_backend_fails_closed_as_indeterminate() {
     rt().block_on(async {
@@ -133,9 +134,9 @@ fn dead_backend_fails_closed_as_indeterminate() {
         let pool =
             HttpInnerPool::new(vec![uri_for(addr)], Duration::from_secs(2)).expect("pool builds");
 
-        let out = pool.dispatch(br#"{"jsonrpc":"2.0","id":1}"#).await;
+        let out = round_trip(&pool, br#"{"jsonrpc":"2.0","id":1}"#).await;
         assert!(
-            matches!(out, InnerOutcome::Indeterminate(_)),
+            matches!(out, DispatchedOutcome::Indeterminate(_)),
             "a dead backend must fail closed, and whether it executed is unknown: {out:?}"
         );
     });
@@ -151,9 +152,9 @@ fn non_2xx_status_is_an_invalid_upstream_answer_not_an_unknown_one() {
         let pool =
             HttpInnerPool::new(vec![uri_for(addr)], Duration::from_secs(5)).expect("pool builds");
 
-        let out = pool.dispatch(br#"{"jsonrpc":"2.0","id":1}"#).await;
+        let out = round_trip(&pool, br#"{"jsonrpc":"2.0","id":1}"#).await;
         assert!(
-            matches!(out, InnerOutcome::InvalidUpstream(_)),
+            matches!(out, DispatchedOutcome::InvalidUpstream(_)),
             "a non-2xx inner status must fail closed, never sign backend error bytes: {out:?}"
         );
     });
@@ -180,9 +181,9 @@ fn a_timeout_is_indeterminate_not_a_definite_non_execution() {
         let pool = HttpInnerPool::new(vec![uri_for(addr)], Duration::from_millis(200))
             .expect("pool builds");
 
-        let out = pool.dispatch(br#"{"jsonrpc":"2.0","id":1}"#).await;
+        let out = round_trip(&pool, br#"{"jsonrpc":"2.0","id":1}"#).await;
         assert!(
-            matches!(out, InnerOutcome::Indeterminate(_)),
+            matches!(out, DispatchedOutcome::Indeterminate(_)),
             "a timeout must not claim the call did not execute: {out:?}"
         );
         // Non-vacuity: the request really did reach the backend, so "indeterminate" is the
@@ -201,29 +202,33 @@ fn a_timeout_is_indeterminate_not_a_definite_non_execution() {
 /// the retry-safe side of the execution threshold. Asked after the threshold — which is all
 /// a bytes-only seam could do — the same outage becomes an exchange that must report
 /// `possibly_executed` forever after.
+///
+/// Since #741 the question TAKES the capacity rather than reading it, so there is no window
+/// between the answer and the acquisition for another caller to win.
 #[test]
-fn admit_refuses_a_saturated_plane_without_transmitting_anything() {
+fn preparing_refuses_a_saturated_plane_without_transmitting_anything() {
     rt().block_on(async {
         let (addr, hits) = spawn_slow_counting_backend(Duration::from_secs(30), INNER_OK).await;
         let pool = HttpInnerPool::new(vec![uri_for(addr)], Duration::from_secs(60))
             .expect("pool")
             .with_max_in_flight(1);
 
-        assert!(pool.admit().is_ok(), "an idle plane admits");
+        let idle = pool.prepare(b"{}").expect("an idle plane prepares");
+        drop(idle);
 
         let req = br#"{"jsonrpc":"2.0","id":1}"#;
-        let holder = async { pool.dispatch(req).await };
+        let holder = async { round_trip(&pool, req).await };
         let prober = async {
             tokio::time::sleep(Duration::from_millis(300)).await;
             let hits_before = hits.load(Ordering::SeqCst);
             assert!(
-                pool.admit().is_err(),
+                pool.prepare(req).is_err(),
                 "a saturated plane must refuse before the threshold"
             );
             assert_eq!(
                 hits.load(Ordering::SeqCst),
                 hits_before,
-                "admit must not transmit anything"
+                "preparing must not transmit anything"
             );
         };
         tokio::select! {
@@ -236,7 +241,7 @@ fn admit_refuses_a_saturated_plane_without_transmitting_anything() {
 /// The other half: a plane with every backend ejected also refuses at `admit`, so an
 /// all-dead inner fleet is a retry-safe refusal rather than a possibly-executed one.
 #[test]
-fn admit_refuses_when_every_backend_is_ejected() {
+fn preparing_refuses_when_every_backend_is_ejected() {
     rt().block_on(async {
         let (dead, _hits) = spawn_counting_backend(500, b"boom").await;
         let pool = HttpInnerPool::with_breaker_config(
@@ -249,11 +254,11 @@ fn admit_refuses_when_every_backend_is_ejected() {
         )
         .expect("pool builds");
 
-        assert!(pool.admit().is_ok(), "a fresh plane admits");
-        let _ = pool.dispatch(br#"{"id":1}"#).await;
+        drop(pool.prepare(b"{}").expect("a fresh plane prepares"));
+        let _ = round_trip(&pool, br#"{"id":1}"#).await;
         assert_eq!(pool.ejected_backend_count(), 1);
         assert!(
-            pool.admit().is_err(),
+            pool.prepare(b"{}").is_err(),
             "an all-ejected plane must refuse before the threshold"
         );
     });
@@ -312,9 +317,9 @@ fn a_truncated_response_body_is_an_invalid_upstream_answer() {
         let pool =
             HttpInnerPool::new(vec![uri_for(addr)], Duration::from_secs(5)).expect("pool builds");
 
-        let out = pool.dispatch(br#"{"jsonrpc":"2.0","id":1}"#).await;
+        let out = round_trip(&pool, br#"{"jsonrpc":"2.0","id":1}"#).await;
         assert!(
-            matches!(out, InnerOutcome::InvalidUpstream(_)),
+            matches!(out, DispatchedOutcome::InvalidUpstream(_)),
             "a backend that answered and then broke its body did act: {out:?}"
         );
     });
@@ -340,7 +345,8 @@ fn round_robin_spreads_across_backends() {
         // Four sequential requests round-robin A,B,A,B.
         let mut seen = Vec::new();
         for _ in 0..4 {
-            let InnerOutcome::Replied(bytes) = pool.dispatch(br#"{"jsonrpc":"2.0","id":1}"#).await
+            let DispatchedOutcome::Replied(bytes) =
+                round_trip(&pool, br#"{"jsonrpc":"2.0","id":1}"#).await
             else {
                 panic!("a healthy backend replies");
             };
@@ -484,9 +490,24 @@ async fn spawn_flappy_backend(healthy: Arc<AtomicBool>, body: &'static [u8]) -> 
 }
 
 /// The backend replied, and its reply carries a `result`.
-fn has_result(out: &InnerOutcome) -> bool {
+/// Prepare and dispatch in one step, for the controls whose subject is the ROUND TRIP.
+///
+/// Since #741 the two are separate: `prepare` takes the plane's capacity and transmits
+/// nothing, and the value it returns is what transmits. A control about breaker behaviour
+/// wants both, so it says so once here rather than at every call — and the controls whose
+/// subject IS the split call `prepare` directly.
+async fn round_trip(pool: &HttpInnerPool, request: &[u8]) -> DispatchedOutcome {
+    match pool.prepare(request) {
+        Ok(prepared) => prepared.dispatch().await,
+        // A pre-commitment refusal. The tests that care about this case assert on
+        // `prepare` itself; here it is a failure like any other, and never a `Replied`.
+        Err(why) => DispatchedOutcome::Indeterminate(why.0),
+    }
+}
+
+fn has_result(out: &DispatchedOutcome) -> bool {
     match out {
-        InnerOutcome::Replied(bytes) => serde_json::from_slice::<Value>(bytes)
+        DispatchedOutcome::Replied(bytes) => serde_json::from_slice::<Value>(bytes)
             .ok()
             .and_then(|v| v.get("result").cloned())
             .is_some(),
@@ -500,8 +521,8 @@ fn has_result(out: &InnerOutcome) -> bool {
 /// ejected, being re-admitted. Tests whose subject IS the classification assert on the
 /// specific variant instead, because "some failure" is precisely the answer that used to
 /// be the only one available.
-fn is_failure(out: &InnerOutcome) -> bool {
-    !matches!(out, InnerOutcome::Replied(_))
+fn is_failure(out: &DispatchedOutcome) -> bool {
+    !matches!(out, DispatchedOutcome::Replied(_))
 }
 
 #[test]
@@ -521,7 +542,7 @@ fn failing_backend_is_ejected_and_traffic_rebalances_to_healthy() {
 
         let mut ok = 0;
         for _ in 0..30 {
-            if has_result(&pool.dispatch(br#"{"jsonrpc":"2.0","id":1}"#).await) {
+            if has_result(&round_trip(&pool, br#"{"jsonrpc":"2.0","id":1}"#).await) {
                 ok += 1;
             }
         }
@@ -568,7 +589,7 @@ fn slow_backend_is_ejected_and_does_not_stall_the_plane() {
         let start = std::time::Instant::now();
         let mut ok = 0;
         for _ in 0..20 {
-            if has_result(&pool.dispatch(br#"{"jsonrpc":"2.0","id":1}"#).await) {
+            if has_result(&round_trip(&pool, br#"{"jsonrpc":"2.0","id":1}"#).await) {
                 ok += 1;
             }
         }
@@ -616,19 +637,19 @@ fn all_backends_open_fails_closed_without_dispatching() {
         .expect("pool builds");
 
         // One failure ejects the only backend (threshold = 1).
-        assert!(is_failure(&pool.dispatch(br#"{"id":1}"#).await));
+        assert!(is_failure(&round_trip(&pool, br#"{"id":1}"#).await));
         assert_eq!(pool.ejected_backend_count(), 1);
         let hits_after_eject = dead_hits.load(Ordering::SeqCst);
 
         // With the circuit open, further requests fail closed WITHOUT dispatching —
-        // no unbounded queuing onto a known-dead backend.
+        // no unbounded queuing onto a known-dead backend. And they fail closed BEFORE
+        // committing: an all-ejected pool transmits nothing, and the refusal is a
+        // pre-commitment one rather than an outcome indistinguishable from a backend that
+        // answered.
         for _ in 0..5 {
-            let out = pool.dispatch(br#"{"id":1}"#).await;
-            // An all-ejected pool transmits NOTHING, and now says so rather than
-            // producing bytes indistinguishable from a backend that answered.
             assert!(
-                matches!(out, InnerOutcome::NotDispatched(_)),
-                "all-open must fail closed without dispatching: {out:?}"
+                pool.prepare(br#"{"id":1}"#).is_err(),
+                "all-open must fail closed before anything commits"
             );
         }
         assert_eq!(
@@ -656,16 +677,16 @@ fn ejected_backend_is_readmitted_after_cooldown_probe_succeeds() {
 
         // Two failures eject the only backend.
         for _ in 0..2 {
-            let _ = pool.dispatch(br#"{"id":1}"#).await;
+            let _ = round_trip(&pool, br#"{"id":1}"#).await;
         }
         assert_eq!(pool.ejected_backend_count(), 1);
         // Before the cooldown elapses it stays fail-closed.
-        assert!(is_failure(&pool.dispatch(br#"{"id":1}"#).await));
+        assert!(is_failure(&round_trip(&pool, br#"{"id":1}"#).await));
 
         // The backend recovers; after the cooldown a Half-Open probe re-admits it.
         healthy.store(true, Ordering::SeqCst);
         tokio::time::sleep(Duration::from_millis(400)).await;
-        let out = pool.dispatch(br#"{"id":1}"#).await;
+        let out = round_trip(&pool, br#"{"id":1}"#).await;
         assert!(
             has_result(&out),
             "recovered backend must be re-admitted via probe: {out:?}"
@@ -692,19 +713,19 @@ fn concurrent_dispatches_are_in_flight_together_not_serialized() {
         let req = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#;
         let start = std::time::Instant::now();
         let (a, b, c, d, e, f) = tokio::join!(
-            pool.dispatch(req),
-            pool.dispatch(req),
-            pool.dispatch(req),
-            pool.dispatch(req),
-            pool.dispatch(req),
-            pool.dispatch(req),
+            round_trip(&pool, req),
+            round_trip(&pool, req),
+            round_trip(&pool, req),
+            round_trip(&pool, req),
+            round_trip(&pool, req),
+            round_trip(&pool, req),
         );
         let elapsed = start.elapsed();
 
         for out in [&a, &b, &c, &d, &e, &f] {
             assert_eq!(
                 out,
-                &InnerOutcome::Replied(INNER_OK.to_vec()),
+                &DispatchedOutcome::Replied(INNER_OK.to_vec()),
                 "every concurrent dispatch returns the inner response verbatim"
             );
         }
@@ -737,7 +758,7 @@ fn pool_exhaustion_fails_closed_immediately_without_queuing() {
         let req = br#"{"jsonrpc":"2.0","id":1}"#;
 
         // Two long-lived dispatches hold both permits.
-        let holders = async { tokio::join!(pool.dispatch(req), pool.dispatch(req)) };
+        let holders = async { tokio::join!(round_trip(&pool, req), round_trip(&pool, req)) };
         // Concurrently: once both permits are held, a third dispatch must be rejected
         // fast and never touch a backend. Completing the prober ends the test; the
         // holders are then dropped (no 30s wait).
@@ -749,14 +770,14 @@ fn pool_exhaustion_fails_closed_immediately_without_queuing() {
                 "both in-flight permits must be held by the two long dispatches"
             );
             let start = std::time::Instant::now();
-            let out = pool.dispatch(req).await;
+            let refused = pool.prepare(req);
             let took = start.elapsed();
-            // NOT merely "some failure". A saturated pool transmitted nothing, so the
-            // call definitely did not execute — and the serving path turns that into a
-            // retry-safe PRE-dispatch refusal only because this value says so.
+            // NOT merely "some failure". A saturated pool transmitted nothing, so the call
+            // definitely did not execute — and it is refused where the serving path can
+            // still say so, before any capability is handed out.
             assert!(
-                matches!(out, InnerOutcome::NotDispatched(_)),
-                "a saturated pool must fail closed as not-dispatched: {out:?}"
+                refused.is_err(),
+                "a saturated pool must fail closed before committing"
             );
             assert!(
                 took < Duration::from_millis(100),

@@ -2,15 +2,18 @@
 //! WHICH inner backend a dispatch may use, and whether any is usable at all.
 //!
 //! One authority: the pool's health-aware choice. It reads breaker state and claims the
-//! single recovery probe when it takes one, and it answers the read-only twin question
-//! without claiming anything. What it does NOT do is run the round trip or fold an outcome
-//! back — that is [`super::HttpInnerPool::record_outcome`]'s, and keeping the two apart is
-//! what stops a question about the pool from silently changing it.
+//! single recovery probe when it takes one. What it does NOT do is run the round trip or
+//! fold an outcome back — that is [`super::HttpInnerPool::record_outcome`]'s, and keeping
+//! the two apart is what stops a question about the pool from silently changing it.
 //!
-//! Two projections leave this owner — `select_backend` and `any_dispatchable`, the
-//! claiming and non-claiming forms of the same question. `rotating_start` and `scan_from`
-//! stay private to it: the order in which backends are tried is this module's business,
-//! and a consumer that could ask for it could take the choice apart.
+//! ONE projection leaves this owner: `select_backend`, the claiming form. It used to have a
+//! read-only twin, `any_dispatchable`, because the seam's `admit` had to answer the same
+//! question without taking anything — and two functions deciding *is a backend usable* from
+//! the same atomics is one fact stated twice, with a race living in the gap between the
+//! answer and the claim. #741 removed the caller that needed the non-claiming form, so the
+//! second statement is gone with it. `rotating_start` and `scan_from` stay private: the
+//! order in which backends are tried is this module's business, and a consumer that could
+//! ask for it could take the choice apart.
 //!
 //! The scan ORDER is expressed as a split rather than as `(start + k) % n` reads: the two
 //! halves are the order, so it is carried by the iterator instead of by an index recomputed
@@ -106,29 +109,5 @@ impl HttpInnerPool {
             .enumerate()
             .map(move |(k, b)| (start + k, b))
             .chain(head.iter().enumerate())
-    }
-
-    /// Whether any backend could be dispatched to right now, WITHOUT claiming it.
-    ///
-    /// The read-only twin of [`Self::select_backend`]: it answers the same question over
-    /// the same three cases (a `Closed` backend, an `Open` backend past its cooldown, a
-    /// `HalfOpen` backend with no trial in flight) using loads only. `select_backend`
-    /// cannot serve this purpose — it performs the `Open`→`HalfOpen` CAS and sets
-    /// `probe_inflight`, so asking it a question claims the single recovery probe, and a
-    /// claim no `ProbeGuard` or `record_outcome` ever releases wedges the backend
-    /// HalfOpen for the life of the process.
-    ///
-    /// Advisory by nature: the state can change between this read and the dispatch that
-    /// follows. The losing side of that race is resolved pessimistically by `dispatch`
-    /// itself, which re-selects.
-    pub(super) fn any_dispatchable(&self, now_nanos: u64) -> bool {
-        self.backends
-            .iter()
-            .any(|b| match b.state.load(Ordering::Acquire) {
-                STATE_CLOSED => true,
-                STATE_OPEN => now_nanos >= b.reopen_at_nanos.load(Ordering::Acquire),
-                STATE_HALF_OPEN => !b.probe_inflight.load(Ordering::Acquire),
-                _ => false,
-            })
     }
 }
