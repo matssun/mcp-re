@@ -47,6 +47,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _ecosystems import CARGO  # noqa: E402
+from _ecosystems import parse_results  # noqa: E402
+from _ecosystems import test_argv  # noqa: E402
+from _ecosystems import unit_ecosystem  # noqa: E402
+from _ecosystems import valid_target  # noqa: E402
 from _evidence import EvidenceRecord, write_record  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _manifest import (  # noqa: E402
@@ -61,28 +66,9 @@ from _manifest import (  # noqa: E402
 
 EVIDENCE_STORE = REPO_ROOT / ".verification" / "evidence"
 
-#: The statuses libtest reports. Closed, because everything else on a result line is
-#: somebody ELSE's output — see below.
-TEST_STATUSES = ("ok", "FAILED", "ignored")
-
-#: libtest's per-test result line: `test block::tests::round_trips ... ok`.
-#:
-#: The status is taken from the END of the line rather than from the first word after the
-#: ellipsis, and the reason is a measured false RED. libtest writes `test <name> ... ` and
-#: the status from the harness thread, but a test that spawns a child process — or any code
-#: writing to the real fd 2 rather than to the capture buffer — lands its bytes BETWEEN
-#: them. On 2026-08-31 that produced
-#:
-#:     test audit_sink::tests::the_collector_preserves_emission_order ... mcp-re-proxy: ...ok
-#:
-#: and the old pattern read the status as `mcp`, reporting a deterministic two-assert test
-#: as not having passed. Anchoring to the end of the line is safe in the direction that
-#: matters: libtest writes the status LAST, so interleaved text containing the word `ok`
-#: cannot outrank a real `FAILED` — and if the interleave carries a newline the line does
-#: not match at all, which reads as `never ran` and fails loudly rather than quietly green.
-RESULT_LINE = re.compile(
-    r"^test (\S+) \.\.\. .*?(" + "|".join(TEST_STATUSES) + r")$", re.MULTILINE
-)
+# The per-runner result syntax — including the libtest false-RED lesson that decided where
+# the status is read from — lives in `_ecosystems.parse_results`, so that one rule about
+# what a reported status MEANS is applied to every ecosystem the platform adapts.
 
 #: A DOCTEST's result line, whose name contains spaces and a line number:
 #: `test src/verified_response.rs - verified_response::VerifiedMcpResponse (line 82) - compile fail ... ok`
@@ -95,24 +81,14 @@ TARGET_SEP = "#"
 
 
 def unit_crate(unit: dict) -> str | None:
-    """The Cargo package whose targets carry this unit's tests, or None.
+    """The project whose targets carry this unit's tests, or None.
 
     Delegates to the manifest's `test_package_for`, which is the ONE answer: the lane runs
-    the battery in this package and the ReviewFingerprint records this package as what was
-    measured, so a second implementation here could let the two disagree.
+    the battery in this project and the ReviewFingerprint records this project as what was
+    measured, so a second implementation here could let the two disagree. Which build system
+    a project belongs to is `_ecosystems`' answer (issue #745), not this lane's.
     """
     return test_package_for(unit)
-
-
-def target_argv(target: str) -> list[str] | None:
-    """Cargo's selector for one test target, or None if the target is not a known form."""
-    if target == "lib":
-        return ["--lib"]
-    if target == "doc":
-        return ["--doc"]
-    if target.startswith("tests/") and target.count("/") == 1 and target[6:]:
-        return ["--test", target[6:]]
-    return None
 
 
 def doc_matches(observed: dict[str, str], item: str) -> list[str]:
@@ -127,38 +103,46 @@ def doc_matches(observed: dict[str, str], item: str) -> list[str]:
     return [name for name in observed if f" - {item} (line " in name]
 
 
-def group_by_target(symbols: list[str]) -> tuple[dict[str, list[str]], list[str]]:
-    """Split `<target>#<path>` symbols into per-target selections, and the malformed ones."""
+def group_by_target(eco, symbols: list[str]) -> tuple[dict[str, list[str]], list[str]]:
+    """Split `<target>#<path>` symbols into per-target selections, and the malformed ones.
+
+    Which target names are runnable is the ECOSYSTEM's answer. A symbol naming a target its
+    ecosystem does not run is malformed rather than skipped: a selector nothing executes is
+    a declared control that establishes nothing, and the lane refuses on it in both
+    directions already.
+    """
     grouped: dict[str, list[str]] = defaultdict(list)
     malformed: list[str] = []
     for symbol in symbols:
         target, _, path = symbol.partition(TARGET_SEP)
-        if not path or target_argv(target) is None:
+        if not path or not valid_target(eco, target):
             malformed.append(symbol)
             continue
         grouped[target].append(path)
     return dict(grouped), malformed
 
 
-def run_selection(crate: str, target: str, paths: list[str]) -> tuple[bool, str]:
+def run_selection(eco, crate: str, target: str, paths: list[str]) -> tuple[bool, str]:
     """Run exactly `paths` in one target and say whether all of them passed.
 
-    `check=False` and libtest's own status: piping the run through anything replaces its
-    exit code with the pipeline's, which is how a failed test reads as a success.
+    `check=False` and the runner's own per-test status: piping the run through anything
+    replaces its exit code with the pipeline's, which is how a failed test reads as a
+    success. The COMMAND and the report syntax are the ecosystem's; the rule applied to the
+    result is this lane's and is one rule — a declared symbol that did not report success
+    is a failure, whether it failed, was skipped, or never ran.
     """
-    # Doctests are filtered by substring, not `--exact`, because their names carry a line
-    # number; the containment check below is what makes the selection precise.
-    selector = [] if target == "doc" else ["--exact"]
-    argv = ["cargo", "test", "-p", crate, *target_argv(target), "--", *selector, *paths]
+    argv = test_argv(eco, crate, target, paths)
     proc = subprocess.run(
         argv,
-        cwd=REPO_ROOT,
+        # Cargo is driven from the workspace root with `-p`; a pytest or vitest selection is
+        # relative to its own project, which is where its configuration lives.
+        cwd=REPO_ROOT if eco is CARGO else REPO_ROOT / crate,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         check=False,
     )
-    if target == "doc":
+    if eco is CARGO and target == "doc":
         observed = dict(DOC_RESULT_LINE.findall(proc.stdout))
         missing = []
         for item in paths:
@@ -179,7 +163,7 @@ def run_selection(crate: str, target: str, paths: list[str]) -> tuple[bool, str]
             )
         return True, f"{target}: {len(paths)} item(s) passed"
 
-    observed = dict(RESULT_LINE.findall(proc.stdout))
+    observed = parse_results(eco, proc.stdout)
     passed = {name for name, status in observed.items() if status == "ok"}
     missing = sorted(set(paths) - passed)
     if missing:
@@ -198,23 +182,28 @@ def run_selection(crate: str, target: str, paths: list[str]) -> tuple[bool, str]
 
 def measure_unit(unit: dict) -> tuple[bool, str]:
     """Whether this unit's whole declared battery passed, and what to record about it."""
+    eco = unit_ecosystem(unit)
     crate = unit_crate(unit)
-    if crate is None:
-        return False, "the unit's paths name no single Cargo package to test"
+    if eco is None or crate is None:
+        return False, (
+            "the unit's paths name no single project to test: they belong to no build "
+            "system this platform adapts, span two of them, or sit outside every project "
+            "of their own"
+        )
 
     symbols = sorted(unit.get("tested_symbols", []))
-    grouped, malformed = group_by_target(symbols)
+    grouped, malformed = group_by_target(eco, symbols)
     if malformed:
         return False, (
-            f"{len(malformed)} tested_symbol(s) name no runnable target "
-            f"({', '.join(malformed)}); expected `lib#path` or `tests/<name>#path`"
+            f"{len(malformed)} tested_symbol(s) name no runnable {eco.name} target "
+            f"({', '.join(malformed)})"
         )
 
     details: list[str] = []
     failed = False
     for target in sorted(grouped):
         print(f"    {crate} {target}: {len(grouped[target])} test(s)")
-        ok, detail = run_selection(crate, target, grouped[target])
+        ok, detail = run_selection(eco, crate, target, grouped[target])
         details.append(detail)
         failed = failed or not ok
     return not failed, "; ".join(details)
