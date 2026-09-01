@@ -87,6 +87,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import tomllib
 from functools import lru_cache
 
@@ -181,7 +182,43 @@ def _formal_sources(unit: dict) -> dict[str, str]:
     project measurement happened. The class check that refuses such a unit outright is the
     schema's; this is the half that would otherwise measure it as if it had one.
     """
-    return _digest_paths(formal_source_patterns(unit))
+    return _digest_tracked(formal_source_patterns(unit))
+
+
+@lru_cache(maxsize=1)
+def _tracked_files() -> frozenset[str]:
+    """Every path git tracks, as repo-relative POSIX strings.
+
+    A fingerprint describes the COMMITTED tree, and every explicitly declared input already
+    is one. The glob-driven inputs are not: `sdk/python/uv.lock` is `.gitignore`d as a
+    maturin by-product, so a developer who has run the import hook has a file on disk that a
+    CI checkout does not — and digesting it would make the same commit fingerprint two ways
+    depending on whose machine looked. That is not a stricter measurement; it is a
+    measurement of something nobody reviewed.
+
+    Git is already a platform premise here — `render-r9-dispositions --check` establishes
+    merge ancestry the same way — and the call is made once per process.
+    """
+    proc = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=REPO_ROOT,
+        stdout=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        # No git, no answer. Returning "everything is tracked" would silently restore the
+        # machine-dependent digest this exists to remove.
+        raise RuntimeError("git ls-files failed; the fingerprint cannot describe the tree")
+    return frozenset(entry for entry in proc.stdout.split("\0") if entry)
+
+
+def _digest_tracked(patterns: list[str]) -> dict[str, str]:
+    """`_digest_paths`, restricted to what git tracks — for the glob-driven inputs."""
+    tracked = _tracked_files()
+    return {
+        path: digest for path, digest in _digest_paths(patterns).items() if path in tracked
+    }
 
 
 def _build_configuration(unit: dict) -> dict[str, str]:
@@ -193,7 +230,7 @@ def _build_configuration(unit: dict) -> dict[str, str]:
     about without touching a declared source line. Absent alternatives — `poetry.lock` where
     a project uses `uv` — contribute nothing rather than an error.
     """
-    return _digest_paths(build_configuration_patterns(unit))
+    return _digest_tracked(build_configuration_patterns(unit))
 
 
 def _toolchain_identity(toolchains: dict) -> dict:

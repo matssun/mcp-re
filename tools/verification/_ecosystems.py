@@ -300,20 +300,32 @@ def test_argv(eco: Ecosystem, project: str, target: str, selectors: list[str]) -
         target_argv = ["--lib"] if target == "lib" else ["--test", target[6:]]
         return ["cargo", "test", "-p", project, *target_argv, "--", "--exact", *selectors]
     if eco is PYTHON:
-        # `-p no:randomly` is deliberate: a battery whose order varies is a battery whose
-        # result is not reproducible from the fingerprint that recorded it.
+        # `uv run` rather than a bare interpreter: the project's environment is the one its
+        # lockfile pins, and that lockfile is a fingerprint input. A battery run against
+        # whatever happens to be importable is a battery whose result the fingerprint does
+        # not describe. `-p no:randomly` for the same reason one step further in — a battery
+        # whose order varies is not reproducible from the record that measured it. Selection
+        # is by exact node id, which pytest supports natively.
         return [
-            "python3",
+            "uv",
+            "run",
+            "--quiet",
+            "python",
             "-m",
             "pytest",
             "-p",
             "no:randomly",
             "--no-header",
-            "-q",
+            "-v",
             *selectors,
         ]
     if eco is TYPESCRIPT:
-        return ["npx", "vitest", "run", "--reporter=verbose", *selectors]
+        # vitest selects by FILE; `-t` matches a name by substring, which is not selection.
+        # So the files are selected here and the exact names are compared by the lane, which
+        # is where the both-directions rule already lives: a declared name that did not
+        # report success fails, and a name nobody declared is not evidence for anything.
+        files = sorted({selector.split(" > ", 1)[0] for selector in selectors})
+        return ["npx", "vitest", "run", "--reporter=verbose", *files]
     raise ValueError(f"no test command for ecosystem {eco.name!r}")
 
 
