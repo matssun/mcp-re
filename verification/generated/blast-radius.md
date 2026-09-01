@@ -76,6 +76,7 @@ attestations this view cannot see.
 | unit://proxy.replay_materialization | source, contracts or evidence | THM-0086 | _no consumer_ |
 | unit://proxy.request_peer_binding | source, contracts or evidence | THM-0034 | _no consumer_ |
 | unit://proxy.response_signing | source, contracts or evidence | THM-0063, THM-0075 | _no consumer_ |
+| unit://proxy.retention_commitment | source, contracts or evidence | THM-0088 | _no consumer_ |
 | unit://proxy.runtime_lifecycle | source, contracts or evidence | THM-0012 | _no consumer_ |
 | unit://proxy.serving_identity_provenance | source, contracts or evidence | THM-0080 | _no consumer_ |
 | unit://proxy.serving_trust_seam | source, contracts or evidence | THM-0066 | _no consumer_ |
@@ -176,6 +177,7 @@ attestations this view cannot see.
 | THM-0085 | statement, consequence, scope or review requirement | specification review | THM-0071 |
 | THM-0086 | statement, consequence, scope or review requirement | specification review | THM-0077 |
 | THM-0087 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0088 | statement, consequence, scope or review requirement | specification review | THM-0078 |
 
 ## Assumptions
 

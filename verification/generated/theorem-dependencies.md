@@ -98,6 +98,7 @@ graph BT
     THM_0084["THM-0084<br/>The shipped client proxy verifies against the request it sent"]
     THM_0085["THM-0085<br/>Every exchange-owned refusal reaches the audit boundary, typed, before it is answered"]
     THM_0086["THM-0086<br/>The established replay tier is the selected one, and never a weaker substitute"]
+    THM_0088["THM-0088<br/>A retention artefact reads as a crossing only for an exchange that crossed"]
     THM_0007 --> THM_0008
     THM_0010 --> THM_0009
     THM_0001 --> THM_0014
@@ -205,6 +206,7 @@ graph BT
     THM_0063 --> THM_0078
     THM_0069 --> THM_0078
     THM_0081 --> THM_0078
+    THM_0088 --> THM_0078
     THM_0031 --> THM_0080
     THM_0033 --> THM_0080
     THM_0043 --> THM_0081

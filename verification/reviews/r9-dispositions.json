@@ -47,7 +47,11 @@
       "node": "THM-0045 / proxy.dispatch_commitment",
       "area": "retention-marker",
       "reason": "`commit_to_dispatch` reserves last, closing the `admit()` ordering — but `dispatch()` still returns `NotDispatched` for the in-flight bound (`http_inner:486`) and all-ejected (`:495`), refused at `inner_plane.rs:99/151` after the reservation, dropping the disposition with no release.",
-      "tracking_issue": 741
+      "merged_closure": {
+        "pr": 760,
+        "commit": "6fea87b697342407f76ccf7d625c51000222fa4d",
+        "note": "the two stages are two names; a refused call leaves the reserved one, which asserts no execution"
+      }
     },
     {
       "cluster": "R9-C005",
@@ -862,7 +866,11 @@
       "node": "no THM (transparency unrooted)",
       "area": "retention-marker",
       "reason": "`release_before_dispatch` is called only from `durability.rs`'s own test; `pending_reservations` only from one proxy integration test.",
-      "tracking_issue": 741
+      "merged_closure": {
+        "pr": 760,
+        "commit": "6fea87b697342407f76ccf7d625c51000222fa4d",
+        "note": "release_before_dispatch is deleted; the withdrawal is a drop, and .reserved has its own enumerator"
+      }
     },
     {
       "cluster": "R9-C079",
@@ -873,7 +881,11 @@
       "node": "no THM",
       "area": "retention-marker",
       "reason": "Same.",
-      "tracking_issue": 741
+      "merged_closure": {
+        "pr": 760,
+        "commit": "6fea87b697342407f76ccf7d625c51000222fa4d",
+        "note": "same: the rescind is not a call any path can fail to make"
+      }
     },
     {
       "cluster": "R9-C080",
@@ -884,7 +896,11 @@
       "node": "no THM",
       "area": "retention-marker",
       "reason": "Same.",
-      "tracking_issue": 741
+      "merged_closure": {
+        "pr": 760,
+        "commit": "6fea87b697342407f76ccf7d625c51000222fa4d",
+        "note": "same: the API that had no production caller no longer exists"
+      }
     },
     {
       "cluster": "R9-C081",
@@ -1090,7 +1106,11 @@
       "node": "no THM (transparency unrooted)",
       "area": "retention-marker",
       "reason": "`reserve` still writes the marker durably before returning; a failure or cancellation after the write leaves a credential-bearing `.pending` with no reservation for any release path to consume.",
-      "tracking_issue": 741
+      "merged_closure": {
+        "pr": 760,
+        "commit": "6fea87b697342407f76ccf7d625c51000222fa4d",
+        "note": "the marker carries the digest commitment alone, and a pre-dispatch publication that cannot be withdrawn is reported as its own fact"
+      }
     },
     {
       "cluster": "R9-C100",

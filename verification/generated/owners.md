@@ -72,6 +72,7 @@ not an omission to hide.
 | proxy.replay_materialization | V0 | THM-0086 | 0 |
 | proxy.request_peer_binding | V0 | THM-0034 | 0 |
 | proxy.response_signing | V0 | THM-0063, THM-0075 | 0 |
+| proxy.retention_commitment | V0 | THM-0088 | 0 |
 | proxy.runtime_lifecycle | V0 | THM-0012 | 0 |
 | proxy.serving_identity_provenance | V0 | THM-0080 | 0 |
 | proxy.serving_trust_seam | V0 | THM-0066 | 0 |
