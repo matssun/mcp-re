@@ -634,7 +634,9 @@ would destroy the audit's own record of what it found.
 A closure is typed (`pr`, `commit`, `note`) and **means merged**: `--check` requires the
 recorded commit to be an ancestor of HEAD in the local clone. `R9-C074`/`C075` were once
 recorded as closed by a pull request that was green and *open*, and prose could not tell the
-difference — the evidence for "merged" was a sentence saying so. No network is consulted;
+difference — the evidence for "merged" was a sentence saying so. They went back to their
+owning issue until #736 actually merged, and carry a typed closure now; the round trip is
+what the control is for. No network is consulted;
 PR state is remote and mutable, while a merge commit reachable from HEAD is the durable
 local fact, and it is the one that means the change is in the tree being measured.
 
@@ -715,8 +717,8 @@ local fact, and it is the one that means the change is in the tree being measure
 | R9-C071 | medium | `assurance-platform` | verify exits before writing the evidence bundle, so attest consumes the previous run's aggregate | `SURVIVES_AND_MAPPED` | assurance platform | Same as C023. | #739 |
 | R9-C072 | medium | `assurance-platform` | Workflow path triggers miss the build inputs the new fingerprint measures, including the verify-feature Cargo.toml | `FIXED_AND_COVERED` | assurance platform | Same as C053. | — |
 | R9-C073 | medium | `assurance-platform` | Widened trigger lands on a currently-red gate: most core PRs now fail on an unrelated manifest-policy error | `NO_LONGER_REPRODUCES` | — | `verify --manifests` is PASS on current main (measured this session, including after the ASM-0037 correction). | — |
-| R9-C074 | medium | `scitt-retained-evidence` | submitted_commitment covers no header but `signature`, so tail substitution stays open via signature-input | `SURVIVES_AND_MAPPED` | THM-0042 (root) | `submitted_commitment` (`chain/mod.rs:202`) still folds only status, method, target-URI, request body, response body, and headers whose name is exactly `signature`. `signature-input`, `content-digest` and `mcp-re-delegation` are excluded. | #740 |
-| R9-C075 | medium | `scitt-retained-evidence` | submitted_commitment omits every header but `signature`, leaving the tail substitution open | `SURVIVES_AND_MAPPED` | THM-0042 (root) | Same digest. The record's own doc still calls it the identity of what was submitted. | #740 |
+| R9-C074 | medium | `scitt-retained-evidence` | submitted_commitment covers no header but `signature`, so tail substitution stays open via signature-input | `SURVIVES_AND_MAPPED` | THM-0042 (root) | `submitted_commitment` (`chain/mod.rs:202`) still folds only status, method, target-URI, request body, response body, and headers whose name is exactly `signature`. `signature-input`, `content-digest` and `mcp-re-delegation` are excluded. | closed by #736 (`eef36b63e1dd`) |
+| R9-C075 | medium | `scitt-retained-evidence` | submitted_commitment omits every header but `signature`, leaving the tail substitution open | `SURVIVES_AND_MAPPED` | THM-0042 (root) | Same digest. The record's own doc still calls it the identity of what was submitted. | closed by #736 (`eef36b63e1dd`) |
 | R9-C076 | medium | `cli-boundary` | --trust-domain non-emptiness is still enforced only in parse_args after its five siblings moved to the boundary | `FIXED_AND_COVERED` | THM-0077 (root) | `config_state/server_identity.rs::coordinate_violations` refuses an empty `--trust-domain` (and `--server-signer`) at the validation boundary. | — |
 | R9-C077 | medium | `cli-boundary` | Three semantic refusals are still enforced only in parse_args after the round-8 boundary sweep | `SURVIVES_AND_MAPPED` | THM-0013 / proxy.online_ocsp_reachability | No `ocsp_responder_url` refusal exists in `config_state/`; the dangling-flag refusal is still argv-only, so a programmatic `Config` carries it into serving. | — |
 | R9-C078 | medium | `retention-marker` | Both new retention APIs are unwired: nothing enumerates, releases or reclaims a .pending marker | `SURVIVES_AND_MAPPED` | no THM (transparency unrooted) | `release_before_dispatch` is called only from `durability.rs`'s own test; `pending_reservations` only from one proxy integration test. | #741 |
