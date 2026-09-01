@@ -1028,3 +1028,76 @@ introduced_by = "Owner completeness ruling A, 2026-08-31"
 review_requirement = "Owner review; any new RawEd25519TlsSigner implementation, and any change to how the resolver obtains or installs the signer's exported key."
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
+
+# ---------------------------------------------------------------------------
+# ADR-MCPRE-059 §28 / issue #744, D2a — what an ACKNOWLEDGED replay admission
+# durably established.
+# ---------------------------------------------------------------------------
+#
+# Two entries, not one, and deliberately no umbrella. What a Redis `WAIT` reply establishes
+# is not what an etcd transaction success establishes: one is a count of replicas that
+# acknowledged a write which may still be lost on failover, the other is a linearized
+# compare-and-set on a Raft quorum. A single "the client library reports success faithfully"
+# premise would hide that difference behind a sentence true of neither mechanism in
+# particular, and would put both backends' failure modes into one blast radius.
+#
+# The REFUSAL direction needs neither entry. That a store which does not answer refuses
+# rather than admits is local, and `proxy.replay_admission_gate` measures it.
+
+[[assumption]]
+id = "ASM-0040"
+description = "A Redis `WAIT n t` reply of at least `n` means `n` replicas acknowledged the preceding `SET NX PX`, and the tier's declared quorum is the number that survives the failures ADR-MCPS-020 admits for REDIS_WAIT_QUORUM."
+justification = """
+The `REDIS_WAIT_QUORUM` tier issues `WAIT` after a fresh insert and fails closed when the
+reply is short of the configured quorum, so the admission decision rests on what that number
+means. MCP-RE cannot establish it: the replicas are remote processes, the count is what the
+primary reports, and Redis replication is asynchronous — a `WAIT` that returns `n` says `n`
+replicas acknowledged receipt, NOT that a subsequent failover cannot elect a replica that
+had not applied the write.
+
+So the premise is narrow on purpose. It is not "Redis is correct" and not "the client
+library reports success faithfully". It is that the count is honest and that the operator's
+declared quorum is chosen against the failure set ADR-MCPS-020 names for this tier. The
+choice of quorum is the operator's, which is why the tier is DECLARED configuration rather
+than something MCP-RE infers.
+
+It stops being acceptable if the deployment runs a replication topology outside that failure
+set — a chained or read-only replica counted toward the quorum, or a failover policy that can
+promote a replica the primary never waited on.
+"""
+scope = ["unit://proxy.replay_admission_gate"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 §28 / issue #744, D2a"
+review_requirement = "Owner review; any change to the WAIT quorum handling, to the tier's strict-production minimum, or to the replication topologies ADR-MCPS-020 admits."
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0041"
+description = "An etcd `POST /v3/kv/txn` that succeeds under `compare { target: CREATE, create_revision: 0 }` means the key did not exist at a linearization point and now does, cluster-wide, for the granted lease's TTL."
+justification = """
+The etcd tier's admission is a put-if-absent under a lease, and the whole replay guarantee
+for that tier is that two concurrent admissions of one nonce cannot both observe it absent.
+That is etcd's linearizability property over a Raft quorum, and it is the thing MCP-RE takes
+rather than establishes: nothing local can distinguish a transaction that linearized from
+one whose reply merely looked like it did.
+
+Separate from ASM-0040 because the guarantee is different in kind. Redis's is a count of
+acknowledgements; etcd's is a consensus decision, and it survives failover by construction
+rather than by an operator's quorum choice. Registering one premise over both would state,
+for each backend, a property only the other has.
+
+The lease is inside the premise deliberately. A recorded nonce that outlives its lease stops
+being recorded, so the tier's replay window is bounded by the TTL rather than by the entry
+being permanent, and the admission decision is only as durable as that bound.
+
+It stops being acceptable if the deployment runs a single-member or non-quorum etcd, if the
+admission stops using the CREATE comparison, or if a lease TTL is derived from anything but
+the request's own retain-until.
+"""
+scope = ["unit://proxy.replay_admission_gate"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 §28 / issue #744, D2a"
+review_requirement = "Owner review; any change to the txn comparison, the lease derivation, or the cluster topology the tier is declared against."
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"

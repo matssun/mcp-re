@@ -16,6 +16,7 @@ use mcp_re_core::McpReError;
 use mcp_re_http_profile::RetainedContinuation;
 
 use crate::continuation_store::continuation_key;
+use crate::continuation_store::ContinuationStoreError;
 use crate::continuation_store::RetainedBases;
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
@@ -58,15 +59,7 @@ impl ContinuationPlane {
             .as_ref()
             .map(|state| continuation_key(audience_id, ex.actor_id, state.as_bytes()));
         let retained = match (&self.store, &answer_key) {
-            (Some(store), Some(key)) => match store.peek(key).await {
-                Ok(bases) => bases,
-                Err(_) => {
-                    return Err(Refusal::before_admission(
-                        McpReError::ReplayCacheUnavailable,
-                        503,
-                    ))
-                }
-            },
+            (Some(store), Some(key)) => peeked_or_refusal(store.peek(key).await)?,
             _ => None,
         };
         Ok(Established::new(
@@ -105,6 +98,22 @@ impl ContinuationPlane {
             Err(_) => Retirement::Indeterminate,
         }
     }
+}
+
+/// What a `peek` established, or the refusal an unanswered store earns.
+///
+/// The one place the two absences are told apart, so that neither call site nor reader has
+/// to reconstruct the distinction from an `Option` that lost it. `Ok(None)` is a MISS —
+/// never opened, expired, already answered — and the binding then fails closed on the
+/// caller's behalf. `Err` is an OUTAGE, which is a statement about this deployment rather
+/// than about the caller: flattening the two would report a forged continuation every time
+/// the shared tier blips, and would hide a genuine splice attempt inside an outage.
+///
+/// Neither outcome proceeds unbound, which is the property this exists to make checkable.
+fn peeked_or_refusal(
+    peeked: Result<Option<RetainedBases>, ContinuationStoreError>,
+) -> Result<Option<RetainedBases>, Refusal> {
+    peeked.map_err(|_| Refusal::before_admission(McpReError::ReplayCacheUnavailable, 503))
 }
 
 /// What CONTINUATION-PREPARED recovered.
@@ -238,5 +247,37 @@ mod tests {
             "nothing was read, so nothing is at stake"
         );
         assert_eq!(prep.answer_key(), Some(&"k-1".to_owned()));
+    }
+    /// D2b: an outage and a miss are different facts, and NEITHER proceeds unbound.
+    ///
+    /// The miss leaves no bases, so the binding is absent and the dispatcher fails closed
+    /// on `continuation_binding_failed` — a statement about the caller. The outage refuses
+    /// here, before admission, as a statement about this deployment. A single `Option`
+    /// would report the first for both, which reads as a forged continuation every time the
+    /// shared tier blips and hides a genuine splice attempt inside an outage.
+    #[test]
+    fn a_store_outage_is_refused_before_admission_and_is_not_a_miss() {
+        let miss = peeked_or_refusal(Ok(None)).expect("a miss is not a refusal here");
+        assert!(
+            miss.is_none(),
+            "a miss must leave no bases, so the binding fails closed downstream"
+        );
+
+        let outage = peeked_or_refusal(Err(ContinuationStoreError::Unavailable {
+            details: "the shared tier did not answer".into(),
+        }))
+        .expect_err("an outage must refuse rather than proceed unbound");
+        assert_eq!(outage.status, 503);
+        assert_eq!(
+            outage.cause,
+            crate::refusal::RefusalCause::from(McpReError::ReplayCacheUnavailable)
+        );
+
+        let hit = peeked_or_refusal(Ok(Some(RetainedBases {
+            previous_request_base: b"req".to_vec(),
+            input_required_response_base: b"resp".to_vec(),
+        })))
+        .expect("a live entry is not a refusal");
+        assert!(hit.is_some(), "the positive control: a hit binds");
     }
 }

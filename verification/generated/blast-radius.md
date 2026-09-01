@@ -54,6 +54,7 @@ attestations this view cannot see.
 | unit://proxy.channel_associated_credential | source, contracts or evidence | THM-0028 | proxy.channel_associated_identity (CONTRACT_CONSUMES), proxy.mechanism_verified_credential (CONTRACT_CONSUMES) |
 | unit://proxy.channel_associated_identity | source, contracts or evidence | THM-0029 | proxy.authenticated_relationship_peer (CONTRACT_CONSUMES) |
 | unit://proxy.continuation_correlation_store | source, contracts or evidence | THM-0087 | _no consumer_ |
+| unit://proxy.continuation_leg_binding | source, contracts or evidence | THM-0093 | _no consumer_ |
 | unit://proxy.credential_currency | source, contracts or evidence | THM-0032 | proxy.current_authenticated_peer (CONTRACT_CONSUMES) |
 | unit://proxy.credential_key_correspondence | source, contracts or evidence | THM-0026 | proxy.delegated_resolver_materialization (CONTRACT_CONSUMES) |
 | unit://proxy.cross_machine_legality | source, contracts or evidence | THM-0049, THM-0077 | _no consumer_ |
@@ -74,6 +75,7 @@ attestations this view cannot see.
 | unit://proxy.refusal_audit_emission | source, contracts or evidence | THM-0085 | _no consumer_ |
 | unit://proxy.refusal_provenance | source, contracts or evidence | THM-0046, THM-0069, THM-0071, THM-0078 | _no consumer_ |
 | unit://proxy.refusal_site_totality | source, contracts or evidence | THM-0081 | _no consumer_ |
+| unit://proxy.replay_admission_gate | source, contracts or evidence | THM-0092 | _no consumer_ |
 | unit://proxy.replay_materialization | source, contracts or evidence | THM-0086 | _no consumer_ |
 | unit://proxy.request_peer_binding | source, contracts or evidence | THM-0034 | _no consumer_ |
 | unit://proxy.response_signing | source, contracts or evidence | THM-0063, THM-0075 | _no consumer_ |
@@ -176,11 +178,13 @@ attestations this view cannot see.
 | THM-0083 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 | THM-0084 | statement, consequence, scope or review requirement | specification review | THM-0076 |
 | THM-0085 | statement, consequence, scope or review requirement | specification review | THM-0071 |
-| THM-0086 | statement, consequence, scope or review requirement | specification review | THM-0077 |
+| THM-0086 | statement, consequence, scope or review requirement | specification review | THM-0077, THM-0092 |
 | THM-0087 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0088 | statement, consequence, scope or review requirement | specification review | THM-0078 |
 | THM-0089 | statement, consequence, scope or review requirement | specification review | THM-0077 |
 | THM-0091 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0092 | statement, consequence, scope or review requirement | specification review | THM-0074 |
+| THM-0093 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 
 ## Assumptions
 
@@ -223,3 +227,5 @@ attestations this view cannot see.
 | ASM-0037 | description, justification, scope or mechanism | http_profile.keyid_selector | assumption review |
 | ASM-0038 | description, justification, scope or mechanism | proxy.credential_currency | assumption review |
 | ASM-0039 | description, justification, scope or mechanism | proxy.delegated_resolver_materialization | assumption review |
+| ASM-0040 | description, justification, scope or mechanism | proxy.replay_admission_gate | assumption review |
+| ASM-0041 | description, justification, scope or mechanism | proxy.replay_admission_gate | assumption review |

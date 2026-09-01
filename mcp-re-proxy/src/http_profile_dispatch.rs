@@ -183,6 +183,7 @@ mod tests {
     // This module is the file's test region: `scripts/module_size_gate.py` opens it at the
     // `#[cfg(test)]` above and stops counting production lines here.
     use super::*;
+    use mcp_re_core::McpReError;
     use mcp_re_core::ReplayCacheError;
     use mcp_re_core::ReplayDurabilityClass;
     use mcp_re_http_profile::ActorIdentity;
@@ -202,6 +203,9 @@ mod tests {
     struct WitnessCache {
         touched: Cell<bool>,
         class: ReplayDurabilityClass,
+        /// When set, the store CANNOT establish the state: `check_and_insert` fails the
+        /// way an unreachable or non-acknowledging backend fails.
+        unavailable: bool,
     }
 
     impl WitnessCache {
@@ -211,6 +215,17 @@ mod tests {
             WitnessCache {
                 touched: Cell::new(false),
                 class: ReplayDurabilityClass::SingleProcessReference,
+                unavailable: false,
+            }
+        }
+
+        /// Durable and reachable, but its acknowledgement never arrives — the state the
+        /// request requires cannot be established, which is a different fact from a replay.
+        fn unreachable() -> Self {
+            WitnessCache {
+                touched: Cell::new(false),
+                class: ReplayDurabilityClass::Durable,
+                unavailable: true,
             }
         }
 
@@ -219,6 +234,7 @@ mod tests {
             WitnessCache {
                 touched: Cell::new(false),
                 class: ReplayDurabilityClass::Durable,
+                unavailable: false,
             }
         }
     }
@@ -232,6 +248,11 @@ mod tests {
             _expires_at_unix: i64,
         ) -> Result<ReplayDecision, ReplayCacheError> {
             self.touched.set(true);
+            if self.unavailable {
+                return Err(ReplayCacheError::Unavailable {
+                    details: "the acknowledgement never arrived".into(),
+                });
+            }
             Ok(ReplayDecision::Fresh)
         }
 
@@ -421,6 +442,38 @@ mod tests {
         assert!(
             !cache.touched.get(),
             "the store was consulted before refusal"
+        );
+    }
+    /// D2a: a tier that cannot establish the state the request requires does not dispatch.
+    ///
+    /// The two gates above refuse a store whose POSTURE is wrong. This is the other half
+    /// and it is the one that decides the proposition: the posture is fine, the store is
+    /// the selected one, and the acknowledgement does not arrive. Admission is the last
+    /// step for exactly this reason — there is nothing after it to undo — so its failure
+    /// must be a refusal and never a fall-through, and it must not read as a replay: a
+    /// replay says this request was already served, and an outage says nothing at all.
+    #[test]
+    fn a_store_that_cannot_establish_the_state_refuses_rather_than_dispatching() {
+        let cache = WitnessCache::unreachable();
+        let err = dispatch_request_with_tier_gate(
+            &verified(),
+            &cache,
+            None,
+            &ProxyDispatchConfig {
+                fleet_strict: true,
+                tier: Some(ReplayDurabilityTier::Linearizable),
+            },
+        )
+        .expect_err("an unestablished replay state must not dispatch");
+
+        assert!(
+            cache.touched.get(),
+            "this control is only about the admission step, which must have been reached"
+        );
+        assert_eq!(
+            McpReError::from(&err),
+            McpReError::ReplayCacheUnavailable,
+            "an outage must not be reported as a replay: {err:?}"
         );
     }
 }

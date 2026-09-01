@@ -3293,6 +3293,13 @@ depends_on = [
   # Found by the missing-edge pass: what the request IS, decided once, ahead of every stage
   # that reads the body for meaning. R1 quantifies over it and nothing stated it.
   "THM-0083",
+  # ADR-MCPRE-059 §28 / #744, D2a and D2b. The two pre-dispatch obligations whose FAILURE
+  # this root quantifies over and which nothing named: replay admission and the continuation
+  # leg. Both are refusal-direction claims — an obligation that was not established does not
+  # reach the backend — which is exactly the shape of "no unearned dispatch", and neither
+  # duplicates the D1 leaves above, which say only which tier the serving path holds.
+  "THM-0092",
+  "THM-0093",
 ]
 
 [[theorem]]
@@ -3789,6 +3796,105 @@ provider selected was the right one for the deployment.
 owner = "proxy.kms_endpoint_authority"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.kms_endpoint_authority"]
+depends_on = []
+
+# ADR-MCPRE-059 §28 / issue #744, D2a and D2b. The refusal half of the pair whose D1 leaves
+# are THM-0086 and THM-0087: D1 says the tier the serving path holds is the one selected,
+# and these say what a request may proceed on when that tier cannot establish what the
+# request requires. Both hang under THM-0074, whose consequence forbids reaching the backend
+# on an establishment that did not happen.
+[[theorem]]
+id = "THM-0092"
+title = "A request whose replay state was not established does not dispatch"
+statement = """
+Under the fleet-strict posture, replay admission refuses before any store side effect when
+the deployment declares no replay tier, declares one below the strict-production minimum, or
+wires a store that self-reports the single-process reference class. The atomic admission is
+the LAST step, and a store that does not answer it refuses the exchange rather than
+admitting it — reported as an outage, never as a replay.
+
+Where the store DOES acknowledge under a tier at or above the strict-production minimum, the
+nonce is recorded fleet-wide for the request's own retention bound, which is what makes the
+admission a replay decision rather than a local one. That direction is not local and rests on
+ASM-0040 or ASM-0041, per mechanism.
+"""
+security_consequence = """
+Replay admission cannot degrade to fail-open on infrastructure trouble. The excluded outcome
+is not a crash — it is a deployment that believes it has cross-replica replay protection and
+has process-local protection, serving a replayed request as a fresh one because the store it
+was supposed to consult was unreachable or was never the store the posture claimed.
+
+The outage/replay distinction is part of the claim rather than a diagnostic nicety. A replay
+verdict says this request was already served, so a caller must not retry; an outage says
+nothing was established, so a retry is exactly what should happen once the tier is back.
+Collapsing them gives a caller the opposite advice in one of the two cases.
+"""
+scope = """
+It is one-directional and is not a liveness claim: it says an unestablished replay state does
+not dispatch, never that an established one does.
+
+The two gates it composes are of different kinds and the claim keeps them apart. The
+DECLARED tier is the operator's statement, checked here; the store's self-reported durability
+class is the object's own, checked beneath. A deployment can get the first right and the
+second wrong, which is why both refuse, and why neither is called a check on the other.
+
+Outside fleet-strict the tier gate deliberately does not fire, and this claim says nothing
+about such a deployment beyond what the core gate beneath still enforces.
+
+What an acknowledgement durably established is a FOREIGN fact, registered per mechanism.
+Nothing here establishes that Redis's replication or etcd's consensus behaves as its premise
+states, and no umbrella premise stands in for both.
+"""
+owner = "proxy.replay_admission_gate"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.replay_admission_gate"]
+depends_on = ["THM-0086"]
+
+[[theorem]]
+id = "THM-0093"
+title = "An answer leg that needs a continuation does not proceed unbound"
+statement = """
+Where a request carries a continuation, the retained open-leg bases are read WITHOUT being
+spent, and every way they can be absent — this deployment runs no store, the request names no
+`requestState`, the entry was never opened, has expired, or was already answered — yields no
+binding, so the dispatcher fails closed rather than admitting an unbound continuation. A store
+that does not ANSWER is refused before admission and named as a deployment fact, not reported
+as the caller's forged continuation.
+
+The spend is the store's atomic consume and has four outcomes, because the store's error is
+not its negative answer: nothing was at stake, this call spent the approval, the store
+answered and there was nothing live to spend, or the store did not answer and whether the
+entry is gone cannot be determined by anything downstream.
+"""
+security_consequence = """
+A signed continuation that cannot be bound to a live approval is never admitted, so a second
+verified actor cannot complete a human approval round trip that was not its own by presenting
+a continuation the deployment cannot check. The read is free, so a request about to be refused
+for an unrelated reason leaves a live approval intact — the refusals above the retirement stay
+free only because nothing above them spent anything.
+
+The four-valued retirement is what keeps a human's approval from being silently destroyed or
+silently duplicated. "There was definitely nothing to retire" and "the entry may or may not be
+gone" are different facts about a person's decision, and they warrant different claims about
+whether an ordinary retry can still succeed.
+"""
+scope = """
+It is about what a leg may PROCEED on, not about what the deployment has. That the shared
+continuation tier is opportunistic — its absence announces itself and starts, rather than
+refusing startup — is THM-0087's scope and is deliberately not restated here.
+
+It says nothing about the continuation binding check itself, which is
+`mcp-re-http-profile`'s and is where a bound-but-wrong continuation is caught, and nothing
+about what an acknowledged store write durably establishes.
+
+The `Indeterminate` retirement is reported, not resolved. Nothing downstream can find out
+whether the entry was consumed, and this claim does not pretend otherwise — what it
+establishes is that the outcome is carried as its own case rather than collapsed into one of
+the other three.
+"""
+owner = "proxy.continuation_leg_binding"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.continuation_leg_binding"]
 depends_on = []
 
 [[theorem]]

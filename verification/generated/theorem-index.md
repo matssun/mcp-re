@@ -125,6 +125,8 @@ any of them is closed.
 | THM-0088 | A retention artefact reads as a crossing only for an exchange that crossed | proxy.retention_commitment | unit://proxy.retention_commitment | live |
 | THM-0089 | A KMS or STS endpoint reaches the authority its text names | proxy.kms_endpoint_authority | unit://proxy.kms_endpoint_authority | live |
 | THM-0091 | The sidecar signs only for a request its ingress policy admitted | client.local_ingress_authority | unit://client.local_ingress_authority | live |
+| THM-0092 | A request whose replay state was not established does not dispatch | proxy.replay_admission_gate | unit://proxy.replay_admission_gate | live |
+| THM-0093 | An answer leg that needs a continuation does not proceed unbound | proxy.continuation_leg_binding | unit://proxy.continuation_leg_binding | live |
 
 ## Claims in full
 
@@ -936,7 +938,7 @@ any of them is closed.
 
 **Review requirement.** Owner security-specification review
 
-**Depends on.** THM-0003, THM-0004, THM-0005, THM-0006, THM-0009, THM-0015, THM-0034, THM-0040, THM-0043, THM-0045, THM-0050, THM-0051, THM-0052, THM-0053, THM-0066, THM-0079, THM-0080, THM-0083
+**Depends on.** THM-0003, THM-0004, THM-0005, THM-0006, THM-0009, THM-0015, THM-0034, THM-0040, THM-0043, THM-0045, THM-0050, THM-0051, THM-0052, THM-0053, THM-0066, THM-0079, THM-0080, THM-0083, THM-0092, THM-0093
 
 ### THM-0075 — No unearned response attribution
 
@@ -1111,5 +1113,27 @@ any of them is closed.
 **Security consequence.** The sidecar signs with the agent's key. A web page in the user's browser that could reach the loopback listener — by DNS rebinding, or because the listener answered to any `Host` — would obtain signed, attributed MCP-RE calls under someone else's identity, and every root about what a signature MEANS would remain true while saying nothing about who caused it. The defect this closes was not a missing check but a conflated input. One operator boolean governed two independent facts, so an operator who bound off-host for a documented reason disabled the rebinding guard entirely and was never told, and an operator who set the flag for the bind reason lost the guard silently. Two facts now have two values, and neither can be recombined into the other by a caller: `BindScope` hands out one projection, and `AcceptedHttpAuthority`'s only constructor takes that scope rather than the flag.
 
 **Scope — what this does NOT establish.** It is a NEW ROOT, and independence holds both ways: this sidecar runs against deployments with no MCP-RE proxy, and every other root holds where no sidecar exists. It is deliberately NOT a THM-0076 child — that root's subject is response ACCEPTANCE, and this attack completes before any answer exists. It ends at ADMISSION. What the sidecar then does with an admitted request — that the response it accepts answers the request it sent, that the signer was authorized, that the trust document it resolves anchors from is current — is THM-0084, THM-0057 through THM-0061 and THM-0057's neighbourhood, and none of it is re-derived here. `client.trust_manifest_lifecycle` is deliberately NOT a dependency. The blueprint named it as the source of "what the sidecar is configured to be", and the measurement does not bear that out: admission is decided from the validated local configuration alone, and nothing in the ingress path reads the trust document. An edge would claim support this argument does not use, which is the failure the root set exists to avoid. It says nothing about availability. The exchange deadline is in the closure because a dripping caller must not hold a worker, but a request refused for lateness is refused, not admitted — the claim is one-directional and is not a promise that anything is served.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0092 — A request whose replay state was not established does not dispatch
+
+**Statement.** Under the fleet-strict posture, replay admission refuses before any store side effect when the deployment declares no replay tier, declares one below the strict-production minimum, or wires a store that self-reports the single-process reference class. The atomic admission is the LAST step, and a store that does not answer it refuses the exchange rather than admitting it — reported as an outage, never as a replay. Where the store DOES acknowledge under a tier at or above the strict-production minimum, the nonce is recorded fleet-wide for the request's own retention bound, which is what makes the admission a replay decision rather than a local one. That direction is not local and rests on ASM-0040 or ASM-0041, per mechanism.
+
+**Security consequence.** Replay admission cannot degrade to fail-open on infrastructure trouble. The excluded outcome is not a crash — it is a deployment that believes it has cross-replica replay protection and has process-local protection, serving a replayed request as a fresh one because the store it was supposed to consult was unreachable or was never the store the posture claimed. The outage/replay distinction is part of the claim rather than a diagnostic nicety. A replay verdict says this request was already served, so a caller must not retry; an outage says nothing was established, so a retry is exactly what should happen once the tier is back. Collapsing them gives a caller the opposite advice in one of the two cases.
+
+**Scope — what this does NOT establish.** It is one-directional and is not a liveness claim: it says an unestablished replay state does not dispatch, never that an established one does. The two gates it composes are of different kinds and the claim keeps them apart. The DECLARED tier is the operator's statement, checked here; the store's self-reported durability class is the object's own, checked beneath. A deployment can get the first right and the second wrong, which is why both refuse, and why neither is called a check on the other. Outside fleet-strict the tier gate deliberately does not fire, and this claim says nothing about such a deployment beyond what the core gate beneath still enforces. What an acknowledgement durably established is a FOREIGN fact, registered per mechanism. Nothing here establishes that Redis's replication or etcd's consensus behaves as its premise states, and no umbrella premise stands in for both.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0086
+
+### THM-0093 — An answer leg that needs a continuation does not proceed unbound
+
+**Statement.** Where a request carries a continuation, the retained open-leg bases are read WITHOUT being spent, and every way they can be absent — this deployment runs no store, the request names no `requestState`, the entry was never opened, has expired, or was already answered — yields no binding, so the dispatcher fails closed rather than admitting an unbound continuation. A store that does not ANSWER is refused before admission and named as a deployment fact, not reported as the caller's forged continuation. The spend is the store's atomic consume and has four outcomes, because the store's error is not its negative answer: nothing was at stake, this call spent the approval, the store answered and there was nothing live to spend, or the store did not answer and whether the entry is gone cannot be determined by anything downstream.
+
+**Security consequence.** A signed continuation that cannot be bound to a live approval is never admitted, so a second verified actor cannot complete a human approval round trip that was not its own by presenting a continuation the deployment cannot check. The read is free, so a request about to be refused for an unrelated reason leaves a live approval intact — the refusals above the retirement stay free only because nothing above them spent anything. The four-valued retirement is what keeps a human's approval from being silently destroyed or silently duplicated. "There was definitely nothing to retire" and "the entry may or may not be gone" are different facts about a person's decision, and they warrant different claims about whether an ordinary retry can still succeed.
+
+**Scope — what this does NOT establish.** It is about what a leg may PROCEED on, not about what the deployment has. That the shared continuation tier is opportunistic — its absence announces itself and starts, rather than refusing startup — is THM-0087's scope and is deliberately not restated here. It says nothing about the continuation binding check itself, which is `mcp-re-http-profile`'s and is where a bound-but-wrong continuation is caught, and nothing about what an acknowledged store write durably establishes. The `Indeterminate` retirement is reported, not resolved. Nothing downstream can find out whether the entry was consumed, and this claim does not pretend otherwise — what it establishes is that the outcome is carried as its own case rather than collapsed into one of the other three.
 
 **Review requirement.** Owner security-specification review

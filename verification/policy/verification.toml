@@ -2929,6 +2929,75 @@ tested_symbols = [
   "lib#continuation_store::tests::key_is_stable_and_specific_to_both_inputs",
 ]
 
+# ADR-MCPRE-059 §28 / issue #744, D2a and D2b. The other half of the pair whose D1 leaves
+# sit above: D1 says the tier the serving path holds is the one the configuration selected,
+# and these say what happens when that tier cannot establish the state a request requires.
+# Two owners again, and for the same reason — the replay admission and the continuation leg
+# are different authorities, and a leaf may not carry the other's fact.
+[[unit]]
+id = "proxy.replay_admission_gate"
+class = "V0"
+description = "The fail-closed order of replay admission: an undeclared or sub-minimum tier and a store that self-reports the single-process class are refused before the store is touched, the atomic admission is the last step, and a store that does not answer refuses rather than admitting."
+paths = [
+  "mcp-re-proxy/src/http_profile_dispatch.rs",
+  "mcp-re-proxy/src/http_profile_dispatch/core_projection.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/replay_admission/fail_closed_order"]
+# WHAT THIS IS ABOUT: the REFUSAL direction, which is local and needs no premise about any
+# backend. That an ACKNOWLEDGED admission durably established the nonce fleet-wide is the
+# other direction, it is not local, and it is carried by ASM-0040 and ASM-0041 at the
+# theorem — per mechanism, because what a Redis `WAIT` acknowledgement establishes is not
+# what an etcd transaction success establishes.
+tested_symbols = [
+  # Refused BEFORE the store is touched — the witness cache makes "before" observable, so
+  # these are not satisfied by a refusal that already spent the side effect.
+  "lib#http_profile_dispatch::tests::an_undeclared_tier_is_refused_before_the_store_is_touched",
+  "lib#http_profile_dispatch::tests::a_sub_minimum_tier_is_refused_before_the_store_is_touched",
+  # Defense in depth: a strong DECLARATION does not excuse a store that says it cannot
+  # prevent a cross-node replay.
+  "lib#http_profile_dispatch::tests::a_strong_declared_tier_does_not_excuse_a_single_process_store",
+  # The admission step itself. The store is reached, does not answer, and the exchange does
+  # not dispatch — and the verdict is an outage rather than a replay, because "already
+  # served" and "nothing was established" are opposite advice to a caller.
+  "lib#http_profile_dispatch::tests::a_store_that_cannot_establish_the_state_refuses_rather_than_dispatching",
+  # The mirrors. Without them the four above are satisfied by a gate that refuses
+  # everything, which would establish nothing about the requests that ARE admitted.
+  "lib#http_profile_dispatch::tests::a_strict_minimum_tier_over_a_durable_store_reaches_the_dispatcher",
+  "lib#http_profile_dispatch::tests::the_tier_gate_does_not_fire_outside_fleet_strict",
+  # The projection: the two tier failures are one fact about the store, and the delegating
+  # arm does not re-decide a verdict the dispatcher already gave.
+  "lib#http_profile_dispatch::core_projection::tests::an_unusable_tier_and_an_undeclared_one_are_one_verdict",
+  "lib#http_profile_dispatch::core_projection::tests::a_delegated_failure_keeps_the_dispatchers_verdict",
+]
+
+[[unit]]
+id = "proxy.continuation_leg_binding"
+class = "V0"
+description = "What an answer leg may proceed on: a live approval is read without spending it, every way the retained bases can be absent yields no binding, a store outage is refused as a deployment fact rather than reported as a caller fact, and the spend has four outcomes because the store's error is not its negative answer."
+paths = [
+  "mcp-re-proxy/src/http_profile_serve/continuation/mod.rs",
+  "mcp-re-proxy/src/http_profile_serve/continuation/answer_leg.rs",
+  "mcp-re-proxy/src/http_profile_serve/continuation/open_leg.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/continuation_leg/no_unbound_answer"]
+# The continuation store is OPPORTUNISTIC — its absence does not refuse startup, which is
+# `proxy.continuation_correlation_store`'s scope — so everything that protects a signed
+# continuation from being answered unbound is here, at the leg. That is why this unit exists
+# separately from the store's: one owns what the deployment HAS, the other what a request
+# may proceed on.
+tested_symbols = [
+  # Neither absence proceeds unbound, and the two are not the same fact.
+  "lib#http_profile_serve::continuation::answer_leg::tests::a_store_outage_is_refused_before_admission_and_is_not_a_miss",
+  "lib#http_profile_serve::continuation::answer_leg::tests::a_prep_with_no_retained_bases_offers_no_binding",
+  # One-shot, and the second leg is told which fact it hit.
+  "lib#http_profile_serve::continuation::answer_leg::tests::the_second_answer_leg_is_told_the_approval_was_already_spent",
+  # A deployment with no store has nothing at stake, which is not the same as a failed
+  # retirement — the exchange must be able to say nothing was spent.
+  "lib#http_profile_serve::continuation::answer_leg::tests::a_deployment_with_no_store_retires_nothing",
+]
+
 [[unit]]
 id = "proxy.audit_delivery"
 class = "V0"
