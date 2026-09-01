@@ -89,6 +89,13 @@ on:
       # signed. A subtree pattern for the same reason as client-core's.
       - "mcp-re-client/src/**"
       - "mcp-re-client/Cargo.toml"
+      # #740: the retained-evidence corpus this implementation produced. The ARTIFACTS are in
+      # the fingerprint, not just the test that reads them — a frozen vector whose bytes can
+      # change without the lane re-running is a vector that proves whatever it currently is.
+      - "mcp-re-conformance/Cargo.toml"
+      - "mcp-re-conformance/tests/scitt_retained_corpus_test.rs"
+      - "mcp-re-conformance/tests/scitt_retained_corpus_test/**"
+      - "mcp-re-conformance/tests/vectors/scitt/retained/**"
       # Stage 5 gave the response-emission cluster its four owners.
       - "mcp-re-proxy/src/delegated_server_signer/**"
       - "mcp-re-proxy/src/delegated_response_signer.rs"
@@ -245,6 +252,13 @@ on:
       # signed. A subtree pattern for the same reason as client-core's.
       - "mcp-re-client/src/**"
       - "mcp-re-client/Cargo.toml"
+      # #740: the retained-evidence corpus this implementation produced. The ARTIFACTS are in
+      # the fingerprint, not just the test that reads them — a frozen vector whose bytes can
+      # change without the lane re-running is a vector that proves whatever it currently is.
+      - "mcp-re-conformance/Cargo.toml"
+      - "mcp-re-conformance/tests/scitt_retained_corpus_test.rs"
+      - "mcp-re-conformance/tests/scitt_retained_corpus_test/**"
+      - "mcp-re-conformance/tests/vectors/scitt/retained/**"
       # Stage 5 gave the response-emission cluster its four owners.
       - "mcp-re-proxy/src/delegated_server_signer/**"
       - "mcp-re-proxy/src/delegated_response_signer.rs"

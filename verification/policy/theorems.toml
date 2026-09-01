@@ -2108,8 +2108,16 @@ It says nothing about a record that carries no submission identity beyond that s
 is refused. The `s01` interop corpus is one: its retained artifact records handles rather
 than the submitted messages, so the digest is not reproducible from it at all, and the
 conformance vector is demoted in place — it evidences receipt, statement and key-pin
-interoperation, and does NOT evidence this claim. Closing that needs a corpus produced by a
-real signed multi-hop exchange.
+interoperation, and does NOT evidence this claim. It stays as it is: that no MCP-RE code
+produced it is the whole value of that vector, and regenerating it would destroy a real
+interop claim to fix a different one.
+
+The corpus that DOES evidence this claim is `conformance.retained_corpus` — a signed
+multi-hop exchange this implementation produced, whose statement binds to the verified call
+its retained messages reproduce. It is the only place the verdict is reached over an
+artifact on disk rather than over a value a test constructed, and its own controls keep it
+from being a happy path: a tampered byte and a truncation stop corresponding, and the
+committed bytes are compared against a fresh generation rather than assumed.
 
 It does not establish registration: whether any transparency service ever saw the statement
 is THM-0041. Nor does it establish that the commitment function is collision-resistant; the
@@ -2120,6 +2128,11 @@ review_requirement = "Owner security-specification review"
 supported_by = [
   "unit://http_profile.scitt_retained_correspondence",
   "unit://http_profile.submitted_hop_identity",
+  # #740. The two above are measured over values their own modules construct, which is what
+  # makes their controls precise and also what keeps them inside the crate that computes the
+  # identity. This one is measured over an ARTIFACT a whole signed exchange produced, and it
+  # is the only support for the claim that does not begin inside the implementation of it.
+  "unit://conformance.retained_corpus",
 ]
 depends_on = []
 

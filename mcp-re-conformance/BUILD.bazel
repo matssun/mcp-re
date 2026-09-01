@@ -291,6 +291,33 @@ nt_rust_test(
     ],
 )
 
+# ADR-MCPRE-059 §28 / issue #740: a retained-evidence corpus THIS implementation produced.
+# The interop corpus above cannot evidence retained-evidence correspondence — its artifact
+# records handles rather than the submitted messages, so the submission digest is not
+# reproducible from it at all — and regenerating it would destroy a real interop claim to
+# fix a different one. So this is a second corpus, not a replacement: three hops signed by
+# the shipped signers, verified by the shipped verifier, and committed to by a Signed
+# Statement, with a writer in the established `--ignored` pattern so the frozen bytes are
+# compared against a fresh generation rather than assumed.
+nt_rust_test(
+    name = "scitt_retained_corpus_test",
+    srcs = ["tests/scitt_retained_corpus_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = glob(["tests/vectors/scitt/**"]),
+    edition = "2021",
+    env = {
+        "MCP_RE_SCITT_RETAINED_MANIFEST": "$(rlocationpath tests/vectors/scitt/retained/manifest.json)",
+    },
+    deps = [
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:sha2",
+    ],
+)
+
 # MCPRE-501: external → us. Statements and receipts BUILT by an independent
 # implementation of RFC 9942/9943 as published (cbor2 + python-cryptography, emitted by
 # tools/scitt_cross_verify.py) must verify here, and every refusal a conforming verifier

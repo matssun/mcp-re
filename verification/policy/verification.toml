@@ -2982,6 +2982,60 @@ tested_symbols = [
   "lib#replay::tests::first_insert_is_fresh_replay_is_detected",
 ]
 
+# ADR-MCPRE-059 §28 / issue #740. The corpus THIS implementation produced, as its own
+# review unit — because it answers a question neither of the two units above can.
+#
+# They are measured over inputs their own module constructs, which is what makes their
+# controls precise and also what keeps them inside the crate that computes the identity.
+# This one is measured over BYTES ON DISK that a whole signed multi-hop exchange produced:
+# three hops signed by the shipped signers, verified by the shipped verifier, reconstructed,
+# and committed to by a Signed Statement. It is the only place `BoundToVerifiedCall` is
+# reached over an artifact rather than over a value a test built.
+#
+# The frozen `s01` interop corpus is NOT here and is not replaced. It records
+# `produced_by: "@transmute/cose 0.3.0 + node crypto Ed25519"`, and that no MCP-RE code
+# produced it is the whole value of that vector; regenerating it would destroy a real
+# interop claim to fix a different one. The two corpora answer different questions.
+[[unit]]
+id = "conformance.retained_corpus"
+class = "V0"
+description = "A retained-evidence corpus this implementation produced: a signed multi-hop exchange whose Signed Statement binds to the verified call the retained messages reproduce, with the committed bytes compared against a fresh generation rather than assumed."
+paths = [
+  "mcp-re-conformance/tests/scitt_retained_corpus_test.rs",
+  # The artifacts themselves. A corpus unit whose fingerprint did not cover the bytes it
+  # is about would report FRESH over a regenerated corpus — which is the one thing a
+  # frozen vector must not do.
+  "mcp-re-conformance/tests/vectors/scitt/retained/retained-hops.json",
+  "mcp-re-conformance/tests/vectors/scitt/retained/signed-statement.cbor",
+  "mcp-re-conformance/tests/vectors/scitt/retained/manifest.json",
+]
+exported_contracts = []
+evidence = ["test://conformance/scitt/retained_corpus"]
+# The first control is the one #740 exists for. The other three are what keep it from being
+# a happy-path demonstration: a tampered byte and a truncation must stop corresponding, and
+# the committed bytes must be what this implementation emits TODAY rather than what it
+# emitted when someone last regenerated them.
+tested_symbols = [
+  "tests/scitt_retained_corpus_test#the_committed_corpus_binds_its_statement_to_a_verified_call",
+  "tests/scitt_retained_corpus_test#a_tampered_retained_body_no_longer_corresponds",
+  "tests/scitt_retained_corpus_test#a_truncated_corpus_no_longer_corresponds",
+  "tests/scitt_retained_corpus_test#the_committed_bytes_are_the_ones_this_implementation_produces",
+  "tests/scitt_retained_corpus_test#the_manifest_describes_the_committed_artifacts",
+]
+
+[[edge]]
+kind = "PROOF_DEPENDENCY"
+from = "conformance.retained_corpus"
+to = "http_profile.scitt_retained_correspondence"
+rationale = """
+The corpus exercises the correspondence authority; it does not restate it. What it adds is a
+record the authority never sees from inside its own crate — an artifact on disk that a real
+signed exchange produced — and what it takes is the authority's verdict over that artifact.
+An edge rather than a merge, because the two fail differently: a defect in the comparison is
+the authority's, and a corpus that stopped being what the implementation emits is this
+unit's.
+"""
+
 [[edge]]
 kind = "PROOF_DEPENDENCY"
 from = "http_profile.submitted_hop_identity"
