@@ -14,7 +14,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _load_tool import load_tool  # noqa: E402
 from _manifest import LANE_VERDICTS, aggregate_verdict  # noqa: E402
+
+verify_cli = load_tool("verify", "verify_cli")
 
 
 def test_a_required_formal_lane_that_passed_is_a_pass():
@@ -93,6 +96,49 @@ def test_the_verdict_set_is_closed():
         "UNAVAILABLE",
         "SKIPPED",
     }
+
+
+# --- which verdict a lane's own exit status may overturn ---------------------
+#
+# R9-C114. The algebra above has five verdicts; two of them were UNREACHABLE from any lane
+# that reports them by exiting non-zero, because `verify` overwrote the declared verdict with
+# FAIL before reading the `VERDICT:` line at all. The Verus lane is such a lane, so
+# UNAVAILABLE — "the prover is not installed" — arrived as FAIL, which is "the evidence says
+# the tree is broken". They call for opposite actions.
+
+
+def test_a_lane_that_did_not_complete_may_still_say_which_non_measuring_case_it_is_in():
+    """Neither UNAVAILABLE nor SKIPPED claims a measurement, and both are already
+    non-passing in the algebra above — so believing the lane about which of them it is in
+    cannot turn absence into success."""
+    assert verify_cli._lane_verdict(1, "UNAVAILABLE", "")[0] == "UNAVAILABLE"
+    assert verify_cli._lane_verdict(1, "SKIPPED", "")[0] == "SKIPPED"
+    assert aggregate_verdict(["UNAVAILABLE"], []) != "PASS"
+    assert aggregate_verdict(["SKIPPED"], []) != "PASS"
+
+
+def test_a_lane_that_crashed_may_never_claim_success():
+    """The other direction, and the one that must not be given away with it. A non-zero exit
+    beside a declared PASS is a contradiction, and it is reported rather than resolved in the
+    lane's favour."""
+    verdict, output = verify_cli._lane_verdict(1, "PASS", "some output")
+    assert verdict == "FAIL"
+    assert "exited 1" in output
+    assert verify_cli._lane_verdict(1, "INCOMPLETE", "")[0] == "FAIL"
+
+
+def test_a_lane_that_says_nothing_is_a_failure_whatever_its_exit_status():
+    """Unchanged, and it is what keeps the two cases above from being a hole: a lane that
+    does not say what it did has unknown provenance, and unknown is dirty."""
+    assert verify_cli._lane_verdict(0, None, "")[0] == "FAIL"
+    assert verify_cli._lane_verdict(1, None, "")[0] == "FAIL"
+
+
+def test_a_clean_exit_carries_the_lanes_own_verdict():
+    """The positive control. Without it the three above are satisfied by a rule that answers
+    FAIL to everything."""
+    for declared in ("PASS", "INCOMPLETE", "UNAVAILABLE", "SKIPPED", "NOT_REQUIRED"):
+        assert verify_cli._lane_verdict(0, declared, "")[0] == declared
 
 
 if __name__ == "__main__":

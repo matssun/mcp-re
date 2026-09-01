@@ -87,6 +87,21 @@ def test_a_formal_units_fingerprint_covers_the_whole_verified_crate():
     assert "mcp-re-http-profile/src/verify/floor/params.rs" in source
 
 
+def test_the_proof_dependency_closures_manifests_are_measured_too():
+    """R9-C039 / R9-C040. `proof_dependencies` digests the SOURCE of the crates the prover
+    compiles alongside this one, and nothing digested their manifests — so the `verify`
+    feature could stop travelling down the closure, or a dependency of a dependency could be
+    swapped, and the unit still derived FRESH over a prover run that had checked something
+    else. The source of a crate and the manifest that decides what that crate IS are the
+    same input to this question."""
+    build = components("http_profile.freshness_window")["build_configuration"]
+    assert "mcp-re-core/Cargo.toml" in build, build
+    assert "mcp-re-http-profile/Cargo.toml" in build
+    # And a V0 unit is not given the closure: its evidence is not a prover run, so a
+    # dependency manifest it never compiles against must not dirty it.
+    assert "mcp-re-core/Cargo.toml" not in components("proxy.runtime_lifecycle")["build_configuration"]
+
+
 def test_a_formal_units_proof_dependencies_reach_the_verified_dependency_closure():
     """The `verify` feature travels down the path-dependency closure, so the prover checks
     mcp-re-core as part of the run an http-profile unit claims."""
