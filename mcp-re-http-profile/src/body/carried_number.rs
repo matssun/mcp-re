@@ -19,6 +19,7 @@
 //!     so `1234567890123456789.5` comes back as `1.2345678901234568e18` — a fixed-point
 //!     amount or a high-precision measurement rewritten inside the signed bytes.
 
+use super::decimal_token::DecimalToken;
 use crate::error::HttpProfileError;
 
 /// Scan one number token and refuse it if the `f64` carrier would rewrite it.
@@ -64,51 +65,51 @@ pub(super) fn scan_number(body: &[u8], at: usize) -> Result<usize, HttpProfileEr
     Ok(i)
 }
 
-/// Significant decimal digits an `f64` carries with no loss of value: within this many,
-/// distinct decimals map to distinct `f64`s and are recovered from them exactly.
-const EXACTLY_CARRIED_DECIMAL_DIGITS: usize = 15;
-
 /// Whether a JSON number token carrying a fraction or an exponent keeps its value
 /// through the `f64` the composer re-serializes it from.
 ///
-/// `f64` → text → `f64` is exact, but the direction taken here is text → `f64` → text,
-/// and that one is not: `1234567890123456789.5` is emitted as `1.2345678901234568e18`.
-/// Two conditions make the emitted decimal equal the received one:
+/// **The property, tested directly.** The composer parses the received token to an `f64`
+/// and emits that `f64` again; a reader of the composed body reads whatever it emitted.
+/// So the question is whether the emitted text denotes the same number as the received
+/// text, and the way to answer it is to perform the round trip and compare the two
+/// values. `1234567890123456789.5` comes back as `1.2345678901234568e18` and is refused;
+/// `0.30000000000000004` comes back unchanged and is not.
 ///
-///   * the significand carries at most [`EXACTLY_CARRIED_DECIMAL_DIGITS`] significant
-///     digits, so the shortest round-trip form `serde_json` emits has the same value; and
-///   * the carrier neither overflowed to an infinity nor flushed a nonzero value to
-///     zero.
+/// **Why not a digit count.** Counting significant digits against a constant is a PROXY
+/// for that property, and it is wrong in the admitting direction as well as the refusing
+/// one: a shortest-round-trip formatter emits sixteen and seventeen significant digits for
+/// ordinary computed values, and those values survive the carrier exactly. Raising the
+/// constant moves the boundary and leaves the proxy in place. There is no count to pick,
+/// because width is not what decides the question.
 ///
-/// Spelling is not value: `1e2` is emitted as `100.0` and is admitted, the same way
-/// member ORDER is rewritten and admitted. What is refused is a change to the number a
-/// reader sees.
+/// Both halves of the comparison go through the parser and the formatter the composer
+/// itself uses, so what is measured is the composer's behaviour rather than a second
+/// implementation of it.
+///
+/// Spelling is not value: `1e2` is emitted as `100.0` and is admitted, the same way member
+/// ORDER is rewritten and admitted. What is refused is a change to the number a reader
+/// sees. [`DecimalToken`] is what draws that line — see its module for why neither a
+/// string comparison nor an `f64` comparison can.
 fn decimal_survives_the_f64_carrier(text: &str) -> bool {
-    let Ok(value) = text.parse::<f64>() else {
+    // The carrier, run: the parse the composer performed to build the `Value`, and the
+    // formatting it will perform to re-serialize it.
+    let Ok(carried) = serde_json::from_str::<f64>(text) else {
         return false;
     };
-    if !value.is_finite() {
-        return false;
-    }
-    let significand = text.split(['e', 'E']).next().unwrap_or(text);
-    let digits: Vec<u8> = significand.bytes().filter(|b| b.is_ascii_digit()).collect();
-    let Some(first) = digits.iter().position(|d| *d != b'0') else {
-        // A zero significand — `0`, `0.000`, `0e10`. Exactly carried.
-        return true;
-    };
-    if value == 0.0 {
-        // A nonzero decimal the carrier flushed to zero.
+    if !carried.is_finite() {
         return false;
     }
-    // Class B: the significant digits are taken as a SLICE, so the range constructor
-    // checks the relation a `last - first + 1` would assume — that `rposition` does not
-    // precede `position` for one predicate over one slice. A zero significand cannot
-    // reach here (`first` returns for it), and the `else` agrees with that branch.
-    let Some(last) = digits.iter().rposition(|d| *d != b'0') else {
-        return true;
+    let Ok(emitted) = serde_json::to_string(&carried) else {
+        return false;
     };
-    let Some(significant) = digits.get(first..=last) else {
-        return true;
+    // An unparseable side is a refusal, never a pass: the values were not compared, so
+    // nothing may be concluded about them. This is also what refuses a nonzero decimal
+    // the carrier flushed to zero and a value it rounded to an infinity — those need no
+    // case of their own, because both change the number a reader sees.
+    let (Some(received), Some(emitted)) =
+        (DecimalToken::parse(text), DecimalToken::parse(&emitted))
+    else {
+        return false;
     };
-    significant.len() <= EXACTLY_CARRIED_DECIMAL_DIGITS
+    received == emitted
 }

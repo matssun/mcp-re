@@ -19,6 +19,7 @@ const META_KEY: &str = "_meta";
 
 /// Which JSON this profile can carry through its own re-serialization unchanged.
 mod carried_number;
+mod decimal_token;
 mod representable;
 pub use representable::reject_unrepresentable_json;
 
@@ -278,6 +279,68 @@ mod tests {
                 root["result"]["v"].as_f64().expect("a number"),
                 expect,
                 "{value} did not survive the composer",
+            );
+        }
+    }
+
+    /// The over-refusal a digit count produced. Every one of these is a shortest
+    /// round-trip form with sixteen or seventeen significant digits — what a formatter
+    /// emits for an ordinary computed `f64` — and every one survives the carrier exactly.
+    /// A count of 15 refused them all; a count of 17 would refuse the next set. The
+    /// property is round-tripping, so it is round-tripping that is tested.
+    #[test]
+    fn a_wide_but_exactly_carried_decimal_is_composed_not_refused() {
+        for value in [
+            // 0.1 + 0.2, and the reason anyone meets this at all.
+            "0.30000000000000004",
+            "-0.30000000000000004",
+            "1.7976931348623157e308",
+            "2.2250738585072014e-308",
+            "5e-324",
+            "0.6000000000000001",
+            "1.2345678901234567",
+            // 2^53 exactly. Its immediate successor is refused below, at the same width.
+            "9007199254740992.0",
+        ] {
+            let body = format!(r#"{{"jsonrpc":"2.0","result":{{"v":{value}}}}}"#);
+            let out = insert_meta_block(body.as_bytes(), "k.demo", &Demo { a: 1 })
+                .unwrap_or_else(|e| panic!("{value} survives the carrier and must compose: {e:?}"));
+            let root: Value = serde_json::from_slice(&out).unwrap();
+            assert_eq!(
+                root["result"]["v"].as_f64().expect("a number"),
+                value.parse::<f64>().expect("a number"),
+                "{value} did not survive the composer",
+            );
+        }
+    }
+
+    /// The refusal is not widened by testing the real property: what the carrier alters
+    /// is still refused, and the two sides are the same length so neither control can be
+    /// satisfied by a predicate that answers one way for everything.
+    #[test]
+    fn the_boundary_still_refuses_what_the_carrier_alters() {
+        for value in [
+            // Seventeen digits again — width is not what decides it.
+            "0.30000000000000005",
+            "1.23456789012345678",
+            // 2^53 + 1, which no `f64` holds: it comes back as 2^53, the value the
+            // control above admits. Sixteen digits in both, and the answers differ.
+            "9007199254740993.0",
+            "1.0000000000000000001",
+            "1e-400",
+            "1234567890123456789.5",
+            "0.12345678901234567890123",
+        ] {
+            let body = format!(r#"{{"jsonrpc":"2.0","result":{{"v":{value}}}}}"#);
+            let err = insert_meta_block(body.as_bytes(), "k.demo", &Demo { a: 1 }).expect_err(
+                &format!("{value} is altered by the carrier and must be refused"),
+            );
+            assert_eq!(
+                err,
+                HttpProfileError::MalformedEvidence(
+                    "body carries a number this profile cannot sign without altering it"
+                ),
+                "{value}",
             );
         }
     }

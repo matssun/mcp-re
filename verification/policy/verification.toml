@@ -175,8 +175,15 @@ paths = [
   "mcp-re-http-profile/src/delegation/verify.rs",
   "mcp-re-http-profile/src/delegation/issue.rs",
   "mcp-re-http-profile/src/block.rs",
+  # The whole body-refusal rule, not the structural half of it. `reject_unrepresentable_json`
+  # lives in `representable.rs` and delegates every NUMBER token to `carried_number.rs`,
+  # which delegates the value comparison to `decimal_token.rs` — so a closure naming only
+  # the first two would let the rule that decides which values are refused change under a
+  # fingerprint that did not move.
   "mcp-re-http-profile/src/body/mod.rs",
   "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
   "mcp-re-http-profile/src/message.rs",
   "mcp-re-http-profile/src/ids.rs",
   "mcp-re-http-profile/src/evidence.rs",
