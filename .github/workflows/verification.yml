@@ -84,6 +84,11 @@ on:
       # the expectation it verifies against, and it lives here rather than in client-core.
       - "mcp-re-client-proxy/src/**"
       - "mcp-re-client-proxy/Cargo.toml"
+      # #743: the sidecar BINARY crate's inner face — where the listener is exposed, which
+      # HTTP authority names reach signing, and the head guards that run before a byte is
+      # signed. A subtree pattern for the same reason as client-core's.
+      - "mcp-re-client/src/**"
+      - "mcp-re-client/Cargo.toml"
       # Stage 5 gave the response-emission cluster its four owners.
       - "mcp-re-proxy/src/delegated_server_signer/**"
       - "mcp-re-proxy/src/delegated_response_signer.rs"
@@ -235,6 +240,11 @@ on:
       # the expectation it verifies against, and it lives here rather than in client-core.
       - "mcp-re-client-proxy/src/**"
       - "mcp-re-client-proxy/Cargo.toml"
+      # #743: the sidecar BINARY crate's inner face — where the listener is exposed, which
+      # HTTP authority names reach signing, and the head guards that run before a byte is
+      # signed. A subtree pattern for the same reason as client-core's.
+      - "mcp-re-client/src/**"
+      - "mcp-re-client/Cargo.toml"
       # Stage 5 gave the response-emission cluster its four owners.
       - "mcp-re-proxy/src/delegated_server_signer/**"
       - "mcp-re-proxy/src/delegated_response_signer.rs"

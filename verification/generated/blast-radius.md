@@ -22,6 +22,7 @@ attestations this view cannot see.
 |---|---|---|---|
 | unit://client.delegation_policy_seal | source, contracts or evidence | THM-0060 | _no consumer_ |
 | unit://client.execution_contract | source, contracts or evidence | THM-0061 | _no consumer_ |
+| unit://client.local_ingress_authority | source, contracts or evidence | THM-0091 | _no consumer_ |
 | unit://client.proxy_request_correspondence | source, contracts or evidence | THM-0084 | _no consumer_ |
 | unit://client.response_acceptance | source, contracts or evidence | THM-0058, THM-0059, THM-0076 | _no consumer_ |
 | unit://client.trust_manifest_lifecycle | source, contracts or evidence | THM-0057, THM-0058 | _no consumer_ |
@@ -179,6 +180,7 @@ attestations this view cannot see.
 | THM-0087 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0088 | statement, consequence, scope or review requirement | specification review | THM-0078 |
 | THM-0089 | statement, consequence, scope or review requirement | specification review | THM-0077 |
+| THM-0091 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 
 ## Assumptions
 

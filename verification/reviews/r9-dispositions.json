@@ -1075,6 +1075,11 @@
       "node": "no THM (client sidecar unrooted)",
       "area": "client-proxy-and-sidecar",
       "reason": "`mcp-re-client/src/lib.rs:195` still wires `allow_any_host` from `allow_non_loopback`, and `config/validation.rs:30` still accepts the flag together with a loopback bind.",
+      "merged_closure": {
+        "pr": 753,
+        "commit": "7ce84c95c35b349bdc51648bc614ae316fcf5102",
+        "note": "two facts, two values: the bind permission no longer decides which Host names reach signing"
+      },
       "tracking_issue": 743
     },
     {
@@ -1412,6 +1417,11 @@
       "node": "no THM",
       "area": "client-proxy-and-sidecar",
       "reason": "`docs/client-sidecar-deployment-guide.md` still documents neither the required `Content-Type` nor the loopback `Host`, and names none of 403/415/421.",
+      "merged_closure": {
+        "pr": 753,
+        "commit": "7ce84c95c35b349bdc51648bc614ae316fcf5102",
+        "note": "the deployment guide names the required Content-Type, the loopback Host set, and 403/415/421"
+      },
       "tracking_issue": 743
     },
     {

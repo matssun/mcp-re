@@ -60,6 +60,12 @@ root_theorems = [
   "THM-0076",
   # R4 — the configuration lattice.
   "THM-0077",
+  # D6 — the sidecar's inner face. The only NEW ROOT SHAPE among the ruled-in areas, and
+  # independent both ways: this sidecar runs against deployments with no proxy, and every
+  # root above holds where no sidecar exists. It could not be stated before #753, because
+  # one operator input governed two independent facts and "the deployment-selected listener
+  # and HTTP-authority policy" therefore named nothing a value held.
+  "THM-0091",
   # R5 — a FAMILY, not one umbrella. No authority owns the conjunction of these, and none is
   # invented to make an elegant single claim possible: lifecycle/state-record correspondence,
   # registration on the pinned transparency service, retained-evidence correspondence, and
@@ -3783,6 +3789,69 @@ provider selected was the right one for the deployment.
 owner = "proxy.kms_endpoint_authority"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.kms_endpoint_authority"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0091"
+title = "The sidecar signs only for a request its ingress policy admitted"
+statement = """
+A request that reaches the shipped `mcp-re-client` sidecar outside the deployment-selected
+listener and HTTP-authority policy cannot cause it to initiate a signed MCP-RE exchange.
+
+The listener is where the deployment said: an off-host bind exists only against an explicit
+operator declaration, and possession of the scope IS that permission — there is no other
+constructor. The authority set is derived from that scope and never from the flag, so
+permitting an off-host bind widens the names that reach signing by exactly the listener's
+own address and by nothing else; a rebound name is refused on an exposed listener as it is
+on a loopback one. Framing is settled before any header is believed, and the three
+caller-shape refusals — a present `Origin`, a `Host` that does not name this listener, a
+body that is not JSON — all run before a single byte is signed. A repeated `Content-Length`
+or `Host` is refused rather than resolved.
+
+EXPLICIT NON-CLAIM. This does not identify or authenticate which local process originated an
+otherwise admissible request; there is no local-caller authentication and none is offered.
+The local leg is not confidential. No HTTP `Origin` is authenticated either — its PRESENCE
+is the refusal, which is a different rule from comparing it against anything. The claim is
+about ingress authority and reachability, and the word "origin" is not used in any other
+sense here.
+"""
+security_consequence = """
+The sidecar signs with the agent's key. A web page in the user's browser that could reach
+the loopback listener — by DNS rebinding, or because the listener answered to any `Host` —
+would obtain signed, attributed MCP-RE calls under someone else's identity, and every root
+about what a signature MEANS would remain true while saying nothing about who caused it.
+
+The defect this closes was not a missing check but a conflated input. One operator boolean
+governed two independent facts, so an operator who bound off-host for a documented reason
+disabled the rebinding guard entirely and was never told, and an operator who set the flag
+for the bind reason lost the guard silently. Two facts now have two values, and neither can
+be recombined into the other by a caller: `BindScope` hands out one projection, and
+`AcceptedHttpAuthority`'s only constructor takes that scope rather than the flag.
+"""
+scope = """
+It is a NEW ROOT, and independence holds both ways: this sidecar runs against deployments
+with no MCP-RE proxy, and every other root holds where no sidecar exists. It is deliberately
+NOT a THM-0076 child — that root's subject is response ACCEPTANCE, and this attack completes
+before any answer exists.
+
+It ends at ADMISSION. What the sidecar then does with an admitted request — that the
+response it accepts answers the request it sent, that the signer was authorized, that the
+trust document it resolves anchors from is current — is THM-0084, THM-0057 through THM-0061
+and THM-0057's neighbourhood, and none of it is re-derived here.
+
+`client.trust_manifest_lifecycle` is deliberately NOT a dependency. The blueprint named it
+as the source of "what the sidecar is configured to be", and the measurement does not bear
+that out: admission is decided from the validated local configuration alone, and nothing in
+the ingress path reads the trust document. An edge would claim support this argument does
+not use, which is the failure the root set exists to avoid.
+
+It says nothing about availability. The exchange deadline is in the closure because a
+dripping caller must not hold a worker, but a request refused for lateness is refused, not
+admitted — the claim is one-directional and is not a promise that anything is served.
+"""
+owner = "client.local_ingress_authority"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://client.local_ingress_authority"]
 depends_on = []
 
 [[theorem]]
