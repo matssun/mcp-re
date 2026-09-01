@@ -60,6 +60,10 @@ on:
       # remaining members belong to other owners.
       - "mcp-re-proxy/src/exchange_state.rs"
       - "mcp-re-proxy/src/request_stages.rs"
+      # #741 put the inner-plane seam inside the dispatch-commitment closure: the capability
+      # the ready state carries is produced there, so a change to it dirties the unit and
+      # this lane must re-measure it.
+      - "mcp-re-proxy/src/async_inner.rs"
       - "mcp-re-proxy/src/authorization/dispatch.rs"
       - "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs"
       - "mcp-re-proxy/src/refusal/**"
@@ -203,6 +207,10 @@ on:
       # remaining members belong to other owners.
       - "mcp-re-proxy/src/exchange_state.rs"
       - "mcp-re-proxy/src/request_stages.rs"
+      # #741 put the inner-plane seam inside the dispatch-commitment closure: the capability
+      # the ready state carries is produced there, so a change to it dirties the unit and
+      # this lane must re-measure it.
+      - "mcp-re-proxy/src/async_inner.rs"
       - "mcp-re-proxy/src/authorization/dispatch.rs"
       - "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs"
       - "mcp-re-proxy/src/refusal/**"
