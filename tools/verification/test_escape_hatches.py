@@ -196,6 +196,16 @@ def block_for(source: str) -> str:
     return sites[0][1]
 
 
+def with_line_before(source: str, comment: str) -> str:
+    """`source` with `comment` on its own line directly above the `check_params` item."""
+    out = []
+    for line in source.splitlines():
+        if "fn check_params" in line:
+            out.append(comment)
+        out.append(line)
+    return "\n".join(out)
+
+
 def hatched(block: str) -> set[str]:
     return {
         name
@@ -222,6 +232,51 @@ def test_a_deleted_specification_leaves_a_function_with_no_contract():
     and nothing else — not the function, not the verified count, not the symbol list."""
     block = block_for(SPECIFICATION_DELETED)
     assert not gate.SPECIFICATION_TEXT.search(block)
+
+
+def test_prose_about_a_specification_is_not_a_specification():
+    """R9-C002 / R9-C038, and it is the only control for a deleted specification.
+
+    Comment lines were accumulated into the block the gate searched, so the words
+    `requires` or `ensures` in the DOC COMMENT above a function satisfied
+    `SPECIFICATION_TEXT`. The attribute could be deleted while the prose describing it
+    stayed — the function, the crate's verified count and the prover's symbol list all
+    unchanged — and the gate reported the theorem present.
+
+    A doc comment says what a function is supposed to do. The attribute is what makes the
+    prover check it, and only the second is evidence.
+    """
+    described = with_line_before(
+        SPECIFICATION_DELETED,
+        "/// Ensures the parameter set is admissible, and requires a validated policy.",
+    )
+    block = block_for(described)
+    assert not gate.SPECIFICATION_TEXT.search(block), (
+        "prose describing a specification read as the specification"
+    )
+
+
+def test_a_comment_cannot_supply_an_escape_hatch_either():
+    """The same walk, the other direction: a false positive rather than a false green.
+
+    `external_body` written in a comment is a word about the code, not an instruction to
+    the prover, and a gate that cannot tell them apart is wrong in both directions.
+    """
+    mentioned = with_line_before(
+        PROVED, "// Deliberately NOT external_body: the prover checks this one."
+    )
+    assert hatched(block_for(mentioned)) == set()
+
+
+def test_a_doc_comment_between_the_attribute_and_the_item_does_not_orphan_it():
+    """Comments are not part of the block; they must still not RESET it.
+
+    Rust permits a doc comment between an attribute and the item it decorates, and an
+    attribute separated that way is still that item's. Dropping the block at a comment
+    would report every such specification as deleted.
+    """
+    separated = with_line_before(PROVED, "/// What this function does, in prose.")
+    assert gate.SPECIFICATION_TEXT.search(block_for(separated))
 
 
 def test_the_block_walker_does_not_reach_the_previous_item():

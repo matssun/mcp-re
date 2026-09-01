@@ -288,29 +288,49 @@ def _bracket_balance(line: str) -> int:
     return sum(line.count(c) for c in "([{") - sum(line.count(c) for c in ")]}")
 
 
+#: A line comment's tail, and a whole-line block comment. Removed before an attribute block
+#: is searched — see `_definition_sites`.
+_COMMENT_TAIL = re.compile(r"//.*$")
+
+
 def _definition_sites(lines: list[str], pattern: re.Pattern[str]) -> list[tuple[int, str]]:
-    """`(line index, attribute block)` for every definition `pattern` matches.
+    """`(line index, ATTRIBUTE text)` for every definition `pattern` matches.
 
     Read forwards rather than backwards from the item. A Verus specification is a
     multi-line `#[cfg_attr(...)]` whose body is arbitrary expression text, so no
     line-shaped heuristic recognises its middle; accumulating the block from its opening
     `#[` until the brackets balance does.
+
+    COMMENTS ARE NOT PART OF THE BLOCK, and that is the whole point of this function
+    returning attribute text rather than everything above the item. They used to be
+    accumulated, so `SPECIFICATION_TEXT` — the ONLY control for a deleted specification —
+    matched the words `requires` or `ensures` in the doc comment above the function. A
+    specification could therefore be deleted while the prose describing it stayed, and the
+    gate would report the theorem present. Doc comments say what a function is supposed to
+    do; the attribute is what makes the prover check it, and only the second is evidence.
+    A comment cannot supply an escape-hatch mechanism either, so removing them fixes a
+    false positive in the same walk.
+
+    Comment lines still do not RESET the block: an attribute separated from its item by a
+    doc comment is still that item's attribute.
     """
     sites: list[tuple[int, str]] = []
     block: list[str] = []
     depth = 0
     for index, line in enumerate(lines):
         if depth > 0:
-            block.append(line)
+            # Inside a multi-line attribute. A trailing `//` comment here is still prose,
+            # so it is stripped before the text is kept — but the brackets on the line are
+            # counted from the whole line, because a comment cannot close an attribute.
+            block.append(_COMMENT_TAIL.sub("", line))
             depth += _bracket_balance(line)
             continue
         stripped = line.strip()
         if stripped.startswith("#["):
-            block.append(line)
+            block.append(_COMMENT_TAIL.sub("", line))
             depth = max(_bracket_balance(line), 0)
             continue
         if not stripped or stripped.startswith(("//", "/*", "*")):
-            block.append(line)
             continue
         if pattern.match(line):
             sites.append((index, "\n".join(block)))
