@@ -306,6 +306,42 @@ jobs:
       # merged closure and no lane could tell the difference: the evidence for "merged" was
       # a sentence saying so. No network — PR state is remote and mutable, the commit
       # reachable from HEAD is the durable local fact.
+      # THE MERGE-PATH CLASS ITSELF. A security/assurance control the assurance model
+      # relies on must be mechanically present on the required merge path; existence in
+      # `scripts/local_gate.sh` — an aggregate a developer chooses to run — does not
+      # establish enforcement. That class has opened five times in this repository (the
+      # two ADR-MCPRE-061 ratchets, the verification-trigger gate, the registry-approval
+      # gate, and the ten platform self-test suites below), and each instance was repaired
+      # only when someone noticed. This gate is what notices, so it goes first.
+      - name: Merge-path gate (a local-only control is not enforced)
+        run: |
+          python3 scripts/merge_path_gate.py --selftest
+          python3 scripts/merge_path_gate.py
+
+      # The assurance platform's own self-tests — the verdict algebra, the invalidation
+      # rules, the measured-input closure, the escape-hatch detector, the theorem loader
+      # and review model, the test and Verus lane adapters, and the views generator. They
+      # are what establishes that a `verify` verdict means what ADR-MCPRE-059 says it
+      # means, and every product claim rests on that. They ran in `local_gate.sh` and
+      # nowhere else, so nothing on the merge path established it. ~16s, python-only.
+      #
+      # Spelled out one per line rather than looped over a variable: `merge_path_gate.py`
+      # reads literal paths, and a name a workflow assembles at run time is a name it
+      # cannot see. A control that is enforced but not legible to the checker is how the
+      # next instance of this class would be missed.
+      - name: Assurance platform self-tests (ADR-MCPRE-059)
+        run: |
+          python3 tools/verification/test_verdict_algebra.py
+          python3 tools/verification/test_invalidation.py
+          python3 tools/verification/test_attest.py
+          python3 tools/verification/test_verus_lane.py
+          python3 tools/verification/test_test_lane.py
+          python3 tools/verification/test_measured_inputs.py
+          python3 tools/verification/test_escape_hatches.py
+          python3 tools/verification/test_theorems.py
+          python3 tools/verification/test_theorem_review.py
+          python3 tools/verification/test_views.py
+
       # ADR-MCPRE-059 §14.7 — approval is evidence ABOUT a fingerprint, never a bit on the
       # object approved. This gate had `scripts/local_gate.sh` as its only caller, and it
       # was RED on main while every CI check was green: `r9-dispositions.json` landed under
