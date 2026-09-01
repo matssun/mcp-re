@@ -42,6 +42,12 @@ on:
       # filter covers it.
       - "mcp-re-http-profile/tests/**"
       - "mcp-re-proxy/src/runtime_state.rs"
+      # Issue #742: the two outbound authorities. Registered as units because R9's only
+      # Critical was a credential-bearing egress reaching an authority the configuration
+      # did not select, and both modules were fixed while neither was declared — a fix
+      # that maps to no unit is covered by nothing.
+      - "mcp-re-proxy/src/outbound_fetch/**"
+      - "mcp-re-proxy/src/kms_endpoint_policy/**"
       # The ratified theorem-architecture closure, Stage 1: three authorities that already
       # existed and were simply unmeasured. Enumerated rather than given a subtree pattern
       # because none of them IS a subtree — `exchange_state.rs` and `request_stages.rs` are
@@ -174,6 +180,12 @@ on:
       # filter covers it.
       - "mcp-re-http-profile/tests/**"
       - "mcp-re-proxy/src/runtime_state.rs"
+      # Issue #742: the two outbound authorities. Registered as units because R9's only
+      # Critical was a credential-bearing egress reaching an authority the configuration
+      # did not select, and both modules were fixed while neither was declared — a fix
+      # that maps to no unit is covered by nothing.
+      - "mcp-re-proxy/src/outbound_fetch/**"
+      - "mcp-re-proxy/src/kms_endpoint_policy/**"
       # The ratified theorem-architecture closure, Stage 1: three authorities that already
       # existed and were simply unmeasured. Enumerated rather than given a subtree pattern
       # because none of them IS a subtree — `exchange_state.rs` and `request_stages.rs` are
