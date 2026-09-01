@@ -19,13 +19,14 @@
       "THM-0064": "sha256:d4ed4b51ee2b1642de63c8b8024310060f381ed421a151cfd76f51d4e9a43701",
       "THM-0066": "sha256:53248632f6d1eb564a7557c6f4b400d16e21655bdb1037376abe64d51c0e6fdc",
       "THM-0067": "sha256:10ada285a51969bc917f49fad14a6ec471c16cbcf8082a14ea9d697092b70433",
-      "THM-0073": "sha256:1193224486e76a9ffcaf098325e3f701e100454779b066ca7c56be2edb2473ac"
+      "THM-0073": "sha256:1193224486e76a9ffcaf098325e3f701e100454779b066ca7c56be2edb2473ac",
+      "THM-0086": "sha256:9fe769a6f49b2d1628059803ee4096c9de6800af4df4ec47a1434e6ce6da6f2d"
     },
     "theorem_id": "THM-0077",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner specification-review ruling of 2026-08-31, given over verification/reviews/packets/owner-specification-review-2026-08-31.md. The ruling declared the consolidated review COMPLETE and approved every packet theorem not named in its bounded correction set at its current fingerprint. This theorem was not named, and its statement, security consequence and scope are unchanged from the packet the owner read. Its own claim text is unchanged from the packet, but its fingerprint moved because a PREMISE in its dependency closure was corrected by this same ruling \u2014 which is exactly what the transitive closure exists to surface. The ruling approved both the corrected premise and this theorem, so the approval covers the resulting fingerprint.",
-  "reviewed_fingerprint": "sha256:d08f6f2322a50f0bff07911b7236d698cd7195b609efc92ffc1a553449f739dc",
+  "notes": "Owner specification-review ruling of 2026-09-01, given in the ADR-MCPRE-059 \u00a728 closure campaign directly after the THM-0087 measurement recorded on issue #744 and merged at d9129b93. The ruling reads: 'I RE-AFFIRM THM-0077 at sha256:4e8edd287c7fd8deb5f4d996234b2ea83f7cef585c2620267eb367f9c71267de. This review covers the current THM-0077 claim text unchanged, with its current dependency closure including reviewed/established THM-0086 and excluding THM-0087.' The claim text \u2014 statement, security consequence and scope \u2014 is unchanged from the text the owner approved on 2026-08-31; this record was written over the text in the tree at d9129b93 with no edit. What moved the fingerprint is the dependency closure, not the claim: THM-0086 was added as the replay materialization leaf D1a and THM-0087 was deliberately withdrawn from the closure, so the previous record's `theorem_dependencies` no longer describes the object. The owner read both facts before re-affirming, so this approval is over the closure as it now stands. It approves nothing beyond that: it does not review THM-0087, does not establish D1b\u2032 or D2b\u2032, does not establish THM-0042, and establishes no other \u00a74 branch by implication.",
+  "reviewed_fingerprint": "sha256:4e8edd287c7fd8deb5f4d996234b2ea83f7cef585c2620267eb367f9c71267de",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0077"
 }
