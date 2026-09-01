@@ -15,7 +15,11 @@
       "node": "THM-0074 / kms_endpoint_policy",
       "area": "credential-acquisition",
       "reason": "`kms_endpoint_policy::kms_endpoint_authority` is now the single decision, applied at GCP (`gcp_kms_keysource.rs:611`), AWS-KMS, STS and the config boundary. The three-flag asymmetry is gone.",
-      "tracking_issue": 742
+      "merged_closure": {
+        "pr": 762,
+        "commit": "598f5064f630ab11718bda99c419f02c29967212",
+        "note": "coverage, not a new fix: the owner that decides this now supports THM-0089, so the finding maps to a claim"
+      }
     },
     {
       "cluster": "R9-C002",
@@ -199,7 +203,11 @@
       "node": "THM-0074 / kms_endpoint_policy",
       "area": "credential-acquisition",
       "reason": "One authority, three flags.",
-      "tracking_issue": 742
+      "merged_closure": {
+        "pr": 762,
+        "commit": "598f5064f630ab11718bda99c419f02c29967212",
+        "note": "same owner, same claim: one decision consumed by the command line, the validation boundary and all three key sources"
+      }
     },
     {
       "cluster": "R9-C018",
@@ -210,7 +218,11 @@
       "node": "kms_endpoint_policy",
       "area": "credential-acquisition",
       "reason": "`kms_endpoint_policy/mod.rs:97` refuses userinfo explicitly, before any loopback reading.",
-      "tracking_issue": 742
+      "merged_closure": {
+        "pr": 762,
+        "commit": "598f5064f630ab11718bda99c419f02c29967212",
+        "note": "the plaintext exception follows the resolved address, and THM-0089 is what says so"
+      }
     },
     {
       "cluster": "R9-C019",
@@ -359,7 +371,11 @@
       "node": "kms_endpoint_policy",
       "area": "credential-acquisition",
       "reason": "`aws_sts.rs:258/461` now call the shared authority.",
-      "tracking_issue": 742
+      "merged_closure": {
+        "pr": 762,
+        "commit": "598f5064f630ab11718bda99c419f02c29967212",
+        "note": "the STS path consumes the same decision, now under a claim"
+      }
     },
     {
       "cluster": "R9-C032",
@@ -1032,7 +1048,11 @@
       "node": "kms_endpoint_policy",
       "area": "credential-acquisition",
       "reason": "See C001.",
-      "tracking_issue": 742
+      "merged_closure": {
+        "pr": 762,
+        "commit": "598f5064f630ab11718bda99c419f02c29967212",
+        "note": "the asymmetry is gone and the owner it went to is claimed"
+      }
     },
     {
       "cluster": "R9-C093",
