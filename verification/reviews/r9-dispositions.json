@@ -26,6 +26,11 @@
       "node": "assurance platform (no THM)",
       "area": "assurance-platform",
       "reason": "`check-assumptions:312` still folds comment lines into the attribute block and `SPECIFICATION_TEXT` (`:138`) is still a bare `\\bensures\\b|\\brequires\\b` searched over it at `:360`. A doc comment still satisfies the deleted-specification detector.",
+      "merged_closure": {
+        "pr": 756,
+        "commit": "5164b39448523cacf4e4f3ce4f7f50ebe8b1b59e",
+        "note": "comment lines no longer enter the block SPECIFICATION_TEXT searches, so prose describing a contract cannot stand in for the attribute that makes the prover check it"
+      },
       "tracking_issue": 739
     },
     {
@@ -62,6 +67,11 @@
       "node": "assurance platform",
       "area": "assurance-platform",
       "reason": "`trust-boundaries.toml` appears in no `_fingerprint.py` component. Raising or deleting `max_class_without_assumption` still invalidates nothing.",
+      "merged_closure": {
+        "pr": 756,
+        "commit": "5164b39448523cacf4e4f3ce4f7f50ebe8b1b59e",
+        "note": "governing_boundaries is a fingerprint component, so widening or deleting a cap dirties every unit the boundary binds"
+      },
       "tracking_issue": 739
     },
     {
@@ -269,6 +279,11 @@
       "node": "assurance platform",
       "area": "assurance-platform",
       "reason": "`verify:196` returns 1 before `write_bundle` at `:249`. A failed run leaves the previous bundle, and `attest` reads it as the last run's aggregate.",
+      "merged_closure": {
+        "pr": 751,
+        "commit": "07a2df27735862024ea0e3e134cf3b19716595fd",
+        "note": "the bundle write is structural: _run returns a RunOutcome and main writes it on every exit path, so a failed run cannot leave the previous run’s verdict standing"
+      },
       "tracking_issue": 739
     },
     {
@@ -437,6 +452,11 @@
       "node": "assurance platform",
       "area": "assurance-platform",
       "reason": "Same as C002.",
+      "merged_closure": {
+        "pr": 756,
+        "commit": "5164b39448523cacf4e4f3ce4f7f50ebe8b1b59e",
+        "note": "same repair; test_prose_about_a_specification_is_not_a_specification is the control"
+      },
       "tracking_issue": 739
     },
     {
@@ -470,6 +490,11 @@
       "node": "assurance platform",
       "area": "assurance-platform",
       "reason": "Same as C005.",
+      "merged_closure": {
+        "pr": 756,
+        "commit": "5164b39448523cacf4e4f3ce4f7f50ebe8b1b59e",
+        "note": "same component; the whole boundary entry is digested, not the cap alone"
+      },
       "tracking_issue": 739
     },
     {
@@ -785,6 +810,11 @@
       "node": "assurance platform",
       "area": "assurance-platform",
       "reason": "Same as C023.",
+      "merged_closure": {
+        "pr": 751,
+        "commit": "07a2df27735862024ea0e3e134cf3b19716595fd",
+        "note": "same repair; possession of a RunOutcome is what it means for a run to have a verdict"
+      },
       "tracking_issue": 739
     },
     {

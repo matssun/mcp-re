@@ -217,6 +217,49 @@ def validate_manifests() -> tuple[bool, list[str]]:
     return True, notes
 
 
+#: The verdicts a lane may declare that are NOT a claim to have measured anything. Both say
+#: "this lane produced no evidence", and both are non-passing — so a lane that exits
+#: non-zero may still be believed when it says one of them.
+_NON_MEASURING = ("UNAVAILABLE", "SKIPPED")
+
+
+def _lane_verdict(returncode: int, declared: str | None, output: str) -> tuple[str, str]:
+    """What this run records for one lane, and what to print with it.
+
+    R9-C114. A non-zero exit used to overwrite the declared verdict with FAIL before the
+    `VERDICT:` line was read at all, which made `UNAVAILABLE` and `SKIPPED` UNREACHABLE from
+    any lane that reports them by exiting non-zero — the Verus lane does. A five-verdict
+    algebra collapsed to two, and the states that mean "no evidence was produced, and here
+    is why" became indistinguishable from "the evidence says the tree is broken". They call
+    for opposite actions: install the prover, versus fix the code.
+
+    The repair is not "believe the lane". It is that a lane is the authority on WHICH
+    non-passing state it is in, and on nothing else:
+
+      * no verdict line at all is FAIL, whatever the exit status. A lane that does not say
+        what it did has unknown provenance, and unknown is dirty.
+      * a declared `UNAVAILABLE` or `SKIPPED` stands even on a non-zero exit, because
+        neither claims a measurement and both are already non-passing in the algebra.
+      * anything else on a non-zero exit is FAIL, including — especially — `PASS`. A lane
+        that crashed may never claim success, and the contradiction is reported rather than
+        resolved in the lane's favour.
+    """
+    if declared is None:
+        return "FAIL", (
+            f"{output}\n\nFAIL: lane exited {returncode} without declaring a verdict. "
+            "A lane that does not say what it did has unknown provenance, and unknown is "
+            "dirty."
+        ).strip()
+    if returncode == 0:
+        return declared, output
+    if declared in _NON_MEASURING:
+        return declared, output
+    return "FAIL", (
+        f"{output}\n\nFAIL: lane declared {declared} and exited {returncode}. A lane that "
+        "did not complete may state which non-measuring case it is in, and nothing more."
+    ).strip()
+
+
 def main() -> int:
     """Run, then record. The bundle write is here and nowhere else."""
     outcome = _run()
@@ -270,23 +313,12 @@ def _run() -> RunOutcome:
             check=False,
         )
         output = (completed.stdout + completed.stderr).strip()
-        if completed.returncode != 0:
-            verdict = "FAIL"
-        else:
-            # The lane states its own verdict on a VERDICT: line. Inferring it from the
-            # prose instead would mean a lane that exits 0 having done nothing reads as
-            # PASS purely because it did not happen to print the word SKIPPED — the
-            # "exits 0 having measured nothing" failure, one level up.
-            declared = _declared_verdict(output)
-            if declared is None:
-                verdict = "FAIL"
-                output = (
-                    f"{output}\n\nFAIL: lane exited 0 without declaring a verdict. "
-                    "A lane that does not say what it did has unknown provenance, and "
-                    "unknown is dirty."
-                ).strip()
-            else:
-                verdict = declared
+        # The lane states its own verdict on a VERDICT: line. Inferring it from the prose
+        # instead would mean a lane that exits 0 having done nothing reads as PASS purely
+        # because it did not happen to print the word SKIPPED — the "exits 0 having measured
+        # nothing" failure, one level up.
+        declared = _declared_verdict(output)
+        verdict, output = _lane_verdict(completed.returncode, declared, output)
         verdicts[name] = verdict
         print(f"\n[{name}] {verdict}")
         for line in output.splitlines():

@@ -122,6 +122,33 @@ def group_by_target(eco, symbols: list[str]) -> tuple[dict[str, list[str]], list
     return dict(grouped), malformed
 
 
+def _rerun_unread(eco, crate: str, target: str, names: list[str]) -> set[str]:
+    """Re-run `names` ONE AT A TIME and return those that reported `ok` on their own.
+
+    One at a time on purpose: a batch re-run can interleave the same way the first run did,
+    and would then report the same unreadable line for a different member. Alone, a test's
+    result line has nothing to interleave with except its own child process — and if that
+    still happens, the symbol stays missing and the lane still fails.
+
+    This admits only a FRESH `ok`. It does not carry anything over from the first run, and a
+    test that fails or is ignored in isolation is reported from this run rather than from
+    the one whose output could not be read.
+    """
+    recovered: set[str] = set()
+    for name in names:
+        again = subprocess.run(
+            test_argv(eco, crate, target, [name]),
+            cwd=REPO_ROOT if eco is CARGO else REPO_ROOT / crate,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+        if again.returncode == 0 and parse_results(eco, again.stdout).get(name) == "ok":
+            recovered.add(name)
+    return recovered
+
+
 def run_selection(eco, crate: str, target: str, paths: list[str]) -> tuple[bool, str]:
     """Run exactly `paths` in one target and say whether all of them passed.
 
@@ -166,6 +193,25 @@ def run_selection(eco, crate: str, target: str, paths: list[str]) -> tuple[bool,
     observed = parse_results(eco, proc.stdout)
     passed = {name for name, status in observed.items() if status == "ok"}
     missing = sorted(set(paths) - passed)
+    if missing:
+        # A symbol with NO line at all is the one case that can be a reading failure rather
+        # than a test failure, and the failure is this lane's own. A test that spawns a child
+        # process — or any code writing to the real fd 2 rather than to the capture buffer —
+        # can land bytes carrying a NEWLINE between the harness's `test <name> ... ` and its
+        # status, and the result line then does not exist to be read. That is deliberately a
+        # loud red rather than a quiet green, and it has fired on a deterministic control
+        # (`audit_sink::tests::the_collector_preserves_emission_order`, twice).
+        #
+        # Re-measuring is not believing it. The symbol is RUN AGAIN, alone, and only its own
+        # fresh result is admitted: a test that fails in isolation still fails, and one that
+        # is genuinely absent still reports nothing. What this removes is a red that says
+        # something about interleaved output and nothing about the property.
+        unread = [name for name in missing if name not in observed]
+        if unread:
+            recovered = _rerun_unread(eco, crate, target, unread)
+            passed |= recovered
+            observed |= {name: "ok" for name in recovered}
+            missing = sorted(set(paths) - passed)
     if missing:
         # One message for "never selected" and "selected but did not pass": the remedy
         # differs, the evidentiary standing does not. Either way the claimed battery did not

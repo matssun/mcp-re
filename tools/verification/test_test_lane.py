@@ -286,6 +286,47 @@ def test_only_units_claiming_test_evidence_are_in_scope():
     assert not lane.claims_test_evidence({})
 
 
+# --- a result line that could not be READ is re-measured, never assumed ------
+
+
+def test_a_symbol_with_no_result_line_is_rerun_alone_before_the_lane_concludes():
+    """A symbol with NO line at all is the one case that can be a reading failure rather
+    than a test failure, and the failure is this lane's own: a child process writing to the
+    real fd 2 can land bytes carrying a NEWLINE between the harness's `test <name> ... ` and
+    its status, and the result line then does not exist to be read. It has fired on a
+    deterministic control twice.
+
+    Re-measuring is not believing it. The symbol is RUN AGAIN, alone, and only a fresh `ok`
+    from that run is admitted."""
+    calls: list[list[str]] = []
+
+    class Result:
+        def __init__(self, code: int, out: str) -> None:
+            self.returncode = code
+            self.stdout = out
+
+    def fake_run(argv, **_kwargs):
+        calls.append(argv)
+        name = argv[-1]
+        if name == "a::tests::readable":
+            return Result(0, "test a::tests::readable ... ok\n")
+        return Result(101, "test a::tests::broken ... FAILED\n")
+
+    original = lane.subprocess.run
+    lane.subprocess.run = fake_run
+    try:
+        recovered = lane._rerun_unread(
+            CARGO, "crate", "lib", ["a::tests::readable", "a::tests::broken"]
+        )
+    finally:
+        lane.subprocess.run = original
+
+    assert recovered == {"a::tests::readable"}, recovered
+    assert len(calls) == 2, "each unread symbol is run ALONE, not as a batch"
+    assert calls[0][-1] == "a::tests::readable"
+    assert "--exact" in calls[0], "the re-run selects exactly the one symbol"
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

@@ -297,6 +297,30 @@ def test_every_declared_theorem_is_established_in_the_tree_as_it_stands():
     assert gate.proved_symbol_defects() == []
 
 
+# --- the FAIL text must name a remedy that EXISTS ----------------------------
+
+
+def test_a_site_no_unit_declares_is_told_to_declare_the_file_first():
+    """R9-C120. `scope` names units, so a site in a file no `[[unit]]` declares cannot be
+    registered at all — and the gate used to tell its author to add an assumption scoped to
+    "this unit", which is a step that does not exist for them. The two remedies are
+    different and the gate must not offer one for both."""
+    import io
+    from contextlib import redirect_stderr
+
+    source = Path(gate.__file__).read_text(encoding="utf-8")
+    assert "no unit declares this file" in source, (
+        "the FAIL path must distinguish a site with an owning unit from one without"
+    )
+    assert "Declare the file " in source and "`[[unit]]` whose" in source, (
+        "the remedy for an unowned site is to declare the file, not to register a scope "
+        "that cannot name it"
+    )
+    # And the two branches are selected by the owner set, which is what `is_registered`
+    # already answers `False` for.
+    assert not gate.is_registered("external_body", frozenset(), {"u": {"external_body"}})
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

@@ -92,6 +92,7 @@ import tomllib
 from functools import lru_cache
 
 from _ecosystems import build_configuration_patterns
+from _ecosystems import CARGO
 from _ecosystems import formal_source_patterns
 from _ecosystems import unit_projects
 from _manifest import (
@@ -221,7 +222,7 @@ def _digest_tracked(patterns: list[str]) -> dict[str, str]:
     }
 
 
-def _build_configuration(unit: dict) -> dict[str, str]:
+def _build_configuration(unit: dict, formal_closure: list[str]) -> dict[str, str]:
     """The dependency and configuration inputs that decide what this unit's source IS.
 
     Ecosystem-supplied (`build_configuration_patterns`), because a Python project's
@@ -229,8 +230,19 @@ def _build_configuration(unit: dict) -> dict[str, str]:
     workspace `Cargo.lock` bear: a dependency swap or a lockfile bump alters what a claim is
     about without touching a declared source line. Absent alternatives — `poetry.lock` where
     a project uses `uv` — contribute nothing rather than an error.
+
+    `formal_closure` closes R9-C039/R9-C040. A formal unit's `proof_dependencies` digests
+    the SOURCE of the crates the prover compiles alongside it, and nothing digested their
+    manifests — so the `verify` feature could stop travelling down the closure, or a
+    dependency of a dependency could be swapped, and the unit still derived FRESH over a
+    prover run that had checked something else. The source of a crate and the manifest that
+    decides what that crate IS are the same input to this question, and it was answered for
+    the unit's own crates and not for the ones its proof reaches through.
     """
-    return _digest_tracked(build_configuration_patterns(unit))
+    patterns = build_configuration_patterns(unit)
+    for project in formal_closure:
+        patterns.extend(f"{project}/{name}" for name in CARGO.project_inputs)
+    return _digest_tracked(patterns)
 
 
 def _toolchain_identity(toolchains: dict) -> dict:
@@ -448,11 +460,13 @@ def fingerprint_unit(
     if formal:
         source_inputs |= _formal_sources(unit)
     proof_dependencies: dict[str, str] = {}
+    formal_closure: list[str] = []
     if formal:
         closure: set[str] = set()
         for crate in crates:
             _path_dependencies(crate, closure)
-        proof_dependencies = _crate_sources(sorted(closure - set(crates)))
+        formal_closure = sorted(closure - set(crates))
+        proof_dependencies = _crate_sources(formal_closure)
     components = {
         "encoding_version": ENCODING_VERSION,
         "unit_id": unit["id"],
@@ -461,7 +475,7 @@ def fingerprint_unit(
         "generated_inputs": _digest_paths(
             [p for p in unit["paths"] if p.startswith(GENERATED_ROOT)]
         ),
-        "build_configuration": _build_configuration(unit),
+        "build_configuration": _build_configuration(unit, formal_closure),
         "enabled_features": sorted(unit.get("features", [])),
         # The theorems the unit claims, by prover-reported name. In the fingerprint
         # because deleting one is a reduction in evidence: the source digest would move
