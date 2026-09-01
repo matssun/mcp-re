@@ -21,6 +21,8 @@ use crate::chain::ChainReconstruction;
 
 mod correspondence;
 
+pub use correspondence::RetainedCorrespondence;
+
 /// The MCP-RE evidence a receipt commits to (#415 §4.6), as HASH COMMITMENTS. Each
 /// field is a digest of externally-retained evidence, never the evidence itself.
 ///

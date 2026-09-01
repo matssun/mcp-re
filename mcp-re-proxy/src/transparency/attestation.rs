@@ -29,6 +29,14 @@ pub struct Attestation {
     pub statement: mcp_re_http_profile::scitt::SignedStatement,
     /// The reconstruction the statement commits to.
     pub reconstruction: mcp_re_http_profile::ChainReconstruction,
+    /// WHICH binding the self-check established between the statement and the retained
+    /// bytes it was issued over.
+    ///
+    /// Carried rather than discarded because the two are not interchangeable to a reader:
+    /// a record with no verified hop binds its SUBMISSION and nothing else, and an
+    /// attestation that reported only success would leave that distinction to be recovered
+    /// from the chain label by a consumer who might not.
+    pub correspondence: mcp_re_http_profile::scitt::RetainedCorrespondence,
 }
 
 /// An attestation that could not be produced.
@@ -97,25 +105,27 @@ pub fn attest_chain<R: Into<mcp_re_http_profile::ResolverOutcome>>(
     let statement =
         mcp_re_http_profile::scitt::issue_signed_statement(issuer_kid, commitment, now, sign)
             .map_err(AttestError::Statement)?;
-    // The self-check compares a record against the bytes it names, and a reconstruction
-    // with no verified prefix — a chain that broke at hop 0, and the empty chain — names
-    // none: two empty handles and a fold over nothing. `verify_retained_evidence` refuses
-    // such a record rather than reporting a match that would equally hold for every
-    // unrelated submission that failed the same way, so running it here would refuse to
-    // attest exactly the records this seam exists for. The statement is still issued: its
-    // label says which hop broke, and `commits_to_verified_evidence` is how any reader
-    // tells that it identifies no particular call.
-    if statement.commitment().commits_to_verified_evidence() {
-        mcp_re_http_profile::scitt::verify_retained_evidence(
-            statement.commitment(),
-            &reconstruction,
-            bindings_commitment,
-            verified_context_commitment,
-        )
-        .map_err(AttestError::Statement)?;
-    }
+    // The self-check runs on EVERY record, including the ones with no verified hop. It
+    // used to be skipped for those, on the reasoning that a reconstruction which broke at
+    // hop 0 names no call — two empty handles and a fold over nothing, the same three
+    // values for every unrelated submission that failed the same way. That reasoning is
+    // right about the identity fields and wrong about the submission: `submitted_commitment`
+    // is call-specific there too, and skipping left it unexercised on exactly the records
+    // an auditor investigates (R9-C103, R9-C128).
+    //
+    // The verdict says which binding was established, and this seam does not weaken it:
+    // `BoundToSubmissionOnly` means these are the bytes the issuer saw and no hop verified,
+    // which is what the label already reports and what a reader must not read as more.
+    let correspondence = mcp_re_http_profile::scitt::verify_retained_evidence(
+        statement.commitment(),
+        &reconstruction,
+        bindings_commitment,
+        verified_context_commitment,
+    )
+    .map_err(AttestError::Statement)?;
     Ok(Attestation {
         statement,
         reconstruction,
+        correspondence,
     })
 }
