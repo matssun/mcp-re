@@ -38,6 +38,7 @@ not an omission to hide.
 | http_profile.scitt_receipt_offline | V0 | THM-0041, THM-0072 | 0 |
 | http_profile.scitt_retained_correspondence | V0 | THM-0042 | 0 |
 | http_profile.scitt_service_pin | V0 | THM-0068 | 0 |
+| http_profile.submitted_hop_identity | V0 | _none_ | 0 |
 | http_profile.verifier_result_separation | V0 | THM-0047 | 0 |
 | http_profile.verifier_results | V0 | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022 | 3 |
 | proxy.audit_delivery | V0 | THM-0070 | 0 |

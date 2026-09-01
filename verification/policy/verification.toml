@@ -1873,6 +1873,26 @@ tested_symbols = [
 ]
 
 [[unit]]
+id = "http_profile.submitted_hop_identity"
+class = "V0"
+description = "What identifies a SUBMISSION: two retained submitted hops that differ in any retained fact are two submissions. The representation is closed — a hop IS its retained request and response, entire — because a curated field list is how an identity comes to omit something, and the omission it already made was `signature-input`, the header naming what was signed."
+paths = ["mcp-re-http-profile/src/chain/submitted_identity.rs"]
+exported_contracts = []
+evidence = ["test://http_profile/submitted_hop_identity/closed_representation"]
+# The battery is entirely negative, and that is the shape the claim needs: an identity is
+# established by what it REFUSES to conflate. Each control alters one retained fact and
+# requires the commitment to move. The header cases are the ones the curated fold failed —
+# `every_retained_header_is_inside_the_submitted_identity` is the inverse of a test this
+# module's predecessor shipped, which asserted the omission as a property.
+tested_symbols = [
+  "lib#chain::submitted_identity::tests::the_response_status_is_inside_the_submitted_identity",
+  "lib#chain::submitted_identity::tests::header_order_is_part_of_the_submission_identity",
+  "lib#chain::submitted_identity::tests::every_retained_header_is_inside_the_submitted_identity",
+  "lib#chain::submitted_identity::tests::the_empty_submission_has_an_identity_of_its_own",
+]
+pilot = "verus-candidate"
+
+[[unit]]
 id = "http_profile.scitt_retained_correspondence"
 class = "V0"
 description = "The commitment a Signed Statement carries equals the one recomputed from the presented reconstruction and its optional binding and verified-context commitments — so the retained bytes are the ones committed to, and the ChainLabel embedded is the label of THAT reconstruction. Correspondence only: nothing about registration, and no confidentiality claim."
@@ -2753,3 +2773,17 @@ tested_symbols = [
   "lib#replay::tests::core_replay_key_carries_the_same_injective_slots",
   "lib#replay::tests::first_insert_is_fresh_replay_is_detected",
 ]
+
+[[edge]]
+kind = "PROOF_DEPENDENCY"
+from = "http_profile.submitted_hop_identity"
+to = "http_profile.scitt_retained_correspondence"
+rationale = """
+The correspondence authority compares a statement's `submitted_commitment` against a
+recomputed one and refuses a statement that identifies no submission. What that value MEANS
+— which two retained submissions are the same submission — is not its fact, and it is the
+half that was wrong: the comparison was correct while the identity omitted `signature-input`,
+so two substitutable tail hops compared equal and correspondence reported a binding it did
+not have. Neither half states the claim alone, and putting the identity under the comparison
+would let a future curation of the digest pass as a property of the comparison.
+"""

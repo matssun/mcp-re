@@ -46,10 +46,6 @@
 //! admission asserts, which is the point: the label is embedded in a SCITT Signed
 //! Statement, so "served" and "accounted for" must be one verdict.
 
-use mcp_re_core::b64url_encode;
-use sha2::Digest;
-use sha2::Sha256;
-
 use crate::block::ArtifactBinding;
 use crate::block::AudienceTuple;
 use crate::block::ResolverOutcome;
@@ -72,6 +68,11 @@ mod record;
 
 /// The record a reconstruction produces, and the identity only this crate can compute.
 mod reconstruction;
+
+/// What identifies a submission: the closed representation its commitment is taken over.
+mod submitted_identity;
+
+use submitted_identity::submitted_commitment;
 
 pub use reconstruction::ChainReconstruction;
 
@@ -169,56 +170,6 @@ pub struct ChainAudit<'a> {
     /// binding with no obtainable credential fails closed.
     pub artifact_material: &'a dyn Fn(&ArtifactBinding) -> Option<Vec<u8>>,
 }
-
-/// Digest the submitted hops, length-delimited so no two distinct submissions can share
-/// a preimage.
-///
-/// Every variable-length field is preceded by its length as 8 octets big-endian.
-/// Concatenating raw bytes would let a request ending in one byte and a response
-/// beginning with another produce the same stream as a different split, which is exactly
-/// the ambiguity an identity must not have.
-fn submitted_commitment(hops: &[RetainedHop]) -> String {
-    let mut h = Sha256::new();
-    h.update(SUBMITTED_COMMITMENT_DOMAIN.len().to_be_bytes());
-    h.update(SUBMITTED_COMMITMENT_DOMAIN);
-    h.update((hops.len() as u64).to_be_bytes());
-    for hop in hops {
-        // The request line and the response status are part of what was submitted, so
-        // two submissions differing only in method or status must not share an identity.
-        h.update(u64::from(hop.response.status).to_be_bytes());
-        for part in [
-            hop.request.method.as_bytes(),
-            hop.request.target_uri.as_bytes(),
-            hop.request.body.as_slice(),
-            hop.response.body.as_slice(),
-        ] {
-            h.update((part.len() as u64).to_be_bytes());
-            h.update(part);
-        }
-        // The signatures are what make one submission of the same JSON distinct from
-        // another, so they are part of the identity too.
-        for headers in [&hop.request.headers, &hop.response.headers] {
-            let mut signature_headers: Vec<(&str, &str)> = headers
-                .iter()
-                .filter(|(name, _)| name.eq_ignore_ascii_case("signature"))
-                .map(|(name, value)| (name.as_str(), value.as_str()))
-                .collect();
-            signature_headers.sort_unstable();
-            h.update((signature_headers.len() as u64).to_be_bytes());
-            for (name, value) in signature_headers {
-                h.update((name.len() as u64).to_be_bytes());
-                h.update(name.as_bytes());
-                h.update((value.len() as u64).to_be_bytes());
-                h.update(value.as_bytes());
-            }
-        }
-    }
-    b64url_encode(&h.finalize())
-}
-
-/// Domain separator for [`submitted_commitment`], so its digests can never be confused
-/// with any other SHA-256 this profile takes over evidence.
-const SUBMITTED_COMMITMENT_DOMAIN: &[u8] = b"mcp-re-evidence/v2:submitted-chain";
 
 /// The two role-labeled handles a verified hop contributes to the record.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -488,10 +439,21 @@ mod tests {
         );
     }
 
-    /// Signature headers are sorted before hashing, so header ORDER is not part of the
-    /// identity — the same submission observed through two transports commits equally.
+    /// Header ORDER is part of the submission identity, and that is a decision rather than an
+    /// accident of the fold.
+    ///
+    /// The earlier curated digest SORTED the `signature` headers, so two retained hops
+    /// carrying the same signatures in a different order shared an identity. Under the
+    /// closed representation the identity is of the RETAINED BYTES, and two retained
+    /// artefacts whose bytes differ are two artefacts.
+    ///
+    /// This cannot produce a false match. It could in principle produce a false MISMATCH —
+    /// an honest record failing to verify because something reordered its headers — except
+    /// that both sides of the comparison are computed from the same stored artefact: the
+    /// issuer digests what it retained, and the verifier digests what it presents. Nothing
+    /// reorders in between.
     #[test]
-    fn signature_header_order_does_not_change_the_commitment() {
+    fn header_order_is_part_of_the_submission_identity() {
         let mut a = hop(200, "{}");
         a.request.headers = vec![
             ("signature".to_string(), "sig1=:AA:".to_string()),
@@ -502,19 +464,26 @@ mod tests {
             ("signature".to_string(), "sig2=:BB:".to_string()),
             ("signature".to_string(), "sig1=:AA:".to_string()),
         ];
-        assert_eq!(submitted_commitment(&[a]), submitted_commitment(&[b]));
+        assert_ne!(submitted_commitment(&[a]), submitted_commitment(&[b]));
     }
 
-    /// Only `signature` headers contribute. A hop-by-hop header a proxy added is not part
-    /// of what was submitted, so it must not change the identity.
+    /// EVERY retained header is inside the submitted identity — the claim this file used to
+    /// state in reverse.
+    ///
+    /// The old test asserted that a non-`signature` header was outside it, which is exactly
+    /// the property that left `signature-input` — the header naming what was signed — out of
+    /// the identity, so two unverified tail hops declaring different covered components
+    /// could be substituted for one another. The claim was not stale; it was wrong, and it
+    /// is inverted here rather than deleted so the reversal is visible in the file that made
+    /// it.
     #[test]
-    fn non_signature_headers_are_outside_the_submitted_identity() {
+    fn every_retained_header_is_inside_the_submitted_identity() {
         let mut with_extra = hop(200, "{}");
         with_extra
             .request
             .headers
             .push(("x-forwarded-for".to_string(), "10.0.0.1".to_string()));
-        assert_eq!(
+        assert_ne!(
             submitted_commitment(&[hop(200, "{}")]),
             submitted_commitment(&[with_extra])
         );
