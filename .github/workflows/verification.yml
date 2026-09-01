@@ -105,6 +105,9 @@ on:
       # product-provenance gate measures — and a filter enumerating today's members would go
       # stale the next time a region moves.
       - "mcp-re-proxy/src/http_profile_serve/**"
+      # #744 D2a: the replay-admission gate and the verdict projection beneath it.
+      - "mcp-re-proxy/src/http_profile_dispatch.rs"
+      - "mcp-re-proxy/src/http_profile_dispatch/**"
       - "mcp-re-proxy/src/async_serve/**"
       - "mcp-re-proxy/src/blocking_mtls_harness/**"
       - "mcp-re-proxy/src/capability_materialization/key_source/**"
@@ -268,6 +271,9 @@ on:
       # product-provenance gate measures — and a filter enumerating today's members would go
       # stale the next time a region moves.
       - "mcp-re-proxy/src/http_profile_serve/**"
+      # #744 D2a: the replay-admission gate and the verdict projection beneath it.
+      - "mcp-re-proxy/src/http_profile_dispatch.rs"
+      - "mcp-re-proxy/src/http_profile_dispatch/**"
       - "mcp-re-proxy/src/async_serve/**"
       - "mcp-re-proxy/src/blocking_mtls_harness/**"
       - "mcp-re-proxy/src/capability_materialization/key_source/**"

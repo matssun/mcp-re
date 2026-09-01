@@ -128,17 +128,19 @@ evidence. A premise being about code this project owns does not make it a result
 
 The completeness ruling of 2026-08-31 found the declared root set incomplete against this
 claim surface and ruled the following in scope. **None of them is established yet**, and
-until each is, MCP-RE makes no claim in that area. Listing them here rather than omitting
+until each is, MCP-RE makes no claim in that area. Where a theorem has since been WRITTEN it
+is named — a written, unreviewed theorem is not an established one, and naming it here is
+what keeps "the argument exists and is unreviewed" distinguishable from "no argument exists". Listing them here rather than omitting
 them is the point: an unstated gap is the failure mode this document exists to prevent.
 
 | area | disposition | placement |
 |---|---|---|
-| **Replay** store durability | in scope | under THM-0077 — the selected tier materializes honestly — and THM-0074: a replay state the request requires and the store cannot establish must prevent dispatch |
-| **Continuation** correlation durability | in scope, and **not the same shape** | the capability is OPPORTUNISTIC, so absence is permitted and silent weakening is not. Under THM-0077: an available capability is what the runtime advertises and holds, and an unavailable one is an explicit absence with no weaker or node-local substitute installed. Under THM-0074: a leg that requires correlation fails closed rather than proceeding unbound when the capability or state is absent |
+| **Replay** store durability | in scope; **written, unreviewed** — THM-0086 and THM-0092 | under THM-0077 — the selected tier materializes honestly — and THM-0074: a replay state the request requires and the store cannot establish must prevent dispatch. The second rests on ASM-0040 / ASM-0041, per mechanism |
+| **Continuation** correlation durability | in scope, and **not the same shape**; **written, unreviewed** — THM-0087 and THM-0093 | the capability is OPPORTUNISTIC, so absence is permitted and silent weakening is not. Under THM-0077: an available capability is what the runtime advertises and holds, and an unavailable one is an explicit absence with no weaker or node-local substitute installed. Under THM-0074: a leg that requires correlation fails closed rather than proceeding unbound when the capability or state is absent |
 | Retained-evidence correspondence | in scope, **NOT CURRENTLY CLAIMED** — THM-0042 branch reopened | the corrected `submitted_commitment` proposition must be independently reviewed and established against genuine retained-evidence correspondence evidence before it returns to §2. The theorem is not to be weakened to make it green |
 | Retained-evidence reservation fidelity | in scope | retained-evidence family; a pending marker may exist only under the execution threshold its owner defines |
-| Outbound credential acquisition (KMS / STS / metadata / remote signer) | in scope | under THM-0077 / materialization; a credential-bearing outbound call reaches only the authority selected and validated for that capability |
-| Client sidecar local ingress | in scope, **its own client-side root** | not folded into THM-0076; an unrelated browser origin or DNS-rebinding attacker must not cause a security-bearing outbound exchange |
+| Outbound credential acquisition (KMS / STS / metadata / remote signer) | in scope; **written, unreviewed** — THM-0089 and THM-0090 | under THM-0077 / materialization; a credential-bearing outbound call reaches only the authority selected and validated for that capability. THM-0090 ends at the authority NAMED — the address a name resolves to is not closed |
+| Client sidecar local ingress | in scope, **its own client-side root**; **declared, unreviewed** — THM-0091 | not folded into THM-0076; an unrelated browser origin or DNS-rebinding attacker must not cause a security-bearing outbound exchange |
 | Python and TypeScript SDK exchange paths | in scope, as a **supported-client root family** | each independently implemented boundary gets its own root; the Rust THM-0076 is one member |
 | Deployment rendering | **outside** the runtime roots | release / deployment conformance gates (§0) |
 | The ADR-MCPRE-059 assurance platform | **outside** the product roots | assurance TCB (§0); its false-green defects are platform-integrity work |

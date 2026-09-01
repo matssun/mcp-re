@@ -53,5 +53,7 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0037 | SHA-256 is collision resistant: no computationally feasible adversary exhibits two distinct byte strings sharing a digest. | http_profile.keyid_selector | THM-0050 |
 | ASM-0038 | The X.509 parser faithfully reports a certificate's validity instants, the DER encodings of its issuer and subject `Name`, and its serial number. | proxy.credential_currency | THM-0032 |
 | ASM-0039 | A `RawEd25519TlsSigner` reports, as `tls_public_key_spki_der`, the SubjectPublicKeyInfo of the very key `sign_tls_ed25519` signs with. | proxy.delegated_resolver_materialization | THM-0027 |
+| ASM-0040 | A Redis `WAIT n t` reply of at least `n` means `n` replicas acknowledged the preceding `SET NX PX`, and the tier's declared quorum is the number that survives the failures ADR-MCPS-020 admits for REDIS_WAIT_QUORUM. | proxy.replay_admission_gate | THM-0092 |
+| ASM-0041 | An etcd `POST /v3/kv/txn` that succeeds under `compare { target: CREATE, create_revision: 0 }` means the key did not exist at a linearization point and now does, cluster-wide, for the granted lease's TTL. | proxy.replay_admission_gate | THM-0092 |
 
 16 assumption(s) are reached by more than one theorem.

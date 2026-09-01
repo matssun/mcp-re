@@ -2369,3 +2369,48 @@ expect_red = [
   "lib#serve::accepted_authority::tests::an_exposed_listener_still_refuses_a_rebound_name",
   "lib#serve::head_fields::tests::a_rebound_host_is_refused_on_an_exposed_listener_too",
 ]
+
+[[probe]]
+id = "M86-an-unanswered-store-does-not-admit"
+unit = "proxy.replay_admission_gate"
+conjunct = "A store that does not answer the atomic admission refuses the exchange rather than admitting it"
+# The fail-open this exists to exclude, and the reason admission is the LAST step: there is
+# nothing after it to undo. Reading a store error as freshness serves a replayed request as a
+# fresh one on exactly the deployments whose infrastructure is already in trouble.
+path = "mcp-re-http-profile/src/dispatch.rs"
+anchor = """
+    match replay_key.check_and_insert(replay, verified.floor.expires)? {
+        ReplayDecision::Fresh => {}
+        ReplayDecision::Replay => return Err(DispatchError::ReplayDetected),
+    }
+"""
+weakening = """
+    match replay_key
+        .check_and_insert(replay, verified.floor.expires)
+        .unwrap_or(ReplayDecision::Fresh)
+    {
+        ReplayDecision::Fresh => {}
+        ReplayDecision::Replay => return Err(DispatchError::ReplayDetected),
+    }
+"""
+expect_red = [
+  "lib#http_profile_dispatch::tests::a_store_that_cannot_establish_the_state_refuses_rather_than_dispatching",
+]
+
+[[probe]]
+id = "M87-an-outage-is-not-a-miss"
+unit = "proxy.continuation_leg_binding"
+conjunct = "A continuation store that does not answer is refused as a deployment fact, not reported as the caller's"
+# Flattening the two absences is the tempting simplification: both end with no bases, so one
+# `Option` looks sufficient. It reports a forged continuation every time the shared tier
+# blips, and hides a genuine splice attempt inside an outage.
+path = "mcp-re-proxy/src/http_profile_serve/continuation/answer_leg.rs"
+anchor = """
+    peeked.map_err(|_| Refusal::before_admission(McpReError::ReplayCacheUnavailable, 503))
+"""
+weakening = """
+    Ok(peeked.unwrap_or(None))
+"""
+expect_red = [
+  "lib#http_profile_serve::continuation::answer_leg::tests::a_store_outage_is_refused_before_admission_and_is_not_a_miss",
+]
