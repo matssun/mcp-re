@@ -3,8 +3,9 @@
 """Registry approval gate — no policy registry may carry a mutable approval string.
 
 WHAT THIS PROVES, exactly: no file under `verification/policy/` declares a key that
-represents review or approval STATE, and no review record under `verification/reviews/`
-carries one either.
+represents review or approval STATE, no record under `verification/reviews/` carries one
+either, and every such record names what it is about — the fingerprint an approval
+approves, or the tree a measurement was taken against.
 
 WHAT IT DOES NOT PROVE: that any approval is genuine, that a reviewer read anything, or
 that the fingerprint a record names was ever computed honestly. It proves only that
@@ -87,6 +88,45 @@ def offending_keys(value, path: str = "", exempt: set[str] | None = None) -> lis
     return found
 
 
+def naming_defects(doc: dict, path: Path) -> list[str]:
+    """Every record under `verification/reviews/` must name what it is about.
+
+    Two kinds of document live here and they name different things. An APPROVAL record —
+    the default, and what every `specification/THM-NNNN.json` is — names the
+    `reviewed_fingerprint` it approves; without it the approval is about nothing in
+    particular and survives every edit to the proposition. A MEASUREMENT record names the
+    tree it was taken against, and must NOT carry a `reviewed_fingerprint`, because a
+    measurement approves nothing at all.
+
+    The kind is declared, not inferred from the filename: `record_kind = "measurement"`.
+    Inferring it would let a document acquire the weaker obligation by being renamed, and
+    the obligations are the whole point of the distinction.
+    """
+    kind = doc.get("record_kind", "approval")
+    where = path.relative_to(REPO)
+    if kind == "approval":
+        if "reviewed_fingerprint" not in doc:
+            return [
+                f"{where}: no `reviewed_fingerprint`. A review that does not name what it "
+                f"reviewed approves nothing in particular."
+            ]
+        return []
+    if kind == "measurement":
+        defects = []
+        if "re_derived_against" not in doc:
+            defects.append(
+                f"{where}: a measurement record must name the tree it measured "
+                f"(`re_derived_against`)."
+            )
+        if "reviewed_fingerprint" in doc:
+            defects.append(
+                f"{where}: a measurement record carries a `reviewed_fingerprint`. "
+                f"Measuring is not approving; one of the two facts is misdeclared."
+            )
+        return defects
+    return [f"{where}: unknown `record_kind` {kind!r}. Expected approval or measurement."]
+
+
 def scan() -> tuple[list[str], int]:
     """(failures, files examined). An empty scope is a failure, not a pass."""
     failures: list[str] = []
@@ -118,11 +158,7 @@ def scan() -> tuple[list[str], int]:
                 f"{path.relative_to(REPO)}: `{key}` is a stored approval bit. A review "
                 f"record says which fingerprint was reviewed and nothing else."
             )
-        if "reviewed_fingerprint" not in doc:
-            failures.append(
-                f"{path.relative_to(REPO)}: no `reviewed_fingerprint`. A review that does "
-                f"not name what it reviewed approves nothing in particular."
-            )
+        failures.extend(naming_defects(doc, path))
     return failures, examined
 
 
@@ -160,6 +196,31 @@ def selftest() -> int:
     if offending_keys(record):
         print("SELFTEST FAIL: the gate refused a well-formed review record", file=sys.stderr)
         return 1
+    here = REPO / "verification" / "reviews" / "selftest.json"
+    naming_cases = [
+        ({"reviewer": "x"}, "reviewed_fingerprint", "an approval naming no fingerprint"),
+        (
+            {"record_kind": "measurement", "re_derived_against": "main @ abc"},
+            None,
+            "a well-formed measurement record",
+        ),
+        (
+            {"record_kind": "measurement", "reviewed_fingerprint": "sha256:abc"},
+            "Measuring is not approving",
+            "a measurement claiming to be a review",
+        ),
+        ({"record_kind": "audit"}, "unknown `record_kind`", "an undeclared third kind"),
+    ]
+    for doc, needle, label in naming_cases:
+        defects = naming_defects(doc, here)
+        if needle is None:
+            if defects:
+                print(f"SELFTEST FAIL: the gate refused {label}: {defects}", file=sys.stderr)
+                return 1
+            continue
+        if not any(needle in entry for entry in defects):
+            print(f"SELFTEST FAIL: {label} was accepted", file=sys.stderr)
+            return 1
     print("registry_approval_gate selftest: OK")
     return 0
 

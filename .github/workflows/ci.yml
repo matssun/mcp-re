@@ -294,6 +294,33 @@ jobs:
           python3 scripts/verification_trigger_gate.py --selftest
           python3 scripts/verification_trigger_gate.py
 
+      # R9 linkage. `verification/reviews/r9-dispositions.json` is the authoritative
+      # per-row ownership map for the 2026-08-31 audit, and the appendix in the packet is a
+      # generated view of it. Three properties, all of which drifted at least once:
+      # the appendix must match the record; every row that SURVIVED the re-derivation at
+      # High or Critical must name the workstream that owns it or the change that closed
+      # it; and a `merged_closure` must name a merge commit that is an ancestor of HEAD.
+      # The last is why this step is in the `fetch-depth: 0` job — at depth 1 the closure
+      # commits are not in the clone, and the check would be measuring the checkout rather
+      # than the record. It exists because a green OPEN pull request was recorded here as a
+      # merged closure and no lane could tell the difference: the evidence for "merged" was
+      # a sentence saying so. No network — PR state is remote and mutable, the commit
+      # reachable from HEAD is the durable local fact.
+      # ADR-MCPRE-059 §14.7 — approval is evidence ABOUT a fingerprint, never a bit on the
+      # object approved. This gate had `scripts/local_gate.sh` as its only caller, and it
+      # was RED on main while every CI check was green: `r9-dispositions.json` landed under
+      # verification/reviews/ carrying a `status` key and naming no fingerprint, and nothing
+      # on the merge path asked. Same repair, same reason, as the two ratchets above.
+      - name: Registry approval gate (ADR-MCPRE-059 §14.7)
+        run: |
+          python3 scripts/registry_approval_gate.py --selftest
+          python3 scripts/registry_approval_gate.py
+
+      - name: R9 linkage controls (merged means merged)
+        run: |
+          python3 tools/verification/test_r9_linkage.py
+          python3 tools/verification/render-r9-dispositions --check
+
       # The clippy ratchet needs the toolchain, so it runs with the clippy lanes below.
 
       # ADR-MCPRE-061 Amendment 1 §3. The Group A zero-debt protections live in ONE
