@@ -35,6 +35,8 @@
 //! cannot obtain an HSM-protected Ed25519 key, the high-assurance claim is scoped
 //! OUT for that deployment rather than met by adding a second curve (P-256).
 
+use crate::kms_endpoint_policy::KmsEndpoint;
+use crate::outbound_fetch::{CredentialEgress, VettedDestination};
 use crate::remote_signer_call::NETWORK_TIMEOUT;
 use std::io::Read;
 use std::sync::Mutex;
@@ -244,8 +246,7 @@ fn stated_expiry(now: SystemTime, expires_in: u64) -> Option<SystemTime> {
 /// The GCE/GKE metadata server (workload identity). Fetches a token and caches it
 /// until shortly before its stated expiry.
 pub(crate) struct MetadataServerTokenSource {
-    agent: ureq::Agent,
-    endpoint: String,
+    egress: CredentialEgress,
     state: Mutex<TokenState>,
     /// Held across a fetch so concurrent callers coalesce onto one.
     ///
@@ -324,13 +325,21 @@ struct CachedToken {
 }
 
 impl MetadataServerTokenSource {
-    pub(crate) fn new(endpoint: Option<String>) -> Self {
-        MetadataServerTokenSource {
-            agent: ureq::AgentBuilder::new().build(),
-            endpoint: endpoint.unwrap_or_else(|| DEFAULT_METADATA_ENDPOINT.to_string()),
+    /// The token source for `endpoint`, or `None` for the metadata server itself.
+    ///
+    /// Fallible because the destination is vetted, not assumed. Production passes `None`.
+    pub(crate) fn new(endpoint: Option<String>) -> Result<Self, KeyError> {
+        let endpoint = endpoint.unwrap_or_else(|| DEFAULT_METADATA_ENDPOINT.to_string());
+        let destination = VettedDestination::operator_configured(&endpoint).ok_or_else(|| {
+            KeyError::Malformed(format!(
+                "gcp-kms: metadata endpoint {endpoint:?} is not fetchable"
+            ))
+        })?;
+        Ok(MetadataServerTokenSource {
+            egress: CredentialEgress::to(&destination, NETWORK_TIMEOUT),
             state: Mutex::new(TokenState::default()),
             fetching: Mutex::new(()),
-        }
+        })
     }
 
     /// The token state, recovering a poisoned lock rather than propagating the panic.
@@ -440,13 +449,9 @@ impl MetadataServerTokenSource {
 
     /// One metadata-server round trip, returning the token and the expiry it STATED.
     fn fetch_token(&self, now: SystemTime) -> Result<FetchedToken, KeyError> {
-        let url = format!(
-            "{}/computeMetadata/v1/instance/service-accounts/default/token",
-            self.endpoint
-        );
         let body = match self
-            .agent
-            .get(&url)
+            .egress
+            .get("computeMetadata/v1/instance/service-accounts/default/token")
             .set("Metadata-Flavor", "Google")
             .timeout(NETWORK_TIMEOUT)
             .call()
@@ -563,10 +568,10 @@ pub(crate) trait GcpKmsTransport {
 
 /// Production [`GcpKmsTransport`]: bearer-authed `ureq` (rustls HTTPS).
 pub(crate) struct UreqGcpClient {
-    agent: ureq::Agent,
+    egress: CredentialEgress,
     token_source: Box<dyn GcpAccessTokenSource + Send + Sync>,
-    sign_url: String,
-    public_key_url: String,
+    sign_path: String,
+    public_key_path: String,
     /// When the refused-token retry may fire again, set after a FRESH token was refused
     /// too. `None` outside a suspension, which is the steady state.
     /// See [`TOKEN_REFUSAL_RETRY_COOLDOWN`].
@@ -608,19 +613,14 @@ impl UreqGcpClient {
         // verify-before-return check then passes against the attacker's key. Checked here
         // as well as at the CLI because `GcpKmsConfig::endpoint` is public and an embedder
         // reaches this constructor without meeting a parser.
-        crate::kms_endpoint_policy::kms_endpoint_authority(&base)
+        let endpoint = KmsEndpoint::parse(&base)
             .map_err(|why| KeyError::Malformed(format!("gcp-kms: --gcp-kms-endpoint {why}")))?;
-        // A trailing slash is a spelling of the same endpoint, and the gate admits it — so
-        // it must not survive into the per-operation URLs, where `{base}/v1/...` on
-        // `https://cloudkms.googleapis.com/` would build a doubled `//v1/` path that Cloud
-        // KMS does not serve.
-        let base = base.trim_end_matches('/');
         let name = &config.key_version_name;
         Ok(UreqGcpClient {
-            agent: ureq::AgentBuilder::new().build(),
+            egress: endpoint.egress(NETWORK_TIMEOUT),
             token_source,
-            sign_url: format!("{base}/v1/{name}:asymmetricSign"),
-            public_key_url: format!("{base}/v1/{name}/publicKey"),
+            sign_path: format!("v1/{name}:asymmetricSign"),
+            public_key_path: format!("v1/{name}/publicKey"),
             token_retry_suspended_until: Mutex::new(None),
         })
     }
@@ -743,8 +743,8 @@ impl UreqGcpClient {
 
     fn get_public_key_once(&self, auth: &str) -> Result<Vec<u8>, RemoteSignerFailure> {
         match self
-            .agent
-            .get(&self.public_key_url)
+            .egress
+            .get(&self.public_key_path)
             .set("Authorization", auth)
             .timeout(NETWORK_TIMEOUT)
             .call()
@@ -764,8 +764,8 @@ impl UreqGcpClient {
         body: &[u8],
     ) -> Result<Vec<u8>, RemoteSignerFailure> {
         match self
-            .agent
-            .post(&self.sign_url)
+            .egress
+            .post(&self.sign_path)
             .set("Authorization", auth)
             .set("Content-Type", "application/json")
             .timeout(NETWORK_TIMEOUT)
@@ -1029,7 +1029,7 @@ impl GcpKmsEd25519Backend {
     /// otherwise an operator-supplied `MCP_RE_GCP_ACCESS_TOKEN` is used.
     pub fn new(config: &GcpKmsConfig, use_metadata_server: bool) -> Result<Self, KeyError> {
         let token_source: Box<dyn GcpAccessTokenSource + Send + Sync> = if use_metadata_server {
-            Box::new(MetadataServerTokenSource::new(None))
+            Box::new(MetadataServerTokenSource::new(None)?)
         } else {
             Box::new(EnvAccessTokenSource)
         };
@@ -1241,6 +1241,7 @@ mod tests {
     fn token_source() -> MetadataServerTokenSource {
         // Never reached: every test below supplies its own `fetch`.
         MetadataServerTokenSource::new(Some("http://127.0.0.1:1".to_string()))
+            .expect("a loopback http endpoint is admissible")
     }
 
     /// A fetch result carrying a STATED expiry.
@@ -2118,25 +2119,25 @@ mod tests {
         let default = UreqGcpClient::new(Box::new(EnvAccessTokenSource), &gcp_config(None))
             .expect("the default endpoint builds");
         assert_eq!(
-            default.sign_url,
-            "https://cloudkms.googleapis.com/v1/projects/p/locations/l/keyRings/r/cryptoKeys/k/\
-             cryptoKeyVersions/1:asymmetricSign"
+            default.sign_path,
+            "v1/projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/\
+             1:asymmetricSign"
         );
         assert_eq!(
-            default.public_key_url,
-            "https://cloudkms.googleapis.com/v1/projects/p/locations/l/keyRings/r/cryptoKeys/k/\
-             cryptoKeyVersions/1/publicKey"
+            default.public_key_path,
+            "v1/projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1/publicKey"
         );
     }
 
-    /// A trailing slash is a spelling of the same endpoint, so it must build the same URLs.
+    /// This client builds PATHS, so no endpoint spelling reaches its operation URLs.
     ///
-    /// The gate admits `https://cloudkms.googleapis.com/` — operators type it, and three
-    /// positive controls certify it — but `format!("{base}/v1/…")` on it built a doubled
-    /// `//v1/` path Cloud KMS does not serve. A positive control that admits an endpoint the
-    /// client then malforms is worse than no control, so the client normalises it.
+    /// The claim the previous form of this test protected — that a trailing slash on the
+    /// endpoint must not build a doubled `//v1/` path Cloud KMS does not serve, and that an
+    /// emulator base path must survive — is now a property of the join itself and is tested
+    /// where the join lives: `outbound_fetch::credential_egress`. What remains here is that
+    /// this client has no endpoint in its operation URLs to malform.
     #[test]
-    fn a_trailing_slash_on_the_endpoint_builds_the_same_urls() {
+    fn the_operation_paths_do_not_depend_on_the_endpoint_spelling() {
         let plain = UreqGcpClient::new(
             Box::new(EnvAccessTokenSource),
             &gcp_config(Some("https://cloudkms.googleapis.com")),
@@ -2145,29 +2146,18 @@ mod tests {
         for spelling in [
             "https://cloudkms.googleapis.com/",
             "https://cloudkms.googleapis.com//",
+            "http://localhost:8443/kms/",
         ] {
-            let slashed =
+            let other =
                 UreqGcpClient::new(Box::new(EnvAccessTokenSource), &gcp_config(Some(spelling)))
                     .expect("admissible");
-            assert_eq!(slashed.sign_url, plain.sign_url, "{spelling}");
-            assert_eq!(slashed.public_key_url, plain.public_key_url, "{spelling}");
+            assert_eq!(other.sign_path, plain.sign_path, "{spelling}");
+            assert_eq!(other.public_key_path, plain.public_key_path, "{spelling}");
         }
         assert!(
-            !plain.sign_url.contains("com//"),
-            "the operation path must not be doubled: {}",
-            plain.sign_url
-        );
-        // And an emulator base PATH is still carried through, which is why the endpoint
-        // rule allows one at all.
-        let based = UreqGcpClient::new(
-            Box::new(EnvAccessTokenSource),
-            &gcp_config(Some("http://localhost:8443/kms/")),
-        )
-        .expect("admissible");
-        assert!(
-            based.sign_url.starts_with("http://localhost:8443/kms/v1/"),
-            "got {}",
-            based.sign_url
+            !plain.sign_path.contains("://") && !plain.sign_path.starts_with('/'),
+            "an operation path must name no authority and no root: {}",
+            plain.sign_path
         );
     }
 

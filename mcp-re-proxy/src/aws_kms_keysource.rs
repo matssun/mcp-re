@@ -17,6 +17,8 @@
 //!     BEFORE it is handed to the proxy — a non-verifying signature is an error,
 //!     never emitted.
 
+use crate::kms_endpoint_policy::KmsEndpoint;
+use crate::outbound_fetch::CredentialEgress;
 use crate::remote_signer_call::NETWORK_TIMEOUT;
 use std::io::Read;
 
@@ -101,8 +103,8 @@ pub(crate) struct UreqKmsClient {
     /// exchange. Consulted before every signature, so a rotated projected token or a
     /// re-exchanged STS session takes effect without a restart.
     credential_source: Box<dyn AwsCredentialSource>,
-    agent: ureq::Agent,
-    url: String,
+    /// Obtainable only from `KmsEndpoint`: the rule is a property, not a call.
+    egress: CredentialEgress,
     authority: String,
 }
 
@@ -123,7 +125,7 @@ impl UreqKmsClient {
             Some(endpoint) => endpoint,
             None => format!("https://kms.{}.amazonaws.com", config.region),
         };
-        let authority = authority_of(&url)?;
+        let endpoint = endpoint_of(&url)?;
         // Mint once here so a misconfigured custody path fails at CONSTRUCTION —
         // where an operator sees it — rather than on the first signature.
         let credentials = credential_source.credentials()?;
@@ -131,9 +133,8 @@ impl UreqKmsClient {
         Ok(UreqKmsClient {
             signer: std::sync::RwLock::new(signer),
             credential_source,
-            agent: ureq::AgentBuilder::new().build(),
-            url,
-            authority,
+            authority: endpoint.authority().to_string(),
+            egress: endpoint.egress(NETWORK_TIMEOUT),
         })
     }
 }
@@ -184,8 +185,8 @@ impl KmsHttpClient for UreqKmsClient {
         );
 
         let mut req = self
-            .agent
-            .post(&self.url)
+            .egress
+            .post("")
             .set("Host", &self.authority)
             .set("Content-Type", KMS_CONTENT_TYPE)
             .set("X-Amz-Target", target)
@@ -254,8 +255,8 @@ fn read_kms_response(
 ///
 /// The path this used to refuse is refused there too: an endpoint is a `host[:port]`
 /// authority, and a `/v1`-style suffix is not part of one.
-fn authority_of(url: &str) -> Result<String, KeyError> {
-    let authority = crate::kms_endpoint_policy::kms_endpoint_authority(url)
+fn endpoint_of(url: &str) -> Result<KmsEndpoint, KeyError> {
+    let endpoint = KmsEndpoint::parse(url)
         .map_err(|why| KeyError::Malformed(format!("aws-kms: endpoint {why}")))?;
     let path = url
         .split_once("://")
@@ -267,7 +268,7 @@ fn authority_of(url: &str) -> Result<String, KeyError> {
             "aws-kms: endpoint '{url}' must not include a path"
         )));
     }
-    Ok(authority)
+    Ok(endpoint)
 }
 
 /// Current UNIX time in seconds (production-only; tests use fixed inputs to
@@ -689,14 +690,16 @@ mod tests {
     #[test]
     fn authority_strips_scheme_and_path() {
         assert_eq!(
-            authority_of("https://kms.us-east-1.amazonaws.com").unwrap(),
+            endpoint_of("https://kms.us-east-1.amazonaws.com")
+                .unwrap()
+                .authority(),
             "kms.us-east-1.amazonaws.com"
         );
         assert_eq!(
-            authority_of("http://localhost:4566/").unwrap(),
+            endpoint_of("http://localhost:4566/").unwrap().authority(),
             "localhost:4566"
         );
-        assert!(authority_of("not-a-url").is_err());
+        assert!(endpoint_of("not-a-url").is_err());
     }
 
     /// Userinfo, a query and a fragment all move where a URL parser sends the request,
@@ -724,7 +727,7 @@ mod tests {
             "http://kms.attacker.example",
         ] {
             assert!(
-                authority_of(hostile).is_err(),
+                endpoint_of(hostile).is_err(),
                 "{hostile:?} must not be accepted as an endpoint authority"
             );
         }
@@ -753,7 +756,9 @@ mod tests {
             ("http://[::1]:4566", "[::1]:4566"),
         ] {
             assert_eq!(
-                authority_of(endpoint).unwrap_or_else(|e| panic!("{endpoint}: {e:?}")),
+                endpoint_of(endpoint)
+                    .unwrap_or_else(|e| panic!("{endpoint}: {e:?}"))
+                    .authority(),
                 authority
             );
         }

@@ -39,6 +39,8 @@
 //!   such a credential for at most [`UNKNOWN_EXPIRY_REUSE`] and then re-exchanges, so an
 //!   unreadable expiry costs a bounded window, not an indefinite one.
 
+use crate::kms_endpoint_policy::KmsEndpoint;
+use crate::outbound_fetch::CredentialEgress;
 use crate::remote_signer_call::read_error_body;
 use crate::remote_signer_call::NETWORK_TIMEOUT;
 use std::io::Read;
@@ -393,7 +395,11 @@ impl std::fmt::Debug for CachedCredentials {
 
 /// IRSA: exchange the projected service-account token for temporary credentials.
 pub struct WebIdentityCredentialSource {
-    agent: ureq::Agent,
+    /// The STS endpoint as a capability. Holding it is what makes the endpoint rule a
+    /// property of this source rather than a line in its constructor: there is no other
+    /// way to obtain one, and whoever this endpoint names receives the pod's projected
+    /// service-account token.
+    egress: CredentialEgress,
     config: WebIdentityConfig,
     state: Mutex<CredentialState>,
     /// Held across an exchange so concurrent callers coalesce onto one.
@@ -458,11 +464,11 @@ impl WebIdentityCredentialSource {
     /// the earliest point with the flag named; both call the one decision, so they cannot
     /// drift.
     pub fn new(config: WebIdentityConfig) -> Result<Self, KeyError> {
-        crate::kms_endpoint_policy::kms_endpoint_authority(&config.endpoint).map_err(|why| {
+        let endpoint = KmsEndpoint::parse(&config.endpoint).map_err(|why| {
             KeyError::Malformed(format!("aws-kms: web identity STS endpoint {why}"))
         })?;
         Ok(WebIdentityCredentialSource {
-            agent: ureq::AgentBuilder::new().build(),
+            egress: endpoint.egress(NETWORK_TIMEOUT),
             config,
             state: Mutex::new(CredentialState::default()),
             exchanging: Mutex::new(()),
@@ -605,9 +611,12 @@ impl WebIdentityCredentialSource {
             form_encode(&self.config.session_name),
             form_encode(&token),
         ));
+        // The endpoint itself, as a path the egress joins onto the vetted authority: STS
+        // serves the query API at the root, and no path this source names can move the
+        // authority the token is sent to.
         let response = self
-            .agent
-            .post(&self.config.endpoint)
+            .egress
+            .post("")
             .set("Content-Type", "application/x-www-form-urlencoded")
             .set("Accept", "application/xml")
             .timeout(NETWORK_TIMEOUT)

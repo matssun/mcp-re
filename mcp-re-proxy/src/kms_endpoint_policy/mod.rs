@@ -33,6 +33,14 @@ use std::str::FromStr;
 mod authority;
 use authority::split_authority;
 
+// The endpoint as a VALUE, and the credential egress it grants — the half of this rule
+// that key sources hold rather than call. Gated with the two backends that make such a
+// request; a build with neither has no credential to send.
+#[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
+mod endpoint;
+#[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
+pub(crate) use endpoint::KmsEndpoint;
+
 /// The `host[:port]` a request to `value` will actually reach — or why `value` may not be
 /// used as a KMS/STS endpoint at all.
 ///

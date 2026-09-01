@@ -285,6 +285,10 @@ _PROXY_LIB_SRCS = [
     # first caller: key sources reach it without meeting a command line.
     "src/kms_endpoint_policy/mod.rs",
     "src/kms_endpoint_policy/authority.rs",
+    # The endpoint as a VALUE and the credential egress it grants; behind
+    # #[cfg(any(aws_kms_keysource, gcp_kms_keysource))], so it is cfg'd out of the base
+    # flavor and compiled by :mcp_re_proxy_ext.
+    "src/kms_endpoint_policy/endpoint.rs",
     # ADR-MCPS-028: provider-agnostic cloud-KMS response signer core (the shared
     # protocol mapping behind the #3838 delegation seam). Always compiled.
     "src/kms_keysource/mod.rs",
@@ -320,6 +324,10 @@ _PROXY_LIB_SRCS = [
     # 6960, and it was reachable only through a feature gate that has nothing to do with it.
     "src/outbound_fetch/mod.rs",
     "src/outbound_fetch/address.rs",
+    # The HTTP-client binding, and the credential-egress capability built on it. Both ride
+    # the features that link an HTTP client, so both are cfg'd out of the base flavor.
+    "src/outbound_fetch/binding.rs",
+    "src/outbound_fetch/credential_egress.rs",
     "src/outbound_fetch/resolver.rs",
     "src/outbound_fetch/url.rs",
     # Issue #4028: Redis-backed shared atomic ReplayCache (behind #[cfg(feature =
