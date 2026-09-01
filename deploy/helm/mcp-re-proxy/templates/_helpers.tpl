@@ -185,23 +185,35 @@ would otherwise produce a chart that looks bounded and is not:
 
 {{/*
 The DRAIN INVARIANT. The kubelet's terminationGracePeriodSeconds clock starts at pod
-DELETION, not at SIGTERM, so the preStop delay is spent inside it:
+DELETION, not at SIGTERM, so the preStop delay is spent inside it — and so is everything
+the process does after it stops serving:
 
-  drainPreStopSeconds + proxyDrainGraceSeconds < drainGracePeriodSeconds
+  drainPreStopSeconds + proxyDrainGraceSeconds + auditFlush < drainGracePeriodSeconds
 
 Violated, the pod is SIGKILLed while the proxy still believes it may drain, and an
 admitted request dies with neither a signed response nor a signed rejection — the
 opposite of the ADR-MCPRE-051 §6 zero-abandoned property. It cannot be checked at
 the proxy: only the chart knows the kubelet's two numbers.
+
+THE AUDIT FLUSH IS PART OF THE ARITHMETIC. Serving ending is not the process exiting:
+`audit_sink::drain::at_shutdown` then waits up to AUDIT_FLUSH_TIMEOUT for the detached
+writer to hand over what it was already given. That wait is inside the kubelet's window
+too, so a chart budgeting only `pre + proxyDrain` describes a shutdown two seconds shorter
+than the one that happens, and the request the invariant exists to protect can still be
+killed at the end of a drain the chart called legal. The literal below is coupled to the
+Rust constant by `scripts/helm_render_gate.py`; it is not an operator knob, because it
+bounds an obligation the proxy owns rather than a policy the deployment chooses.
 */}}
 {{- $pre := int .Values.drainPreStopSeconds -}}
 {{- $proxyDrain := int .Values.proxyDrainGraceSeconds -}}
 {{- $kubelet := int .Values.drainGracePeriodSeconds -}}
+{{- $auditFlush := 2 -}}
 {{- if lt $proxyDrain 30 -}}
 {{- fail (printf "proxyDrainGraceSeconds=%d is below the proxy's 30s request deadline: an admitted request cannot finish inside the drain window, so a rolling update abandons it" $proxyDrain) -}}
 {{- end -}}
-{{- if ge (add $pre $proxyDrain) $kubelet -}}
-{{- fail (printf "drainPreStopSeconds(%d) + proxyDrainGraceSeconds(%d) >= drainGracePeriodSeconds(%d): the kubelet SIGKILLs at %ds while the proxy drains until %ds, so in-flight requests are killed mid-flight with no signed response and no rejection evidence. Raise drainGracePeriodSeconds or lower the other two." $pre $proxyDrain $kubelet $kubelet (add $pre $proxyDrain)) -}}
+{{- $needed := add $pre $proxyDrain $auditFlush -}}
+{{- if ge $needed $kubelet -}}
+{{- fail (printf "drainPreStopSeconds(%d) + proxyDrainGraceSeconds(%d) + the proxy's %ds post-serve audit flush = %ds >= drainGracePeriodSeconds(%d): the kubelet SIGKILLs at %ds while the proxy is still finishing shutdown, so in-flight requests are killed mid-flight with no signed response and no rejection evidence, and the audit records for what it did serve are lost with the process. Raise drainGracePeriodSeconds or lower the other two." $pre $proxyDrain $auditFlush $needed $kubelet $kubelet) -}}
 {{- end -}}
 
 {{/*

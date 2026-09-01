@@ -240,7 +240,34 @@ REQUIRED_UPLOAD_EXCLUSIONS: tuple[str, ...] = (
     ".aws/",
     ".gcloud/",
     ".kube/",
+    # Local agent and editor state. `.claude/` is TRACKED, so it is not even gitignored:
+    # `COPY . .` and `git archive HEAD` both emit it unconditionally, and
+    # `.claude/settings.local.json` is where env vars and MCP server tokens live.
+    ".claude/",
+    "**/.claude/",
+    ".verification/",
 )
+
+#: Patterns one upload-ignore file may carry alone, with the reason. Everything else must
+#: appear in BOTH — see `asymmetric_upload_exclusions`.
+#:
+#: The list above is a FLOOR, and a floor is why round 8 got through: `.claude/` and
+#: `.verification/` were added to `.gcloudignore` alone, the floor did not name them, and
+#: a gate that only checks a fixed list has nothing to say about a pattern nobody thought
+#: to add to it. Parity is the property that does not need the list to be complete.
+FILE_SPECIFIC_UPLOAD_EXCLUSIONS: dict[str, dict[str, str]] = {
+    ".dockerignore": {
+        "**/*.rs.bk": "rustfmt backup litter; build-size only",
+    },
+    ".gcloudignore": {
+        "node_modules/": "build size; the image build needs no npm tree",
+        "**/node_modules/": "build size",
+        ".venv*/": "build size",
+        "**/.venv*/": "build size",
+        "sdk/**/dist/": "build size; the Docker build produces its own",
+        "sdk/**/native/": "build size; the Docker build produces its own",
+    },
+}
 
 
 def missing_upload_exclusions(text: str) -> list[str]:
@@ -254,18 +281,64 @@ def missing_upload_exclusions(text: str) -> list[str]:
     return [pattern for pattern in REQUIRED_UPLOAD_EXCLUSIONS if pattern not in present]
 
 
+def patterns_of(text: str) -> set[str]:
+    """The rules an ignore file states, which is not the same as what it says.
+
+    Comment lines are dropped: a preamble explaining that `work/` must be excluded is not
+    an exclusion of `work/`, and that is the exact shape the unremediated `.gcloudignore`
+    had.
+    """
+    return {
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+
+def asymmetric_upload_exclusions(bodies: dict[str, str]) -> list[tuple[str, str]]:
+    """`(file, pattern)` for every rule one upload-ignore file carries and the other lacks.
+
+    The two files govern different transfers — `.dockerignore` keeps a path out of an image
+    LAYER, `.gcloudignore` out of the tarball `gcloud builds submit` uploads — but a path
+    too sensitive to appear in one is too sensitive to appear in the other, so the sets must
+    agree. A deliberate difference is declared in `FILE_SPECIFIC_UPLOAD_EXCLUSIONS` with the
+    reason, which is why every difference is either justified or a finding.
+
+    This is what `REQUIRED_UPLOAD_EXCLUSIONS` alone cannot do. A required list can only
+    check the patterns someone already thought to require; parity checks the ones they did
+    not, which is where the last two gaps were.
+    """
+    found = []
+    for name, text in bodies.items():
+        others = set().union(*(patterns_of(b) for n, b in bodies.items() if n != name))
+        allowed = FILE_SPECIFIC_UPLOAD_EXCLUSIONS.get(name, {})
+        for pattern in sorted(patterns_of(text) - others - allowed.keys()):
+            found.append((name, pattern))
+    return found
+
+
 def scan_upload_ignores() -> list[tuple[str, int, str, str]]:
-    """Every credential exclusion missing from an upload-context ignore file."""
+    """Every credential exclusion missing from, or unmatched between, the ignore files."""
     hits = []
+    bodies = {}
     for name in UPLOAD_IGNORE_FILES:
         path = REPO / name
         if not path.is_file():
             hits.append((name, 0, "upload-ignore-missing",
                          "this file decides what leaves the repo; its absence is not a default"))
             continue
-        for pattern in missing_upload_exclusions(path.read_text(encoding="utf-8")):
+        bodies[name] = path.read_text(encoding="utf-8")
+        for pattern in missing_upload_exclusions(bodies[name]):
             hits.append((name, 0, "upload-ignore-gap",
                          f"{pattern!r} is not excluded, so it ships with the build context"))
+    if len(bodies) == len(UPLOAD_IGNORE_FILES):
+        others = [n for n in UPLOAD_IGNORE_FILES]
+        for name, pattern in asymmetric_upload_exclusions(bodies):
+            missing_from = ", ".join(n for n in others if n != name)
+            hits.append((name, 0, "upload-ignore-asymmetry",
+                         f"{pattern!r} is excluded here and not in {missing_from}. Add it "
+                         f"there, or declare it in FILE_SPECIFIC_UPLOAD_EXCLUSIONS with "
+                         f"the reason it is build-size only"))
     return hits
 
 
@@ -388,6 +461,39 @@ BINARY_SELFTEST_CASES: list[tuple[bool, str, bytes]] = [
 #: output and nothing else while `.dockerignore` already carried the credential
 #: block. Without it the parity check is code that has only ever seen a passing
 #: input.
+#: `(should_flag, label, {file: body})` for the PARITY half. The first case is the round-8
+#: shape verbatim — an exclusion added to one file and not the other, which the required
+#: list could not see because nobody had added it to the required list either. That is the
+#: whole reason parity exists beside the floor, so it is the case the check is written
+#: against.
+UPLOAD_PARITY_SELFTEST_CASES: list[tuple[bool, str, dict[str, str]]] = [
+    (
+        True,
+        "round 8: an agent-state exclusion added to one file only",
+        {".dockerignore": "work/\n", ".gcloudignore": "work/\n.claude/\n"},
+    ),
+    (
+        True,
+        "an exclusion present only in a comment on the other side",
+        {".dockerignore": "work/\n# .claude/\n", ".gcloudignore": "work/\n.claude/\n"},
+    ),
+    (
+        False,
+        "the same rules on both sides",
+        {".dockerignore": "work/\n.claude/\n", ".gcloudignore": ".claude/\nwork/\n"},
+    ),
+    (
+        False,
+        "a difference declared as build-size only",
+        {".dockerignore": "work/\n**/*.rs.bk\n", ".gcloudignore": "work/\nnode_modules/\n"},
+    ),
+    (
+        True,
+        "a difference that is NOT the declared one",
+        {".dockerignore": "work/\n**/*.rs.bk\n", ".gcloudignore": "work/\n.ssh/\n"},
+    ),
+]
+
 UPLOAD_IGNORE_SELFTEST_CASES: list[tuple[bool, str, str]] = [
     (
         True,
@@ -434,8 +540,14 @@ def selftest() -> int:
             verb = "did not flag" if should_flag else "wrongly flagged"
             print(f"SELFTEST FAIL: upload-ignore check {verb}: {label}")
             failures += 1
+    for should_flag, label, bodies in UPLOAD_PARITY_SELFTEST_CASES:
+        flagged = bool(asymmetric_upload_exclusions(bodies))
+        if flagged != should_flag:
+            verb = "did not flag" if should_flag else "wrongly flagged"
+            print(f"SELFTEST FAIL: upload-ignore parity {verb}: {label}")
+            failures += 1
     total = (len(SELFTEST_CASES) + len(BINARY_SELFTEST_CASES)
-             + len(UPLOAD_IGNORE_SELFTEST_CASES))
+             + len(UPLOAD_IGNORE_SELFTEST_CASES) + len(UPLOAD_PARITY_SELFTEST_CASES))
     if failures:
         print(f"\n{failures} selftest case(s) failed — the gate is not trustworthy.")
         return 1

@@ -413,9 +413,17 @@ tls:
 #   t=0                        pod deleted; preStop sleep begins
 #   t=drainPreStopSeconds      SIGTERM delivered; the proxy stops accepting and
 #                              drains for proxyDrainGraceSeconds
+#   +2s                        serving has ended, the process has NOT: shutdown waits
+#                              up to the proxy's 2s bound for the detached audit
+#                              writer to hand over the records it already holds
 #   t=drainGracePeriodSeconds  SIGKILL, unconditionally
 #
-# So the invariant is  drainPreStopSeconds + proxyDrainGraceSeconds < drainGracePeriodSeconds.
+# So the invariant is
+#   drainPreStopSeconds + proxyDrainGraceSeconds + 2 < drainGracePeriodSeconds.
+# The 2 is the proxy's own AUDIT_FLUSH_TIMEOUT, not a value you set here — it bounds an
+# obligation the process owns, and the render gate holds the chart's copy equal to the
+# Rust constant. Leaving it out of the arithmetic describes a shutdown two seconds
+# shorter than the one that happens.
 # The render gate enforces it. Getting it wrong SIGKILLs requests mid-flight: the
 # client gets a truncated connection with neither a signed response nor a signed
 # rejection, which is exactly what the §6 zero-abandoned gate claims cannot happen.

@@ -15,7 +15,15 @@ catching them here turns a CrashLoopBackOff into a render error that names the v
 {{- if not .Values.admissionCurrency.redisUrl -}}
 {{- fail "admissionCurrency.mode=optional|required requires admissionCurrency.redisUrl, the shared authoritative record currency is checked against; without it every call fails closed on an unreachable authority." -}}
 {{- end -}}
-{{- if and .Values.fleet (not .Values.replay.allowPlaintextRedis) (hasPrefix "redis://" .Values.admissionCurrency.redisUrl) -}}
+{{/*
+Independent of `fleet`, like the replay and trust-epoch guards in _helpers.tpl and for
+the same reason: what is at stake is who can write the keyspace, which does not depend on
+replica count. This hop is reached whenever admissionCurrency.mode is not off — the guard
+above requires the URL for exactly those modes — so a single-replica install carries the
+same security state over the same hop. While `fleet` was a conjunct here, values.yaml
+claimed the guard held "at any replica count" and the chart did not.
+*/}}
+{{- if and (not .Values.replay.allowPlaintextRedis) (hasPrefix "redis://" .Values.admissionCurrency.redisUrl) -}}
 {{- fail "admissionCurrency.redisUrl is plaintext redis:// — this hop decides whether a caller is still admitted, so an unauthenticated peer who can write it re-admits a revoked actor fleet-wide. Use rediss:// with credentials, or set replay.allowPlaintextRedis=true to accept the risk deliberately." -}}
 {{- end -}}
 {{- if and .Values.admissionCurrency.allowDegraded (not (gt (int .Values.admissionCurrency.degradedBoundSecs) 0)) -}}

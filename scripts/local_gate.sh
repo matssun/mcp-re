@@ -91,6 +91,11 @@ stage_static() {
     && python3 scripts/discriminator_gate.py \
     && python3 scripts/tracked_secrets_gate.py --selftest \
     && python3 scripts/tracked_secrets_gate.py \
+    `# The CodeBuild pre_build guard rests on every path it names being one` \
+    `# \`git archive HEAD\` cannot emit. \`.claude\` is partly TRACKED, so that guard` \
+    `# refused every correct upload and detected no wrong one.` \
+    && python3 scripts/codebuild_guard_gate.py --selftest \
+    && python3 scripts/codebuild_guard_gate.py \
     && python3 scripts/deploy_image_tag_gate.py --selftest \
     && python3 scripts/deploy_image_tag_gate.py \
     && python3 scripts/slo_invocation_gate.py --selftest \
