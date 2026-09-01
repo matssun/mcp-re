@@ -18,6 +18,17 @@ target/
 # between those files and a published image.
 work/
 **/work/
+# Local agent and editor state. `.claude/` is TRACKED here, so unlike `work/` it is not
+# even gitignored — `COPY . .` picks it up unconditionally, and
+# `.claude/settings.local.json` is where env vars and MCP server tokens live while the
+# skill tree next to it holds private review material. `.verification/` is local lane
+# scratch. These landed in `.gcloudignore` and not here, and the parity control that was
+# supposed to notice was a fixed list that did not name them.
+.claude/
+**/.claude/
+.vscode/
+.idea/
+.verification/
 **/.env
 **/.env.*
 **/*.pem

@@ -111,6 +111,16 @@ jobs:
           python3 scripts/tracked_secrets_gate.py --selftest
           python3 scripts/tracked_secrets_gate.py
 
+      # The CodeBuild `pre_build` context guard rests on one premise: every path it
+      # refuses is one `git archive HEAD` cannot emit. `.claude` is partly TRACKED —
+      # eight files — so the guard aborted every correctly produced upload and detected
+      # no zipped working tree at all. The premise is a local fact that `git ls-files`
+      # decides, so it is checked rather than remembered.
+      - name: CodeBuild context-guard gate
+        run: |
+          python3 scripts/codebuild_guard_gate.py --selftest
+          python3 scripts/codebuild_guard_gate.py
+
       # Deploy image-tag gate: Cloud Build pushes the image tags, and the k8s
       # manifests, chart and live-validation harnesses reference them. Nothing tied
       # those together, so they drifted a whole release apart — the multi-replica

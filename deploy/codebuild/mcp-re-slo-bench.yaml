@@ -153,8 +153,18 @@ Resources:
                 # time the build runs the object is already in S3 — so this cannot
                 # un-upload anything, it refuses to BUILD from a context that carries
                 # operator credential material and makes the mistake visible at once.
+                #
+                # Every path here must be one `git archive HEAD` CANNOT emit, or the
+                # guard refuses the correct upload instead of the wrong one. `.claude`
+                # was in this list and is partly TRACKED — eight files under it are in
+                # the tree — so every correctly produced source zip aborted here, and
+                # the check that was meant to catch a working-tree zip caught only the
+                # good path. `.claude/settings.local.json` is the file that actually
+                # carries env vars and MCP server tokens, and it is untracked, so it is
+                # the discriminator `.claude` was standing in for.
+                # `scripts/codebuild_guard_gate.py` is what keeps this list honest.
                 - |
-                  for p in work .claude .aws .gcloud .kube .env; do
+                  for p in work .claude/settings.local.json .aws .gcloud .kube .env; do
                     if [ -e "$p" ]; then
                       echo "REFUSING: '$p' is in the build context. Upload it with"
                       echo "'git archive --format=zip HEAD', which emits tracked files only."

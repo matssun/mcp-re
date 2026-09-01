@@ -152,6 +152,49 @@ def check_documented_in_flight_default() -> list[str]:
     return problems
 
 
+def check_audit_flush_budget() -> list[str]:
+    """The seconds the chart budgets for the post-serve audit flush must be the code's.
+
+    Serving ending is not the process exiting. `audit_sink::drain::at_shutdown` then waits
+    up to `AUDIT_FLUSH_TIMEOUT` for the detached writer to hand over what it already holds,
+    and that wait is inside the kubelet's grace period like everything else after pod
+    deletion. A chart budgeting only `pre + proxyDrain` describes a shutdown shorter than
+    the one that happens — so the drain invariant it enforces is unsound, and the request
+    it exists to protect can still be SIGKILLed at the end of a drain the chart called
+    legal. It cost nothing to notice, because a template literal agrees with a Rust
+    constant only by coincidence until something checks.
+
+    The chart cannot read the constant, so this is the coupling. It is not an operator
+    knob: the value bounds an obligation the proxy owns, not a policy the deployment
+    chooses, which is why it is a literal in `_helpers.tpl` and not a key in values.yaml.
+    """
+    owner = REPO / "mcp-re-proxy" / "src" / "audit_sink" / "drain.rs"
+    actual = ""
+    for line in owner.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("const AUDIT_FLUSH_TIMEOUT: Duration = Duration::from_secs("):
+            actual = stripped.split("from_secs(", 1)[1].split(")", 1)[0].strip()
+            break
+    if not actual:
+        return ["mcp-re-proxy/src/audit_sink/drain.rs declares no `AUDIT_FLUSH_TIMEOUT`; "
+                "the chart's drain arithmetic can no longer be checked against the code"]
+    problems = []
+    helpers = (CHART / "templates" / "_helpers.tpl").read_text(encoding="utf-8")
+    if f"$auditFlush := {actual}" not in helpers:
+        problems.append(
+            f"_helpers.tpl does not budget the proxy's {actual}s audit flush "
+            f"($auditFlush := {actual}); the drain invariant is short by that much"
+        )
+    values = " ".join((CHART / "values.yaml").read_text(encoding="utf-8")
+                      .replace("#", " ").split())
+    if f"+ {actual} < drainGracePeriodSeconds" not in values:
+        problems.append(
+            f"values.yaml states the drain invariant without the {actual}s audit flush; "
+            f"an operator sizing the grace period from it budgets too little"
+        )
+    return problems
+
+
 def check_image_serves_every_key_source() -> list[str]:
     """Every custody mode the chart's `keySource` comment offers must be compiled in."""
     problems: list[str] = []
@@ -525,6 +568,67 @@ CASES: list[tuple[str, dict, bool, str]] = [
         False,
         "mode is off",
     ),
+    # --- the drain invariant, with the post-serve audit flush inside it ---
+    # The base values are 6 + 30 + 2 = 38 < 45 and render. These two sit either side of
+    # the boundary the audit flush moves: 13 + 30 = 43 < 45 was legal while the chart
+    # budgeted only the drain, and is not, because the process is still flushing at 45
+    # and the kubelet SIGKILLs at 45.
+    (
+        "a drain that fits only without the audit flush is refused",
+        merged({"drainPreStopSeconds": 13, "proxyDrainGraceSeconds": 30,
+                "drainGracePeriodSeconds": 45}),
+        False,
+        "audit flush",
+    ),
+    (
+        "the same drain renders once the grace period covers the flush",
+        merged({"drainPreStopSeconds": 13, "proxyDrainGraceSeconds": 30,
+                "drainGracePeriodSeconds": 60}),
+        True,
+        "",
+    ),
+    # THE SINGLE-REPLICA HOLE. Every plaintext-Redis case above renders under the base
+    # values, and the base values set `fleet: true` — so the whole rule was only ever
+    # measured on one side of a conjunct. The admission-currency guard carried
+    # `and .Values.fleet` while values.yaml documented the refusal as holding "at any
+    # replica count", and no case could see the difference. What is at stake on all three
+    # hops is who can write the keyspace, which does not depend on replica count.
+    (
+        "plaintext admission-currency redis is refused with fleet off",
+        merged({"fleet": False},
+               {"replay": {"redisUrl": "rediss://r:6379", "durabilityTier": "linearizable"}},
+               {"admissionCurrency": {"mode": "required", "authorityKid": "adm-1",
+                                      "authorityPubkey": "cHVia2V5",
+                                      "redisUrl": "redis://r:6379"}}),
+        False,
+        "admissionCurrency.redisUrl is plaintext",
+    ),
+    (
+        "plaintext replay redis is refused with fleet off",
+        merged({"fleet": False},
+               {"replay": {"redisUrl": "redis://r:6379", "durabilityTier": "linearizable"}}),
+        False,
+        "replay.redisUrl is plaintext",
+    ),
+    (
+        "plaintext trust-epoch redis is refused with fleet off",
+        merged({"fleet": False},
+               {"revocation": {"tier": "push:60", "trustEpochRedisUrl": "redis://r:6379",
+                               "trustEpochKey": "mcp-re:trust:epoch"}}),
+        False,
+        "trustEpochRedisUrl is plaintext",
+    ),
+    # The mirror, without which the three above are satisfied by a chart that refuses
+    # everything at fleet=false.
+    (
+        "a single-replica install with encrypted hops still renders",
+        merged({"fleet": False},
+               {"admissionCurrency": {"mode": "required", "authorityKid": "adm-1",
+                                      "authorityPubkey": "cHVia2V5",
+                                      "redisUrl": "rediss://r:6379"}}),
+        True,
+        "",
+    ),
     (
         "a fully configured admission currency renders",
         merged({"admissionCurrency": {"mode": "required", "authorityKid": "adm-1",
@@ -766,6 +870,7 @@ def main() -> int:
         ("the default image serves every offered keySource", check_image_serves_every_key_source),
         ("the proxy image declares the chart's non-root uid", check_image_declares_non_root),
         ("the documented in-flight default is the code's", check_documented_in_flight_default),
+        ("the drain arithmetic budgets the code's audit flush", check_audit_flush_budget),
     ):
         problems = check()
         failures.extend(f"{label}: {p}" for p in problems)
@@ -839,7 +944,7 @@ def main() -> int:
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"\nhelm render gate: {3 + len(CASES) + len(ARGV_CASES) + len(MANIFEST_CASES)} cases pass")
+    print(f"\nhelm render gate: {4 + len(CASES) + len(ARGV_CASES) + len(MANIFEST_CASES)} cases pass")
     return 0
 
 
