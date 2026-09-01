@@ -52,6 +52,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -112,17 +113,65 @@ LANES = [
 
 
 def gate_exit_code(aggregate: str, gate: bool) -> int:
-    """The process status `--gate` reports for an aggregate verdict.
+    """The process status this run reports for an aggregate verdict.
 
-    Only PASS exits 0. INCOMPLETE is not a pass — it is the state in which no required lane
-    produced formal evidence, which is what a downgraded unit, a deleted unit, an
-    unavailable prover and a deliberately skipped lane all look like. An exit code that
-    cannot tell those from a proved repository makes the CI check green for a run that
+    Only PASS exits 0 under `--gate`. INCOMPLETE is not a pass — it is the state in which
+    no required lane produced formal evidence, which is what a downgraded unit, a deleted
+    unit, an unavailable prover and a deliberately skipped lane all look like. An exit code
+    that cannot tell those from a proved repository makes the CI check green for a run that
     measured nothing, and the exit code is the only thing CI reads.
+
+    A FAIL EXITS NON-ZERO IN BOTH MODES. Report mode used to return 0 for a run that had
+    just printed `VERIFICATION: FAIL`, on the reasoning that it is not authoritative —
+    but "not authoritative" is a statement about what a PASS is worth, not a licence to
+    report a failure as success. Anything reading the status rather than the verdict line
+    read a failed lane as a pass, and something did: this repository has already recorded a
+    lane as green off a report-mode exit status.
+
+    What `--gate` still decides is the treatment of INCOMPLETE, which is the mode's real
+    content: a report of "nothing measured" is a legitimate development state, while
+    accepting it on the merge path is not.
     """
+    if aggregate == "FAIL":
+        return 1
     if not gate:
         return 0
     return 0 if aggregate == "PASS" else 1
+
+
+@dataclass(frozen=True)
+class RunOutcome:
+    """What a verification run produced: its verdict, and what carried it.
+
+    A value rather than a pair of statements, because the property that failed was one
+    about EVERY exit path. `verify` wrote the bundle at the end of the lane sweep, so a run
+    that returned earlier — manifest validation failed, or `--manifests` stopped it — left
+    the PREVIOUS run's verdict on disk, and `attest` reads that file as "the last
+    verification run". A failed run therefore made the tree look measured, and the earlier
+    a run failed the more certainly the stale PASS survived it.
+
+    Writing the bundle at each early return would fix the two paths that exist today and
+    say nothing about the next one added. Returning this instead makes the write
+    structural: `main` performs it once, on whatever `_run` returns, and there is no way to
+    leave without stating an aggregate. Possession of a `RunOutcome` is what it means for a
+    run to have a verdict.
+    """
+
+    exit_code: int
+    aggregate: str
+    lanes: dict[str, str]
+
+    def policy_revision(self) -> str:
+        """The revision this run validated against, or a marker if it cannot be read.
+
+        Defensive because one caller is the path where manifest loading has ALREADY failed.
+        An unreadable revision must not raise past the bundle write — that would restore
+        the exact behaviour this type exists to remove.
+        """
+        try:
+            return str(load_verification()["policy_revision"])
+        except Exception:  # noqa: BLE001 — any load failure means the same thing here
+            return "<unreadable>"
 
 
 def validate_manifests() -> tuple[bool, list[str]]:
@@ -169,6 +218,18 @@ def validate_manifests() -> tuple[bool, list[str]]:
 
 
 def main() -> int:
+    """Run, then record. The bundle write is here and nowhere else."""
+    outcome = _run()
+    write_bundle(
+        REPO_ROOT / ".verification" / "evidence",
+        outcome.aggregate,
+        outcome.lanes,
+        outcome.policy_revision(),
+    )
+    return outcome.exit_code
+
+
+def _run() -> RunOutcome:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--gate",
@@ -192,9 +253,13 @@ def main() -> int:
     for note in notes:
         print(f"    {note}")
     if not ok:
-        return 1
+        return RunOutcome(1, "FAIL", {"manifests": "FAIL"})
     if args.manifests:
-        return 0
+        # A deliberate partial run is still a run, and after it the last verification of
+        # this tree measured no lanes. INCOMPLETE rather than the previous verdict is the
+        # fail-closed direction: `attest` refuses, and the remedy is to run the lanes
+        # rather than to inherit a verdict from a run that no longer describes the tree.
+        return RunOutcome(0, "INCOMPLETE", {"manifests": "PASS"})
 
     verdicts: dict[str, str] = {}
     for name, script, _is_formal in LANES:
@@ -242,16 +307,6 @@ def main() -> int:
         name for name, verdict in verdicts.items() if verdict == "NOT_REQUIRED"
     ]
 
-    # Phase 3 of the evidence pipeline: the run's verdict becomes a record. Attestation is
-    # a separate phase precisely so that the thing which DECIDES pass is never the thing
-    # which STAMPS freshness; the issuer reads this and may not overrule it.
-    write_bundle(
-        REPO_ROOT / ".verification" / "evidence",
-        aggregate,
-        verdicts,
-        str(load_verification()["policy_revision"]),
-    )
-
     print("\n" + "=" * 70)
     if aggregate == "FAIL":
         print(f"VERIFICATION: FAIL — {', '.join(failed)}")
@@ -271,7 +326,11 @@ def main() -> int:
         print("(report-only — pass --gate to make this authoritative)")
     print("=" * 70)
 
-    return gate_exit_code(aggregate, args.gate)
+    # Phase 3 of the evidence pipeline: the run's verdict becomes a record. Attestation is
+    # a separate phase precisely so that the thing which DECIDES pass is never the thing
+    # which STAMPS freshness; the issuer reads the bundle `main` writes from this and may
+    # not overrule it.
+    return RunOutcome(gate_exit_code(aggregate, args.gate), aggregate, verdicts)
 
 
 if __name__ == "__main__":

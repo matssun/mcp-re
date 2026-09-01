@@ -117,6 +117,15 @@ def write_bundle(store: Path, aggregate: str, lanes: dict[str, str], policy_revi
     Phase 3 of the pipeline, and the reason it is a file rather than an exit code: the
     issuer must be able to see WHICH lanes carried the verdict, not merely that some
     process upstream exited 0.
+
+    THE BUNDLE DESCRIBES THE LAST RUN, NOT THE LAST SUCCESSFUL ONE. `attest` reads it as
+    "the aggregate verdict of the last verification run", and that reading is only true if
+    every exit path from `verify` writes one. It did not: a run that failed manifest
+    validation returned before reaching this call, leaving the PREVIOUS run's verdict on
+    disk for the issuer to consume — a failed run made the tree look measured, and the
+    worse a run failed, the earlier it exited and the more certainly the stale record
+    survived. `verify` now writes on every path, which is what makes the file's meaning
+    the one the issuer assumes.
     """
     store.mkdir(parents=True, exist_ok=True)
     path = store / "bundle.json"

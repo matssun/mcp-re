@@ -22,11 +22,12 @@ from __future__ import annotations
 import importlib.util
 import re
 import sys
-from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+
+from _load_tool import load_tool  # noqa: E402
 
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _manifest import (  # noqa: E402
@@ -39,10 +40,7 @@ from _manifest import (  # noqa: E402
     unit_assumptions,
 )
 
-_loader = SourceFileLoader("verify_cli", str(HERE / "verify"))
-_spec = importlib.util.spec_from_loader("verify_cli", _loader)
-verify_cli = importlib.util.module_from_spec(_spec)
-_loader.exec_module(verify_cli)
+verify_cli = load_tool('verify', 'verify_cli')
 
 DOC = load_verification()
 TOOLCHAINS = load_toolchains()
@@ -255,9 +253,28 @@ def test_only_pass_exits_zero_under_gate():
     assert verify_cli.gate_exit_code("INCOMPLETE", True) == 1
 
 
-def test_report_only_mode_never_fails_the_build():
-    for aggregate in ("PASS", "FAIL", "INCOMPLETE"):
-        assert verify_cli.gate_exit_code(aggregate, False) == 0
+def test_report_only_mode_does_not_fail_an_unresolved_state():
+    """What report mode withholds, and it is not the same as what it used to withhold.
+
+    The claim this protects is that an honestly unresolved state must not fail ordinary
+    development — the same reason `review --root-completeness` is report-only. INCOMPLETE
+    is that state: no required lane produced formal evidence, which is a legitimate place
+    to be while working and is not a place to merge from.
+    """
+    assert verify_cli.gate_exit_code("PASS", False) == 0
+    assert verify_cli.gate_exit_code("INCOMPLETE", False) == 0
+
+
+def test_report_only_mode_still_reports_a_measured_failure():
+    """The half the claim above was over-broad about.
+
+    This asserted that report mode never fails the build, for ANY aggregate. "Not
+    authoritative" is a statement about what a PASS is worth, not a licence to report a
+    failure as success — and a FAIL is not an unresolved state, it is a measured one.
+    Anything reading the status rather than the verdict line read a failed lane as a pass,
+    and something did.
+    """
+    assert verify_cli.gate_exit_code("FAIL", False) == 1
 
 
 # --- the boundary a unit's paths cross -----------------------------------------

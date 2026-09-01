@@ -23,16 +23,14 @@ from __future__ import annotations
 import importlib.util
 import re
 import sys
-from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-_loader = SourceFileLoader("check_assumptions", str(HERE / "check-assumptions"))
-_spec = importlib.util.spec_from_loader("check_assumptions", _loader)
-gate = importlib.util.module_from_spec(_spec)
-_loader.exec_module(gate)
+from _load_tool import load_tool  # noqa: E402
+
+gate = load_tool('check-assumptions', 'check_assumptions')
 
 
 # --- registration is per unit, not per mechanism name -------------------------

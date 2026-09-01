@@ -34,11 +34,11 @@ from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 
-_loader = SourceFileLoader("render_r9", str(HERE / "render-r9-dispositions"))
-_spec = importlib.util.spec_from_loader("render_r9", _loader)
-render_r9 = importlib.util.module_from_spec(_spec)
-_loader.exec_module(render_r9)
+from _load_tool import load_tool  # noqa: E402
+
+render_r9 = load_tool('render-r9-dispositions', 'render_r9')
 
 
 def git(repo: Path, *args: str) -> str:

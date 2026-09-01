@@ -24,20 +24,18 @@ import importlib.util
 import sys
 import tempfile
 import tomllib
-from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+from _load_tool import load_tool  # noqa: E402
+
 from _manifest import load_assumptions, load_verification  # noqa: E402
 from _theorems import load_theorems  # noqa: E402
 from _views import GENERATED_ROOT, render_all  # noqa: E402
 
-_loader = SourceFileLoader("generate_views", str(HERE / "generate-views"))
-_spec = importlib.util.spec_from_loader("generate_views", _loader)
-generator = importlib.util.module_from_spec(_spec)
-_loader.exec_module(generator)
+generator = load_tool('generate-views', 'generate_views')
 
 UNIT = "http_profile.freshness_window"
 

@@ -17,19 +17,14 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _load_tool import load_tool  # noqa: E402
+
 # The lane is an extensionless script, so it is loaded by path rather than imported.
-_LOADER = SourceFileLoader(
-    "verify_tests_lane", str(Path(__file__).resolve().parent / "verify-tests")
-)
-_SPEC = importlib.util.spec_from_loader("verify_tests_lane", _LOADER)
-assert _SPEC is not None
-lane = importlib.util.module_from_spec(_SPEC)
-_LOADER.exec_module(lane)
+lane = load_tool("verify-tests", "verify_tests_lane")
 
 
 class FakeProc:

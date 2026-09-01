@@ -351,6 +351,7 @@ jobs:
           python3 tools/verification/test_theorems.py
           python3 tools/verification/test_theorem_review.py
           python3 tools/verification/test_views.py
+          python3 tools/verification/test_evidence_bundle.py
 
       # ADR-MCPRE-059 §14.7 — approval is evidence ABOUT a fingerprint, never a bit on the
       # object approved. This gate had `scripts/local_gate.sh` as its only caller, and it
