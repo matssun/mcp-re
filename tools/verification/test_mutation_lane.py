@@ -23,17 +23,14 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-_LOADER = SourceFileLoader("verify_mutations_lane", str(HERE / "verify-mutations"))
-_SPEC = importlib.util.spec_from_loader("verify_mutations_lane", _LOADER)
-assert _SPEC is not None
-lane = importlib.util.module_from_spec(_SPEC)
-_LOADER.exec_module(lane)
+from _load_tool import load_tool  # noqa: E402
+
+lane = load_tool("verify-mutations", "verify_mutations_lane")
 
 from _manifest import ManifestError, load_verification  # noqa: E402
 

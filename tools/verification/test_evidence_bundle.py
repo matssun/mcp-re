@@ -20,6 +20,11 @@ Anything reading the status rather than the verdict line read a failed lane as a
 something did — this repository has already recorded a lane as green off a report-mode exit
 status. What `--gate` still decides is INCOMPLETE, which is the mode's real content.
 
+One loader for all of it. Seven suites had hand-built `SourceFileLoader` blocks and none
+registered the module in `sys.modules`, so the first `@dataclass` in a loaded tool raised
+at import — turning an untouched suite red about a change that was correct.
+`_load_tool.load_tool` is the single one.
+
 Run: python3 tools/verification/test_evidence_bundle.py
 """
 
@@ -31,20 +36,15 @@ import json
 import subprocess
 import sys
 import tempfile
-from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 sys.path.insert(0, str(HERE))
 
-_loader = SourceFileLoader("verify_tool", str(HERE / "verify"))
-_spec = importlib.util.spec_from_loader("verify_tool", _loader)
-verify_tool = importlib.util.module_from_spec(_spec)
-# Registered before exec: `@dataclass` resolves its annotations through
-# `sys.modules[cls.__module__]`, which is absent for a module loaded by hand.
-sys.modules["verify_tool"] = verify_tool
-_loader.exec_module(verify_tool)
+from _load_tool import load_tool  # noqa: E402
+
+verify_tool = load_tool('verify', 'verify_tool')
 
 from _evidence import load_bundle, write_bundle  # noqa: E402
 
