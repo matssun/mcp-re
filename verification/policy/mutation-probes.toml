@@ -2245,17 +2245,28 @@ conjunct = "the presented reconstruction is the one the statement committed to, 
 # covers, so a record that says COMPLETE and one that says incomplete-because-hop-N-was-
 # unverifiable are different commitments — and deleting the comparison makes them the same
 # to a verifier.
+#
+# Re-adjudicated for #740. The comparison now returns WHICH binding it established, so the
+# weakening must produce a verdict rather than a unit — and the honest one to write is the
+# stronger, because that is what deleting the check would let a caller believe. The probe
+# therefore also demonstrates the zero-verified-hop control, which is red exactly because
+# the weakened tree claims a verified call for a record with no verified hop.
 path = "mcp-re-http-profile/src/scitt/retained.rs"
 anchor = """
     commitment.corresponds_to(&recomputed)
 """
 weakening = """
     let _ = recomputed;
-    Ok(())
+    Ok(RetainedCorrespondence::BoundToVerifiedCall)
 """
 expect_red = [
   "lib#scitt::retained::tests::a_truncated_chain_is_refused_even_though_hop_zero_matches",
   "lib#scitt::retained::tests::a_substituted_unverified_tail_is_refused_even_though_the_verified_prefix_matches",
+  # #740 made the check TOTAL, so deleting it also stops distinguishing the two verdicts:
+  # the weakening has to name one, and naming the stronger reports a verified call for a
+  # record where nothing verified. A probe that could still compile without covering that
+  # would be defending the old, skippable shape.
+  "lib#scitt::retained::tests::a_record_with_no_verified_hop_is_bound_by_its_submission_and_says_only_that",
 ]
 
 # ---------------------------------------------------------------------------------------
