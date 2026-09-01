@@ -72,6 +72,13 @@ pub(super) fn host_of(url: &str) -> Option<String> {
 /// serve, and the same doubling appears from the other side when a caller writes a leading
 /// one. A join that dropped `base` — which is what every call site did while it addressed
 /// requests by full URL — is what would move the authority. Pure.
+// Compiled unconditionally, consumed only where an HTTP client is linked. The property it
+// carries — that no path moves an authority — is the one every credential-bearing request
+// rests on, and a build that compiles it only under the backend features measures it only
+// there: the default `cargo test -p mcp-re-proxy --lib` lane is what this unit's evidence
+// resolves in, and a symbol that lane cannot run is not evidence for it. The unused warning
+// in a build with no HTTP client is the cost of keeping the measurement where the claim is.
+#[allow(dead_code)]
 pub(super) fn joined_onto(base: &str, path: &str) -> String {
     format!(
         "{}/{}",

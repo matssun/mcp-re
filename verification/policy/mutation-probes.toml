@@ -2368,6 +2368,7 @@ weakening = """
 expect_red = [
   "lib#serve::accepted_authority::tests::an_exposed_listener_still_refuses_a_rebound_name",
   "lib#serve::head_fields::tests::a_rebound_host_is_refused_on_an_exposed_listener_too",
+]
 
 [[probe]]
 id = "M84-a-path-cannot-become-a-host"
