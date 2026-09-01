@@ -52,7 +52,7 @@ impl HttpProfileProxy {
                 Some(ex.verified.evidence()),
                 ex.actor_id.to_owned(),
                 retention,
-                Self::disposition(progress),
+                Self::disposition(progress, None),
                 ex.key.clone(),
             )
             .await

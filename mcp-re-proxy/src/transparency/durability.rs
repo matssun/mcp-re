@@ -20,9 +20,7 @@
 
 use super::durability_bounds::write_queue_capacity;
 use super::durability_bounds::MAX_RESERVATIONS;
-use super::durability_bounds::MAX_WRITE_BATCH;
 use std::path::PathBuf;
-use std::sync::mpsc::Receiver;
 use std::sync::mpsc::SyncSender;
 use std::sync::Arc;
 
@@ -35,27 +33,18 @@ use crate::retained_evidence::FsRetainedEvidenceStore;
 
 use mcp_re_http_profile::chain::RetainedHop;
 
+use super::dispatch_committed::PENDING_EXTENSION;
+use super::durable_job::JobFault;
+use super::durable_job::JobKind;
+use super::durable_job::WriteJob;
+use super::durable_writer::write_loop;
+use super::reservation_marker::ReservationMarker;
+use super::reserved_before_dispatch::RESERVED_EXTENSION;
 use super::retained_record::retained_request;
 use super::retained_record::RetainedHopRecord;
+use super::DispatchCommitted;
+use super::ReservedBeforeDispatch;
 use super::RetentionError;
-
-/// One durable write, and the acknowledgement the awaiting request is owed.
-struct WriteJob {
-    /// Where the bytes must land, and what must be there before this job is
-    /// acknowledged. `None` for a job that only clears a marker — a reservation
-    /// released by a call that was refused before it could be dispatched publishes
-    /// nothing, so there is no object to make durable.
-    write: Option<(PathBuf, Vec<u8>)>,
-    /// A reservation marker to unlink once the write is durable. Its own removal is
-    /// deliberately not made durable: a lost unlink leaves a stale marker, which
-    /// over-reports indeterminacy — the safe direction.
-    clear_marker: Option<PathBuf>,
-    /// Sent ONLY after the durability boundary for this job has been crossed. Never on
-    /// enqueue: a queued write that is acknowledged early is fire-and-forget with extra
-    /// steps, and the serving path would emit a success for an exchange it cannot
-    /// account for.
-    ack: tokio::sync::oneshot::Sender<Result<(), std::io::Error>>,
-}
 
 /// Retains served exchanges so an auditor can attest to them later.
 ///
@@ -95,105 +84,6 @@ impl Drop for EvidenceRetention {
     }
 }
 
-/// Drain, write, take ONE directory barrier for the batch, then acknowledge.
-///
-/// The order is the whole contract: no job is acknowledged until the `fsync` covering its
-/// rename has returned, so a batch is a durability optimisation over jobs that were each
-/// admitted individually — never a transaction over them, and never an early success.
-fn write_loop(store: FsRetainedEvidenceStore, jobs: Receiver<WriteJob>) {
-    loop {
-        let Ok(first) = jobs.recv() else { return };
-        let mut batch = vec![first];
-        while batch.len() < MAX_WRITE_BATCH {
-            match jobs.try_recv() {
-                Ok(job) => batch.push(job),
-                Err(_) => break,
-            }
-        }
-
-        let staged: Vec<std::io::Result<()>> = batch
-            .iter()
-            .map(|job| match &job.write {
-                Some((path, bytes)) => store.stage_at(path, bytes),
-                None => Ok(()),
-            })
-            .collect();
-        let published = batch
-            .iter()
-            .zip(&staged)
-            .any(|(job, staged)| job.write.is_some() && staged.is_ok());
-        let barrier = if published { store.sync_root() } else { Ok(()) };
-
-        for (job, staged) in batch.into_iter().zip(staged) {
-            let outcome = staged.and_then(|()| match &barrier {
-                Ok(()) => Ok(()),
-                // `io::Error` is not `Clone`; the batch shares one failure, so each
-                // caller is given an equivalent one.
-                Err(e) => Err(std::io::Error::new(e.kind(), e.to_string())),
-            });
-            if outcome.is_ok() {
-                if let Some(marker) = &job.clear_marker {
-                    if let Err(e) = std::fs::remove_file(marker) {
-                        if e.kind() != std::io::ErrorKind::NotFound {
-                            let stored = match &job.write {
-                                Some((path, _)) => path.display().to_string(),
-                                None => "nothing (the call was refused before dispatch)".to_owned(),
-                            };
-                            eprintln!(
-                                "retained evidence: hop {stored} is stored but its \
-                                 reservation marker {} could not be cleared ({e}); an \
-                                 auditor will see it as indeterminate",
-                                marker.display()
-                            );
-                        }
-                    }
-                }
-            }
-            let _ = job.ack.send(outcome);
-        }
-    }
-}
-
-/// Durable acceptance of responsibility for one exchange, taken BEFORE the backend runs.
-///
-/// Holding one means a `<request-digest>.pending` marker is on disk. It is consumed by
-/// [`EvidenceRetention::complete`] once the exchange is retained, or by
-/// [`EvidenceRetention::release_before_dispatch`] if the call is refused while the
-/// backend is still untouched; a marker that outlives the process is the record
-/// that this exact request crossed the execution threshold and its outcome was never
-/// retained — the one fact an auditor otherwise cannot recover, because the completed
-/// hop is precisely what failed to be written.
-#[derive(Debug)]
-pub struct RetentionReservation {
-    digest: EvidenceDigest,
-    /// Returned on drop, so a request that dies on any path gives its slot back. Held
-    /// for the whole span from `reserve` to `complete`, which is what guarantees the
-    /// completion job always has somewhere to go.
-    _permit: tokio::sync::OwnedSemaphorePermit,
-    /// The one completion this reservation is worth, taken by the first
-    /// [`EvidenceRetention::complete`] that asks for it.
-    completion: std::sync::atomic::AtomicBool,
-}
-
-impl RetentionReservation {
-    /// The request digest this reservation is keyed by.
-    pub fn digest(&self) -> &EvidenceDigest {
-        &self.digest
-    }
-
-    /// Take this reservation's single completion, reporting whether it was still there.
-    ///
-    /// The permit is what makes the queue bound hold — `K` reservations bound the queue
-    /// at `K` completion jobs — and a permit is held by a handle, not by a call. A
-    /// completion that could be taken from the same handle twice would put two jobs
-    /// behind one permit, so the count that bounds the queue would stop counting jobs.
-    /// The swap is what makes the second taker lose even when both race.
-    fn take_completion(&self) -> bool {
-        self.completion
-            .swap(false, std::sync::atomic::Ordering::AcqRel)
-    }
-}
-
 impl EvidenceRetention {
     /// Open (creating if absent) a retention store rooted at `dir`, proving it writable
     /// and starting its writer thread.
@@ -224,41 +114,23 @@ impl EvidenceRetention {
         })
     }
 
-    /// Hand one job to the writer and await its acknowledgement.
+    /// Hand the writer a job and await its acknowledgement.
     ///
     /// The `await` is the point of the whole arrangement: the runtime worker is free
     /// while the fsync runs. Every failure mode — a full queue, a dead writer, a dropped
     /// acknowledgement — is a store failure, never a silent success.
-    async fn durable_write(
-        &self,
-        path: PathBuf,
-        bytes: Vec<u8>,
-        clear_marker: Option<PathBuf>,
-    ) -> Result<(), RetentionError> {
-        self.submit(Some((path, bytes)), clear_marker).await
-    }
-
-    /// Hand the writer a job and await its acknowledgement.
-    async fn submit(
-        &self,
-        write: Option<(PathBuf, Vec<u8>)>,
-        clear_marker: Option<PathBuf>,
-    ) -> Result<(), RetentionError> {
+    async fn submit(&self, kind: JobKind) -> Result<(), RetentionError> {
         let (ack, acked) = tokio::sync::oneshot::channel();
-        self.jobs
-            .try_send(WriteJob {
-                write,
-                clear_marker,
-                ack,
-            })
-            .map_err(|_| {
-                RetentionError::Store(std::io::Error::new(
-                    std::io::ErrorKind::WouldBlock,
-                    "retention writer is not accepting work",
-                ))
-            })?;
+        self.jobs.try_send(WriteJob::new(kind, ack)).map_err(|_| {
+            RetentionError::Store(std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "retention writer is not accepting work",
+            ))
+        })?;
         match acked.await {
-            Ok(result) => result.map_err(RetentionError::Store),
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(JobFault::NotPublished(e))) => Err(RetentionError::Store(e)),
+            Ok(Err(JobFault::Unwithdrawn(e))) => Err(RetentionError::Unresolved(e)),
             Err(_) => Err(RetentionError::Store(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
                 "retention writer stopped before acknowledging the write",
@@ -266,131 +138,181 @@ impl EvidenceRetention {
         }
     }
 
-    /// The marker path for a reservation.
+    /// The path for a marker at `stage`.
     ///
-    /// The digest is base64url, so it is already a safe single path segment; the
-    /// `.pending` extension keeps it out of the content-addressed namespace, which is
-    /// read back by bare digest and can therefore never resolve to one of these.
-    fn pending_path(&self, digest: &EvidenceDigest) -> std::path::PathBuf {
-        self.root.join(format!("{}.pending", digest.as_str()))
+    /// The digest is base64url, so it is already a safe single path segment; the extension
+    /// keeps it out of the content-addressed namespace, which is read back by bare digest
+    /// and can therefore never resolve to one of these.
+    fn marker_path(&self, digest: &EvidenceDigest, stage: &str) -> PathBuf {
+        self.root.join(format!("{}.{stage}", digest.as_str()))
     }
 
-    /// Take durable responsibility for an exchange BEFORE its side effects run.
+    /// Accept durable responsibility for an exchange, WITHOUT asserting that anything ran.
     ///
-    /// A store that cannot accept this must stop the call reaching the backend, which
-    /// is the only point at which refusing is still free. This is NOT a health probe
-    /// and does not claim the later write will succeed — nothing here can, since the
-    /// backend and the store share no transaction. What it establishes is that the
-    /// crossing of the execution threshold is itself durable, so a failure afterwards
-    /// is a recorded state rather than an inference.
+    /// A store that cannot accept this must stop the call reaching the backend, which is
+    /// the only point at which refusing is still free. This is NOT a health probe and does
+    /// not claim the later writes will succeed — nothing here can, since the backend and
+    /// the store share no transaction.
+    ///
+    /// What it establishes is narrower than what its predecessor claimed, and the
+    /// narrowing is the point. The marker it publishes is at the RESERVED stage: it says
+    /// an obligation was accepted, and it says nothing about execution. The crossing of
+    /// the execution threshold is recorded separately, by
+    /// [`commit_to_dispatch`](Self::commit_to_dispatch), because one artefact asked to
+    /// mean both left a refused call indistinguishable from one whose backend may have
+    /// acted (R9-C004, R9-C099).
     ///
     /// Keyed by the digest of the request bytes, which is a sound call identity exactly
-    /// because retention sits behind the replay tier: two byte-identical admitted
-    /// requests cannot exist, the second being refused as a replay.
+    /// because retention sits behind the replay tier: two byte-identical admitted requests
+    /// cannot exist, the second being refused as a replay. The digest is computed over the
+    /// retained request and the retained request is NOT persisted here — the digest
+    /// commits to it, and a marker for a call that has not dispatched has no business
+    /// holding the live credentials its covered headers carry.
+    ///
     /// Taking a permit is also the queue's admission decision, and it is taken HERE for
-    /// both of the call's writes. A full queue is therefore an
-    /// `ABORTED_BEFORE_EXECUTION` refusal — 503, backend untouched, retry safe — and
-    /// never a completion the writer had no room for.
+    /// every job the call will submit. A full queue is therefore an
+    /// `ABORTED_BEFORE_EXECUTION` refusal — 503, backend untouched, retry safe — and never
+    /// a completion the writer had no room for.
     pub async fn reserve(
         &self,
         request: &HttpRequest,
-    ) -> Result<RetentionReservation, RetentionError> {
+    ) -> Result<ReservedBeforeDispatch, RetentionError> {
         let permit = Arc::clone(&self.permits).try_acquire_owned().map_err(|_| {
             RetentionError::Store(std::io::Error::new(
                 std::io::ErrorKind::WouldBlock,
                 "retention queue is full",
             ))
         })?;
-        let bytes = serde_json::to_vec(&retained_request(request))
-            .map_err(|_| RetentionError::Malformed("retained request does not serialize"))?;
-        let digest = EvidenceDigest::of(&bytes);
-        // A marker that is not durable proves nothing about a call that is about to
-        // have effects, so the acknowledgement is awaited before the caller may
-        // dispatch.
-        self.durable_write(self.pending_path(&digest), bytes, None)
-            .await?;
-        Ok(RetentionReservation {
-            digest,
-            _permit: permit,
-            completion: std::sync::atomic::AtomicBool::new(true),
+        let digest = EvidenceDigest::of(
+            &serde_json::to_vec(&retained_request(request))
+                .map_err(|_| RetentionError::Malformed("retained request does not serialize"))?,
+        );
+        let marker = self.marker_path(&digest, RESERVED_EXTENSION);
+        // A marker that is not durable proves nothing about an obligation the exchange is
+        // about to rely on, so the acknowledgement is awaited before the caller may go on.
+        self.submit(JobKind::PublishOrWithdraw {
+            path: marker.clone(),
+            bytes: ReservationMarker::of(&digest).to_bytes()?,
         })
+        .await?;
+        Ok(ReservedBeforeDispatch::over(
+            digest,
+            marker,
+            self.jobs.clone(),
+            Arc::new(permit),
+        ))
     }
 
-    /// Complete a reservation with the exchange the backend actually produced.
+    /// Record that this exchange is committing to a dispatch. **The execution threshold.**
+    ///
+    /// Advances the reservation's marker from the reserved stage to the committed one, as
+    /// a RENAME — which is what makes the two facts one artefact that changes what it
+    /// asserts, rather than two that can both be present or both be missing. Awaited, so
+    /// nothing is transmitted before the crossing is durable.
+    ///
+    /// Consumes the reservation. A caller cannot hold a `ReservedBeforeDispatch` and the
+    /// `DispatchCommitted` it became, so *this exchange has not committed* and *this
+    /// exchange may have executed* are never the same value in two places. On the way out
+    /// the reservation drops, and its rescind unlinks a name this commitment has already
+    /// moved — a no-op, and the reason no flag is needed to remember that it committed.
+    ///
+    /// # What a failure here is
+    ///
+    /// [`RetentionError::Store`] means nothing was published: the exchange did not
+    /// dispatch and an ordinary retry is correct.
+    /// [`RetentionError::Unresolved`] means the rename could not be made durable and could
+    /// not be taken back, so a committed-stage marker may survive for an exchange that
+    /// never dispatched. That is not an ordinary outage and must not be answered as one.
+    pub async fn commit_to_dispatch(
+        &self,
+        reserved: ReservedBeforeDispatch,
+    ) -> Result<DispatchCommitted, RetentionError> {
+        let digest = reserved.digest().clone();
+        self.submit(JobKind::Commit {
+            reserved: reserved.marker().to_path_buf(),
+            committed: self.marker_path(&digest, PENDING_EXTENSION),
+        })
+        .await?;
+        Ok(DispatchCommitted::over(digest, reserved.permit()))
+    }
+
+    /// Complete a commitment with the exchange the backend actually produced.
     ///
     /// The hop is written first and the marker cleared only after it lands, so an
-    /// interruption between them leaves the marker — over-reporting indeterminacy,
-    /// which is the safe direction. A failure to clear the marker after a successful
-    /// hop write is likewise not an error for the caller: it costs an auditor one
-    /// reconciliation, whereas failing the exchange there would refuse a call whose
-    /// evidence is on disk.
+    /// interruption between them leaves the marker — over-reporting indeterminacy, which
+    /// is the safe direction once the threshold has been crossed. A failure to clear the
+    /// marker after a successful hop write is likewise not an error for the caller: it
+    /// costs an auditor one reconciliation, whereas failing the exchange there would
+    /// refuse a call whose evidence is on disk.
     ///
-    /// A reservation is worth exactly one completion, and a second attempt is refused
-    /// with [`RetentionError::AlreadyCompleted`] before any job is queued. One crossing
-    /// of the execution threshold produces one hop: a reservation that could be completed
-    /// repeatedly would let one execution write N hop objects, so an auditor counting
-    /// hops would count calls that never happened — and it would put N jobs behind the
-    /// one permit that bounds the write queue, which is what makes a completion refusable
-    /// for capacity after the backend has already run.
+    /// A commitment is worth exactly one completion, and a second attempt is refused with
+    /// [`RetentionError::AlreadyCompleted`] before any job is queued —
+    /// [`DispatchCommitted`] owns that fact.
     pub async fn complete(
         &self,
-        reservation: &RetentionReservation,
+        committed: &DispatchCommitted,
         request: &HttpRequest,
         response: &HttpResponse,
     ) -> Result<EvidenceDigest, RetentionError> {
-        if !reservation.take_completion() {
+        if !committed.take_completion() {
             return Err(RetentionError::AlreadyCompleted);
         }
         let bytes = serde_json::to_vec(&RetainedHopRecord::of(request, response))
             .map_err(|_| RetentionError::Malformed("retained hop does not serialize"))?;
         let digest = EvidenceDigest::of(&bytes);
-        let path = self.object_path(&digest)?;
-        let marker = self.pending_path(&reservation.digest);
-        self.durable_write(path, bytes, Some(marker)).await?;
+        self.submit(JobKind::Publish {
+            path: self.object_path(&digest)?,
+            bytes,
+            clear_marker: Some(self.marker_path(committed.digest(), PENDING_EXTENSION)),
+        })
+        .await?;
         Ok(digest)
     }
 
-    /// Give a reservation back for a call that was refused BEFORE the backend ran.
+    /// The digest tokens of every COMMITTED marker currently on disk.
     ///
-    /// A marker says one thing: this request crossed the execution threshold and its
-    /// outcome was never retained. A call refused between `reserve` and dispatch did not
-    /// cross it, so leaving its marker asserts an execution that provably never happened
-    /// — it collapses did-not-run into unknown-if-ran in the direction that invents
-    /// indeterminacy, and it keeps the request's covered headers, this profile's live
-    /// bearer token and DPoP proof among them, in the store for an exchange the boundary
-    /// refused.
+    /// The reconciliation read, and it reads one stage only. A committed-stage marker
+    /// records an exchange that crossed the execution threshold and whose outcome was
+    /// never retained, and a fact recorded where nothing can enumerate it is not a record
+    /// an auditor can act on: this is how the audit lane asks which calls crossed without
+    /// landing a hop.
     ///
-    /// The caller therefore owes this call on exactly one path: a refusal taken while
-    /// the backend is still untouched. Calling it once dispatch has begun would erase
-    /// the one fact an auditor cannot recover afterwards, which is why it consumes the
-    /// reservation rather than being available to a handle that has been completed.
-    ///
-    /// Failing to clear the marker is not the caller's error to handle — the refusal
-    /// stands either way, and a stale marker over-reports indeterminacy, which is the
-    /// safe direction.
-    pub async fn release_before_dispatch(&self, reservation: RetentionReservation) {
-        let marker = self.pending_path(&reservation.digest);
-        let _ = self.submit(None, Some(marker)).await;
+    /// Reserved-stage markers are deliberately NOT here. They record obligations accepted
+    /// by exchanges that never committed, so counting them would be counting refused calls
+    /// as calls that may have run — the collapse this stage split exists to remove. They
+    /// have their own enumerator, [`stale_reservations`](Self::stale_reservations), and it
+    /// answers a different question.
+    pub fn pending_reservations(&self) -> Result<Vec<String>, RetentionError> {
+        self.markers_at(PENDING_EXTENSION)
     }
 
-    /// The digest tokens of every reservation marker currently on disk.
+    /// The digest tokens of every RESERVED marker currently on disk.
     ///
-    /// The reconciliation read. A marker records an exchange whose outcome was never
-    /// retained, and a fact recorded where nothing can enumerate it is not a record an
-    /// auditor can act on: this is how the audit lane asks which calls crossed the
-    /// execution threshold without landing a hop.
-    pub fn pending_reservations(&self) -> Result<Vec<String>, RetentionError> {
-        let mut pending = Vec::new();
+    /// Cleanup debt, and nothing else. Each one is an obligation that was accepted by an
+    /// exchange which then did not commit, and whose rescind did not land — a queue that
+    /// was full when the reservation dropped, or a process that died between the two.
+    ///
+    /// An auditor must not read this as indeterminacy. That is the whole reason the stage
+    /// has its own name on disk: a residue that says *nothing ran* is answerable by
+    /// deleting it, and one that says *something may have* is not.
+    pub fn stale_reservations(&self) -> Result<Vec<String>, RetentionError> {
+        self.markers_at(RESERVED_EXTENSION)
+    }
+
+    /// The digest tokens of every marker at one stage.
+    fn markers_at(&self, stage: &str) -> Result<Vec<String>, RetentionError> {
+        let suffix = format!(".{stage}");
+        let mut found = Vec::new();
         for entry in std::fs::read_dir(&self.root).map_err(RetentionError::Store)? {
             let entry = entry.map_err(RetentionError::Store)?;
             let name = entry.file_name();
             let Some(name) = name.to_str() else { continue };
-            if let Some(digest) = name.strip_suffix(".pending") {
-                pending.push(digest.to_owned());
+            if let Some(digest) = name.strip_suffix(&suffix) {
+                found.push(digest.to_owned());
             }
         }
-        pending.sort();
-        Ok(pending)
+        found.sort();
+        Ok(found)
     }
 
     /// Retain one exchange with NO execution boundary, returning its handle.
@@ -418,7 +340,12 @@ impl EvidenceRetention {
             .map_err(|_| RetentionError::Malformed("retained hop does not serialize"))?;
         let digest = EvidenceDigest::of(&bytes);
         let path = self.object_path(&digest)?;
-        self.durable_write(path, bytes, None).await?;
+        self.submit(JobKind::Publish {
+            path,
+            bytes,
+            clear_marker: None,
+        })
+        .await?;
         Ok(digest)
     }
 
@@ -489,6 +416,15 @@ mod tests {
     impl Drop for TempDir {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A response, for the tests that only need the writer to make one round trip.
+    fn response_of() -> HttpResponse {
+        HttpResponse {
+            status: 200,
+            headers: vec![],
+            body: b"{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}".to_vec(),
         }
     }
 
@@ -752,46 +688,123 @@ mod tests {
         for i in 0..3u8 {
             let mut request = request.clone();
             request.body.push(i);
+            let reserved = retention.reserve(&request).await.expect("reserve");
             held.push((
                 request.clone(),
-                retention.reserve(&request).await.expect("reserve"),
+                retention
+                    .commit_to_dispatch(reserved)
+                    .await
+                    .expect("commit"),
             ));
         }
         // Every permit is now taken, so no further call could be admitted.
         assert!(retention.reserve(&request).await.is_err());
 
-        for (request, reservation) in &held {
+        for (request, committed) in &held {
             retention
-                .complete(reservation, request, &response)
+                .complete(committed, request, &response)
                 .await
-                .expect("a reserved call always has somewhere to put its evidence");
+                .expect("a committed call always has somewhere to put its evidence");
         }
     }
 
-    /// The reservation marker is durable before the caller may dispatch, and is cleared
-    /// once the hop it stands for is itself durable.
+    /// The two stages are two artefacts, and the commitment is the move between them.
+    ///
+    /// The property this pins is the one #741 exists for: at no instant does a single
+    /// name have to mean both *an obligation was accepted* and *this call crossed the
+    /// execution threshold*. Reserving publishes the reserved stage and only that;
+    /// committing moves it; completing consumes it.
     #[tokio::test]
-    async fn a_reservation_marker_is_durable_before_dispatch_and_cleared_after() {
+    async fn the_reserved_and_committed_stages_are_distinct_artefacts() {
         let dir = TempDir::new("marker");
         let retention = EvidenceRetention::open(&dir.0).expect("open");
         let (request, response) = exchange();
 
-        let reservation = retention.reserve(&request).await.expect("reserve");
-        let marker = dir
-            .0
-            .join(format!("{}.pending", reservation.digest().as_str()));
+        let reserved = retention.reserve(&request).await.expect("reserve");
+        let digest = reserved.digest().as_str().to_owned();
+        let reserved_marker = dir.0.join(format!("{digest}.reserved"));
+        let committed_marker = dir.0.join(format!("{digest}.pending"));
         assert!(
-            marker.exists(),
-            "the backend must not be reachable before the marker is on disk"
+            reserved_marker.exists(),
+            "the obligation must be durable before anything relies on it"
+        );
+        assert!(
+            !committed_marker.exists(),
+            "accepting an obligation must not assert that anything crossed"
+        );
+        assert_eq!(
+            retention.pending_reservations().expect("list"),
+            Vec::<String>::new(),
+            "a reservation is not a crossing, and reconciliation must not count it as one"
         );
 
-        let digest = retention
-            .complete(&reservation, &request, &response)
+        let committed = retention
+            .commit_to_dispatch(reserved)
+            .await
+            .expect("commit");
+        assert!(
+            !reserved_marker.exists(),
+            "the commitment MOVES the marker; two artefacts would let one be lost"
+        );
+        assert!(
+            committed_marker.exists(),
+            "the backend must not be reachable before the crossing is on disk"
+        );
+        assert_eq!(
+            retention.pending_reservations().expect("list"),
+            vec![digest.clone()],
+            "a crossing that never lands a hop is what an auditor reconciles"
+        );
+
+        let hop = retention
+            .complete(&committed, &request, &response)
             .await
             .expect("complete");
 
-        assert!(dir.0.join(digest.as_str()).exists(), "the hop is retained");
-        assert!(!marker.exists(), "its marker is consumed");
+        assert!(dir.0.join(hop.as_str()).exists(), "the hop is retained");
+        assert!(!committed_marker.exists(), "its marker is consumed");
+        assert!(retention.pending_reservations().expect("list").is_empty());
+    }
+
+    /// The marker holds the exchange's digest and none of its credentials.
+    ///
+    /// R9-C099, asserted on the BYTES. The predecessor wrote `retained_request(request)`
+    /// into the marker at `reserve` — covered headers included, which for this profile
+    /// means the live bearer and the DPoP proof — before the call had dispatched, into a
+    /// store with no expiry, for exchanges that were then sometimes refused.
+    #[tokio::test]
+    async fn a_marker_on_disk_carries_no_credential() {
+        let dir = TempDir::new("no-credential");
+        let retention = EvidenceRetention::open(&dir.0).expect("open");
+        let (request, response) = exchange();
+
+        let reserved = retention.reserve(&request).await.expect("reserve");
+        let digest = reserved.digest().as_str().to_owned();
+        let on_disk = std::fs::read_to_string(dir.0.join(format!("{digest}.reserved")))
+            .expect("the reserved marker is readable");
+        assert!(!on_disk.contains("Bearer"), "{on_disk}");
+        assert!(!on_disk.contains("dpop"), "{on_disk}");
+        assert!(on_disk.contains(&digest), "{on_disk}");
+
+        // And the committed stage is the same bytes, because the commitment renames.
+        let committed = retention
+            .commit_to_dispatch(reserved)
+            .await
+            .expect("commit");
+        let moved = std::fs::read_to_string(dir.0.join(format!("{digest}.pending")))
+            .expect("the committed marker is readable");
+        assert_eq!(moved, on_disk);
+
+        // The completed hop is where the full retained message belongs, and it is there.
+        let hop = retention
+            .complete(&committed, &request, &response)
+            .await
+            .expect("complete");
+        let retained = std::fs::read_to_string(dir.0.join(hop.as_str())).expect("hop");
+        assert!(
+            retained.contains("Bearer"),
+            "the hop still carries what an auditor recomputes the handles from"
+        );
     }
 
     /// One crossing of the execution threshold is worth one hop.
@@ -808,21 +821,25 @@ mod tests {
         let retention = EvidenceRetention::open(&dir.0).expect("open");
         let (request, response) = exchange();
 
-        let reservation = retention.reserve(&request).await.expect("reserve");
+        let reserved = retention.reserve(&request).await.expect("reserve");
+        let committed = retention
+            .commit_to_dispatch(reserved)
+            .await
+            .expect("commit");
         let first = retention
-            .complete(&reservation, &request, &response)
+            .complete(&committed, &request, &response)
             .await
             .expect("the reserved completion is always available");
 
         let mut second_response = response.clone();
         second_response.body = b"{\"jsonrpc\":\"2.0\",\"result\":\"again\"}".to_vec();
         let second = retention
-            .complete(&reservation, &request, &second_response)
+            .complete(&committed, &request, &second_response)
             .await;
 
         assert!(
             matches!(second, Err(RetentionError::AlreadyCompleted)),
-            "a completed reservation was completed again"
+            "a completed commitment was completed again"
         );
         assert!(dir.0.join(first.as_str()).exists(), "the one hop is stored");
         let hops: Vec<String> = std::fs::read_dir(&dir.0)
@@ -834,7 +851,7 @@ mod tests {
                     .to_string_lossy()
                     .into_owned()
             })
-            .filter(|name| !name.ends_with(".pending"))
+            .filter(|name| !name.ends_with(".pending") && !name.ends_with(".reserved"))
             .collect();
         assert_eq!(
             hops,
@@ -865,58 +882,86 @@ mod tests {
         assert!(names.contains(&"content-digest"), "kept {names:?}");
     }
 
-    /// R8-C093: a call refused before dispatch takes its marker with it.
+    /// R8-C093 / R9-C004: a call that never committed takes its marker with it, and
+    /// takes it on DROP.
     ///
-    /// A marker asserts that this request crossed the execution threshold. A refusal
-    /// taken while the backend is untouched did not, so leaving the marker would invent
-    /// an indeterminacy that never existed — and would leave the request's covered
-    /// headers, live bearer token included, on disk for an exchange the boundary
-    /// refused.
+    /// The predecessor had `release_before_dispatch`, and the operative question for
+    /// whether a value owns an invariant is *can the check be deleted and still leave the
+    /// forbidden state unconstructible?* For a call site the answer was no — and that call
+    /// site was reachable only from tests, so the separation was not merely deletable but
+    /// absent. This asserts the property with no call at all: the value goes out of scope,
+    /// which is what a refusal, an early return and a cancelled request future all do.
     #[tokio::test]
-    async fn a_reservation_released_before_dispatch_leaves_nothing_behind() {
-        let dir = TempDir::new("released");
+    async fn a_reservation_that_never_commits_is_rescinded_by_being_dropped() {
+        let dir = TempDir::new("rescinded");
         let retention = EvidenceRetention::open(&dir.0).expect("open");
         let (request, _) = exchange();
 
-        let reservation = retention.reserve(&request).await.expect("reserve");
-        let marker = dir
-            .0
-            .join(format!("{}.pending", reservation.digest().as_str()));
-        assert!(marker.exists(), "the marker is durable before dispatch");
+        let reserved = retention.reserve(&request).await.expect("reserve");
+        let digest = reserved.digest().as_str().to_owned();
+        let marker = dir.0.join(format!("{digest}.reserved"));
+        assert!(
+            marker.exists(),
+            "the obligation is durable before it is relied on"
+        );
         assert_eq!(
-            retention.pending_reservations().expect("list"),
-            vec![reservation.digest().as_str().to_owned()],
-            "an unfinished reservation is enumerable, or nothing can reconcile it"
+            retention.stale_reservations().expect("list"),
+            vec![digest.clone()],
+            "an accepted obligation is enumerable, or nothing can reconcile it"
         );
 
-        retention.release_before_dispatch(reservation).await;
+        drop(reserved);
+        // The rescind is queued, not awaited — `Drop` cannot await. One round trip
+        // through the writer is enough to observe it.
+        retention
+            .retain(&request, &response_of())
+            .await
+            .expect("a round trip through the writer");
 
         assert!(
             !marker.exists(),
-            "a call that never reached the backend left a credential-bearing marker \
-             that only a successful completion can ever remove"
+            "a call that never committed left a marker only a completion could remove"
         );
-        assert!(retention.pending_reservations().expect("list").is_empty());
+        assert!(retention.stale_reservations().expect("list").is_empty());
+        assert!(
+            retention.pending_reservations().expect("list").is_empty(),
+            "and it never produced a committed-stage marker at all"
+        );
     }
 
-    /// A reservation that is merely DROPPED keeps its marker. Dropping is what a request
-    /// that died mid-flight does, and for that one the outcome genuinely is unknown.
+    /// A COMMITMENT that is merely dropped keeps its marker.
+    ///
+    /// The other half of the asymmetry, and the reason the two states are two types.
+    /// Dropping is what a request that died mid-flight does; past the commitment the
+    /// outcome genuinely is unknown, so over-reporting indeterminacy is the safe
+    /// direction — and only here. A `Drop` that rescinded this one too would erase the one
+    /// fact an auditor cannot recover.
     #[tokio::test]
-    async fn a_dropped_reservation_keeps_its_marker() {
+    async fn a_dropped_commitment_keeps_its_marker() {
         let dir = TempDir::new("dropped");
         let retention = EvidenceRetention::open(&dir.0).expect("open");
         let (request, _) = exchange();
 
-        let reservation = retention.reserve(&request).await.expect("reserve");
-        let marker = dir
-            .0
-            .join(format!("{}.pending", reservation.digest().as_str()));
-        drop(reservation);
+        let reserved = retention.reserve(&request).await.expect("reserve");
+        let digest = reserved.digest().as_str().to_owned();
+        let marker = dir.0.join(format!("{digest}.pending"));
+        let committed = retention
+            .commit_to_dispatch(reserved)
+            .await
+            .expect("commit");
+        drop(committed);
+        retention
+            .retain(&request, &response_of())
+            .await
+            .expect("a round trip through the writer");
 
         assert!(
             marker.exists(),
-            "over-reporting indeterminacy is the safe direction; a dropped reservation \
-             must not read as a call that never ran"
+            "a dropped commitment must not read as a call that never ran"
+        );
+        assert_eq!(
+            retention.pending_reservations().expect("list"),
+            vec![digest]
         );
     }
 

@@ -393,30 +393,31 @@ impl HttpProfileProxy {
         refusal: Refusal,
         progress: &ExchangeProgress,
     ) -> ServedHttpResponse {
-        self.responses
-            .refuse(&self.audit, ex, refusal, Self::disposition(progress))
+        let owed = Self::disposition(progress, refusal.execution_refinement);
+        self.responses.refuse(&self.audit, ex, refusal, owed)
     }
 
     /// What the exchange machine's cross-machine state means on the wire.
     ///
-    /// The only place the two vocabularies meet, and now a total map: every consequence the
-    /// machine can derive is stated.
-    ///
-    /// `NotRetrySafe` used to map to `Unstated`, on the reasoning that past the threshold the
-    /// frozen wire code already carried the contract. It did not. Exactly ONE post-dispatch
-    /// code said anything — `evidence_retention_indeterminate`, which `retry_semantics`
-    /// special-cased by name — so an illegal upstream response, a signing failure and a
-    /// continuation-record failure at **HTTP 503** all returned a bare status after the tool
-    /// had run, and 503 is the status clients retry (ADR-MCPRE-058 §10, ruling D1). Deriving
-    /// it from the machine rather than from an allowlist of tokens is what stops the next
-    /// post-dispatch exit from silently not being on the list.
-    fn disposition(progress: &ExchangeProgress) -> ExecutionDisposition {
-        match progress.retry_semantics() {
-            RetrySemantics::SafeNothingExecuted => ExecutionDisposition::NothingExecuted,
-            RetrySemantics::RequiresNewElicitation => {
+    /// The only place the two vocabularies meet, and a total map. `NotRetrySafe` used to
+    /// map to `Unstated`, on the reasoning that past the threshold the frozen wire code
+    /// already carried the contract. It did not: exactly ONE post-dispatch code said
+    /// anything, so an illegal upstream response, a signing failure and a
+    /// continuation-record failure at **HTTP 503** returned a bare status after the tool
+    /// had run (ADR-MCPRE-058 §10, ruling D1). Deriving it from the machine, not an
+    /// allowlist, stops the next post-dispatch exit from silently not being on it — and a
+    /// refusing OWNER refines only where an ordinary retry was correct.
+    fn disposition(
+        p: &ExchangeProgress,
+        refined: Option<ExecutionDisposition>,
+    ) -> ExecutionDisposition {
+        match (p.retry_semantics(), refined) {
+            (RetrySemantics::SafeNothingExecuted, Some(refined)) => refined,
+            (RetrySemantics::SafeNothingExecuted, None) => ExecutionDisposition::NothingExecuted,
+            (RetrySemantics::RequiresNewElicitation, _) => {
                 ExecutionDisposition::ApprovalSpentNothingExecuted
             }
-            RetrySemantics::NotRetrySafe => ExecutionDisposition::PossiblyExecuted,
+            (RetrySemantics::NotRetrySafe, _) => ExecutionDisposition::PossiblyExecuted,
         }
     }
 

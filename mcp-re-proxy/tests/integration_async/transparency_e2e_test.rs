@@ -706,14 +706,22 @@ async fn a_retention_failure_after_execution_is_indeterminate_and_leaves_its_res
         body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
     };
 
-    let reservation = retention
+    let reserved = retention
         .reserve(&request)
         .await
         .expect("reserve before dispatch");
-    let marker = evidence.join(format!("{}.pending", reservation.digest().as_str()));
+    let digest = reserved.digest().as_str().to_owned();
     assert!(
-        marker.exists(),
-        "the reservation must be durable before the side effects run"
+        evidence.join(format!("{digest}.reserved")).exists(),
+        "the obligation must be durable before anything relies on it"
+    );
+    let committed = retention
+        .commit_to_dispatch(reserved)
+        .await
+        .expect("record the crossing before the side effects run");
+    assert!(
+        evidence.join(format!("{digest}.pending")).exists(),
+        "the crossing must be durable before the side effects run"
     );
 
     // The backend has now "run". Break the store underneath the completion.
@@ -721,7 +729,7 @@ async fn a_retention_failure_after_execution_is_indeterminate_and_leaves_its_res
     std::fs::write(&evidence, b"not a directory").expect("occupy the path");
 
     retention
-        .complete(&reservation, &request, &response)
+        .complete(&committed, &request, &response)
         .await
         .expect_err("completion must fail once the store is gone");
 
@@ -729,7 +737,7 @@ async fn a_retention_failure_after_execution_is_indeterminate_and_leaves_its_res
     std::fs::remove_file(&evidence).expect("free the path");
     std::fs::create_dir_all(&evidence).expect("recreate the store directory");
     assert!(
-        !evidence.join(reservation.digest().as_str()).exists(),
+        !evidence.join(&digest).exists(),
         "no hop was retained for the failed completion"
     );
 }

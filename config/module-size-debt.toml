@@ -581,8 +581,8 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-http-profile/src/rejection.rs"
-baseline_prod_loc = 377
+path = "mcp-re-http-profile/src/rejection/mod.rs"
+baseline_prod_loc = 290
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 

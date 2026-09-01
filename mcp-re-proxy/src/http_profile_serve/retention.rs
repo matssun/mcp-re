@@ -3,43 +3,35 @@
 //!
 //! One fact: **a deployment that has turned retention on can account for everything it
 //! served, and it takes that responsibility BEFORE the side effects run rather than after
-//! them.** The obligation is therefore two halves that only make sense together —
+//! them.** Three steps, and the middle one is what #741 added —
+//! [`reserve`](Retention::reserve) accepts the obligation, [`commit`](Retention::commit)
+//! records the crossing, [`complete`](Retention::complete) discharges it.
 //!
-//! * [`Retention::reserve`] records that this request is about to cross the execution
-//!   threshold. It is the LAST free refusal: nothing between it and the dispatch can
-//!   refuse, and past the dispatch no refusal can say nothing happened.
-//! * [`Retention::complete`] discharges the obligation with what was actually served.
+//! What each step MEANS belongs to the store's own products,
+//! [`crate::transparency::ReservedBeforeDispatch`] and
+//! [`crate::transparency::DispatchCommitted`]. What is here is the serving-side half:
+//! which refusal each failure earns.
 //!
-//! and a reservation that is never completed is precisely the marker an auditor uses to
-//! find an exchange the deployment cannot account for.
-//!
-//! # The two failures are not the same failure
-//!
-//! Reserving fails BEFORE the backend acts, so it is an ordinary 503: nothing happened and
-//! an ordinary retry is correct.
-//!
-//! Completing fails AFTER the backend acted. Answering 503 there is what made a transient
-//! store fault into repeated execution — 503 is the status clients retry, and the retry's
-//! fresh nonce passes replay admission. The exchange is *indeterminate*, and it says so.
-//!
-//! # Why the disposition is not an `Option`
-//!
-//! *This deployment retains nothing* and *a reservation is missing* are different facts.
-//! Collapsing them is what used to require a guard on the completion path to tell them
-//! apart (ADR-MCPRE-058 §9.6). [`RetentionDisposition`] keeps them apart, and this owner is
-//! the only thing that reads it.
+//! Reserving fails before anything is committed: an ordinary 503. Committing fails in one
+//! of two ways, and they are not one — nothing published is again an ordinary 503, while a
+//! crossing that could be neither made durable nor withdrawn is not. Completing fails
+//! AFTER the backend acted; answering 503 there is what made a transient store fault into
+//! repeated execution, because 503 is the status clients retry.
 
 use std::sync::Arc;
 
 use mcp_re_core::McpReError;
+use mcp_re_http_profile::rejection::ExecutionDisposition;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
 use crate::refusal::Refusal;
+use crate::request_stages::PreDispatchRetention;
 use crate::request_stages::RetentionDisposition;
 use crate::transparency::EvidenceRetention;
+use crate::transparency::RetentionError;
 
 /// The deployment's evidence-retention obligation, and the store that discharges it.
 ///
@@ -65,40 +57,93 @@ impl Retention {
         Retention { store: Some(store) }
     }
 
-    /// RETENTION-RESERVED — take durable responsibility BEFORE the side effects run.
+    /// RETENTION-RESERVED — accept the obligation, asserting nothing about execution.
+    ///
+    /// ```text
+    /// ensures   Ok  => the obligation is durably accepted, and no artefact says the
+    ///                  exchange crossed anything
+    ///           Err => 503, bound
+    /// forbids   running the backend
+    /// refusal   free
+    /// ```
+    ///
+    ///
+    /// NOT a probe: it does not claim the later writes will succeed, because nothing can —
+    /// the backend and the store share no transaction. The write runs on the retention
+    /// writer thread and this future AWAITS its acknowledgement, so the core keeps serving
+    /// while the fsync is in progress. What it returns rescinds itself on drop, so a
+    /// refusal between here and the commitment leaves nothing behind and needs no call.
+    /// It establishes no exchange STATE, deliberately: accepting the obligation carries the
+    /// same consequence as the step before it.
+    pub(super) async fn reserve(
+        &self,
+        request: &HttpRequest,
+    ) -> Result<PreDispatchRetention, Refusal> {
+        let Some(store) = self.store.as_ref() else {
+            return Ok(PreDispatchRetention::NotConfigured);
+        };
+        match store.reserve(request).await {
+            Ok(reservation) => Ok(PreDispatchRetention::Reserved(reservation)),
+            Err(e) => {
+                eprintln!(
+                    "evidence retention could not accept the exchange, refusing before \
+                     dispatch: {e}"
+                );
+                Err(Refusal::after_admission(
+                    McpReError::EvidenceRetentionUnavailable,
+                    503,
+                ))
+            }
+        }
+    }
+
+    /// RETENTION-COMMITTED — record the crossing of the execution threshold.
     ///
     /// ```text
     /// ensures   Ok  => the crossing of the execution threshold is itself durable
-    ///           Err => 503, bound
+    ///           Err => 503 (nothing published) / 500 (published and unwithdrawable), bound
     /// forbids   running the backend
     /// refusal   THE LAST FREE ONE
     /// ```
     ///
-    /// Ordered AFTER the inner-plane question. The marker this writes is durable and is
-    /// erased only by [`complete`](Self::complete), so a free refusal downstream of it
-    /// would leave on disk the record that a request crossed the execution threshold when
-    /// it provably never reached a backend — and one such file per refusal, in a store with
-    /// no expiry, for as long as the plane stays saturated.
+    /// Awaiting is not optional: dispatching before the crossing is durable would make the
+    /// record a hint rather than a record.
     ///
-    /// NOT a probe: it does not claim the later write will succeed, because nothing can —
-    /// the backend and the store share no transaction. The write runs on the retention
-    /// writer thread and this future AWAITS its acknowledgement, so the core keeps serving
-    /// while the fsync is in progress. Awaiting is not optional: dispatching before the
-    /// marker is durable would make the reservation a hint rather than a record.
-    pub(super) async fn reserve(
+    /// The two failures are not one. Nothing published is an ordinary 503 — the backend is
+    /// untouched and a retry is genuinely free. A crossing that could be neither made
+    /// durable nor withdrawn is not: answering it as a retry-safe 503 would tell a client
+    /// to retry freely while leaving execution-signifying state behind (R9-C099).
+    pub(super) async fn commit(
         &self,
-        request: &HttpRequest,
+        accepted: PreDispatchRetention,
     ) -> Result<Established<RetentionDisposition>, Refusal> {
-        let reserved =
-            |d: RetentionDisposition| Established::new(d, ExchangeEvent::RetentionReserved);
-        let Some(store) = self.store.as_ref() else {
-            return Ok(reserved(RetentionDisposition::NotConfigured));
+        let committed =
+            |d: RetentionDisposition| Established::new(d, ExchangeEvent::RetentionCommitted);
+        let PreDispatchRetention::Reserved(reservation) = accepted else {
+            return Ok(committed(RetentionDisposition::NotConfigured));
         };
-        match store.reserve(request).await {
-            Ok(reservation) => Ok(reserved(RetentionDisposition::Reserved(reservation))),
+        // A disposition can only be `Reserved` if the store was present when it was built,
+        // and the store is owned for the proxy's whole life — so this is the same value
+        // that accepted the obligation.
+        let Some(store) = self.store.as_ref() else {
+            return Ok(committed(RetentionDisposition::NotConfigured));
+        };
+        match store.commit_to_dispatch(reservation).await {
+            Ok(crossing) => Ok(committed(RetentionDisposition::Committed(crossing))),
+            Err(RetentionError::Unresolved(e)) => {
+                eprintln!(
+                    "evidence retention could not establish OR withdraw the crossing; the \
+                     exchange did NOT dispatch and the store's record of it cannot be \
+                     stated: {e}"
+                );
+                Err(
+                    Refusal::after_admission(McpReError::EvidenceRetentionUnavailable, 500)
+                        .refining(ExecutionDisposition::NothingExecutedRetentionUnresolved),
+                )
+            }
             Err(e) => {
                 eprintln!(
-                    "evidence retention could not accept the exchange, refusing before \
+                    "evidence retention could not record the crossing, refusing before \
                      dispatch: {e}"
                 );
                 Err(Refusal::after_admission(
@@ -117,17 +162,15 @@ impl Retention {
     /// refusal   NOT free, and deliberately NOT 503
     /// ```
     ///
-    /// The refusal names the exchange indeterminate rather than unavailable. The backend
-    /// has already run, and 503 is the status clients retry — a retry whose fresh nonce
-    /// passes replay admission and executes the tool a second time. That is the whole
-    /// reason this code is not the reservation's.
+    /// The refusal names the exchange indeterminate rather than unavailable: the backend
+    /// has already run, and 503 is the status clients retry.
     pub(super) async fn complete(
         &self,
         owed: &RetentionDisposition,
         request: &HttpRequest,
         response: &HttpResponse,
     ) -> Result<(), Refusal> {
-        let RetentionDisposition::Reserved(reservation) = owed else {
+        let RetentionDisposition::Committed(crossing) = owed else {
             return Ok(());
         };
         // A disposition can only be `Reserved` if the store was present when it was built,
@@ -136,7 +179,7 @@ impl Retention {
         let Some(store) = self.store.as_ref() else {
             return Ok(());
         };
-        match store.complete(reservation, request, response).await {
+        match store.complete(crossing, request, response).await {
             Ok(_) => Ok(()),
             Err(e) => {
                 eprintln!(
@@ -166,17 +209,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_deployment_that_retains_nothing_owes_nothing_on_either_half() {
-        // `NotConfigured` is not a missing reservation. The request path is unchanged, and
-        // — the half that matters — the completion owes nothing rather than silently
-        // treating an absent obligation as a failed one.
+    async fn a_deployment_that_retains_nothing_owes_nothing_on_any_of_the_three() {
+        // `NotConfigured` is not a missing reservation. The request path is unchanged
+        // through all three steps, and — the half that matters — the completion owes
+        // nothing rather than silently treating an absent obligation as a failed one.
         let retention = Retention::none();
-        let established = retention
+        let mut progress = crate::exchange_state::ExchangeProgress::new();
+        let accepted = retention
             .reserve(&request())
             .await
             .expect("retaining nothing never refuses");
-        let mut progress = crate::exchange_state::ExchangeProgress::new();
-        let disposition = progress.establish(established);
+        assert!(matches!(accepted, PreDispatchRetention::NotConfigured));
+
+        let disposition = progress.establish(
+            retention
+                .commit(accepted)
+                .await
+                .expect("and committing nothing never refuses either"),
+        );
         assert!(matches!(disposition, RetentionDisposition::NotConfigured));
 
         let response = HttpResponse {

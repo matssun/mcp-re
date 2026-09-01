@@ -24,7 +24,7 @@
 //! either side of a single irreversible effect:
 //!
 //! ```text
-//! ... -> InnerPlaneAccepted -> RetentionReserved -> [DISPATCH] -> Dispatched -> ...
+//! ... -> InnerPlaneAccepted -> RetentionCommitted -> [DISPATCH] -> Dispatched -> ...
 //! ```
 //!
 //! The response region is not a second machine standing beside the first. A response is an
@@ -107,17 +107,16 @@ pub(crate) enum ExchangeState {
     /// threshold turns a definitely-not-executed outage into an exchange that must report
     /// `possibly_executed` forever after.
     ///
-    /// Asked BEFORE [`RetentionReserved`](Self::RetentionReserved), because a saturated
-    /// plane must leave nothing on disk: refusing after the reservation would write a
-    /// durable marker asserting that a request crossed the execution threshold, for a
-    /// request that provably never reached a backend.
+    /// Asked BEFORE [`RetentionCommitted`](Self::RetentionCommitted), because a saturated
+    /// plane must leave nothing on disk: refusing after the crossing was recorded would
+    /// assert that a request which provably never reached a backend had crossed.
     InnerPlaneAccepted,
-    /// Durable retention responsibility is taken.
-    ///
-    /// **The last point at which refusing is free**, and the last state before the
-    /// threshold. Nothing between this and the dispatch can refuse, and past the dispatch
-    /// no refusal can say nothing happened.
-    RetentionReserved,
+    /// The crossing of the execution threshold is DURABLY RECORDED, and reads as
+    /// possibly-executed: the record on disk says the exchange committed and the machine
+    /// must not disagree with it. The store ACCEPTING the obligation is a step before this
+    /// and deliberately not a state — same consequence, and the distinction that matters
+    /// lives in the store's two products and the two names its markers take (#741).
+    RetentionCommitted,
     /// The inner server has been handed the request. **The execution threshold.** No state
     /// at or after this may claim nothing happened.
     Dispatched,
@@ -184,7 +183,8 @@ pub(crate) enum ExchangeEvent {
     ForwardBodyPrepared,
     /// The inner plane took a permit and selected a live backend. Nothing is transmitted.
     InnerPlaneAccepted,
-    RetentionReserved,
+    /// The crossing of the execution threshold was durably recorded.
+    RetentionCommitted,
     /// The inner server has been handed the request. Emitted at the dispatch, not around
     /// it: an event asserting that the threshold was crossed must not be emitted by a path
     /// that did not cross it.
@@ -331,7 +331,7 @@ impl ExchangeEvent {
             Self::ContinuationRetired => S::ContinuationRetired,
             Self::ForwardBodyPrepared => S::Forwarded,
             Self::InnerPlaneAccepted => S::InnerPlaneAccepted,
-            Self::RetentionReserved => S::RetentionReserved,
+            Self::RetentionCommitted => S::RetentionCommitted,
             Self::BackendDispatched => S::Dispatched,
             Self::ResponseObserved => S::ResponseObserved,
             Self::EnvelopeValidated => S::ResponseValidated,
@@ -370,9 +370,9 @@ impl std::fmt::Display for InvalidExchangeTransition {
 impl ExchangeState {
     /// Whether the inner server can have acted by this state.
     ///
-    /// The predicate the execution threshold exists to make statable. `Dispatched` is the
-    /// boundary and is itself included: the event is emitted at the handoff, so by the time
-    /// the state holds, the backend has the request.
+    /// The predicate the execution threshold exists to make statable. `RetentionCommitted`
+    /// is the boundary and is itself included: no byte has left the process there, but the
+    /// record on disk already says the exchange committed.
     pub(crate) fn backend_may_have_executed(self) -> bool {
         match self {
             Self::Received
@@ -385,9 +385,9 @@ impl ExchangeState {
             | Self::ContinuationRetired
             | Self::Forwarded
             | Self::InnerPlaneAccepted
-            | Self::RetentionReserved
             | Self::RefusedBeforeDispatch => false,
-            Self::Dispatched
+            Self::RetentionCommitted
+            | Self::Dispatched
             | Self::ResponseObserved
             | Self::ResponseValidated
             | Self::ResponseClassified
@@ -464,9 +464,9 @@ pub(crate) fn transition(
         (S::Answerable, E::ContinuationRetired) => Ok(S::ContinuationRetired),
         (S::ContinuationRetired, E::ForwardBodyPrepared) => Ok(S::Forwarded),
         (S::Forwarded, E::InnerPlaneAccepted) => Ok(S::InnerPlaneAccepted),
-        (S::InnerPlaneAccepted, E::RetentionReserved) => Ok(S::RetentionReserved),
-        (S::RetentionReserved, E::BackendDispatched) => Ok(S::Dispatched),
-        // ================== THE EXECUTION THRESHOLD ==================
+        (S::InnerPlaneAccepted, E::RetentionCommitted) => Ok(S::RetentionCommitted),
+        // ============ THE EXECUTION THRESHOLD, at the COMMITMENT ============
+        (S::RetentionCommitted, E::BackendDispatched) => Ok(S::Dispatched),
         // The notification arm branches out of the pipeline HERE, at the only point where
         // the backend has acted and no bodied reply has been observed yet.
         (S::Dispatched, E::NotificationAcknowledged) => Ok(S::AcknowledgedNotification),
@@ -828,7 +828,7 @@ mod tests {
         ExchangeState::ContinuationRetired,
         ExchangeState::Forwarded,
         ExchangeState::InnerPlaneAccepted,
-        ExchangeState::RetentionReserved,
+        ExchangeState::RetentionCommitted,
         ExchangeState::Dispatched,
         ExchangeState::ResponseObserved,
         ExchangeState::ResponseValidated,
@@ -853,7 +853,7 @@ mod tests {
         ExchangeEvent::ContinuationRetired,
         ExchangeEvent::ForwardBodyPrepared,
         ExchangeEvent::InnerPlaneAccepted,
-        ExchangeEvent::RetentionReserved,
+        ExchangeEvent::RetentionCommitted,
         ExchangeEvent::BackendDispatched,
         ExchangeEvent::ResponseObserved,
         ExchangeEvent::EnvelopeValidated,
@@ -923,11 +923,11 @@ mod tests {
         ),
         (
             ExchangeState::InnerPlaneAccepted,
-            ExchangeEvent::RetentionReserved,
-            ExchangeState::RetentionReserved,
+            ExchangeEvent::RetentionCommitted,
+            ExchangeState::RetentionCommitted,
         ),
         (
-            ExchangeState::RetentionReserved,
+            ExchangeState::RetentionCommitted,
             ExchangeEvent::BackendDispatched,
             ExchangeState::Dispatched,
         ),
@@ -1013,8 +1013,8 @@ mod tests {
             ExchangeState::InnerPlaneAccepted,
         ),
         (
-            ExchangeEvent::RetentionReserved,
-            ExchangeState::RetentionReserved,
+            ExchangeEvent::RetentionCommitted,
+            ExchangeState::RetentionCommitted,
         ),
         (ExchangeEvent::BackendDispatched, ExchangeState::Dispatched),
         (
@@ -1160,7 +1160,7 @@ mod tests {
             .filter(|s| s.backend_may_have_executed())
             .count();
         assert!(executed > 0 && executed < STATES.len(), "{executed}");
-        assert!(!ExchangeState::RetentionReserved.backend_may_have_executed());
+        assert!(!ExchangeState::InnerPlaneAccepted.backend_may_have_executed());
         assert!(!ExchangeState::InnerPlaneAccepted.backend_may_have_executed());
         assert!(ExchangeState::Dispatched.backend_may_have_executed());
     }
@@ -1208,7 +1208,10 @@ mod tests {
     fn a_refusal_after_the_approval_is_spent_never_reads_as_an_ordinary_retry() {
         let mut progress = ExchangeProgress::new();
         for (event, _) in PIPELINE {
-            if *event == ExchangeEvent::BackendDispatched {
+            // The window ends at the CROSSING, not at the handoff. Recording the crossing
+            // is the last thing that can refuse, and the first thing past which a refusal
+            // may no longer claim nothing happened.
+            if *event == ExchangeEvent::RetentionCommitted {
                 break;
             }
             progress.apply(*event).unwrap();
@@ -1224,9 +1227,10 @@ mod tests {
                 );
             }
         }
-        // Every refusal site in the window: forwarding, retention reservation, and the
-        // inner-plane admission that D4 added below them.
-        assert_eq!(progress.state(), ExchangeState::RetentionReserved);
+        // Every refusal site in the window: forwarding, the inner-plane preparation, and
+        // the retention obligation the store accepts below them — none of which advances
+        // the machine past the last state at which refusing is still free.
+        assert_eq!(progress.state(), ExchangeState::InnerPlaneAccepted);
         let mut refused = progress;
         refused.apply(ExchangeEvent::Refused).unwrap();
         assert_eq!(refused.state(), ExchangeState::RefusedBeforeDispatch);
@@ -1243,7 +1247,7 @@ mod tests {
     fn the_same_refusal_without_a_spent_approval_is_an_ordinary_retry() {
         let mut progress = ExchangeProgress::new();
         for (event, _) in PIPELINE {
-            if *event == ExchangeEvent::BackendDispatched {
+            if *event == ExchangeEvent::RetentionCommitted {
                 break;
             }
             progress.apply(*event).unwrap();
@@ -1601,7 +1605,7 @@ mod tests {
             E::ContinuationRetired,
             E::ForwardBodyPrepared,
             E::InnerPlaneAccepted,
-            E::RetentionReserved,
+            E::RetentionCommitted,
         ];
         let mut p = ExchangeProgress::new();
         for e in ladder {
@@ -1617,9 +1621,14 @@ mod tests {
 
     #[test]
     fn the_whole_legal_ladder_latches_no_anomaly() {
-        let p = progressed_to(ExchangeState::RetentionReserved);
+        let p = progressed_to(ExchangeState::InnerPlaneAccepted);
         assert_eq!(p.anomaly(), None);
         assert_eq!(p.retry_semantics(), RetrySemantics::SafeNothingExecuted);
+        // And one state further is past the threshold: the crossing is recorded, so the
+        // ladder is still legal and the consequence has risen.
+        let committed = progressed_to(ExchangeState::RetentionCommitted);
+        assert_eq!(committed.anomaly(), None);
+        assert_eq!(committed.retry_semantics(), RetrySemantics::NotRetrySafe);
     }
 
     #[test]
@@ -1667,7 +1676,7 @@ mod tests {
             ExchangeEvent::ContinuationRetired,
             ExchangeEvent::ForwardBodyPrepared,
             ExchangeEvent::InnerPlaneAccepted,
-            ExchangeEvent::RetentionReserved,
+            ExchangeEvent::RetentionCommitted,
             ExchangeEvent::BackendDispatched,
             ExchangeEvent::ResponseObserved,
             ExchangeEvent::EnvelopeValidated,
@@ -1700,7 +1709,7 @@ mod tests {
 
     #[test]
     fn an_illegal_advance_still_never_moves_consequence_backward() {
-        let mut p = progressed_to(ExchangeState::RetentionReserved);
+        let mut p = progressed_to(ExchangeState::RetentionCommitted);
         p.advance(ExchangeEvent::BackendDispatched);
         assert_eq!(p.retry_semantics(), RetrySemantics::NotRetrySafe);
         // An event establishing an EARLIER state cannot walk the exchange back below the

@@ -130,7 +130,7 @@ impl HttpProfileProxy {
             ex.verified,
             ex.actor_id.to_owned(),
             retention,
-            Self::disposition(progress),
+            Self::disposition(progress, None),
         )
         .await
     }

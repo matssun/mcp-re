@@ -270,6 +270,11 @@ _PROXY_LIB_SRCS = [
     "src/transparency/retained_record.rs",
     "src/transparency/covered_set.rs",
     "src/transparency/durability.rs",
+    "src/transparency/durable_job.rs",
+    "src/transparency/durable_writer.rs",
+    "src/transparency/reserved_before_dispatch.rs",
+    "src/transparency/dispatch_committed.rs",
+    "src/transparency/reservation_marker.rs",
     "src/transparency/attestation.rs",
     "src/transparency/durability_bounds.rs",
     # Trust-document interpretation: the authoritative rules over the bytes, owned apart

@@ -204,7 +204,11 @@ paths = [
   "mcp-re-http-profile/src/mcp_transport/mod.rs",
   "mcp-re-http-profile/src/mcp_transport/agreement.rs",
   "mcp-re-http-profile/src/sign.rs",
-  "mcp-re-http-profile/src/rejection.rs",
+  # Both halves of the rejection authority: how a body is framed and signed, and the
+  # execution/retry contract it projects. The retry contract moved into its own module in
+  # #741; leaving it out would drop the projection this closure verifies from the closure.
+  "mcp-re-http-profile/src/rejection/mod.rs",
+  "mcp-re-http-profile/src/rejection/retry_contract.rs",
   "mcp-re-core/src/crypto.rs",
   "mcp-re-core/src/error.rs",
   "mcp-re-core/src/encoding.rs",
@@ -255,7 +259,7 @@ evidence = [
 #     `;req` base instead;
 #   * the delegated wire-keyid comparison on the UNBOUND path.
 #
-# Five targets carry the battery. `rejection.rs` holds the only in-crate exercise of the
+# Five targets carry the battery. `rejection/` holds the only in-crate exercise of the
 # seam-authorized unbound floor through `verify_signed_rejection`; `delegation.rs`'s module
 # tests are the credential-layer negatives the two delegated claims rest on and are listed
 # here because those claims assert what they check; the delegated-unbound members were
@@ -2008,8 +2012,15 @@ evidence = ["test://proxy/serving/dispatch_commitment_boundary"]
 # forecast: preparing must transmit nothing, and dropping a preparation must transmit
 # nothing and release what it took. Without both, `PreparedInnerDispatch` would be a
 # renamed `admit` and the pre-dispatch refusal would still be free only by convention.
+#
+# The two ordering controls replace one that named the reservation as the last pre-dispatch
+# state. It is not: since #741 the store ACCEPTS the obligation without asserting a
+# crossing, and the crossing is a separate step. So the relation control moved to where the
+# threshold now is, and the second states the predicate the split buys — a refusal is free
+# right up to the crossing and never after it.
 tested_symbols = [
-  "lib#http_profile_serve::dispatch_commitment::tests::the_reservation_is_the_last_pre_dispatch_state",
+  "lib#http_profile_serve::dispatch_commitment::tests::the_crossing_is_recorded_after_everything_that_can_refuse_and_before_the_dispatch",
+  "lib#http_profile_serve::dispatch_commitment::tests::the_last_state_that_can_refuse_freely_is_the_one_before_the_crossing",
   "lib#request_stages::tests::the_retention_obligation_has_exactly_two_cases",
   "lib#request_stages::tests::the_dispatch_boundary_consumes_the_ready_state",
   "lib#async_inner::tests::preparing_transmits_nothing",
