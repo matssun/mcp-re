@@ -119,6 +119,11 @@ stage_static() {
     && python3 scripts/lifecycle_purity_gate.py \
     && python3 scripts/registry_approval_gate.py --selftest \
     && python3 scripts/registry_approval_gate.py \
+    `# The class this aggregate is itself the cause of: a control reachable only from` \
+    `# here is enforced by remembering to run it. Five instances so far, each repaired` \
+    `# only when someone noticed. It runs here too so the answer arrives before the push.` \
+    && python3 scripts/merge_path_gate.py --selftest \
+    && python3 scripts/merge_path_gate.py \
     && python3 scripts/serving_identity_provenance_gate.py --selftest \
     && python3 scripts/serving_identity_provenance_gate.py \
     && python3 scripts/authorization_provenance_gate.py --selftest \
