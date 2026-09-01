@@ -90,6 +90,8 @@ attestations this view cannot see.
 | unit://proxy.trust_composition_root | source, contracts or evidence | THM-0038, THM-0067, THM-0077 | _no consumer_ |
 | unit://proxy.trust_configuration_state | source, contracts or evidence | THM-0035, THM-0036 | _no consumer_ |
 | unit://proxy.trust_plan | source, contracts or evidence | THM-0037, THM-0066 | _no consumer_ |
+| unit://sdk_python.exchange_path | source, contracts or evidence | THM-0094 | _no consumer_ |
+| unit://sdk_typescript.exchange_path | source, contracts or evidence | THM-0095 | _no consumer_ |
 
 ## Theorems
 
@@ -186,6 +188,8 @@ attestations this view cannot see.
 | THM-0091 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0092 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 | THM-0093 | statement, consequence, scope or review requirement | specification review | THM-0074 |
+| THM-0094 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0095 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 
 ## Assumptions
 
@@ -230,3 +234,5 @@ attestations this view cannot see.
 | ASM-0039 | description, justification, scope or mechanism | proxy.delegated_resolver_materialization | assumption review |
 | ASM-0040 | description, justification, scope or mechanism | proxy.replay_admission_gate | assumption review |
 | ASM-0041 | description, justification, scope or mechanism | proxy.replay_admission_gate | assumption review |
+| ASM-0042 | description, justification, scope or mechanism | sdk_python.exchange_path | assumption review |
+| ASM-0043 | description, justification, scope or mechanism | sdk_typescript.exchange_path | assumption review |

@@ -96,6 +96,17 @@ on:
       - "mcp-re-conformance/tests/scitt_retained_corpus_test.rs"
       - "mcp-re-conformance/tests/scitt_retained_corpus_test/**"
       - "mcp-re-conformance/tests/vectors/scitt/retained/**"
+      # #746: the two SDK exchange paths. Their SOURCE, their tests, and the manifests and
+      # lockfiles that decide what their dependencies are — the same closure a crate gets,
+      # because the fingerprint measures all three for a non-Rust unit too (#745).
+      - "sdk/python/python/**"
+      - "sdk/python/tests/**"
+      - "sdk/python/pyproject.toml"
+      - "sdk/typescript/src/**"
+      - "sdk/typescript/test/**"
+      - "sdk/typescript/package.json"
+      - "sdk/typescript/package-lock.json"
+      - "sdk/typescript/tsconfig.json"
       # Stage 5 gave the response-emission cluster its four owners.
       - "mcp-re-proxy/src/delegated_server_signer/**"
       - "mcp-re-proxy/src/delegated_response_signer.rs"
@@ -262,6 +273,17 @@ on:
       - "mcp-re-conformance/tests/scitt_retained_corpus_test.rs"
       - "mcp-re-conformance/tests/scitt_retained_corpus_test/**"
       - "mcp-re-conformance/tests/vectors/scitt/retained/**"
+      # #746: the two SDK exchange paths. Their SOURCE, their tests, and the manifests and
+      # lockfiles that decide what their dependencies are — the same closure a crate gets,
+      # because the fingerprint measures all three for a non-Rust unit too (#745).
+      - "sdk/python/python/**"
+      - "sdk/python/tests/**"
+      - "sdk/python/pyproject.toml"
+      - "sdk/typescript/src/**"
+      - "sdk/typescript/test/**"
+      - "sdk/typescript/package.json"
+      - "sdk/typescript/package-lock.json"
+      - "sdk/typescript/tsconfig.json"
       # Stage 5 gave the response-emission cluster its four owners.
       - "mcp-re-proxy/src/delegated_server_signer/**"
       - "mcp-re-proxy/src/delegated_response_signer.rs"
@@ -426,6 +448,33 @@ jobs:
       # Authoritative from Phase 2 onward. Report-only was the honest posture while the
       # manifest declared no formal evidence; now that a V1 unit exists, a lane that could
       # go red without failing the build would be evidence nobody has to keep green.
+      # ADR-MCPRE-059 §28 / issue #746: two registered units' batteries are a pytest and a
+      # vitest one, and neither runs against a bare checkout — the Python wheel is a PyO3
+      # extension module and the TypeScript package a napi one, so both need building before
+      # a single test can import them.
+      #
+      # Built HERE rather than inside the lane, and the separation is the point: a lane that
+      # builds what it measures can report a battery it just made pass. This step prepares an
+      # environment; `verify` measures whatever is in it, and a preparation failure stops the
+      # job before the lane can report anything at all.
+      #
+      # `scripts/verification_runner_preflight.sh` has already refused the job if `uv` or
+      # `npx` is missing, and it derives that requirement from the registry — so this step
+      # exists exactly while some unit's battery needs it.
+      - name: Prepare the non-Rust SDK batteries
+        run: |
+          set -euo pipefail
+          if grep -q '^id = "sdk_python\.' verification/policy/verification.toml; then
+            # `--extra dev` is load-bearing: the battery runs under pytest, and the runner
+            # pins it with `anyio` and `mcp` in that extra. A bare `uv sync` resolves the
+            # RUNTIME closure only, which installs no test runner at all — and the lane
+            # would then refuse for want of a battery rather than for want of the property.
+            (cd sdk/python && uv sync --extra dev && uv run maturin develop)
+          fi
+          if grep -q '^id = "sdk_typescript\.' verification/policy/verification.toml; then
+            (cd sdk/typescript && npm ci && npm run build)
+          fi
+
       - name: Verification platform gate
         run: ./tools/verification/verify --gate
 

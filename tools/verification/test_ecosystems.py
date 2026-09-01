@@ -25,6 +25,7 @@ sys.path.insert(0, str(HERE))
 
 from _ecosystems import (  # noqa: E402
     CARGO,
+    ReportUnreadable,
     PYTHON,
     TYPESCRIPT,
     build_configuration_patterns,
@@ -263,7 +264,7 @@ def test_each_ecosystem_selects_exactly_the_declared_symbols():
         "vitest",
         ["test/x.test.ts > a probe", "test/x.test.ts > another", "test/y.test.ts > third"],
     )
-    assert ts[:4] == ["npx", "vitest", "run", "--reporter=verbose"]
+    assert ts[:4] == ["npx", "vitest", "run", "--reporter=json"]
     assert ts[4:] == ["test/x.test.ts", "test/y.test.ts"]
 
 
@@ -291,11 +292,40 @@ def test_every_runners_report_is_read_in_one_vocabulary():
         "tests/test_smoke.py::test_skipped": "ignored",
     }
 
-    vitest_out = " ✓ test/correlation.test.ts > a probe 3ms\n × test/mtls.test.ts > another\n"
+    # The JSON reporter, not the verbose one. Measured on CI: the verbose reporter writes
+    # marks meant for a terminal, and every declared control came back `never ran` from a
+    # suite that had passed. A lane must not read a human-facing rendering.
+    vitest_out = (
+        "some build noise\n"
+        '{"numTotalTestSuites":1,"testResults":[{"name":"/x/sdk/typescript/test/correlation'
+        '.test.ts","assertionResults":['
+        '{"ancestorTitles":["a suite"],"title":"a probe","status":"passed"},'
+        '{"ancestorTitles":[],"title":"another","status":"failed"}]}]}'
+    )
     assert parse_results(TYPESCRIPT, vitest_out) == {
-        "test/correlation.test.ts > a probe": "ok",
-        "test/mtls.test.ts > another": "FAILED",
+        "test/correlation.test.ts > a suite > a probe": "ok",
+        "test/correlation.test.ts > another": "FAILED",
     }
+
+
+def test_an_unreadable_vitest_report_is_a_lane_failure_not_a_battery_of_absent_tests():
+    """Measured on CI: the run produced no JSON at all and every one of 26 declared controls
+    was reported `never ran` — one unread report stated something false about all of them.
+    The report is now searched for past whatever else reached the stream, and its absence
+    raises rather than returning an empty result set."""
+    prefixed = (
+        'npm warn something\n{"not":"the report"}\n'
+        '{"numTotalTestSuites":1,"testResults":[{"name":"/x/test/t.test.ts",'
+        '"assertionResults":[{"ancestorTitles":[],"title":"a","status":"passed"}]}]}\n'
+    )
+    assert parse_results(TYPESCRIPT, prefixed) == {"test/t.test.ts > a": "ok"}
+
+    try:
+        parse_results(TYPESCRIPT, "Error: Cannot find module 'vitest'\n")
+    except ReportUnreadable as unreadable:
+        assert "Cannot find module" in str(unreadable)
+    else:
+        raise AssertionError("an absent report must raise, not read as zero results")
 
 
 def test_a_skipped_test_is_not_evidence_in_any_ecosystem():
@@ -305,7 +335,11 @@ def test_a_skipped_test_is_not_evidence_in_any_ecosystem():
     for eco, text in (
         (CARGO, "test a ... ignored"),
         (PYTHON, "tests/t.py::a SKIPPED"),
-        (TYPESCRIPT, " ↓ test/t.test.ts > a"),
+        (
+            TYPESCRIPT,
+            '{"numTotalTestSuites":1,"testResults":[{"name":"/x/test/t.test.ts",'
+            '"assertionResults":[{"ancestorTitles":[],"title":"a","status":"skipped"}]}]}',
+        ),
     ):
         statuses = set(parse_results(eco, text).values())
         assert statuses == {"ignored"}, f"{eco.name}: {statuses}"

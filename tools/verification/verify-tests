@@ -48,6 +48,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _ecosystems import CARGO  # noqa: E402
+from _ecosystems import ReportUnreadable  # noqa: E402
 from _ecosystems import parse_results  # noqa: E402
 from _ecosystems import test_argv  # noqa: E402
 from _ecosystems import unit_ecosystem  # noqa: E402
@@ -144,7 +145,11 @@ def _rerun_unread(eco, crate: str, target: str, names: list[str]) -> set[str]:
             text=True,
             check=False,
         )
-        if again.returncode == 0 and parse_results(eco, again.stdout).get(name) == "ok":
+        try:
+            fresh = parse_results(eco, again.stdout)
+        except ReportUnreadable:
+            fresh = {}
+        if again.returncode == 0 and fresh.get(name) == "ok":
             recovered.add(name)
     return recovered
 
@@ -190,7 +195,13 @@ def run_selection(eco, crate: str, target: str, paths: list[str]) -> tuple[bool,
             )
         return True, f"{target}: {len(paths)} item(s) passed"
 
-    observed = parse_results(eco, proc.stdout)
+    try:
+        observed = parse_results(eco, proc.stdout)
+    except ReportUnreadable as unreadable:
+        # Not "the controls failed" — the lane could not read the runner. Reported as its
+        # own failure, with what the runner said, because presenting an unread report as a
+        # battery of controls that never ran states something false about every one of them.
+        return False, f"{target}: {unreadable}"
     passed = {name for name, status in observed.items() if status == "ok"}
     missing = sorted(set(paths) - passed)
     if missing:

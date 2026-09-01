@@ -2366,6 +2366,144 @@ tested_symbols = [
 # this process at all; and whether the emitted signature binds the request it answers.
 # ---------------------------------------------------------------------------------------
 
+# ADR-MCPRE-059 §28 / issue #746. The two SDK exchange paths, as TWO units.
+#
+# Not one "SDK" unit, and not a Rust unit widened to cover them. The boundary is implemented
+# independently per language and the Rust proof establishes nothing about either — the
+# byte-level parity fixtures are green while the implementations diverge behaviourally,
+# which is the measured evidence that a single claim would be a claim about no shipped
+# artefact.
+#
+# What each unit owns is the SECURITY-ROOT surface the issue enumerates: response/request
+# correlation, signer and trust acceptance, bound vs unbound evidence, execution-status
+# interpretation, and safe-retry interpretation. What each deliberately does NOT own is the
+# concurrency bound and the throughput behaviour — those are resource ceilings, and a
+# difference between the two SDKs there changes nothing about authenticity, correlation or
+# execution. Deadline behaviour enters only where a timeout changes the client's conclusion
+# about whether the remote side may have executed.
+[[unit]]
+id = "sdk_python.exchange_path"
+class = "V0"
+description = "The shipped Python SDK's exchange path: every reply is correlated to the request that earned it, an unverifiable one never reaches the application as a result, and what the SDK says about execution is what the receipt said."
+paths = [
+  "sdk/python/python/mcp_re_sdk/transport.py",
+  "sdk/python/python/mcp_re_sdk/correlation.py",
+  "sdk/python/python/mcp_re_sdk/authorization.py",
+  "sdk/python/python/mcp_re_sdk/custody.py",
+  "sdk/python/python/mcp_re_sdk/mtls.py",
+]
+exported_contracts = []
+evidence = ["test://sdk_python/exchange_path/root_battery"]
+# The replay battery is the substance: a RECORDED delegated session, verified by the shipped
+# adapter, with one appended byte, an untrusted root, a wrong epoch, a wrong audience and a
+# revoked key each refused against the same recording. A battery of constructed positives
+# would not distinguish an adapter that verifies from one that returns what it was handed.
+tested_symbols = [
+  # Correlation: the reply reaches the request that earned it, and a failed exchange leaves
+  # nothing outstanding for a later reply to bind to.
+  "pytest#tests/test_transport.py::test_a_failed_exchange_does_not_leave_its_correlation_entry_outstanding",
+  "pytest#tests/test_transport.py::test_one_exchanges_network_error_does_not_take_down_the_session",
+  "pytest#tests/test_transport.py::test_close_clears_abandoned_correlation_state",
+  "pytest#tests/test_correlation.py::TestFailsClosed::test_a_response_binding_to_nothing_outstanding_is_rejected",
+  "pytest#tests/test_correlation.py::TestFailsClosed::test_a_late_response_is_rejected",
+  "pytest#tests/test_correlation.py::TestFailsClosed::test_a_duplicate_response_is_a_replay_not_a_mismatch",
+  # Signer and trust acceptance, against a recorded session rather than a constructed one.
+  "pytest#tests/test_transport_replay.py::test_a_recorded_delegated_session_verifies_and_reaches_the_app_as_plain_mcp",
+  "pytest#tests/test_transport_replay.py::test_one_appended_byte_of_the_recorded_body_fails_closed",
+  "pytest#tests/test_transport_replay.py::test_an_untrusted_root_anchor_refuses_the_same_recorded_response",
+  "pytest#tests/test_transport_replay.py::test_a_response_outside_the_accepted_trust_epoch_is_refused",
+  "pytest#tests/test_transport_replay.py::test_a_response_for_a_different_audience_is_refused",
+  "pytest#tests/test_transport_replay.py::test_a_revoked_delegated_key_is_refused",
+  # An acknowledgement is evidence or it is nothing.
+  "pytest#tests/test_transport.py::test_an_unsigned_acknowledgement_fails_the_transport_closed",
+  "pytest#tests/test_transport.py::test_a_non_202_answer_to_a_notification_fails_closed",
+  # A pause is not a result. An elicitation that cannot be answered must not reach the
+  # application as though the call completed.
+  "pytest#tests/test_transport_replay.py::test_the_adapter_drives_the_answer_leg_to_a_terminal_result",
+  "pytest#tests/test_transport_replay.py::test_an_unanswerable_elicitation_is_refused_not_delivered_as_a_result",
+  "pytest#tests/test_transport_replay.py::test_a_declined_elicitation_is_refused",
+  "pytest#tests/test_malformed_elicitation.py::test_a_non_terminal_reply_without_a_usable_state_is_refused",
+  "pytest#tests/test_unrecognized_result_type.py::test_an_unrecognized_result_type_is_refused_not_read_as_terminal",
+  # Bound vs unbound evidence: one signed preflight receipt answers any request from any
+  # client of that issuer, so the caller has to be able to tell "the boundary rejected MY
+  # request" from "a generic rejection arrived".
+  "pytest#tests/test_transport.py::test_an_unbound_rejection_receipt_is_reported_as_not_request_bound",
+  # Execution status, in both directions: the contract a post-dispatch rejection stated
+  # reaches the application, and a member the receipt did not carry is not invented —
+  # inventing `not_executed` collapses "unknown whether it ran" into "it did not run" at
+  # the one place that decides whether a caller repeats a side effect.
+  "pytest#tests/test_transport.py::test_a_post_dispatch_rejection_reports_its_execution_and_retry_contract",
+  # A verified reply that is not an answer to this request is refused rather than
+  # dispatched — the Python twin of the TypeScript verified-reply-shape controls.
+  "pytest#tests/test_transport.py::test_a_verified_reply_carrying_a_method_is_refused_not_dispatched",
+  "pytest#tests/test_transport.py::test_a_verified_reply_with_neither_result_nor_error_is_refused",
+  # Execution status: a verified rejection is delivered as an error carrying what the
+  # receipt said, and a local failure does not borrow a wire code it was never given.
+  "pytest#tests/test_transport_replay.py::test_a_verified_rejection_receipt_is_delivered_as_an_error_not_a_result",
+  "pytest#tests/test_transport.py::test_a_wire_failure_is_delivered_as_a_correlated_json_rpc_error",
+  "pytest#tests/test_transport.py::test_a_local_signer_failure_is_delivered_without_claiming_a_wire_code",
+  "pytest#tests/test_transport.py::test_an_unexpected_exception_is_delivered_without_claiming_a_wire_code",
+  # The positive controls the refusals need: without them the battery is satisfied by an
+  # adapter that refuses everything.
+  "pytest#tests/test_transport.py::test_a_satisfied_policy_opens_the_transport",
+  "pytest#tests/test_transport.py::test_the_signed_body_is_the_request_the_caller_described",
+  "pytest#tests/test_malformed_elicitation.py::test_the_fixture_is_otherwise_genuine_evidence",
+  "pytest#tests/test_unrecognized_result_type.py::test_the_fixture_is_otherwise_genuine_evidence",
+]
+
+[[unit]]
+id = "sdk_typescript.exchange_path"
+class = "V0"
+description = "The shipped TypeScript SDK's exchange path: every reply is correlated to the request that earned it, an unverifiable one never reaches the application as a result, and what the SDK says about execution is what the receipt said."
+paths = [
+  "sdk/typescript/src/transport.ts",
+  "sdk/typescript/src/correlation.ts",
+  "sdk/typescript/src/authorization.ts",
+  "sdk/typescript/src/custody.ts",
+  "sdk/typescript/src/mtls.ts",
+  "sdk/typescript/src/index.ts",
+]
+exported_contracts = []
+evidence = ["test://sdk_typescript/exchange_path/root_battery"]
+# The same propositions as the Python member, over an independent implementation. The two
+# lists are deliberately not a translation of each other: each names the controls its own
+# suite actually has, and a proposition one suite covers and the other does not is a gap
+# this registration makes visible rather than papers over.
+tested_symbols = [
+  # Correlation.
+  "vitest#test/transport.test.ts > McpReHttpTransport concurrency > correlates every concurrent reply to its own request",
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > does not leave a failed exchange's correlation entry outstanding",
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > keeps a failed exchange from taking down the session's other requests",
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > clears abandoned correlation state on close",
+  "vitest#test/correlation.test.ts > fails closed > rejects a response binding to nothing outstanding",
+  "vitest#test/correlation.test.ts > fails closed > rejects a late response",
+  "vitest#test/correlation.test.ts > fails closed > treats a duplicate response as a replay, not a mismatch",
+  # Signer and trust acceptance.
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > checks the signer against the route policy in start(), before anything is signed",
+  "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty issuerKeyId",
+  "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty issuerPubkeyB64Url",
+  "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty expectedAudienceHash",
+  "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty acceptedEpochs",
+  "vitest#test/transport.test.ts > McpReHttpTransport revocation denylist shape > refuses a bare string, which would spread into a per-character denylist",
+  # An acknowledgement is evidence or it is nothing.
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > fails closed on an unsigned acknowledgement",
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > fails closed on a bodied 200 in place of an acknowledgement",
+  # A verified reply that is not an answer to this request is refused rather than dispatched.
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > refuses a verified reply carrying a top-level method instead of dispatching it",
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > refuses a verified reply that is not a JSON-RPC response at all",
+  # Bound vs unbound evidence, and execution status.
+  "vitest#test/transport.test.ts > McpReHttpTransport rejection receipt binding > reports a preflight-unbound receipt as NOT request-bound",
+  "vitest#test/transport.test.ts > McpReHttpTransport rejection receipt binding > reports a request-bound receipt as request-bound",
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > reports the execution and retry contract a post-dispatch rejection carried",
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > invents no disposition for a receipt that stated none",
+  "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > delivers a core failure as its frozen token, not as a local SDK error",
+  "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > still labels a genuine local failure as one",
+  # The positive controls.
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > accepts a signer that satisfies the policy",
+  "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > signs the request body the caller's message described",
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > still delivers an ordinary verified reply",
+]
+
 [[unit]]
 id = "proxy.delegated_signing_credential"
 class = "V0"

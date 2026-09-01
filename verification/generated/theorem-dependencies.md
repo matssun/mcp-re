@@ -281,3 +281,21 @@ graph BT
     classDef root stroke-width:3px;
     class THM_0091 root;
 ```
+
+## Component 8
+
+```mermaid
+graph BT
+    THM_0094["ROOT — THM-0094<br/>The shipped Python SDK accepts only an answer to its own request"]
+    classDef root stroke-width:3px;
+    class THM_0094 root;
+```
+
+## Component 9
+
+```mermaid
+graph BT
+    THM_0095["ROOT — THM-0095<br/>The shipped TypeScript SDK accepts only an answer to its own request"]
+    classDef root stroke-width:3px;
+    class THM_0095 root;
+```
