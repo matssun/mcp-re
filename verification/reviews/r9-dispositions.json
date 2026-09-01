@@ -155,6 +155,11 @@
       "node": "no THM",
       "area": "deployment-rendering",
       "reason": "`deploy/codebuild/mcp-re-slo-bench.yaml:157` still refuses `.claude`; `git ls-files .claude` still returns tracked files; the documented upload is still `git archive HEAD`.",
+      "merged_closure": {
+        "pr": 749,
+        "commit": "eef0f95271cad5b567ae432a27325a7421335fe7",
+        "note": "the guard names `.claude/settings.local.json` — the untracked file that carries the tokens — rather than `.claude`, which git archive always emits"
+      },
       "tracking_issue": 738
     },
     {
@@ -166,6 +171,11 @@
       "node": "no THM",
       "area": "deployment-rendering",
       "reason": "Same guard, same tracked files. Every correctly-produced source zip still aborts pre_build.",
+      "merged_closure": {
+        "pr": 749,
+        "commit": "eef0f95271cad5b567ae432a27325a7421335fe7",
+        "note": "same guard, same discriminator; codebuild_guard_gate.py keeps the list to paths git archive cannot emit"
+      },
       "tracking_issue": 738
     },
     {
@@ -177,6 +187,11 @@
       "node": "no THM",
       "area": "deployment-rendering",
       "reason": "`.dockerignore` still carries none of `.claude/`, `**/.claude/`, `.vscode/`, `.idea/`, `.verification/`; `REQUIRED_UPLOAD_EXCLUSIONS` still lists none of them, so the parity gate is blind.",
+      "merged_closure": {
+        "pr": 749,
+        "commit": "eef0f95271cad5b567ae432a27325a7421335fe7",
+        "note": ".dockerignore carries the five exclusions and REQUIRED_UPLOAD_EXCLUSIONS lists them, so the parity gate now sees the ones it was blind to"
+      },
       "tracking_issue": 738
     },
     {
@@ -188,6 +203,11 @@
       "node": "no THM",
       "area": "deployment-rendering",
       "reason": "`deployment.yaml:18` still reads `and .Values.fleet …`. The two sibling refusals in `_helpers.tpl:128-135` are fleet-independent and argue in comments that the hazard is independent of replica count.",
+      "merged_closure": {
+        "pr": 749,
+        "commit": "eef0f95271cad5b567ae432a27325a7421335fe7",
+        "note": "the admission-currency plaintext refusal no longer conjoins .Values.fleet, so the chart holds at any replica count as values.yaml says"
+      },
       "tracking_issue": 738
     },
     {
@@ -316,6 +336,11 @@
       "node": "no THM",
       "area": "deployment-rendering",
       "reason": "Same as C015.",
+      "merged_closure": {
+        "pr": 749,
+        "commit": "eef0f95271cad5b567ae432a27325a7421335fe7",
+        "note": "same hop, same de-fleet-gating"
+      },
       "tracking_issue": 738
     },
     {
@@ -327,6 +352,11 @@
       "node": "no THM",
       "area": "deployment-rendering",
       "reason": "Same as C014.",
+      "merged_closure": {
+        "pr": 749,
+        "commit": "eef0f95271cad5b567ae432a27325a7421335fe7",
+        "note": "the .dockerignore half is closed with C014. Dockerfile.bench stays single-stage deliberately: its entrypoint runs cargo test, so the image needs the toolchain and the source tree, and discarding a builder stage would break the bench rather than harden it"
+      },
       "tracking_issue": 738
     },
     {
@@ -395,6 +425,11 @@
       "node": "no THM",
       "area": "deployment-rendering",
       "reason": "`_helpers.tpl:190` DRAIN INVARIANT is still `pre + proxyDrain < kubelet`, with no budget for the post-serve audit flush.",
+      "merged_closure": {
+        "pr": 749,
+        "commit": "eef0f95271cad5b567ae432a27325a7421335fe7",
+        "note": "the DRAIN INVARIANT budgets the post-serve audit flush, and helm_render_gate.py couples the literal to the Rust constant"
+      },
       "tracking_issue": 738
     },
     {
@@ -587,6 +622,11 @@
       "node": "no THM",
       "area": "deployment-rendering",
       "reason": "Same as C014.",
+      "merged_closure": {
+        "pr": 749,
+        "commit": "eef0f95271cad5b567ae432a27325a7421335fe7",
+        "note": "same parity repair; the gate is fixed as well as the file, since a defect a gate was meant to see is two defects"
+      },
       "tracking_issue": 738
     },
     {
@@ -598,6 +638,11 @@
       "node": "no THM",
       "area": "deployment-rendering",
       "reason": "Same as C015.",
+      "merged_closure": {
+        "pr": 749,
+        "commit": "eef0f95271cad5b567ae432a27325a7421335fe7",
+        "note": "same hop as C015"
+      },
       "tracking_issue": 738
     },
     {
@@ -1227,6 +1272,11 @@
       "node": "no THM",
       "area": "deployment-rendering",
       "reason": "Same as C033.",
+      "merged_closure": {
+        "pr": 749,
+        "commit": "eef0f95271cad5b567ae432a27325a7421335fe7",
+        "note": "same arithmetic"
+      },
       "tracking_issue": 738
     },
     {
