@@ -22,6 +22,7 @@ not an omission to hide.
 | client.proxy_request_correspondence | V0 | THM-0084 | 0 |
 | client.response_acceptance | V0 | THM-0058, THM-0059, THM-0076 | 0 |
 | client.trust_manifest_lifecycle | V0 | THM-0057 | 0 |
+| conformance.retained_corpus | V0 | _none_ | 0 |
 | core.time_rfc3339 | V1 | THM-0002 | 4 |
 | http_profile.admission_assertion | V0 | THM-0053 | 0 |
 | http_profile.admission_currency | V1 | THM-0003, THM-0004, THM-0005, THM-0006 | 7 |
