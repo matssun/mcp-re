@@ -968,7 +968,7 @@ any of them is closed.
 
 **Review requirement.** Owner security-specification review
 
-**Depends on.** THM-0005, THM-0013, THM-0036, THM-0038, THM-0048, THM-0049, THM-0054, THM-0064, THM-0066, THM-0067, THM-0073, THM-0086, THM-0087
+**Depends on.** THM-0005, THM-0013, THM-0036, THM-0038, THM-0048, THM-0049, THM-0054, THM-0064, THM-0066, THM-0067, THM-0073, THM-0086
 
 ### THM-0078 — Refusal is terminal, and no refusal-side effect reads as success
 

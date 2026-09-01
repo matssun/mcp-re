@@ -6,6 +6,9 @@
 STATUS:  RATIFIED — the current canonical MCP-RE security-claim boundary
          Owner: Mats Sundvall, 2026-09-01, over commit 23a727ac. See §7.
          It inherits no signature from any earlier boundary and carries its own.
+         AMENDED by the owner on 2026-09-01: §4.1, the replay/continuation split.
+         The amendment is recorded in place rather than folded silently into the
+         ratified text — see §4.1 for what changed and why it is not a §2 weakening.
 ```
 
 This document states what MCP-RE protects, and — with equal weight — what it does **not**.
@@ -130,7 +133,8 @@ them is the point: an unstated gap is the failure mode this document exists to p
 
 | area | disposition | placement |
 |---|---|---|
-| Replay / continuation store durability | in scope | under THM-0077 (selected tier materializes honestly) and THM-0074 (a store that cannot establish its state must prevent dispatch) |
+| **Replay** store durability | in scope | under THM-0077 — the selected tier materializes honestly — and THM-0074: a replay state the request requires and the store cannot establish must prevent dispatch |
+| **Continuation** correlation durability | in scope, and **not the same shape** | the capability is OPPORTUNISTIC, so absence is permitted and silent weakening is not. Under THM-0077: an available capability is what the runtime advertises and holds, and an unavailable one is an explicit absence with no weaker or node-local substitute installed. Under THM-0074: a leg that requires correlation fails closed rather than proceeding unbound when the capability or state is absent |
 | Retained-evidence correspondence | in scope, **NOT CURRENTLY CLAIMED** — THM-0042 branch reopened | the corrected `submitted_commitment` proposition must be independently reviewed and established against genuine retained-evidence correspondence evidence before it returns to §2. The theorem is not to be weakened to make it green |
 | Retained-evidence reservation fidelity | in scope | retained-evidence family; a pending marker may exist only under the execution threshold its owner defines |
 | Outbound credential acquisition (KMS / STS / metadata / remote signer) | in scope | under THM-0077 / materialization; a credential-bearing outbound call reaches only the authority selected and validated for that capability |
@@ -138,6 +142,27 @@ them is the point: an unstated gap is the failure mode this document exists to p
 | Python and TypeScript SDK exchange paths | in scope, as a **supported-client root family** | each independently implemented boundary gets its own root; the Rust THM-0076 is one member |
 | Deployment rendering | **outside** the runtime roots | release / deployment conformance gates (§0) |
 | The ADR-MCPRE-059 assurance platform | **outside** the product roots | assurance TCB (§0); its false-green defects are platform-integrity work |
+
+### 4.1 Amendment — 2026-09-01
+
+**Owner amendment, 2026-09-01.** The row above was one row reading *"Replay / continuation
+store durability … the selected tier materializes honestly … a store that cannot establish
+its state must prevent dispatch"*. It gave the two stores an identical shape they do not
+have: the continuation correlation capability is **opportunistic** — no flag asks for it, it
+appears when a shared Redis happens to be configured, and
+`serving_capabilities::mrtr_continuation_store` announces its absence and starts rather than
+refusing, because refusing would make every single-store deployment unstartable. The
+dependent leg fails closed at the continuation binding instead.
+
+So a single row asserting a startup refusal for both was describing behaviour the tree does
+not have, and it is now two rows.
+
+**This is a correction to a §4 branch that is explicitly NOT YET ESTABLISHED, not a
+weakening of a §2 positive claim.** Neither store appears in §2, nothing moves out of §2,
+and no established claim is narrowed: what changes is the accuracy of a statement about work
+in scope and not yet done. A §4 row corrected toward what the code actually does is the
+document working, and leaving the two shapes conflated would have made the eventual claim
+easier to state than to earn.
 
 ## 5. Where the boundary is currently weaker than it reads
 
@@ -155,6 +180,20 @@ has none.
 - **Assurance-platform false-green classes are open.** Until they are closed, the word
   ESTABLISHED carries less than it appears to. The list and its priority order are in the
   ruling record.
+- **THM-0077 does not currently establish, and §2 claims it.** Its specification review is
+  `STALE_DEPENDENCY_CLAIM`: the theorem's own claim text is byte-identical to the text the
+  owner reviewed, and its dependency closure grew by one premise — THM-0086, the replay
+  materialization leaf, which is itself reviewed and established. Nothing about the posture
+  claim has weakened and no evidence stopped holding; what is missing is an owner review
+  covering the closure as it now stands, which is an event that has not happened. The row
+  stays in §2 rather than being moved out, because moving it would report a weakened claim
+  where the fact is an unrenewed signature — but a reader must know the difference, which
+  is why it is here. Root completeness: 7 of 9.
+- **THM-0087 is registered and unreviewed, by ruling.** It states an actor-scoped,
+  non-consuming continuation lookup. It was briefly attached to THM-0077 as if it were the
+  continuation posture claim; it is not, and the edge was removed on 2026-09-01. Its
+  measured position is under THM-0074, and that edge is deliberately not written while the
+  theorem is unreviewed — see the design packet.
 - **Surviving Round-9 findings.** 131 cluster dispositions are recorded in
   `verification/reviews/r9-dispositions.json`. A finding mapping to a theorem is not thereby
   closed.
@@ -198,3 +237,8 @@ being established and independently reviewed, never by this section having been 
 
 Equally, this signature is not permission to weaken an existing claim. A §2 row whose
 evidence stops holding leaves §2; it is not rewritten until it fits what remains.
+
+**Amendments.** §4.1 (2026-09-01) is an owner amendment to a §4 row, made after measurement
+showed the row described behaviour the tree does not have. It is recorded as an amendment
+rather than an edit because the ratified text is a fixed object: a document that quietly
+absorbed corrections would make "ratified at 23a727ac" mean less each time it was right.
