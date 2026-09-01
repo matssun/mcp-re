@@ -100,6 +100,17 @@ mod covered_set;
 /// WHEN responsibility for retaining an exchange has been durably established.
 mod durability;
 mod durability_bounds;
+/// WHAT a durable job asks for, and what its failure means.
+mod durable_job;
+/// HOW a durable job is executed.
+mod durable_writer;
+
+/// The execution threshold CROSSED, and durably recorded.
+mod dispatch_committed;
+/// WHAT a marker persists, and what it deliberately does not.
+mod reservation_marker;
+/// The obligation ACCEPTED, before anything has run.
+mod reserved_before_dispatch;
 
 /// Turning retained evidence into a portable SCITT record — the auditor's half.
 mod attestation;
@@ -107,8 +118,9 @@ mod attestation;
 pub use attestation::attest_chain;
 pub use attestation::AttestError;
 pub use attestation::Attestation;
+pub use dispatch_committed::DispatchCommitted;
 pub use durability::EvidenceRetention;
-pub use durability::RetentionReservation;
+pub use reserved_before_dispatch::ReservedBeforeDispatch;
 
 /// The schema token every retained record carries.
 ///
@@ -125,8 +137,19 @@ pub enum RetentionError {
     Store(std::io::Error),
     /// A record came back that this reader cannot use.
     Malformed(&'static str),
-    /// The reservation offered has already had its completion taken.
+    /// The commitment offered has already had its completion taken.
     AlreadyCompleted,
+    /// A pre-dispatch retention state could not be established AND could not be
+    /// withdrawn.
+    ///
+    /// Separate from [`Store`](Self::Store) because the two demand different answers. A
+    /// store failure that published nothing leaves the exchange exactly where it was:
+    /// nothing dispatched, nothing on disk, an ordinary retry is correct. This one leaves
+    /// something on disk that may read as a crossed execution threshold for an exchange
+    /// that never dispatched — so answering it as an ordinary retry-safe outage would be
+    /// the deployment telling a client to retry freely while holding a record it cannot
+    /// account for (R9-C099).
+    Unresolved(std::io::Error),
 }
 
 impl std::fmt::Display for RetentionError {
@@ -135,8 +158,14 @@ impl std::fmt::Display for RetentionError {
             RetentionError::Store(e) => write!(f, "retained-evidence store: {e}"),
             RetentionError::Malformed(what) => write!(f, "retained evidence: {what}"),
             RetentionError::AlreadyCompleted => {
-                write!(f, "retained evidence: reservation is already completed")
+                write!(f, "retained evidence: the commitment is already completed")
             }
+            RetentionError::Unresolved(e) => write!(
+                f,
+                "retained evidence: a pre-dispatch retention state could not be \
+                 established or withdrawn ({e}); the exchange did not dispatch and the \
+                 store's record of it cannot be stated"
+            ),
         }
     }
 }

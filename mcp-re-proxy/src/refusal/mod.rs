@@ -63,6 +63,8 @@
 //! own while the authorization coordinate says who refused. The producer graph stopped
 //! being something a scanner discovers and became something the compiler decides.
 
+use mcp_re_http_profile::rejection::ExecutionDisposition;
+
 mod cause;
 
 pub(crate) use cause::RefusalCause;
@@ -104,6 +106,19 @@ pub(crate) struct Refusal {
     pub(crate) cause: RefusalCause,
     pub(crate) status: u16,
     pub(crate) posture: RefusalPosture,
+    /// What the REFUSING OWNER established about effects that the exchange machine has no
+    /// representation for.
+    ///
+    /// `None` is the ordinary case, and the machine's own derivation stands. The one
+    /// producer is the retained-evidence store's unresolvable pre-dispatch state: the
+    /// backend provably did not act, and the store may still hold an artefact that reads
+    /// as a crossed execution threshold — a conjunction no state of the machine encodes,
+    /// because the machine does not model the store's withdrawal.
+    ///
+    /// It REFINES, and can only refine downward in safety: the composition applies it only
+    /// where the machine says an ordinary retry would have been correct, so a floor the
+    /// machine has already raised is never walked back (`HttpProfileProxy::disposition`).
+    pub(crate) execution_refinement: Option<ExecutionDisposition>,
 }
 
 impl Refusal {
@@ -113,6 +128,7 @@ impl Refusal {
             cause: cause.into(),
             status,
             posture: RefusalPosture::Preflight,
+            execution_refinement: None,
         }
     }
 
@@ -122,7 +138,17 @@ impl Refusal {
             cause: cause.into(),
             status,
             posture: RefusalPosture::BeforeAdmission,
+            execution_refinement: None,
         }
+    }
+
+    /// The same refusal, carrying what the refusing owner established about effects.
+    ///
+    /// For an owner that knows something the machine cannot represent. Everything else
+    /// leaves it unset and the machine's derivation is the whole answer.
+    pub(crate) fn refining(mut self, execution: ExecutionDisposition) -> Self {
+        self.execution_refinement = Some(execution);
+        self
     }
 
     /// The request was admitted; the fault is on the response side.
@@ -131,6 +157,7 @@ impl Refusal {
             cause: cause.into(),
             status,
             posture: RefusalPosture::AfterAdmission,
+            execution_refinement: None,
         }
     }
 }

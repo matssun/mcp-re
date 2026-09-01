@@ -76,7 +76,7 @@ impl HttpProfileProxy {
                 now,
                 None,
                 None,
-                Self::disposition(progress),
+                Self::disposition(progress, None),
                 None,
             )),
         }

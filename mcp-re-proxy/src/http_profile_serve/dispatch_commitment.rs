@@ -3,12 +3,16 @@
 //! the durable record honest.
 //!
 //! Local saturation and a fully-ejected backend set are facts about this proxy, knowable
-//! without writing anything. Refusing on them AFTER the retention reservation would leave a
-//! durable marker asserting that the request crossed the execution threshold — for a
-//! request that provably never reached a backend. The reservation is therefore the last
-//! refusal of any kind before the dispatch, and the request relation says so:
-//! `RetentionReserved` is its last pre-dispatch state, so a pipeline that asked in the
-//! other order would be refused by the machine rather than merely recorded oddly.
+//! without writing anything, and they are settled first — by TAKING the plane's capacity
+//! rather than predicting it, so nothing can refuse on them later.
+//!
+//! What writes comes after, in two steps that are two facts. The retention obligation is
+//! ACCEPTED, which asserts nothing about execution and is rescinded by dropping the value
+//! that carries it. Then the crossing is RECORDED, and that recording is the execution
+//! threshold: it is the last refusal of any kind, and the request relation says so —
+//! `DispatchCommitted` is the state the dispatch leaves from, so a pipeline that recorded
+//! the crossing before asking the questions that could still refuse would be rejected by
+//! the machine rather than merely recorded oddly.
 
 use crate::async_inner::PreparedInnerDispatch;
 use crate::async_serve::ServedHttpResponse;
@@ -56,7 +60,9 @@ impl HttpProfileProxy {
     ///
     /// The body is prepared first because preparing it decides nothing; the inner plane is
     /// prepared second because its refusal is free and leaves nothing behind; the
-    /// reservation is taken last because it is the only one of the three that writes.
+    /// retention obligation is accepted third because it is the only one that writes; and
+    /// the crossing is recorded LAST, because recording it is what makes every earlier
+    /// refusal free and every later one impossible.
     ///
     /// The inner-plane capability is HELD from here to the dispatch. If the reservation
     /// then refuses, the prepared dispatch is dropped on the way out and everything it took
@@ -78,7 +84,11 @@ impl HttpProfileProxy {
             Ok(prepared) => progress.establish(prepared),
             Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
         };
-        let retention = match self.retention.reserve(ex.http_req).await {
+        let accepted = match self.retention.reserve(ex.http_req).await {
+            Ok(accepted) => accepted,
+            Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
+        };
+        let retention = match self.retention.commit(accepted).await {
             Ok(disposition) => progress.establish(disposition),
             Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
         };
@@ -93,16 +103,33 @@ mod tests {
     use crate::exchange_state::ExchangeState;
 
     /// The order this region asks in is the relation's, not a local convention. A pipeline
-    /// that reserved retention before asking the inner plane would be refused by the
-    /// machine rather than merely leaving an odd record.
+    /// that recorded the crossing before asking the questions that can still refuse would
+    /// be rejected by the machine rather than merely leaving an odd record.
     #[test]
-    fn the_reservation_is_the_last_pre_dispatch_state() {
+    fn the_crossing_is_recorded_after_everything_that_can_refuse_and_before_the_dispatch() {
         assert!(transition(
-            ExchangeState::RetentionReserved,
+            ExchangeState::InnerPlaneAccepted,
+            ExchangeEvent::RetentionCommitted
+        )
+        .is_ok());
+        assert!(transition(
+            ExchangeState::RetentionCommitted,
             ExchangeEvent::BackendDispatched
         )
         .is_ok());
         assert!(transition(ExchangeState::Forwarded, ExchangeEvent::BackendDispatched).is_err());
-        assert!(transition(ExchangeState::Forwarded, ExchangeEvent::RetentionReserved).is_err());
+        assert!(transition(ExchangeState::Forwarded, ExchangeEvent::RetentionCommitted).is_err());
+    }
+
+    /// A refusal is free right up to the crossing, and never after it.
+    ///
+    /// The predicate the two-stage store buys. Under one artefact the machine could not
+    /// say this: the only pre-dispatch state that wrote anything wrote the thing an auditor
+    /// reads as a crossing, so *refusing here is free* and *this may have executed* were
+    /// true of the same state.
+    #[test]
+    fn the_last_state_that_can_refuse_freely_is_the_one_before_the_crossing() {
+        assert!(!ExchangeState::InnerPlaneAccepted.backend_may_have_executed());
+        assert!(ExchangeState::RetentionCommitted.backend_may_have_executed());
     }
 }

@@ -46,17 +46,33 @@
 use crate::async_inner::DispatchedOutcome;
 use crate::async_inner::PreparedInnerDispatch;
 use crate::http_profile_serve::signing_window::SigningWindow;
-use crate::transparency::RetentionReservation;
+use crate::transparency::DispatchCommitted;
+use crate::transparency::ReservedBeforeDispatch;
+
+/// What this exchange owes the evidence store BEFORE it commits to a dispatch.
+///
+/// Distinct from [`RetentionDisposition`] because they are distinct facts, and the whole
+/// #741 repair is that they used to be one. `Reserved` says an obligation was ACCEPTED and
+/// says nothing about execution; the disposition below says the execution threshold was
+/// crossed and that the crossing is durable. One value meaning both left a refused call
+/// indistinguishable from one whose backend may have acted — on disk, in the exchange
+/// machine, and in what the client was told.
+pub(crate) enum PreDispatchRetention {
+    /// This deployment retains nothing, so there is no obligation to accept.
+    NotConfigured,
+    /// The obligation is durably accepted, and nothing has run. Dropping this rescinds it.
+    Reserved(ReservedBeforeDispatch),
+}
 
 /// What this exchange owes the evidence store, as a closed set.
 ///
-/// # Why this is not `Option<RetentionReservation>`
+/// # Why this is not `Option<DispatchCommitted>`
 ///
 /// Retention is optional — a deployment may run without it — so the obvious typed form is
 /// an `Option`, and it is wrong. `None` would mean BOTH "this deployment retains nothing"
-/// and "this deployment retains, and the reservation is missing", and the second is a
-/// bypassed step. Keeping them in one shape is what forced the runtime guard on the
-/// completion path:
+/// and "this deployment retains, and the record is missing", and the second is a bypassed
+/// step. Keeping them in one shape is what forced the runtime guard on the completion
+/// path:
 ///
 /// ```text
 /// if retention.is_some() && reservation.is_none() { internal error }
@@ -64,15 +80,15 @@ use crate::transparency::RetentionReservation;
 ///
 /// which is a check compensating for something the type could not say (ADR-MCPRE-058
 /// §9.5, §9.6). As a sum type there is no third case: the ready state PROVES
-/// *retention is not configured XOR a reservation exists*, and the obligation is
-/// discharged after dispatch by an exhaustive match rather than by asking whether an
+/// *retention is not configured XOR the crossing is durably recorded*, and the obligation
+/// is discharged after dispatch by an exhaustive match rather than by asking whether an
 /// earlier step was performed.
 pub(crate) enum RetentionDisposition {
     /// This deployment retains nothing, so there is no obligation to discharge.
     NotConfigured,
     /// The execution threshold is durably recorded, and this exchange must complete the
     /// record before it is served.
-    Reserved(RetentionReservation),
+    Committed(DispatchCommitted),
 }
 
 /// Every pre-dispatch prerequisite, in hand.
@@ -193,7 +209,7 @@ mod tests {
         let disposition = RetentionDisposition::NotConfigured;
         let owed = match disposition {
             RetentionDisposition::NotConfigured => false,
-            RetentionDisposition::Reserved(_) => true,
+            RetentionDisposition::Committed(_) => true,
         };
         assert!(
             !owed,

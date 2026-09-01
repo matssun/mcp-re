@@ -239,7 +239,11 @@
       "node": "THM-0045",
       "area": "retention-marker",
       "reason": "The awaited durable write is now `retention.reserve` between `inner_async.admit()` and `dispatch()`. The capacity check and the permit acquisition are still separated by an await.",
-      "tracking_issue": 741
+      "merged_closure": {
+        "pr": 759,
+        "commit": "c83030763d959e97766c5374a632c1bdbe59395c",
+        "note": "the capacity question and the acquisition are one act: `prepare` takes the permit"
+      }
     },
     {
       "cluster": "R9-C022",
@@ -891,7 +895,11 @@
       "node": "THM-0045",
       "area": "retention-marker",
       "reason": "Same as C004.",
-      "tracking_issue": 741
+      "merged_closure": {
+        "pr": 759,
+        "commit": "c83030763d959e97766c5374a632c1bdbe59395c",
+        "note": "saturation is decided before commitment; no committed outcome claims nothing was transmitted"
+      }
     },
     {
       "cluster": "R9-C082",
