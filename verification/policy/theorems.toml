@@ -2199,7 +2199,8 @@ statement = """
 Transmitting to the backend consumes a `ReadyForDispatch`, whose representation and
 constructor take each pre-dispatch prerequisite by value: a `PreparedInnerDispatch` holding
 the inner plane's real dispatch capability, a `SigningWindow` snapshotted before the backend
-runs, and a `RetentionDisposition` that is either `NotConfigured` or a taken `Reserved`. The
+runs, and a `RetentionDisposition` that is either `NotConfigured` or a `DispatchCommitted`
+whose crossing the store has already made durable. The
 serving path obtains a `PreparedInnerDispatch` only from `InnerPlane::prepare`, which takes
 an `AuthorizedRequestBody` by value, and that type is sealed with exactly one producer,
 `AuthorizationPosture::release`. Crossing is one-way and the transmission happens INSIDE it:
