@@ -25,6 +25,7 @@ use crate::chain::ChainReconstruction;
 use crate::error::HttpProfileError;
 
 use super::commitment::EvidenceCommitment;
+use super::commitment::RetainedCorrespondence;
 
 /// The digest that names one retained-evidence object — the handle a Signed Statement
 /// commits to.
@@ -122,17 +123,21 @@ pub trait RetainedEvidenceStore {
 /// here. A second implementation of the same rule is a second thing to keep in sync,
 /// and a drifted copy accepts the wrong bytes silently.
 ///
-/// **A record with no verified hop is refused, not matched.** A reconstruction that
-/// broke at hop 0 — and the empty chain — has no verified prefix, so
+/// **A record with no verified hop is bound by its SUBMISSION, and says only that.** A
+/// reconstruction that broke at hop 0 — and the empty chain — has no verified prefix, so
 /// [`EvidenceCommitment::from_reconstruction`] emits two empty handles and a shape
 /// digest over zero bytes. Those are the same three values for every unrelated call
-/// that failed at hop 0, so comparing them proves nothing: an archivist could present
-/// call B's retained bytes as the record a statement about call A was made over and
-/// every field would match. Reporting `Ok` there would be the check announcing a
-/// binding it does not have, on exactly the records an auditor is most likely to be
-/// investigating, so this returns an error instead. The statement and its receipt
-/// still verify — what fails is the claim that these particular bytes are the ones it
-/// was about.
+/// that failed at hop 0, so comparing them proves nothing, and reporting
+/// [`RetainedCorrespondence::BoundToVerifiedCall`] there would announce a binding the
+/// check does not have.
+///
+/// `submitted_commitment` is not one of those three. It is the digest over the submitted
+/// hops, verified or not, so it is call-specific on exactly these records — and it was
+/// nevertheless never exercised on them, because the whole comparison returned early
+/// (R9-C103, R9-C128). It is compared now, and the weaker verdict
+/// [`RetainedCorrespondence::BoundToSubmissionOnly`] is what the result says: these are
+/// the bytes the issuer saw, and no hop verified. There is no path to a success that
+/// skipped the comparison, which is why the caller no longer decides whether to make it.
 ///
 /// `bindings_commitment` / `verified_context_commitment` are passed back in because
 /// the issuer supplied them as digests: this module never saw the artifact bytes and
@@ -143,7 +148,7 @@ pub fn verify_retained_evidence(
     reconstruction: &ChainReconstruction,
     bindings_commitment: Option<String>,
     verified_context_commitment: Option<String>,
-) -> Result<(), HttpProfileError> {
+) -> Result<RetainedCorrespondence, HttpProfileError> {
     let recomputed = EvidenceCommitment::from_reconstruction(
         reconstruction,
         bindings_commitment,
@@ -308,67 +313,94 @@ mod tests {
         );
     }
 
-    /// The retained/committed split must not report a binding it does not have.
+    /// A record with no verified hop is bound by its SUBMISSION, and by nothing else.
     ///
-    /// Without the fail-closed gate, `verify_retained_evidence` returns `Ok` for a
-    /// hop-0-failure commitment against ANY other hop-0-failure reconstruction —
-    /// including one built from a completely different call's retained bytes — because
-    /// every field it compares is a constant. That is the archivist substitution the
-    /// whole check exists to catch, on the records an auditor most needs pinned.
+    /// R9-C103 / R9-C128. The identity fields are constants for every hop-0 failure — two
+    /// empty handles and a fold over nothing — so a check that compared only those would
+    /// report a match between unrelated calls, which is why it used to refuse outright.
+    /// Refusing, though, left `submitted_commitment` unexercised on exactly the records an
+    /// auditor investigates, and that field is NOT a constant there: it digests the bytes
+    /// that were submitted, verified or not.
+    ///
+    /// So the weaker binding is established and named, and the stronger one is not claimed.
     #[test]
-    fn retained_evidence_cannot_be_bound_to_a_record_with_no_verified_hop() {
+    fn a_record_with_no_verified_hop_is_bound_by_its_submission_and_says_only_that() {
         let label = ChainLabel::Incomplete {
             hop: 0,
             reason: IncompleteReason::RequestUnverifiable(HttpProfileError::InvalidSignature),
         };
-        let call_a = recon(label.clone(), 0);
+        let call_a = ChainReconstruction::with_authored_submission_identity(
+            label.clone(),
+            Vec::new(),
+            "submitted-call-a".to_owned(),
+        );
         let commitment = EvidenceCommitment::from_reconstruction(&call_a, None, None);
-
-        let expected = HttpProfileError::MalformedEvidence(
-            "a record with no verified hop commits to no call, so retained evidence cannot be bound to it",
+        assert!(
+            !commitment.commits_to_verified_evidence(),
+            "nothing verified, so the identity fields identify no call"
         );
 
-        // Its own reconstruction is refused too: there is nothing to bind either way.
         assert_eq!(
-            verify_retained_evidence(&commitment, &call_a, None, None).unwrap_err(),
-            expected
+            verify_retained_evidence(&commitment, &call_a, None, None)
+                .expect("its own submitted bytes bind"),
+            RetainedCorrespondence::BoundToSubmissionOnly,
+            "the weaker verdict is named rather than reported as a verified call"
         );
 
-        // A DIFFERENT call that failed at hop 0 for the same reason. Every compared
-        // field matches, which is precisely why matching must not be reported.
-        let call_b = recon(label, 0);
+        // A DIFFERENT call that failed at hop 0 for the same reason. Every identity field
+        // matches — that is the archivist substitution — and the submission separates them.
+        let call_b = ChainReconstruction::with_authored_submission_identity(
+            label.clone(),
+            Vec::new(),
+            "submitted-call-b".to_owned(),
+        );
         assert_eq!(
-            EvidenceCommitment::from_reconstruction(&call_b, None, None),
-            commitment,
-            "the two records are indistinguishable — the check cannot separate them"
+            EvidenceCommitment::from_reconstruction(&call_b, None, None).verified_prefix_fields(),
+            commitment.verified_prefix_fields(),
+            "the identity fields cannot separate them — only the submission can"
         );
         assert_eq!(
             verify_retained_evidence(&commitment, &call_b, None, None).unwrap_err(),
-            expected
+            HttpProfileError::MalformedEvidence(
+                "retained submission does not match the commitment"
+            ),
+            "substituting another call's bytes is refused on the one field that is not a constant"
         );
 
-        // The empty chain lands in the same place rather than matching anything.
-        let nothing = recon(
+        // The empty chain is a different submission too, and is refused as one.
+        let nothing = ChainReconstruction::with_authored_submission_identity(
             ChainLabel::Incomplete {
                 hop: 0,
                 reason: IncompleteReason::EmptyChain,
             },
-            0,
+            Vec::new(),
+            "submitted-nothing".to_owned(),
         );
+        assert!(verify_retained_evidence(&commitment, &nothing, None, None).is_err());
+
+        // A statement that carries NO submission identity still binds nothing here: with
+        // no verified prefix either, there is no field left that could bind.
+        let no_identity = commitment.clone().without_submission_identity();
         assert_eq!(
-            verify_retained_evidence(&commitment, &nothing, None, None).unwrap_err(),
-            expected
+            verify_retained_evidence(&no_identity, &call_a, None, None).unwrap_err(),
+            HttpProfileError::MalformedEvidence(
+                "the statement carries no submission identity, so the retained submission cannot be bound to it"
+            ),
         );
 
-        // And a real record is not collateral damage.
+        // And a real record still reports the STRONGER verdict — otherwise the weaker one
+        // would be satisfied by a check that had stopped distinguishing them.
         let real = recon(ChainLabel::Complete, 2);
-        verify_retained_evidence(
-            &EvidenceCommitment::from_reconstruction(&real, None, None),
-            &real,
-            None,
-            None,
-        )
-        .expect("a record with verified hops still binds");
+        assert_eq!(
+            verify_retained_evidence(
+                &EvidenceCommitment::from_reconstruction(&real, None, None),
+                &real,
+                None,
+                None,
+            )
+            .expect("a record with verified hops still binds"),
+            RetainedCorrespondence::BoundToVerifiedCall,
+        );
     }
 
     /// A commitment that names artifact bindings or a verified context is not

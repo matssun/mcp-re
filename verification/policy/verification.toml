@@ -1914,13 +1914,19 @@ evidence = [
 # hop zero matches and whose tail is missing must not correspond, because the label is inside
 # what the commitment covers. The last entry is the SEPARATION: a verified receipt does not
 # imply the evidence is retained, which is the claim this unit does NOT make.
+#
+# The zero-verified-hop control was renamed with #740, and its claim changed with it. It used
+# to assert that such a record binds NOTHING; it now asserts that it binds its SUBMISSION and
+# says only that — the weaker verdict, named, on the records an auditor investigates. A unit
+# naming the old symbol would declare a battery member that no longer exists, which measures
+# nothing and reports green from a lane that ran no test.
 tested_symbols = [
   "lib#scitt::retained::tests::retained_evidence_reproduces_the_commitment",
   "lib#scitt::retained::tests::a_truncated_chain_is_refused_even_though_hop_zero_matches",
   "lib#scitt::retained::tests::a_substituted_unverified_tail_is_refused_even_though_the_verified_prefix_matches",
   "lib#scitt::retained::tests::a_statement_with_no_submission_identity_cannot_bind_retained_bytes",
   "lib#scitt::retained::tests::a_statement_that_identifies_no_submission_binds_nothing",
-  "lib#scitt::retained::tests::retained_evidence_cannot_be_bound_to_a_record_with_no_verified_hop",
+  "lib#scitt::retained::tests::a_record_with_no_verified_hop_is_bound_by_its_submission_and_says_only_that",
   "lib#scitt::retained::tests::absent_bindings_do_not_satisfy_a_commitment_that_names_them",
   "lib#scitt::retained::tests::a_verified_receipt_does_not_imply_the_evidence_is_retained",
   "lib#scitt::commitment::tests::the_two_evidence_roles_are_not_interchangeable",

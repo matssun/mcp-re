@@ -118,6 +118,7 @@ mod trust_pin;
 mod wire;
 
 pub use commitment::EvidenceCommitment;
+pub use commitment::RetainedCorrespondence;
 pub use cose_key::CoseVerificationKey;
 pub use cose_key::P256Point;
 pub use merkle::StatementLeafProfile;

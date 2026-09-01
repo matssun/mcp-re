@@ -16,6 +16,29 @@ use crate::error::HttpProfileError;
 
 use super::EvidenceCommitment;
 
+/// WHAT a correspondence establishes, when it establishes anything.
+///
+/// Two successes rather than one, because the records an auditor investigates most are the
+/// ones where only the weaker of them is available — and reporting them as the stronger, or
+/// as nothing at all, are both wrong. A statement over a chain that broke at hop 0 commits
+/// to two empty handles and a shape digest over zero bytes, which are the same three values
+/// for every unrelated call that failed the same way; it also commits to the SUBMISSION,
+/// which is not. Naming the two apart is what lets the second be checked without the first
+/// being claimed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetainedCorrespondence {
+    /// The retained bytes are the ones this statement was issued over, and the statement
+    /// identifies a verified call: every identity field matched, and so did the submission.
+    BoundToVerifiedCall,
+    /// The statement identifies NO verified call, and the retained submission is the one it
+    /// committed to.
+    ///
+    /// What is bound is *which bytes were submitted*, not *which call ran*. An auditor may
+    /// rely on this to say these are the bytes the issuer saw; it may not rely on it to say
+    /// any hop verified, because none did.
+    BoundToSubmissionOnly,
+}
+
 impl EvidenceCommitment {
     /// Whether `recomputed` — a commitment derived from retained bytes — describes the
     /// same call as this one, or the reason it does not.
@@ -27,13 +50,21 @@ impl EvidenceCommitment {
     /// weaker until somebody remembered to extend it. Here a new field is a compile error
     /// in one place.
     ///
-    /// The `submitted_commitment` clause is deliberately asymmetric — see the comment on
-    /// it below.
-    pub(crate) fn corresponds_to(&self, recomputed: &Self) -> Result<(), HttpProfileError> {
+    /// The `submitted_commitment` clause is deliberately asymmetric — see
+    /// [`submission_corresponds_to`](Self::submission_corresponds_to).
+    pub(crate) fn corresponds_to(
+        &self,
+        recomputed: &Self,
+    ) -> Result<RetainedCorrespondence, HttpProfileError> {
+        // A record with no verified hop commits to no CALL — but it still commits to a
+        // submission, and that field is call-specific where the identity fields are not.
+        // Returning early here is what left the one meaningful binding unexercised on
+        // exactly the records an auditor investigates (R9-C103, R9-C128). The weaker
+        // verdict is reached through the same submission comparison as the stronger one,
+        // so there is no path out of this function that skipped it.
         if !self.commits_to_verified_evidence() || !recomputed.commits_to_verified_evidence() {
-            return Err(HttpProfileError::MalformedEvidence(
-                "a record with no verified hop commits to no call, so retained evidence cannot be bound to it",
-            ));
+            self.submission_corresponds_to(recomputed)?;
+            return Ok(RetainedCorrespondence::BoundToSubmissionOnly);
         }
         if recomputed.request_evidence != self.request_evidence {
             return Err(HttpProfileError::MalformedEvidence(
@@ -65,13 +96,24 @@ impl EvidenceCommitment {
                 "retained verified context does not match the commitment",
             ));
         }
-        // The SUBMISSION identity, which is the only field that covers the hops AFTER the
-        // verified prefix. Every field above is derived from that prefix, so on an
-        // Incomplete record — the records an auditor investigates — the unverified tail
-        // contributes to none of them: an archivist holding a statement about
-        // `[h0, h1, h2-tampered]` could present `[h0, h1, h2']`, and as long as `h2'` fails
-        // at the same hop index for the same reason the label and both digests still match.
-        //
+        // The SUBMISSION identity is the only field that covers the hops AFTER the verified
+        // prefix. Every field above is derived from that prefix, so on an Incomplete record
+        // — the records an auditor investigates — the unverified tail contributes to none
+        // of them: an archivist holding a statement about `[h0, h1, h2-tampered]` could
+        // present `[h0, h1, h2']`, and as long as `h2'` fails at the same hop index for the
+        // same reason the label and both digests still match.
+        self.submission_corresponds_to(recomputed)?;
+        Ok(RetainedCorrespondence::BoundToVerifiedCall)
+    }
+
+    /// Whether `recomputed` carries the SUBMISSION this commitment was issued over.
+    ///
+    /// Split out because both verdicts need it and neither may reach a success without it.
+    /// It is the only comparison that covers the hops after the verified prefix, and on a
+    /// record with no verified prefix at all it is the only one that covers anything: the
+    /// identity fields are then two empty handles and a fold over nothing, identical for
+    /// every call that failed the same way.
+    fn submission_corresponds_to(&self, recomputed: &Self) -> Result<(), HttpProfileError> {
         // A statement that carries no submission identity cannot bind one, whatever the
         // retained side carries, so it is refused rather than reported as bound on the
         // strength of its verified prefix. The condition is on THIS side alone, and
