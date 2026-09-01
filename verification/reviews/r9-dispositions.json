@@ -808,7 +808,11 @@
       "node": "THM-0042 (root)",
       "area": "scitt-retained-evidence",
       "reason": "`submitted_commitment` (`chain/mod.rs:202`) still folds only status, method, target-URI, request body, response body, and headers whose name is exactly `signature`. `signature-input`, `content-digest` and `mcp-re-delegation` are excluded.",
-      "tracking_issue": 740
+      "merged_closure": {
+        "pr": 736,
+        "commit": "eef36b63e1dd9420db13c826e4c1ada9fb66cd33",
+        "note": "closed canonical submitted-hop representation"
+      }
     },
     {
       "cluster": "R9-C075",
@@ -819,7 +823,11 @@
       "node": "THM-0042 (root)",
       "area": "scitt-retained-evidence",
       "reason": "Same digest. The record's own doc still calls it the identity of what was submitted.",
-      "tracking_issue": 740
+      "merged_closure": {
+        "pr": 736,
+        "commit": "eef36b63e1dd9420db13c826e4c1ada9fb66cd33",
+        "note": "closed canonical submitted-hop representation"
+      }
     },
     {
       "cluster": "R9-C076",
