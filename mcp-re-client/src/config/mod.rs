@@ -40,46 +40,6 @@ pub struct ClientConfig {
     pub routes: Vec<RouteConfig>,
 }
 
-/// The local, plain-MCP leg.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LocalConfig {
-    /// Where to accept plain MCP. Loopback unless `allow_non_loopback` says otherwise.
-    pub bind: SocketAddr,
-    /// Admit a NON-loopback bind address.
-    ///
-    /// The local leg is unauthenticated by construction — that is the point of the
-    /// sidecar, the local client speaks ordinary MCP and holds no key. So anything that
-    /// can reach this socket gets requests signed with this client's key, under this
-    /// client's identity, against every configured route. On loopback that set is
-    /// "processes on this host"; on `0.0.0.0` it is the network.
-    ///
-    /// Defaulting to refuse costs an operator one field in the one deployment that
-    /// genuinely fronts this with its own authenticated hop, and costs nothing in the
-    /// far more common one where `0.0.0.0` was copied from the server's config.
-    #[serde(default)]
-    pub allow_non_loopback: bool,
-    /// How long a signed request stays fresh, seconds (RFC 9421 `expires - created`).
-    #[serde(default = "default_request_lifetime")]
-    pub request_lifetime_secs: i64,
-    /// The route to use for a request whose path is not `/route/<id>`, for clients that
-    /// POST to a fixed path. Absent means every request must name its route.
-    #[serde(default)]
-    pub default_route: Option<String>,
-    /// How many local requests may be in flight at once. Beyond it the listener answers
-    /// 503 rather than spawning without bound.
-    #[serde(default = "default_max_in_flight")]
-    pub max_in_flight: usize,
-}
-
-fn default_max_in_flight() -> usize {
-    64
-}
-
-fn default_request_lifetime() -> i64 {
-    60
-}
-
 /// The client's own signing identity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -333,7 +293,12 @@ fn bearer_token(authorization_header: &str) -> Option<&str> {
 }
 
 /// The checks that cannot be expressed in the type.
+mod bind_scope;
+mod local;
 mod validation;
+
+pub use bind_scope::BindScope;
+pub use local::LocalConfig;
 
 impl ClientConfig {
     /// Parse a configuration document.

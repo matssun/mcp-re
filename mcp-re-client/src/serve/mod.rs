@@ -49,6 +49,8 @@ use std::time::Instant;
 
 use mcp_re_client_proxy::ClientProxy;
 
+use crate::config::BindScope;
+use crate::config::ConfigError;
 use crate::config::LocalConfig;
 
 /// One wall-clock bound per phase, not a set of per-syscall timers.
@@ -59,6 +61,7 @@ mod deadlines;
 mod close;
 
 /// What a browser cannot do, stated as two predicates.
+mod accepted_authority;
 mod guards;
 
 /// Reading one local request, and refusing everything this listener does not parse.
@@ -76,6 +79,7 @@ mod exchange;
 /// What a verified outcome looks like to an ordinary MCP client.
 mod render;
 
+pub use accepted_authority::AcceptedHttpAuthority;
 use exchange::handle_connection;
 
 /// The largest request head this listener will read before giving up.
@@ -119,18 +123,47 @@ pub struct ServeContext {
     pub request_lifetime_secs: i64,
     /// Concurrent local requests permitted.
     pub max_in_flight: usize,
-    /// Whether a request may name a `Host` other than loopback.
+    /// Which HTTP authority names may reach the signing key.
     ///
-    /// False on every ordinary deployment: the `Host` check is what a DNS-rebound name
-    /// resolving to `127.0.0.1` cannot pass, and it is the half of the browser guard
-    /// that `Origin` does not cover (a rebound page is SAME-origin, so it sends none).
-    /// Set only where the operator has already declared `local.allow_non_loopback`,
-    /// which is the point at which they have taken the local leg off loopback anyway.
-    pub allow_any_host: bool,
+    /// The half of the browser guard `Origin` does not cover: a DNS-rebound page is
+    /// SAME-origin, so it sends no `Origin`, and the `Host` it must send is the name it
+    /// cannot forge. Derived from the deployment's [`crate::config::BindScope`] and never
+    /// from `local.allow_non_loopback` — permitting an off-host BIND is a different fact
+    /// from widening WHO MAY REACH the listener, and one boolean used to be both.
+    pub accepted_authority: AcceptedHttpAuthority,
     /// Wall clock, Unix seconds.
     pub clock: Box<dyn Fn() -> i64 + Send + Sync>,
     /// Fresh nonce bytes, Base64URL-encoded by the caller of [`next_nonce`].
     pub nonce: Box<dyn Fn() -> String + Send + Sync>,
+}
+
+impl ServeContext {
+    /// The serving context a validated local configuration describes.
+    ///
+    /// Here rather than at the composition root because the authority policy must derive
+    /// from the [`BindScope`] and never from `local.allow_non_loopback`: a root that
+    /// destructured the config to fill both fields could reintroduce the conflation this
+    /// split removed — permitting an off-host BIND is not the same fact as widening WHO
+    /// MAY REACH the listener, and one boolean was both.
+    ///
+    /// `BindScope::decide` refuses rather than assumes. It is total over a config the
+    /// validation boundary already accepted, so the failure arm is unreachable there —
+    /// which is a property of that caller, not of this constructor.
+    pub fn for_local_config(local: &LocalConfig, proxy: ClientProxy) -> Result<Self, ConfigError> {
+        let scope = BindScope::decide(local.bind, local.allow_non_loopback)?;
+        Ok(Self {
+            proxy,
+            default_route: local.default_route.clone(),
+            request_lifetime_secs: local.request_lifetime_secs,
+            max_in_flight: local.max_in_flight,
+            accepted_authority: AcceptedHttpAuthority::for_listener(&scope),
+            clock: Box::new(|| {
+                use mcp_re_host::Clock;
+                mcp_re_host::SystemClock::new().now_unix()
+            }),
+            nonce: Box::new(crate::next_nonce),
+        })
+    }
 }
 
 /// A parsed local request.

@@ -63,7 +63,8 @@ mcp-re-client — the MCP-RE client-side ambassador
 
 The local listener speaks PLAIN MCP. It binds loopback unless the configuration
 declares local.allow_non_loopback, because anything that reaches it gets requests
-signed under this client's identity.";
+signed under this client's identity. That flag permits the BIND only: the listener
+answers to the loopback names and its own address, never to any Host.";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
