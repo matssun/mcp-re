@@ -16,6 +16,7 @@
 use super::bearer_token;
 use super::err;
 use super::ArtifactType;
+use super::BindScope;
 use super::BindingSource;
 use super::ClientConfig;
 use super::ConfigError;
@@ -27,15 +28,10 @@ use super::MAX_MANIFEST_RELOAD_SECS;
 /// Where this client offers its signing key, and the bounds that keep one caller from
 /// holding the sidecar.
 pub(super) fn check_local(local: &LocalConfig) -> Result<(), ConfigError> {
-    if !local.allow_non_loopback && !local.bind.ip().is_loopback() {
-        return Err(err(format!(
-            "local.bind {} is not a loopback address. The local leg is \
-             unauthenticated, so binding it off-host offers this client's signing \
-             key as a service to the network. Set local.allow_non_loopback if that \
-             is genuinely intended.",
-            local.bind
-        )));
-    }
+    // The refusal itself is `BindScope`'s, not a statement here that happens to run
+    // first: a scope in hand means the bind was permitted, so there is no check at this
+    // site that could be deleted to admit an off-host listener.
+    BindScope::decide(local.bind, local.allow_non_loopback)?;
     if local.request_lifetime_secs <= 0 {
         return Err(err("local.request_lifetime_secs must be positive"));
     }

@@ -51,7 +51,7 @@ pub(super) fn handle_connection(mut stream: TcpStream, context: &ServeContext) {
         return;
     };
     let _ = stream.set_nonblocking(false);
-    let request = match read_request(&mut stream, deadline, context.allow_any_host) {
+    let request = match read_request(&mut stream, deadline, &context.accepted_authority) {
         Ok(request) => request,
         Err(status) => {
             let write_deadline = write_budget();

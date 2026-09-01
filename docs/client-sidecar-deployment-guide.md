@@ -104,7 +104,8 @@ anything that can reach the socket gets requests signed with this client's key, 
 this client's identity, against every configured route. On loopback that set is
 "processes on this host"; on `0.0.0.0` it is the network. Set
 `local.allow_non_loopback` only where a deployment genuinely fronts this with its own
-authenticated hop.
+authenticated hop. It permits the BIND and nothing more — the `Host`-authority guard
+below stays on, and the listener answers to its own address rather than to any name.
 
 **A binding names a header rather than restating its value.** An OAuth-DPoP binding
 whose digest covers one token while the `Authorization` header carries another is a
@@ -179,6 +180,36 @@ caller's body be read as another's.
 
 Address a route with `POST /route/<route_id>`, or configure `local.default_route` for
 clients that POST to a fixed path.
+
+### What a local request must carry, and what each refusal means
+
+An ordinary MCP client satisfies all of this without knowing it exists. A web page in the
+user's browser cannot, and that is the whole design: anything reaching this socket gets
+requests signed with the agent's key, under the agent's identity.
+
+| Requirement | Refusal | Why |
+| --- | --- | --- |
+| `POST` | `405` | one method, no negotiation |
+| `Content-Length`, not chunked, at most the body ceiling | `411` / `413` | framing is settled before anything else is read |
+| No `Origin` header at all | `403` | a browser sends one on every cross-origin request and no MCP client sends one. There is no origin that should drive this signing key, so its **presence** is the refusal — it is not compared against an allowlist |
+| `Host` names this listener | `421` | the rebinding half. A page served from `evil.example` whose name resolves to `127.0.0.1` is SAME-origin to the browser, so it sends no `Origin` — the `Host` is what it cannot forge |
+| `Content-Type: application/json` | `415` | a CORS-"simple" `POST` may carry only `text/plain`, form-urlencoded or multipart; requiring JSON removes the no-preflight path entirely and costs a real client nothing |
+
+**Which `Host` values name this listener.** The loopback literals — `127.0.0.1`, `[::1]`,
+`localhost`, with or without the port — always. A listener bound off-host additionally
+answers to **its own address**, and to nothing else.
+
+`local.allow_non_loopback` does **not** widen that set to "any host". It used to: the flag
+was wired straight through, so an operator who bound off-host for a documented reason
+disabled the rebinding guard without being told. Permitting a bind and widening who may
+reach it are two facts, and they are two values now. A deployment fronted by a reverse
+proxy that rewrites `Host` to a name of its own is not currently supported — say so rather
+than reaching for the old flag, because the old behaviour was not support, it was the
+absence of a check.
+
+**What none of this claims.** It decides reachability, not identity. The local leg is
+unauthenticated by construction and nothing here identifies or authenticates *which* local
+process sent an otherwise admissible request, nor is the local leg confidential.
 
 Every reply carries `Mcp-Re-Verified-Kind`:
 

@@ -20,6 +20,7 @@ use std::io::Read;
 use std::net::TcpStream;
 use std::time::Instant;
 
+use super::accepted_authority::AcceptedHttpAuthority;
 use super::deadlines::arm;
 use super::head_fields::check_framing_and_caller_shape;
 use super::head_fields::HeadFields;
@@ -34,7 +35,7 @@ use super::MAX_HEAD_BYTES;
 pub(super) fn read_request(
     stream: &mut TcpStream,
     deadline: Instant,
-    allow_any_host: bool,
+    accepted_authority: &AcceptedHttpAuthority,
 ) -> Result<LocalRequest, u16> {
     let (mut buffer, head_end) = read_head(stream, deadline)?;
     // Bytes past the terminator are the start of this request's body — the chunked
@@ -52,7 +53,7 @@ pub(super) fn read_request(
     }
 
     let head = HeadFields::read(lines)?;
-    let length = check_framing_and_caller_shape(&head, allow_any_host)?;
+    let length = check_framing_and_caller_shape(&head, accepted_authority)?;
     let body = fill_body(stream, deadline, body, length)?;
     Ok(LocalRequest { path, body })
 }
@@ -145,6 +146,17 @@ pub(super) fn find_head_end(buffer: &[u8]) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::BindScope;
+
+    /// The ordinary deployment: a loopback listener, so the loopback literals are the
+    /// whole authority set.
+    fn loopback_only() -> AcceptedHttpAuthority {
+        AcceptedHttpAuthority::for_listener(
+            &BindScope::decide("127.0.0.1:8640".parse().expect("an address"), false)
+                .expect("loopback is admitted"),
+        )
+    }
+
     use super::*;
     use std::io::Write;
     use std::net::TcpListener;
@@ -181,8 +193,12 @@ mod tests {
                 .expect("second chunk");
             std::thread::sleep(Duration::from_millis(50));
         });
-        let request = read_request(&mut server, Instant::now() + Duration::from_secs(5), false)
-            .expect("the request frames");
+        let request = read_request(
+            &mut server,
+            Instant::now() + Duration::from_secs(5),
+            &loopback_only(),
+        )
+        .expect("the request frames");
         assert_eq!(request.path, "/route/r1");
         assert_eq!(request.body, b"{\"ok\":true}");
         writer.join().expect("writer");
@@ -208,7 +224,7 @@ mod tests {
         let status = read_request(
             &mut server,
             Instant::now() + Duration::from_millis(120),
-            false,
+            &loopback_only(),
         )
         .expect_err("the deadline must fire");
         assert_eq!(status, 408);
