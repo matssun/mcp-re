@@ -18,6 +18,7 @@ not an omission to hide.
 |---|---|---|---|
 | client.delegation_policy_seal | V0 | THM-0060 | 0 |
 | client.execution_contract | V0 | THM-0061 | 0 |
+| client.local_ingress_authority | V0 | THM-0091 | 0 |
 | client.proxy_request_correspondence | V0 | THM-0084 | 0 |
 | client.response_acceptance | V0 | THM-0058, THM-0059, THM-0076 | 0 |
 | client.trust_manifest_lifecycle | V0 | THM-0057 | 0 |

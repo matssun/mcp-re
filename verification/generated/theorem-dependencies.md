@@ -267,3 +267,12 @@ graph BT
 graph BT
     THM_0087["THM-0087<br/>A continuation entry is reachable only by the actor the verifier resolved"]
 ```
+
+## Component 7
+
+```mermaid
+graph BT
+    THM_0091["ROOT — THM-0091<br/>The sidecar signs only for a request its ingress policy admitted"]
+    classDef root stroke-width:3px;
+    class THM_0091 root;
+```

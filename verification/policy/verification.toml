@@ -2205,6 +2205,59 @@ tested_symbols = [
   "lib#delegated_trust::manifest_validity::tests::a_hand_assembled_picture_has_no_deadline_to_miss",
 ]
 
+# ADR-MCPRE-059 §28 / issue #743. The sidecar's INNER face — the socket local MCP clients
+# speak plain HTTP to, whose other side signs under this client's identity. It is a real
+# authority that had no `[[unit]]`, and it could not be stated until #753 landed: one
+# operator input governed two independent facts, so "the deployment-selected listener and
+# HTTP-authority policy" named nothing a value held.
+#
+# The composition is in the closure deliberately. `ServeContext::for_local_config` is where
+# the two values meet — the scope decides the bind, and the authority set is derived FROM
+# the scope rather than from the flag — and a claim about the shipped sidecar that did not
+# fingerprint its composition would be a claim about two types nobody wired together.
+[[unit]]
+id = "client.local_ingress_authority"
+class = "V0"
+description = "Which local requests may reach the sidecar's signing path: where the listener is exposed, which HTTP authority names it answers to, and the caller-shape refusals that run before any byte is signed."
+paths = [
+  "mcp-re-client/src/config/bind_scope.rs",
+  "mcp-re-client/src/config/local.rs",
+  "mcp-re-client/src/config/validation.rs",
+  "mcp-re-client/src/serve/accepted_authority.rs",
+  "mcp-re-client/src/serve/head_fields.rs",
+  "mcp-re-client/src/serve/request.rs",
+  "mcp-re-client/src/serve/mod.rs",
+]
+exported_contracts = []
+evidence = ["test://client/local_ingress/admission_policy"]
+# The negative controls carry this unit, and the one that matters most is the conflation
+# itself: an exposed listener must STILL refuse a rebound name. A battery that only proved
+# loopback refuses one would have passed before #753 and after it alike.
+tested_symbols = [
+  # Where the listener is exposed — refused unless the operator declared it, and the
+  # declaration widens the authority set by exactly one address.
+  "lib#config::bind_scope::tests::an_off_host_bind_needs_the_operators_declaration",
+  "lib#config::bind_scope::tests::a_loopback_bind_needs_nothing_and_the_flag_does_not_change_it",
+  "lib#config::bind_scope::tests::an_exposed_bind_names_one_further_authority_and_no_more",
+  # Which names reach it. The second is the control the conflation used to fail.
+  "lib#serve::accepted_authority::tests::a_loopback_listener_answers_to_the_loopback_names_only",
+  "lib#serve::accepted_authority::tests::an_exposed_listener_still_refuses_a_rebound_name",
+  "lib#serve::accepted_authority::tests::an_exposed_listener_answers_to_its_own_address",
+  "lib#serve::accepted_authority::tests::an_exposed_ipv6_listener_answers_to_its_bracketed_literal",
+  # The head guards, their order, and the duplicates they refuse rather than resolve.
+  "lib#serve::head_fields::tests::a_well_formed_local_request_passes_every_guard",
+  "lib#serve::head_fields::tests::a_rebound_host_is_refused_on_an_exposed_listener_too",
+  "lib#serve::head_fields::tests::an_exposed_listener_serves_its_own_authority",
+  "lib#serve::head_fields::tests::framing_is_refused_before_the_caller_shape_guards",
+  "lib#serve::head_fields::tests::the_three_caller_shape_guards_each_refuse_with_their_own_status",
+  "lib#serve::head_fields::tests::a_duplicate_length_or_host_is_refused_rather_than_resolved",
+  # Framing, which the order argument rests on: a head that cannot be framed says nothing
+  # reliable about its headers, so it is settled before the guards read one.
+  "lib#serve::request::tests::the_head_terminator_is_found_at_its_own_end",
+  "lib#serve::request::tests::a_head_split_across_reads_still_frames_a_body_that_arrived_with_it",
+  "lib#serve::request::tests::a_dripping_caller_hits_the_exchange_deadline_instead_of_holding_the_worker",
+]
+
 [[unit]]
 id = "client.proxy_request_correspondence"
 class = "V0"

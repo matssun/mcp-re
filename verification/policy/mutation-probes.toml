@@ -2344,3 +2344,28 @@ weakening = """
 expect_red = [
   "lib#exchange_state::tests::nothing_observed_after_an_approval_is_spent_makes_it_look_unspent",
 ]
+
+[[probe]]
+id = "M85-an-exposed-listener-still-refuses-a-rebound-name"
+unit = "client.local_ingress_authority"
+conjunct = "Permitting an off-host bind widens the admitted names by the listener's own address and by nothing else"
+# The conflation, restored. `allow_non_loopback` was wired straight to `allow_any_host`, so
+# an exposed listener admitted every name — and a page whose name resolves to the listener
+# obtained signed calls under the agent's identity. The weakening is that behaviour written
+# where the derived authority set used to be, and it must not pass.
+path = "mcp-re-client/src/serve/accepted_authority.rs"
+anchor = """
+        let Some(address) = self.exposed else {
+            return false;
+        };
+"""
+weakening = """
+        let Some(address) = self.exposed else {
+            return false;
+        };
+        return true;
+"""
+expect_red = [
+  "lib#serve::accepted_authority::tests::an_exposed_listener_still_refuses_a_rebound_name",
+  "lib#serve::head_fields::tests::a_rebound_host_is_refused_on_an_exposed_listener_too",
+]
