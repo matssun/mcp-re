@@ -15,6 +15,11 @@ import sys
 import tomllib
 from pathlib import Path
 
+from _ecosystems import CARGO
+from _ecosystems import test_project_for
+from _ecosystems import unit_ecosystem
+from _ecosystems import unit_projects
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 POLICY_DIR = REPO_ROOT / "verification" / "policy"
 
@@ -89,17 +94,13 @@ _UNIT_KEYS = {
 _EDGE_KEYS = {"kind", "from", "to", "contract", "sealed", "sealed_by", "rationale"}
 
 def _unit_packages(unit: dict) -> list[str]:
-    """The Cargo packages the unit's declared paths live in, sorted.
+    """The projects the unit's declared paths live in, sorted.
 
-    Shared by the schema check and by `verify-tests`, because "which packages does this
-    unit name" must not have two answers.
+    Shared by the schema check and by `verify-tests`, because "which projects does this unit
+    name" must not have two answers. Which BUILD SYSTEM answers it is `_ecosystems`' —
+    Cargo is one adapter beneath this concept rather than the shape of it (issue #745).
     """
-    heads = {
-        path.split("/", 1)[0]
-        for path in unit["paths"]
-        if "/" in path and (REPO_ROOT / path.split("/", 1)[0] / "Cargo.toml").is_file()
-    }
-    return sorted(heads)
+    return unit_projects(unit)
 
 
 def claims_mutation_evidence(unit: dict) -> bool:
@@ -123,25 +124,16 @@ def claims_test_evidence(unit: dict) -> bool:
 
 
 def test_package_for(unit: dict) -> str | None:
-    """The single Cargo package this unit's battery runs in, or None if there is none.
+    """The single project this unit's battery runs in, or None if there is none.
 
-    One answer, shared by the lane (which runs the battery) and the fingerprint (which
-    records which package was measured). Two implementations of "where do these tests live"
-    would let the recorded package and the executed package disagree.
+    Delegates to `_ecosystems.test_project_for`, which is where the fail-closed cases live:
+    a closure spanning two ecosystems, a source path outside every project of its own
+    ecosystem, and several projects with no `test_package` naming one of them.
 
-    Fail-closed on a path outside every Cargo package: such a unit has no package the lane
-    could run, and answering with one of the others would name a package that does not
-    cover its source.
+    The name is kept because the schema field is `test_package` and the two must read as
+    one concept; what changed is that a package is no longer necessarily a Cargo one.
     """
-    for path in unit["paths"]:
-        head = path.split("/", 1)[0]
-        if "/" not in path or not (REPO_ROOT / head / "Cargo.toml").is_file():
-            return None
-    packages = _unit_packages(unit)
-    if len(packages) == 1:
-        return packages[0]
-    declared = unit.get("test_package")
-    return declared if declared in packages else None
+    return test_project_for(unit)
 
 
 def _module_candidates(package: str, symbol_path: str) -> list[str]:
@@ -171,7 +163,7 @@ def _validate_in_crate_selectors(uwhere: str, unit: dict) -> None:
     no fingerprint moving — the same false-freshness shape as an unmeasured implementation.
     """
     package = test_package_for(unit)
-    if package is None:
+    if package is None or unit_ecosystem(unit) is not CARGO:
         return
     declared = set(unit["paths"])
     for symbol in unit.get("tested_symbols", []):

@@ -179,13 +179,16 @@ def test_in_crate_selectors_are_covered_by_the_units_own_paths():
 
 
 def test_the_test_lane_instrument_is_part_of_the_evidence_identity():
-    """The meaning of a `doc#` selector, and of `test_package`, is decided by the lane's
-    own code. Evidence whose measuring instrument changed is evidence whose meaning
-    changed — the same argument that puts the toolchain in the fingerprint."""
+    """The meaning of a `doc#` selector, of `test_package`, and of which ecosystem runs the
+    battery at all is decided by the lane's own code. Evidence whose measuring instrument
+    changed is evidence whose meaning changed — the same argument that puts the toolchain in
+    the fingerprint, and the reason #745's adapter registry joined the set rather than
+    sitting beside it unmeasured."""
     lane = components("http_profile.verifier_results")["test_lane_identity"]
     assert set(lane) == {
         "tools/verification/verify-tests",
         "tools/verification/_manifest.py",
+        "tools/verification/_ecosystems.py",
     }
     assert all(digest.startswith("sha256:") for digest in lane.values())
 

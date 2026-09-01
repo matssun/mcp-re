@@ -142,6 +142,7 @@ stage_static() {
     && python3 tools/verification/test_attest.py \
     && python3 tools/verification/test_verus_lane.py \
     && python3 tools/verification/test_test_lane.py \
+    && python3 tools/verification/test_ecosystems.py \
     && python3 tools/verification/test_measured_inputs.py \
     && python3 tools/verification/test_escape_hatches.py \
     && python3 tools/verification/test_theorems.py \

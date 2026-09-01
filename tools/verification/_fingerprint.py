@@ -87,9 +87,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import tomllib
 from functools import lru_cache
 
+from _ecosystems import build_configuration_patterns
+from _ecosystems import formal_source_patterns
+from _ecosystems import unit_projects
 from _manifest import (
     claims_mutation_evidence,
     claims_test_evidence,
@@ -132,18 +136,14 @@ def _digest_paths(patterns: list[str]) -> dict[str, str]:
 
 
 def _unit_crates(unit: dict) -> list[str]:
-    """The workspace crates the unit's declared paths live in.
+    """The projects the unit's declared paths live in.
 
     Derived from the paths rather than configured, for the reason `verify-verus` derives
-    its `-p` argument the same way: a unit whose source moves to another crate must not keep
-    fingerprinting the crate it left.
+    its `-p` argument the same way: a unit whose source moves to another project must not
+    keep fingerprinting the one it left. Which build system decides what a project IS is
+    `_ecosystems`' (issue #745), so this is no longer a Cargo-only answer.
     """
-    crates = {
-        path.split("/", 1)[0]
-        for path in unit["paths"]
-        if "/" in path and (REPO_ROOT / path.split("/", 1)[0] / "Cargo.toml").is_file()
-    }
-    return sorted(crates)
+    return unit_projects(unit)
 
 
 def _path_dependencies(crate: str, seen: set[str]) -> set[str]:
@@ -174,10 +174,63 @@ def _crate_sources(crates: list[str]) -> dict[str, str]:
     return _digest_paths([f"{crate}/src/**/*.rs" for crate in crates])
 
 
-def _build_configuration(crates: list[str]) -> dict[str, str]:
-    return _digest_paths(
-        list(WORKSPACE_BUILD_INPUTS) + [f"{crate}/Cargo.toml" for crate in crates]
+def _formal_sources(unit: dict) -> dict[str, str]:
+    """Whole-project sources for a unit whose evidence comes from a prover run.
+
+    Empty where the ecosystem has no prover lane, which is what keeps a V1/V3 declaration
+    over Python or TypeScript source from deriving a fingerprint that pretends a whole-
+    project measurement happened. The class check that refuses such a unit outright is the
+    schema's; this is the half that would otherwise measure it as if it had one.
+    """
+    return _digest_tracked(formal_source_patterns(unit))
+
+
+@lru_cache(maxsize=1)
+def _tracked_files() -> frozenset[str]:
+    """Every path git tracks, as repo-relative POSIX strings.
+
+    A fingerprint describes the COMMITTED tree, and every explicitly declared input already
+    is one. The glob-driven inputs are not: `sdk/python/uv.lock` is `.gitignore`d as a
+    maturin by-product, so a developer who has run the import hook has a file on disk that a
+    CI checkout does not — and digesting it would make the same commit fingerprint two ways
+    depending on whose machine looked. That is not a stricter measurement; it is a
+    measurement of something nobody reviewed.
+
+    Git is already a platform premise here — `render-r9-dispositions --check` establishes
+    merge ancestry the same way — and the call is made once per process.
+    """
+    proc = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=REPO_ROOT,
+        stdout=subprocess.PIPE,
+        text=True,
+        check=False,
     )
+    if proc.returncode != 0:
+        # No git, no answer. Returning "everything is tracked" would silently restore the
+        # machine-dependent digest this exists to remove.
+        raise RuntimeError("git ls-files failed; the fingerprint cannot describe the tree")
+    return frozenset(entry for entry in proc.stdout.split("\0") if entry)
+
+
+def _digest_tracked(patterns: list[str]) -> dict[str, str]:
+    """`_digest_paths`, restricted to what git tracks — for the glob-driven inputs."""
+    tracked = _tracked_files()
+    return {
+        path: digest for path, digest in _digest_paths(patterns).items() if path in tracked
+    }
+
+
+def _build_configuration(unit: dict) -> dict[str, str]:
+    """The dependency and configuration inputs that decide what this unit's source IS.
+
+    Ecosystem-supplied (`build_configuration_patterns`), because a Python project's
+    `pyproject.toml` and `uv.lock` bear exactly the weight a crate's `Cargo.toml` and the
+    workspace `Cargo.lock` bear: a dependency swap or a lockfile bump alters what a claim is
+    about without touching a declared source line. Absent alternatives — `poetry.lock` where
+    a project uses `uv` — contribute nothing rather than an error.
+    """
+    return _digest_tracked(build_configuration_patterns(unit))
 
 
 def _toolchain_identity(toolchains: dict) -> dict:
@@ -294,6 +347,11 @@ def _test_sources(unit: dict) -> dict[str, str]:
 TEST_LANE_INPUTS = (
     "tools/verification/verify-tests",
     "tools/verification/_manifest.py",
+    # The adapter registry: which ecosystem a path belongs to, which project runs the
+    # battery, and how a selected result is read. It decides what a symbol NAMES, so a
+    # change to it changes what the recorded evidence means — the same argument that put
+    # the lane itself here (issue #745).
+    "tools/verification/_ecosystems.py",
 )
 
 
@@ -388,7 +446,7 @@ def fingerprint_unit(
     # under an attestation that still derives FRESH.
     source_inputs = _digest_paths(unit["paths"])
     if formal:
-        source_inputs |= _crate_sources(crates)
+        source_inputs |= _formal_sources(unit)
     proof_dependencies: dict[str, str] = {}
     if formal:
         closure: set[str] = set()
@@ -403,7 +461,7 @@ def fingerprint_unit(
         "generated_inputs": _digest_paths(
             [p for p in unit["paths"] if p.startswith(GENERATED_ROOT)]
         ),
-        "build_configuration": _build_configuration(crates),
+        "build_configuration": _build_configuration(unit),
         "enabled_features": sorted(unit.get("features", [])),
         # The theorems the unit claims, by prover-reported name. In the fingerprint
         # because deleting one is a reduction in evidence: the source digest would move

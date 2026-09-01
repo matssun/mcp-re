@@ -21,6 +21,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _ecosystems import CARGO
+from _ecosystems import test_argv
+from _ecosystems import valid_target
 from _load_tool import load_tool  # noqa: E402
 
 # The lane is an extensionless script, so it is loaded by path rather than imported.
@@ -40,7 +43,7 @@ def run_with(monkey_output: str, returncode: int = 0):
     original = subprocess.run
     subprocess.run = lambda *a, **k: FakeProc(monkey_output, returncode)  # type: ignore[assignment]
     try:
-        return lane.run_selection("crate", "lib", ["a::tests::one", "a::tests::two"])
+        return lane.run_selection(CARGO, "crate", "lib", ["a::tests::one", "a::tests::two"])
     finally:
         subprocess.run = original  # type: ignore[assignment]
 
@@ -155,13 +158,13 @@ def test_a_nonzero_exit_is_not_a_pass_even_when_every_line_said_ok():
 def test_a_symbol_without_a_target_is_malformed_not_defaulted():
     """Defaulting the target would let a test that moved between the lib and an
     integration target keep reporting under the one it left."""
-    grouped, malformed = lane.group_by_target(["a::tests::one", "lib#a::tests::two"])
+    grouped, malformed = lane.group_by_target(CARGO, ["a::tests::one", "lib#a::tests::two"])
     assert malformed == ["a::tests::one"]
     assert grouped == {"lib": ["a::tests::two"]}
 
 
 def test_an_unknown_target_form_is_malformed():
-    grouped, malformed = lane.group_by_target(["bench#a", "tests/#b", "examples/x#c"])
+    grouped, malformed = lane.group_by_target(CARGO, ["bench#a", "tests/#b", "examples/x#c"])
     assert sorted(malformed) == ["bench#a", "examples/x#c", "tests/#b"]
     assert grouped == {}
 
@@ -181,18 +184,24 @@ def test_a_doctest_item_matches_its_own_doctests_and_nothing_else():
 
 
 def test_targets_are_selected_by_their_own_cargo_flag():
-    assert lane.target_argv("doc") == ["--doc"]
-    assert lane.target_argv("lib") == ["--lib"]
-    assert lane.target_argv("tests/dispatch_test") == ["--test", "dispatch_test"]
-    assert lane.target_argv("tests/a/b") is None
-    assert lane.target_argv("") is None
+    """Which flag selects which target is the ECOSYSTEM's answer now (#745), and the
+    Cargo answer is unchanged: `lib`, `doc` and an open-ended `tests/<name>` family, with a
+    nested or empty name refused rather than guessed at."""
+    assert test_argv(CARGO, "p", "doc", ["a"])[:6] == ["cargo", "test", "-p", "p", "--doc", "--"]
+    assert test_argv(CARGO, "p", "lib", ["a"])[:5] == ["cargo", "test", "-p", "p", "--lib"]
+    assert test_argv(CARGO, "p", "tests/dispatch_test", ["a"])[4:6] == [
+        "--test",
+        "dispatch_test",
+    ]
+    assert not valid_target(CARGO, "tests/a/b")
+    assert not valid_target(CARGO, "")
 
 
 def test_a_battery_spanning_two_targets_is_two_selections():
     """One filter across two targets would let a name that exists in only one of them
     look satisfied by the other."""
     grouped, malformed = lane.group_by_target(
-        ["lib#policy::tests::window", "tests/proof_path_test#stale_window_fails_closed"]
+        CARGO, ["lib#policy::tests::window", "tests/proof_path_test#stale_window_fails_closed"]
     )
     assert not malformed
     assert set(grouped) == {"lib", "tests/proof_path_test"}
@@ -280,7 +289,13 @@ def test_only_units_claiming_test_evidence_are_in_scope():
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
+        # Only this module's controls: `test_argv` is an imported adapter helper whose name
+        # begins the same way, and calling it would be a runner bug reported as a failure.
+        if (
+            name.startswith("test_")
+            and callable(fn)
+            and getattr(fn, "__module__", None) == "__main__"
+        ):
             try:
                 fn()
                 print(f"ok   {name}")
