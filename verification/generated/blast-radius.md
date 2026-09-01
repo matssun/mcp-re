@@ -63,7 +63,7 @@ attestations this view cannot see.
 | unit://proxy.dispatch_commitment | source, contracts or evidence | THM-0045, THM-0051, THM-0052, THM-0074 | _no consumer_ |
 | unit://proxy.ed25519_public_key | source, contracts or evidence | THM-0025 | proxy.credential_key_correspondence (COMPILE_DEPENDENCY) |
 | unit://proxy.exchange_lifecycle | source, contracts or evidence | THM-0043, THM-0044, THM-0074, THM-0078 | _no consumer_ |
-| unit://proxy.kms_endpoint_authority | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://proxy.kms_endpoint_authority | source, contracts or evidence | THM-0089 | _no consumer_ |
 | unit://proxy.mechanism_verified_credential | source, contracts or evidence | THM-0030 | proxy.authenticated_relationship_peer (CONTRACT_CONSUMES), proxy.credential_currency (CONTRACT_CONSUMES) |
 | unit://proxy.online_ocsp_reachability | source, contracts or evidence | THM-0013 | _no consumer_ |
 | unit://proxy.outbound_destination | source, contracts or evidence | _no theorem_ | _no consumer_ |
@@ -178,6 +178,7 @@ attestations this view cannot see.
 | THM-0086 | statement, consequence, scope or review requirement | specification review | THM-0077 |
 | THM-0087 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0088 | statement, consequence, scope or review requirement | specification review | THM-0078 |
+| THM-0089 | statement, consequence, scope or review requirement | specification review | THM-0077 |
 
 ## Assumptions
 
