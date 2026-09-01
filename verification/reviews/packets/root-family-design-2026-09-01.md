@@ -25,7 +25,7 @@ Node names `D1`…`D10` are handles for this review and appear nowhere else.
 | # | area | altitude |
 |---|---|---|
 | 1 | Replay tier fidelity | **EXISTING_ROOT_EXTENSION** — D1a under THM-0077 |
-| 1 | Continuation tier fidelity | **EXISTING_ROOT_EXTENSION** — D1b under THM-0077 |
+| 1 | Continuation tier fidelity | **EXISTING_ROOT_EXTENSION** — D1b′ under THM-0077 (D1b superseded by measurement, 2026-09-01) |
 | 1 | Replay establishment fail-closed | **EXISTING_ROOT_EXTENSION** — D2a under THM-0074 |
 | 1 | Continuation establishment fail-closed | **EXISTING_ROOT_EXTENSION** — D2b under THM-0074 |
 | 2 | Retained-evidence correspondence | **REOPENED_BRANCH** — THM-0042. No node minted |
@@ -65,7 +65,7 @@ that mechanism's reported success establishes   ← external fact. Needs a narro
 its advertised durable effect                      mechanism-specific premise.
 ```
 
-D1a/D1b claim only the first. The second is a separate obligation, and it is where Redis and
+D1a/D1b′ claim only the first. The second is a separate obligation, and it is where Redis and
 etcd stop being interchangeable.
 
 ### D1a — the materialized replay tier is the selected replay tier
@@ -92,11 +92,74 @@ etcd stop being interchangeable.
   radius the claim does not use.
 - **R9 disposed.** None. Closes an omission the boundary-action enumeration found.
 
-### D1b — the materialized continuation tier is the selected continuation tier
+### D1b — SUPERSEDED BY MEASUREMENT, 2026-09-01
 
-`EXISTING_ROOT_EXTENSION` — child of **THM-0077**. As D1a, owned by
-`mcp-re-proxy/src/continuation_store/`, with `redis_continuation_store.rs` as the shared-tier
-arm. Separate node because separate owner; identical shape, no shared representation.
+> **This node as originally written is withdrawn.** It read "as D1a … identical shape",
+> carrying D1a's clause that a tier which cannot be established prevents startup. The
+> continuation capability is **opportunistic** and that is deliberate:
+> `serving_capabilities::mrtr_continuation_store` states the rule in as many words —
+> *explicitly requested and unavailable => refuse startup; opportunistic and unavailable =>
+> announce the absence, and verify the dependent leg still fails closed without it* —
+> because refusing startup for its absence would make every single-store deployment
+> unstartable. No flag asks for the store; it appears when a shared Redis happens to be
+> configured.
+>
+> Copying D1a's shape onto a sibling with a different availability model is the error the
+> two-leaves split was supposed to prevent, and it survived one layer deeper than the split
+> did. Recorded rather than edited away: a design node that was wrong is evidence about how
+> the packet was built.
+
+### D1b′ — continuation capability materialization is honest
+
+`EXISTING_ROOT_EXTENSION` — child of **THM-0077**. Owner ruling of 2026-09-01.
+
+- **Proposition.** If the continuation correlation capability is available, that capability
+  is what the runtime advertises and holds; if it is unavailable, the absence is explicit
+  and no weaker or node-local substitute is silently installed.
+- **Why this is the honest form.** Absence itself is permitted — that is what
+  *opportunistic* means. **Silent weakening is not.** The claim is about the agreement
+  between what a deployment holds and what it says it holds, which is THM-0077's subject;
+  it is not about a startup refusal, which the code does not perform and must not be made
+  to perform.
+- **Owner.** `mcp-re-proxy/src/continuation_store/` with the establishment seam in
+  `serving_capabilities::mrtr_continuation_store`, which is where the OFF posture is minted
+  and announced.
+- **Assumptions.** None. It is a configuration projection, as D1a is.
+- **Status.** Not yet written. THM-0087 is **not** this node — see below.
+
+### D2b′ — a leg that requires correlation does not proceed unbound
+
+`EXISTING_ROOT_EXTENSION` — child of **THM-0074**, replacing the continuation half of
+D2a/D2b as originally stated.
+
+- **Proposition.** A request or answer leg that requires continuation correlation does not
+  proceed unbound when the required capability or state is absent or unavailable.
+- **Why not the original.** The original D2b asked what a *startup* refusal establishes.
+  The honest question for an opportunistic capability is what the **binding** refusal
+  establishes when the store is absent: the answer leg finds no retained bases and the pure
+  dispatcher fails closed `mcp-re.continuation_binding_failed`, which is a refusal to
+  proceed unbound rather than a refusal to start.
+- **Status.** Not yet written.
+
+### THM-0087 is not D1b, and its position is measured rather than assumed
+
+THM-0087 — *a continuation entry is reachable only by the actor the verifier resolved, and a
+read that does not admit an answer leg does not consume it* — was registered under THM-0077
+in #755 as if it were D1b. It is not: THM-0077 is deployment-posture safety and THM-0087 is a
+runtime lookup relation over a running store. The edge was removed by the same ruling.
+
+Its lowest honest position, measured:
+
+| candidate | verdict |
+|---|---|
+| THM-0009 / THM-0010 | **eliminated by closure.** Both are `mcp-re-http-profile` claims over the PRESENTED inputs, neither owner's closure names a proxy path, so neither reads the store — and both stay true whoever fetched the bases. |
+| THM-0074 | **survives.** Its consequence forbids reaching the backend "by having some other exchange's establishment succeed", and a store keyed on anything but the verifier-resolved actor permits exactly that on the MRT answer leg: the handles WOULD match the presented inputs, THM-0010 would hold, and actor B would dispatch on actor A's establishment. |
+
+One candidate survives, so no owner return is owed on the placement. **The edge is not written
+yet**, and the reason is stated rather than hidden: THM-0087 is unreviewed, and attaching an
+unreviewed premise to a ratified root would make THM-0074 unestablished — leaving
+`docs/spec/security-boundary.md` §2 claiming a root that does not establish. The edge is owed
+once THM-0087 carries an owner specification review.
 
 ### D2a / D2b — a store that cannot establish required state prevents dispatch
 
@@ -438,7 +501,7 @@ while being none.
 3. **Register the existing-authority units** — `outbound_fetch`, `kms_endpoint_policy`,
    `replay_plane`, `continuation_store`, `transparency/durability`, `mcp-re-client/src/serve`.
    Mechanical; the owners already exist.
-4. **Close D1a/D1b projection and D2a/D2b fail-closed.**
+4. **Close D1a/D1b′ projection and D2a/D2b′ fail-closed.**
 5. **Repair the retention reservation state machine** (typed states, production release path)
    and close D4's relations.
 6. **Split `BindScope` from `AcceptedHttpAuthority`**, then register D6.

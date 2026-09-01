@@ -3375,11 +3375,17 @@ depends_on = [
   "THM-0073",
   "THM-0064",
   "THM-0066",
-  # ADR-MCPRE-059 §28 / #744: the two store-materialization leaves. Two, because
-  # `replay_plane` and `continuation_store` are sibling authorities and neither owns the
-  # other's facts — the root may quantify over both, a leaf may not.
+  # ADR-MCPRE-059 §28 / #744: the replay materialization leaf, D1a.
+  #
+  # THM-0087 IS DELIBERATELY NOT HERE. It was added beside THM-0086 as if the two leaves
+  # were the same shape, and they are not: THM-0077 is about DEPLOYMENT POSTURE — the
+  # capability a runtime holds is the one the validated configuration selected — while
+  # THM-0087 states an actor-scoped, non-consuming lookup relation over a running store.
+  # Those are different propositions, and an edge between them would make the root's
+  # dependency closure claim support it does not have. Owner ruling of 2026-09-01. The
+  # continuation posture claim THM-0077 actually needs is D1b′, which is not yet written:
+  # see the design packet.
   "THM-0086",
-  "THM-0087",
 ]
 
 [[theorem]]
@@ -3758,6 +3764,32 @@ review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.replay_materialization"]
 depends_on = []
 
+# ADR-MCPRE-059 §28 / #744. MEASURED POSITION, NOT YET AN EDGE — owner ruling of
+# 2026-09-01, which directed that this theorem's lowest honest position be measured and
+# that no edge be guessed merely to keep it rooted.
+#
+# Measurement. Two candidate authorities were examined and one survives:
+#
+#   * THM-0009 / THM-0010 — ELIMINATED BY CLOSURE, not by preference. Both are
+#     `mcp-re-http-profile` claims over the PRESENTED inputs: THM-0010 says an accepted
+#     continuation's handles are the labeled digests of what was presented, THM-0009 says
+#     the check ran. Neither owner's closure names a proxy path, so neither reads the
+#     correlation store, and both propositions stay true whoever fetched the bases.
+#   * THM-0074 — SURVIVES. Its consequence forbids reaching the backend "by having some
+#     other exchange's establishment succeed", and on the MRT answer leg that is exactly
+#     what a store keyed on anything but the verifier-resolved actor would permit: the
+#     handles WOULD match the presented inputs, THM-0010 would hold, and actor B would
+#     dispatch on actor A's establishment.
+#
+# So the edge belongs under THM-0074 and it is not written here yet. THM-0087 is
+# UNREVIEWED, and attaching an unreviewed premise to a ratified root would make THM-0074
+# unestablished — leaving `docs/spec/security-boundary.md` §2 claiming a root that does
+# not establish, which the same ruling forbids. The edge is owed once this theorem carries
+# an owner specification review; recording the measurement here is what keeps it from
+# being lost in the meantime.
+#
+# It is NOT D1b. That proposition is D1b′ (continuation capability materialization is
+# honest), it belongs under THM-0077, and it is not written yet — see the design packet.
 [[theorem]]
 id = "THM-0087"
 title = "A continuation entry is reachable only by the actor the verifier resolved"

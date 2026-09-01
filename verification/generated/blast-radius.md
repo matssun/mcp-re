@@ -175,7 +175,7 @@ attestations this view cannot see.
 | THM-0084 | statement, consequence, scope or review requirement | specification review | THM-0076 |
 | THM-0085 | statement, consequence, scope or review requirement | specification review | THM-0071 |
 | THM-0086 | statement, consequence, scope or review requirement | specification review | THM-0077 |
-| THM-0087 | statement, consequence, scope or review requirement | specification review | THM-0077 |
+| THM-0087 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 
 ## Assumptions
 

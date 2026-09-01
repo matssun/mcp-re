@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:9fe769a6f49b2d1628059803ee4096c9de6800af4df4ec47a1434e6ce6da6f2d",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0086",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-09-01, given in the ADR-MCPRE-059 §28 closure campaign after the measurement recorded on issue #744. The ruling reads: 'I APPROVE the current THM-0086 specification statement as D1a, provided its statement/consequence/scope are unchanged from #755. Record the owner specification review against its exact fingerprint.' They are unchanged: this record was written over the text merged at commit bf1431b9 with no edit, and the fingerprint below is the one `review --fingerprint THM-0086` prints for it. The approved proposition is the replay one — selected replay tier -> materialized replay tier, with no weaker substitution. `theorem_dependencies` is empty because the theorem is a leaf, so this approval is over its own claim text alone and cannot inherit a premise the owner did not read. The sibling THM-0087 was NOT approved by the same ruling and is deliberately left unreviewed.",
+  "reviewed_fingerprint": "sha256:4f81d389f7369f85fc99c5f609f070a6761d2e0cd6416a471ca536eb53a6b2e9",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0086"
+}
