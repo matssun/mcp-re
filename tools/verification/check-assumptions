@@ -464,14 +464,40 @@ def main() -> int:
         print(f"  [{status}] {path}:{lineno}  {name}  ({where})  |  {text}")
 
     if unregistered:
+        # R9-C120. The remedy depends on whether the site HAS an owning unit, and naming
+        # the wrong one is worse than naming none: a site in a file no `[[unit]]` declares
+        # cannot be registered at all — `scope` names units, and there is no unit to name —
+        # so telling its author to add an assumption scoped to "this unit" describes a step
+        # that does not exist. The first move there is to declare the file.
+        unowned = [hit for hit in unregistered if not hit[4]]
+        owned = [hit for hit in unregistered if hit[4]]
         print(
             "\nFAIL: unregistered proof escape hatch. Every one of these moves an "
-            "obligation\nout of the proof and into the trusted computing base, and "
-            "registration is per\nUNIT: an assumption trusted in one unit does not excuse "
-            "the same mechanism in\nanother. Register it in "
-            "verification/policy/assumptions.toml with a justification,\nan owner, and a "
-            "`scope` naming this unit — or discharge it. A green proof created\nby an "
-            "unregistered assumption is not MCP-RE evidence.",
+            "obligation\nout of the proof and into the trusted computing base.",
+            file=sys.stderr,
+        )
+        if owned:
+            print(
+                "\nRegistration is per UNIT: an assumption trusted in one unit does not "
+                "excuse the\nsame mechanism in another. Register each of these in "
+                "verification/policy/assumptions.toml\nwith a justification, an owner, and "
+                "a `scope` naming the unit that declares the file —\nor discharge it:",
+                file=sys.stderr,
+            )
+            for path, lineno, name, _text, owners in owned:
+                print(f"  {path}:{lineno}  {name}  in {', '.join(sorted(owners))}", file=sys.stderr)
+        if unowned:
+            print(
+                "\nThese sit in files NO unit declares, so they cannot be registered at "
+                "all: `scope`\nnames units, and there is no unit to name. Declare the file "
+                "in the `[[unit]]` whose\nauthority it belongs to first — registering the "
+                "mechanism is the step after that,\nnot instead of it:",
+                file=sys.stderr,
+            )
+            for path, lineno, name, _text, _owners in unowned:
+                print(f"  {path}:{lineno}  {name}  (no unit declares this file)", file=sys.stderr)
+        print(
+            "\nA green proof created by an unregistered assumption is not MCP-RE evidence.",
             file=sys.stderr,
         )
         return 1
