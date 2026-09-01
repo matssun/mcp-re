@@ -3,7 +3,8 @@
   "source": "work/security-audit-2026-08-11-r9 (gitignored) — 131 clusters, Stage 3 never run",
   "re_derived_against": "main @ 8551061c",
   "re_derived_on": "2026-08-31",
-  "status": "NON-NORMATIVE measurement. A disposition is evidence about the tree, not a work item.",
+  "record_kind": "measurement",
+  "normativity": "NON-NORMATIVE measurement. A disposition is evidence about the tree, not a work item.",
   "dispositions": [
     {
       "cluster": "R9-C001",
@@ -13,7 +14,8 @@
       "theorem": "THM-0074",
       "node": "THM-0074 / kms_endpoint_policy",
       "area": "credential-acquisition",
-      "reason": "`kms_endpoint_policy::kms_endpoint_authority` is now the single decision, applied at GCP (`gcp_kms_keysource.rs:611`), AWS-KMS, STS and the config boundary. The three-flag asymmetry is gone."
+      "reason": "`kms_endpoint_policy::kms_endpoint_authority` is now the single decision, applied at GCP (`gcp_kms_keysource.rs:611`), AWS-KMS, STS and the config boundary. The three-flag asymmetry is gone.",
+      "tracking_issue": 742
     },
     {
       "cluster": "R9-C002",
@@ -23,7 +25,8 @@
       "theorem": null,
       "node": "assurance platform (no THM)",
       "area": "assurance-platform",
-      "reason": "`check-assumptions:312` still folds comment lines into the attribute block and `SPECIFICATION_TEXT` (`:138`) is still a bare `\\bensures\\b|\\brequires\\b` searched over it at `:360`. A doc comment still satisfies the deleted-specification detector."
+      "reason": "`check-assumptions:312` still folds comment lines into the attribute block and `SPECIFICATION_TEXT` (`:138`) is still a bare `\\bensures\\b|\\brequires\\b` searched over it at `:360`. A doc comment still satisfies the deleted-specification detector.",
+      "tracking_issue": 739
     },
     {
       "cluster": "R9-C003",
@@ -43,7 +46,8 @@
       "theorem": "THM-0045",
       "node": "THM-0045 / proxy.dispatch_commitment",
       "area": "retention-marker",
-      "reason": "`commit_to_dispatch` reserves last, closing the `admit()` ordering — but `dispatch()` still returns `NotDispatched` for the in-flight bound (`http_inner:486`) and all-ejected (`:495`), refused at `inner_plane.rs:99/151` after the reservation, dropping the disposition with no release."
+      "reason": "`commit_to_dispatch` reserves last, closing the `admit()` ordering — but `dispatch()` still returns `NotDispatched` for the in-flight bound (`http_inner:486`) and all-ejected (`:495`), refused at `inner_plane.rs:99/151` after the reservation, dropping the disposition with no release.",
+      "tracking_issue": 741
     },
     {
       "cluster": "R9-C005",
@@ -53,7 +57,8 @@
       "theorem": null,
       "node": "assurance platform",
       "area": "assurance-platform",
-      "reason": "`trust-boundaries.toml` appears in no `_fingerprint.py` component. Raising or deleting `max_class_without_assumption` still invalidates nothing."
+      "reason": "`trust-boundaries.toml` appears in no `_fingerprint.py` component. Raising or deleting `max_class_without_assumption` still invalidates nothing.",
+      "tracking_issue": 739
     },
     {
       "cluster": "R9-C006",
@@ -63,7 +68,12 @@
       "theorem": "THM-0083",
       "node": "THM-0083 / http_profile.request_envelope",
       "area": "serving-body-shape",
-      "reason": "`reject_unrepresentable_json` still runs inside `body_boundary::prepare` at `forward_body_stage`, i.e. after the nonce burn, after continuation retirement, after `request.accepted`."
+      "reason": "`reject_unrepresentable_json` still runs inside `body_boundary::prepare` at `forward_body_stage`, i.e. after the nonce burn, after continuation retirement, after `request.accepted`.",
+      "merged_closure": {
+        "pr": 733,
+        "commit": "e6496173fc7727fe674a93cc4cdad82b185ea64d",
+        "note": "representability decided pre-admission"
+      }
     },
     {
       "cluster": "R9-C007",
@@ -73,7 +83,12 @@
       "theorem": "THM-0083",
       "node": "THM-0083",
       "area": "serving-body-shape",
-      "reason": "Same site. `validate_request_envelope` does not call it; the sibling shape refusal is still one region late and still `Refusal::after_admission(e, 500)`."
+      "reason": "Same site. `validate_request_envelope` does not call it; the sibling shape refusal is still one region late and still `Refusal::after_admission(e, 500)`.",
+      "merged_closure": {
+        "pr": 733,
+        "commit": "e6496173fc7727fe674a93cc4cdad82b185ea64d",
+        "note": "representability decided pre-admission"
+      }
     },
     {
       "cluster": "R9-C008",
@@ -103,7 +118,8 @@
       "theorem": null,
       "node": "no THM (SDK unrooted)",
       "area": "sdk-client-exchange",
-      "reason": "`_read_bounded` checks the deadline only between `response.read(want)` calls with `want` up to 64 KiB; `http.client` fills to `amt`. The docstring's cap claim is still false."
+      "reason": "`_read_bounded` checks the deadline only between `response.read(want)` calls with `want` up to 64 KiB; `http.client` fills to `amt`. The docstring's cap claim is still false.",
+      "tracking_issue": 746
     },
     {
       "cluster": "R9-C011",
@@ -113,7 +129,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "sdk-client-exchange",
-      "reason": "Same defect, same lines."
+      "reason": "Same defect, same lines.",
+      "tracking_issue": 746
     },
     {
       "cluster": "R9-C012",
@@ -123,7 +140,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "deployment-rendering",
-      "reason": "`deploy/codebuild/mcp-re-slo-bench.yaml:157` still refuses `.claude`; `git ls-files .claude` still returns tracked files; the documented upload is still `git archive HEAD`."
+      "reason": "`deploy/codebuild/mcp-re-slo-bench.yaml:157` still refuses `.claude`; `git ls-files .claude` still returns tracked files; the documented upload is still `git archive HEAD`.",
+      "tracking_issue": 738
     },
     {
       "cluster": "R9-C013",
@@ -133,7 +151,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "deployment-rendering",
-      "reason": "Same guard, same tracked files. Every correctly-produced source zip still aborts pre_build."
+      "reason": "Same guard, same tracked files. Every correctly-produced source zip still aborts pre_build.",
+      "tracking_issue": 738
     },
     {
       "cluster": "R9-C014",
@@ -143,7 +162,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "deployment-rendering",
-      "reason": "`.dockerignore` still carries none of `.claude/`, `**/.claude/`, `.vscode/`, `.idea/`, `.verification/`; `REQUIRED_UPLOAD_EXCLUSIONS` still lists none of them, so the parity gate is blind."
+      "reason": "`.dockerignore` still carries none of `.claude/`, `**/.claude/`, `.vscode/`, `.idea/`, `.verification/`; `REQUIRED_UPLOAD_EXCLUSIONS` still lists none of them, so the parity gate is blind.",
+      "tracking_issue": 738
     },
     {
       "cluster": "R9-C015",
@@ -153,7 +173,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "deployment-rendering",
-      "reason": "`deployment.yaml:18` still reads `and .Values.fleet …`. The two sibling refusals in `_helpers.tpl:128-135` are fleet-independent and argue in comments that the hazard is independent of replica count."
+      "reason": "`deployment.yaml:18` still reads `and .Values.fleet …`. The two sibling refusals in `_helpers.tpl:128-135` are fleet-independent and argue in comments that the hazard is independent of replica count.",
+      "tracking_issue": 738
     },
     {
       "cluster": "R9-C016",
@@ -173,7 +194,8 @@
       "theorem": "THM-0074",
       "node": "THM-0074 / kms_endpoint_policy",
       "area": "credential-acquisition",
-      "reason": "One authority, three flags."
+      "reason": "One authority, three flags.",
+      "tracking_issue": 742
     },
     {
       "cluster": "R9-C018",
@@ -183,7 +205,8 @@
       "theorem": null,
       "node": "kms_endpoint_policy",
       "area": "credential-acquisition",
-      "reason": "`kms_endpoint_policy/mod.rs:97` refuses userinfo explicitly, before any loopback reading."
+      "reason": "`kms_endpoint_policy/mod.rs:97` refuses userinfo explicitly, before any loopback reading.",
+      "tracking_issue": 742
     },
     {
       "cluster": "R9-C019",
@@ -193,7 +216,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "sdk-client-exchange",
-      "reason": "Unchanged."
+      "reason": "Unchanged.",
+      "tracking_issue": 746
     },
     {
       "cluster": "R9-C020",
@@ -203,7 +227,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "sdk-client-exchange",
-      "reason": "Unchanged; the TypeScript twin is still bounded and Python is not."
+      "reason": "Unchanged; the TypeScript twin is still bounded and Python is not.",
+      "tracking_issue": 746
     },
     {
       "cluster": "R9-C021",
@@ -213,7 +238,8 @@
       "theorem": "THM-0045",
       "node": "THM-0045",
       "area": "retention-marker",
-      "reason": "The awaited durable write is now `retention.reserve` between `inner_async.admit()` and `dispatch()`. The capacity check and the permit acquisition are still separated by an await."
+      "reason": "The awaited durable write is now `retention.reserve` between `inner_async.admit()` and `dispatch()`. The capacity check and the permit acquisition are still separated by an await.",
+      "tracking_issue": 741
     },
     {
       "cluster": "R9-C022",
@@ -223,7 +249,8 @@
       "theorem": null,
       "node": "assurance platform",
       "area": "assurance-platform",
-      "reason": "`boundary_class_violations` still decides on `expand_paths(unit['paths'])` while the measured cone is the crate plus its path-dependency closure."
+      "reason": "`boundary_class_violations` still decides on `expand_paths(unit['paths'])` while the measured cone is the crate plus its path-dependency closure.",
+      "tracking_issue": 739
     },
     {
       "cluster": "R9-C023",
@@ -233,7 +260,8 @@
       "theorem": null,
       "node": "assurance platform",
       "area": "assurance-platform",
-      "reason": "`verify:196` returns 1 before `write_bundle` at `:249`. A failed run leaves the previous bundle, and `attest` reads it as the last run's aggregate."
+      "reason": "`verify:196` returns 1 before `write_bundle` at `:249`. A failed run leaves the previous bundle, and `attest` reads it as the last run's aggregate.",
+      "tracking_issue": 739
     },
     {
       "cluster": "R9-C024",
@@ -253,7 +281,8 @@
       "theorem": null,
       "node": "assurance platform",
       "area": "assurance-platform",
-      "reason": "The guard is still an `if:` at `verification.yml:322/375` in the file a fork PR's merge ref supplies. Closing it is an Actions-settings decision, not a code one."
+      "reason": "The guard is still an `if:` at `verification.yml:322/375` in the file a fork PR's merge ref supplies. Closing it is an Actions-settings decision, not a code one.",
+      "tracking_issue": 739
     },
     {
       "cluster": "R9-C026",
@@ -263,7 +292,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "deployment-rendering",
-      "reason": "Same as C015."
+      "reason": "Same as C015.",
+      "tracking_issue": 738
     },
     {
       "cluster": "R9-C027",
@@ -273,7 +303,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "deployment-rendering",
-      "reason": "Same as C014."
+      "reason": "Same as C014.",
+      "tracking_issue": 738
     },
     {
       "cluster": "R9-C028",
@@ -283,7 +314,8 @@
       "theorem": "THM-0083",
       "node": "THM-0083 (adjacent)",
       "area": "serving-body-shape",
-      "reason": "`EXACTLY_CARRIED_DECIMAL_DIGITS = 15` still refuses 16–17-significant-digit shortest-round-trip forms, which are exactly what ryu emits for computed f64s and which round-trip exactly."
+      "reason": "`EXACTLY_CARRIED_DECIMAL_DIGITS = 15` still refuses 16–17-significant-digit shortest-round-trip forms, which are exactly what ryu emits for computed f64s and which round-trip exactly.",
+      "tracking_issue": 737
     },
     {
       "cluster": "R9-C029",
@@ -293,7 +325,12 @@
       "theorem": "THM-0042",
       "node": "THM-0042 (root)",
       "area": "scitt-retained-evidence",
-      "reason": "`corresponds_to` still falls through to `Ok(())` when neither side identifies a submission, and `submitted_commitment` is still copied verbatim from the caller-supplied reconstruction (`commitment/mod.rs:129`)."
+      "reason": "`corresponds_to` still falls through to `Ok(())` when neither side identifies a submission, and `submitted_commitment` is still copied verbatim from the caller-supplied reconstruction (`commitment/mod.rs:129`).",
+      "merged_closure": {
+        "pr": 733,
+        "commit": "e6496173fc7727fe674a93cc4cdad82b185ea64d",
+        "note": "a statement identifying no submission binds nothing"
+      }
     },
     {
       "cluster": "R9-C030",
@@ -313,7 +350,8 @@
       "theorem": null,
       "node": "kms_endpoint_policy",
       "area": "credential-acquisition",
-      "reason": "`aws_sts.rs:258/461` now call the shared authority."
+      "reason": "`aws_sts.rs:258/461` now call the shared authority.",
+      "tracking_issue": 742
     },
     {
       "cluster": "R9-C032",
@@ -333,7 +371,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "deployment-rendering",
-      "reason": "`_helpers.tpl:190` DRAIN INVARIANT is still `pre + proxyDrain < kubelet`, with no budget for the post-serve audit flush."
+      "reason": "`_helpers.tpl:190` DRAIN INVARIANT is still `pre + proxyDrain < kubelet`, with no budget for the post-serve audit flush.",
+      "tracking_issue": 738
     },
     {
       "cluster": "R9-C034",
@@ -353,7 +392,12 @@
       "theorem": "THM-0042",
       "node": "THM-0042",
       "area": "scitt-retained-evidence",
-      "reason": "Re-derived only to the level of the corpus writers; the interop artefact/committed-statement byte comparison is still absent. Treat the residual measurement as owed."
+      "reason": "Re-derived only to the level of the corpus writers; the interop artefact/committed-statement byte comparison is still absent. Treat the residual measurement as owed.",
+      "merged_closure": {
+        "pr": 733,
+        "commit": "e6496173fc7727fe674a93cc4cdad82b185ea64d",
+        "note": "s01 demoted in place; from_retained_handles names the limitation"
+      }
     },
     {
       "cluster": "R9-C036",
@@ -373,7 +417,8 @@
       "theorem": null,
       "node": "assurance platform",
       "area": "assurance-platform",
-      "reason": "`is_registered` is still per (mechanism kind, unit) with no site, so one registration licenses every future site in every file the unit declares."
+      "reason": "`is_registered` is still per (mechanism kind, unit) with no site, so one registration licenses every future site in every file the unit declares.",
+      "tracking_issue": 739
     },
     {
       "cluster": "R9-C038",
@@ -383,7 +428,8 @@
       "theorem": null,
       "node": "assurance platform",
       "area": "assurance-platform",
-      "reason": "Same as C002."
+      "reason": "Same as C002.",
+      "tracking_issue": 739
     },
     {
       "cluster": "R9-C039",
@@ -393,7 +439,8 @@
       "theorem": null,
       "node": "assurance platform",
       "area": "assurance-platform",
-      "reason": "`_build_configuration` still digests only `WORKSPACE_BUILD_INPUTS` plus the unit's own crates' `Cargo.toml`; the proof-dependency closure's manifests participate in no component."
+      "reason": "`_build_configuration` still digests only `WORKSPACE_BUILD_INPUTS` plus the unit's own crates' `Cargo.toml`; the proof-dependency closure's manifests participate in no component.",
+      "tracking_issue": 739
     },
     {
       "cluster": "R9-C040",
@@ -403,7 +450,8 @@
       "theorem": null,
       "node": "assurance platform",
       "area": "assurance-platform",
-      "reason": "Same measurement."
+      "reason": "Same measurement.",
+      "tracking_issue": 739
     },
     {
       "cluster": "R9-C041",
@@ -413,7 +461,8 @@
       "theorem": null,
       "node": "assurance platform",
       "area": "assurance-platform",
-      "reason": "Same as C005."
+      "reason": "Same as C005.",
+      "tracking_issue": 739
     },
     {
       "cluster": "R9-C042",
@@ -493,7 +542,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "sdk-client-exchange",
-      "reason": "Unchanged."
+      "reason": "Unchanged.",
+      "tracking_issue": 746
     },
     {
       "cluster": "R9-C050",
@@ -503,7 +553,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "deployment-rendering",
-      "reason": "Same as C014."
+      "reason": "Same as C014.",
+      "tracking_issue": 738
     },
     {
       "cluster": "R9-C051",
@@ -513,7 +564,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "deployment-rendering",
-      "reason": "Same as C015."
+      "reason": "Same as C015.",
+      "tracking_issue": 738
     },
     {
       "cluster": "R9-C052",
@@ -553,7 +605,8 @@
       "theorem": null,
       "node": "assurance platform",
       "area": "assurance-platform",
-      "reason": "A skipped job still reports success, and nothing on the GitHub-hosted side runs any part of the lane for forks."
+      "reason": "A skipped job still reports success, and nothing on the GitHub-hosted side runs any part of the lane for forks.",
+      "tracking_issue": 739
     },
     {
       "cluster": "R9-C056",
@@ -613,7 +666,8 @@
       "theorem": null,
       "node": "no THM (SDK unrooted)",
       "area": "sdk-client-exchange",
-      "reason": "`send_notification_verified`'s whole body is still `await _notify(...)` — no `CapacityLimiter`, no lifecycle or abort check."
+      "reason": "`send_notification_verified`'s whole body is still `await _notify(...)` — no `CapacityLimiter`, no lifecycle or abort check.",
+      "tracking_issue": 746
     },
     {
       "cluster": "R9-C062",
@@ -653,7 +707,12 @@
       "theorem": "THM-0042",
       "node": "THM-0042",
       "area": "scitt-retained-evidence",
-      "reason": "See C035."
+      "reason": "See C035.",
+      "merged_closure": {
+        "pr": 733,
+        "commit": "e6496173fc7727fe674a93cc4cdad82b185ea64d",
+        "note": "s01 demoted in place"
+      }
     },
     {
       "cluster": "R9-C066",
@@ -673,7 +732,8 @@
       "theorem": null,
       "node": "assurance platform",
       "area": "assurance-platform",
-      "reason": "Same as C037."
+      "reason": "Same as C037.",
+      "tracking_issue": 739
     },
     {
       "cluster": "R9-C068",
@@ -683,7 +743,8 @@
       "theorem": null,
       "node": "assurance platform",
       "area": "assurance-platform",
-      "reason": "Same as C037."
+      "reason": "Same as C037.",
+      "tracking_issue": 739
     },
     {
       "cluster": "R9-C069",
@@ -693,7 +754,8 @@
       "theorem": null,
       "node": "assurance platform",
       "area": "assurance-platform",
-      "reason": "`REQUIRED & set(unresolved_pins(...))` still detects only entries that exist with `state = \"unresolved\"`; `unresolved_pins` iterates existing tables, so a deleted one is never reported."
+      "reason": "`REQUIRED & set(unresolved_pins(...))` still detects only entries that exist with `state = \"unresolved\"`; `unresolved_pins` iterates existing tables, so a deleted one is never reported.",
+      "tracking_issue": 739
     },
     {
       "cluster": "R9-C070",
@@ -703,7 +765,8 @@
       "theorem": null,
       "node": "assurance platform",
       "area": "assurance-platform",
-      "reason": "`installed_identity` still digests only `vstd.vir` and `version.json`, and the lane still runs with `{**os.environ}`, so `VERUS_Z3_PATH` selects the solver undetected."
+      "reason": "`installed_identity` still digests only `vstd.vir` and `version.json`, and the lane still runs with `{**os.environ}`, so `VERUS_Z3_PATH` selects the solver undetected.",
+      "tracking_issue": 739
     },
     {
       "cluster": "R9-C071",
@@ -713,7 +776,8 @@
       "theorem": null,
       "node": "assurance platform",
       "area": "assurance-platform",
-      "reason": "Same as C023."
+      "reason": "Same as C023.",
+      "tracking_issue": 739
     },
     {
       "cluster": "R9-C072",
@@ -743,7 +807,8 @@
       "theorem": "THM-0042",
       "node": "THM-0042 (root)",
       "area": "scitt-retained-evidence",
-      "reason": "`submitted_commitment` (`chain/mod.rs:202`) still folds only status, method, target-URI, request body, response body, and headers whose name is exactly `signature`. `signature-input`, `content-digest` and `mcp-re-delegation` are excluded."
+      "reason": "`submitted_commitment` (`chain/mod.rs:202`) still folds only status, method, target-URI, request body, response body, and headers whose name is exactly `signature`. `signature-input`, `content-digest` and `mcp-re-delegation` are excluded.",
+      "tracking_issue": 740
     },
     {
       "cluster": "R9-C075",
@@ -753,7 +818,8 @@
       "theorem": "THM-0042",
       "node": "THM-0042 (root)",
       "area": "scitt-retained-evidence",
-      "reason": "Same digest. The record's own doc still calls it the identity of what was submitted."
+      "reason": "Same digest. The record's own doc still calls it the identity of what was submitted.",
+      "tracking_issue": 740
     },
     {
       "cluster": "R9-C076",
@@ -783,7 +849,8 @@
       "theorem": null,
       "node": "no THM (transparency unrooted)",
       "area": "retention-marker",
-      "reason": "`release_before_dispatch` is called only from `durability.rs`'s own test; `pending_reservations` only from one proxy integration test."
+      "reason": "`release_before_dispatch` is called only from `durability.rs`'s own test; `pending_reservations` only from one proxy integration test.",
+      "tracking_issue": 741
     },
     {
       "cluster": "R9-C079",
@@ -793,7 +860,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "retention-marker",
-      "reason": "Same."
+      "reason": "Same.",
+      "tracking_issue": 741
     },
     {
       "cluster": "R9-C080",
@@ -803,7 +871,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "retention-marker",
-      "reason": "Same."
+      "reason": "Same.",
+      "tracking_issue": 741
     },
     {
       "cluster": "R9-C081",
@@ -813,7 +882,8 @@
       "theorem": "THM-0045",
       "node": "THM-0045",
       "area": "retention-marker",
-      "reason": "Same as C004."
+      "reason": "Same as C004.",
+      "tracking_issue": 741
     },
     {
       "cluster": "R9-C082",
@@ -833,7 +903,8 @@
       "theorem": null,
       "node": "assurance platform",
       "area": "assurance-platform",
-      "reason": "`rust_verify`, `z3`, `cargo-verus` and `libvstd.rlib` are still undigested, and `_toolchain_identity` still drops every `note` key, where the recorded rlib digest lives."
+      "reason": "`rust_verify`, `z3`, `cargo-verus` and `libvstd.rlib` are still undigested, and `_toolchain_identity` still drops every `note` key, where the recorded rlib digest lives.",
+      "tracking_issue": 739
     },
     {
       "cluster": "R9-C084",
@@ -843,7 +914,12 @@
       "theorem": "THM-0042",
       "node": "THM-0042 (root)",
       "area": "scitt-retained-evidence",
-      "reason": "Same as C029."
+      "reason": "Same as C029.",
+      "merged_closure": {
+        "pr": 733,
+        "commit": "e6496173fc7727fe674a93cc4cdad82b185ea64d",
+        "note": "a statement identifying no submission binds nothing"
+      }
     },
     {
       "cluster": "R9-C085",
@@ -923,7 +999,8 @@
       "theorem": null,
       "node": "kms_endpoint_policy",
       "area": "credential-acquisition",
-      "reason": "See C001."
+      "reason": "See C001.",
+      "tracking_issue": 742
     },
     {
       "cluster": "R9-C093",
@@ -943,7 +1020,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "sdk-client-exchange",
-      "reason": "The fake's short-read semantics still differ from `http.client`, so the test passes over a property the production path lacks."
+      "reason": "The fake's short-read semantics still differ from `http.client`, so the test passes over a property the production path lacks.",
+      "tracking_issue": 746
     },
     {
       "cluster": "R9-C095",
@@ -953,7 +1031,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "sdk-client-exchange",
-      "reason": "`timeoutMs` is still both the inactivity bound and the aggregate wall clock — now stated in the module doc at `:27`, so the conflation is honest but unresolved and there is still no second knob."
+      "reason": "`timeoutMs` is still both the inactivity bound and the aggregate wall clock — now stated in the module doc at `:27`, so the conflation is honest but unresolved and there is still no second knob.",
+      "tracking_issue": 746
     },
     {
       "cluster": "R9-C096",
@@ -963,7 +1042,8 @@
       "theorem": null,
       "node": "no THM (client sidecar unrooted)",
       "area": "client-proxy-and-sidecar",
-      "reason": "`mcp-re-client/src/lib.rs:195` still wires `allow_any_host` from `allow_non_loopback`, and `config/validation.rs:30` still accepts the flag together with a loopback bind."
+      "reason": "`mcp-re-client/src/lib.rs:195` still wires `allow_any_host` from `allow_non_loopback`, and `config/validation.rs:30` still accepts the flag together with a loopback bind.",
+      "tracking_issue": 743
     },
     {
       "cluster": "R9-C097",
@@ -993,7 +1073,8 @@
       "theorem": null,
       "node": "no THM (transparency unrooted)",
       "area": "retention-marker",
-      "reason": "`reserve` still writes the marker durably before returning; a failure or cancellation after the write leaves a credential-bearing `.pending` with no reservation for any release path to consume."
+      "reason": "`reserve` still writes the marker durably before returning; a failure or cancellation after the write leaves a credential-bearing `.pending` with no reservation for any release path to consume.",
+      "tracking_issue": 741
     },
     {
       "cluster": "R9-C100",
@@ -1033,7 +1114,8 @@
       "theorem": "THM-0042",
       "node": "THM-0042 (root)",
       "area": "scitt-retained-evidence",
-      "reason": "`corresponds_to` still refuses outright when either side has no verified hop, before the submission comparison — so the field that exists to identify such a record is unreachable for it."
+      "reason": "`corresponds_to` still refuses outright when either side has no verified hop, before the submission comparison — so the field that exists to identify such a record is unreachable for it.",
+      "tracking_issue": 740
     },
     {
       "cluster": "R9-C104",
@@ -1043,7 +1125,12 @@
       "theorem": "THM-0042",
       "node": "THM-0042",
       "area": "scitt-retained-evidence",
-      "reason": "`scitt_vectors_test.rs:177` still writes `format!(\"corpus-submitted-{hops}\")`, a literal no digest fold can produce, frozen inside nine signed vectors."
+      "reason": "`scitt_vectors_test.rs:177` still writes `format!(\"corpus-submitted-{hops}\")`, a literal no digest fold can produce, frozen inside nine signed vectors.",
+      "merged_closure": {
+        "pr": 733,
+        "commit": "e6496173fc7727fe674a93cc4cdad82b185ea64d",
+        "note": "the corpus can no longer author a submission identity"
+      }
     },
     {
       "cluster": "R9-C105",
@@ -1053,7 +1140,12 @@
       "theorem": "THM-0042",
       "node": "THM-0042 (root)",
       "area": "scitt-retained-evidence",
-      "reason": "Same as C029."
+      "reason": "Same as C029.",
+      "merged_closure": {
+        "pr": 733,
+        "commit": "e6496173fc7727fe674a93cc4cdad82b185ea64d",
+        "note": "a statement identifying no submission binds nothing"
+      }
     },
     {
       "cluster": "R9-C106",
@@ -1063,7 +1155,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "deployment-rendering",
-      "reason": "Same as C033."
+      "reason": "Same as C033.",
+      "tracking_issue": 738
     },
     {
       "cluster": "R9-C107",
@@ -1093,7 +1186,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "sdk-client-exchange",
-      "reason": "Same as C061."
+      "reason": "Same as C061.",
+      "tracking_issue": 746
     },
     {
       "cluster": "R9-C110",
@@ -1103,7 +1197,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "sdk-client-exchange",
-      "reason": "Same as C061."
+      "reason": "Same as C061.",
+      "tracking_issue": 746
     },
     {
       "cluster": "R9-C111",
@@ -1143,7 +1238,8 @@
       "theorem": null,
       "node": "assurance platform",
       "area": "assurance-platform",
-      "reason": "`verify:209` still sets FAIL from `returncode != 0` before reading the lane's own `VERDICT:` line, so UNAVAILABLE remains unreachable from the Verus lane."
+      "reason": "`verify:209` still sets FAIL from `returncode != 0` before reading the lane's own `VERDICT:` line, so UNAVAILABLE remains unreachable from the Verus lane.",
+      "tracking_issue": 739
     },
     {
       "cluster": "R9-C115",
@@ -1153,7 +1249,12 @@
       "theorem": "THM-0042",
       "node": "THM-0042 (root)",
       "area": "scitt-retained-evidence",
-      "reason": "Same as C029."
+      "reason": "Same as C029.",
+      "merged_closure": {
+        "pr": 733,
+        "commit": "e6496173fc7727fe674a93cc4cdad82b185ea64d",
+        "note": "a statement identifying no submission binds nothing"
+      }
     },
     {
       "cluster": "R9-C116",
@@ -1203,7 +1304,8 @@
       "theorem": null,
       "node": "assurance platform",
       "area": "assurance-platform",
-      "reason": "`scan_paths` still gives undeclared `verification/` files an empty owner set, `is_registered` still answers false for it, and the FAIL text still names a remedy that does not exist for them."
+      "reason": "`scan_paths` still gives undeclared `verification/` files an empty owner set, `is_registered` still answers false for it, and the FAIL text still names a remedy that does not exist for them.",
+      "tracking_issue": 739
     },
     {
       "cluster": "R9-C121",
@@ -1273,7 +1375,8 @@
       "theorem": null,
       "node": "no THM",
       "area": "client-proxy-and-sidecar",
-      "reason": "`docs/client-sidecar-deployment-guide.md` still documents neither the required `Content-Type` nor the loopback `Host`, and names none of 403/415/421."
+      "reason": "`docs/client-sidecar-deployment-guide.md` still documents neither the required `Content-Type` nor the loopback `Host`, and names none of 403/415/421.",
+      "tracking_issue": 743
     },
     {
       "cluster": "R9-C128",
@@ -1283,7 +1386,8 @@
       "theorem": "THM-0042",
       "node": "THM-0042 (root)",
       "area": "scitt-retained-evidence",
-      "reason": "Same short-circuit as C103, reached from the issuance side."
+      "reason": "Same short-circuit as C103, reached from the issuance side.",
+      "tracking_issue": 740
     },
     {
       "cluster": "R9-C129",
@@ -1315,5 +1419,6 @@
       "area": "exchange-lifecycle",
       "reason": "The store-outage wording is gone from the continuation-preparation contract."
     }
-  ]
+  ],
+  "linkage": "Two references, neither a status field. `tracking_issue` names the semantic workstream issue that owns a row's disposition; `merged_closure` is a typed record — `pr`, the merge `commit`, and a `note` — of the change that already closed one. GitHub is the work-status authority and no issue state is copied here.\n\n`merged_closure` MEANS MERGED, and `tools/verification/render-r9-dispositions --check` establishes that from the local repository: the recorded commit must exist and be an ancestor of HEAD. A green open PR is not a merged closure, and a field that merely says one is not evidence that anything merged. No network is consulted; the merge commit reachable from HEAD is the durable local fact.\n\nThe two facts are different and neither overwrites the other. A row's `disposition` is a HISTORICAL MEASUREMENT: `SURVIVES_AND_MAPPED` says the claim SURVIVED THE 2026-08-31 RE-DERIVATION, and that never changes. Whether it is CURRENTLY UNRESOLVED is read from the linkage — a `merged_closure` says later work closed it, a `tracking_issue` says the workstream still owns it. Later work never rewrites the audit's measurement.\n\nEvery surviving High/Critical row carries one reference or the other; that is the checked property. Rows with neither are medium/low findings inside an owning issue's area, or dispositions that closed without work."
 }

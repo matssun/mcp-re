@@ -13,11 +13,16 @@ not policy: no theorem, unit, or assumption is read from here, and no gate consu
 The packet it writes into is NON-NORMATIVE by its own banner.
 
 `--check` verifies the appendix matches the record without writing, for a lane that wants
-to notice drift rather than repair it.
+to notice drift rather than repair it. It also carries two linkage controls: every surviving
+High/Critical row must name the workstream that owns it or the change that closed it, and
+every recorded closure must name a merge commit that is actually an ancestor of HEAD. The
+second exists because a green OPEN pull request was once recorded here as a merged closure
+and nothing could tell the difference.
 """
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -44,11 +49,29 @@ def escape(text: str) -> str:
     return text.replace("|", "\\|")
 
 
+def owner_cell(row: dict) -> str:
+    """Who owns the row NOW — which is not what its disposition says.
+
+    The `disposition` is the 2026-08-31 measurement and is immutable: `SURVIVES_AND_MAPPED`
+    means the claim survived that re-derivation, and later work never rewrites it. Whether
+    the row is CURRENTLY UNRESOLVED is this column instead.
+    """
+    closure = row.get("merged_closure")
+    if isinstance(closure, dict):
+        return f"closed by #{closure['pr']} (`{closure['commit'][:12]}`)"
+    if closure is not None:
+        # `unmerged_closures` is what refuses this; rendering must reach it, not crash on
+        # the way. An untyped closure is a defect to report, not a malformed cell.
+        return "malformed merged_closure"
+    issue = row.get("tracking_issue")
+    return f"#{issue}" if issue is not None else "—"
+
+
 def table(rows: list[dict]) -> str:
     lines = [
         "| Cluster | Sev | Area | Round-9 title | Disposition | Node | "
-        "Re-derivation against current main |",
-        "|---|---|---|---|---|---|---|",
+        "Re-derivation against current main | Owner now |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for row in sorted(
         rows, key=lambda r: (SEVERITY_ORDER[r["severity"]], r["cluster"])
@@ -56,7 +79,8 @@ def table(rows: list[dict]) -> str:
         lines.append(
             f"| {row['cluster']} | {row['severity']} | `{row['area']}` | "
             f"{escape(row['title'])} | `{row['disposition']}` | "
-            f"{escape(row['node'])} | {escape(row['reason'])} |"
+            f"{escape(row['node'])} | {escape(row['reason'])} | "
+            f"{escape(owner_cell(row))} |"
         )
     return "\n".join(lines)
 
@@ -64,6 +88,74 @@ def table(rows: list[dict]) -> str:
 def render() -> str:
     record = json.loads(RECORD.read_text(encoding="utf-8"))
     return f"{BEGIN}\n\n{table(record['dispositions'])}\n\n{END}"
+
+
+def uncovered_surviving_high(record: dict) -> list[str]:
+    """Surviving High/Critical rows that name neither an owning issue nor a merged closure.
+
+    #542 requires a child issue for every finding that survives re-derivation, and the
+    ruling of 2026-09-01 discharges that by SEMANTIC WORKSTREAM rather than one issue per
+    cluster — 96 surviving rows are not 96 defects. What the workstream form must not lose
+    is the property the per-cluster form had for free: that nothing severe is untracked.
+
+    So the linkage is checked rather than remembered. A row carries `tracking_issue` (the
+    workstream that owns it now) or `merged_closure` (the change that already closed it).
+    Neither is a STATUS field: GitHub owns work status, and nothing here is updated when an
+    issue moves. They are stable references, and a row acquiring neither is the one thing
+    the grouping could quietly drop.
+    """
+    return sorted(
+        row["cluster"]
+        for row in record["dispositions"]
+        if row["disposition"] == "SURVIVES_AND_MAPPED"
+        and row["severity"] in ("high", "critical")
+        and "tracking_issue" not in row
+        and "merged_closure" not in row
+    )
+
+
+def _is_ancestor(commit: str, repo: Path) -> bool:
+    """Does `commit` exist in this repository and lead to HEAD?
+
+    `merge-base --is-ancestor` answers both at once: exit 0 reachable, 1 not, and anything
+    else — including an object this clone does not have — is not an ancestor either.
+    """
+    return (
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", commit, "HEAD"],
+            cwd=repo,
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+
+
+def unmerged_closures(record: dict, repo: Path = REPO_ROOT) -> list[str]:
+    """Closure records that assert a merge the repository does not contain.
+
+    A field spelling the word "merged" is not evidence that anything merged. #736 was green
+    and OPEN when it was first recorded here as a closure, and prose could not tell the
+    difference — so the claim is typed (`pr`, `commit`, `note`) and discharged against the
+    local object graph: the recorded merge commit must exist and be an ancestor of HEAD.
+
+    Deliberately no network and no GitHub API. PR state is remote, mutable and unavailable
+    to an offline gate; the merge commit reachable from HEAD is the durable local fact, and
+    it is the one that means the change is in the tree being measured.
+    """
+    defects = []
+    for row in record["dispositions"]:
+        closure = row.get("merged_closure")
+        if closure is None:
+            continue
+        if not isinstance(closure, dict) or not {"pr", "commit"} <= closure.keys():
+            defects.append(f"{row['cluster']}: merged_closure is not a typed {{pr, commit}} record")
+            continue
+        if not _is_ancestor(closure["commit"], repo):
+            defects.append(
+                f"{row['cluster']}: merged_closure names #{closure['pr']} at "
+                f"{closure['commit'][:12]}, which is not an ancestor of HEAD"
+            )
+    return defects
 
 
 def main() -> int:
@@ -83,16 +175,36 @@ def main() -> int:
     _, tail = rest.split(END, 1)
     updated = head + render() + tail
 
+    record = json.loads(RECORD.read_text(encoding="utf-8"))
+    uncovered = uncovered_surviving_high(record)
+    unmerged = unmerged_closures(record)
+
     if args.check:
+        failed = False
         if updated != text:
             print("FAIL: the appendix does not match r9-dispositions.json", file=sys.stderr)
+            failed = True
+        if uncovered:
+            print(
+                "FAIL: surviving High/Critical row(s) name neither a tracking_issue nor a "
+                f"merged_closure: {', '.join(uncovered)}",
+                file=sys.stderr,
+            )
+            failed = True
+        for defect in unmerged:
+            print(f"FAIL: {defect}", file=sys.stderr)
+            failed = True
+        if failed:
             return 1
-        print("render-r9-dispositions: appendix matches the record")
+        print(
+            "render-r9-dispositions: appendix matches the record; every surviving "
+            "High/Critical row is tracked, and every merged_closure names a commit "
+            "reachable from HEAD"
+        )
         return 0
 
     PACKET.write_text(updated, encoding="utf-8")
-    count = len(json.loads(RECORD.read_text(encoding="utf-8"))["dispositions"])
-    print(f"render-r9-dispositions: wrote {count} row(s) into {PACKET.name}")
+    print(f"render-r9-dispositions: wrote {len(record['dispositions'])} row(s) into {PACKET.name}")
     return 0
 
 

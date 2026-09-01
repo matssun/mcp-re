@@ -137,6 +137,12 @@ stage_static() {
     && python3 tools/verification/test_theorems.py \
     && python3 tools/verification/test_theorem_review.py \
     && python3 tools/verification/test_views.py \
+    && python3 tools/verification/test_r9_linkage.py \
+    `# The R9 record is a historical measurement, and the appendix in the packet is a view` \
+    `# of it. --check refuses a hand-edited appendix, an untracked surviving High/Critical` \
+    `# row, and a merged_closure whose commit is not an ancestor of HEAD — the last because` \
+    `# a green OPEN pull request was once recorded here as a merged closure.` \
+    && python3 tools/verification/render-r9-dispositions --check \
     `# A report, not a gate: run so a broken import or a renamed component surfaces here` \
     `# rather than the first time someone reaches for the review state. It derives the` \
     `# whole assurance conjunction and prints only ROOT COMPLETENESS (ADR-MCPRE-059 §28.8),` \
