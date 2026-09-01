@@ -59,7 +59,7 @@ not an omission to hide.
 | proxy.dispatch_commitment | V0 | THM-0045, THM-0051, THM-0052, THM-0074 | 0 |
 | proxy.ed25519_public_key | V0 | THM-0025 | 1 |
 | proxy.exchange_lifecycle | V0 | THM-0043, THM-0044, THM-0078 | 0 |
-| proxy.kms_endpoint_authority | V0 | _none_ | 0 |
+| proxy.kms_endpoint_authority | V0 | THM-0089 | 0 |
 | proxy.mechanism_verified_credential | V0 | THM-0030 | 1 |
 | proxy.online_ocsp_reachability | V0 | THM-0013 | 0 |
 | proxy.outbound_destination | V0 | _none_ | 0 |

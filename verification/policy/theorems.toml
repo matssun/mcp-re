@@ -3402,6 +3402,14 @@ depends_on = [
   # continuation posture claim THM-0077 actually needs is D1b′, which is not yet written:
   # see the design packet.
   "THM-0086",
+  # ADR-MCPRE-059 §28 / #742 (D5). A runtime that fetched its root key from an endpoint whose
+  # text named one authority and whose parse named another holds a capability derived from
+  # something the validated configuration did not select — which is this claim's subject.
+  #
+  # It is the CONFIG-TIME half only. The connect-time half, `proxy.outbound_destination`, is
+  # deliberately NOT given an edge here: no credential-bearing egress consumes it, so an edge
+  # would make this root's closure claim support that does not exist. #742 keeps it open.
+  "THM-0089",
 ]
 
 [[theorem]]
@@ -3733,6 +3741,48 @@ failure earns — that is the serving owner's, under THM-0078.
 owner = "proxy.retention_commitment"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.retention_commitment"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0089"
+title = "A KMS or STS endpoint reaches the authority its text names"
+statement = """
+An operator-supplied KMS or STS endpoint is accepted only when its literal human-readable
+representation and the machine interpretation the HTTP client will connect by name the same
+`host[:port]`. Userinfo, percent- and IDNA-encoded hosts, separators a parser resolves
+differently, alternate IP spellings a resolver canonicalizes, and non-numeric or
+non-canonical ports are refused; the plaintext-scheme exception is decided from the host as
+RESOLVED, after userinfo has been refused. The decision belongs to one owner and is consumed
+by the command line, the validation boundary, and the AWS-KMS, AWS-STS and GCP-KMS key
+sources alike — none of them obtains it from another.
+"""
+security_consequence = """
+An endpoint whose spelling names a recognisable authority and whose parse names an
+attacker's cannot be used to carry the root-key trust bootstrap or, on GCP, a live
+workload-identity bearer token. `https://cloudkms.googleapis.com@evil.example.com` is not a
+Google endpoint to the client, and `http://localhost:80@evil.example.com` is not loopback —
+so the plaintext exception cannot be used to send a bearer token off the machine in the
+clear, which is the redirection R9-C001 exploited.
+
+Because the rule is the owner's rather than each caller's, an embedder reaching a key-source
+constructor without meeting a parser gets the same decision as an operator on a command
+line. That is what makes it a property of the endpoint rather than of the entry point.
+"""
+scope = """
+It ends at the endpoint TEXT. What it establishes is agreement between what a reader sees
+and what a URL parser resolves — NOT that the address finally connected to is one this
+deployment would accept. Under a rebinding-capable threat model a name that passes here can
+still resolve to an address the deployment would refuse; establishing that is the
+connect-time half owned by `proxy.outbound_destination`, and no credential-bearing egress
+path consumes it today. This claim must not be read as closing that gap.
+
+It says nothing about what a KMS does with a request that reaches it, nothing about key
+custody or exportability (THM-0064's and THM-0082's), and nothing about whether the
+provider selected was the right one for the deployment.
+"""
+owner = "proxy.kms_endpoint_authority"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.kms_endpoint_authority"]
 depends_on = []
 
 [[theorem]]

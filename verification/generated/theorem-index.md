@@ -122,6 +122,7 @@ any of them is closed.
 | THM-0086 | The established replay tier is the selected one, and never a weaker substitute | proxy.replay_materialization | unit://proxy.replay_materialization | live |
 | THM-0087 | A continuation entry is reachable only by the actor the verifier resolved | proxy.continuation_correlation_store | unit://proxy.continuation_correlation_store | live |
 | THM-0088 | A retention artefact reads as a crossing only for an exchange that crossed | proxy.retention_commitment | unit://proxy.retention_commitment | live |
+| THM-0089 | A KMS or STS endpoint reaches the authority its text names | proxy.kms_endpoint_authority | unit://proxy.kms_endpoint_authority | live |
 
 ## Claims in full
 
@@ -969,7 +970,7 @@ any of them is closed.
 
 **Review requirement.** Owner security-specification review
 
-**Depends on.** THM-0005, THM-0013, THM-0036, THM-0038, THM-0048, THM-0049, THM-0054, THM-0064, THM-0066, THM-0067, THM-0073, THM-0086
+**Depends on.** THM-0005, THM-0013, THM-0036, THM-0038, THM-0048, THM-0049, THM-0054, THM-0064, THM-0066, THM-0067, THM-0073, THM-0086, THM-0089
 
 ### THM-0078 — Refusal is terminal, and no refusal-side effect reads as success
 
@@ -1088,5 +1089,15 @@ any of them is closed.
 **Security consequence.** A committed-stage marker exists only for an exchange that committed to dispatching, so an auditor reconciling them counts calls that may have run and never calls the boundary refused. Before this, one artefact meant both — accepted at `reserve`, crossed at reconciliation — and no byte on disk separated them, so a saturated inner plane or a refused reservation manufactured indeterminacy for calls that provably never reached a backend. No path leaves one behind by forgetting to release. The withdrawal is a drop, which a refusal, an early return, a panic and a cancelled request future all perform; its predecessor was a call site reachable only from tests. And no marker holds a live credential for a call that has not dispatched. The pre-dispatch artefact carries the digest commitment alone, so a refused exchange leaves no bearer token and no DPoP proof in a store with no expiry — the exposure that a failed reservation could previously make permanent, because no value existed for any release path to consume.
 
 **Scope — what this does NOT establish.** It is about WHEN responsibility was accepted and crossed, never about WHAT the retained record contains. That is `retained_record`'s, and the completed hop still carries the full message including its covered credential headers; the marker's content appears here only as an ABSENCE. A stale reserved-stage marker is permitted and is not a defect this forbids. The withdrawal is queued rather than awaited — `Drop` cannot await — and its unlink is not made durable, so a full queue or a process that dies leaves cleanup debt. What is forbidden is that residue reading as an execution, and it cannot, because it is at the other name. It does not establish that the completion write succeeds, and it claims no atomicity between the store and the backend: they share no transaction, which is why the crossing is recorded BEFORE the dispatch rather than around it. It says nothing about which HTTP refusal each failure earns — that is the serving owner's, under THM-0078.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0089 — A KMS or STS endpoint reaches the authority its text names
+
+**Statement.** An operator-supplied KMS or STS endpoint is accepted only when its literal human-readable representation and the machine interpretation the HTTP client will connect by name the same `host[:port]`. Userinfo, percent- and IDNA-encoded hosts, separators a parser resolves differently, alternate IP spellings a resolver canonicalizes, and non-numeric or non-canonical ports are refused; the plaintext-scheme exception is decided from the host as RESOLVED, after userinfo has been refused. The decision belongs to one owner and is consumed by the command line, the validation boundary, and the AWS-KMS, AWS-STS and GCP-KMS key sources alike — none of them obtains it from another.
+
+**Security consequence.** An endpoint whose spelling names a recognisable authority and whose parse names an attacker's cannot be used to carry the root-key trust bootstrap or, on GCP, a live workload-identity bearer token. `https://cloudkms.googleapis.com@evil.example.com` is not a Google endpoint to the client, and `http://localhost:80@evil.example.com` is not loopback — so the plaintext exception cannot be used to send a bearer token off the machine in the clear, which is the redirection R9-C001 exploited. Because the rule is the owner's rather than each caller's, an embedder reaching a key-source constructor without meeting a parser gets the same decision as an operator on a command line. That is what makes it a property of the endpoint rather than of the entry point.
+
+**Scope — what this does NOT establish.** It ends at the endpoint TEXT. What it establishes is agreement between what a reader sees and what a URL parser resolves — NOT that the address finally connected to is one this deployment would accept. Under a rebinding-capable threat model a name that passes here can still resolve to an address the deployment would refuse; establishing that is the connect-time half owned by `proxy.outbound_destination`, and no credential-bearing egress path consumes it today. This claim must not be read as closing that gap. It says nothing about what a KMS does with a request that reaches it, nothing about key custody or exportability (THM-0064's and THM-0082's), and nothing about whether the provider selected was the right one for the deployment.
 
 **Review requirement.** Owner security-specification review

@@ -99,6 +99,7 @@ graph BT
     THM_0085["THM-0085<br/>Every exchange-owned refusal reaches the audit boundary, typed, before it is answered"]
     THM_0086["THM-0086<br/>The established replay tier is the selected one, and never a weaker substitute"]
     THM_0088["THM-0088<br/>A retention artefact reads as a crossing only for an exchange that crossed"]
+    THM_0089["THM-0089<br/>A KMS or STS endpoint reaches the authority its text names"]
     THM_0007 --> THM_0008
     THM_0010 --> THM_0009
     THM_0001 --> THM_0014
@@ -199,6 +200,7 @@ graph BT
     THM_0067 --> THM_0077
     THM_0073 --> THM_0077
     THM_0086 --> THM_0077
+    THM_0089 --> THM_0077
     THM_0043 --> THM_0078
     THM_0044 --> THM_0078
     THM_0045 --> THM_0078
