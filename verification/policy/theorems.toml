@@ -3375,6 +3375,11 @@ depends_on = [
   "THM-0073",
   "THM-0064",
   "THM-0066",
+  # ADR-MCPRE-059 §28 / #744: the two store-materialization leaves. Two, because
+  # `replay_plane` and `continuation_store` are sibling authorities and neither owns the
+  # other's facts — the root may quantify over both, a leaf may not.
+  "THM-0086",
+  "THM-0087",
 ]
 
 [[theorem]]
@@ -3715,3 +3720,67 @@ review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.refusal_audit_emission"]
 depends_on = ["THM-0046", "THM-0069", "THM-0081"]
 
+# ADR-MCPRE-059 §28 / issue #744, D1a and D1b. TWO leaves, not one: `replay_plane` and
+# `continuation_store` are sibling authorities and neither owns the other's facts. THM-0077
+# may quantify over both; a leaf may not.
+#
+# Both claim a CONFIGURATION PROJECTION and nothing more — the store the serving path uses
+# is the one the deployment selected — so neither carries a premise about what a backend's
+# acknowledgement establishes. That a mechanism's reported success implies its advertised
+# durable effect is an EXTERNAL fact, it differs per mechanism (a Redis `WAIT`, an etcd
+# transaction and an `fsync` establish three different things), and it is registered only
+# where a root consumes it. Giving a projection claim a backend-behaviour assumption would
+# widen a blast radius the claim does not use.
+[[theorem]]
+id = "THM-0086"
+title = "The established replay tier is the selected one, and never a weaker substitute"
+statement = """
+The replay tier `replay_plane::materialize` hands to the serving path is the tier the plan
+selected, paired with the dispatch posture that plan declared. A tier that self-declares the
+volatile single-process reference posture cannot be handed over at all, and a backend this
+build does not carry is refused by name rather than substituted.
+"""
+security_consequence = """
+A deployment cannot come up believing it has cross-replica replay protection while holding
+process-local protection. Replay admission cannot degrade to a weaker store on infrastructure
+trouble, because there is no reachable path that substitutes one.
+"""
+scope = """
+CONFIGURATION PROJECTION ONLY. It establishes which tier the serving path holds, not what an
+acknowledged write to that tier durably establishes — that is a per-mechanism external fact
+with its own premise, and this claim does not use it. It says nothing about availability: a
+tier that cannot be established refuses startup, which is inside the claim rather than a
+violation of it. That the plan itself is a faithful projection of the validated configuration
+is the planner's fact, reached through THM-0077 rather than asserted here.
+"""
+owner = "proxy.replay_materialization"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.replay_materialization"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0087"
+title = "A continuation entry is reachable only by the actor the verifier resolved"
+statement = """
+The MRTR continuation correlation entry is keyed on the actor the VERIFIER resolved together
+with the opaque `requestState`, never on anything the request asserts, and a read that does
+not admit an answer leg does not consume the entry.
+"""
+security_consequence = """
+A second verified actor who knows the open leg's public signature-base digests cannot obtain
+the victim's retained bases, so it cannot complete a human-approval round trip that was not
+its own. A refused or transiently-failed read cannot destroy a live approval either.
+"""
+scope = """
+CONFIGURATION PROJECTION AND REACHABILITY ONLY, and the store is OPPORTUNISTIC: an
+unavailable shared tier does not refuse startup — the deployment announces its absence and
+serves, and an answer leg that needs a correlated continuation fails closed at the binding
+rather than being admitted unbound. So this claim carries no "prevents startup" conjunct,
+which is where it departs from the shape of its replay sibling. It says nothing about what an
+acknowledged write durably establishes, and nothing about the continuation binding itself,
+which is `mcp-re-http-profile`'s.
+"""
+owner = "proxy.continuation_correlation_store"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.continuation_correlation_store"]
+depends_on = []

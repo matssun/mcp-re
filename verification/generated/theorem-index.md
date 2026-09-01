@@ -119,6 +119,8 @@ any of them is closed.
 | THM-0083 | What a request is, is decided once, before anything reads it for meaning | http_profile.request_envelope | unit://http_profile.request_envelope, unit://proxy.outstanding_id_provenance | live |
 | THM-0084 | The shipped client proxy verifies against the request it sent | client.proxy_request_correspondence | unit://client.proxy_request_correspondence | live |
 | THM-0085 | Every exchange-owned refusal reaches the audit boundary, typed, before it is answered | proxy.refusal_audit_emission | unit://proxy.refusal_audit_emission | live |
+| THM-0086 | The established replay tier is the selected one, and never a weaker substitute | proxy.replay_materialization | unit://proxy.replay_materialization | live |
+| THM-0087 | A continuation entry is reachable only by the actor the verifier resolved | proxy.continuation_correlation_store | unit://proxy.continuation_correlation_store | live |
 
 ## Claims in full
 
@@ -966,7 +968,7 @@ any of them is closed.
 
 **Review requirement.** Owner security-specification review
 
-**Depends on.** THM-0005, THM-0013, THM-0036, THM-0038, THM-0048, THM-0049, THM-0054, THM-0064, THM-0066, THM-0067, THM-0073
+**Depends on.** THM-0005, THM-0013, THM-0036, THM-0038, THM-0048, THM-0049, THM-0054, THM-0064, THM-0066, THM-0067, THM-0073, THM-0086, THM-0087
 
 ### THM-0078 — Refusal is terminal, and no refusal-side effect reads as success
 
@@ -1057,3 +1059,23 @@ any of them is closed.
 **Review requirement.** Owner security-specification review
 
 **Depends on.** THM-0046, THM-0069, THM-0081
+
+### THM-0086 — The established replay tier is the selected one, and never a weaker substitute
+
+**Statement.** The replay tier `replay_plane::materialize` hands to the serving path is the tier the plan selected, paired with the dispatch posture that plan declared. A tier that self-declares the volatile single-process reference posture cannot be handed over at all, and a backend this build does not carry is refused by name rather than substituted.
+
+**Security consequence.** A deployment cannot come up believing it has cross-replica replay protection while holding process-local protection. Replay admission cannot degrade to a weaker store on infrastructure trouble, because there is no reachable path that substitutes one.
+
+**Scope — what this does NOT establish.** CONFIGURATION PROJECTION ONLY. It establishes which tier the serving path holds, not what an acknowledged write to that tier durably establishes — that is a per-mechanism external fact with its own premise, and this claim does not use it. It says nothing about availability: a tier that cannot be established refuses startup, which is inside the claim rather than a violation of it. That the plan itself is a faithful projection of the validated configuration is the planner's fact, reached through THM-0077 rather than asserted here.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0087 — A continuation entry is reachable only by the actor the verifier resolved
+
+**Statement.** The MRTR continuation correlation entry is keyed on the actor the VERIFIER resolved together with the opaque `requestState`, never on anything the request asserts, and a read that does not admit an answer leg does not consume the entry.
+
+**Security consequence.** A second verified actor who knows the open leg's public signature-base digests cannot obtain the victim's retained bases, so it cannot complete a human-approval round trip that was not its own. A refused or transiently-failed read cannot destroy a live approval either.
+
+**Scope — what this does NOT establish.** CONFIGURATION PROJECTION AND REACHABILITY ONLY, and the store is OPPORTUNISTIC: an unavailable shared tier does not refuse startup — the deployment announces its absence and serves, and an answer leg that needs a correlated continuation fails closed at the binding rather than being admitted unbound. So this claim carries no "prevents startup" conjunct, which is where it departs from the shape of its replay sibling. It says nothing about what an acknowledged write durably establishes, and nothing about the continuation binding itself, which is `mcp-re-http-profile`'s.
+
+**Review requirement.** Owner security-specification review

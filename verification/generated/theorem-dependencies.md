@@ -97,6 +97,8 @@ graph BT
     THM_0083["THM-0083<br/>What a request is, is decided once, before anything reads it for meaning"]
     THM_0084["THM-0084<br/>The shipped client proxy verifies against the request it sent"]
     THM_0085["THM-0085<br/>Every exchange-owned refusal reaches the audit boundary, typed, before it is answered"]
+    THM_0086["THM-0086<br/>The established replay tier is the selected one, and never a weaker substitute"]
+    THM_0087["THM-0087<br/>A continuation entry is reachable only by the actor the verifier resolved"]
     THM_0007 --> THM_0008
     THM_0010 --> THM_0009
     THM_0001 --> THM_0014
@@ -196,6 +198,8 @@ graph BT
     THM_0066 --> THM_0077
     THM_0067 --> THM_0077
     THM_0073 --> THM_0077
+    THM_0086 --> THM_0077
+    THM_0087 --> THM_0077
     THM_0043 --> THM_0078
     THM_0044 --> THM_0078
     THM_0045 --> THM_0078
