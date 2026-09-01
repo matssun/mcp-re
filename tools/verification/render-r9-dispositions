@@ -66,6 +66,31 @@ def render() -> str:
     return f"{BEGIN}\n\n{table(record['dispositions'])}\n\n{END}"
 
 
+def uncovered_surviving_high() -> list[str]:
+    """Surviving High/Critical rows that name neither an owning issue nor a merged closure.
+
+    #542 requires a child issue for every finding that survives re-derivation, and the
+    ruling of 2026-09-01 discharges that by SEMANTIC WORKSTREAM rather than one issue per
+    cluster — 96 surviving rows are not 96 defects. What the workstream form must not lose
+    is the property the per-cluster form had for free: that nothing severe is untracked.
+
+    So the linkage is checked rather than remembered. A row carries `tracking_issue` (the
+    workstream that owns its disposition) or `merged_closure` (the change that already
+    closed it). Neither is a STATUS field: GitHub owns work status, and nothing here is
+    updated when an issue moves. They are stable references, and a row acquiring neither is
+    the one thing the grouping could quietly drop.
+    """
+    record = json.loads(RECORD.read_text(encoding="utf-8"))
+    return sorted(
+        row["cluster"]
+        for row in record["dispositions"]
+        if row["disposition"] == "SURVIVES_AND_MAPPED"
+        and row["severity"] in ("high", "critical")
+        and "tracking_issue" not in row
+        and "merged_closure" not in row
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -83,11 +108,26 @@ def main() -> int:
     _, tail = rest.split(END, 1)
     updated = head + render() + tail
 
+    uncovered = uncovered_surviving_high()
+
     if args.check:
+        failed = False
         if updated != text:
             print("FAIL: the appendix does not match r9-dispositions.json", file=sys.stderr)
+            failed = True
+        if uncovered:
+            print(
+                "FAIL: surviving High/Critical row(s) name neither a tracking_issue nor a "
+                f"merged_closure: {', '.join(uncovered)}",
+                file=sys.stderr,
+            )
+            failed = True
+        if failed:
             return 1
-        print("render-r9-dispositions: appendix matches the record")
+        print(
+            "render-r9-dispositions: appendix matches the record; every surviving "
+            "High/Critical row is tracked"
+        )
         return 0
 
     PACKET.write_text(updated, encoding="utf-8")
