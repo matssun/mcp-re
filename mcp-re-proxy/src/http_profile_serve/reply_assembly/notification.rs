@@ -16,7 +16,7 @@ use mcp_re_http_profile::sign_delegated_accepted_202;
 use mcp_re_http_profile::ExecutionDisposition;
 use mcp_re_http_profile::HttpRequest;
 
-use crate::async_inner::InnerOutcome;
+use crate::async_inner::DispatchedOutcome;
 use crate::async_serve::ServedHttpResponse;
 use crate::exchange_state::ExchangeProgress;
 use crate::refusal::RefusalCause;
@@ -103,15 +103,17 @@ impl HttpProfileProxy {
     /// The whole notification terminal: read whether the message got there, then answer it.
     ///
     /// The reply itself is discarded, as JSON-RPC requires — but not the fact of whether the
-    /// inner plane received the message at all. A 202 minted for a message that was never
-    /// transmitted, or whose transport failed after transmission, is a signed statement from
-    /// the enforcement boundary that a backend accepted something no backend has seen, and
-    /// it is the one exit a client could select by omitting `id`.
+    /// inner plane received the message at all. A 202 minted for a message whose transport
+    /// failed after transmission is a signed statement from the enforcement boundary that a
+    /// backend accepted something no backend is known to have seen, and it is the one exit a
+    /// client could select by omitting `id`. The stronger case — a message that was never
+    /// transmitted — cannot reach this terminal, because it is refused before the exchange
+    /// commits to a dispatch at all.
     pub(in crate::http_profile_serve) async fn answer_notification_terminal(
         &self,
         ex: &Exchange<'_>,
         progress: &mut ExchangeProgress,
-        outcome: &InnerOutcome,
+        outcome: &DispatchedOutcome,
         window: &SigningWindow,
         retention: &RetentionDisposition,
     ) -> ServedHttpResponse {
@@ -137,13 +139,18 @@ impl HttpProfileProxy {
 #[cfg(test)]
 mod tests {
     /// The 202 is minted only for a message the inner plane is known to have received. The
-    /// two refused outcomes are exactly the two that say it did not get there, or may not
-    /// have — a signed statement that a backend accepted something no backend has seen is
-    /// the failure this arm exists to prevent.
+    /// refused outcome is the one that says it may not have got there — a signed statement
+    /// that a backend accepted something no backend is known to have seen is the failure
+    /// this arm exists to prevent.
+    ///
+    /// The message that was never transmitted at all is absent from this set by
+    /// construction: a committed dispatch has no outcome meaning *nothing happened*, so the
+    /// case is decided before the exchange commits, where it can still be refused as
+    /// retry-safe.
     #[test]
-    fn a_lost_message_is_not_acknowledged() {
-        use crate::async_inner::InnerOutcome;
-        let lost = InnerOutcome::NotDispatched("the inner plane was never reached");
-        assert!(!matches!(lost, InnerOutcome::Replied(_)));
+    fn a_message_that_may_not_have_arrived_is_not_acknowledged() {
+        use crate::async_inner::DispatchedOutcome;
+        let lost = DispatchedOutcome::Indeterminate("the answer never came");
+        assert!(!matches!(lost, DispatchedOutcome::Replied(_)));
     }
 }

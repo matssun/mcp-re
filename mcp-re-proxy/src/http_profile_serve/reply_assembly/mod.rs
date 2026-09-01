@@ -16,7 +16,7 @@
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::OutstandingId;
 
-use crate::async_inner::InnerOutcome;
+use crate::async_inner::DispatchedOutcome;
 use crate::async_serve::ServedHttpResponse;
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
@@ -89,7 +89,7 @@ impl HttpProfileProxy {
         &self,
         ex: &Exchange<'_>,
         progress: &mut ExchangeProgress,
-        outcome: InnerOutcome,
+        outcome: DispatchedOutcome,
         outstanding: &OutstandingId,
         window: &SigningWindow,
     ) -> Result<SignedReply, ServedHttpResponse> {

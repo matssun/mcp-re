@@ -1991,9 +1991,10 @@ tested_symbols = [
 [[unit]]
 id = "proxy.dispatch_commitment"
 class = "V0"
-description = "The one pre-dispatch boundary the compiler holds: the backend is reached only by consuming a ReadyForDispatch, which cannot be assembled without an authorization-released body, a signing window snapshotted before the backend runs, and a discharged retention disposition — and crossing it is one-way."
+description = "The one pre-dispatch boundary the compiler holds: the backend is reached only by consuming a ReadyForDispatch, which cannot be assembled without the inner plane's real dispatch capability — itself obtainable only from an authorization-released body — a signing window snapshotted before the backend runs, and a discharged retention disposition. Crossing it is one-way, and the transmission happens inside the crossing."
 paths = [
   "mcp-re-proxy/src/request_stages.rs",
+  "mcp-re-proxy/src/async_inner.rs",
   "mcp-re-proxy/src/authorization/dispatch.rs",
   "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs",
 ]
@@ -2002,10 +2003,17 @@ evidence = ["test://proxy/serving/dispatch_commitment_boundary"]
 # What each control measures, in the order the boundary is crossed. The last one is the
 # separation this unit does NOT claim: an unconfigured deployment releases a body too, so
 # possession proves the decision was TAKEN, never that a policy permitted.
+#
+# The two seam controls are the ones that make the capability a capability rather than a
+# forecast: preparing must transmit nothing, and dropping a preparation must transmit
+# nothing and release what it took. Without both, `PreparedInnerDispatch` would be a
+# renamed `admit` and the pre-dispatch refusal would still be free only by convention.
 tested_symbols = [
   "lib#http_profile_serve::dispatch_commitment::tests::the_reservation_is_the_last_pre_dispatch_state",
   "lib#request_stages::tests::the_retention_obligation_has_exactly_two_cases",
   "lib#request_stages::tests::the_dispatch_boundary_consumes_the_ready_state",
+  "lib#async_inner::tests::preparing_transmits_nothing",
+  "lib#async_inner::tests::dropping_a_prepared_dispatch_transmits_nothing_and_releases_what_it_held",
   "lib#authorization::dispatch::tests::an_unconfigured_deployment_still_releases_a_body",
 ]
 

@@ -27,18 +27,24 @@
 //! # What the types enforce
 //!
 //! [`ReadyForDispatch`] can only be built with every pre-dispatch prerequisite in hand,
-//! and the inner dispatch consumes one. So "remember to reserve retention before the side
-//! effects run" stops being a comment and becomes: *dispatch requires `ReadyForDispatch`,
-//! and `ReadyForDispatch` proves a [`RetentionDisposition`]* — and, since ADR-MCPRE-065,
-//! that an authorization decision was taken, because the body it carries has exactly one
-//! producer and that producer is a decision.
+//! and it is the only thing that can transmit. So "remember to reserve retention before the
+//! side effects run" stops being a comment and becomes: *transmitting requires a
+//! `ReadyForDispatch`, and a `ReadyForDispatch` proves a [`RetentionDisposition`]* — and,
+//! since ADR-MCPRE-065, that an authorization decision was taken, because the capability it
+//! carries is obtained only from a released body.
+//!
+//! Since #741 the capability is real. The ready state holds a
+//! [`PreparedInnerDispatch`] — the taken permit, the claimed backend, the built transport
+//! request — rather than bytes the seam would look capacity up for later, so the last
+//! pre-dispatch prerequisite is no longer a prediction that the plane will still admit the
+//! call when it is asked to run it.
 //!
 //! This is not a stage type per numbered comment (ADR-MCPRE-058 §9.3). Two states carry
 //! the boundary and everything else stays ordinary control flow, because only this one
 //! boundary has an invariant the compiler can hold.
 
-use crate::async_inner::InnerOutcome;
-use crate::authorization::AuthorizedRequestBody;
+use crate::async_inner::DispatchedOutcome;
+use crate::async_inner::PreparedInnerDispatch;
 use crate::http_profile_serve::signing_window::SigningWindow;
 use crate::transparency::RetentionReservation;
 
@@ -79,16 +85,19 @@ pub(crate) enum RetentionDisposition {
 /// borrowed by the caller on both sides of it. What is here is exactly what would
 /// otherwise be a local whose presence at the dispatch line is a matter of reading
 /// upwards.
-pub(crate) struct ReadyForDispatch {
-    /// The body actually sent to the backend: proxy-owned `_meta` stripped, verified
-    /// context written if this deployment carries one.
+pub(crate) struct ReadyForDispatch<'a> {
+    /// The capability to transmit, and the body it will transmit — the in-flight permit,
+    /// the selected backend and the built transport request, all taken and none of them
+    /// predicted.
     ///
-    /// Typed as an [`AuthorizedRequestBody`] rather than `Vec<u8>` because that is where
-    /// "dispatch only from an authorized request" stops being a sentence: the only producer
-    /// is `AuthorizationPosture::release`, so a serving path that skipped the ADR-MCPRE-065
-    /// decision has nothing to pass here, and the failure is a compile error at the
-    /// dispatch rather than a proxy that quietly serves unjudged requests.
-    forwarded: AuthorizedRequestBody,
+    /// It carries the authorization decision with it. The serving path obtains one only
+    /// from `InnerPlane::prepare`, which takes an `AuthorizedRequestBody` by value, and
+    /// that type has exactly one producer: `AuthorizationPosture::release`. So a path that
+    /// skipped the ADR-MCPRE-065 decision has nothing to prepare with, the failure is a
+    /// compile error before the dispatch rather than a proxy that quietly serves unjudged
+    /// requests, and the bytes that go out are the bytes the decision released — there is
+    /// no second copy for a later stage to substitute.
+    prepared: PreparedInnerDispatch<'a>,
     /// The credential this reply will be signed with and the validity it authorizes,
     /// snapshotted BEFORE the backend runs. Taken early on purpose: discovering a missing
     /// key at signing time meant the tool call had already executed and the client got a
@@ -102,36 +111,42 @@ pub(crate) struct ReadyForDispatch {
     retention: RetentionDisposition,
 }
 
-impl ReadyForDispatch {
+impl<'a> ReadyForDispatch<'a> {
     /// Assemble the ready state. Every argument is a completed pre-dispatch stage.
     pub(crate) fn new(
-        forwarded: AuthorizedRequestBody,
+        prepared: PreparedInnerDispatch<'a>,
         window: SigningWindow,
         retention: RetentionDisposition,
     ) -> Self {
         ReadyForDispatch {
-            forwarded,
+            prepared,
             window,
             retention,
         }
     }
 
-    /// The body to send, borrowed — the dispatch does not consume the ready state,
-    /// because what survives it is the obligation, not the request.
-    pub(crate) fn forwarded(&self) -> &[u8] {
-        self.forwarded.bytes()
-    }
-
-    /// Cross the boundary: yield what the post-dispatch half is answerable for.
+    /// Cross the boundary: transmit, and yield what the post-dispatch half is answerable
+    /// for.
     ///
     /// Consuming, and the only way out. A caller cannot hold a `ReadyForDispatch` and a
     /// [`DispatchedExchange`] at once, which is what keeps "the backend has not acted" and
     /// "the backend may have acted" from being the same value in two places.
-    pub(crate) fn dispatched(self, outcome: InnerOutcome) -> DispatchedExchange {
+    ///
+    /// The transmission happens HERE rather than beside this call. The seam used to hand
+    /// back the body and take the outcome, so the ready state survived the dispatch and a
+    /// path could — in principle — have dispatched twice from one set of prerequisites, or
+    /// dispatched from bytes that were not the ones it carried. Consuming the capability
+    /// inside the crossing removes both.
+    pub(crate) async fn dispatch(self) -> DispatchedExchange {
+        let ReadyForDispatch {
+            prepared,
+            window,
+            retention,
+        } = self;
         DispatchedExchange {
-            outcome,
-            window: self.window,
-            retention: self.retention,
+            outcome: prepared.dispatch().await,
+            window,
+            retention,
         }
     }
 }
@@ -142,14 +157,14 @@ impl ReadyForDispatch {
 /// every exit from here is a `response_rejection`, never a `request.rejected`, and none
 /// of them can claim nothing happened.
 pub(crate) struct DispatchedExchange {
-    outcome: InnerOutcome,
+    outcome: DispatchedOutcome,
     window: SigningWindow,
     retention: RetentionDisposition,
 }
 
 impl DispatchedExchange {
     /// What the inner plane managed to do, taken out with the obligations that outlive it.
-    pub(crate) fn into_parts(self) -> (InnerOutcome, SigningWindow, RetentionDisposition) {
+    pub(crate) fn into_parts(self) -> (DispatchedOutcome, SigningWindow, RetentionDisposition) {
         (self.outcome, self.window, self.retention)
     }
 }
@@ -186,14 +201,19 @@ mod tests {
         );
     }
 
-    /// Crossing the boundary is one-way: the ready state is consumed.
+    /// Crossing the boundary is one-way: the ready state is consumed, and transmitting is
+    /// what consumes it.
     ///
     /// Asserted here because it is the property that makes "pre-dispatch rejection" and
     /// "post-dispatch failure" different in the type system and not only in prose. A
-    /// `dispatched` that borrowed instead would let a caller keep the ready state and
-    /// refuse as though the backend had not run.
-    #[test]
-    fn the_dispatch_boundary_consumes_the_ready_state() {
+    /// `dispatch` that borrowed instead would let a caller keep the ready state and refuse
+    /// as though the backend had not run — or transmit from it twice.
+    ///
+    /// The capability the ready state carries comes through the ONE producer: an
+    /// `AuthorizedRequestBody`, released by an `AuthorizationPosture`, prepared by the
+    /// inner plane. There is no other way to obtain a dispatchable body.
+    #[tokio::test]
+    async fn the_dispatch_boundary_consumes_the_ready_state() {
         let key = Arc::new(ActiveDelegatedKey {
             key: Arc::new(mcp_re_core::SigningKey::from_seed_bytes(&[4u8; 32])),
             delegated_kid: "delegated-1".into(),
@@ -207,19 +227,27 @@ mod tests {
             nbf: 0,
             exp: 1_700_000_000,
         });
+        let inner = |body: &[u8]| {
+            assert_eq!(body, b"{}", "the bytes sent are the bytes released");
+            b"{\"result\":{}}".to_vec()
+        };
+        let released =
+            crate::authorization::AuthorizationPosture::NoPolicyConfigured.release(b"{}".to_vec());
+        let prepared = crate::async_inner::AsyncInnerServer::prepare(&inner, released.bytes())
+            .expect("an in-process inner always prepares");
         let ready = ReadyForDispatch::new(
-            // Through the ONE producer. There is no other way to obtain a dispatchable
-            // body, which is the property this type now carries.
-            crate::authorization::AuthorizationPosture::NoPolicyConfigured.release(b"{}".to_vec()),
+            prepared,
             SigningWindow::over(key, 1_699_999_000, 60),
             RetentionDisposition::NotConfigured,
         );
-        assert_eq!(ready.forwarded(), b"{}");
 
-        let exchange = ready.dispatched(InnerOutcome::Replied(b"{\"result\":{}}".to_vec()));
+        let exchange = ready.dispatch().await;
         // `ready` is gone here — the compiler enforces it, which is the assertion.
         let (outcome, window, retention) = exchange.into_parts();
-        assert_eq!(outcome, InnerOutcome::Replied(b"{\"result\":{}}".to_vec()));
+        assert_eq!(
+            outcome,
+            DispatchedOutcome::Replied(b"{\"result\":{}}".to_vec())
+        );
         // The window crosses the boundary intact — the reply is signed under the
         // credential the exchange snapshotted before the backend ran.
         assert_eq!(window.expires(), 1_699_999_060);

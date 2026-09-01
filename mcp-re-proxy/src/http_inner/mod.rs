@@ -55,28 +55,29 @@
 //!
 //! ## Fail-closed
 //!
-//! `dispatch` NEVER errors (the [`AsyncInnerServer`] contract): every failure becomes an
-//! [`InnerOutcome`] the proxy still SIGNS a reply about. When all backends are Open the
-//! request fails closed WITHOUT dispatching; when the in-flight bound
+//! A committed dispatch NEVER errors (the [`AsyncInnerServer`] contract): every failure
+//! becomes a [`DispatchedOutcome`] the proxy still SIGNS a reply about. When all backends
+//! are Open the request fails closed WITHOUT dispatching; when the in-flight bound
 //! ([`DEFAULT_MAX_IN_FLIGHT`]) is reached, a further request fails closed WITHOUT
 //! queuing — bounded backpressure, never an unbounded backlog. A dead, hostile, or
 //! overloaded inner fleet can never suppress the signature or cause a silent allow.
 //!
 //! What it no longer does is report all of those as the same thing (ADR-MCPRE-058 §10,
 //! ruling D4). The pool is the only component that KNOWS whether bytes left the process,
-//! so it is the only one that can classify:
+//! so it is the only one that can classify — and, since #741, the first three are
+//! classified BEFORE anything is committed, by taking the capacity rather than reading it:
 //!
 //! ```text
-//! no permit / all backends ejected / unbuildable request  -> NotDispatched
-//! timeout, connect or transport error                     -> Indeterminate
-//! non-2xx, non-JSON media type, unreadable or over-cap    -> InvalidUpstream
-//! 2xx with a JSON body                                    -> Replied
+//! prepare:  no permit / all backends ejected / unbuildable  -> NotAdmitted
+//! dispatch: timeout, connect or transport error             -> Indeterminate
+//! dispatch: non-2xx, non-JSON, unreadable or over-cap       -> InvalidUpstream
+//! dispatch: 2xx with a JSON body                            -> Replied
 //! ```
 //!
-//! A connect error is classified `Indeterminate` rather than `NotDispatched`, deliberately.
-//! hyper does not reliably distinguish "the connection was refused" from "the request was
-//! written and the peer went away", and `NotDispatched` is a claim that the action did not
-//! run. Only outcomes this pool can PROVE never reached a backend earn it.
+//! A connect error is classified `Indeterminate`, deliberately. hyper does not reliably
+//! distinguish "the connection was refused" from "the request was written and the peer
+//! went away", so it is not a fact this pool can prove never reached a backend — and past
+//! the commitment there is no outcome that claims one.
 
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU32;
@@ -101,9 +102,9 @@ use hyper_util::rt::TokioExecutor;
 use tokio::sync::Semaphore;
 
 use crate::async_inner::AsyncInnerServer;
-use crate::async_inner::InnerOutcome;
-use crate::async_inner::InnerResponseFuture;
+use crate::async_inner::DispatchedOutcome;
 use crate::async_inner::NotAdmitted;
+use crate::async_inner::PreparedInnerDispatch;
 
 mod selection;
 
@@ -335,19 +336,15 @@ impl HttpInnerPool {
         }
     }
 
-    /// Issue the HTTP round-trip to `uri`.
+    /// Build the transport request for `uri`, BEFORE anything is committed.
     ///
-    /// Returns the classified [`InnerOutcome`] rather than `Result<Vec<u8>, ()>`: this
-    /// function is the only place that can tell a timeout from a refused connection from a
-    /// backend that answered with HTML, and flattening them to one `Err(())` here is what
-    /// made the distinction unrecoverable everywhere else.
-    async fn round_trip(
-        client: &Client<HttpConnector, Full<Bytes>>,
-        uri: Uri,
-        body: Bytes,
-        timeout: Duration,
-    ) -> InnerOutcome {
-        let req = Request::builder()
+    /// Separate from the round trip because its failure is a different fact: a request
+    /// that cannot even be constructed was never transmitted, and saying so is only
+    /// possible while the caller can still be told nothing happened. It used to live
+    /// inside the dispatch, where the honest answer had to be minted on the far side of
+    /// the execution threshold.
+    fn build_request(uri: Uri, body: Bytes) -> Result<Request<Full<Bytes>>, NotAdmitted> {
+        Request::builder()
             .method(Method::POST)
             .uri(uri)
             // MCP Streamable HTTP (2025-06-18 §Sending Messages): a client POST MUST
@@ -364,15 +361,28 @@ impl HttpInnerPool {
             // what the transport requires and accept only what we can evidence.
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::ACCEPT, "application/json, text/event-stream")
-            .body(Full::new(body));
-        let req = match req {
-            Ok(req) => req,
-            // The request could not even be constructed, so nothing was transmitted.
-            Err(_) => return InnerOutcome::NotDispatched("inner request could not be built"),
-        };
+            .body(Full::new(body))
+            // Nothing was transmitted, and nothing can be: reported as a pre-commitment
+            // refusal, which is what it is.
+            .map_err(|_| NotAdmitted("inner request could not be built"))
+    }
 
+    /// Issue the HTTP round-trip for an already-built request.
+    ///
+    /// Returns the classified [`DispatchedOutcome`] rather than `Result<Vec<u8>, ()>`:
+    /// this function is the only place that can tell a timeout from a refused connection
+    /// from a backend that answered with HTML, and flattening them to one `Err(())` here
+    /// is what made the distinction unrecoverable everywhere else.
+    ///
+    /// Every arm it can reach is compatible with the action having executed. The
+    /// unbuildable-request case is NOT among them: it is decided in
+    /// [`build_request`](Self::build_request), before commitment.
+    async fn round_trip(
+        client: &Client<HttpConnector, Full<Bytes>>,
+        req: Request<Full<Bytes>>,
+        timeout: Duration,
+    ) -> DispatchedOutcome {
         // Bound the whole round-trip. Timeout OR transport error ⇒ failure.
-        let _t_inner = crate::stage_timers::Timed::start(crate::stage_timers::Stage::InnerDispatch);
         let resp = match tokio::time::timeout(timeout, client.request(req)).await {
             Ok(Ok(resp)) => resp,
             // Both arms are INDETERMINATE, and the timeout is the reason this classification
@@ -380,15 +390,15 @@ impl HttpInnerPool {
             // the answer simply never came back. Reporting that as a clean error response is
             // the strongest available signal that nothing happened, which is precisely what
             // is not known.
-            Ok(Err(_)) => return InnerOutcome::Indeterminate("inner transport error"),
-            Err(_) => return InnerOutcome::Indeterminate("inner request timed out"),
+            Ok(Err(_)) => return DispatchedOutcome::Indeterminate("inner transport error"),
+            Err(_) => return DispatchedOutcome::Indeterminate("inner request timed out"),
         };
 
         // A non-2xx inner status is not a valid JSON-RPC response. The backend DID answer,
         // so this is not indeterminate — it is an unusable answer, and signing backend HTML
         // as an MCP result is not an option either.
         if !resp.status().is_success() {
-            return InnerOutcome::InvalidUpstream("inner backend returned a non-2xx status");
+            return DispatchedOutcome::InvalidUpstream("inner backend returned a non-2xx status");
         }
 
         // JSON mode (#415 rev 2 §3.4): if the backend answered with a stream, refuse
@@ -410,17 +420,19 @@ impl HttpInnerPool {
             })
             .unwrap_or(false);
         if !is_json {
-            return InnerOutcome::InvalidUpstream("inner backend did not answer application/json");
+            return DispatchedOutcome::InvalidUpstream(
+                "inner backend did not answer application/json",
+            );
         }
 
         // Read the body, capped. `Limited` fails the collect if the cap is exceeded.
         let limited = http_body_util::Limited::new(resp.into_body(), MAX_INNER_RESPONSE_BYTES);
         match limited.collect().await {
-            Ok(collected) => InnerOutcome::Replied(collected.to_bytes().to_vec()),
+            Ok(collected) => DispatchedOutcome::Replied(collected.to_bytes().to_vec()),
             // The backend answered and the answer is unusable — over the cap, or the body
             // stream broke partway. It acted either way.
             Err(_) => {
-                InnerOutcome::InvalidUpstream("inner response body was unreadable or over cap")
+                DispatchedOutcome::InvalidUpstream("inner response body was unreadable or over cap")
             }
         }
     }
@@ -444,76 +456,67 @@ impl Drop for ProbeGuard<'_> {
 }
 
 impl AsyncInnerServer for HttpInnerPool {
-    /// The pre-dispatch capacity and health question, answered without transmitting.
+    /// Take the in-flight permit, claim the backend, build the request — transmit nothing.
     ///
-    /// Both conditions are facts about THIS process: how many round trips are already in
-    /// flight, and whether the breaker has ejected every backend. Asking them before the
-    /// execution threshold is what lets a saturated or fully-ejected fleet be refused as
-    /// genuinely retry-safe instead of as an exchange that may have executed.
+    /// Every one of those is a fact about THIS process, and taking them here is what lets
+    /// a saturated or fully-ejected fleet be refused as genuinely retry-safe instead of as
+    /// an exchange that may have executed.
     ///
-    /// Deliberately claims NOTHING — neither the in-flight permit nor a recovery probe.
-    /// Both are read-only observations ([`Semaphore::available_permits`] and
-    /// [`HttpInnerPool::any_dispatchable`], never `select_backend`, which claims the
-    /// Half-Open trial as a side effect of answering). A reservation would have to be
-    /// held across the caller's own stages and released on every refusal path, and the
-    /// benefit — closing a race whose losing side is resolved pessimistically anyway —
-    /// does not pay for that.
-    fn admit(&self) -> Result<(), NotAdmitted> {
-        if self.in_flight.available_permits() == 0 {
-            return Err(NotAdmitted("inner plane is at its in-flight bound"));
-        }
-        if !self.any_dispatchable(self.now_nanos()) {
+    /// This CLAIMS, where its predecessor observed. `admit` read
+    /// [`Semaphore::available_permits`] and [`HttpInnerPool::any_dispatchable`] and took
+    /// nothing, deliberately: a reservation would have had to be held across the caller's
+    /// remaining pre-dispatch stages and released on every refusal path. The prepared
+    /// dispatch IS that holding, and its drop IS that release — so the reason not to claim
+    /// is gone, and with it the window in which another core took the last permit between
+    /// the answer and the acquisition. The recovery probe is claimed here for the same
+    /// reason and released the same way: by [`ProbeGuard`], on drop, whether the dispatch
+    /// happens or not.
+    fn prepare<'a>(&'a self, request: &[u8]) -> Result<PreparedInnerDispatch<'a>, NotAdmitted> {
+        // Bounded inner-plane concurrency: take an in-flight permit or fail closed
+        // IMMEDIATELY. Saturation ⇒ refusal WITHOUT queuing, so a slow/overloaded inner
+        // fleet cannot build an unbounded per-core backlog (ADR-MCPRE-051 §3
+        // pool-exhaustion backpressure). The permit is held from here to the end of the
+        // round-trip, and released by dropping this value if the dispatch never happens.
+        let permit = Arc::clone(&self.in_flight)
+            .try_acquire_owned()
+            .map_err(|_| NotAdmitted("inner plane is at its in-flight bound"))?;
+        // Health-aware selection. All backends ejected ⇒ fail closed WITHOUT dispatching
+        // and WITHOUT queuing (bounded fail-closed, ADR-MCPRE-051 §3). The selection
+        // yields the backend alongside its index, so neither is looked back up from the
+        // other — and, once taken, neither is selected again at the dispatch.
+        let Some((idx, is_probe, backend)) = self.select_backend(self.now_nanos()) else {
             return Err(NotAdmitted("every inner backend is ejected"));
-        }
-        Ok(())
-    }
-
-    fn dispatch<'a>(&'a self, request: &'a [u8]) -> InnerResponseFuture<'a> {
-        // Own the request bytes + a cheap client clone into the future.
-        let body = Bytes::copy_from_slice(request);
+        };
+        // A claimed recovery probe MUST be released even if this dispatch never happens.
+        // `record_outcome` — the only other place that clears the flag — runs after the
+        // awaited round trip, so a prepared dispatch that is dropped, or a future hyper
+        // drops on a client disconnect or an H2 RST_STREAM, would otherwise leave
+        // `probe_inflight` set forever: the backend stays HalfOpen with its single trial
+        // slot permanently claimed, never re-probed and never recovered, for the life of
+        // the process. The guard releases on drop, and the drop now covers the
+        // never-dispatched path too.
+        let probe = is_probe.then_some(ProbeGuard { backend });
+        let req = Self::build_request(backend.uri.clone(), Bytes::copy_from_slice(request))?;
         let client = self.client.clone();
         let timeout = self.request_timeout;
-        let in_flight = self.in_flight.clone();
-        Box::pin(async move {
-            // Bounded inner-plane concurrency: take an in-flight permit or fail closed
-            // IMMEDIATELY. Saturation ⇒ synthesized inner-unavailable WITHOUT queuing,
-            // so a slow/overloaded inner fleet cannot build an unbounded per-core
-            // backlog (ADR-MCPRE-051 §3 pool-exhaustion backpressure). The permit is
-            // held for the whole round-trip and released on completion.
-            let _permit = match in_flight.try_acquire_owned() {
-                Ok(permit) => permit,
-                Err(_) => {
-                    return InnerOutcome::NotDispatched("inner plane is at its in-flight bound")
-                }
-            };
-            let now = self.now_nanos();
-            // Health-aware selection. All backends ejected ⇒ fail closed WITHOUT
-            // dispatching and WITHOUT queuing (bounded fail-closed, ADR-MCPRE-051 §3).
-            // The selection yields the backend alongside its index, so neither is looked
-            // back up from the other.
-            let Some((idx, is_probe, backend)) = self.select_backend(now) else {
-                return InnerOutcome::NotDispatched("every inner backend is ejected");
-            };
-            let uri = backend.uri.clone();
-
-            // A claimed recovery probe MUST be released even if this future never
-            // finishes. hyper drops the service future on a client disconnect or an H2
-            // RST_STREAM, and `record_outcome` — the only other place that clears the
-            // flag — runs after the awaited round trip. A dropped probe therefore left
-            // `probe_inflight` set forever: the backend stayed HalfOpen with its single
-            // trial slot permanently claimed, so it could never be re-probed and never
-            // recovered, for the life of the process. The guard releases on drop.
-            let _probe = is_probe.then(|| ProbeGuard { backend });
-
-            let outcome = Self::round_trip(&client, uri, body.clone(), timeout).await;
-            let done = self.now_nanos();
-            // The breaker counts "did this backend serve a usable answer", so every
-            // non-`Replied` outcome is a failure for its purposes even though the three
-            // differ sharply in what they mean for the exchange.
-            let healthy = matches!(outcome, InnerOutcome::Replied(_));
-            self.record_outcome(idx, is_probe, healthy, done);
-            outcome
-        })
+        Ok(PreparedInnerDispatch::over(move || {
+            Box::pin(async move {
+                // Moved in, so the permit and the trial slot are held for exactly the
+                // round trip and released with this future however it ends.
+                let _permit = permit;
+                let _probe = probe;
+                let _t_inner =
+                    crate::stage_timers::Timed::start(crate::stage_timers::Stage::InnerDispatch);
+                let outcome = Self::round_trip(&client, req, timeout).await;
+                let done = self.now_nanos();
+                // The breaker counts "did this backend serve a usable answer", so every
+                // non-`Replied` outcome is a failure for its purposes even though the two
+                // differ sharply in what they mean for the exchange.
+                let healthy = matches!(outcome, DispatchedOutcome::Replied(_));
+                self.record_outcome(idx, is_probe, healthy, done);
+                outcome
+            })
+        }))
     }
 }
 
@@ -541,7 +544,7 @@ mod tests {
         .expect("pool")
     }
 
-    /// A pool whose ejected backends become probe-eligible immediately, so `admit`'s
+    /// A pool whose ejected backends become probe-eligible immediately, so `prepare`'s
     /// use of the real monotonic clock still lands past the cooldown.
     fn pool_no_cooldown(backends: usize, threshold: u32) -> HttpInnerPool {
         let uris = (0..backends).map(|i| uri(9100 + i as u16)).collect();
@@ -557,50 +560,92 @@ mod tests {
     }
 
     #[test]
-    fn admit_does_not_claim_the_recovery_probe() {
+    fn preparing_claims_the_recovery_probe_and_dropping_it_gives_the_probe_back() {
         let p = pool_no_cooldown(1, 1);
         let (i, pr, _) = p.select_backend(0).unwrap();
         p.record_outcome(i, pr, false, 0); // ejected, reopen_at = now
         assert_eq!(p.ejected_backend_count(), 1);
 
-        // Asking the capacity question must not consume the single trial slot, so it
-        // stays answerable — and stays the SAME answer — however often it is asked.
-        for _ in 0..8 {
-            assert!(p.admit().is_ok(), "a probe-eligible backend is admissible");
-        }
-        assert_eq!(
-            p.backends[0].state.load(Ordering::Acquire),
-            STATE_OPEN,
-            "admit must not perform the Open->HalfOpen transition"
+        // Preparing takes the single trial slot — it does not predict that the slot will
+        // still be there at the dispatch. That is the whole change: the capability is
+        // held, so no second claimant can win the race in between.
+        let prepared = p.prepare(b"{}").expect("a probe-eligible backend prepares");
+        assert!(
+            p.backends[0].probe_inflight.load(Ordering::Acquire),
+            "prepare must claim the Half-Open trial it is about to use"
         );
         assert!(
-            !p.backends[0].probe_inflight.load(Ordering::Acquire),
-            "admit must not set probe_inflight; nothing would ever release it"
+            p.prepare(b"{}").is_err(),
+            "the trial slot is taken, so a second preparation finds nothing to claim"
         );
 
-        // The dispatch that follows is still able to claim the trial and recover.
+        // Dropping it gives everything back, with no release call anywhere. This is the
+        // rescind path for a refusal taken between prepare and the dispatch.
+        drop(prepared);
+        assert!(
+            !p.backends[0].probe_inflight.load(Ordering::Acquire),
+            "a dropped preparation must not leave the trial slot claimed forever"
+        );
+        assert_eq!(
+            p.in_flight_available(),
+            p.max_in_flight(),
+            "a dropped preparation must give the in-flight permit back"
+        );
+
+        // And the probe is still there for the next attempt to claim and recover on.
         let (pi, is_probe, _) = p
             .select_backend(p.now_nanos())
-            .expect("the probe is still there for the dispatch to claim");
+            .expect("the probe survives a preparation that never dispatched");
         assert!(is_probe, "the claim is a Half-Open trial");
         p.record_outcome(pi, is_probe, true, p.now_nanos());
         assert_eq!(p.ejected_backend_count(), 0, "the backend recovered");
     }
 
     #[test]
-    fn admit_refuses_only_while_every_backend_is_ejected() {
+    fn preparing_refuses_only_while_every_backend_is_ejected() {
         let p = pool(1, 1); // 30s cooldown: stays ejected for the whole test
-        assert!(p.admit().is_ok(), "healthy backend is admissible");
+        assert!(p.prepare(b"{}").is_ok(), "healthy backend is admissible");
         let (i, pr, _) = p.select_backend(0).unwrap();
         p.record_outcome(i, pr, false, 0);
         assert!(
-            p.admit().is_err(),
+            p.prepare(b"{}").is_err(),
             "an Open backend inside its cooldown is not admissible"
         );
     }
 
+    /// The permit is TAKEN at preparation, not read.
+    ///
+    /// The defect this closes: `admit` answered from `available_permits`, and the permit
+    /// was acquired inside the dispatch — so between the two another core could take the
+    /// last one, and the exchange discovered it from the far side of the execution
+    /// threshold. Exhausting the bound with prepared-but-undispatched capabilities is
+    /// exactly that window, and it must now be closed at the pre-commitment refusal.
     #[test]
-    fn any_dispatchable_agrees_with_selection_without_mutating() {
+    fn a_held_preparation_consumes_the_in_flight_bound() {
+        let p = pool(1, 1).with_max_in_flight(1);
+        let held = p
+            .prepare(b"{}")
+            .expect("the first preparation takes the permit");
+        assert_eq!(p.in_flight_available(), 0);
+        assert!(
+            p.prepare(b"{}").is_err(),
+            "a permit held by a preparation is not available to predict against"
+        );
+        drop(held);
+        assert!(
+            p.prepare(b"{}").is_ok(),
+            "and it is available again once the preparation is dropped"
+        );
+    }
+
+    /// Selection is the ONLY reader of dispatchability, and each claim takes one slot.
+    ///
+    /// This replaces a control over `any_dispatchable`, the read-only twin `admit` used.
+    /// The property worth keeping is not that the two agreed — it is that a claim removes
+    /// what it claimed, so an ejected fleet past its cooldown offers exactly as many trials
+    /// as it has probe-eligible backends, and not one more.
+    #[test]
+    fn each_probe_claim_takes_a_slot_that_no_second_claim_can_take() {
         let p = pool(2, 1);
         let cooldown = DEFAULT_EJECTION_DURATION.as_nanos() as u64;
         // Eject both backends.
@@ -610,19 +655,22 @@ mod tests {
         }
         assert_eq!(p.ejected_backend_count(), 2);
         assert!(
-            !p.any_dispatchable(1),
+            p.select_backend(1).is_none(),
             "inside the cooldown nothing is dispatchable"
         );
+        let (first, is_probe, _) = p
+            .select_backend(cooldown + 1)
+            .expect("past the cooldown a probe is available");
+        assert!(is_probe);
+        let (second, is_probe, _) = p
+            .select_backend(cooldown + 1)
+            .expect("the OTHER backend is still probe-eligible");
+        assert!(is_probe);
+        assert_ne!(first, second, "one probe slot per backend, not per call");
         assert!(
-            p.any_dispatchable(cooldown + 1),
-            "past the cooldown a probe is available"
+            p.select_backend(cooldown + 1).is_none(),
+            "both trial slots are claimed, so there is nothing left to take"
         );
-        // Repeated reads never change the answer, because they change nothing.
-        assert!(p.any_dispatchable(cooldown + 1));
-        assert!(p.select_backend(cooldown + 1).is_some());
-        // The claim IS visible to the read: one probe slot, now taken by one backend,
-        // leaves the other still probe-eligible.
-        assert!(p.any_dispatchable(cooldown + 1));
     }
 
     #[test]

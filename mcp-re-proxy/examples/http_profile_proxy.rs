@@ -326,15 +326,21 @@ async fn handle(
 
     // Step 4 — strip the proxy-owned top-level `_meta` (the request evidence
     // block) so the backend sees clean MCP, then forward through the real inner
-    // pool. `dispatch` never errors: a dead/hostile backend yields a synthesized
+    // pool. Preparing takes the plane's capacity and transmits nothing; dispatching
+    // consumes it and never errors: a dead/hostile backend yields a synthesized
     // inner-unavailable response, which we STILL sign (fail-closed, never a silent
     // allow).
     let forwarded = strip_top_level_meta(&http_req.body);
+    let prepared = match state.inner.prepare(&forwarded) {
+        Ok(prepared) => prepared,
+        Err(why) => panic!("the example's inner plane refused to prepare: {why:?}"),
+    };
     // The example wires an in-process closure inner, which has no transport to fail and so
-    // only ever reports `Replied`. The production path classifies all four outcomes; here
-    // anything else would be a bug in the seam, not a case this demo can exercise.
-    let inner_bytes = match state.inner.dispatch(&forwarded).await {
-        mcp_re_proxy::async_inner::InnerOutcome::Replied(bytes) => bytes,
+    // only ever reports `Replied`. The production path classifies all three post-commitment
+    // outcomes; here anything else would be a bug in the seam, not a case this demo can
+    // exercise.
+    let inner_bytes = match prepared.dispatch().await {
+        mcp_re_proxy::async_inner::DispatchedOutcome::Replied(bytes) => bytes,
         other => panic!("the example's in-process inner cannot report {other:?}"),
     };
 
