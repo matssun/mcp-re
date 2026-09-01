@@ -2751,6 +2751,59 @@ tested_symbols = [
 # needs no premise about what a backend's acknowledgement establishes. That is a different
 # claim (D2), it is per mechanism, and it is registered only where a root consumes it.
 [[unit]]
+id = "proxy.retention_commitment"
+class = "V0"
+description = "WHEN the deployment became answerable for an exchange, as two durable stages under two names: an obligation accepted, which asserts nothing about execution and withdraws itself, and a crossing of the execution threshold, which is recorded by renaming the first and survives being dropped."
+paths = [
+  "mcp-re-proxy/src/transparency/durability.rs",
+  "mcp-re-proxy/src/transparency/durable_job.rs",
+  "mcp-re-proxy/src/transparency/durable_writer.rs",
+  "mcp-re-proxy/src/transparency/reserved_before_dispatch.rs",
+  "mcp-re-proxy/src/transparency/dispatch_committed.rs",
+  "mcp-re-proxy/src/transparency/reservation_marker.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/retention_commitment/two_stages_and_their_dispositions",
+]
+# `retained_record.rs` and `covered_set.rs` are deliberately ABSENT. WHAT a hop contains is
+# a different authority from WHEN responsibility was accepted and crossed, and this claim
+# says nothing about the first — the marker's own content is here only as an ABSENCE, which
+# is a fact about the marker rather than about the record.
+#
+# `http_profile_serve/retention.rs` is absent for the same reason in the other direction: it
+# is the CONSUMER, and which refusal each failure earns belongs to the serving unit. Folding
+# it in would let one fingerprint stand for two owners' evidence.
+tested_symbols = [
+  # The split itself, on the filesystem: reserving publishes the reserved stage and only
+  # that, committing MOVES it, completing consumes it. Without the move being a rename,
+  # two artefacts could exist independently and one could be lost.
+  "lib#transparency::durability::tests::the_reserved_and_committed_stages_are_distinct_artefacts",
+  # The two dispositions, and they are opposite. Neither is inferable from the other: a
+  # reservation that kept its marker would invent an execution, and a commitment that
+  # withdrew one would erase the record an auditor cannot recover.
+  "lib#transparency::durability::tests::a_reservation_that_never_commits_is_rescinded_by_being_dropped",
+  "lib#transparency::durability::tests::a_dropped_commitment_keeps_its_marker",
+  # The withdrawal is a DROP, asserted at the type where no store is involved, so the
+  # property is the value's and not the store's discipline.
+  "lib#transparency::reserved_before_dispatch::tests::dropping_a_reservation_queues_the_rescind_for_its_own_marker",
+  "lib#transparency::dispatch_committed::tests::dropping_a_commitment_gives_the_permit_back_and_keeps_its_record",
+  # R9-C099, on the BYTES. A round trip would pass just as well if the marker grew a field
+  # carrying the request back, so the control asserts the absence directly.
+  "lib#transparency::reservation_marker::tests::a_marker_never_carries_the_request_or_its_credentials",
+  "lib#transparency::durability::tests::a_marker_on_disk_carries_no_credential",
+  # What survives a durability barrier that did not hold, split by disposition. The third
+  # is the non-vacuity control for the first two: withdraw everything and the post-dispatch
+  # record would be erased too.
+  "lib#transparency::durable_writer::tests::a_pre_dispatch_publication_that_cannot_be_made_durable_is_withdrawn",
+  "lib#transparency::durable_writer::tests::a_withdrawal_that_fails_is_not_reported_as_an_ordinary_outage",
+  "lib#transparency::durable_writer::tests::a_post_dispatch_publication_is_never_withdrawn",
+  # A rescind after a commitment finds nothing, which is what lets the drop be
+  # unconditional rather than guarded by a flag a future path could set wrongly.
+  "lib#transparency::durable_writer::tests::a_rescind_publishes_nothing_and_tolerates_an_absent_marker",
+]
+
+[[unit]]
 id = "proxy.replay_materialization"
 class = "V0"
 description = "The replay tier handed to the serving path is the one the plan selected, and a tier that self-declares the volatile single-process posture is never handed over."

@@ -3446,7 +3446,25 @@ authority this tree exists to remove. THM-0081 measures which replies are in the
 owner = "proxy.exchange_lifecycle"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.exchange_lifecycle", "unit://proxy.refusal_provenance"]
-depends_on = ["THM-0043", "THM-0044", "THM-0046", "THM-0045", "THM-0063", "THM-0069", "THM-0081"]
+depends_on = [
+  "THM-0043",
+  "THM-0044",
+  "THM-0046",
+  "THM-0045",
+  "THM-0063",
+  "THM-0069",
+  "THM-0081",
+  # ADR-MCPRE-059 §28 / #741: the retention instance of this theorem's own second
+  # paragraph, which names "audit and retention records" among the refusal-side effects that
+  # may not read as success. It was the one that could: a refused exchange left an artefact
+  # whose documented meaning was that the request crossed the execution threshold.
+  #
+  # THM-0074 is NOT given this edge. That claim is about a dispatch being EARNED, and the
+  # retention obligation being established before it is THM-0045's ordering, already in its
+  # closure. What #741 added is that a REFUSAL leaves nothing readable as a crossing, and
+  # that is a refusal-side fact — this theorem's, at its lowest honest parent.
+  "THM-0088",
+]
 
 # --- Found by the Stage 8 whole-system missing-edge pass. ---
 
@@ -3659,6 +3677,62 @@ supported_by = [
   "unit://http_profile.request_envelope",
   "unit://proxy.outstanding_id_provenance",
 ]
+depends_on = []
+
+[[theorem]]
+id = "THM-0088"
+title = "A retention artefact reads as a crossing only for an exchange that crossed"
+statement = """
+The retained-evidence store records an exchange in TWO stages under TWO names. `reserve`
+publishes `<digest>.reserved`, which carries the request-digest commitment and no part of
+the request; only `commit_to_dispatch` advances it to `<digest>.pending`, and it advances by
+RENAMING, so one artefact changes what it asserts rather than two existing independently.
+
+The stages are two types whose drop dispositions are opposite. Dropping a
+`ReservedBeforeDispatch` queues the withdrawal of its marker and returns its admission
+permit; dropping a `DispatchCommitted` keeps its marker. Neither disposition is a call a
+path can skip.
+
+A publication taken before the exchange may dispatch is WITHDRAWN when its durability
+barrier does not hold, and the durability of that withdrawal is itself established before
+the store reports that nothing was published; when it cannot be, the store says so as a
+distinct fact. A publication taken after the backend acted survives its own failure.
+"""
+security_consequence = """
+A committed-stage marker exists only for an exchange that committed to dispatching, so an
+auditor reconciling them counts calls that may have run and never calls the boundary
+refused. Before this, one artefact meant both — accepted at `reserve`, crossed at
+reconciliation — and no byte on disk separated them, so a saturated inner plane or a refused
+reservation manufactured indeterminacy for calls that provably never reached a backend.
+
+No path leaves one behind by forgetting to release. The withdrawal is a drop, which a
+refusal, an early return, a panic and a cancelled request future all perform; its
+predecessor was a call site reachable only from tests.
+
+And no marker holds a live credential for a call that has not dispatched. The pre-dispatch
+artefact carries the digest commitment alone, so a refused exchange leaves no bearer token
+and no DPoP proof in a store with no expiry — the exposure that a failed reservation could
+previously make permanent, because no value existed for any release path to consume.
+"""
+scope = """
+It is about WHEN responsibility was accepted and crossed, never about WHAT the retained
+record contains. That is `retained_record`'s, and the completed hop still carries the full
+message including its covered credential headers; the marker's content appears here only as
+an ABSENCE.
+
+A stale reserved-stage marker is permitted and is not a defect this forbids. The withdrawal
+is queued rather than awaited — `Drop` cannot await — and its unlink is not made durable, so
+a full queue or a process that dies leaves cleanup debt. What is forbidden is that residue
+reading as an execution, and it cannot, because it is at the other name.
+
+It does not establish that the completion write succeeds, and it claims no atomicity between
+the store and the backend: they share no transaction, which is why the crossing is recorded
+BEFORE the dispatch rather than around it. It says nothing about which HTTP refusal each
+failure earns — that is the serving owner's, under THM-0078.
+"""
+owner = "proxy.retention_commitment"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.retention_commitment"]
 depends_on = []
 
 [[theorem]]

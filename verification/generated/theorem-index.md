@@ -121,6 +121,7 @@ any of them is closed.
 | THM-0085 | Every exchange-owned refusal reaches the audit boundary, typed, before it is answered | proxy.refusal_audit_emission | unit://proxy.refusal_audit_emission | live |
 | THM-0086 | The established replay tier is the selected one, and never a weaker substitute | proxy.replay_materialization | unit://proxy.replay_materialization | live |
 | THM-0087 | A continuation entry is reachable only by the actor the verifier resolved | proxy.continuation_correlation_store | unit://proxy.continuation_correlation_store | live |
+| THM-0088 | A retention artefact reads as a crossing only for an exchange that crossed | proxy.retention_commitment | unit://proxy.retention_commitment | live |
 
 ## Claims in full
 
@@ -980,7 +981,7 @@ any of them is closed.
 
 **Review requirement.** Owner security-specification review
 
-**Depends on.** THM-0043, THM-0044, THM-0045, THM-0046, THM-0063, THM-0069, THM-0081
+**Depends on.** THM-0043, THM-0044, THM-0045, THM-0046, THM-0063, THM-0069, THM-0081, THM-0088
 
 ### THM-0079 — Distinct signed exchanges have distinct replay keys
 
@@ -1077,5 +1078,15 @@ any of them is closed.
 **Security consequence.** A second verified actor who knows the open leg's public signature-base digests cannot obtain the victim's retained bases, so it cannot complete a human-approval round trip that was not its own. A refused or transiently-failed read cannot destroy a live approval either.
 
 **Scope — what this does NOT establish.** CONFIGURATION PROJECTION AND REACHABILITY ONLY, and the store is OPPORTUNISTIC: an unavailable shared tier does not refuse startup — the deployment announces its absence and serves, and an answer leg that needs a correlated continuation fails closed at the binding rather than being admitted unbound. So this claim carries no "prevents startup" conjunct, which is where it departs from the shape of its replay sibling. It says nothing about what an acknowledged write durably establishes, and nothing about the continuation binding itself, which is `mcp-re-http-profile`'s.
+
+**Review requirement.** Owner security-specification review
+
+### THM-0088 — A retention artefact reads as a crossing only for an exchange that crossed
+
+**Statement.** The retained-evidence store records an exchange in TWO stages under TWO names. `reserve` publishes `<digest>.reserved`, which carries the request-digest commitment and no part of the request; only `commit_to_dispatch` advances it to `<digest>.pending`, and it advances by RENAMING, so one artefact changes what it asserts rather than two existing independently. The stages are two types whose drop dispositions are opposite. Dropping a `ReservedBeforeDispatch` queues the withdrawal of its marker and returns its admission permit; dropping a `DispatchCommitted` keeps its marker. Neither disposition is a call a path can skip. A publication taken before the exchange may dispatch is WITHDRAWN when its durability barrier does not hold, and the durability of that withdrawal is itself established before the store reports that nothing was published; when it cannot be, the store says so as a distinct fact. A publication taken after the backend acted survives its own failure.
+
+**Security consequence.** A committed-stage marker exists only for an exchange that committed to dispatching, so an auditor reconciling them counts calls that may have run and never calls the boundary refused. Before this, one artefact meant both — accepted at `reserve`, crossed at reconciliation — and no byte on disk separated them, so a saturated inner plane or a refused reservation manufactured indeterminacy for calls that provably never reached a backend. No path leaves one behind by forgetting to release. The withdrawal is a drop, which a refusal, an early return, a panic and a cancelled request future all perform; its predecessor was a call site reachable only from tests. And no marker holds a live credential for a call that has not dispatched. The pre-dispatch artefact carries the digest commitment alone, so a refused exchange leaves no bearer token and no DPoP proof in a store with no expiry — the exposure that a failed reservation could previously make permanent, because no value existed for any release path to consume.
+
+**Scope — what this does NOT establish.** It is about WHEN responsibility was accepted and crossed, never about WHAT the retained record contains. That is `retained_record`'s, and the completed hop still carries the full message including its covered credential headers; the marker's content appears here only as an ABSENCE. A stale reserved-stage marker is permitted and is not a defect this forbids. The withdrawal is queued rather than awaited — `Drop` cannot await — and its unlink is not made durable, so a full queue or a process that dies leaves cleanup debt. What is forbidden is that residue reading as an execution, and it cannot, because it is at the other name. It does not establish that the completion write succeeds, and it claims no atomicity between the store and the backend: they share no transaction, which is why the crossing is recorded BEFORE the dispatch rather than around it. It says nothing about which HTTP refusal each failure earns — that is the serving owner's, under THM-0078.
 
 **Review requirement.** Owner security-specification review
