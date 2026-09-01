@@ -2723,6 +2723,12 @@ paths = [
   # even though this unit's evidence lane does not reach it — see the note on
   # `tested_symbols`. A file whose change cannot invalidate the claim would be worse.
   "mcp-re-proxy/src/outbound_fetch/resolver.rs",
+  # #742 slice 2. The HTTP-client binding, and the capability that carries a credential to
+  # one authority and no other. Same reason as `resolver.rs`: both ride the features that
+  # link an HTTP client, so this lane cannot run their controls, and both decide what the
+  # claim is about.
+  "mcp-re-proxy/src/outbound_fetch/binding.rs",
+  "mcp-re-proxy/src/outbound_fetch/credential_egress.rs",
 ]
 exported_contracts = []
 evidence = [
@@ -2737,9 +2743,21 @@ evidence = [
 # not evidence, and naming it would be the "green lane that measured nothing" shape.
 #
 # So this unit's claim is over the CONSTRUCTION boundary — that provenance decides the
-# guard and a caller never holds the switch — and not over what happens at connect time.
-# The connect-time conjunct is measured only in the `online_ocsp` lane, and #742 slice 2
-# is where it acquires evidence a unit may cite.
+# guard and a caller never holds the switch — and over ADDRESSING: which authority a
+# request built through this authority is sent to. It is not over what a name resolves to
+# at connect time.
+#
+# #742 slice 2 moved the addressing half into this lane deliberately. The join that makes
+# an authority unmovable by a path is pure and lives in `url.rs`, which is unconditional,
+# so its controls RUN here and are cited below. The two facts one hop out — that a
+# redirect is not followed, and that the resolver vets what a name resolved to — are in
+# `binding.rs` and `resolver.rs`, both feature-gated, so their controls compile
+# to zero tests here and are deliberately NOT named:
+# `an_agent_does_not_follow_a_redirect_and_never_reaches_the_second_authority` and
+# `vetting_resolver_rejects_rebinding_to_internal_addresses` are measured by the Bazel
+# `:mcp_re_proxy_ext` flavor, which sets both features, and by
+# `cargo test -p mcp-re-proxy --features aws_kms_keysource|gcp_kms_keysource|online_ocsp`.
+# A symbol this lane cannot run is not evidence for it, whatever another lane saw.
 tested_symbols = [
   # Provenance decides the guard: the certificate-derived constructor applies the scheme
   # allowlist AND the private-address protection, over the address a parser resolves to
@@ -2758,6 +2776,17 @@ tested_symbols = [
   # one address. A guard over the text would pass every control above and still admit
   # `http://0x7f.1/`.
   "lib#outbound_fetch::address::tests::inet_aton_parser_canonicalizes_each_encoding",
+  # ADDRESSING (#742 slice 2): no path a caller names can move the authority it is joined
+  # onto. This is the property every credential-bearing request rests on, because naming a
+  # path is the entire addressing surface `CredentialEgress` offers.
+  "lib#outbound_fetch::url::tests::no_path_can_move_the_authority_it_is_joined_onto",
+  # The mirror. A join that discarded the path would satisfy the control above and serve
+  # no request; this also fixes the base-path and trailing-separator spellings, which is
+  # where the doubled `//v1/` reference used to be reintroduced.
+  "lib#outbound_fetch::url::tests::the_path_survives_the_join_with_exactly_one_separator",
+  # The two readings of "where the authority ends" agree, which is what lets the join be
+  # stated in terms of the first `/` at all.
+  "lib#outbound_fetch::url::tests::the_host_read_back_is_the_one_the_base_named",
 ]
 
 [[unit]]
@@ -2767,6 +2796,11 @@ description = "A KMS endpoint's literal spelling and its machine interpretation 
 paths = [
   "mcp-re-proxy/src/kms_endpoint_policy/mod.rs",
   "mcp-re-proxy/src/kms_endpoint_policy/authority.rs",
+  # #742 slice 2: the rule as a VALUE. `KmsEndpoint` is the only producer in the crate of
+  # credential egress to a KMS/STS endpoint, so what this unit owns now includes the fact
+  # that the decision cannot be skipped rather than only what the decision is. Gated with
+  # the two backends, so this lane does not run its controls — see the note below.
+  "mcp-re-proxy/src/kms_endpoint_policy/endpoint.rs",
 ]
 exported_contracts = []
 evidence = [
@@ -2775,9 +2809,17 @@ evidence = [
 # WHAT THIS IS AND IS NOT. It is the KMS-specific leaf: an AGREEMENT between two readings
 # of one string. It is NOT a reachability claim — a config-time check over a host string
 # cannot establish which authority a connection reaches under a rebinding-capable threat
-# model, and #742 records that the proof ends at configuration parsing. The unit is
-# registered at the width it owns so the fixes are covered; widening it by renaming would
-# be the move the issue rules out.
+# model. The unit is registered at the width it owns so the fixes are covered; widening it
+# by renaming would be the move the issue rules out.
+#
+# What #742 slice 2 changed is not the rule but who must obey it. The three key sources
+# used to CALL this and discard the answer, which made the check a line each of them
+# remembered to write; they now hold a `CredentialEgress` obtainable only from a
+# `KmsEndpoint`, so deleting the call removes the value the constructor needs. That
+# structural fact is compiled only under the two backend features, so the controls in
+# `endpoint.rs` — `an_endpoint_the_rule_refuses_yields_no_egress` and its two positive
+# controls — do not run in this lane and are NOT cited here. They are measured by the
+# Bazel `:mcp_re_proxy_ext` flavor and by the per-feature cargo lanes.
 tested_symbols = [
   # The two readings agree, which is the whole claim.
   "lib#kms_endpoint_policy::tests::the_authority_returned_is_the_host_and_port_that_will_be_reached",

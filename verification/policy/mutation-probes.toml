@@ -2371,6 +2371,30 @@ expect_red = [
 ]
 
 [[probe]]
+id = "M84-a-path-cannot-become-a-host"
+unit = "proxy.outbound_destination"
+conjunct = "Addressing: no path a caller names moves the authority it is joined onto"
+# The whole caller-facing surface of credential egress is a path, so this join is what makes
+# "reaches only the endpoint the rule admitted" true of every call site rather than of the
+# strings today's call sites happen to pass. The weakening is the shape every call site had
+# before #742: the caller's string IS the URL. That is how a path becomes a host, and it is
+# the R9-C001 class reached from inside the process rather than from the config.
+path = "mcp-re-proxy/src/outbound_fetch/url.rs"
+anchor = """
+    format!(
+        "{}/{}",
+        base.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    )
+"""
+weakening = """
+    format!("{}", path.trim_start_matches('/'))
+"""
+expect_red = [
+  "lib#outbound_fetch::url::tests::no_path_can_move_the_authority_it_is_joined_onto",
+]
+
+[[probe]]
 id = "M86-an-unanswered-store-does-not-admit"
 unit = "proxy.replay_admission_gate"
 conjunct = "A store that does not answer the atomic admission refuses the exchange rather than admitting it"

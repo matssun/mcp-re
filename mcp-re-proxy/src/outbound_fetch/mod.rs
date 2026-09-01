@@ -57,16 +57,26 @@ pub use address::resolved_ip_is_public;
 // Installing that policy into a `ureq` agent is a different thing, and it can only exist
 // where an HTTP client is linked. ADR-MCPS-018 keeps the default closure lean and the
 // Bazel base flavor deliberately links no HTTP client at all, so this half rides the
-// feature that brings one in. That is a real constraint on the BINDING, not the accidental
-// coupling of the guard the census objected to.
-#[cfg(feature = "online_ocsp")]
+// features that bring one in — the revocation client and the two cloud-KMS backends, each
+// of which must build with the others absent. That is a real constraint on the BINDING,
+// not the accidental coupling of the guard the census objected to.
+#[cfg(any(
+    feature = "online_ocsp",
+    feature = "aws_kms_keysource",
+    feature = "gcp_kms_keysource"
+))]
+mod binding;
+#[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
+mod credential_egress;
+#[cfg(any(
+    feature = "online_ocsp",
+    feature = "aws_kms_keysource",
+    feature = "gcp_kms_keysource"
+))]
 mod resolver;
 
-#[cfg(feature = "online_ocsp")]
-use std::time::Duration;
-
-#[cfg(feature = "online_ocsp")]
-use self::resolver::VettingResolver;
+#[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
+pub use credential_egress::CredentialEgress;
 
 /// A destination this proxy may fetch from, and the provenance that decided how it was
 /// checked.
@@ -150,26 +160,6 @@ impl VettedDestination {
     /// the constructor recorded.
     pub fn provenance(&self) -> Provenance {
         self.provenance
-    }
-
-    /// An HTTP agent configured for THIS destination's provenance.
-    ///
-    /// Feature-gated with the resolver it installs, for the reason stated on that module:
-    /// the guard is unconditional, binding it to an HTTP client cannot be.
-    ///
-    /// A capability, not a flag. Redirects are disabled for every provenance — a revocation
-    /// fetch has no legitimate need to chase a `302 Location: http://169.254.169.254/`, and
-    /// the first URL is the only one any guard saw. The resolved-address vetting is
-    /// installed only for a certificate-derived destination, for the same reason the
-    /// literal-address block is.
-    #[cfg(feature = "online_ocsp")]
-    pub fn agent(&self, _timeout: Duration) -> ureq::Agent {
-        let builder = ureq::AgentBuilder::new().redirects(0);
-        let builder = match self.provenance {
-            Provenance::CertificateDerived => builder.resolver(VettingResolver::std()),
-            Provenance::OperatorConfigured => builder,
-        };
-        builder.build()
     }
 }
 

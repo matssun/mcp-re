@@ -3432,10 +3432,16 @@ depends_on = [
   # text named one authority and whose parse named another holds a capability derived from
   # something the validated configuration did not select — which is this claim's subject.
   #
-  # It is the CONFIG-TIME half only. The connect-time half, `proxy.outbound_destination`, is
-  # deliberately NOT given an edge here: no credential-bearing egress consumes it, so an edge
-  # would make this root's closure claim support that does not exist. #742 keeps it open.
+  # It is the CONFIG-TIME half: WHICH endpoint the validated configuration selected.
   "THM-0089",
+  # ADR-MCPRE-059 §28 / #742 (D5), the other half of the same posture claim. THM-0089 says
+  # the endpoint text and its parse name one authority; this says the credential actually
+  # goes there — that every credential-bearing request is issued through a capability bound
+  # to that endpoint, and that neither a caller's string nor a responder's redirect can
+  # move it. Both are needed: a runtime whose root-key bootstrap or workload credential
+  # reached some other authority holds a capability derived from something the validated
+  # configuration did not select, which is this root's subject.
+  "THM-0090",
 ]
 
 [[theorem]]
@@ -3798,9 +3804,14 @@ scope = """
 It ends at the endpoint TEXT. What it establishes is agreement between what a reader sees
 and what a URL parser resolves — NOT that the address finally connected to is one this
 deployment would accept. Under a rebinding-capable threat model a name that passes here can
-still resolve to an address the deployment would refuse; establishing that is the
-connect-time half owned by `proxy.outbound_destination`, and no credential-bearing egress
-path consumes it today. This claim must not be read as closing that gap.
+still resolve to an address the deployment would refuse, and this claim must not be read as
+closing that gap.
+
+What it now also does is decide something: `KmsEndpoint` is the only producer in the crate
+of credential egress to a KMS/STS endpoint, so a key source cannot reach one without this
+decision. That is a fact about who must obey the rule, not a widening of the rule — the
+question answered is still the agreement between two readings of one string. Where the
+credential then goes is THM-0090.
 
 It says nothing about what a KMS does with a request that reaches it, nothing about key
 custody or exportability (THM-0064's and THM-0082's), and nothing about whether the
@@ -3972,6 +3983,70 @@ owner = "client.local_ingress_authority"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://client.local_ingress_authority"]
 depends_on = []
+
+[[theorem]]
+id = "THM-0090"
+title = "A credential leaves this proxy only to the endpoint its rule admitted"
+statement = """
+Every credential-bearing outbound request this proxy issues — AWS KMS, the AWS STS
+web-identity exchange, GCP Cloud KMS, and the GCE metadata token fetch — is issued through a
+capability that was bound at construction to a destination which passed the
+outbound-destination guard, and is addressed by naming a PATH on that destination.
+
+No path moves the authority: the join places everything the caller supplied after a
+separator that terminates the base's authority, so a protocol-relative reference, an
+absolute URL, userinfo, a backslash or a tab names a path and not a host. The capability
+exposes no other way to address a request — there is no constructor taking a URL and no
+projection handing back a raw client — and the client it performs the request with is the
+one the destination's provenance built, with redirects disabled, so the responder cannot
+move the authority either.
+
+For a KMS or STS endpoint the destination is obtainable only from `KmsEndpoint`, so the rule
+of THM-0089 is not a call a constructor may omit: omitting it removes the value the
+constructor needs.
+"""
+security_consequence = """
+The pod's projected service-account token, the live workload-identity bearer token, and the
+`getPublicKey` response that BECOMES this replica's root verify key each have exactly one
+destination, and it is the one the validated configuration selected. R9's only Critical was
+this class: an endpoint that re-points that traffic sends a replayable credential to an
+attacker and lets a substituted authority supply a root signing key every local fail-closed
+check then passes against, self-consistently.
+
+The previous shape failed the deletion test rather than the threat model. Each key source
+called the endpoint rule and DISCARDED its answer, then built a bare HTTP client and
+interpolated the endpoint back into a URL string at each call site; deleting the call left a
+constructor that still built, still reached the endpoint, and still sent the credential. The
+check was being remembered at five sites. A later site that formatted its own URL — or a
+responder answering `302 Location:` — reached whatever it named.
+"""
+scope = """
+It is about the AUTHORITY NAMED, not the address that name resolves to. Resolved-address
+vetting is installed for a certificate-derived destination only, and deliberately not for an
+operator-configured one: an operator may legitimately point a KMS endpoint at an internal
+address, which is what keeps the emulator lane working. So a name admitted by THM-0089 can
+still resolve wherever DNS says, and neither claim closes that.
+
+It says nothing about what a KMS or STS does with a request that reaches it, nothing about
+key custody or exportability (THM-0064, THM-0082), and nothing about the metadata server's
+own trustworthiness — on every production path that endpoint is a constant, and the
+parameter that varies it exists for tests.
+
+EVIDENCE AND LANES, stated because they differ. The addressing conjunct is pure and its
+controls run in the default `cargo test -p mcp-re-proxy --lib` lane that this unit's
+`test://` evidence resolves in. The redirect conjunct and the single-producer structure are
+compiled only under the `online_ocsp`, `aws_kms_keysource` and `gcp_kms_keysource` features,
+so their controls —
+`outbound_fetch::binding::tests::an_agent_does_not_follow_a_redirect_and_never_reaches_the_second_authority`
+and `kms_endpoint_policy::endpoint::tests::an_endpoint_the_rule_refuses_yields_no_egress` —
+are measured by the Bazel `:mcp_re_proxy_ext` flavor and by the per-feature cargo lanes, and
+are NOT cited by the unit. A build with none of those features compiles no credential egress
+at all, so there is nothing for the claim to be about there.
+"""
+owner = "proxy.outbound_destination"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.outbound_destination"]
+depends_on = ["THM-0089"]
 
 [[theorem]]
 id = "THM-0084"

@@ -100,6 +100,7 @@ graph BT
     THM_0086["THM-0086<br/>The established replay tier is the selected one, and never a weaker substitute"]
     THM_0088["THM-0088<br/>A retention artefact reads as a crossing only for an exchange that crossed"]
     THM_0089["THM-0089<br/>A KMS or STS endpoint reaches the authority its text names"]
+    THM_0090["THM-0090<br/>A credential leaves this proxy only to the endpoint its rule admitted"]
     THM_0092["THM-0092<br/>A request whose replay state was not established does not dispatch"]
     THM_0093["THM-0093<br/>An answer leg that needs a continuation does not proceed unbound"]
     THM_0007 --> THM_0008
@@ -205,6 +206,7 @@ graph BT
     THM_0073 --> THM_0077
     THM_0086 --> THM_0077
     THM_0089 --> THM_0077
+    THM_0090 --> THM_0077
     THM_0043 --> THM_0078
     THM_0044 --> THM_0078
     THM_0045 --> THM_0078
@@ -223,6 +225,7 @@ graph BT
     THM_0046 --> THM_0085
     THM_0069 --> THM_0085
     THM_0081 --> THM_0085
+    THM_0089 --> THM_0090
     THM_0086 --> THM_0092
     classDef root stroke-width:3px;
     class THM_0071,THM_0074,THM_0075,THM_0076,THM_0077,THM_0078 root;
