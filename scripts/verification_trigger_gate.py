@@ -67,6 +67,9 @@ from _fingerprint import (  # noqa: E402
     test_source_patterns,
 )
 
+#: The boundary catalogue, read by `_fingerprint._governing_boundaries`.
+TRUST_BOUNDARIES = "verification/policy/trust-boundaries.toml"
+
 
 def glob_matches(pattern: str, path: str) -> bool:
     """GitHub Actions path matching, restricted to the forms this repository uses.
@@ -156,6 +159,13 @@ def fingerprint_inputs(manifest: Path) -> list[str]:
         if any(str(e).startswith("mutation://") for e in unit.get("evidence", [])):
             required.append("verification/policy/mutation-probes.toml")
             required.extend(MUTATION_LANE_INPUTS)
+    # Encoding v6: `governing_boundaries`. A unit's fingerprint reads
+    # `trust-boundaries.toml`, and it is the one input the derivation above cannot see —
+    # the component holds digests of boundary ENTRIES rather than file paths, so nothing in
+    # a unit's `paths` names it. Listed explicitly for that reason, with the reason: a
+    # fingerprint input the trigger set is blind to is a lane that stops asking rather than
+    # going red, which is the failure this whole gate exists for.
+    required.append(TRUST_BOUNDARIES)
     return sorted(set(required))
 
 

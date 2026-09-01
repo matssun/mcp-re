@@ -88,18 +88,21 @@ from __future__ import annotations
 import hashlib
 import json
 import tomllib
+from functools import lru_cache
 
 from _manifest import (
     claims_mutation_evidence,
     claims_test_evidence,
     test_package_for,
+    expand_paths,
+    load_trust_boundaries,
     REPO_ROOT,
 )
 
 # Every attestation carrying an earlier version is UNKNOWN from the moment this moves, which
 # is the intended cost: an attestation computed over a narrower set of inputs cannot answer
 # whether one of the inputs it never saw has since changed.
-ENCODING_VERSION = 5
+ENCODING_VERSION = 6
 
 #: The classes whose evidence comes from a whole-crate prover run.
 FORMAL_CLASSES = {"V1", "V3"}
@@ -330,7 +333,53 @@ def _mutation_lane_identity(unit: dict) -> dict[str, str]:
     return _digest_paths(list(MUTATION_LANE_INPUTS))
 
 
-def fingerprint_unit(unit: dict, doc: dict, toolchains: dict, assumptions: dict) -> dict:
+@lru_cache(maxsize=None)
+def _boundary_files(patterns: tuple[str, ...]) -> frozenset[str]:
+    """The files a boundary's patterns name. Cached: the globs are walked once per run."""
+    return frozenset(expand_paths(list(patterns)))
+
+
+def _governing_boundaries(unit: dict, boundaries: dict) -> dict[str, str]:
+    """The declared trust boundaries this unit's paths cross, by id and content digest.
+
+    `trust-boundaries.toml` decides how far a unit may be promoted: a theorem about code on
+    this side of a boundary says nothing about the other side, so
+    `max_class_without_assumption` is what keeps a proof's meaning honest across it. That
+    cap participated in NO fingerprint. Widening it — or deleting the boundary, or narrowing
+    its `paths` so it stops covering a unit — relaxed the rule and invalidated nothing, so
+    every claim above it kept deriving FRESH while the argument beneath it had changed.
+
+    The digest covers the whole entry, not the cap alone, because each field can weaken the
+    reading on its own: `paths` decides WHICH units the cap binds, `beyond` states what is
+    being trusted, and `kind` is how a reader classifies the trust. Only the boundaries a
+    unit actually crosses are included, so a change to an unrelated boundary does not dirty
+    the whole tree — the same relation `boundary_class_violations` uses to decide the rule.
+    """
+    unit_files = expand_paths(unit["paths"])
+    crossed: dict[str, str] = {}
+    for boundary in boundaries.get("boundary", []):
+        if not unit_files & _boundary_files(tuple(boundary["paths"])):
+            continue
+        crossed[boundary["id"]] = canonical_digest(
+            {
+                "kind": boundary.get("kind"),
+                "beyond": boundary.get("beyond"),
+                "max_class_without_assumption": boundary.get(
+                    "max_class_without_assumption"
+                ),
+                "paths": sorted(boundary["paths"]),
+            }
+        )
+    return dict(sorted(crossed.items()))
+
+
+def fingerprint_unit(
+    unit: dict,
+    doc: dict,
+    toolchains: dict,
+    assumptions: dict,
+    boundaries: dict | None = None,
+) -> dict:
     crates = _unit_crates(unit)
     formal = unit["class"] in FORMAL_CLASSES
     # A formal unit's evidence comes from a whole-crate prover run, so the crate is the
@@ -373,6 +422,12 @@ def fingerprint_unit(unit: dict, doc: dict, toolchains: dict, assumptions: dict)
         ),
         "mutation_lane_identity": _mutation_lane_identity(unit),
         "trusted_assumptions": _trusted_assumptions(unit["id"], assumptions),
+        # The boundaries whose cap binds this unit's class. See `_governing_boundaries`:
+        # the cap was a gate that participated in no fingerprint, so relaxing it left every
+        # claim above it reading as fresh.
+        "governing_boundaries": _governing_boundaries(
+            unit, load_trust_boundaries() if boundaries is None else boundaries
+        ),
         "toolchain_identity": _toolchain_identity(toolchains),
         "formal_model_revision": doc.get("formal_model_revision"),
         "threat_model_revision": doc.get("threat_model_revision"),
