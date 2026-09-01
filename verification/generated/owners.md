@@ -48,6 +48,7 @@ not an omission to hide.
 | proxy.certificate_identity | V0 | THM-0024 | 1 |
 | proxy.channel_associated_credential | V0 | THM-0028 | 1 |
 | proxy.channel_associated_identity | V0 | THM-0029 | 1 |
+| proxy.continuation_correlation_store | V0 | THM-0087 | 0 |
 | proxy.credential_currency | V0 | THM-0032 | 1 |
 | proxy.credential_key_correspondence | V0 | THM-0026 | 1 |
 | proxy.cross_machine_legality | V0 | THM-0049 | 0 |
@@ -68,6 +69,7 @@ not an omission to hide.
 | proxy.refusal_audit_emission | V0 | THM-0085 | 0 |
 | proxy.refusal_provenance | V0 | THM-0046 | 0 |
 | proxy.refusal_site_totality | V0 | THM-0081 | 0 |
+| proxy.replay_materialization | V0 | THM-0086 | 0 |
 | proxy.request_peer_binding | V0 | THM-0034 | 0 |
 | proxy.response_signing | V0 | THM-0063, THM-0075 | 0 |
 | proxy.runtime_lifecycle | V0 | THM-0012 | 0 |

@@ -2721,6 +2721,83 @@ tested_symbols = [
   "lib#kms_endpoint_policy::tests::the_plaintext_exception_follows_the_address_not_the_spelling",
 ]
 
+# ADR-MCPRE-059 §28 / issue #744. Two sibling authorities, neither owning the other's
+# facts. `replay_plane` establishes the authoritative replay tier; `continuation_store`
+# carries a multi-round-trip continuation across a replica switch. A parent root may
+# quantify over both; a leaf may not, and putting the joint on whichever plane happened to
+# be registered first is the shallow boundary the twelve questions exist to catch.
+#
+# Neither had a unit. The claim they carry is a CONFIGURATION PROJECTION — the store the
+# serving path uses is the one the validated configuration selected — and it deliberately
+# needs no premise about what a backend's acknowledgement establishes. That is a different
+# claim (D2), it is per mechanism, and it is registered only where a root consumes it.
+[[unit]]
+id = "proxy.replay_materialization"
+class = "V0"
+description = "The replay tier handed to the serving path is the one the plan selected, and a tier that self-declares the volatile single-process posture is never handed over."
+paths = [
+  "mcp-re-proxy/src/replay_plane/mod.rs",
+  "mcp-re-proxy/src/replay_plane/backends.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/replay_materialization/selected_tier_is_established",
+]
+# `startup_plan` is deliberately ABSENT from this closure. That the plan is a projection of
+# the validated configuration is the planner's fact, not this plane's, and folding it in
+# here would let one unit's fingerprint stand for two owners' evidence. The composition is
+# made at the theorem, which is what `depends_on` is for.
+tested_symbols = [
+  # The guard fires from inside the only producer of the handover value, so a volatile
+  # store cannot be paired with a durability-claiming posture and handed over. The
+  # INVOCATION, not the predicate — a check the producer remembers to run afterwards is
+  # the shape this is not.
+  "lib#replay_plane::tests::the_handover_value_cannot_be_built_around_a_volatile_tier",
+  "lib#replay_plane::tests::a_volatile_tier_is_never_handed_over",
+  # The mirror. Without it the two above are satisfied by a constructor that refuses
+  # everything, which would establish nothing about the tier that IS selected.
+  "lib#replay_plane::tests::a_durable_tier_produces_the_handover_value_with_its_posture",
+  # A backend the build lacks is refused BY NAME rather than substituted — the refusal
+  # class that belongs to materialization because it is a fact about the build.
+  "lib#replay_plane::tests::a_backend_the_build_lacks_is_refused_and_named",
+  # What those refusals amount to together: a build carrying neither backend has no
+  # reachable replay state, so it is not a serving binary.
+  "lib#replay_plane::tests::a_build_with_no_replay_backend_can_reach_no_replay_state",
+]
+
+[[unit]]
+id = "proxy.continuation_correlation_store"
+class = "V0"
+description = "The MRTR continuation correlation entry is reachable only by the actor the verifier resolved, and a read that does not admit an answer leg does not destroy it."
+paths = [
+  "mcp-re-proxy/src/continuation_store/mod.rs",
+  "mcp-re-proxy/src/continuation_store/in_memory.rs",
+  # The shared-tier arm. In the closure because the key derivation and the peek/consume
+  # split are claims about the STORE, and a backend that implemented them differently
+  # would falsify them under a fingerprint that had not moved.
+  "mcp-re-proxy/src/redis_continuation_store.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/continuation_correlation_store/actor_scoped_correlation",
+]
+# WHAT THIS UNIT DOES NOT CLAIM. Not that the shared tier was established: the continuation
+# store is OPPORTUNISTIC — `serving_capabilities::mrtr_continuation_store` announces its
+# absence and starts, because refusing startup would make every single-store deployment
+# unstartable — and the dependent leg fails closed at the continuation binding instead. So
+# there is no "prevents startup" conjunct here, and #744's D1b is corrected to the claim
+# the code actually carries. Not the durability of an acknowledged write either; that is
+# D2b, and it needs a mechanism premise this claim does not use.
+tested_symbols = [
+  # The key is derived from the actor the VERIFIER resolved, never from anything the
+  # request asserts. Without it a second verified actor who knows the public digests
+  # completes the victim's approval round trip.
+  "lib#continuation_store::tests::the_key_is_scoped_to_the_audience",
+  "lib#continuation_store::tests::the_actor_state_boundary_cannot_be_moved",
+  # The key separates both inputs, so the scope above is not vacuous.
+  "lib#continuation_store::tests::key_is_stable_and_specific_to_both_inputs",
+]
+
 [[unit]]
 id = "proxy.audit_delivery"
 class = "V0"
