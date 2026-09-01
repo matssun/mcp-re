@@ -147,6 +147,7 @@ stage_static() {
     && python3 tools/verification/test_theorems.py \
     && python3 tools/verification/test_theorem_review.py \
     && python3 tools/verification/test_views.py \
+    && python3 tools/verification/test_evidence_bundle.py \
     && python3 tools/verification/test_r9_linkage.py \
     `# The R9 record is a historical measurement, and the appendix in the packet is a view` \
     `# of it. --check refuses a hand-edited appendix, an untracked surviving High/Critical` \
