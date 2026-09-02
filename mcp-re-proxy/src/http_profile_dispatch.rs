@@ -451,7 +451,8 @@ mod tests {
     /// the selected one, and the acknowledgement does not arrive. Admission is the last
     /// step for exactly this reason — there is nothing after it to undo — so its failure
     /// must be a refusal and never a fall-through, and it must not read as a replay: a
-    /// replay says this request was already served, and an outage says nothing at all.
+    /// replay says the key was already admitted under the mechanism, and an outage says
+    /// the establishing fact was not obtained. Neither says the backend executed.
     #[test]
     fn a_store_that_cannot_establish_the_state_refuses_rather_than_dispatching() {
         let cache = WitnessCache::unreachable();
