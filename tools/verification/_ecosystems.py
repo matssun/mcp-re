@@ -59,10 +59,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import field
+import json
 from pathlib import Path
 import re
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+class ReportUnreadable(Exception):
+    """A runner ran, and the lane could not read what it said.
+
+    Distinct from "the declared test did not pass", and deliberately so: a report the lane
+    cannot parse says NOTHING about the property, while presenting every declared control as
+    `never ran` says something false about all of them at once. The runner's own output
+    travels with the exception so the reason is in the failure rather than in a later
+    reproduction attempt.
+    """
 
 
 @dataclass(frozen=True)
@@ -324,8 +336,14 @@ def test_argv(eco: Ecosystem, project: str, target: str, selectors: list[str]) -
         # So the files are selected here and the exact names are compared by the lane, which
         # is where the both-directions rule already lives: a declared name that did not
         # report success fails, and a name nobody declared is not evidence for anything.
+        #
+        # `--reporter=json`, and the reason is a measured CI failure: the verbose reporter
+        # writes marks meant for a terminal, and on the runner every one of 26 declared
+        # controls came back `never ran` from a suite that had actually passed. A lane must
+        # not read a human-facing rendering — the machine-readable report is the same run
+        # said in a form that does not depend on what the process is attached to.
         files = sorted({selector.split(" > ", 1)[0] for selector in selectors})
-        return ["npx", "vitest", "run", "--reporter=verbose", *files]
+        return ["npx", "vitest", "run", "--reporter=json", *files]
     raise ValueError(f"no test command for ecosystem {eco.name!r}")
 
 
@@ -357,10 +375,33 @@ _PYTEST_RESULT = re.compile(
     r"^(?P<name>\S+::\S+)\s+(?P<status>PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b"
 )
 
-#: vitest's verbose reporter: a mark, the file, and the test name after `>`.
-_VITEST_RESULT = re.compile(r"^\s*(?P<mark>[x×✓↓·])\s+(?P<name>\S+ > .+?)(?:\s+\d+ms)?$")
+#: vitest's JSON reporter states each case's status in words. Translated into the lane's one
+#: vocabulary here, like every other runner's.
+_VITEST_STATUS = {"passed": "ok", "failed": "FAILED", "skipped": "ignored", "todo": "ignored"}
 
-_VITEST_STATUS = {"✓": "ok", "x": "FAILED", "×": "FAILED", "↓": "ignored", "·": "ignored"}
+
+def _vitest_report(stdout: str) -> dict:
+    """The JSON report vitest wrote, found inside whatever else reached stdout.
+
+    Scanned for rather than decoded whole, because the runner, npm and the native build all
+    write to the same stream. Every `{` is tried in turn and the first object carrying
+    `testResults` is the report; a run whose report is not there at all raises rather than
+    returning nothing, since an empty result set is indistinguishable from a suite in which
+    no declared control ran.
+    """
+    decoder = json.JSONDecoder()
+    index = stdout.find("{")
+    while index >= 0:
+        try:
+            candidate, _ = decoder.raw_decode(stdout[index:])
+        except json.JSONDecodeError:
+            candidate = None
+        if isinstance(candidate, dict) and "testResults" in candidate:
+            return candidate
+        index = stdout.find("{", index + 1)
+    raise ReportUnreadable(
+        "vitest wrote no JSON report; the run said: " + (stdout.strip()[-2000:] or "(nothing)")
+    )
 
 
 def parse_results(eco: Ecosystem, stdout: str) -> dict[str, str]:
@@ -389,9 +430,18 @@ def parse_results(eco: Ecosystem, stdout: str) -> dict[str, str]:
                 )
         return out
     if eco is TYPESCRIPT:
-        for line in stdout.splitlines():
-            match = _VITEST_RESULT.match(line.rstrip())
-            if match:
-                out[match.group("name").strip()] = _VITEST_STATUS[match.group("mark")]
+        # The JSON blob is the last thing on stdout, after whatever the build or the runner
+        # printed before it. Scanning back from the first `{` that parses keeps a warning
+        # line from making the whole report unreadable — which would present as every
+        # declared control having "never ran", the exact false RED this reporter replaced.
+        report = _vitest_report(stdout)
+        for file_result in report.get("testResults", []):
+            name = str(file_result.get("name", ""))
+            relative = name.split("/test/", 1)
+            prefix = f"test/{relative[1]}" if len(relative) == 2 else name
+            for case in file_result.get("assertionResults", []):
+                titles = [*case.get("ancestorTitles", []), case.get("title", "")]
+                full = " > ".join([prefix, *[t for t in titles if t]])
+                out[full] = _VITEST_STATUS.get(str(case.get("status")), "FAILED")
         return out
     raise ValueError(f"no result parser for ecosystem {eco.name!r}")

@@ -60,6 +60,8 @@ WORKFLOW = REPO / ".github" / "workflows" / "verification.yml"
 MANIFEST = REPO / "verification" / "policy" / "verification.toml"
 
 sys.path.insert(0, str(REPO / "tools" / "verification"))
+from _ecosystems import build_configuration_patterns  # noqa: E402
+from _fingerprint import _tracked_files  # noqa: E402
 from _fingerprint import (  # noqa: E402
     MUTATION_LANE_INPUTS,
     TEST_LANE_INPUTS,
@@ -141,9 +143,23 @@ def fingerprint_inputs(manifest: Path) -> list[str]:
     for unit in doc.get("unit", []):
         for path in unit.get("paths", []):
             required.append(str(path))
-            head = str(path).split("/", 1)[0]
-            # `_build_configuration` digests each unit crate's own manifest.
-            required.append(f"{head}/Cargo.toml")
+        # The dependency and configuration inputs, from the ONE function the fingerprint
+        # uses. This used to restate the Cargo answer — `{first-segment}/Cargo.toml` — which
+        # is the "one dependency set stated twice" shape this gate exists to prevent, and
+        # #745 made it wrong: a Python unit's inputs are its `pyproject.toml` and lockfile,
+        # and a project can live at `sdk/python` rather than at a top-level directory.
+        # Only the ones the fingerprint actually digests, which is the TRACKED ones — the
+        # same rule, from the same function. A lockfile alternative a project does not use
+        # contributes nothing, and neither does one that exists on a developer's disk and
+        # not in the tree; demanding a trigger for either is the mirror of the defect this
+        # gate exists for, and the workflow refuses a wildcard-free filter that names
+        # nothing, so the two rules would contradict each other.
+        tracked = _tracked_files()
+        required.extend(
+            pattern
+            for pattern in build_configuration_patterns(unit)
+            if pattern in tracked
+        )
         # Encoding v4: the integration-test SOURCES a unit's selectors run, and the lane
         # code that decides what a selector means, are both fingerprint inputs. A trigger
         # set blind to them would leave a rewritten control, or a changed selector

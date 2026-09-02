@@ -58,6 +58,13 @@ root_theorems = [
   # either alone, so producer attribution and consumer acceptance stay separate promises.
   "THM-0075",
   "THM-0076",
+  # R2/R3 continued — a supported-client root FAMILY, and THM-0076 is one member of it. The
+  # boundary is implemented independently per language and the Rust proof establishes nothing
+  # about either of the others; the byte-level parity fixtures are green while the
+  # implementations diverge behaviourally, which is the measured reason a single "SDK"
+  # theorem would be a claim about no shipped artefact (issue #746).
+  "THM-0094",
+  "THM-0095",
   # R4 — the configuration lattice.
   "THM-0077",
   # D6 — the sidecar's inner face. The only NEW ROOT SHAPE among the ruled-in areas, and
@@ -3919,6 +3926,127 @@ the other three.
 owner = "proxy.continuation_leg_binding"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.continuation_leg_binding"]
+depends_on = []
+
+# ADR-MCPRE-059 §28 / issue #746. TWO members, never one theorem.
+#
+# A single claim over "the SDK" would be a claim about no shipped artefact. The boundary is
+# implemented independently per language and the Rust proof establishes nothing about
+# either — and the evidence for that is direct and measured: the byte-level parity fixtures
+# are GREEN while the implementations diverge behaviourally. Bytes are not behaviour.
+#
+# Both are root-family members beside THM-0076, which is the Rust member of the same family.
+[[theorem]]
+id = "THM-0094"
+title = "The shipped Python SDK accepts only an answer to its own request"
+statement = """
+For the shipped Python SDK, an application is not handed, as this call's answer, a response
+from another exchange or signer, or one that verified only unbound — and is not led to
+repeat a side effect by reading silence as *it did not run*.
+
+Every reply is taken from the correlation entry the request created, and a reply binding to
+nothing outstanding, arriving late, or repeating one already answered is refused rather than
+delivered. A response is accepted only under the configured trust anchor, epoch, audience and
+revocation posture, measured against a RECORDED delegated session rather than a constructed
+one. A notification is delivered only against a signed acknowledgement. An elicitation pauses
+a call rather than ending it, so a reply that is not terminal — including one whose result
+type this SDK does not recognise — is refused rather than surfacing as the call's answer.
+A verified reply that is not an answer to this request — one carrying a method, or one with
+neither result nor error — is refused rather than dispatched. What the application is told
+about execution is what the receipt said: whether the receipt was bound to THIS transmission,
+the execution and retry contract a post-dispatch rejection stated, no member the receipt did
+not carry, and a local failure under the SDK's own prefix rather than a wire code the peer
+never sent.
+"""
+security_consequence = """
+An application driving MCP through this SDK cannot be handed another exchange's answer, an
+answer from a signer this deployment does not trust, or a refusal that verified only unbound
+— and cannot be told that an operation did not run when the SDK does not know that.
+
+The last is the one a byte-level fixture cannot reach. Parity fixtures pin what this SDK
+EMITS; whether it invents `not_executed` for a receipt that stated nothing is behaviour, and
+the two SDKs have diverged there before.
+"""
+scope = """
+It is one MEMBER of a root family, not the family. THM-0076 is the Rust member and THM-0095
+the TypeScript one; none of the three establishes anything about the others, and a green
+parity fixture is not a substitute — it compares bytes, and every divergence this family
+exists for is behavioural.
+
+CONCURRENCY AND THROUGHPUT ARE OUTSIDE IT. The exchange bound is a resource ceiling, and a
+difference from the TypeScript member there changes nothing about authenticity, correlation
+or execution. Deadline behaviour enters only where a timeout changes the client's conclusion
+about whether the remote side may have executed.
+
+One such deadline is REGISTERED RATHER THAN CLAIMED. The aggregate read bound is evaluated
+between completed `read(n)` calls, and `http.client` fills to `n` — so a trickling peer keeps
+one call outstanding and the bound is not consulted while it does (ASM-0042, R9-C010). The
+consequence stated here is exactly what follows and no more: the SDK reports NOTHING for such
+an exchange rather than reporting that it did not execute. The looseness reaches this claim
+only if a caller's own outer timeout produces a retry whose execution status the SDK never
+determined, and that condition is stated rather than assumed away.
+
+It says nothing about the transport below it beyond what ASM-0042 names, nothing about the
+proxy's own guarantees, and nothing about an application that bypasses this adapter.
+"""
+owner = "sdk_python.exchange_path"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://sdk_python.exchange_path"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0095"
+title = "The shipped TypeScript SDK accepts only an answer to its own request"
+statement = """
+For the shipped TypeScript SDK, an application is not handed, as this call's answer, a
+response from another exchange or signer, or one that verified only unbound — and is not led
+to repeat a side effect by reading silence as *it did not run*.
+
+Every reply is taken from the correlation entry the request created, and a reply binding to
+nothing outstanding, arriving late, or repeating one already answered is refused rather than
+delivered; concurrent exchanges each receive their own. A response is accepted only under a
+complete configured trust anchor — an incomplete one is refused at construction rather than
+defaulted — and only outside the revocation denylist, whose shape is checked so a bare string
+cannot spread into a per-character list. A notification is delivered only against a signed
+acknowledgement. A verified reply that is not a JSON-RPC response to this request is refused
+rather than dispatched. What the application is told about execution is what the receipt
+said: a post-dispatch rejection carries the contract it stated, a receipt that stated none is
+given none, and a local failure travels under the SDK's own prefix.
+"""
+security_consequence = """
+The same consequence as the Python member, over an independently implemented boundary — and
+the reason both exist is that "independently implemented" is a measured fact here rather than
+a caution. The parity fixtures are green while the two diverge behaviourally, so a root over
+one of them would report coverage of the other that no evidence supports.
+
+`invents no disposition for a receipt that stated none` is the control that names the
+difference. Inventing `not_executed` collapses "unknown whether it ran" into "it did not
+run" at the one place that decides whether a caller repeats a side effect.
+"""
+scope = """
+It is one MEMBER of a root family. THM-0076 is the Rust member and THM-0094 the Python one,
+and none establishes anything about the others.
+
+CONCURRENCY AND THROUGHPUT ARE OUTSIDE IT, and the exclusion is a decision rather than an
+omission: `send_notification_verified()` running outside the concurrency bound its Python
+twin enforces (R9-C061, R9-C109, R9-C110) is a resource ceiling and changes nothing about
+authenticity, correlation or execution.
+
+ONE DEADLINE IS INSIDE IT, and it is the reason deadlines are not excluded wholesale.
+`timeoutMs` is both the per-socket inactivity bound and an aggregate wall clock on reading a
+response (R9-C095), so this SDK will abort a response whose TOTAL download exceeds it — a
+request the server may have executed. What this claim establishes is that the abort surfaces
+as a LOCAL transport outcome carrying no execution assertion, not as a clean failure a caller
+could read as "it did not run". The aggregate bound itself is deliberate: the inactivity
+bound alone bounds nothing, because every byte re-arms it.
+
+ASM-0043 carries what the abort race rests on: that an already-aborted signal is observable
+before dispatch, and that aborting an in-flight exchange settles the caller's promise without
+recalling what the server already received.
+"""
+owner = "sdk_typescript.exchange_path"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://sdk_typescript.exchange_path"]
 depends_on = []
 
 [[theorem]]

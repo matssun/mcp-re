@@ -67,6 +67,60 @@ if [[ -n "$rustup_path" ]]; then
   fi
 fi
 
+# --- the ecosystems the REGISTRY actually uses ---------------------------------
+# ADR-MCPRE-059 §2 / issue #745: a review unit is not a Cargo package, so the lane may have
+# a battery to run under pytest or vitest. Which toolchains this box needs is therefore a
+# fact about the registry rather than a list kept here — a hardcoded requirement would
+# either demand tools no unit uses, or stay silent when the first non-Rust unit lands and
+# let the lane report a battery it could not run.
+#
+# Derived, and each requirement names its remedy. A missing toolchain is a FAIL rather than
+# a skip for the reason the rest of this script exists: a lane that cannot run its battery
+# must not report the claim above it as measured.
+ecosystems="$(python3 - <<'PYEOF' 2>/dev/null || true
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path("tools/verification").resolve()))
+from _ecosystems import unit_ecosystem  # noqa: E402
+from _manifest import claims_test_evidence, load_verification  # noqa: E402
+
+doc = load_verification()
+names = set()
+for unit in doc.get("unit", []):
+    if not claims_test_evidence(unit):
+        continue
+    eco = unit_ecosystem(unit)
+    if eco is not None:
+        names.add(eco.name)
+print(" ".join(sorted(names)))
+PYEOF
+)"
+echo "registry ecosystems: ${ecosystems:-<none>}"
+
+for eco in $ecosystems; do
+  case "$eco" in
+    cargo) ;;  # covered by the rustup checks above
+    python)
+      if command -v uv >/dev/null 2>&1; then
+        echo "uv at $(command -v uv) (a python unit's battery runs through it)"
+      else
+        fail "a registered unit's battery is a python one and there is no uv on the lane PATH. Install it (brew install uv) and put it on the runner's PATH."
+      fi
+      ;;
+    typescript)
+      if command -v npx >/dev/null 2>&1; then
+        echo "npx at $(command -v npx) (a typescript unit's battery runs through it)"
+      else
+        fail "a registered unit's battery is a typescript one and there is no npx on the lane PATH. Install node (brew install node) and put it on the runner's PATH."
+      fi
+      ;;
+    *)
+      fail "a registered unit names ecosystem '${eco}', which this preflight does not know how to check. Teach it here rather than letting the lane discover it."
+      ;;
+  esac
+done
+
 if [[ $failed -ne 0 ]]; then
   cat >&2 <<'REMEDY'
 

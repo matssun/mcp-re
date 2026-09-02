@@ -17,6 +17,7 @@ from pathlib import Path
 
 from _ecosystems import CARGO
 from _ecosystems import test_project_for
+from _ecosystems import valid_target
 from _ecosystems import unit_ecosystem
 from _ecosystems import unit_projects
 
@@ -403,23 +404,25 @@ def load_verification() -> dict:
                     f"battery with no named members cannot be run, and an unrunnable "
                     f"claim is not evidence."
                 )
+            eco = unit_ecosystem(unit)
             for symbol in unit["tested_symbols"]:
                 target, _, path = str(symbol).partition("#")
                 # The target is required, not defaulted: a defaulted target lets a test
                 # that moved between the lib and an integration target keep reporting under
                 # the one it left.
-                # `doc` names the crate's doctest target. A doctest's reported name
-                # embeds the line it starts on, so the symbol names the ITEM and the lane
-                # matches that item's doctests — an edit above a control must not break the
-                # declaration, a rename or deletion must.
-                if not path or not (
-                    target in ("lib", "doc")
-                    or (target.startswith("tests/") and target[6:])
-                ):
+                # WHICH targets exist is the ecosystem's answer (issue #745): Cargo has
+                # `lib`, `doc` and an open-ended `tests/<name>` family, while a pytest or
+                # vitest battery has the one target that says which runner reads the
+                # selector. A unit whose paths name no single ecosystem has no runnable
+                # target at all, which is the same refusal for a different reason.
+                if not path or eco is None or not valid_target(eco, target):
                     raise ManifestError(
-                        f"{uwhere}: tested_symbol {symbol!r} names no runnable target; "
-                        f"expected `lib#path::to::test`, `doc#module::Item`, or "
-                        f"`tests/<name>#path::to::test`"
+                        f"{uwhere}: tested_symbol {symbol!r} names no runnable "
+                        f"{eco.name if eco else '<unresolved ecosystem>'} target; "
+                        f"cargo takes `lib#path::to::test`, `doc#module::Item` or "
+                        f"`tests/<name>#path::to::test`; python takes "
+                        f"`pytest#tests/file.py::name`; typescript takes "
+                        f"`vitest#test/file.test.ts > suite > name`"
                     )
         elif unit.get("tested_symbols"):
             # Declared members with no `test://` URI claiming them would run a battery

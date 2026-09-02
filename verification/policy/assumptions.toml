@@ -1072,6 +1072,47 @@ review_requirement = "Owner review; any change to the WAIT quorum handling, to t
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
 
+# ---------------------------------------------------------------------------
+# ADR-MCPRE-059 §28 / issue #746 — the two SDK exchange-path roots.
+# ---------------------------------------------------------------------------
+#
+# Exact, not general. Neither entry says "the Python runtime is correct" or "fetch is
+# correct": each names the ONE semantic its member's execution-status reasoning rests on,
+# because that is what a reader has to believe and what stops being true if the runtime
+# changes underneath it.
+
+[[assumption]]
+id = "ASM-0042"
+description = "`http.client.HTTPResponse.read(n)` returns when it has n bytes or the body ends, and raises rather than returning short on a socket error — so a wall-clock bound checked between calls is checked between COMPLETED chunks, never during one."
+justification = """
+The Python member reads a response under two bounds: a byte ceiling and a wall clock. The
+wall clock is evaluated between `read(want)` calls, which bounds the total read only if a
+call returns in bounded time. `http.client` fills to `amt`, so a peer trickling under the
+per-recv socket timeout keeps ONE call outstanding and the aggregate deadline is not
+consulted while it does.
+
+The premise is registered rather than the behaviour changed, and the root states the
+consequence rather than hiding it: an inert deadline yields NO conclusion, not a wrong one.
+The SDK does not report such an exchange as having failed to execute; it does not report
+anything, and the caller's own outer timeout is what ends the wait. That is the condition
+under which the looseness would reach the root — a caller whose outer timeout produces a
+retry whose execution status the SDK never determined — and THM-0094 states it as a
+condition rather than assuming it does not happen.
+
+It stops being acceptable if the SDK begins to REPORT an outcome for a read the deadline
+did not actually bound, or if `http.client` gains short-read semantics, at which point the
+bound becomes real and this entry should be discharged rather than renewed. R9-C010 /
+R9-C094 record the measurement; R9-C094 also records that the test pinning the bound uses a
+fake whose short-read semantics `http.client` does not have, so that control cannot fail —
+an evidence defect this premise does not repair.
+"""
+scope = ["unit://sdk_python.exchange_path"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 §28 / issue #746 (D7)"
+review_requirement = "Owner review; any change to `_read_bounded`, to the bounds it is given, or to what the SDK reports for a read that ended on the caller's clock."
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
 [[assumption]]
 id = "ASM-0041"
 description = "An etcd `POST /v3/kv/txn` that succeeds under `compare { target: CREATE, create_revision: 0 }` means the key did not exist at a linearization point and now does, cluster-wide, for the granted lease's TTL."
@@ -1099,5 +1140,36 @@ scope = ["unit://proxy.replay_admission_gate"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 §28 / issue #744, D2a"
 review_requirement = "Owner review; any change to the txn comparison, the lease derivation, or the cluster topology the tier is declared against."
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0043"
+description = "An `AbortController` signal that is already aborted is observable synchronously before the request is issued, and aborting an in-flight exchange settles the caller's promise without cancelling what the server already received."
+justification = """
+The TypeScript member races every exchange against its own abort signal, and the whole
+correctness of `close()` rests on which of the two facts the race decides. It decides WHICH
+RESULT THE CALLER SEES. It does not decide whether the request reached the server: a request
+already handed to the poster is on the wire, and an abort cannot recall it.
+
+Both halves are the premise. The synchronous check before dispatch is what keeps a QUEUED
+request from being signed and sent after `close()` — a fresh, correctly signed request the
+caller believes it cancelled — and it is only sound if an aborted signal is observable
+without yielding. The second half is what stops `ConnectionClosed` from being read as "it
+did not run": the SDK reports a local transport outcome and asserts nothing about execution,
+which is exactly the distinction THM-0094 and THM-0095 are about.
+
+Registered rather than proved because both are runtime semantics: nothing in this SDK can
+establish that `AbortSignal.aborted` is synchronous, or that a socket the runtime tore down
+had not already delivered its bytes.
+
+It stops being acceptable if the SDK ever derives an EXECUTION claim from an abort — if
+`ConnectionClosed` acquires a retry-safety meaning — or if the pre-dispatch check is moved
+after an await, where a signal raised in between would no longer be seen.
+"""
+scope = ["unit://sdk_typescript.exchange_path"]
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 §28 / issue #746 (D8)"
+review_requirement = "Owner review; any change to the abort race, to the pre-dispatch signal check, or to what `ConnectionClosed` claims."
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
