@@ -368,7 +368,12 @@
       "node": "THM-0083 (adjacent)",
       "area": "serving-body-shape",
       "reason": "`EXACTLY_CARRIED_DECIMAL_DIGITS = 15` still refuses 16–17-significant-digit shortest-round-trip forms, which are exactly what ryu emits for computed f64s and which round-trip exactly.",
-      "tracking_issue": 737
+      "tracking_issue": 737,
+      "merged_closure": {
+        "pr": 750,
+        "commit": "d34aa49d",
+        "note": "representability is decided by round-tripping the value through the f64 carrier the composer re-serializes through, not by counting decimal digits: `EXACTLY_CARRIED_DECIMAL_DIGITS` no longer exists anywhere in the tree, and `body/carried_number.rs` refuses exactly the two losses that are real — an integer outside i64/u64 and a decimal the carrier cannot hold — so a 16-17 significant-digit shortest-round-trip form emitted by ryu is carried rather than refused"
+      }
     },
     {
       "cluster": "R9-C029",
