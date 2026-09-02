@@ -1,0 +1,16 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:69e411fd6b97444acab2d2001bf35cd1e70cfe46b78ed76db391b6d0c5b906f0",
+    "theorem_dependencies": {
+      "THM-0089": "sha256:5f08ed31d860d3ef9a71836edf1b0bff9ea496a89e74dae727eb4baff757fad8"
+    },
+    "theorem_id": "THM-0090",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-09-02, given as BATCH 2B after the owner declined the previous version of this theorem on two bounded grounds and the corrections landed at bce6d2cc. This is the theorem's FIRST owner specification review; the declined version carries no record and no approval was transferred to it. EVIDENCE CLOSURE. The ruling accepts the `test_features` repair: the security-bearing feature-gated controls are part of the supporting unit's actual battery, and the selected feature set participates in `test_selection`, so removing a feature cannot silently shrink the battery while preserving freshness. It accepts the ownership result as the correct semantic ownership — the no-second-addressing-surface and redirect-confinement facts belong to `unit://proxy.outbound_destination`; the fact that KMS/STS destination construction requires `KmsEndpoint` belongs to `unit://proxy.kms_endpoint_authority` and THM-0089; and THM-0090 consumes that fact through `depends_on` rather than re-deriving it. CLAIM ALTITUDE. The ruling accepts the narrowed consequence: credential-bearing traffic is confined to the authority embodied by the vetted destination capability through which the request was constructed, and neither caller-controlled addressing nor responder redirects can move that authority. THM-0090 does NOT establish that this capability is the posture selected by validated deployment configuration; that composition remains THM-0077's. RESOLVED-ADDRESS NON-CLAIM, ruled explicitly so it is not read wider than it is. This theorem is about the HTTP AUTHORITY NAMED, not a general guarantee about every IP address an operator-configured hostname may resolve to. The approval must NOT be reinterpreted as IP pinning or private-address refusal for operator-configured KMS/STS endpoints. The provenance distinction stands: a certificate-derived or otherwise attacker-influenced destination gets address and private-network vetting where required; an operator-configured destination is trusted configuration and may legitimately target internal infrastructure. Treating hostile DNS resolution of operator-configured KMS/STS names as an additional threat would require its own proposition and its own ruling. The approval was made conditional on immediate remeasurement; the fingerprint was recomputed at bce6d2cc before this record was written and equals the value the owner named. `theorem_dependencies` carries THM-0089's claim digest, and THM-0089 is itself owner-reviewed at that digest.",
+  "reviewed_fingerprint": "sha256:ce22a7ec651a2fbdc6bf3f8083a57b398a12164a06108086209e4099aad34d9d",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0090"
+}
