@@ -162,7 +162,7 @@ pub type AdmissionAuthorityResolver = Arc<dyn Fn(&str) -> Option<VerificationKey
 pub(super) struct Exchange<'a> {
     http_req: &'a HttpRequest,
     verified: &'a VerifiedMcpRequest,
-    actor_id: &'a str,
+    actor_id: &'a crate::continuation_store::ResolvedActorId,
     now: i64,
     /// The delegated key snapshotted at ANSWERABLE, once the exchange has one.
     ///
@@ -454,7 +454,7 @@ impl HttpProfileProxy {
         // The verifier-resolved actor, carried into every audit record from here on: a
         // denial after resolution knows who was denied, and dropping that is dropping the
         // attribution this surface exists to provide.
-        let actor_id = verified.resolved_actor().actor_id();
+        let actor_id = crate::continuation_store::ResolvedActorId::of(verified.resolved_actor());
         let mut ex = Exchange {
             http_req: &http_req,
             verified: &verified,
@@ -478,7 +478,7 @@ impl HttpProfileProxy {
             Ok(window) => window,
             Err(rejection) => return rejection,
         };
-        self.record_request_accepted(&admitted, &actor_id, now);
+        self.record_request_accepted(&admitted, actor_id.as_str(), now);
         let commitment = self.commit_to_dispatch(&ex, admitted.authorized, &mut progress);
         let (prepared, retention) = match commitment.await {
             Ok(committed) => committed,

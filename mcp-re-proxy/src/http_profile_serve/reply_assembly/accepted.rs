@@ -50,7 +50,7 @@ impl HttpProfileProxy {
                 &reply.response,
                 ex.now,
                 Some(ex.verified.evidence()),
-                ex.actor_id.to_owned(),
+                ex.actor_id.as_str().to_owned(),
                 retention,
                 Self::disposition(progress, None),
                 ex.key.clone(),
@@ -65,7 +65,7 @@ impl HttpProfileProxy {
             crate::audit_record::AuditSubject::response(
                 mcp_re_core::audit::AuditEvent::response_signed(),
             ),
-            Some(ex.actor_id.to_owned()),
+            Some(ex.actor_id.as_str().to_owned()),
             reply.response.status,
             ex.now,
         );

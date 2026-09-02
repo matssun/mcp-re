@@ -3155,6 +3155,57 @@ tested_symbols = [
 # the claim is about the store, and half the store does not exist in the default crate.
 test_features = ["redis_replay"]
 
+# ADR-MCPRE-059 §28 / issue #744. The PROVENANCE half of the continuation-correlation claim,
+# and it is a separate unit because it is a separate authority. The store owns what a KEY
+# separates; this owns which actor the serving path feeds it. Two units rather than one
+# widened store unit: the store's files decide neither, and a store unit reaching into
+# `http_profile_serve` would own two independently describable authorities.
+
+[[unit]]
+id = "proxy.continuation_key_provenance"
+class = "V0"
+description = "The actor operand of a continuation key is the actor the verifier resolved: the operand type has no other constructor, both legs derive it from the carried verification product, and an identity the request asserts names nothing."
+paths = [
+  # Where the operand type lives, and where the key's signature demands it.
+  "mcp-re-proxy/src/continuation_store/resolved_actor_id.rs",
+  "mcp-re-proxy/src/continuation_store/mod.rs",
+  # Where the exchange's actor is bound from the verification product.
+  "mcp-re-proxy/src/http_profile_serve/mod.rs",
+  # The two sites that choose the operand.
+  "mcp-re-proxy/src/http_profile_serve/continuation/answer_leg.rs",
+  "mcp-re-proxy/src/http_profile_serve/continuation/open_leg.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/continuation_key/resolved_actor_operand",
+  "mutation://proxy/continuation_key/resolved_actor_operand",
+]
+# HOW MUCH OF THIS IS MEASURED, AND HOW MUCH IS STRUCTURAL. That `Exchange` cannot hold an
+# actor the verifier did not resolve is not a test result: `ResolvedActorId`'s only
+# constructor takes a `ResolvedActor`, there is no `From<String>`, no public field and no
+# parse, so an identifier taken from a request cannot be made into the operand at all. The
+# controls below measure the other half — WHICH operand each leg passes — because that is
+# the half a type cannot decide.
+#
+# The mutation URI is here rather than optional: the two controls are positive assertions,
+# and a positive assertion is satisfied by an implementation that reads the body and happens
+# to agree. Probe M88 swaps the identity for the one the body names, keeping the resolved
+# actor's key, and the store-side controls stay green under it — they compare two actors
+# derived the same way. Without the probe, nothing distinguishes this evidence from a
+# battery that would pass on the defect.
+tested_symbols = [
+  # The answer leg keys on the resolved actor while the body asserts another identity in
+  # exactly the members a naive implementation would read.
+  "lib#http_profile_serve::continuation::answer_leg::tests::the_key_is_the_verifier_resolved_actors_and_not_one_the_body_asserts",
+  # The open leg's half. Without it the answer leg's scoping could be true about entries
+  # recorded under an identity the caller chose.
+  "lib#http_profile_serve::continuation::open_leg::tests::the_leg_is_recorded_under_the_verifier_resolved_actor",
+  # The operand IS the resolved identity rather than a re-derivation of it, and it
+  # separates the fields the identity is made of. Without it both controls above are
+  # satisfied by a projection that collapses two actors into one operand.
+  "lib#continuation_store::resolved_actor_id::tests::the_operand_is_the_resolved_identity_and_separates_its_fields",
+]
+
 # ADR-MCPRE-059 §28 / issue #744, D2a and D2b. The other half of the pair whose D1 leaves
 # sit above: D1 says the tier the serving path holds is the one the configuration selected,
 # and these say what happens when that tier cannot establish the state a request requires.

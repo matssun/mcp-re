@@ -55,6 +55,7 @@ attestations this view cannot see.
 | unit://proxy.channel_associated_credential | source, contracts or evidence | THM-0028 | proxy.channel_associated_identity (CONTRACT_CONSUMES), proxy.mechanism_verified_credential (CONTRACT_CONSUMES) |
 | unit://proxy.channel_associated_identity | source, contracts or evidence | THM-0029 | proxy.authenticated_relationship_peer (CONTRACT_CONSUMES) |
 | unit://proxy.continuation_correlation_store | source, contracts or evidence | THM-0087 | _no consumer_ |
+| unit://proxy.continuation_key_provenance | source, contracts or evidence | THM-0087 | _no consumer_ |
 | unit://proxy.continuation_leg_binding | source, contracts or evidence | THM-0093 | _no consumer_ |
 | unit://proxy.credential_currency | source, contracts or evidence | THM-0032 | proxy.current_authenticated_peer (CONTRACT_CONSUMES) |
 | unit://proxy.credential_key_correspondence | source, contracts or evidence | THM-0026 | proxy.delegated_resolver_materialization (CONTRACT_CONSUMES) |
@@ -182,7 +183,7 @@ attestations this view cannot see.
 | THM-0084 | statement, consequence, scope or review requirement | specification review | THM-0076 |
 | THM-0085 | statement, consequence, scope or review requirement | specification review | THM-0071 |
 | THM-0086 | statement, consequence, scope or review requirement | specification review | THM-0077, THM-0092 |
-| THM-0087 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0087 | statement, consequence, scope or review requirement | specification review | THM-0093 |
 | THM-0088 | statement, consequence, scope or review requirement | specification review | THM-0078 |
 | THM-0089 | statement, consequence, scope or review requirement | specification review | THM-0077, THM-0090 |
 | THM-0090 | statement, consequence, scope or review requirement | specification review | THM-0077 |

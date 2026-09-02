@@ -521,6 +521,7 @@ _PROXY_LIB_SRCS = [
     # always compiled; the Redis backend is redis_replay-gated inside the module.
     "src/continuation_store/mod.rs",
     "src/continuation_store/in_memory.rs",
+    "src/continuation_store/resolved_actor_id.rs",
     # ADR-MCPS-047: the Redis-backed continuation store (SET PX + GETDEL). #[cfg(feature
     # = "redis_replay")] — cfg'd out of the default build, like async_redis_store.
     "src/redis_continuation_store.rs",

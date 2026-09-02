@@ -66,7 +66,9 @@ use std::future::Future;
 use std::pin::Pin;
 
 mod in_memory;
+mod resolved_actor_id;
 pub use in_memory::InMemoryContinuationStore;
+pub use resolved_actor_id::ResolvedActorId;
 
 /// The retained open-leg signature bases an answer leg binds to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,15 +178,16 @@ const CONTINUATION_KEY_DOMAIN: &[u8] = b"mcp-re/continuation-key/v1";
 /// "the same actor", and the difference is load-bearing in both directions. Here it is
 /// what keeps a second key from collecting a human approval it did not ask for; there it
 /// is what keeps one subject's rotation from reading as several budgets.
-pub fn continuation_key(audience_id: &str, actor_id: &str, request_state: &[u8]) -> String {
+pub fn continuation_key(audience_id: &str, actor: &ResolvedActorId, state: &[u8]) -> String {
     use sha2::Digest;
+    let actor_id = actor.as_str();
     let mut hasher = sha2::Sha256::new();
     hasher.update(CONTINUATION_KEY_DOMAIN);
     hasher.update((audience_id.len() as u64).to_be_bytes());
     hasher.update(audience_id.as_bytes());
     hasher.update((actor_id.len() as u64).to_be_bytes());
     hasher.update(actor_id.as_bytes());
-    hasher.update(request_state);
+    hasher.update(state);
     format!(
         "{CONTINUATION_KEY_PREFIX}{}",
         mcp_re_core::b64url_encode(&hasher.finalize())
@@ -207,13 +210,36 @@ mod tests {
     /// against the other.
     #[test]
     fn the_key_is_scoped_to_the_audience() {
-        let here = continuation_key(AUD, ACTOR_A, b"state-1");
-        let elsewhere = continuation_key("did:example:server-2", ACTOR_A, b"state-1");
+        let here = continuation_key(AUD, &actor_a(), b"state-1");
+        let elsewhere = continuation_key("did:example:server-2", &actor_a(), b"state-1");
         assert_ne!(here, elsewhere);
     }
 
-    const ACTOR_A: &str = "client:example.com:did:example:host-a:client-key-1";
-    const ACTOR_B: &str = "client:example.com:did:example:host-b:client-key-2";
+    /// A resolved actor, as the verifier would hand one over.
+    ///
+    /// The tests go through [`ResolvedActorId::of`] because that is the only way to obtain
+    /// the operand at all. A test that could spell an actor id directly would be measuring
+    /// a key function that accepts strings, which is precisely the shape this type removes.
+    fn resolved(subject: &str, keyid: &str) -> mcp_re_http_profile::ResolvedActor {
+        mcp_re_http_profile::ResolvedActor {
+            identity: mcp_re_http_profile::ActorIdentity {
+                role: "client".into(),
+                trust_domain: "example.com".into(),
+                subject: subject.into(),
+                keyid: keyid.into(),
+            },
+            verification_key: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32]).public_key(),
+            slot: mcp_re_http_profile::SignerSlot::Request,
+        }
+    }
+
+    fn actor_a() -> ResolvedActorId {
+        ResolvedActorId::of(&resolved("did:example:host-a", "client-key-1"))
+    }
+
+    fn actor_b() -> ResolvedActorId {
+        ResolvedActorId::of(&resolved("did:example:host-b", "client-key-2"))
+    }
 
     fn bases() -> RetainedBases {
         RetainedBases {
@@ -225,7 +251,7 @@ mod tests {
     #[tokio::test]
     async fn peek_does_not_consume_and_consume_is_one_shot() {
         let store = InMemoryContinuationStore::new();
-        let key = continuation_key(AUD, ACTOR_A, b"state-1");
+        let key = continuation_key(AUD, &actor_a(), b"state-1");
         store.store(&key, &bases(), 300).await.unwrap();
 
         // Reading is free of side effects: the binding is checked against these bytes
@@ -244,10 +270,10 @@ mod tests {
     async fn one_actors_entry_is_not_reachable_by_another() {
         // The cross-actor denial this scoping exists to stop: B naming A's requestState.
         let store = InMemoryContinuationStore::new();
-        let a_key = continuation_key(AUD, ACTOR_A, b"state-1");
+        let a_key = continuation_key(AUD, &actor_a(), b"state-1");
         store.store(&a_key, &bases(), 300).await.unwrap();
 
-        let b_key = continuation_key(AUD, ACTOR_B, b"state-1");
+        let b_key = continuation_key(AUD, &actor_b(), b"state-1");
         assert_ne!(a_key, b_key);
         assert_eq!(store.peek(&b_key).await.unwrap(), None);
         assert!(!store.consume(&b_key).await.unwrap());
@@ -258,27 +284,35 @@ mod tests {
     #[test]
     fn key_is_stable_and_specific_to_both_inputs() {
         assert_eq!(
-            continuation_key(AUD, ACTOR_A, b"abc"),
-            continuation_key(AUD, ACTOR_A, b"abc")
+            continuation_key(AUD, &actor_a(), b"abc"),
+            continuation_key(AUD, &actor_a(), b"abc")
         );
         assert_ne!(
-            continuation_key(AUD, ACTOR_A, b"abc"),
-            continuation_key(AUD, ACTOR_A, b"abd")
+            continuation_key(AUD, &actor_a(), b"abc"),
+            continuation_key(AUD, &actor_a(), b"abd")
         );
         assert_ne!(
-            continuation_key(AUD, ACTOR_A, b"abc"),
-            continuation_key(AUD, ACTOR_B, b"abc")
+            continuation_key(AUD, &actor_a(), b"abc"),
+            continuation_key(AUD, &actor_b(), b"abc")
         );
-        assert!(continuation_key(AUD, ACTOR_A, b"abc").starts_with(CONTINUATION_KEY_PREFIX));
+        assert!(continuation_key(AUD, &actor_a(), b"abc").starts_with(CONTINUATION_KEY_PREFIX));
     }
 
     #[test]
     fn the_actor_state_boundary_cannot_be_moved() {
-        // Without the length prefix, ("ab", "c") and ("a", "bc") would hash the same
-        // bytes — an actor could name another's entry by spelling the split differently.
+        // Without the length prefix the two actors below feed the hasher the same bytes:
+        // one's id ends where the other's `requestState` begins. An actor could then name
+        // another's entry by spelling the split differently.
+        let shorter = ResolvedActorId::of(&resolved("did:example:host", "k"));
+        let longer = ResolvedActorId::of(&resolved("did:example:host", "kx"));
+        assert_eq!(
+            format!("{}{}", shorter.as_str(), "xy"),
+            format!("{}{}", longer.as_str(), "y"),
+            "the two spellings must genuinely collide, or this control proves nothing"
+        );
         assert_ne!(
-            continuation_key(AUD, "ab", b"c"),
-            continuation_key(AUD, "a", b"bc")
+            continuation_key(AUD, &shorter, b"xy"),
+            continuation_key(AUD, &longer, b"y")
         );
     }
 }

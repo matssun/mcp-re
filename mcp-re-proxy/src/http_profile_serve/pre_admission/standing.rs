@@ -86,7 +86,7 @@ impl HttpProfileProxy {
         match enforcer
             .decide(
                 ex.verified,
-                ex.actor_id,
+                ex.actor_id.as_str(),
                 self.requests.audience_id(),
                 ex.now,
             )

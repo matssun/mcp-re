@@ -3922,10 +3922,13 @@ a continuation the deployment cannot check. The read is free, so a request about
 for an unrelated reason leaves a live approval intact — the refusals above the retirement stay
 free only because nothing above them spent anything.
 
-The four-valued retirement is what keeps a human's approval from being silently destroyed or
-silently duplicated. "There was definitely nothing to retire" and "the entry may or may not be
-gone" are different facts about a person's decision, and they warrant different claims about
-whether an ordinary retry can still succeed.
+The four-valued retirement preserves the observed fate of the approval without inventing
+certainty: no approval was involved, this exchange spent it, the store answered and there was
+nothing live to spend, or its fate is indeterminate. These are four different facts about a
+person's decision, and they are carried forward so the exchange-lifecycle authority can
+derive the consequence. THM-0093 does not decide retry policy and does not assert that any
+particular retry will succeed; what it establishes is that the four facts reach that
+authority undistorted rather than collapsed into one another.
 """
 scope = """
 It is about what a leg may PROCEED on, not about what the deployment has. That the shared
@@ -3944,7 +3947,7 @@ the other three.
 owner = "proxy.continuation_leg_binding"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.continuation_leg_binding"]
-depends_on = []
+depends_on = ["THM-0087"]
 
 # ADR-MCPRE-059 §28 / issue #746. TWO members, never one theorem.
 #
@@ -4361,15 +4364,33 @@ the victim's retained bases, so it cannot complete a human-approval round trip t
 its own. A refused or transiently-failed read cannot destroy a live approval either.
 """
 scope = """
-CONFIGURATION PROJECTION AND REACHABILITY ONLY, and the store is OPPORTUNISTIC: an
+RUNTIME CORRELATION AND REACHABILITY ONLY. It is about which actor can reach a live
+continuation entry and about the entry surviving a read that admits nothing — not about
+deployment posture, and not about whether the shared tier this deployment holds is the one
+its configuration selected. That materialization claim is THM-0077's and is deliberately not
+restated here.
+
+The store is OPPORTUNISTIC, which is why no "prevents startup" conjunct appears: an
 unavailable shared tier does not refuse startup — the deployment announces its absence and
-serves, and an answer leg that needs a correlated continuation fails closed at the binding
-rather than being admitted unbound. So this claim carries no "prevents startup" conjunct,
-which is where it departs from the shape of its replay sibling. It says nothing about what an
-acknowledged write durably establishes, and nothing about the continuation binding itself,
-which is `mcp-re-http-profile`'s.
+serves — and an answer leg that needs a correlated continuation fails closed at the binding
+rather than being admitted unbound. That is where this claim departs from the shape of its
+replay sibling.
+
+The provenance half and the separation half have different kinds of evidence, and the
+difference is stated rather than averaged. That an actor operand can only be the verifier's
+resolution is STRUCTURAL: `ResolvedActorId` has no constructor but one taking a
+`ResolvedActor`. Which operand each leg passes is MEASURED, by
+`unit://proxy.continuation_key_provenance`, and its two controls are defended by mutation
+probe M88 — because a positive assertion is also satisfied by an implementation that reads
+the request and happens to agree.
+
+It says nothing about what an acknowledged write durably establishes, and nothing about the
+continuation binding itself, which is `mcp-re-http-profile`'s.
 """
 owner = "proxy.continuation_correlation_store"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.continuation_correlation_store"]
+supported_by = [
+  "unit://proxy.continuation_correlation_store",
+  "unit://proxy.continuation_key_provenance",
+]
 depends_on = []
