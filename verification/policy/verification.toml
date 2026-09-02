@@ -3127,7 +3127,33 @@ tested_symbols = [
   "lib#continuation_store::tests::the_actor_state_boundary_cannot_be_moved",
   # The key separates both inputs, so the scope above is not vacuous.
   "lib#continuation_store::tests::key_is_stable_and_specific_to_both_inputs",
+  # REACHABILITY, not merely key derivation. The three above establish what the key is
+  # made of; this one establishes that the store enforces it — one actor's entry is not
+  # returned to another. A key correctly derived and then looked up loosely would satisfy
+  # every control above.
+  "lib#continuation_store::tests::one_actors_entry_is_not_reachable_by_another",
+  # THE READ DOES NOT SPEND. The statement's second conjunct: a read that does not admit
+  # an answer leg does not consume the entry, and the removal is one-shot. Without it the
+  # claim that a refused or transiently-failed read cannot destroy a live approval rests on
+  # no control at all.
+  "lib#continuation_store::tests::peek_does_not_consume_and_consume_is_one_shot",
+  # THE SHARED ARM, which is the reason `redis_continuation_store.rs` is in this closure:
+  # both conjuncts are claims about the STORE, and a backend implementing them differently
+  # would falsify them. The in-memory controls above cannot see that arm — it is compiled
+  # only under `redis_replay` — so the same two facts are measured again where the shared
+  # tier decides them: the read is non-destructive, the delete count is the one-shot
+  # verdict, and a tier that does not answer fails closed rather than reading as absent.
+  "lib#redis_continuation_store::tests::reading_the_retained_bases_does_not_remove_them",
+  "lib#redis_continuation_store::tests::the_delete_count_is_the_one_shot_verdict",
+  "lib#redis_continuation_store::tests::every_error_reply_fails_closed_as_unavailable",
+  # A stored value that did not come out of this encoder is not a continuation, and an
+  # absent entry and a malformed one are told apart rather than both reading as a miss.
+  "lib#redis_continuation_store::tests::a_missing_entry_reads_as_absent_but_a_malformed_one_does_not",
+  "lib#redis_continuation_store::tests::the_encoded_value_round_trips_and_a_malformed_one_is_rejected",
 ]
+# The feature the shared arm is compiled by. Declared rather than left to another lane:
+# the claim is about the store, and half the store does not exist in the default crate.
+test_features = ["redis_replay"]
 
 # ADR-MCPRE-059 §28 / issue #744, D2a and D2b. The other half of the pair whose D1 leaves
 # sit above: D1 says the tier the serving path holds is the one the configuration selected,
@@ -3196,6 +3222,12 @@ tested_symbols = [
   # A deployment with no store has nothing at stake, which is not the same as a failed
   # retirement — the exchange must be able to say nothing was spent.
   "lib#http_profile_serve::continuation::answer_leg::tests::a_deployment_with_no_store_retires_nothing",
+  # The fourth outcome. `Indeterminate` is the one the other three cannot stand in for:
+  # nothing downstream can find out whether the entry was consumed, so each of `Retired`,
+  # `AlreadyAnswered` and `NotInvolved` would give a person's approval a fate the
+  # deployment did not observe. Without this control the retirement is measured as
+  # three-valued while the claim is four-valued.
+  "lib#http_profile_serve::continuation::answer_leg::tests::a_tier_that_does_not_answer_the_spend_is_its_own_outcome",
 ]
 
 [[unit]]
