@@ -295,22 +295,46 @@ def valid_target(eco: Ecosystem, target: str) -> bool:
     return eco.selector_targets is not None and target in eco.selector_targets
 
 
-def test_argv(eco: Ecosystem, project: str, target: str, selectors: list[str]) -> list[str]:
+def test_argv(
+    eco: Ecosystem,
+    project: str,
+    target: str,
+    selectors: list[str],
+    features: list[str] | None = None,
+) -> list[str]:
     """The command that runs exactly `selectors` of `target` in `project`.
 
     Exact selection is the property, not a convenience: a runner that matched by substring
     would let a battery grow silently, and one that ran the whole suite would report a pass
     for symbols nobody declared.
+
+    `features` is the BUILD CONFIGURATION the battery is measured under, and it is an
+    ecosystem concept rather than a lane one: Cargo compiles a different crate per feature
+    set, so a control behind `#[cfg(feature = ...)]` does not exist without it. Only the
+    Cargo adapter takes them; `_manifest` refuses a declaration on any other ecosystem
+    rather than accepting one this function would drop.
     """
+    features = list(features or [])
     if eco is CARGO:
+        feature_argv = ["--features", ",".join(sorted(features))] if features else []
         if target == "doc":
             # Doctests are selected by substring rather than `--exact`: a doctest's reported
             # name embeds the LINE it starts on, so an exact selector would break on any
             # edit above it — churn that says nothing about the property. The lane's
             # containment check is what makes this selection precise.
-            return ["cargo", "test", "-p", project, "--doc", "--", *selectors]
+            return ["cargo", "test", "-p", project, *feature_argv, "--doc", "--", *selectors]
         target_argv = ["--lib"] if target == "lib" else ["--test", target[6:]]
-        return ["cargo", "test", "-p", project, *target_argv, "--", "--exact", *selectors]
+        return [
+            "cargo",
+            "test",
+            "-p",
+            project,
+            *feature_argv,
+            *target_argv,
+            "--",
+            "--exact",
+            *selectors,
+        ]
     if eco is PYTHON:
         # `uv run` rather than a bare interpreter: the project's environment is the one its
         # lockfile pins, and that lockfile is a fingerprint input. A battery run against

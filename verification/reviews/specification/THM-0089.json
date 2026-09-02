@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:5f08ed31d860d3ef9a71836edf1b0bff9ea496a89e74dae727eb4baff757fad8",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0089",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-09-02, given as BATCH 2A of the batched owner-review frontier over the exact review object returned for this theorem at commit b983ff14. This is the theorem's FIRST owner specification review; there is no earlier record and no inherited approval. The ruling approves four propositions: that the theorem establishes agreement between the human-readable endpoint authority and the URL parser's machine interpretation; that userinfo and ambiguous or encoded authority spellings cannot smuggle a different host; that the plaintext-scheme exception is decided only after the authority interpretation has been validated; and that the rule is owned by `KmsEndpoint` rather than remembered independently at each credential-egress caller. The owner explicitly accepted the non-claim as a non-claim: this theorem does NOT establish the final network address reached after DNS or address resolution, and does not establish that the provider was the deployment's correctly selected provider; that composition belongs elsewhere. The approval was made conditional on immediate remeasurement; the fingerprint was recomputed at b983ff14 before this record was written and equals the value the owner named. `theorem_dependencies` is empty because the theorem is a leaf, so this approval is over its own claim text alone.",
+  "reviewed_fingerprint": "sha256:e72c8e86f82919aa6ff4b0e74981dfdd72fe41bb0147193e8bddc1b0d297d4c3",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0089"
+}

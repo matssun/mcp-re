@@ -33,8 +33,9 @@ URI and therefore the fingerprint unchanged. Four components now answer "what di
 lane actually measure":
 
   * `test_evidence_definition`  the `test://` URIs, as before — WHAT is claimed
-  * `test_selection`            the resolved package and the exact sorted symbols — WHICH
-                                tests were selected
+  * `test_selection`            the resolved package, the exact sorted symbols, and the
+                                Cargo features they resolve under — WHICH tests were
+                                selected
   * `test_sources`              the bytes of the integration-test targets those selectors
                                 run. In-crate (`lib#`, `doc#`) selectors are NOT here: they
                                 execute code inside the unit's declared `paths`, which
@@ -107,7 +108,7 @@ from _manifest import (
 # Every attestation carrying an earlier version is UNKNOWN from the moment this moves, which
 # is the intended cost: an attestation computed over a narrower set of inputs cannot answer
 # whether one of the inputs it never saw has since changed.
-ENCODING_VERSION = 6
+ENCODING_VERSION = 7
 
 #: The classes whose evidence comes from a whole-crate prover run.
 FORMAL_CLASSES = {"V1", "V3"}
@@ -315,6 +316,13 @@ def _test_selection(unit: dict) -> dict:
     return {
         "package": test_package_for(unit),
         "symbols": sorted(str(s) for s in unit.get("tested_symbols", [])),
+        # The build configuration the selection resolves in. A feature-gated control does
+        # not merely fail to run without its feature — it does not EXIST, so the same
+        # symbol list under two feature sets is two different selections. Encoding v7 adds
+        # it because a unit could otherwise drop a feature, lose the controls that only
+        # compile under it, and keep its fingerprint: the battery would shrink to what the
+        # default lane happens to contain, which is the v3 defect one level down.
+        "features": sorted(str(f) for f in unit.get("test_features", [])),
     }
 
 

@@ -140,6 +140,43 @@ def test_dropping_a_declared_control_moves_the_fingerprint():
     assert before != after
 
 
+def test_dropping_a_test_feature_moves_the_fingerprint():
+    """A feature-gated control does not fail without its feature — it does not EXIST. So a
+    unit that drops a feature loses every control behind it while the symbol list, the
+    package and the source digests all stand still. Encoding v7 puts the feature set in
+    `test_selection` for the same reason v4 put the symbols there: the battery must not be
+    able to shrink to whatever the default crate still contains."""
+    unit = dict(UNITS["proxy.outbound_destination"])
+    assert unit["test_features"], "this unit's claim is measured under named features"
+    before = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
+    unit["test_features"] = [f for f in unit["test_features"] if f != "online_ocsp"]
+    after = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
+    assert before != after
+    assert "online_ocsp" not in components("proxy.kms_endpoint_authority")["test_selection"]["features"]
+
+
+def test_a_credential_egress_claim_is_measured_in_the_crate_that_compiles_it():
+    """The evidence-closure repair behind THM-0090. The redirect control and the
+    capability's single addressing surface are behind the features that link an HTTP
+    client, and the single-producer control is behind the two backends. A unit citing a
+    conjunct whose control cannot compile in its own lane would be a theorem established
+    through evidence one lane away from it."""
+    destination = components("proxy.outbound_destination")["test_selection"]
+    assert destination["features"] == [
+        "aws_kms_keysource",
+        "gcp_kms_keysource",
+        "online_ocsp",
+    ]
+    assert any("binding::tests::an_agent_does_not_follow_a_redirect" in s for s in destination["symbols"])
+    assert any("credential_egress::tests::" in s for s in destination["symbols"])
+    endpoint = components("proxy.kms_endpoint_authority")["test_selection"]
+    assert endpoint["features"] == ["aws_kms_keysource", "gcp_kms_keysource"]
+    assert any(
+        "endpoint::tests::an_endpoint_the_rule_refuses_yields_no_egress" in s
+        for s in endpoint["symbols"]
+    )
+
+
 def test_moving_the_battery_to_another_package_moves_the_fingerprint():
     """`test_package` selects which package the lane runs in, so it decides what was
     measured; a fingerprint blind to it would let the measurement move under a standing

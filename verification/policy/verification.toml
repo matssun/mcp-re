@@ -2872,30 +2872,25 @@ exported_contracts = []
 evidence = [
   "test://proxy/outbound_destination/provenance_guard",
 ]
-# WHAT THIS EVIDENCE DOES NOT REACH, stated rather than implied. `verify-tests` runs
-# `cargo test -p mcp-re-proxy --lib` with default features, and
-# `outbound_fetch::resolver` — the connect-time vetting that makes `VettedDestination`
-# more than a parse-time verdict — is `#[cfg(feature = "online_ocsp")]`. Its own control,
-# `vetting_resolver_rejects_rebinding_to_internal_addresses`, therefore compiles to zero
-# tests in this lane and is deliberately NOT named here: a symbol this lane cannot run is
-# not evidence, and naming it would be the "green lane that measured nothing" shape.
+# THE BATTERY IS MEASURED WHERE THE CLAIM LIVES. Half of what this unit owns is compiled
+# only behind the features that link an HTTP client: `binding.rs`, `credential_egress.rs`
+# and `resolver.rs` are `#[cfg(feature = ...)]` on `online_ocsp`, `aws_kms_keysource` and
+# `gcp_kms_keysource`. Under the default lane those controls do not fail — they do not
+# EXIST — so a battery run there measures the unconditional part of the claim and is
+# silent about the rest.
 #
-# So this unit's claim is over the CONSTRUCTION boundary — that provenance decides the
-# guard and a caller never holds the switch — and over ADDRESSING: which authority a
-# request built through this authority is sent to. It is not over what a name resolves to
-# at connect time.
+# `test_features` is therefore part of this unit's evidence definition rather than a
+# convenience: it names the build configuration the selection resolves in, it participates
+# in `test_selection`, and dropping one of these features moves the fingerprint instead of
+# quietly shrinking the battery to whatever the default crate still contains.
 #
-# #742 slice 2 moved the addressing half into this lane deliberately. The join that makes
-# an authority unmovable by a path is pure and lives in `url.rs`, which is unconditional,
-# so its controls RUN here and are cited below. The two facts one hop out — that a
-# redirect is not followed, and that the resolver vets what a name resolved to — are in
-# `binding.rs` and `resolver.rs`, both feature-gated, so their controls compile
-# to zero tests here and are deliberately NOT named:
-# `an_agent_does_not_follow_a_redirect_and_never_reaches_the_second_authority` and
-# `vetting_resolver_rejects_rebinding_to_internal_addresses` are measured by the Bazel
-# `:mcp_re_proxy_ext` flavor, which sets both features, and by
-# `cargo test -p mcp-re-proxy --features aws_kms_keysource|gcp_kms_keysource|online_ocsp`.
-# A symbol this lane cannot run is not evidence for it, whatever another lane saw.
+# What that buys is that every conjunct the theorems above this unit state is inside its
+# own evidence closure: the join that no path can move (unconditional), the redirect that
+# is not followed (`binding.rs`), the capability that offers no second way to address a
+# request (`credential_egress.rs`), and the resolved-address vetting a certificate-derived
+# destination installs (`resolver.rs`). The Bazel `:mcp_re_proxy_ext` flavor still runs
+# them; it is no longer the only lane that does, and this unit no longer cites a claim it
+# did not measure.
 tested_symbols = [
   # Provenance decides the guard: the certificate-derived constructor applies the scheme
   # allowlist AND the private-address protection, over the address a parser resolves to
@@ -2925,7 +2920,22 @@ tested_symbols = [
   # The two readings of "where the authority ends" agree, which is what lets the join be
   # stated in terms of the first `/` at all.
   "lib#outbound_fetch::url::tests::the_host_read_back_is_the_one_the_base_named",
+  # THE REDIRECT. A `302 Location:` names an authority nothing here vetted, chosen by
+  # whoever answered, and on a credential path that is the whole attack: the guard saw the
+  # first URL and no other. The control drives a real responder that answers `302` at a
+  # second listener and asserts the second is never reached.
+  "lib#outbound_fetch::binding::tests::an_agent_does_not_follow_a_redirect_and_never_reaches_the_second_authority",
+  # NO SECOND WAY TO ADDRESS A REQUEST. The join's property belongs to `url.rs` and is
+  # measured there; what this establishes is that the capability still addresses THROUGH
+  # it — a type that started formatting its own URL would keep every control above green.
+  "lib#outbound_fetch::credential_egress::tests::every_request_is_addressed_on_the_vetted_authority",
+  # The connect-time half, for the provenance that installs it: a name a certificate
+  # supplied does not become an internal address between the guard and the connection.
+  "lib#outbound_fetch::resolver::tests::vetting_resolver_rejects_rebinding_to_internal_addresses",
 ]
+# The features those three modules are compiled by. Not `--all-features`: named, so the
+# fingerprint says which crate the battery measured.
+test_features = ["aws_kms_keysource", "gcp_kms_keysource", "online_ocsp"]
 
 [[unit]]
 id = "proxy.kms_endpoint_authority"
@@ -2950,14 +2960,15 @@ evidence = [
 # model. The unit is registered at the width it owns so the fixes are covered; widening it
 # by renaming would be the move the issue rules out.
 #
-# What #742 slice 2 changed is not the rule but who must obey it. The three key sources
-# used to CALL this and discard the answer, which made the check a line each of them
-# remembered to write; they now hold a `CredentialEgress` obtainable only from a
-# `KmsEndpoint`, so deleting the call removes the value the constructor needs. That
-# structural fact is compiled only under the two backend features, so the controls in
-# `endpoint.rs` — `an_endpoint_the_rule_refuses_yields_no_egress` and its two positive
-# controls — do not run in this lane and are NOT cited here. They are measured by the
-# Bazel `:mcp_re_proxy_ext` flavor and by the per-feature cargo lanes.
+# WHO MUST OBEY THE RULE is part of what this unit owns, not only what the rule decides. A
+# key source holds a `CredentialEgress` obtainable only from a `KmsEndpoint`, so deleting
+# the endpoint check removes the value the constructor needs rather than leaving a
+# constructor that still builds and still reaches the endpoint.
+#
+# That structure is compiled only under the two backend features, so `endpoint.rs`'s
+# controls do not exist in the default crate. `test_features` runs this battery where they
+# do, which is what puts the single-producer fact inside this unit's evidence closure
+# instead of one lane away from it.
 tested_symbols = [
   # The two readings agree, which is the whole claim.
   "lib#kms_endpoint_policy::tests::the_authority_returned_is_the_host_and_port_that_will_be_reached",
@@ -2977,7 +2988,16 @@ tested_symbols = [
   # The exception follows the ADDRESS, not the spelling — the same rule as the rest, and
   # the one place a reader might expect the text to decide.
   "lib#kms_endpoint_policy::tests::the_plaintext_exception_follows_the_address_not_the_spelling",
+  # THE RULE IS NOT A CALL A CONSTRUCTOR MAY OMIT. A refused endpoint yields no egress
+  # capability at all, so there is nothing for a key source to perform a request through.
+  "lib#kms_endpoint_policy::endpoint::tests::an_endpoint_the_rule_refuses_yields_no_egress",
+  # The two mirrors. Without them the control above is satisfied by a producer that
+  # refuses everything, and the authority carried into the egress is unmeasured.
+  "lib#kms_endpoint_policy::endpoint::tests::an_admitted_endpoint_carries_its_authority_into_the_egress",
+  "lib#kms_endpoint_policy::endpoint::tests::the_loopback_plaintext_exception_reaches_egress",
 ]
+# The features `endpoint.rs` is compiled by, named rather than taken wholesale.
+test_features = ["aws_kms_keysource", "gcp_kms_keysource"]
 
 # ADR-MCPRE-059 §28 / issue #744. Two sibling authorities, neither owning the other's
 # facts. `replay_plane` establishes the authoritative replay tier; `continuation_store`

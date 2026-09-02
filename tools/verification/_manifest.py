@@ -91,6 +91,7 @@ _UNIT_KEYS = {
     "proved_symbols",
     "tested_symbols",
     "test_package",
+    "test_features",
 }
 _EDGE_KEYS = {"kind", "from", "to", "contract", "sealed", "sealed_by", "rationale"}
 
@@ -152,6 +153,45 @@ def _module_candidates(package: str, symbol_path: str) -> list[str]:
         out.append(f"{package}/src/{stem}.rs")
         out.append(f"{package}/src/{stem}/mod.rs")
     return out
+
+
+def _validate_test_features(uwhere: str, unit: dict) -> None:
+    """`test_features` names the build configuration the unit's battery is measured under.
+
+    Three refusals, and each is a way the field could state something it does not mean.
+
+    A unit with no `test://` evidence has no battery, so a feature set for one measures
+    nothing. A non-Cargo ecosystem has no such concept and the adapter would DROP the
+    value — a declaration nothing applies is worse than none, because the fingerprint would
+    carry it while the runner ignored it. And the specification feature is excluded by
+    construction: `features` carries the prover's text, is off in every production build,
+    and running the battery under it would measure a crate that does not ship. That
+    exclusion was a sentence in the lane's docstring; it is a check here.
+    """
+    declared = unit.get("test_features")
+    if declared is None:
+        return
+    if not isinstance(declared, list) or not all(isinstance(f, str) and f for f in declared):
+        raise ManifestError(f"{uwhere}: test_features must be a list of feature names")
+    if not claims_test_evidence(unit):
+        raise ManifestError(
+            f"{uwhere}: declares `test_features` but no test:// evidence, so the feature "
+            f"set configures a battery that does not exist."
+        )
+    if unit_ecosystem(unit) is not CARGO:
+        raise ManifestError(
+            f"{uwhere}: `test_features` is a Cargo concept and this unit's battery does "
+            f"not run under Cargo; a feature set the runner cannot apply would enter the "
+            f"fingerprint while measuring nothing."
+        )
+    overlap = sorted(set(declared) & set(unit.get("features", [])))
+    if overlap:
+        raise ManifestError(
+            f"{uwhere}: {overlap} appear in both `features` and `test_features`. The "
+            f"specification feature carries the prover's text and is off in every "
+            f"production build; a battery run under it measures a different crate than "
+            f"the one that ships."
+        )
 
 
 def _validate_in_crate_selectors(uwhere: str, unit: dict) -> None:
@@ -431,6 +471,7 @@ def load_verification() -> dict:
                 f"{uwhere}: declares `tested_symbols` but no test:// evidence entry "
                 f"claims them, so nothing consumes what the lane would measure."
             )
+        _validate_test_features(uwhere, unit)
         _validate_test_package(uwhere, unit)
         _validate_in_crate_selectors(uwhere, unit)
         # `mutation://` is a claim about a NEGATIVE battery, which only exists on top of a
