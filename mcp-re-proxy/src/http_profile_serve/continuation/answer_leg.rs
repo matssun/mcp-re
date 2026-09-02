@@ -231,6 +231,57 @@ mod tests {
         assert_eq!(plane.retire(Some(&key)).await, Retirement::AlreadyAnswered);
     }
 
+    /// A tier that does not answer the SPEND. Its own case, and it has to be reachable.
+    ///
+    /// The in-memory store cannot produce it — it never fails — so the fourth outcome has
+    /// no control without a store that errors on `consume`.
+    struct UnansweringStore;
+
+    impl AsyncContinuationStore for UnansweringStore {
+        fn store<'a>(
+            &'a self,
+            _key: &'a str,
+            _bases: &'a RetainedBases,
+            _ttl_secs: i64,
+        ) -> crate::continuation_store::ContinuationFuture<'a, ()> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn peek<'a>(
+            &'a self,
+            _key: &'a str,
+        ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedBases>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn consume<'a>(
+            &'a self,
+            _key: &'a str,
+        ) -> crate::continuation_store::ContinuationFuture<'a, bool> {
+            Box::pin(async {
+                Err(ContinuationStoreError::Unavailable {
+                    details: "the shared tier did not answer the spend".into(),
+                })
+            })
+        }
+    }
+
+    /// The fourth outcome is carried, not collapsed into one of the other three.
+    ///
+    /// Nothing downstream can find out whether the entry was consumed. Reporting
+    /// `AlreadyAnswered` would tell the caller its approval was spent by someone; reporting
+    /// `Retired` would claim this call spent it; reporting `NotInvolved` would say nothing
+    /// was ever at stake. All three are statements the proxy cannot make here, and each
+    /// gives a person's approval a fate the deployment did not observe.
+    #[tokio::test]
+    async fn a_tier_that_does_not_answer_the_spend_is_its_own_outcome() {
+        let plane = ContinuationPlane::wired(Arc::new(UnansweringStore), 300);
+        assert_eq!(
+            plane.retire(Some(&"k-1".to_owned())).await,
+            Retirement::Indeterminate
+        );
+    }
+
     #[test]
     fn a_prep_with_no_retained_bases_offers_no_binding() {
         // Every way the bases can be absent collapses to one answer, on purpose: the
