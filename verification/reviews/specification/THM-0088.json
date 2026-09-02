@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:33ff0b40ae6653e2564b29c668cdb320d5946d60e475f0409d08d96849a42bf3",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0088",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-09-02, given as BATCH 1 of the batched owner-review frontier over the exact review object returned for this theorem at commit bdfddf9e. This is the theorem's FIRST owner specification review; there is no earlier record and no inherited approval. The ruling approves the two-stage representation \u2014 `ReservedBeforeDispatch` at `<digest>.reserved`, which is not execution evidence; `commit_to_dispatch` as a durable rename; `DispatchCommitted` at `<digest>.pending` as the crossed execution threshold \u2014 together with the opposite drop dispositions of the two typed states and the consequence that correctness no longer depends on a caller remembering a release operation. It also approves that the pre-dispatch marker carries the request-digest commitment alone and no live bearer or DPoP material. The non-claims are approved as non-claims: this theorem does NOT assert bounded cleanup, durable deletion of stale `.reserved` artefacts, completion-write success, or transaction atomicity between the evidence store and the backend. The approval was made conditional on immediate remeasurement; the fingerprint was recomputed at bdfddf9e before this record was written and equals the value the owner named. `theorem_dependencies` is empty because the theorem is a leaf, so this approval is over its own claim text alone.",
+  "reviewed_fingerprint": "sha256:4cd3913879e3417cf9ed65cb92ebb373685c2971c7617b6bb06d8c9d1cd21fe0",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0088"
+}
