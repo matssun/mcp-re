@@ -3844,10 +3844,13 @@ wires a store that self-reports the single-process reference class. The atomic a
 the LAST step, and a store that does not answer it refuses the exchange rather than
 admitting it — reported as an outage, never as a replay.
 
-Where the store DOES acknowledge under a tier at or above the strict-production minimum, the
-nonce is recorded fleet-wide for the request's own retention bound, which is what makes the
-admission a replay decision rather than a local one. That direction is not local and rests on
-ASM-0040 or ASM-0041, per mechanism.
+Where the store acknowledges admission under a tier at or above the strict-production
+minimum, replay state is treated as established ACCORDING TO THE SELECTED MECHANISM'S
+REGISTERED PREMISE, and this theorem makes no durability claim stronger than that premise.
+Under Redis, ASM-0040 establishes the configured replica acknowledgements and carries its
+documented failover caveat. Under etcd, ASM-0041 establishes the successful linearized
+transaction and the lease-bound key. The two are not one proposition, and neither is
+restated here in stronger terms than the premise that carries it.
 """
 security_consequence = """
 Replay admission cannot degrade to fail-open on infrastructure trouble. The excluded outcome
@@ -3855,10 +3858,16 @@ is not a crash — it is a deployment that believes it has cross-replica replay 
 has process-local protection, serving a replayed request as a fresh one because the store it
 was supposed to consult was unreachable or was never the store the posture claimed.
 
-The outage/replay distinction is part of the claim rather than a diagnostic nicety. A replay
-verdict says this request was already served, so a caller must not retry; an outage says
-nothing was established, so a retry is exactly what should happen once the tier is back.
-Collapsing them gives a caller the opposite advice in one of the two cases.
+The outage/replay distinction is part of the claim rather than a diagnostic nicety, and both
+sides of it are narrower than they read. A REPLAY verdict says the replay key was already
+admitted and recorded under the mechanism, so the same signed request cannot be treated as
+fresh; it does not say the backend dispatched, and it does not say the backend executed —
+admitted, dispatched and executed are three states, not one. An OUTAGE says the proxy did
+not obtain the replay-establishment fact dispatch requires, so this attempt does not reach
+the backend; it does not say no store-side write occurred, because a write can happen and
+its acknowledgement be lost. Collapsing the two would let one verdict answer for the other,
+and neither is a client retry policy — what a caller should do next is decided elsewhere,
+from these facts and not in place of them.
 """
 scope = """
 It is one-directional and is not a liveness claim: it says an unestablished replay state does
@@ -3875,6 +3884,15 @@ about such a deployment beyond what the core gate beneath still enforces.
 What an acknowledgement durably established is a FOREIGN fact, registered per mechanism.
 Nothing here establishes that Redis's replication or etcd's consensus behaves as its premise
 states, and no umbrella premise stands in for both.
+
+The mechanisms are NOT equally strong and this claim does not level them. `REDIS_WAIT_QUORUM`
+is not linearizable replay durability and is not a guarantee that every later failover
+preserves the nonce: ASM-0040 establishes replica acknowledgements and explicitly declines
+the failover case, which ADR-MCPS-020 treats as materially reduced failover replay risk
+rather than as replay safety. Etcd under ASM-0041 is stronger, by consensus rather than by
+count. A deployment therefore obtains the strength of the tier it wired, and reading the
+positive direction at the stronger mechanism's altitude would be a claim no premise here
+carries.
 """
 owner = "proxy.replay_admission_gate"
 review_requirement = "Owner security-specification review"
